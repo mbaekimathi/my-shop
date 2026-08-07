@@ -1,0 +1,95 @@
+<tr
+  class="{% if shop.is_suspended %}item-row--suspended{% endif %}{% if shop.is_hidden %} item-row--hidden{% endif %}"
+  data-shop-row
+  data-search-text="{{ shop.name|lower }} {{ shop.location|lower }} {{ shop.email|lower }} {{ shop.phone_number|lower }} {{ shop.login_code|lower }}"
+>
+  <td class="item-cell--item" data-label="Branch">
+    <div class="item-person">
+      {% if shop.image %}
+      <img class="item-thumb" src="{{ shop.image.url }}" alt="" width="32" height="32">
+      {% else %}
+      <span class="item-thumb item-thumb--empty" aria-hidden="true">
+        <i data-lucide="store"></i>
+      </span>
+      {% endif %}
+      <div class="item-person-copy">
+        <strong>{{ shop.name }}</strong>
+        <small>{{ shop.email }}</small>
+      </div>
+    </div>
+  </td>
+  <td data-label="Location">{{ shop.location }}</td>
+  <td data-label="Contact">{{ shop.phone_number }}</td>
+  <td data-label="Login code"><code class="shop-login-code">{{ shop.login_code }}</code></td>
+  <td class="item-cell--status" data-label="Status">
+    <div class="item-status-pills">
+      {% if shop.is_suspended %}
+      <span class="status-pill status-pill--suspended">Suspended</span>
+      {% else %}
+      <span class="status-pill status-pill--active">Active</span>
+      {% endif %}
+      {% if shop.is_hidden %}
+      <span class="status-pill status-pill--hidden">Hidden</span>
+      {% endif %}
+    </div>
+  </td>
+  <td class="item-cell--actions" data-label="Actions">
+    <div class="item-actions">
+      <button
+        class="item-action-icon"
+        type="button"
+        title="Edit shop"
+        aria-label="Edit {{ shop.name }}"
+        data-edit-shop
+        data-shop-id="{{ shop.pk }}"
+        data-name="{{ shop.name }}"
+        data-location="{{ shop.location }}"
+        data-email="{{ shop.email }}"
+        data-phone-number="{{ shop.phone_number }}"
+        data-login-code="{{ shop.login_code }}"
+        data-image-url="{% if shop.image %}{{ shop.image.url }}{% endif %}"
+      >
+        <i data-lucide="pencil" aria-hidden="true"></i>
+      </button>
+      <form class="item-inline-form" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="toggle_suspend">
+        <input type="hidden" name="shop_id" value="{{ shop.pk }}">
+        <button
+          class="item-action-icon"
+          type="submit"
+          title="{% if shop.is_suspended %}Unsuspend shop{% else %}Suspend shop{% endif %}"
+          aria-label="{% if shop.is_suspended %}Unsuspend{% else %}Suspend{% endif %} {{ shop.name }}"
+        >
+          <i data-lucide="{% if shop.is_suspended %}play{% else %}pause{% endif %}" aria-hidden="true"></i>
+        </button>
+      </form>
+      <form class="item-inline-form" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="toggle_hide">
+        <input type="hidden" name="shop_id" value="{{ shop.pk }}">
+        <button
+          class="item-action-icon"
+          type="submit"
+          title="{% if shop.is_hidden %}Unhide shop{% else %}Hide shop{% endif %}"
+          aria-label="{% if shop.is_hidden %}Unhide{% else %}Hide{% endif %} {{ shop.name }}"
+        >
+          <i data-lucide="{% if shop.is_hidden %}eye{% else %}eye-off{% endif %}" aria-hidden="true"></i>
+        </button>
+      </form>
+      <form class="item-inline-form" method="post" data-confirm-delete data-shop-name="{{ shop.name }}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="shop_id" value="{{ shop.pk }}">
+        <button
+          class="item-action-icon item-action-icon--danger"
+          type="submit"
+          title="Delete shop"
+          aria-label="Delete {{ shop.name }}"
+        >
+          <i data-lucide="trash-2" aria-hidden="true"></i>
+        </button>
+      </form>
+    </div>
+  </td>
+</tr>

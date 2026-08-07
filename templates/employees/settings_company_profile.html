@@ -1,0 +1,134 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="item-panel item-panel--dense" data-animate="rise">
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }}</p>
+      </div>
+    </div>
+  </div>
+
+  <form
+    class="company-profile-form"
+    method="post"
+    enctype="multipart/form-data"
+    data-company-profile-form
+  >
+    {% csrf_token %}
+
+    <div class="company-logo-upload" data-logo-upload>
+      <div class="company-logo-mark" data-logo-preview>
+        {% if company_profile.logo %}
+        <img
+          src="{{ company_profile.logo.url }}"
+          alt="{{ form_data.name|default:'Company' }} logo"
+          data-logo-image
+        >
+        <i data-lucide="image" aria-hidden="true" data-logo-placeholder hidden></i>
+        {% else %}
+        <img src="" alt="" hidden data-logo-image>
+        <i data-lucide="image" aria-hidden="true" data-logo-placeholder></i>
+        {% endif %}
+      </div>
+      <div class="company-logo-actions">
+        <span class="field-label">Company logo</span>
+        <p>PNG or JPG · transparent preferred · max 5 MB</p>
+        <div class="company-logo-buttons">
+          <label class="btn btn--ghost company-logo-btn">
+            <i data-lucide="upload" aria-hidden="true"></i>
+            <span>Upload logo</span>
+            <input
+              type="file"
+              name="logo"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              hidden
+              data-logo-input
+            >
+          </label>
+          {% if company_profile.logo %}
+          <label class="btn btn--ghost company-logo-btn company-logo-btn--danger">
+            <input type="checkbox" name="remove_logo" value="1" hidden data-logo-remove>
+            <i data-lucide="trash-2" aria-hidden="true"></i>
+            <span>Remove</span>
+          </label>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="company-profile-fields">
+      <label class="field">
+        <span class="field-label">Company name</span>
+        <input
+          type="text"
+          name="name"
+          value="{{ form_data.name }}"
+          required
+          autocomplete="organization"
+          placeholder="RICHCOM LTD"
+          data-uppercase
+        >
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Company phone number</span>
+          <input
+            type="tel"
+            name="phone_number"
+            value="{{ form_data.phone_number }}"
+            required
+            autocomplete="tel"
+            placeholder="+254 700 000 000"
+            data-uppercase
+          >
+        </label>
+        <label class="field">
+          <span class="field-label">Company email</span>
+          <input
+            type="email"
+            name="email"
+            value="{{ form_data.email }}"
+            required
+            autocomplete="email"
+            placeholder="info@company.com"
+            data-lowercase
+          >
+        </label>
+      </div>
+
+      <label class="field">
+        <span class="field-label">Company location</span>
+        <input
+          type="text"
+          name="location"
+          value="{{ form_data.location }}"
+          required
+          autocomplete="street-address"
+          placeholder="NAIROBI, KENYA"
+          data-uppercase
+        >
+      </label>
+    </div>
+
+    <div class="company-profile-actions">
+      <button type="submit" class="btn btn--primary">
+        <i data-lucide="save" aria-hidden="true"></i>
+        <span>Save profile</span>
+      </button>
+    </div>
+  </form>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/company-profile.js' %}"></script>
+{% endblock %}

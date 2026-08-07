@@ -1,0 +1,560 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ shop.name }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="shop-floor"
+  data-item-total="{{ item_count }}"
+  data-shop-cart
+  data-shop-id="{{ shop.id }}"
+  data-shop-view="cards"
+  data-catalog-api="{{ catalog_url }}"
+  data-catalog-page-size="48"
+  data-checkout-url="{{ checkout_url }}"
+  data-stk-initiate-url="{{ stk_initiate_url }}"
+  data-stk-status-url-template="{{ stk_status_url_template }}"
+  data-stk-ready="{% if stk_ready %}1{% else %}0{% endif %}"
+  data-verify-login-url="{{ verify_login_code_url }}"
+  data-client-lookup-url="{{ client_lookup_url }}"
+  data-serial-search-url="{{ serial_search_url }}"
+  data-default-kind="{{ default_kind }}"
+  data-default-payment="{{ default_payment }}"
+  data-default-print-via="{{ default_print_via }}"
+  data-pos-checkout="{% if checkout_enabled %}1{% else %}0{% endif %}"
+  data-pos-kinds="{{ cart_kinds|join:',' }}"
+  data-pos-payments="{{ pos_flags.payment_methods|join:',' }}"
+  data-pos-cash-sale="{% if pos_flags.cash_sale_checkout %}1{% else %}0{% endif %}"
+  data-pos-discount="{% if pos_settings.enable_discount %}1{% else %}0{% endif %}"
+  data-pos-tax="{% if pos_settings.enable_tax %}1{% else %}0{% endif %}"
+  data-pos-tax-percent="{{ pos_flags.effective_tax_percent }}"
+  data-pos-receipt-width="{{ pos_flags.receipt_paper_width }}"
+  data-pos-receipt-font-size="{{ pos_flags.receipt_font_size }}"
+  data-pos-receipt-font-px80="{{ pos_flags.receipt_font_size_px_80 }}"
+  data-pos-receipt-font-px58="{{ pos_flags.receipt_font_size_px_58 }}"
+  data-pos-receipt-font-weight="{{ pos_flags.receipt_font_weight }}"
+  data-pos-receipt-font-weight-css="{{ pos_flags.receipt_font_weight_css }}"
+  data-pos-compulsory-print="{% if pos_settings.compulsory_print_on_sale %}1{% else %}0{% endif %}"
+  data-print-relay-url="{{ print_relay_url }}"
+  data-print-channels="{{ pos_flags.print_channels|join:',' }}"
+  {% if not checkout_enabled %}data-pos-checkout-blocked="1"{% endif %}
+>
+  {% if not checkout_enabled %}
+  <div class="dashboard-placeholder shop-floor-pos-disabled" data-animate="rise">
+    <i data-lucide="sliders-horizontal" aria-hidden="true"></i>
+    <p>Checkout is turned off in POS settings. Enable Sale, Credit, or Quotation (and a payment method for Sale) to sell from this shop.</p>
+  </div>
+  {% endif %}
+  <div class="shop-floor-toolbar">
+    <label class="item-search-field shop-floor-search">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input
+        type="search"
+        placeholder="Search items or categories…"
+        autocomplete="off"
+        data-item-search
+        aria-label="Search active items"
+      >
+    </label>
+    <span
+      class="shop-floor-search-meta"
+      data-item-visible-count
+      data-count-hide-idle
+      hidden
+      aria-live="polite"
+    ></span>
+    {% if item_count %}
+    <div class="shop-floor-view-toggle" role="group" aria-label="Catalog layout">
+      <button
+        type="button"
+        class="shop-floor-view-btn is-active"
+        data-shop-view-set="cards"
+        aria-pressed="true"
+        title="Card view"
+      >
+        <i data-lucide="layout-grid" aria-hidden="true"></i>
+        <span>Cards</span>
+      </button>
+      <button
+        type="button"
+        class="shop-floor-view-btn"
+        data-shop-view-set="list"
+        aria-pressed="false"
+        title="List view"
+      >
+        <i data-lucide="list" aria-hidden="true"></i>
+        <span>List</span>
+      </button>
+    </div>
+    {% endif %}
+    {% if pending_request_count %}
+    <button
+      type="button"
+      class="btn btn--ghost btn--sm shop-floor-requests"
+      data-stock-request-open
+      aria-haspopup="dialog"
+    >
+      <i data-lucide="inbox" aria-hidden="true"></i>
+      <span>Stock requests</span>
+      <span class="shop-floor-request-badge">{{ pending_request_count }}</span>
+    </button>
+    {% endif %}
+    {% if stock_request_decision_count %}
+    <button
+      type="button"
+      class="btn btn--ghost btn--sm shop-floor-requests"
+      data-stock-decision-open
+      aria-haspopup="dialog"
+    >
+      <i data-lucide="bell" aria-hidden="true"></i>
+      <span>Request updates</span>
+      <span class="shop-floor-request-badge">{{ stock_request_decision_count }}</span>
+    </button>
+    {% endif %}
+  </div>
+
+  {% if item_count %}
+  <div class="shop-floor-catalog" data-item-list data-catalog-root>
+    <div class="dashboard-placeholder shop-floor-catalog-loading" data-catalog-loading>
+      <i data-lucide="loader-circle" aria-hidden="true"></i>
+      <p>Loading catalog…</p>
+    </div>
+  </div>
+
+  <div class="shop-floor-catalog-more" data-catalog-more-wrap hidden>
+    <button type="button" class="btn btn--ghost" data-catalog-more>
+      Load more items
+    </button>
+  </div>
+
+  <div class="item-search-empty" data-item-no-results hidden>
+    <i data-lucide="search-x" aria-hidden="true"></i>
+    <p>No items match your search.</p>
+  </div>
+  {% else %}
+  <div class="dashboard-placeholder shop-floor-empty">
+    <i data-lucide="package-open" aria-hidden="true"></i>
+    <p>No active items are available in this shop yet.</p>
+  </div>
+  {% endif %}
+</section>
+
+{% include "shops/partials/stock_request_modals.html" %}
+{% include "shops/partials/printer_connect_modal.html" %}
+{% include "shops/partials/buy_stock_modal.html" %}
+{% include "shops/partials/register_expense_modal.html" %}
+{% endblock %}
+
+{% block workspace_overlays %}
+{% if checkout_enabled %}
+<button
+  type="button"
+  class="shop-cart-fab"
+  data-cart-open
+  aria-haspopup="dialog"
+  aria-controls="shop-cart-drawer"
+  aria-expanded="false"
+  aria-label="Open cart"
+>
+  <i data-lucide="shopping-cart" aria-hidden="true"></i>
+  <span class="shop-cart-fab-count" data-cart-count hidden>0</span>
+</button>
+
+<div class="shop-cart-overlay" data-cart-overlay aria-hidden="true"></div>
+<aside
+  class="shop-cart-drawer"
+  id="shop-cart-drawer"
+  data-cart-drawer
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="shop-cart-title"
+  aria-hidden="true"
+>
+  <header class="shop-cart-head">
+    <div class="shop-cart-head-copy">
+      <p class="shop-cart-kicker">Cart</p>
+      <h2 id="shop-cart-title">Sale items</h2>
+      <p class="shop-cart-sub" data-cart-item-label>No items yet</p>
+    </div>
+    <button
+      type="button"
+      class="shop-cart-close"
+      data-cart-close
+      aria-label="Close cart"
+    >
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+  </header>
+  <div class="shop-cart-body">
+    <ul class="shop-cart-lines" data-cart-lines></ul>
+  </div>
+  <footer class="shop-cart-foot" data-cart-foot hidden>
+    <div class="shop-cart-totals">
+      <div class="shop-cart-total-row shop-cart-total-row--sub" data-cart-subtotal-row{% if not pos_settings.enable_tax %} hidden{% endif %}>
+        <span>Subtotal</span>
+        <strong data-cart-subtotal>KSh 0.00</strong>
+      </div>
+      <div class="shop-cart-total-row shop-cart-total-row--sub" data-cart-tax-row{% if not pos_settings.enable_tax %} hidden{% endif %}>
+        <span data-cart-tax-label>Tax{% if pos_settings.enable_tax %} ({{ pos_flags.effective_tax_percent }}%){% endif %}</span>
+        <strong data-cart-tax>KSh 0.00</strong>
+      </div>
+      <div class="shop-cart-total-row">
+        <span>Total</span>
+        <strong data-cart-total>KSh 0.00</strong>
+      </div>
+    </div>
+
+    <form class="shop-cart-checkout" data-cart-checkout novalidate>
+      {% csrf_token %}
+
+      {% if show_document_picker %}
+      <div class="shop-cart-field">
+        <span class="shop-cart-field-label">Document</span>
+        <div class="shop-cart-seg" role="group" aria-label="Document type">
+          {% if "sale" in cart_kinds %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="kind" value="sale" data-cart-kind{% if default_kind == "sale" %} checked{% endif %}>
+            <span>Sale</span>
+          </label>
+          {% endif %}
+          {% if "credit" in cart_kinds %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="kind" value="credit" data-cart-kind{% if default_kind == "credit" %} checked{% endif %}>
+            <span>Credit</span>
+          </label>
+          {% endif %}
+          {% if "quotation" in cart_kinds %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="kind" value="quotation" data-cart-kind{% if default_kind == "quotation" %} checked{% endif %}>
+            <span>Quotation</span>
+          </label>
+          {% endif %}
+        </div>
+      </div>
+      {% elif default_kind %}
+      <input type="hidden" name="kind" value="{{ default_kind }}" data-cart-kind>
+      {% endif %}
+
+      {% if "quotation" in cart_kinds %}
+      <label class="shop-cart-check" data-cart-whatsapp-wrap{% if default_kind != "quotation" %} hidden{% endif %}>
+        <input type="checkbox" name="share_whatsapp" value="1" data-cart-whatsapp>
+        <span>Share quotation to WhatsApp</span>
+      </label>
+      {% endif %}
+
+      <div class="shop-cart-field" data-cart-payment-wrap{% if not show_payment_picker %} hidden{% endif %}>
+        <span class="shop-cart-field-label">Payment</span>
+        <div class="shop-cart-seg" role="group" aria-label="Payment method">
+          {% if "cash" in pos_flags.payment_methods %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="payment_method" value="cash" data-cart-pay{% if default_payment == "cash" %} checked{% endif %}>
+            <span>Cash</span>
+          </label>
+          {% endif %}
+          {% if "mpesa" in pos_flags.payment_methods %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="payment_method" value="mpesa" data-cart-pay{% if default_payment == "mpesa" %} checked{% endif %}>
+            <span>M-Pesa</span>
+          </label>
+          {% endif %}
+          {% if "both" in pos_flags.payment_methods %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="payment_method" value="both" data-cart-pay{% if default_payment == "both" %} checked{% endif %}>
+            <span>Cash + M-Pesa</span>
+          </label>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if "both" in pos_flags.payment_methods %}
+      <div class="shop-cart-split" data-cart-split hidden>
+        <label class="shop-cart-input">
+          <span>Cash</span>
+          <input
+            type="number"
+            name="cash_amount"
+            min="0"
+            step="0.01"
+            inputmode="decimal"
+            data-cart-cash
+            placeholder="0.00"
+          >
+        </label>
+        <label class="shop-cart-input">
+          <span>M-Pesa</span>
+          <input
+            type="number"
+            name="mpesa_amount"
+            min="0"
+            step="0.01"
+            inputmode="decimal"
+            data-cart-mpesa
+            placeholder="0.00"
+          >
+        </label>
+      </div>
+      {% endif %}
+
+      <div class="shop-cart-client" data-cart-client>
+        <div class="shop-cart-client-head">
+          <p class="shop-cart-client-label" data-cart-client-heading>
+            Link client{% if default_kind != "sale" %} <span class="shop-serial-required" aria-hidden="true">*</span>{% endif %}
+          </p>
+          <p class="shop-cart-client-note" data-cart-client-note {% if default_kind == "sale" %}{% else %}hidden{% endif %}>
+            Optional for cash sales without serials
+          </p>
+        </div>
+        <label class="shop-cart-input">
+          <span data-cart-client-phone-label>Client phone{% if default_kind == "sale" %} <em>(optional)</em>{% else %} <span class="shop-serial-required">*</span>{% endif %}</span>
+          <input
+            type="tel"
+            name="client_phone"
+            autocomplete="tel"
+            inputmode="tel"
+            data-cart-client-phone
+            placeholder="07XX XXX XXX"
+            {% if default_kind != "sale" %}required{% endif %}
+          >
+        </label>
+        <div class="shop-cart-name-wrap">
+          <label class="shop-cart-input">
+            <span data-cart-client-name-label>Client full name{% if default_kind == "sale" %} <em>(optional)</em>{% else %} <span class="shop-serial-required">*</span>{% endif %}</span>
+            <input
+              type="text"
+              name="client_name"
+              autocomplete="off"
+              data-cart-client-name
+              class="shop-cart-name-input"
+              placeholder="Full name"
+              aria-autocomplete="list"
+              aria-controls="shop-cart-client-suggest"
+              {% if default_kind != "sale" %}required{% endif %}
+            >
+          </label>
+          <div
+            class="shop-cart-client-suggest"
+            id="shop-cart-client-suggest"
+            data-cart-client-suggest
+            role="listbox"
+            hidden
+          ></div>
+        </div>
+      </div>
+      <p class="shop-cart-client-hint" data-cart-client-hint></p>
+
+      <div class="shop-cart-stk" data-cart-stk-panel hidden>
+        <button
+          type="button"
+          class="btn btn--primary shop-cart-stk-send"
+          data-cart-stk-send
+          {% if not stk_ready %}disabled{% endif %}
+        >
+          Send STK prompt (optional)
+        </button>
+        <div class="shop-cart-stk-wait" data-cart-stk-wait hidden>
+          <span class="shop-cart-stk-spinner" aria-hidden="true">
+            <i data-lucide="loader-circle"></i>
+          </span>
+          <p data-cart-stk-wait-text>Waiting for customer to confirm on their phone…</p>
+        </div>
+        <div class="shop-cart-stk-receipt" data-cart-stk-receipt hidden>
+          <span>M-Pesa reference</span>
+          <strong data-cart-stk-receipt-code></strong>
+        </div>
+      </div>
+
+      <div class="shop-cart-staff" data-cart-staff-wrap>
+        <label class="shop-cart-input">
+          <span>Staff ID (6 digits)</span>
+          <input
+            type="text"
+            name="login_code"
+            inputmode="numeric"
+            maxlength="6"
+            autocomplete="one-time-code"
+            placeholder="Enter 6-digit staff ID"
+            data-cart-login-code
+            required
+          >
+        </label>
+        <p class="shop-cart-staff-lock" data-cart-staff-lock hidden>
+          Optional STK is still waiting — you can finish with staff ID anytime, or wait for M-Pesa confirmation.
+        </p>
+      </div>
+      <p class="shop-cart-status" data-cart-status>
+        {% if pos_flags.print_channels %}
+          {% if pos_settings.compulsory_print_on_sale %}
+        Enter an active staff member’s 6-digit ID to complete and print.
+          {% else %}
+        Enter an active staff member’s 6-digit ID to complete. Connect a printer to print.
+          {% endif %}
+        {% else %}
+        Enter an active staff member’s 6-digit ID to complete the receipt.
+        {% endif %}
+      </p>
+
+      <div class="shop-cart-actions">
+        <button type="button" class="btn btn--ghost shop-cart-clear" data-cart-clear>
+          Clear
+        </button>
+      </div>
+    </form>
+  </footer>
+</aside>
+{% else %}
+<p class="shop-cart-pos-disabled" hidden data-cart-pos-disabled>
+  Checkout is disabled — enable a document type in POS settings.
+</p>
+{% endif %}
+
+<div
+  class="shop-product-modal"
+  data-product-modal
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="shop-product-title"
+  aria-hidden="true"
+>
+  <div class="shop-product-modal-backdrop" data-product-close></div>
+  <div class="shop-product-modal-dialog" data-product-dialog>
+    <button
+      type="button"
+      class="shop-product-modal-close"
+      data-product-close
+      aria-label="Close product"
+    >
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+    <div class="shop-product-modal-media" data-product-media></div>
+    <div class="shop-product-modal-panel">
+      <div class="shop-product-modal-copy">
+        <p class="shop-product-modal-kicker" data-product-category></p>
+        <h2 id="shop-product-title" data-product-name></h2>
+        <p class="shop-product-modal-desc" data-product-description></p>
+        <div class="shop-product-modal-meta">
+          <div class="shop-product-modal-price-block">
+            <label class="shop-product-modal-price-label" for="shop-product-price-input">
+              {% if pos_settings.enable_discount %}Sale price{% else %}Price{% endif %}
+            </label>
+            <div class="shop-product-price-field{% if not pos_settings.enable_discount %} is-locked{% endif %}">
+              <span class="shop-product-price-prefix">KSh</span>
+              <input
+                id="shop-product-price-input"
+                type="number"
+                class="shop-product-price-input"
+                data-product-price-input
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                aria-describedby="shop-product-price-hint"
+                {% if not pos_settings.enable_discount %}readonly tabindex="-1"{% endif %}
+              >
+            </div>
+            <p class="shop-product-price-hint" id="shop-product-price-hint" data-product-price-hint{% if not pos_settings.enable_discount %} hidden{% endif %}></p>
+          </div>
+          <span class="shop-product-modal-stock" data-product-stock></span>
+        </div>
+      </div>
+      {% if checkout_enabled %}
+      <div class="shop-product-modal-actions" data-product-controls>
+        <button type="button" class="btn btn--primary shop-product-add" data-product-add>
+          <i data-lucide="shopping-cart" aria-hidden="true"></i>
+          <span>Add to cart</span>
+        </button>
+        <div class="shop-product-qty" data-product-qty-wrap hidden>
+          <span class="shop-product-qty-label">Quantity</span>
+          <div class="shop-product-qty-controls">
+            <button type="button" class="shop-floor-qty-btn" data-product-qty="dec" aria-label="Decrease quantity">
+              <i data-lucide="minus" aria-hidden="true"></i>
+            </button>
+            <input
+              type="number"
+              class="shop-floor-qty-input shop-product-qty-input"
+              data-product-qty-input
+              min="1"
+              value="1"
+              inputmode="numeric"
+              aria-label="Quantity in cart"
+            >
+            <button type="button" class="shop-floor-qty-btn" data-product-qty="inc" aria-label="Increase quantity">
+              <i data-lucide="plus" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div
+  class="shop-serial-modal"
+  data-serial-sale-modal
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="shop-serial-sale-title"
+  aria-hidden="true"
+>
+  <div class="shop-serial-modal-backdrop" data-serial-sale-close></div>
+  <div class="shop-serial-modal-dialog" data-serial-sale-dialog>
+    <button
+      type="button"
+      class="shop-serial-modal-close"
+      data-serial-sale-close
+      aria-label="Close serial entry"
+    >
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+    <div class="shop-serial-modal-media" data-serial-sale-media></div>
+    <div class="shop-serial-modal-panel">
+      <div class="shop-serial-modal-copy">
+        <p class="shop-serial-modal-kicker" data-serial-sale-category></p>
+        <h2 id="shop-serial-sale-title" data-serial-sale-name></h2>
+        <p class="shop-serial-modal-desc" data-serial-sale-description></p>
+        <p class="shop-serial-modal-stock" data-serial-sale-stock></p>
+      </div>
+
+      <form class="shop-serial-modal-form" data-serial-sale-form novalidate>
+        <div class="shop-serial-section">
+          <div class="shop-serial-section-head">
+            <label class="shop-serial-field-label">
+              Serial numbers
+            </label>
+            <span class="shop-serial-count" data-serial-sale-count>0 selected</span>
+          </div>
+          <div class="shop-serial-list" data-serial-sale-list></div>
+          <button type="button" class="shop-serial-add-row" data-serial-sale-add-row>
+            <i data-lucide="plus" aria-hidden="true"></i>
+            <span>Add another serial</span>
+          </button>
+          <p class="shop-serial-hint">Search and pick available serials at this shop. Link the client in the cart.</p>
+        </div>
+
+        <p class="shop-serial-status" data-serial-sale-status hidden></p>
+
+        <div class="shop-serial-modal-actions">
+          <button type="button" class="btn btn--ghost" data-serial-sale-close>Cancel</button>
+          <button type="submit" class="btn btn--primary shop-serial-confirm" data-serial-sale-confirm>
+            <i data-lucide="shopping-cart" aria-hidden="true"></i>
+            <span>Add to cart</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/shop-catalog.js' %}?v=1"></script>
+<script src="{% static 'js/item-search.js' %}?v=4"></script>
+<script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
+<script src="{% static 'js/shop-printer.js' %}?v=18"></script>
+<script src="{% static 'js/my-shop.js' %}?v=40"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=5"></script>
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=serial36"></script>
+<script src="{% static 'js/my-shop-expense.js' %}?v=3"></script>
+{% endblock %}

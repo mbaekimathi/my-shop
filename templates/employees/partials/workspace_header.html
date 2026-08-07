@@ -1,0 +1,87 @@
+<header class="workspace-header">
+  <div class="workspace-header-left">
+    {% if workspace.show_back %}
+    <a class="workspace-icon-btn" href="{{ workspace.back_url }}" aria-label="Go back">
+      <i data-lucide="arrow-left" aria-hidden="true"></i>
+    </a>
+    {% endif %}
+    <button class="workspace-icon-btn" type="button" aria-label="Open menu" data-workspace-open>
+      <i data-lucide="panel-left" aria-hidden="true"></i>
+    </button>
+    <div class="workspace-header-titles">
+      <p class="workspace-kicker">{{ role_label|default:workspace.role_label }}</p>
+      <h1 class="workspace-title">{{ meta.headline|default:workspace.meta.headline }}</h1>
+    </div>
+  </div>
+
+  <div class="workspace-header-actions">
+    {% include "partials/connectivity_indicator.html" %}
+    {% include "partials/theme_toggle.html" %}
+
+    <div class="workspace-user-menu" data-user-menu>
+      {% with person=profile|default:workspace.profile %}
+      <button
+        class="workspace-user-trigger"
+        type="button"
+        aria-expanded="false"
+        aria-haspopup="menu"
+        aria-controls="workspace-user-dropdown"
+        data-user-menu-trigger
+        data-user-first-name="{{ user.first_name|default:user.username }}"
+      >
+        {% if person.profile_photo %}
+        <img class="workspace-user-avatar" src="{{ person.profile_photo.url }}" alt="" width="40" height="40">
+        {% else %}
+        <span class="workspace-user-avatar workspace-user-avatar--empty" aria-hidden="true">
+          <i data-lucide="user"></i>
+        </span>
+        {% endif %}
+        <span class="workspace-user-meta">
+          <span class="workspace-user-greeting" data-user-greeting>Hello</span>
+          <strong>{{ user.get_full_name|default:user.username }}</strong>
+        </span>
+        <i class="workspace-user-chevron" data-lucide="chevron-down" aria-hidden="true"></i>
+      </button>
+
+      <div
+        class="workspace-user-dropdown"
+        id="workspace-user-dropdown"
+        role="menu"
+        hidden
+        data-user-menu-panel
+      >
+        <div class="workspace-user-dropdown-head">
+          {% if person.profile_photo %}
+          <img class="workspace-user-avatar" src="{{ person.profile_photo.url }}" alt="" width="36" height="36">
+          {% else %}
+          <span class="workspace-user-avatar workspace-user-avatar--empty" aria-hidden="true">
+            <i data-lucide="user"></i>
+          </span>
+          {% endif %}
+          <div>
+            <strong>{{ user.get_full_name|default:user.username }}</strong>
+            <small>ID {{ person.employee_id }}</small>
+          </div>
+        </div>
+        <div class="workspace-user-dropdown-divider" role="separator"></div>
+        <a
+          class="workspace-user-dropdown-item{% if request.resolver_match.view_name == 'employees:profile' %} is-active{% endif %}"
+          role="menuitem"
+          href="{{ workspace.profile_url }}"
+        >
+          <i data-lucide="circle-user" aria-hidden="true"></i>
+          <span>My profile</span>
+        </a>
+        <a
+          class="workspace-user-dropdown-item workspace-user-dropdown-item--danger"
+          role="menuitem"
+          href="{{ workspace.logout_url }}"
+        >
+          <i data-lucide="log-out" aria-hidden="true"></i>
+          <span>Sign out</span>
+        </a>
+      </div>
+      {% endwith %}
+    </div>
+  </div>
+</header>

@@ -1,0 +1,54 @@
+<section class="ax-card ax-card--wide" data-ax-ledger>
+  <header class="ax-card-head">
+    <h3>{{ ledger_title|default:"Receipts" }}</h3>
+  </header>
+  <div class="ax-table-wrap ax-table-wrap--scroll">
+    {% if rows %}
+    <table class="ax-table">
+      <thead>
+        <tr>
+          <th>Receipt</th>
+          <th>Shop</th>
+          <th>Items</th>
+          <th>Status</th>
+          <th>Due</th>
+          <th>Total</th>
+          <th>When</th>
+          <th class="ax-col-actions">View</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        {{ row.lines|json_script:row.id }}
+        <tr data-ax-receipt-row data-row-id="{{ row.id }}">
+          <td>{{ row.number }}</td>
+          <td>{{ row.shop }}</td>
+          <td>{{ row.item_count }}</td>
+          <td><span class="ax-pill">{{ row.status }}</span></td>
+          <td>{{ row.due }}</td>
+          <td>{{ row.total }}</td>
+          <td>{% if row.when %}{{ row.when|date:"d M Y · H:i" }}{% else %}—{% endif %}</td>
+          <td class="ax-col-actions">
+            <button
+              type="button"
+              class="ax-eye"
+              data-ax-receipt-view
+              data-lines-id="{{ row.id }}"
+              data-receipt-number="{{ row.number }}"
+              data-receipt-total="{{ row.total }}"
+              data-receipt-shop="{{ row.shop }}"
+              data-receipt-due="{{ row.due }}"
+              aria-label="View items on {{ row.number }}"
+            >
+              <i data-lucide="eye" aria-hidden="true"></i>
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="ax-empty">{{ empty_message|default:"No receipts found." }}</p>
+    {% endif %}
+  </div>
+</section>

@@ -1,0 +1,203 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section class="item-panel item-panel--dense" data-animate="rise" data-daraja-settings
+  data-daraja-can-enable-stk="{% if daraja.credentials_valid and daraja.has_callback_base %}1{% else %}0{% endif %}">
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>{{ meta.headline }}</h2>
+        <p>
+          Enable Lipa Na M-Pesa STK Push and store Safaricom Daraja credentials.
+          Credentials are checked against Safaricom before they can be used.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="pos-settings-groups daraja-settings-groups">
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>STK Push</h3>
+        <p>Allow MY-SHOP to prompt customers for M-Pesa payment via Safaricom STK Push.</p>
+      </div>
+      <ul class="pos-settings-list">
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>Enable STK Push</strong>
+            <p data-daraja-ready-hint>
+              {% if daraja.is_ready_for_stk %}
+              Ready — STK Push can run on shop checkout and client account pay.
+              {% elif not daraja.has_callback_base %}
+              STK stays off until a public HTTPS callback is available. Keep
+              <code>ngrok http 8000</code> running — it is detected automatically
+              even if you stay on localhost.
+              {% elif daraja.credentials_valid and not daraja.enable_stk_push %}
+              Credentials verified. Turn this on to activate STK Push.
+              {% elif not daraja.credentials_valid %}
+              Save and verify credentials below before enabling.
+              {% else %}
+              STK Push is not ready yet.
+              {% endif %}
+            </p>
+            <p class="daraja-form-message" data-daraja-stk-message hidden></p>
+          </div>
+          <label class="perm-switch{% if not daraja.enable_stk_push %} is-denied{% endif %}">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if daraja.enable_stk_push %}checked{% endif %}
+              data-daraja-stk-toggle
+              aria-label="Enable STK Push"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state" data-daraja-stk-state>
+              {% if daraja.enable_stk_push %}Enabled{% else %}Disabled{% endif %}
+            </span>
+          </label>
+        </li>
+      </ul>
+    </section>
+
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Daraja credentials</h3>
+        <p>
+          Choose Sandbox or Production, then enter the app credentials from the
+          Safaricom Developer portal. Saving verifies the consumer key and secret.
+        </p>
+      </div>
+
+      <form class="daraja-credentials-form" data-daraja-form novalidate>
+        <div class="daraja-status" data-daraja-status>
+          {% if daraja.credentials_valid %}
+          <span class="daraja-status-pill is-ok">Verified · {{ daraja.environment_label }}</span>
+          {% if daraja.credentials_checked_at %}
+          <em>Checked {{ daraja.credentials_checked_at|date:"d M Y · H:i" }}</em>
+          {% endif %}
+          {% elif daraja.last_error %}
+          <span class="daraja-status-pill is-bad">Not verified</span>
+          <em>{{ daraja.last_error }}</em>
+          {% else %}
+          <span class="daraja-status-pill">Not configured</span>
+          <em>Enter credentials and save to verify.</em>
+          {% endif %}
+        </div>
+
+        <div class="daraja-env-picker" role="group" aria-label="Daraja environment">
+          {% for value, label in daraja_environments %}
+          <label class="daraja-env-option{% if form_data.environment == value %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="environment"
+              value="{{ value }}"
+              data-daraja-environment
+              {% if form_data.environment == value %}checked{% endif %}
+            >
+            <span>
+              <strong>{{ label }}</strong>
+              <em>{% if value == "sandbox" %}Test apps and test shortcodes{% else %}Live customer payments{% endif %}</em>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+
+        <div class="daraja-fields">
+          <label class="daraja-field daraja-field--wide">
+            <span>Site / callback URL (auto)</span>
+            <input
+              type="url"
+              name="callback_base_url"
+              autocomplete="off"
+              spellcheck="false"
+              readonly
+              placeholder="Detected from the address bar"
+              value="{{ form_data.callback_base_url }}"
+              data-daraja-callback-base
+            >
+            <em class="daraja-field-hint">
+              Updates automatically from the URL you are using — hosted domain,
+              ngrok, or localhost. For live M-Pesa, open this page over public HTTPS
+              (or ngrok), then enable STK.
+              {% if daraja.callback_url %}
+              Full callback path:
+              <code data-daraja-callback-full>{{ daraja.callback_url }}</code>
+              {% endif %}
+            </em>
+          </label>
+
+          <label class="daraja-field">
+            <span>Business shortcode</span>
+            <input
+              type="text"
+              name="shortcode"
+              inputmode="numeric"
+              autocomplete="off"
+              maxlength="10"
+              placeholder="e.g. 174379"
+              value="{{ form_data.shortcode }}"
+              data-daraja-shortcode
+              required
+            >
+          </label>
+
+          <label class="daraja-field">
+            <span>Consumer key</span>
+            <input
+              type="text"
+              name="consumer_key"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="{% if daraja.consumer_key_set %}Saved — enter a new key to replace{% else %}From Daraja app{% endif %}"
+              data-daraja-consumer-key
+              {% if not daraja.consumer_key_set %}required{% endif %}
+            >
+          </label>
+
+          <label class="daraja-field">
+            <span>Consumer secret</span>
+            <input
+              type="password"
+              name="consumer_secret"
+              autocomplete="new-password"
+              spellcheck="false"
+              placeholder="{% if daraja.consumer_secret_set %}Saved — enter a new secret to replace{% else %}From Daraja app{% endif %}"
+              data-daraja-consumer-secret
+              {% if not daraja.consumer_secret_set %}required{% endif %}
+            >
+          </label>
+
+          <label class="daraja-field">
+            <span>Lipa Na M-Pesa passkey</span>
+            <input
+              type="password"
+              name="passkey"
+              autocomplete="new-password"
+              spellcheck="false"
+              placeholder="{% if daraja.passkey_set %}Saved — enter a new passkey to replace{% else %}Online passkey{% endif %}"
+              data-daraja-passkey
+              {% if not daraja.passkey_set %}required{% endif %}
+            >
+          </label>
+        </div>
+
+        <div class="daraja-form-actions">
+          <button type="submit" class="btn btn--primary" data-daraja-save>
+            Save &amp; verify
+          </button>
+          <p class="daraja-form-message" data-daraja-message hidden></p>
+        </div>
+      </form>
+    </section>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/daraja-settings.js' %}?v=6"></script>
+{% endblock %}

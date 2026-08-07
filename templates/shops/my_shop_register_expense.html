@@ -1,0 +1,14 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+{% include "shops/partials/register_expense_form.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/my-shop-expense.js' %}?v=3"></script>
+{% endblock %}

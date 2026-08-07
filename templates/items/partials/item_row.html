@@ -1,0 +1,93 @@
+<tr
+  class="{% if row.item.is_suspended %}item-row--suspended{% endif %}"
+  data-item-row
+  data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }} {{ row.item.description|lower }}"
+>
+  <td class="item-cell--item" data-label="Item">
+    <div class="item-person">
+      {% if row.item.image %}
+      <img class="item-thumb" src="{{ row.item.image.url }}" alt="" width="32" height="32">
+      {% else %}
+      <span class="item-thumb item-thumb--empty" aria-hidden="true">
+        <i data-lucide="package"></i>
+      </span>
+      {% endif %}
+      <div class="item-person-copy">
+        <strong>{{ row.item.name }}</strong>
+        {% if row.item.description %}
+        <small>{{ row.item.description|truncatechars:56 }}</small>
+        {% endif %}
+      </div>
+    </div>
+  </td>
+  <td class="item-cell--price" data-label="Shop price">{{ row.shop_price_display }}</td>
+  <td class="item-cell--range" data-label="Price range">
+    <span class="item-price-range">
+      <span>KSh {{ row.item.minimum_selling_price|floatformat:2 }}</span>
+      <span class="item-price-range-sep" aria-hidden="true">–</span>
+      <span>KSh {{ row.item.maximum_selling_price|floatformat:2 }}</span>
+    </span>
+  </td>
+  <td class="item-cell--status" data-label="Status">
+    <div class="item-status-pills">
+      {% if row.item.is_suspended %}
+      <span class="status-pill status-pill--suspended">Suspended</span>
+      {% else %}
+      <span class="status-pill status-pill--active">Active</span>
+      {% endif %}
+      {% if row.item.track_serial_number %}
+      <span class="status-pill status-pill--serial">Serial</span>
+      {% endif %}
+    </div>
+  </td>
+  <td class="item-cell--actions" data-label="Actions">
+    <div class="item-actions">
+      <button
+        class="item-action-icon"
+        type="button"
+        title="Edit item"
+        aria-label="Edit {{ row.item.name }}"
+        data-edit-item
+        data-item-id="{{ row.item.pk }}"
+        data-category="{{ row.item.category }}"
+        data-name="{{ row.item.name }}"
+        data-description="{{ row.item.description }}"
+        data-minimum-selling-price="{{ row.item.minimum_selling_price }}"
+        data-maximum-selling-price="{{ row.item.maximum_selling_price }}"
+        data-shop-price="{{ row.item.shop_price }}"
+        data-pricing-mode="{{ row.pricing_mode }}"
+        data-shop-prices="{{ row.shop_prices_json }}"
+        data-track-serial-number="{% if row.item.track_serial_number %}1{% else %}0{% endif %}"
+        data-image-url="{% if row.item.image %}{{ row.item.image.url }}{% endif %}"
+      >
+        <i data-lucide="pencil" aria-hidden="true"></i>
+      </button>
+      <form class="item-inline-form" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="toggle_suspend">
+        <input type="hidden" name="item_id" value="{{ row.item.pk }}">
+        <button
+          class="item-action-icon"
+          type="submit"
+          title="{% if row.item.is_suspended %}Unsuspend item{% else %}Suspend item{% endif %}"
+          aria-label="{% if row.item.is_suspended %}Unsuspend{% else %}Suspend{% endif %} {{ row.item.name }}"
+        >
+          <i data-lucide="{% if row.item.is_suspended %}play{% else %}pause{% endif %}" aria-hidden="true"></i>
+        </button>
+      </form>
+      <form class="item-inline-form" method="post" data-confirm-delete data-item-name="{{ row.item.name }}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="item_id" value="{{ row.item.pk }}">
+        <button
+          class="item-action-icon item-action-icon--danger"
+          type="submit"
+          title="Delete item"
+          aria-label="Delete {{ row.item.name }}"
+        >
+          <i data-lucide="trash-2" aria-hidden="true"></i>
+        </button>
+      </form>
+    </div>
+  </td>
+</tr>

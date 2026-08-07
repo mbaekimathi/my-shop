@@ -1,0 +1,155 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="shop-tool-page shop-day-page"
+  data-shop-day
+  data-mode="{{ mode }}"
+  data-verify-login-url="{{ verify_login_code_url }}"
+  data-animate="rise"
+>
+  <header class="shop-tool-head">
+    <p class="shop-tool-kicker">{{ shop.name }}</p>
+    <h2>{{ meta.headline }}</h2>
+    <p class="shop-tool-summary">{{ meta.summary }}</p>
+  </header>
+
+  {% if is_open and open_session %}
+  <div class="shop-day-status is-open">
+    <i data-lucide="door-open" aria-hidden="true"></i>
+    <div>
+      <strong>Shop is open</strong>
+      <p>
+        Opened
+        {{ open_session.opened_at|date:"d M Y, H:i" }}
+        by
+        {{ open_session.opened_by.user.get_full_name|default:open_session.opened_by.user.username }}
+      </p>
+    </div>
+  </div>
+  {% else %}
+  <div class="shop-day-status">
+    <i data-lucide="door-closed" aria-hidden="true"></i>
+    <div>
+      <strong>Shop is closed</strong>
+      <p>Enter opening balances to start trading.</p>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if form_errors %}
+  <div class="form-alert" role="alert">
+    {% for error in form_errors %}
+    <p>{{ error }}</p>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <form
+    method="post"
+    class="shop-day-form"
+    data-shop-day-form
+    novalidate
+  >
+    {% csrf_token %}
+
+    <div class="shop-day-balances">
+      <label class="shop-cart-input">
+        <span>{% if is_open %}Closing{% else %}Opening{% endif %} cash</span>
+        <input
+          type="number"
+          name="cash_amount"
+          min="0"
+          step="0.01"
+          inputmode="decimal"
+          required
+          value="{{ form_data.cash_amount }}"
+          placeholder="0.00"
+        >
+      </label>
+      <label class="shop-cart-input">
+        <span>{% if is_open %}Closing{% else %}Opening{% endif %} M-Pesa</span>
+        <input
+          type="number"
+          name="mpesa_amount"
+          min="0"
+          step="0.01"
+          inputmode="decimal"
+          required
+          value="{{ form_data.mpesa_amount }}"
+          placeholder="0.00"
+        >
+      </label>
+      <label class="shop-cart-input">
+        <span>{% if is_open %}Closing{% else %}Opening{% endif %} credit</span>
+        <input
+          type="number"
+          name="credit_amount"
+          min="0"
+          step="0.01"
+          inputmode="decimal"
+          required
+          value="{{ form_data.credit_amount }}"
+          placeholder="0.00"
+        >
+      </label>
+    </div>
+
+    <label class="shop-cart-check shop-day-confirm">
+      <input
+        type="checkbox"
+        name="stock_confirmed"
+        value="1"
+        data-stock-confirmed
+        {% if form_data.stock_confirmed %}checked{% endif %}
+        required
+      >
+      <span>I confirm stock is up to date</span>
+    </label>
+
+    <label class="shop-cart-input">
+      <span>Staff ID (6 digits)</span>
+      <input
+        type="text"
+        name="login_code"
+        inputmode="numeric"
+        maxlength="6"
+        autocomplete="one-time-code"
+        placeholder="Enter 6-digit staff ID"
+        data-day-login-code
+        value="{{ form_data.login_code }}"
+        required
+      >
+    </label>
+    <p class="shop-cart-status" data-day-status>
+      Enter an active staff member’s 6-digit ID to
+      {% if is_open %}close{% else %}open{% endif %} the shop.
+    </p>
+
+    <div class="shop-day-actions">
+      <a
+        class="btn btn--ghost"
+        href="{% url 'employees:my_shop_workspace' shop.id %}"
+      >
+        Cancel
+      </a>
+      <button
+        type="submit"
+        class="btn btn--primary"
+        data-day-submit
+        disabled
+      >
+        {% if is_open %}Close shop{% else %}Open shop{% endif %}
+      </button>
+    </div>
+  </form>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/my-shop-day.js' %}?v=1"></script>
+{% endblock %}

@@ -1,0 +1,82 @@
+<tr class="{% if employee.status == 'suspended' %}item-row--suspended{% endif %}">
+  <td class="item-cell--item" data-label="Employee">
+    <div class="item-person">
+      {% if employee.profile_photo %}
+      <img class="item-thumb" src="{{ employee.profile_photo.url }}" alt="" width="32" height="32">
+      {% else %}
+      <span class="item-thumb item-thumb--empty" aria-hidden="true">
+        <i data-lucide="user"></i>
+      </span>
+      {% endif %}
+      <div class="item-person-copy">
+        <strong>{{ employee.user.get_full_name|default:employee.user.username }}</strong>
+        <small>{{ employee.user.email|default:employee.full_phone }}</small>
+      </div>
+    </div>
+  </td>
+  <td data-label="ID"><code>{{ employee.employee_id }}</code></td>
+  <td data-label="Role">{{ employee.get_role_display }}</td>
+  <td class="item-cell--status" data-label="Status">
+    {% if employee.status == 'suspended' %}
+    <span class="status-pill status-pill--suspended">Suspended</span>
+    {% else %}
+    <span class="status-pill status-pill--active">Active</span>
+    {% endif %}
+  </td>
+  <td class="item-cell--actions" data-label="Actions">
+    <div class="item-actions">
+      <button
+        class="item-action-icon"
+        type="button"
+        title="Edit employee"
+        aria-label="Edit {{ employee.user.get_full_name|default:employee.employee_id }}"
+        data-edit-employee
+        data-original-employee-id="{{ employee.employee_id }}"
+        data-first-name="{{ employee.user.first_name }}"
+        data-last-name="{{ employee.user.last_name }}"
+        data-email="{{ employee.user.email }}"
+        data-phone-country-code="{{ employee.phone_country_code }}"
+        data-phone-country-iso="{{ employee.phone_country_iso }}"
+        data-phone-number="{{ employee.phone_number }}"
+        data-employee-id="{{ employee.employee_id }}"
+        data-role="{{ employee.role }}"
+        data-profile-photo-url="{% if employee.profile_photo %}{{ employee.profile_photo.url }}{% endif %}"
+      >
+        <i data-lucide="pencil" aria-hidden="true"></i>
+      </button>
+      <form class="item-inline-form" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="toggle_suspend">
+        <input type="hidden" name="employee_id" value="{{ employee.employee_id }}">
+        <button
+          class="item-action-icon"
+          type="submit"
+          title="{% if employee.status == 'suspended' %}Unsuspend employee{% else %}Suspend employee{% endif %}"
+          aria-label="{% if employee.status == 'suspended' %}Unsuspend{% else %}Suspend{% endif %} {{ employee.user.get_full_name|default:employee.employee_id }}"
+          {% if employee.user_id == profile.user_id %} disabled{% endif %}
+        >
+          <i data-lucide="{% if employee.status == 'suspended' %}play{% else %}pause{% endif %}" aria-hidden="true"></i>
+        </button>
+      </form>
+      <form
+        class="item-inline-form"
+        method="post"
+        data-confirm-delete
+        data-employee-name="{{ employee.user.get_full_name|default:employee.employee_id }}"
+      >
+        {% csrf_token %}
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="employee_id" value="{{ employee.employee_id }}">
+        <button
+          class="item-action-icon item-action-icon--danger"
+          type="submit"
+          title="Delete employee"
+          aria-label="Delete {{ employee.user.get_full_name|default:employee.employee_id }}"
+          {% if employee.user_id == profile.user_id %} disabled{% endif %}
+        >
+          <i data-lucide="trash-2" aria-hidden="true"></i>
+        </button>
+      </form>
+    </div>
+  </td>
+</tr>

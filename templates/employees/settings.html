@@ -1,0 +1,24 @@
+{% extends "employees/workspace_base.html" %}
+
+{% block title %}System Settings — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="workspace-hero" data-animate="rise">
+  <p class="role-eyebrow">
+    <i data-lucide="settings" aria-hidden="true"></i>
+    <span>Company</span>
+  </p>
+  <h2 class="workspace-hero-title">System settings</h2>
+  <p class="workspace-hero-copy">Configure company-wide profile, theme, POS, and payment options.</p>
+</section>
+
+<div class="workspace-grid workspace-grid--modules" data-animate="rise" data-delay="1">
+  {% for section in settings_sections %}
+  <a class="workspace-card workspace-module-link" href="{{ section.href }}">
+    <i data-lucide="{{ section.icon }}" aria-hidden="true"></i>
+    <h3>{{ section.label }}</h3>
+    <p>{{ section.summary }}</p>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

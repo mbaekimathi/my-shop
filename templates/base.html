@@ -1,0 +1,45 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MY-SHOP — employee registration, login, and role-based access.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#10282c">
+  <link rel="manifest" href="{% url 'core:web_manifest' %}">
+  <title>{% block title %}MY-SHOP{% endblock %}</title>
+  <script>
+    (function () {
+      try {
+        var key = "myshop-theme";
+        var stored = localStorage.getItem(key);
+        var theme = stored;
+        if (!theme) {
+          theme = window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark";
+        }
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  </noscript>
+  <link rel="stylesheet" href="{% static 'css/main.css' %}?v=serial-modal1">
+  <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js" defer></script>
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}" data-sync-url="{% url 'employees:sync' %}" data-sync-register-url="{% url 'employees:sync_register' %}">
+  {% include "partials/offline_bar.html" %}
+  {% block body %}{% endblock %}
+  <script src="{% static 'js/main.js' %}"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

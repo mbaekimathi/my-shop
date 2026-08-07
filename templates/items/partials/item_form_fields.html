@@ -1,0 +1,140 @@
+<label class="field">
+  <span class="field-label">Item category</span>
+  <input type="text" name="category" value="{{ form_data.category }}" required placeholder="e.g. BEVERAGES" id="{{ prefix }}category" data-uppercase autocomplete="off">
+</label>
+<label class="field">
+  <span class="field-label">Item name</span>
+  <input type="text" name="name" value="{{ form_data.name }}" required placeholder="e.g. MINERAL WATER 500ML" id="{{ prefix }}name" data-uppercase autocomplete="off">
+</label>
+<label class="field">
+  <span class="field-label">Item description</span>
+  <textarea name="description" rows="3" placeholder="Short description of the item" id="{{ prefix }}description">{{ form_data.description }}</textarea>
+</label>
+<div class="field-row">
+  <label class="field">
+    <span class="field-label">Minimum selling price (KSh)</span>
+    <div class="currency-field">
+      <span class="currency-prefix" aria-hidden="true">KSh</span>
+      <input type="number" name="minimum_selling_price" value="{{ form_data.minimum_selling_price }}" min="0" step="0.01" required id="{{ prefix }}minimum-selling-price" inputmode="decimal">
+    </div>
+  </label>
+  <label class="field">
+    <span class="field-label">Maximum selling price (KSh)</span>
+    <div class="currency-field">
+      <span class="currency-prefix" aria-hidden="true">KSh</span>
+      <input type="number" name="maximum_selling_price" value="{{ form_data.maximum_selling_price }}" min="0" step="0.01" required id="{{ prefix }}maximum-selling-price" inputmode="decimal">
+    </div>
+  </label>
+</div>
+
+<div class="shop-pricing" data-shop-pricing>
+  <span class="field-label">Shop pricing</span>
+  <div class="shop-pricing-modes" role="radiogroup" aria-label="Shop pricing mode">
+    <label class="shop-pricing-mode">
+      <input
+        type="radio"
+        name="pricing_mode"
+        value="single"
+        id="{{ prefix }}pricing-mode-single"
+        data-pricing-mode
+        {% if form_data.pricing_mode != "individual" %}checked{% endif %}
+      >
+      <span>
+        <strong>Set shop price</strong>
+        <small>One price for all shops</small>
+      </span>
+    </label>
+    <label class="shop-pricing-mode">
+      <input
+        type="radio"
+        name="pricing_mode"
+        value="individual"
+        id="{{ prefix }}pricing-mode-individual"
+        data-pricing-mode
+        {% if form_data.pricing_mode == "individual" %}checked{% endif %}
+      >
+      <span>
+        <strong>Set individual shop prices</strong>
+        <small>Choose a price for each shop</small>
+      </span>
+    </label>
+  </div>
+
+  <div
+    class="shop-pricing-panel"
+    data-pricing-panel="single"
+    {% if form_data.pricing_mode == "individual" %}hidden{% endif %}
+  >
+    <label class="field">
+      <span class="field-label">Shop price (KSh)</span>
+      <div class="currency-field">
+        <span class="currency-prefix" aria-hidden="true">KSh</span>
+        <input
+          type="number"
+          name="shop_price"
+          value="{{ form_data.shop_price }}"
+          min="0"
+          step="0.01"
+          id="{{ prefix }}shop-price"
+          inputmode="decimal"
+          data-single-shop-price
+          {% if form_data.pricing_mode != "individual" %}required{% endif %}
+        >
+      </div>
+    </label>
+  </div>
+
+  <div
+    class="shop-pricing-panel shop-pricing-panel--individual"
+    data-pricing-panel="individual"
+    {% if form_data.pricing_mode != "individual" %}hidden{% endif %}
+  >
+    {% if pricing_shops %}
+    <div class="shop-price-list">
+      {% for shop in pricing_shops %}
+      <label class="shop-price-row">
+        <span class="shop-price-row-name">{{ shop.name }}</span>
+        <div class="currency-field">
+          <span class="currency-prefix" aria-hidden="true">KSh</span>
+          <input
+            type="number"
+            name="shop_price_{{ shop.pk }}"
+            value="{% with sid=shop.pk|stringformat:'s' %}{% for key, price in form_data.shop_prices.items %}{% if key == sid %}{{ price }}{% endif %}{% endfor %}{% endwith %}"
+            min="0"
+            step="0.01"
+            id="{{ prefix }}shop-price-{{ shop.pk }}"
+            inputmode="decimal"
+            data-shop-price-input
+            data-shop-id="{{ shop.pk }}"
+            placeholder="Max range"
+            title="Leave blank to use the maximum selling price"
+          >
+        </div>
+      </label>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="shop-pricing-empty">No active shops available. Add a shop first to set individual prices.</p>
+    {% endif %}
+  </div>
+</div>
+
+<label class="field field--option">
+  <span class="field--option-control">
+    <input
+      type="checkbox"
+      name="track_serial_number"
+      value="1"
+      id="{{ prefix }}track-serial-number"
+      {% if form_data.track_serial_number == True %}checked{% endif %}
+    >
+    <span class="field--option-copy">
+      <strong>Track serial number</strong>
+      <small>When checked, this item requires serial numbers. Leave unchecked to skip serial tracking.</small>
+    </span>
+  </span>
+</label>
+<label class="field">
+  <span class="field-label">Upload item image <em>(optional)</em></span>
+  <input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif" id="{{ prefix }}image">
+</label>

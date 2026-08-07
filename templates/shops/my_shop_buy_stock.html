@@ -1,0 +1,24 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="shop-tool-page" data-animate="rise">
+  <header class="shop-tool-head">
+    <p class="shop-tool-kicker">{{ shop.name }}</p>
+    <h2>{{ meta.headline }}</h2>
+    <p class="shop-tool-summary">{{ meta.summary }}</p>
+  </header>
+</section>
+
+{% include "shops/partials/buy_stock_form.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/stock-catalog.js' %}?v=5"></script>
+<script src="{% static 'js/item-search.js' %}?v=4"></script>
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=serial36"></script>
+{% endblock %}

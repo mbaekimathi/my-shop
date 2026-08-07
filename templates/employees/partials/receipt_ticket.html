@@ -1,0 +1,130 @@
+{% with p=receipt_preview %}
+<div class="receipt-ticket-inner">
+  <div class="receipt-ticket-brand">
+    {% if p.logo_url %}
+    <img class="receipt-ticket-logo" src="{{ p.logo_url }}" alt="">
+    {% endif %}
+    <p class="receipt-ticket-mark">MY-SHOP</p>
+    <h4>{{ p.shop_name }}</h4>
+    {% if p.shop_location %}<p>{{ p.shop_location }}</p>{% endif %}
+    {% if p.shop_phone %}<p>{{ p.shop_phone }}</p>{% endif %}
+    {% if p.shop_branch %}<p class="receipt-ticket-branch">{{ p.shop_branch }}</p>{% endif %}
+  </div>
+
+  <div class="receipt-ticket-rule" aria-hidden="true"></div>
+
+  <div class="receipt-ticket-meta">
+    <div>
+      <span>Receipt</span>
+      <strong data-receipt-ticket-number>{{ p.receipt_number }}</strong>
+    </div>
+    <div>
+      <span>Type</span>
+      <strong>{{ p.kind }}</strong>
+    </div>
+    <div>
+      <span>Date</span>
+      <strong>{{ p.date }}</strong>
+    </div>
+    <div>
+      <span>{{ p.party_label|default:"Client" }}</span>
+      <strong>{{ p.client }}</strong>
+    </div>
+    {% if p.status %}
+    <div>
+      <span>Status</span>
+      <strong>{{ p.status }}</strong>
+    </div>
+    {% endif %}
+    {% if p.cashier %}
+    <div>
+      <span>Cashier</span>
+      <strong>{{ p.cashier }}</strong>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="receipt-ticket-rule" aria-hidden="true"></div>
+
+  <div class="receipt-ticket-lines">
+    <div class="receipt-ticket-line receipt-ticket-line--head">
+      <span>Item</span>
+      <span>Price</span>
+      <span>Qty</span>
+      <span>Total</span>
+    </div>
+    {% if p.cancelled %}
+    <p class="receipt-ticket-cancelled">*** CANCELLED / RETURNED ***</p>
+    {% else %}
+    {% for line in p.lines %}
+    <div class="receipt-ticket-line">
+      <span class="receipt-ticket-item">
+        <strong>{{ line.name }}</strong>
+        {% for serial in line.serials %}
+        <em class="receipt-ticket-serial">SN {{ serial }}</em>
+        {% endfor %}
+        {% if line.serials_extra %}
+        <em class="receipt-ticket-serial">+{{ line.serials_extra }} more serials</em>
+        {% endif %}
+      </span>
+      <span class="receipt-ticket-price">@ {{ line.price }}</span>
+      <span>{{ line.qty }}</span>
+      <span>{{ line.total }}</span>
+    </div>
+    {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="receipt-ticket-rule" aria-hidden="true"></div>
+
+  <div class="receipt-ticket-totals">
+    {% if p.show_tax %}
+    <div>
+      <span>Subtotal</span>
+      <strong>KSh {{ p.subtotal }}</strong>
+    </div>
+    <div>
+      <span>Tax ({{ p.tax_percent }}%)</span>
+      <strong>KSh {{ p.tax_amount }}</strong>
+    </div>
+    {% endif %}
+    <div class="receipt-ticket-grand">
+      <span>Total</span>
+      <strong>KSh {{ p.total }}</strong>
+    </div>
+    {% if p.payment %}
+    <div>
+      <span>Paid</span>
+      <strong>{{ p.payment }}</strong>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="receipt-ticket-payment" data-receipt-payment-block{% if not p.payment_details.lines %} hidden{% endif %}>
+    <div class="receipt-ticket-rule" aria-hidden="true"></div>
+    <p class="receipt-ticket-payment-title" data-receipt-payment-title>
+      {% if p.payment_details.label %}M-Pesa {{ p.payment_details.label }}{% endif %}
+    </p>
+    <div class="receipt-ticket-payment-lines" data-receipt-payment-lines>
+      {% for line in p.payment_details.lines %}
+      <p>{{ line }}</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="receipt-ticket-rule" aria-hidden="true"></div>
+
+  <p class="receipt-ticket-footer">{{ p.footer }}</p>
+
+  <div class="receipt-ticket-qr" data-receipt-qr-block{% if not p.qr.ready %} hidden{% endif %}>
+    {% if p.qr.image_data_url %}
+    <img src="{{ p.qr.image_data_url }}" alt="Receipt QR code" data-receipt-qr-image>
+    {% else %}
+    <img src="" alt="Receipt QR code" data-receipt-qr-image hidden>
+    {% endif %}
+    <p data-receipt-qr-label>{% if p.qr.label %}{{ p.qr.label }}{% endif %}</p>
+  </div>
+
+  <p class="receipt-ticket-width-tag">{{ size }} mm thermal</p>
+</div>
+{% endwith %}

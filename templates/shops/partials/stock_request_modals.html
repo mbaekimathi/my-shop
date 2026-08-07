@@ -1,0 +1,316 @@
+{% if pending_stock_requests %}
+<div
+  class="workspace-modal stock-request-modal"
+  data-stock-request-modal
+  data-auto-open="1"
+  data-serial-search-url="{{ serial_search_url }}"
+  data-verify-login-url="{{ verify_login_code_url }}"
+  data-supply-shop-id="{{ shop.id }}"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="stock-request-modal-title"
+>
+  <div class="workspace-modal-backdrop" data-stock-request-close></div>
+  <div class="workspace-modal-dialog stock-request-dialog stock-transfer-dialog">
+    <div class="workspace-modal-head stock-transfer-head">
+      <div>
+        <p class="stock-transfer-kicker">Stock transfer</p>
+        <h2 id="stock-request-modal-title">Incoming requests</h2>
+      </div>
+      <button
+        type="button"
+        class="btn btn--ghost btn--sm"
+        data-stock-request-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="stock-request-modal-body stock-transfer-body">
+      <p class="stock-request-modal-lead">
+        Review and edit quantities to send from <strong>{{ shop.name }}</strong>.
+        Accepting prints a delivery note (from this shop to the requesting shop).
+        Dismiss hides this for 5 minutes; refresh brings it back.
+      </p>
+
+      <div class="stock-transfer-stack">
+        {% for req in pending_stock_requests %}
+        <article class="stock-transfer-form-card" data-request-card>
+          <form
+            method="post"
+            action="{% url 'employees:my_shop_stock_request_respond' shop.id req.pk %}"
+            class="stock-request-form"
+            data-request-form
+            novalidate
+          >
+            {% csrf_token %}
+
+            <header class="stock-transfer-form-head">
+              <div class="stock-transfer-party">
+                <span class="stock-transfer-party-label">Supplying shop</span>
+                <strong>{{ shop.name }}</strong>
+                <span class="stock-transfer-party-meta">Edit transfer qty below</span>
+              </div>
+              <div class="stock-transfer-route" aria-hidden="true">
+                <i data-lucide="arrow-right"></i>
+              </div>
+              <div class="stock-transfer-party">
+                <span class="stock-transfer-party-label">Requesting shop</span>
+                <strong>{% if req.shop %}{{ req.shop.name }}{% else %}Unknown shop{% endif %}</strong>
+                <span class="stock-transfer-party-meta">
+                  {% if req.created_by %}
+                  {{ req.created_by.user.get_full_name|default:req.created_by.user.username }}
+                  Â·
+                  {% endif %}
+                  {{ req.created_at|timesince }} ago
+                </span>
+              </div>
+            </header>
+
+            <div class="stock-transfer-table-wrap">
+              <table class="stock-transfer-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Item</th>
+                    <th scope="col">Requested</th>
+                    <th scope="col">Available</th>
+                    <th scope="col">Transfer</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for line in req.lines.all %}
+                  <tr
+                    data-request-line
+                    data-line-id="{{ line.pk }}"
+                    data-item-id="{{ line.item_id }}"
+                    data-requested="{{ line.quantity }}"
+                    data-available="{{ line.available_qty }}"
+                    data-track-serial="{% if line.item.track_serial_number %}1{% else %}0{% endif %}"
+                  >
+                    <td>
+                      <div class="stock-transfer-item">
+                        <span>{{ line.item.name }}</span>
+                        {% if line.item.track_serial_number %}
+                        <em class="stock-request-serial-tag">Serial tracked</em>
+                        {% endif %}
+                      </div>
+                    </td>
+                    <td>{{ line.quantity }}</td>
+                    <td class="{% if line.available_qty < line.quantity %}is-low{% endif %}">
+                      {{ line.available_qty }}
+                    </td>
+                    <td>
+                      <label class="stock-transfer-qty-field">
+                        <span class="visually-hidden">Transfer quantity for {{ line.item.name }}</span>
+                        <input
+                          type="number"
+                          name="qty_{{ line.pk }}"
+                          min="0"
+                          max="{{ line.transfer_max }}"
+                          value="{% if line.item.track_serial_number %}0{% else %}{{ line.transfer_max }}{% endif %}"
+                          inputmode="numeric"
+                          data-transfer-qty
+                          data-line-id="{{ line.pk }}"
+                          {% if line.item.track_serial_number %}
+                          data-qty-from-serial="1"
+                          readonly
+                          title="Set by selected serial numbers"
+                          {% endif %}
+                        >
+                      </label>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            {% if req.notes %}
+            <p class="stock-request-notes">{{ req.notes }}</p>
+            {% endif %}
+
+            <div class="stock-request-serial-panel" data-serial-panel hidden>
+              <div class="stock-transfer-section-label">
+                <i data-lucide="scan-barcode" aria-hidden="true"></i>
+                <span>Serial numbers to transfer</span>
+              </div>
+              <p class="stock-request-code-hint">
+                Search and select each serial unit to send. Transfer quantity is set from the serials you enter.
+              </p>
+              {% for line in req.lines.all %}
+              {% if line.item.track_serial_number %}
+              <div
+                class="stock-request-serial-block"
+                data-serial-block
+                data-line-id="{{ line.pk }}"
+                data-item-id="{{ line.item_id }}"
+                data-qty="{{ line.transfer_max }}"
+                data-max-qty="{{ line.transfer_max }}"
+              >
+                <p class="stock-request-serial-label">
+                  {{ line.item.name }}
+                  <span data-serial-need>0 / {{ line.transfer_max }} selected</span>
+                </p>
+                <div class="stock-request-serial-list" data-serial-list></div>
+              </div>
+              {% endif %}
+              {% endfor %}
+            </div>
+
+            <div class="stock-request-code-panel" data-code-panel>
+              <div class="stock-transfer-section-label">
+                <i data-lucide="shield-check" aria-hidden="true"></i>
+                <span>Validate staff access</span>
+              </div>
+              <label class="field">
+                <span class="field-label">Active staff ID (6 digits)</span>
+                <input
+                  type="text"
+                  name="login_code"
+                  inputmode="numeric"
+                  maxlength="6"
+                  autocomplete="one-time-code"
+                  placeholder="Enter 6-digit staff ID"
+                  data-login-code
+                >
+              </label>
+              <p class="stock-request-code-hint" data-verify-status>
+                Enter any active staff memberâ€™s 6-digit ID (any role) to unlock Accept and Decline.
+              </p>
+            </div>
+
+            <footer class="stock-transfer-form-foot">
+              <div class="stock-request-card-actions" data-decision-actions hidden>
+                <button
+                  type="submit"
+                  class="btn btn--ghost"
+                  name="decision"
+                  value="decline"
+                  data-decision-submit="decline"
+                  disabled
+                >
+                  Decline
+                </button>
+                <button
+                  type="submit"
+                  class="btn btn--primary"
+                  name="decision"
+                  value="accept"
+                  data-decision-submit="accept"
+                  disabled
+                >
+                  Accept &amp; print
+                </button>
+              </div>
+            </footer>
+          </form>
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="workspace-modal-actions stock-request-modal-actions">
+      <button type="button" class="btn btn--ghost" data-stock-request-close>Dismiss for now</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if stock_request_decisions %}
+<div
+  class="workspace-modal stock-request-modal"
+  data-stock-decision-modal
+  data-auto-open="1"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="stock-decision-modal-title"
+>
+  <div class="workspace-modal-backdrop" data-stock-decision-close></div>
+  <div class="workspace-modal-dialog stock-request-dialog stock-transfer-dialog">
+    <div class="workspace-modal-head stock-transfer-head">
+      <div>
+        <p class="stock-transfer-kicker">Notification</p>
+        <h2 id="stock-decision-modal-title">Request updates</h2>
+      </div>
+      <button
+        type="button"
+        class="btn btn--ghost btn--sm"
+        data-stock-decision-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="stock-request-modal-body stock-transfer-body">
+      <p class="stock-request-modal-lead">
+        Decisions on stock you requested for <strong>{{ shop.name }}</strong>.
+      </p>
+      <div class="stock-transfer-stack">
+        {% for req in stock_request_decisions %}
+        <article class="stock-transfer-form-card stock-decision-card">
+          <header class="stock-transfer-form-head stock-decision-head">
+            <div>
+              {% if req.request_status == "fulfilled" %}
+              <span class="stock-request-status is-accepted">Accepted</span>
+              {% else %}
+              <span class="stock-request-status is-declined">Declined</span>
+              {% endif %}
+              <p class="stock-request-from">
+                by
+                <strong>
+                  {% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}another shop{% endif %}
+                </strong>
+              </p>
+              <p class="stock-request-meta">
+                {% if req.responded_by %}
+                {{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}
+                Â·
+                {% endif %}
+                {% if req.responded_at %}{{ req.responded_at|timesince }} ago{% else %}recently{% endif %}
+              </p>
+            </div>
+            <form
+              method="post"
+              action="{% url 'employees:my_shop_stock_request_result_ack' shop.id req.pk %}"
+            >
+              {% csrf_token %}
+              <button type="submit" class="btn btn--ghost btn--sm">Got it</button>
+            </form>
+          </header>
+
+          <ul class="stock-request-lines">
+            {% for line in req.lines.all %}
+            <li>
+              <span>{{ line.item.name }}</span>
+              <strong>Ã— {{ line.quantity }}</strong>
+            </li>
+            {% endfor %}
+          </ul>
+          {% if req.request_status == "fulfilled" %}
+          <p class="stock-request-notes">Stock has been transferred into this shop.</p>
+          {% else %}
+          <p class="stock-request-notes">No stock was transferred.</p>
+          {% endif %}
+          {% for line in req.lines.all %}
+            {% if line.note %}
+            <p class="stock-request-notes">{{ line.item.name }}: {{ line.note }}</p>
+            {% endif %}
+          {% endfor %}
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="workspace-modal-actions stock-request-modal-actions">
+      <button type="button" class="btn btn--ghost" data-stock-decision-close>Close</button>
+      <form
+        method="post"
+        action="{% url 'employees:my_shop_stock_request_results_ack_all' shop.id %}"
+      >
+        {% csrf_token %}
+        <button type="submit" class="btn btn--primary">Dismiss all</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}

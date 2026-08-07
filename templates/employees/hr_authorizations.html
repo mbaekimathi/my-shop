@@ -1,0 +1,134 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="staff-panel staff-panel--dense" data-animate="rise">
+  <div class="staff-panel-head">
+    <div>
+      <h2>{{ meta.headline }}</h2>
+      <p>{{ meta.summary }}</p>
+    </div>
+    <div class="staff-panel-actions">
+      <a class="btn btn--primary staff-panel-link" href="{{ permissions_url }}">
+        <i data-lucide="key-round" aria-hidden="true"></i>
+        <span>Module permissions</span>
+      </a>
+      <p class="staff-count">
+        {{ employees_page.paginator.count }} record{{ employees_page.paginator.count|pluralize }}
+        {% if employees_page.paginator.num_pages > 1 %}
+        <span class="staff-count-page">· page {{ employees_page.number }} of {{ employees_page.paginator.num_pages }}</span>
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {% if employees %}
+  <div class="staff-table-wrap">
+    <table class="staff-table staff-table--dense staff-table--shop-auth">
+      <thead>
+        <tr>
+          <th scope="col">Employee</th>
+          <th scope="col">ID</th>
+          <th scope="col">Role</th>
+          <th scope="col">Delegated shops</th>
+          <th scope="col"><span class="visually-hidden">Save</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for employee in employees %}
+        <tr>
+          <td data-label="Employee">
+            <div class="staff-person">
+              {% if employee.profile_photo %}
+              <img class="staff-avatar" src="{{ employee.profile_photo.url }}" alt="" width="36" height="36">
+              {% else %}
+              <span class="staff-avatar staff-avatar--empty" aria-hidden="true">
+                <i data-lucide="user"></i>
+              </span>
+              {% endif %}
+              <div>
+                <strong>{{ employee.user.get_full_name|default:employee.user.username }}</strong>
+                <small>{{ employee.user.email|default:employee.full_phone }}</small>
+              </div>
+            </div>
+          </td>
+          <td data-label="ID"><code>{{ employee.employee_id }}</code></td>
+          <td data-label="Role">
+            <span class="staff-role-badge">{{ employee.get_role_display }}</span>
+          </td>
+          <td colspan="2" data-label="Delegated shops">
+            <form class="staff-access-form staff-access-form--shops" method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="assign_shop">
+              <input type="hidden" name="employee_id" value="{{ employee.employee_id }}">
+              <input type="hidden" name="list_page" value="{{ employees_page.number }}">
+              <fieldset class="staff-shop-picker">
+                <legend class="visually-hidden">Shops for {{ employee.employee_id }}</legend>
+                {% if shops %}
+                <div class="staff-shop-list" role="group" aria-label="Delegated shops for {{ employee.employee_id }}">
+                  {% for shop in shops %}
+                  <label class="staff-shop-option{% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %} is-disabled{% endif %}">
+                    <input
+                      type="checkbox"
+                      name="shop_ids"
+                      value="{{ shop.pk }}"
+                      {% if shop.pk in employee.assigned_shop_ids %}checked{% endif %}
+                      {% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %}disabled{% endif %}
+                    >
+                    <span>
+                      <strong>{{ shop.name }}</strong>
+                      <small>{{ shop.location }}{% if shop.is_suspended %} · suspended{% endif %}</small>
+                    </span>
+                  </label>
+                  {% endfor %}
+                </div>
+                {% else %}
+                <p class="staff-shop-empty">No shops available.</p>
+                {% endif %}
+              </fieldset>
+              <button class="btn btn--primary staff-save" type="submit">
+                <i data-lucide="check" aria-hidden="true"></i>
+                <span>Save</span>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if employees_page.has_other_pages %}
+  {% include "employees/partials/pagination_nav.html" with pagination_label="Shop authorization pages" %}
+  {% endif %}
+
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="{{ meta.icon }}" aria-hidden="true"></i>
+    <p>
+      No Employees, Shop Managers, or Shop Cashiers to authorize yet.
+      Approve pending registrations first, then assign their working shops here.
+    </p>
+  </div>
+  {% endif %}
+
+  {% if not shops %}
+  <div class="staff-auth-hint">
+    <i data-lucide="store" aria-hidden="true"></i>
+    <p>No shops are available. Register a shop in Shop Management before delegating shops.</p>
+  </div>
+  {% endif %}
+</section>
+
+{% include "employees/partials/hr_register_modal.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/hr-management.js' %}"></script>
+<script src="{% static 'js/auth.js' %}"></script>
+<script src="{% static 'js/register.js' %}"></script>
+{% endblock %}

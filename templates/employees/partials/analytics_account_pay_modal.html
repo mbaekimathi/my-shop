@@ -1,0 +1,101 @@
+<div
+  class="workspace-modal ax-pay-modal"
+  data-ax-pay-modal
+  data-pay-url="{{ pay_url }}"
+  {% if stk_initiate_url %}data-stk-initiate-url="{{ stk_initiate_url }}"{% endif %}
+  {% if stk_status_url_template %}data-stk-status-url-template="{{ stk_status_url_template }}"{% endif %}
+  data-account-kind="{{ account_kind }}"
+  data-account-id="{{ account_id }}"
+  data-balance="{{ balance }}"
+  data-balance-raw="{{ balance_raw }}"
+  data-stk-ready="{% if stk_ready %}1{% else %}0{% endif %}"
+  data-client-phone="{{ client_phone|default:'' }}"
+  hidden
+>
+  <div class="workspace-modal-backdrop" data-ax-pay-modal-close></div>
+  <div
+    class="workspace-modal-dialog ax-pay-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-pay-modal-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <h2 id="ax-pay-modal-title">Pay account</h2>
+        <p class="ax-receipt-modal-meta">
+          Clears from earliest receipt to latest.
+          Balance <strong data-ax-pay-balance>{{ balance }}</strong>
+        </p>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-ax-pay-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="ax-pay-wrap">
+      <form class="ax-pay-form" data-ax-pay-form>
+        {% csrf_token %}
+        <input type="hidden" name="kind" value="{{ account_kind }}">
+        <input type="hidden" name="account_id" value="{{ account_id }}">
+        <input type="hidden" name="stk_payment_id" value="" data-ax-stk-id>
+
+        {% if account_kind == "credit" %}
+        <div class="ax-pay-methods" role="group" aria-label="Payment method">
+          <label class="ax-pay-method is-active">
+            <input type="radio" name="payment_method" value="cash" checked data-ax-pay-method>
+            <span>Cash</span>
+          </label>
+          <label class="ax-pay-method{% if not stk_ready %} is-disabled{% endif %}">
+            <input
+              type="radio"
+              name="payment_method"
+              value="mpesa"
+              data-ax-pay-method
+              {% if not stk_ready %}disabled{% endif %}
+            >
+            <span>M-Pesa{% if not stk_ready %} ({{ stk_off_label|default:"STK off" }}){% endif %}</span>
+          </label>
+        </div>
+        <label class="ax-pay-label ax-pay-phone-row" data-ax-pay-phone-row hidden>
+          Phone for STK
+          <input
+            class="ax-pay-input"
+            type="tel"
+            name="phone"
+            value="{{ client_phone|default:'' }}"
+            placeholder="07XX XXX XXX"
+            data-ax-pay-phone
+          >
+        </label>
+        {% else %}
+        <input type="hidden" name="payment_method" value="cash">
+        {% endif %}
+
+        <div class="ax-pay-row">
+          <label class="ax-pay-label" for="ax-account-pay-amount">
+            Amount to pay
+            <span>Due <em data-ax-pay-due>{{ balance }}</em></span>
+          </label>
+          <div class="ax-pay-controls">
+            <input
+              id="ax-account-pay-amount"
+              class="ax-pay-input"
+              type="number"
+              name="amount"
+              min="0.01"
+              step="0.01"
+              max="{{ balance_raw }}"
+              inputmode="decimal"
+              placeholder="0.00"
+              data-ax-pay-amount
+              required
+            >
+            <button type="submit" class="btn btn--primary ax-pay-submit" data-ax-pay-submit>
+              Pay
+            </button>
+          </div>
+        </div>
+        <p class="ax-pay-status" data-ax-pay-status hidden></p>
+      </form>
+    </div>
+  </div>
+</div>

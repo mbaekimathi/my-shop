@@ -1,0 +1,560 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{% if is_movements_page %}Stock Movement{% else %}Stock Report{% endif %} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="stock-panel stock-panel--report" data-animate="rise" data-stock-mode="{{ stock_mode }}">
+  <header class="stock-panel-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">{% if is_movements_page %}Stock movement{% else %}Stock report{% endif %} · {{ report_range_label }}</p>
+        <h2>{% if is_movements_page %}Stock movement{% else %}Stock report{% endif %}</h2>
+        <p>
+          {% if is_movements_page %}
+          Movements for {{ report_period_label }}.
+          {% else %}
+          Item balances with activity for {{ report_period_label }}.
+          {% endif %}
+        </p>
+      </div>
+      <div class="stock-stats">
+        {% if is_movements_page %}
+        <p class="stock-stat">
+          <strong>{{ movement_count }}</strong>
+          <span>event{{ movement_count|pluralize }}</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ units_in }}</strong>
+          <span>units in</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ units_out }}</strong>
+          <span>units out</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ units_request }}</strong>
+          <span>units requested</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ units_sale }}</strong>
+          <span>units sold</span>
+        </p>
+        {% else %}
+        <p class="stock-stat">
+          <strong>{{ item_count }}</strong>
+          <span>item{{ item_count|pluralize }}</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ units_in }}</strong>
+          <span>stock in</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ units_out }}</strong>
+          <span>stock out</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ units_sale }}</strong>
+          <span>stock sale</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ units_request }}</strong>
+          <span>stock request</span>
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <form class="stock-report-filters" method="get" data-stock-report-filters>
+      <input type="hidden" name="mode" value="{{ stock_mode }}">
+
+      <label class="stock-report-field">
+        <span>Shop</span>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="stock-report-field">
+        <span>Time</span>
+        <select name="range" data-stock-report-range aria-label="Time range">
+          <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == 'month' %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == 'year' %} selected{% endif %}>Year</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field" data-range-field="day"{% if report_range != 'day' %} hidden{% endif %}>
+        <span>Date</span>
+        <input type="date" name="date" value="{{ report_date_value }}" data-stock-report-calendar required aria-label="Select day">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != 'period' %} hidden{% endif %}>
+        <span>From</span>
+        <input type="date" name="date_from" value="{{ report_date_from }}" data-stock-report-calendar required aria-label="Period start">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != 'period' %} hidden{% endif %}>
+        <span>To</span>
+        <input type="date" name="date_to" value="{{ report_date_to }}" data-stock-report-calendar required aria-label="Period end">
+      </label>
+      <label class="stock-report-field" data-range-field="month"{% if report_range != 'month' %} hidden{% endif %}>
+        <span>Month</span>
+        <input type="month" name="month" value="{{ report_month_value }}" data-stock-report-calendar required aria-label="Select month">
+      </label>
+      <label class="stock-report-field" data-range-field="year"{% if report_range != 'year' %} hidden{% endif %}>
+        <span>Year</span>
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          data-stock-report-calendar
+          required
+          aria-label="Select year"
+        >
+      </label>
+
+      <label class="stock-report-field">
+        <span>Items</span>
+        <select name="item_mode" data-stock-item-mode aria-label="Item filter">
+          <option value="all"{% if item_mode != 'category' and item_mode != 'items' %} selected{% endif %}>All</option>
+          <option value="category"{% if item_mode == 'category' %} selected{% endif %}>Category</option>
+          <option value="items"{% if item_mode == 'items' %} selected{% endif %}>Item</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field stock-report-live-search" data-item-mode-panel="all"{% if item_mode == 'category' or item_mode == 'items' %} hidden{% endif %}>
+        <span>Search</span>
+        <input
+          type="search"
+          placeholder="Live search items…"
+          autocomplete="off"
+          data-stock-live-search
+          {% if item_mode == 'category' or item_mode == 'items' %}disabled{% endif %}
+          aria-label="Live search items"
+        >
+      </label>
+
+      <label class="stock-report-field" data-item-mode-panel="category"{% if item_mode != 'category' %} hidden{% endif %}>
+        <span>Category</span>
+        <select name="category" aria-label="Category"{% if item_mode != 'category' %} disabled{% endif %}>
+          <option value="">Select category</option>
+          {% for category in categories %}
+          <option value="{{ category }}"{% if category in selected_categories %} selected{% endif %}>{{ category }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <div class="stock-report-field stock-report-item-picker" data-item-mode-panel="items"{% if item_mode != 'items' %} hidden{% endif %}>
+        <span>Search item</span>
+        <div class="stock-report-item-picker-box" data-stock-item-picker>
+          <input
+            type="search"
+            placeholder="Type to search…"
+            autocomplete="off"
+            data-stock-item-search
+            {% if item_mode != 'items' %}disabled{% endif %}
+            aria-label="Search items"
+          >
+          <div class="stock-report-item-results" data-stock-item-results hidden></div>
+        </div>
+        <div class="stock-report-item-chips" data-stock-item-chips>
+          {% for item in selected_filter_items %}
+          <span class="stock-report-item-chip" data-item-id="{{ item.pk }}">
+            {{ item.name }}
+            <button type="button" aria-label="Remove {{ item.name }}" data-stock-item-remove>&times;</button>
+            <input type="hidden" name="item_id" value="{{ item.pk }}">
+          </span>
+          {% endfor %}
+        </div>
+        <script type="application/json" data-stock-item-catalog>{{ filter_items_json|safe }}</script>
+      </div>
+
+      <div class="stock-report-filter-actions">
+        <button type="submit" class="stock-report-apply">Apply</button>
+      </div>
+    </form>
+  </header>
+
+  <div id="stock-movements" class="stock-report-movements">
+    <header class="stock-report-movements-head">
+      <h3>{% if is_movements_page %}Stock movement{% else %}Item stock report{% endif %}</h3>
+      <p>{{ report_period_label }}</p>
+    </header>
+
+    {% if is_movements_page %}
+      {% if movement_events %}
+      <div class="staff-table-wrap stock-report-table-wrap">
+        <table class="staff-table stock-report-table stock-report-table--timeline">
+          <thead>
+            <tr>
+              <th scope="col">When</th>
+              <th scope="col">Type</th>
+              <th scope="col">Shop</th>
+              <th scope="col">Item</th>
+              <th scope="col">Units</th>
+              <th scope="col">Details</th>
+              <th scope="col">By</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in movement_events %}
+            <tr data-stock-live-row data-search-text="{{ event.item_name|lower }} {{ event.item_category|lower }} {{ event.event_label|lower }} {{ event.shop_name|lower }}">
+              <td>
+                {% if report_range == 'day' %}
+                {{ event.happened_at|time:"H:i" }}
+                {% else %}
+                {{ event.happened_at|date:"d M Y" }} · {{ event.happened_at|time:"H:i" }}
+                {% endif %}
+              </td>
+              <td>
+                <span class="stock-report-type stock-report-type--{{ event.event_type }}">
+                  {{ event.event_label }}
+                </span>
+              </td>
+              <td>
+                {{ event.shop_name }}
+                {% if event.from_shop_name %}
+                <span class="stock-report-from">from {{ event.from_shop_name }}</span>
+                {% endif %}
+              </td>
+              <td>
+                <strong>{{ event.item_name }}</strong>
+                {% if event.item_category %}
+                <span class="stock-report-from">{{ event.item_category }}</span>
+                {% endif %}
+              </td>
+              <td>
+                <span class="stock-matrix-qty stock-report-qty--{{ event.event_type }}{% if event.quantity == 0 %} is-empty{% endif %}">
+                  {{ event.quantity }}
+                </span>
+              </td>
+              <td>
+                {% if event.reason %}
+                <span class="stock-report-meta">{{ event.reason }}</span>
+                {% endif %}
+                {% if event.payment_status %}
+                <span class="stock-report-meta">{{ event.payment_status }}</span>
+                {% endif %}
+                {% if event.note %}
+                <span class="stock-report-meta">{{ event.note }}</span>
+                {% endif %}
+                {% if not event.reason and not event.payment_status and not event.note %}
+                —
+                {% endif %}
+              </td>
+              <td>{{ event.by }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="dashboard-placeholder">
+        <i data-lucide="arrow-down-up" aria-hidden="true"></i>
+        <p>No stock movements happened in {{ report_period_label }} for these filters.</p>
+      </div>
+      {% endif %}
+      <p class="stock-report-live-empty" data-stock-live-empty hidden>No rows match your search.</p>
+    {% else %}
+      {% if item_report_rows %}
+      <div class="staff-table-wrap stock-report-table-wrap">
+        <table class="staff-table stock-report-table stock-report-table--items">
+          <thead>
+            <tr>
+              <th scope="col">Item</th>
+              <th scope="col">Starting stock</th>
+              <th scope="col">Stock request</th>
+              <th scope="col">Stock in</th>
+              <th scope="col">Stock out</th>
+              <th scope="col">Stock sale</th>
+              <th scope="col">Closing stock</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in item_report_rows %}
+            <tr
+              data-stock-live-row
+              data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }}"
+              {% if row.item.is_suspended %} class="is-suspended"{% endif %}
+            >
+              <td>
+                <strong>{{ row.item.name }}</strong>
+                <span class="stock-report-from">{{ row.item.category }}</span>
+              </td>
+              <td>
+                <span class="stock-matrix-qty{% if row.starting_stock == 0 %} is-empty{% endif %}">{{ row.starting_stock }}</span>
+              </td>
+              <td>
+                <span class="stock-matrix-qty stock-report-qty--request{% if row.stock_request == 0 %} is-empty{% endif %}">{{ row.stock_request }}</span>
+              </td>
+              <td>
+                <span class="stock-matrix-qty stock-report-qty--in{% if row.stock_in == 0 %} is-empty{% endif %}">{{ row.stock_in }}</span>
+              </td>
+              <td>
+                <span class="stock-matrix-qty stock-report-qty--out{% if row.stock_out == 0 %} is-empty{% endif %}">{{ row.stock_out }}</span>
+              </td>
+              <td>
+                <span class="stock-matrix-qty stock-report-qty--sale{% if row.stock_sale == 0 %} is-empty{% endif %}">{{ row.stock_sale }}</span>
+              </td>
+              <td>
+                <span class="stock-matrix-qty stock-matrix-qty--total{% if row.closing_stock == 0 %} is-empty{% endif %}">{{ row.closing_stock }}</span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row">Total</th>
+              <td><span class="stock-matrix-qty">{{ item_report_totals.starting_stock }}</span></td>
+              <td><span class="stock-matrix-qty stock-report-qty--request">{{ item_report_totals.stock_request }}</span></td>
+              <td><span class="stock-matrix-qty stock-report-qty--in">{{ item_report_totals.stock_in }}</span></td>
+              <td><span class="stock-matrix-qty stock-report-qty--out">{{ item_report_totals.stock_out }}</span></td>
+              <td><span class="stock-matrix-qty stock-report-qty--sale">{{ item_report_totals.stock_sale }}</span></td>
+              <td><span class="stock-matrix-qty stock-matrix-qty--total">{{ item_report_totals.closing_stock }}</span></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {% else %}
+      <div class="dashboard-placeholder">
+        <i data-lucide="bar-chart-3" aria-hidden="true"></i>
+        <p>No stock activity in {{ report_period_label }} for these filters.</p>
+      </div>
+      {% endif %}
+      <p class="stock-report-live-empty" data-stock-live-empty hidden>No rows match your search.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const form = document.querySelector("[data-stock-report-filters]");
+    if (!form) return;
+
+    const rangeSelect = form.querySelector("[data-stock-report-range]");
+    const itemModeSelect = form.querySelector("[data-stock-item-mode]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const itemPanels = [...form.querySelectorAll("[data-item-mode-panel]")];
+
+    const syncRangeFields = (range) => {
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.classList.toggle("is-hidden", !match);
+        field.querySelectorAll("input").forEach((input) => {
+          input.disabled = !match;
+          if (match) input.setAttribute("required", "required");
+          else input.removeAttribute("required");
+        });
+      });
+    };
+
+    const liveSearchInput = form.querySelector("[data-stock-live-search]");
+    const liveRows = [...document.querySelectorAll("[data-stock-live-row]")];
+    const liveEmpty = document.querySelector("[data-stock-live-empty]");
+    const liveTables = [...document.querySelectorAll(".stock-report-table")];
+
+    const applyLiveSearch = () => {
+      if (!liveRows.length) return;
+      const q = (liveSearchInput?.value || "").trim().toLowerCase();
+      let visible = 0;
+      liveRows.forEach((row) => {
+        const hay = (row.getAttribute("data-search-text") || "").toLowerCase();
+        const match = !q || hay.includes(q);
+        row.hidden = !match;
+        if (match) visible += 1;
+      });
+      liveTables.forEach((table) => {
+        const wrap = table.closest(".stock-report-table-wrap");
+        if (wrap) wrap.hidden = Boolean(q && visible === 0);
+        table.querySelectorAll("tfoot").forEach((tfoot) => {
+          tfoot.hidden = Boolean(q);
+        });
+      });
+      if (liveEmpty) {
+        liveEmpty.hidden = !(q && visible === 0);
+      }
+    };
+
+    const resetLiveSearch = () => {
+      if (liveSearchInput) liveSearchInput.value = "";
+      liveRows.forEach((row) => {
+        row.hidden = false;
+      });
+      liveTables.forEach((table) => {
+        const wrap = table.closest(".stock-report-table-wrap");
+        if (wrap) wrap.hidden = false;
+        table.querySelectorAll("tfoot").forEach((tfoot) => {
+          tfoot.hidden = false;
+        });
+      });
+      if (liveEmpty) liveEmpty.hidden = true;
+    };
+
+    const syncItemMode = (mode) => {
+      itemPanels.forEach((panel) => {
+        const match = panel.getAttribute("data-item-mode-panel") === mode;
+        panel.hidden = !match;
+        panel.classList.toggle("is-hidden", !match);
+        panel.querySelectorAll("select, input").forEach((input) => {
+          // Keep hidden item_id inputs enabled when in items mode.
+          if (input.matches('[name="item_id"]')) {
+            input.disabled = !match;
+            return;
+          }
+          if (input.matches("[data-stock-item-search], [data-stock-live-search]")) {
+            input.disabled = !match;
+            return;
+          }
+          if (input.tagName === "SELECT" || input.tagName === "INPUT") {
+            input.disabled = !match;
+          }
+        });
+      });
+      if (mode === "all") applyLiveSearch();
+      else resetLiveSearch();
+    };
+
+    const picker = form.querySelector("[data-stock-item-picker]");
+    const searchInput = form.querySelector("[data-stock-item-search]");
+    const resultsEl = form.querySelector("[data-stock-item-results]");
+    const chipsEl = form.querySelector("[data-stock-item-chips]");
+    const catalogEl = form.querySelector("[data-stock-item-catalog]");
+    let catalog = [];
+    try {
+      catalog = JSON.parse(catalogEl?.textContent || "[]");
+    } catch (_e) {
+      catalog = [];
+    }
+
+    const selectedIds = () =>
+      new Set(
+        [...(chipsEl?.querySelectorAll("[data-item-id]") || [])].map((chip) =>
+          String(chip.getAttribute("data-item-id"))
+        )
+      );
+
+    const renderChips = () => {
+      // chips already in DOM via add/remove
+    };
+
+    const addItem = (item) => {
+      if (!chipsEl || selectedIds().has(String(item.id))) return;
+      const chip = document.createElement("span");
+      chip.className = "stock-report-item-chip";
+      chip.setAttribute("data-item-id", String(item.id));
+      chip.innerHTML = `${item.name} <button type="button" aria-label="Remove ${item.name}" data-stock-item-remove>&times;</button>`;
+      const hidden = document.createElement("input");
+      hidden.type = "hidden";
+      hidden.name = "item_id";
+      hidden.value = String(item.id);
+      chip.appendChild(hidden);
+      chipsEl.appendChild(chip);
+    };
+
+    const hideResults = () => {
+      if (!resultsEl) return;
+      resultsEl.hidden = true;
+      resultsEl.innerHTML = "";
+    };
+
+    const showResults = (query) => {
+      if (!resultsEl || !searchInput || searchInput.disabled) return;
+      const q = query.trim().toLowerCase();
+      if (!q) {
+        hideResults();
+        return;
+      }
+      const selected = selectedIds();
+      const matches = catalog
+        .filter((item) => {
+          if (selected.has(String(item.id))) return false;
+          const hay = `${item.name} ${item.category}`.toLowerCase();
+          return hay.includes(q);
+        })
+        .slice(0, 8);
+
+      if (!matches.length) {
+        resultsEl.innerHTML = `<p class="stock-report-item-empty">No matches</p>`;
+        resultsEl.hidden = false;
+        return;
+      }
+
+      resultsEl.innerHTML = matches
+        .map(
+          (item) =>
+            `<button type="button" class="stock-report-item-result" data-item-id="${item.id}" data-item-name="${item.name.replace(/"/g, "&quot;")}">
+              <strong>${item.name}</strong>
+              <em>${item.category}</em>
+            </button>`
+        )
+        .join("");
+      resultsEl.hidden = false;
+    };
+
+    searchInput?.addEventListener("input", () => {
+      showResults(searchInput.value);
+    });
+
+    searchInput?.addEventListener("focus", () => {
+      if (searchInput.value.trim()) showResults(searchInput.value);
+    });
+
+    resultsEl?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-item-id]");
+      if (!btn) return;
+      addItem({
+        id: btn.getAttribute("data-item-id"),
+        name: btn.getAttribute("data-item-name"),
+      });
+      searchInput.value = "";
+      hideResults();
+    });
+
+    chipsEl?.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest("[data-stock-item-remove]");
+      if (!removeBtn) return;
+      removeBtn.closest("[data-item-id]")?.remove();
+    });
+
+    document.addEventListener("click", (event) => {
+      if (picker && !picker.contains(event.target)) hideResults();
+    });
+
+    syncRangeFields(rangeSelect?.value || "day");
+    syncItemMode(itemModeSelect?.value || "all");
+
+    liveSearchInput?.addEventListener("input", applyLiveSearch);
+
+    rangeSelect?.addEventListener("change", () => {
+      syncRangeFields(rangeSelect.value);
+    });
+
+    itemModeSelect?.addEventListener("change", () => {
+      syncItemMode(itemModeSelect.value);
+      hideResults();
+    });
+
+    form.querySelectorAll("[data-stock-report-calendar]").forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.disabled) return;
+        if (rangeSelect?.value === "period") {
+          const from = form.querySelector('[name="date_from"]');
+          const to = form.querySelector('[name="date_to"]');
+          if (!from?.value || !to?.value) return;
+        }
+        form.submit();
+      });
+    });
+  })();
+</script>
+{% endblock %}

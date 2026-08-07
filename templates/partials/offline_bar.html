@@ -1,0 +1,16 @@
+{% load static %}
+<div class="offline-bar" data-offline-bar aria-live="polite" hidden>
+  <span class="offline-status offline-status--online" data-offline-status>Online</span>
+  <span class="offline-pending" data-sync-pending hidden title="Pending sync items">0</span>
+  <button type="button" class="offline-sync-btn" data-sync-now hidden>Sync now</button>
+  <span class="offline-hint" data-offline-hint hidden>Offline — changes queue locally</span>
+</div>
+<script type="module">
+  import { initOffline } from "{% static 'js/offline/init.js' %}";
+  import { syncNow } from "{% static 'js/offline/sync.js' %}";
+  initOffline();
+  document.querySelector("[data-sync-now]")?.addEventListener("click", () => syncNow());
+  document.querySelectorAll("[data-connectivity-indicator]").forEach((btn) => {
+    btn.addEventListener("click", () => syncNow());
+  });
+</script>

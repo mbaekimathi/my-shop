@@ -1,0 +1,85 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="ax" data-animate="rise">
+  <header class="ax-top">
+    <div class="ax-top-main">
+      <div class="ax-title">
+        <h2>{{ supplier_name }}</h2>
+        <span class="ax-period">{{ kind_label }}</span>
+      </div>
+      <div class="ax-top-actions">
+        {% if can_pay %}
+        <button type="button" class="ax-apply" data-ax-pay-open>Pay</button>
+        {% endif %}
+        <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back to suppliers" }}</a>
+      </div>
+    </div>
+    <p class="ax-lead">
+      {{ supplier_phone|default:"—" }}
+      · {{ entries }} receipt{{ entries|pluralize }}
+      · balance <strong data-ax-account-balance>{{ balance }}</strong>
+    </p>
+  </header>
+
+  <div class="ax-kpis ax-kpis--dynamic" aria-label="Account metrics">
+    <article class="ax-kpi">
+      <span>Supplier</span>
+      <strong>{{ supplier_name }}</strong>
+      <em>{{ supplier_phone|default:"—" }}</em>
+    </article>
+    <article class="ax-kpi">
+      <span>Type</span>
+      <strong>{{ kind_label }}</strong>
+      <em>{{ entries }} receipts</em>
+    </article>
+    <article class="ax-kpi">
+      <span>Lifetime value</span>
+      <strong>{{ total }}</strong>
+      <em>All linked receipts</em>
+    </article>
+    <article class="ax-kpi is-bad">
+      <span>Total balance</span>
+      <strong data-ax-account-balance>{{ balance }}</strong>
+      <em>Unpaid / partial</em>
+    </article>
+  </div>
+
+  {% include "employees/partials/analytics_receipt_ledger.html" %}
+</section>
+{% endblock %}
+
+{% block workspace_overlays %}
+{{ block.super }}
+<div class="workspace-modal ax-receipt-modal" data-ax-receipt-modal hidden>
+  <div class="workspace-modal-backdrop" data-ax-receipt-modal-close></div>
+  <div
+    class="workspace-modal-dialog ax-receipt-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-receipt-modal-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <h2 id="ax-receipt-modal-title" data-ax-receipt-modal-title>Receipt items</h2>
+        <p class="ax-receipt-modal-meta" data-ax-receipt-modal-meta></p>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-ax-receipt-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="ax-receipt-modal-body" data-ax-receipt-modal-body></div>
+  </div>
+</div>
+{% if can_pay %}
+{% include "employees/partials/analytics_account_pay_modal.html" %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=4"></script>
+{% endblock %}

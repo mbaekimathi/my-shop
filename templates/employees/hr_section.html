@@ -1,0 +1,32 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="item-panel item-panel--dense" data-animate="rise">
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }}</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="dashboard-placeholder">
+    <i data-lucide="{{ meta.icon }}" aria-hidden="true"></i>
+    <p><strong>{{ meta.title }}</strong> is coming soon. This section will be available in a future update.</p>
+  </div>
+</section>
+
+{% include "employees/partials/hr_register_modal.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/hr-management.js' %}"></script>
+<script src="{% static 'js/auth.js' %}"></script>
+<script src="{% static 'js/register.js' %}"></script>
+{% endblock %}

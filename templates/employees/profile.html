@@ -1,0 +1,37 @@
+{% extends "employees/workspace_base.html" %}
+
+{% block title %}My Profile — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="workspace-hero" data-animate="rise">
+  <p class="role-eyebrow">
+    <i data-lucide="circle-user" aria-hidden="true"></i>
+    <span>Account</span>
+  </p>
+  <h2 class="workspace-hero-title">My profile</h2>
+  <p class="workspace-hero-copy">Your employee identity and contact details on MY-SHOP.</p>
+</section>
+
+<div class="workspace-grid workspace-grid--profile" data-animate="rise" data-delay="1">
+  <article class="workspace-card workspace-card--accent">
+    <i data-lucide="badge-check" aria-hidden="true"></i>
+    <h3>{{ user.get_full_name|default:user.username }}</h3>
+    <p>Employee ID <strong>{{ profile.employee_id }}</strong></p>
+  </article>
+  <article class="workspace-card">
+    <i data-lucide="mail" aria-hidden="true"></i>
+    <h3>Email</h3>
+    <p>{{ user.email|default:"Not set" }}</p>
+  </article>
+  <article class="workspace-card">
+    <i data-lucide="phone" aria-hidden="true"></i>
+    <h3>Phone</h3>
+    <p>{{ profile.full_phone }}</p>
+  </article>
+  <article class="workspace-card">
+    <i data-lucide="shield" aria-hidden="true"></i>
+    <h3>Role &amp; status</h3>
+    <p>{{ role_label }} · {{ status_label }}</p>
+  </article>
+</div>
+{% endblock %}

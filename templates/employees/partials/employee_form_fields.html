@@ -1,0 +1,163 @@
+<div class="profile-upload" data-profile-upload>
+  <div class="profile-preview" data-profile-preview>
+    <img src="" alt="" hidden data-profile-image>
+    <i data-lucide="camera" aria-hidden="true" data-profile-placeholder></i>
+  </div>
+  <div class="profile-upload-meta">
+    <span class="field-label">Profile photo <em>(optional)</em></span>
+    <p>JPG, PNG, WEBP or GIF · max 5 MB</p>
+    <label class="btn btn--ghost profile-upload-btn">
+      <i data-lucide="upload" aria-hidden="true"></i>
+      <span>Upload photo</span>
+      <input
+        type="file"
+        name="profile_photo"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        hidden
+        data-profile-input
+      >
+    </label>
+  </div>
+</div>
+
+<div class="field-row">
+  <label class="field">
+    <span class="field-label">First name</span>
+    <input type="text" name="first_name" value="{{ form_data.first_name }}" required autocomplete="given-name" data-uppercase>
+  </label>
+  <label class="field">
+    <span class="field-label">Last name</span>
+    <input type="text" name="last_name" value="{{ form_data.last_name }}" required autocomplete="family-name" data-uppercase>
+  </label>
+</div>
+
+<label class="field">
+  <span class="field-label">Email</span>
+  <input type="email" name="email" value="{{ form_data.email }}" required autocomplete="email" placeholder="name@store.com" data-lowercase>
+</label>
+
+<div class="field">
+  <span class="field-label">Phone number</span>
+  <div class="phone-field" data-phone-field>
+    <input type="hidden" name="phone_country_code" value="{{ form_data.phone_country_code }}" data-dial-input>
+    <input type="hidden" name="phone_country_iso" value="{{ form_data.phone_country_iso }}" data-iso-input>
+
+    <button
+      class="country-trigger"
+      type="button"
+      aria-haspopup="listbox"
+      aria-expanded="false"
+      data-country-trigger
+    >
+      <img
+        class="flag-img"
+        src="https://flagcdn.com/w40/{{ form_data.phone_country_iso|lower }}.png"
+        width="20"
+        height="15"
+        alt=""
+        data-flag-img
+      >
+      <span data-dial-label>{{ form_data.phone_country_code }}</span>
+      <i data-lucide="chevron-down" aria-hidden="true"></i>
+    </button>
+
+    <input
+      type="tel"
+      name="phone_number"
+      value="{{ form_data.phone_number }}"
+      required
+      autocomplete="tel-national"
+      inputmode="tel"
+      placeholder="7XX XXX XXX"
+      data-phone-input
+      data-uppercase
+    >
+
+    <div class="country-menu" role="listbox" hidden data-country-menu>
+      <div class="country-search">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input type="search" placeholder="Search country or code" data-country-search aria-label="Search countries">
+      </div>
+      <ul class="country-list" data-country-list>
+        {% for country in countries %}
+        <li>
+          <button
+            type="button"
+            class="country-option{% if country.iso == form_data.phone_country_iso and country.dial == form_data.phone_country_code %} is-selected{% endif %}"
+            role="option"
+            data-iso="{{ country.iso }}"
+            data-dial="{{ country.dial }}"
+            data-name="{{ country.name|lower }}"
+          >
+            <img class="flag-img" src="https://flagcdn.com/w40/{{ country.iso|lower }}.png" width="20" height="15" alt="">
+            <span class="country-name">{{ country.name }}</span>
+            <span class="country-dial">{{ country.dial }}</span>
+          </button>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+
+<label class="field">
+  <span class="field-label">Employee ID</span>
+  <input
+    type="text"
+    name="employee_id"
+    value="{{ form_data.employee_id }}"
+    required
+    inputmode="numeric"
+    pattern="\d{6}"
+    maxlength="6"
+    minlength="6"
+    autocomplete="username"
+    placeholder="6-digit code e.g. 102845"
+    data-employee-id
+    data-check-url="{% url 'employees:check_employee_id' %}"
+    aria-describedby="employee-id-status"
+  >
+  <p class="field-hint" id="employee-id-status" data-employee-id-status role="status" aria-live="polite"></p>
+</label>
+
+<div class="field-row">
+  <label class="field">
+    <span class="field-label">Password</span>
+    <div class="password-field">
+      <input
+        type="password"
+        name="password"
+        required
+        autocomplete="new-password"
+        minlength="6"
+        placeholder="Min. 6 characters"
+        data-password
+        aria-describedby="password-match-status"
+      >
+      <button class="password-toggle" type="button" aria-label="Show password" data-password-toggle>
+        <i data-lucide="eye" aria-hidden="true" data-eye-open></i>
+        <i data-lucide="eye-off" aria-hidden="true" data-eye-closed hidden></i>
+      </button>
+    </div>
+  </label>
+  <label class="field">
+    <span class="field-label">Confirm password</span>
+    <div class="password-field">
+      <input
+        type="password"
+        name="password_confirm"
+        required
+        autocomplete="new-password"
+        minlength="6"
+        placeholder="Re-enter password"
+        data-password-confirm
+        aria-describedby="password-match-status"
+      >
+      <button class="password-toggle" type="button" aria-label="Show password" data-password-toggle>
+        <i data-lucide="eye" aria-hidden="true" data-eye-open></i>
+        <i data-lucide="eye-off" aria-hidden="true" data-eye-closed hidden></i>
+      </button>
+    </div>
+  </label>
+</div>
+<p class="field-hint" id="password-match-status" data-password-match role="status" aria-live="polite"></p>

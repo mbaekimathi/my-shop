@@ -1,0 +1,189 @@
+{% if pos_flags.print_channels %}
+<div
+  class="workspace-modal printer-connect-modal"
+  data-modal="connect-printer"
+  data-printer-modal
+  data-print-relay-url="{{ print_relay_url }}"
+  data-print-scan-url="{{ print_scan_url }}"
+  data-print-channels="{{ pos_flags.print_channels|join:',' }}"
+  hidden
+>
+  <div class="workspace-modal-backdrop" data-modal-close data-printer-close></div>
+  <div
+    class="workspace-modal-dialog printer-connect-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="connect-printer-title"
+  >
+    <div class="workspace-modal-head printer-connect-head">
+      <div class="printer-connect-heading">
+        <h2 id="connect-printer-title">Connect to printer</h2>
+        <p class="printer-connect-lead">
+          Scan a channel, then connect. Stays linked until you disconnect.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-modal-close
+        data-printer-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="printer-connect-body">
+      <div class="printer-channel-list" data-printer-channel-list role="list">
+        {% for channel in pos_flags.print_channels %}
+        <article
+          class="printer-channel-card"
+          data-printer-channel="{{ channel }}"
+          role="listitem"
+        >
+          <div class="printer-channel-head">
+            <div class="printer-channel-title">
+              <span class="printer-channel-icon" aria-hidden="true">
+                <i
+                  data-lucide="{% if channel == 'bluetooth' %}bluetooth{% elif channel == 'usb' %}usb{% else %}wifi{% endif %}"
+                ></i>
+              </span>
+              <div class="printer-channel-meta">
+                <div class="printer-channel-name-row">
+                  <h3>
+                    {% if channel == "bluetooth" %}Bluetooth
+                    {% elif channel == "usb" %}USB
+                    {% else %}Wi‑Fi{% endif %}
+                  </h3>
+                  <span
+                    class="printer-channel-badge"
+                    data-printer-badge
+                    data-state="idle"
+                  >Idle</span>
+                </div>
+                <p class="printer-channel-status" data-printer-status>
+                  Not connected
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {% if channel == "wifi" %}
+          <div class="printer-channel-config">
+            <div class="printer-wifi-fields">
+              <label class="shop-cart-input">
+                <span>Printer IP / host</span>
+                <input
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="192.168.x.x"
+                  data-printer-wifi-host
+                >
+              </label>
+              <label class="shop-cart-input printer-wifi-port">
+                <span>Port</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value="9100"
+                  data-printer-wifi-port
+                >
+              </label>
+            </div>
+            <details class="printer-channel-help">
+              <summary>Network scan tips</summary>
+              <p>
+                Scan finds network printers on ports 9100 / 631 / 515.
+                USB POS printers won’t appear here — use the USB channel.
+              </p>
+            </details>
+          </div>
+          {% elif channel == "usb" %}
+          <div class="printer-channel-config">
+            <div class="printer-usb-fields">
+              <label class="shop-cart-input">
+                <span>USB mode</span>
+                <select data-printer-usb-mode>
+                  <option value="system" selected>Windows printer (Print Queue)</option>
+                  <option value="raw">Raw COM / ESC-POS</option>
+                </select>
+              </label>
+              <label class="shop-cart-input" data-printer-usb-baud-wrap hidden>
+                <span>Baud rate</span>
+                <select data-printer-usb-baud>
+                  <option value="9600" selected>9600</option>
+                  <option value="19200">19200</option>
+                  <option value="38400">38400</option>
+                  <option value="57600">57600</option>
+                  <option value="115200">115200</option>
+                </select>
+              </label>
+            </div>
+            <details class="printer-channel-help">
+              <summary>Which USB mode?</summary>
+              <p>
+                Use <strong>Windows printer</strong> when a driver is installed.
+                <strong>Raw COM</strong> sends ESC/POS bytes directly and won’t show in the Print Queue.
+              </p>
+            </details>
+          </div>
+          {% endif %}
+
+          <div class="printer-channel-actions">
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm printer-action-btn"
+              data-printer-scan
+              data-channel="{{ channel }}"
+            >
+              <i data-lucide="radar" aria-hidden="true"></i>
+              <span>Scan</span>
+            </button>
+            <button
+              type="button"
+              class="btn btn--primary btn--sm printer-action-btn"
+              data-printer-connect
+              data-channel="{{ channel }}"
+            >
+              <i data-lucide="plug" aria-hidden="true"></i>
+              <span>Connect</span>
+            </button>
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm printer-action-btn"
+              data-printer-test
+              data-channel="{{ channel }}"
+              hidden
+            >
+              <i data-lucide="file-text" aria-hidden="true"></i>
+              <span>Test print</span>
+            </button>
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm printer-action-btn printer-action-btn--danger"
+              data-printer-disconnect
+              data-channel="{{ channel }}"
+              hidden
+            >
+              <i data-lucide="unplug" aria-hidden="true"></i>
+              <span>Disconnect</span>
+            </button>
+          </div>
+
+          <ul class="printer-device-list" data-printer-devices hidden></ul>
+          <p class="printer-channel-hint" data-printer-hint></p>
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="printer-connect-foot">
+      <p class="printer-connect-footer" data-printer-global-status>
+        Auto-print runs after checkout when the cart has items and a printer is connected.
+      </p>
+    </div>
+  </div>
+</div>
+{% endif %}

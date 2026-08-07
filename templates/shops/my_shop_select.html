@@ -1,0 +1,161 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Shop login — MY-SHOP{% endblock %}
+
+{% block body_class %}page-workspace page-shop-select{% endblock %}
+
+{% block workspace_content %}
+<div
+  class="workspace-modal shop-select-modal"
+  id="shop-select-modal"
+  data-modal="shop-select"
+  aria-hidden="false"
+>
+  <div class="workspace-modal-backdrop" data-shop-select-cancel data-href="{{ dashboard_url }}"></div>
+  <div
+    class="workspace-modal-dialog shop-select-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shop-select-title"
+  >
+    <div class="workspace-modal-head shop-select-head">
+      <div>
+        <p class="shop-select-kicker">MY-SHOP</p>
+        <h2 id="shop-select-title">
+          {% if multi_shop %}Select a shop &amp; sign in{% else %}Sign in to {{ selected_shop.name }}{% endif %}
+        </h2>
+        <p class="shop-select-lead">
+          {% if multi_shop %}
+          Choose an authorised shop, then enter its password to open the floor.
+          {% else %}
+          Enter the shop password to open this workspace.
+          {% endif %}
+        </p>
+      </div>
+      <a class="workspace-icon-btn" href="{{ dashboard_url }}" aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </a>
+    </div>
+
+    {% if form_error %}
+    <div class="form-alert shop-select-alert" role="alert">
+      <i data-lucide="alert-circle" aria-hidden="true"></i>
+      <span>{{ form_error }}</span>
+    </div>
+    {% endif %}
+
+    <form
+      class="shop-select-form workspace-modal-form"
+      method="post"
+      action="{% url 'employees:my_shop_select' %}"
+      novalidate
+      data-shop-login-form
+    >
+      {% csrf_token %}
+
+      {% if multi_shop %}
+      <fieldset class="shop-select-fieldset">
+        <legend class="field-label">Authorised shops</legend>
+        <div class="shop-select-grid" data-shop-picker>
+          {% for shop in shops %}
+          <label class="shop-select-card{% if selected_shop_id == shop.pk|stringformat:'s' %} is-selected{% elif not selected_shop_id and forloop.first %} is-selected{% endif %}">
+            <input
+              type="radio"
+              name="shop_id"
+              value="{{ shop.pk }}"
+              required
+              {% if selected_shop_id == shop.pk|stringformat:'s' %}checked{% elif not selected_shop_id and forloop.first %}checked{% endif %}
+              data-shop-option
+            >
+            <span class="shop-select-card-media" aria-hidden="true">
+              {% if shop.image %}
+              <img src="{{ shop.image.url }}" alt="" width="56" height="56">
+              {% else %}
+              <i data-lucide="store" aria-hidden="true"></i>
+              {% endif %}
+            </span>
+            <span class="shop-select-card-body">
+              <span class="shop-select-card-name">{{ shop.name }}</span>
+              <span class="shop-select-card-meta">
+                <span class="shop-select-loc">
+                  <i data-lucide="map-pin" aria-hidden="true"></i>
+                  <em>{{ shop.location }}</em>
+                </span>
+                <span class="shop-select-code" title="Shop login code">
+                  <i data-lucide="hash" aria-hidden="true"></i>
+                  <em>{{ shop.login_code }}</em>
+                </span>
+              </span>
+            </span>
+            <span class="shop-select-card-go" aria-hidden="true">
+              <i data-lucide="circle" class="shop-select-mark shop-select-mark--off"></i>
+              <i data-lucide="check" class="shop-select-mark shop-select-mark--on"></i>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      {% else %}
+      <input type="hidden" name="shop_id" value="{{ selected_shop.pk }}">
+      <div class="shop-select-single">
+        <span class="shop-select-card-media" aria-hidden="true">
+          {% if selected_shop.image %}
+          <img src="{{ selected_shop.image.url }}" alt="" width="56" height="56">
+          {% else %}
+          <i data-lucide="store" aria-hidden="true"></i>
+          {% endif %}
+        </span>
+        <span class="shop-select-card-body">
+          <span class="shop-select-card-name">{{ selected_shop.name }}</span>
+          <span class="shop-select-card-meta">
+            <span class="shop-select-loc">
+              <i data-lucide="map-pin" aria-hidden="true"></i>
+              <em>{{ selected_shop.location }}</em>
+            </span>
+            <span class="shop-select-code" title="Shop login code">
+              <i data-lucide="hash" aria-hidden="true"></i>
+              <em>{{ selected_shop.login_code }}</em>
+            </span>
+          </span>
+        </span>
+      </div>
+      {% endif %}
+
+      <div class="shop-select-foot">
+        <label class="field shop-select-password">
+          <span class="field-label">Shop password</span>
+          <div class="password-field">
+            <input
+              type="password"
+              name="password"
+              required
+              autocomplete="current-password"
+              placeholder="Enter shop password"
+              autofocus
+              data-shop-password
+            >
+            <button class="password-toggle" type="button" aria-label="Show password" data-password-toggle>
+              <i data-lucide="eye" aria-hidden="true" data-eye-open></i>
+              <i data-lucide="eye-off" aria-hidden="true" data-eye-closed hidden></i>
+            </button>
+          </div>
+        </label>
+
+        <div class="workspace-modal-actions shop-select-actions">
+          <a class="btn btn--ghost" href="{{ dashboard_url }}">Cancel</a>
+          <button class="btn btn--primary" type="submit">
+            <i data-lucide="log-in" aria-hidden="true"></i>
+            <span>Open shop</span>
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/my-shop.js' %}?v=3"></script>
+{% endblock %}

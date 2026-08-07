@@ -1,0 +1,31 @@
+{% if employees_page.has_other_pages %}
+<nav class="pagination" aria-label="{{ pagination_label|default:'Pages' }}">
+  {% if pagination.previous_url %}
+  <a class="pagination-link" href="{{ pagination.previous_url }}">
+    <i data-lucide="chevron-left" aria-hidden="true"></i>
+    <span>Previous</span>
+  </a>
+  {% else %}
+  <span class="pagination-link pagination-link--disabled">
+    <i data-lucide="chevron-left" aria-hidden="true"></i>
+    <span>Previous</span>
+  </span>
+  {% endif %}
+
+  <span class="pagination-status">
+    Page {{ employees_page.number }} of {{ employees_page.paginator.num_pages }}
+  </span>
+
+  {% if pagination.next_url %}
+  <a class="pagination-link" href="{{ pagination.next_url }}">
+    <span>Next</span>
+    <i data-lucide="chevron-right" aria-hidden="true"></i>
+  </a>
+  {% else %}
+  <span class="pagination-link pagination-link--disabled">
+    <span>Next</span>
+    <i data-lucide="chevron-right" aria-hidden="true"></i>
+  </span>
+  {% endif %}
+</nav>
+{% endif %}

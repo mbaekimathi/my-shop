@@ -1,0 +1,1287 @@
+from itertools import groupby
+import json
+
+from django.contrib import messages
+from django.core.exceptions import ValidationError
+from django.http import JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_GET, require_http_methods
+
+from employees.access import active_employee_required
+from employees.countries import COUNTRY_DIAL_CODES
+from employees.workspace import sidebar_for_stock_management
+
+from .models import Item, ShopItemPrice, ShopStock
+from .services import (
+    actionable_shops_for_profile,
+    apply_stock_movement,
+    build_stock_catalog_page,
+    create_item,
+    delete_item,
+    last_buying_prices_for_items,
+    search_available_serials,
+    search_suppliers,
+    toggle_item_suspended,
+    update_item,
+)
+
+EMPTY_FORM = {
+    "category": "",
+    "name": "",
+    "description": "",
+    "minimum_selling_price": "",
+    "maximum_selling_price": "",
+    "shop_price": "",
+    "pricing_mode": "single",
+    "shop_prices": {},
+    "track_serial_number": False,
+}
+
+
+@active_employee_required
+@require_GET
+def supplier_search_api(request):
+    query = (request.GET.get("q") or "").strip()
+    by = (request.GET.get("by") or "name").strip().lower()
+    dial = (request.GET.get("dial") or "").strip()
+    results = search_suppliers(query=query, by=by, dial=dial, limit=8)
+    return JsonResponse(
+        {
+            "ok": True,
+            "results": [
+                {
+                    "id": supplier.pk,
+                    "name": supplier.name,
+                    "dial": supplier.phone_country_code,
+                    "iso": supplier.phone_country_iso or "KE",
+                    "phone": supplier.phone_number,
+                }
+                for supplier in results
+            ],
+        }
+    )
+
+
+@active_employee_required
+@require_GET
+def serial_search_api(request):
+    item_id = (request.GET.get("item_id") or "").strip()
+    shop_id = (request.GET.get("shop_id") or "").strip()
+    query = (request.GET.get("q") or "").strip()
+    exclude = request.GET.getlist("exclude") or []
+    results = search_available_serials(
+        item_id=item_id,
+        shop_id=shop_id,
+        query=query,
+        exclude=exclude,
+        limit=12,
+    )
+    return JsonResponse({"ok": True, "results": results})
+
+
+def _active_pricing_shops():
+    from shops.models import Shop
+
+    return list(Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name"))
+
+
+def _shop_prices_from_post(post, shops) -> dict:
+    prices = {}
+    for shop in shops:
+        raw = (post.get(f"shop_price_{shop.pk}") or "").strip()
+        if raw:
+            prices[str(shop.pk)] = raw
+    return prices
+
+
+def _form_data_from_post(post) -> dict:
+    shops = _active_pricing_shops()
+    pricing_mode = (post.get("pricing_mode") or "single").strip().lower()
+    if pricing_mode not in ("single", "individual"):
+        pricing_mode = "single"
+    return {
+        "category": post.get("category", "").strip().upper(),
+        "name": post.get("name", "").strip().upper(),
+        "description": post.get("description", "").strip(),
+        "minimum_selling_price": post.get("minimum_selling_price", "").strip(),
+        "maximum_selling_price": post.get("maximum_selling_price", "").strip(),
+        "shop_price": post.get("shop_price", "").strip(),
+        "pricing_mode": pricing_mode,
+        "shop_prices": _shop_prices_from_post(post, shops),
+        "track_serial_number": (post.get("track_serial_number") or "").strip().lower()
+        in ("1", "true", "on", "yes"),
+    }
+
+
+def _form_data_from_item(item: Item) -> dict:
+    shop_prices = {
+        str(shop_id): str(price)
+        for shop_id, price in ShopItemPrice.objects.filter(item=item).values_list(
+            "shop_id", "price"
+        )
+    }
+    return {
+        "category": item.category,
+        "name": item.name,
+        "description": item.description,
+        "minimum_selling_price": str(item.minimum_selling_price),
+        "maximum_selling_price": str(item.maximum_selling_price),
+        "shop_price": str(item.shop_price),
+        "pricing_mode": "individual" if item.use_individual_shop_prices else "single",
+        "shop_prices": shop_prices,
+        "track_serial_number": item.track_serial_number,
+    }
+
+
+def _shop_price_display(item: Item, prices_by_item: dict) -> str:
+    if not item.use_individual_shop_prices:
+        return f"KSh {item.shop_price:.2f}"
+    prices = prices_by_item.get(item.pk) or []
+    if not prices:
+        return f"KSh {item.shop_price:.2f}"
+    low = min(prices)
+    high = max(prices)
+    if low == high:
+        return f"KSh {low:.2f}"
+    return f"KSh {low:.2f} – {high:.2f}"
+
+
+def _shop_prices_json(item: Item, prices_map: dict) -> str:
+    payload = {
+        str(shop_id): f"{price:.2f}"
+        for shop_id, price in (prices_map.get(item.pk) or {}).items()
+    }
+    if not payload and not item.use_individual_shop_prices:
+        # Prefill all shops from global price when opening edit in individual mode later.
+        return "{}"
+    return json.dumps(payload)
+
+
+def _validation_errors(exc: ValidationError) -> list:
+    return exc.messages if hasattr(exc, "messages") else [str(exc)]
+
+
+@require_http_methods(["GET", "POST"])
+def item_management(request, profile, meta, module, page_sidebar):
+    form_data = dict(EMPTY_FORM)
+    form_errors = []
+    open_register_modal = False
+    open_edit_modal = False
+    edit_item = None
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "register").strip()
+        item_id = (request.POST.get("item_id") or "").strip()
+
+        if action == "register":
+            form_data = _form_data_from_post(request.POST)
+            try:
+                create_item(profile, request.POST, request.FILES)
+            except ValidationError as exc:
+                form_errors = _validation_errors(exc)
+                open_register_modal = True
+            else:
+                messages.success(request, f"Item “{form_data['name']}” registered successfully.")
+                return redirect(request.path)
+
+        elif action == "edit":
+            edit_item = get_object_or_404(Item, pk=item_id)
+            form_data = _form_data_from_post(request.POST)
+            try:
+                update_item(edit_item, request.POST, request.FILES)
+            except ValidationError as exc:
+                form_errors = _validation_errors(exc)
+                open_edit_modal = True
+            else:
+                messages.success(request, f"Item “{form_data['name']}” updated successfully.")
+                return redirect(request.path)
+
+        elif action == "toggle_suspend":
+            item = get_object_or_404(Item, pk=item_id)
+            toggle_item_suspended(item)
+            state = "suspended" if item.is_suspended else "unsuspended"
+            messages.success(request, f"Item “{item.name}” {state}.")
+            return redirect(request.path)
+
+        elif action == "delete":
+            item = get_object_or_404(Item, pk=item_id)
+            name = item.name
+            delete_item(item)
+            messages.success(request, f"Item “{name}” deleted.")
+            return redirect(request.path)
+
+        else:
+            messages.error(request, "Unknown action.")
+            return redirect(request.path)
+
+    pricing_shops = _active_pricing_shops()
+    items = list(
+        Item.objects.select_related("created_by__user").order_by("category", "name")
+    )
+
+    price_rows = ShopItemPrice.objects.filter(item__in=items).values_list(
+        "item_id", "shop_id", "price"
+    )
+    prices_list_by_item = {}
+    prices_map_by_item = {}
+    for item_id, shop_id, price in price_rows:
+        prices_list_by_item.setdefault(item_id, []).append(price)
+        prices_map_by_item.setdefault(item_id, {})[shop_id] = price
+
+    items_by_category = []
+    for category, group in groupby(items, key=lambda item: item.category):
+        rows = []
+        for item in group:
+            rows.append(
+                {
+                    "item": item,
+                    "shop_price_display": _shop_price_display(item, prices_list_by_item),
+                    "pricing_mode": (
+                        "individual" if item.use_individual_shop_prices else "single"
+                    ),
+                    "shop_prices_json": _shop_prices_json(item, prices_map_by_item),
+                }
+            )
+        items_by_category.append({"category": category, "items": rows})
+
+    return render(
+        request,
+        "items/item_management.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "items_by_category": items_by_category,
+            "item_count": len(items),
+            "pricing_shops": pricing_shops,
+            "form_data": form_data,
+            "form_errors": form_errors,
+            "open_register_modal": open_register_modal,
+            "open_edit_modal": open_edit_modal,
+            "edit_item": edit_item,
+        },
+    )
+
+
+def _stock_redirect(path, mode, *, shop_id="", requested_from_shop_id=""):
+    from urllib.parse import urlencode
+
+    params = {"mode": mode}
+    if shop_id:
+        params["shop_id"] = shop_id
+    if mode == "request" and requested_from_shop_id:
+        params["requested_from_shop_id"] = requested_from_shop_id
+    return redirect(f"{path}?{urlencode(params)}")
+
+
+def _parse_report_date(raw, *, fallback=None):
+    from datetime import date, datetime
+
+    from django.utils import timezone
+
+    today = timezone.localdate() if fallback is None else fallback
+    value = (raw or "").strip()
+    if not value:
+        return today
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return today
+
+
+def _parse_report_month(raw, *, fallback=None):
+    from datetime import date, datetime
+
+    from django.utils import timezone
+
+    today = timezone.localdate() if fallback is None else fallback
+    value = (raw or "").strip()
+    if not value:
+        return today.replace(day=1)
+    try:
+        parsed = datetime.strptime(value, "%Y-%m").date()
+        return parsed.replace(day=1)
+    except ValueError:
+        return today.replace(day=1)
+
+
+def _parse_report_year(raw, *, fallback=None):
+    from django.utils import timezone
+
+    today = timezone.localdate() if fallback is None else fallback
+    value = (raw or "").strip()
+    if not value:
+        return today.year
+    try:
+        year = int(value)
+    except (TypeError, ValueError):
+        return today.year
+    if year < 2000 or year > 2100:
+        return today.year
+    return year
+
+
+def _report_range_bounds(request):
+    """Return (range_type, start_dt, end_dt, filter_context) for stock report filters."""
+    from calendar import monthrange
+    from datetime import date, datetime, time, timedelta
+
+    from django.utils import timezone
+
+    today = timezone.localdate()
+    range_type = (request.GET.get("range") or "day").strip().lower()
+    if range_type not in ("day", "period", "month", "year"):
+        range_type = "day"
+
+    tz = timezone.get_current_timezone()
+
+    def aware_start(day):
+        return timezone.make_aware(datetime.combine(day, time.min), tz)
+
+    def aware_end_exclusive(day):
+        return aware_start(day) + timedelta(days=1)
+
+    def base_context(**extra):
+        ctx = {
+            "report_range": range_type,
+            "report_date_value": today.isoformat(),
+            "report_date_from": today.isoformat(),
+            "report_date_to": today.isoformat(),
+            "report_month_value": today.strftime("%Y-%m"),
+            "report_year_value": f"{today.year}-01",
+        }
+        ctx.update(extra)
+        return ctx
+
+    if range_type == "period":
+        date_from = _parse_report_date(request.GET.get("date_from"), fallback=today)
+        date_to = _parse_report_date(request.GET.get("date_to"), fallback=today)
+        if date_to < date_from:
+            date_from, date_to = date_to, date_from
+        start = aware_start(date_from)
+        end = aware_end_exclusive(date_to)
+        label = (
+            f"{date_from.strftime('%d %b %Y')} – {date_to.strftime('%d %b %Y')}"
+        )
+        return (
+            range_type,
+            start,
+            end,
+            base_context(
+                report_date=date_from,
+                report_date_value=date_from.isoformat(),
+                report_date_from=date_from.isoformat(),
+                report_date_to=date_to.isoformat(),
+                report_period_label=label,
+            ),
+        )
+
+    if range_type == "month":
+        month_start = _parse_report_month(request.GET.get("month"), fallback=today)
+        last_day = monthrange(month_start.year, month_start.month)[1]
+        month_end = month_start.replace(day=last_day)
+        start = aware_start(month_start)
+        end = aware_end_exclusive(month_end)
+        return (
+            range_type,
+            start,
+            end,
+            base_context(
+                report_date=month_start,
+                report_month_value=month_start.strftime("%Y-%m"),
+                report_year_value=f"{month_start.year}-01",
+                report_period_label=month_start.strftime("%B %Y"),
+            ),
+        )
+
+    if range_type == "year":
+        year_raw = (request.GET.get("year") or "").strip()
+        if "-" in year_raw:
+            year = _parse_report_month(year_raw, fallback=today).year
+        else:
+            year = _parse_report_year(year_raw, fallback=today)
+        year_start = date(year, 1, 1)
+        year_end = date(year, 12, 31)
+        start = aware_start(year_start)
+        end = aware_end_exclusive(year_end)
+        return (
+            range_type,
+            start,
+            end,
+            base_context(
+                report_date=year_start,
+                report_year_value=f"{year}-01",
+                report_period_label=str(year),
+            ),
+        )
+
+    report_date = _parse_report_date(request.GET.get("date"), fallback=today)
+    start = aware_start(report_date)
+    end = aware_end_exclusive(report_date)
+    return (
+        "day",
+        start,
+        end,
+        base_context(
+            report_range="day",
+            report_date=report_date,
+            report_date_value=report_date.isoformat(),
+            report_date_from=report_date.isoformat(),
+            report_date_to=report_date.isoformat(),
+            report_month_value=report_date.strftime("%Y-%m"),
+            report_year_value=f"{report_date.year}-01",
+            report_period_label=report_date.strftime("%d %b %Y"),
+        ),
+    )
+
+
+def _parse_id_list(raw_values):
+    ids = []
+    seen = set()
+    for value in raw_values:
+        value = (value or "").strip()
+        if not value:
+            continue
+        try:
+            pk = int(value)
+        except (TypeError, ValueError):
+            continue
+        if pk in seen:
+            continue
+        seen.add(pk)
+        ids.append(pk)
+    return ids
+
+
+def _movement_qty_by_item(item_ids, shop_ids, start, end):
+    """Sum movement line quantities by item and type for a window. Request is separate from in/out."""
+    from django.db.models import Sum
+
+    from .models import StockMovementLine, StockMovementType
+
+    totals = {
+        item_id: {"in": 0, "out": 0, "request": 0}
+        for item_id in item_ids
+    }
+    if not item_ids or not shop_ids or start >= end:
+        return totals
+
+    rows = (
+        StockMovementLine.objects.filter(
+            item_id__in=item_ids,
+            movement__shop_id__in=shop_ids,
+            movement__created_at__gte=start,
+            movement__created_at__lt=end,
+            movement__movement_type__in=[
+                StockMovementType.IN,
+                StockMovementType.OUT,
+                StockMovementType.REQUEST,
+            ],
+        )
+        .values("item_id", "movement__movement_type")
+        .annotate(total=Sum("quantity"))
+    )
+    for row in rows:
+        bucket = totals.get(row["item_id"])
+        if bucket is None:
+            continue
+        movement_type = row["movement__movement_type"]
+        if movement_type in bucket:
+            bucket[movement_type] = int(row["total"] or 0)
+    return totals
+
+
+def _sale_qty_by_item(items, shop_ids, start, end):
+    """
+    Sale quantities for stock items.
+
+    Prefer MY-SHOP receipt lines (item FK) — accurate and indexed.
+    Fall back to legacy POS SaleLine matching by product name.
+    """
+    from django.db.models import Sum
+
+    from pos.models import SaleLine
+    from shops.models import ShopReceiptKind, ShopReceiptLine
+
+    totals = {item.pk: 0 for item in items}
+    if not items or start >= end:
+        return totals
+
+    item_ids = [item.pk for item in items]
+    receipt_qs = ShopReceiptLine.objects.filter(
+        item_id__in=item_ids,
+        receipt__created_at__gte=start,
+        receipt__created_at__lt=end,
+        receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+    )
+    if shop_ids:
+        receipt_qs = receipt_qs.filter(receipt__shop_id__in=shop_ids)
+
+    for row in receipt_qs.values("item_id").annotate(total=Sum("quantity")):
+        item_id = row["item_id"]
+        if item_id in totals:
+            totals[item_id] += int(row["total"] or 0)
+
+    name_to_ids = {}
+    for item in items:
+        key = (item.name or "").strip().lower()
+        if key:
+            name_to_ids.setdefault(key, []).append(item.pk)
+    if not name_to_ids:
+        return totals
+
+    # Bound the POS scan to known item names instead of loading all sale lines.
+    names = [(item.name or "").strip() for item in items if (item.name or "").strip()]
+    sale_lines = SaleLine.objects.filter(
+        sale__sold_at__gte=start,
+        sale__sold_at__lt=end,
+        product_name__in=names,
+    )
+    if shop_ids:
+        sale_lines = sale_lines.filter(
+            sale__employee__assigned_shops__in=shop_ids
+        ).distinct()
+
+    for row in sale_lines.values("product_name").annotate(total=Sum("quantity")):
+        key = (row["product_name"] or "").strip().lower()
+        for item_id in name_to_ids.get(key, []):
+            totals[item_id] += int(row["total"] or 0)
+    return totals
+
+
+def _current_stock_by_item(item_ids, shop_ids):
+    from django.db.models import Sum
+
+    from .models import ShopStock
+
+    totals = {item_id: 0 for item_id in item_ids}
+    if not item_ids or not shop_ids:
+        return totals
+    rows = (
+        ShopStock.objects.filter(item_id__in=item_ids, shop_id__in=shop_ids)
+        .values("item_id")
+        .annotate(total=Sum("quantity"))
+    )
+    for row in rows:
+        totals[row["item_id"]] = int(row["total"] or 0)
+    return totals
+
+
+def _build_item_report_rows(items, shop_ids, day_start, day_end):
+    """
+    Build per-item report rows for a period.
+
+    closing = current - after_in + after_out + after_sale
+    starting = closing - period_in + period_out + period_sale
+    Request is tracked separately and does not change starting/closing.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    item_ids = [item.pk for item in items]
+    if not item_ids:
+        return []
+
+    now = timezone.now()
+    far_future = now + timedelta(days=3650)
+
+    current = _current_stock_by_item(item_ids, shop_ids)
+    period_moves = _movement_qty_by_item(item_ids, shop_ids, day_start, day_end)
+    after_moves = _movement_qty_by_item(item_ids, shop_ids, day_end, far_future)
+    period_sales = _sale_qty_by_item(items, shop_ids, day_start, day_end)
+    after_sales = _sale_qty_by_item(items, shop_ids, day_end, far_future)
+
+    rows = []
+    for item in items:
+        period = period_moves[item.pk]
+        after = after_moves[item.pk]
+        stock_in = period["in"]
+        stock_out = period["out"]
+        stock_request = period["request"]
+        stock_sale = period_sales[item.pk]
+        closing = (
+            current[item.pk]
+            - after["in"]
+            + after["out"]
+            + after_sales[item.pk]
+        )
+        starting = closing - stock_in + stock_out + stock_sale
+        # Only include stocks that had activity in the filtered period.
+        if not (stock_in or stock_out or stock_request or stock_sale):
+            continue
+        rows.append(
+            {
+                "item": item,
+                "starting_stock": starting,
+                "stock_request": stock_request,
+                "stock_in": stock_in,
+                "stock_out": stock_out,
+                "stock_sale": stock_sale,
+                "closing_stock": closing,
+            }
+        )
+    return rows
+
+
+def _build_movement_timeline(
+    *,
+    shop_ids,
+    day_start,
+    day_end,
+    item_mode,
+    selected_categories,
+    selected_item_ids,
+    report_items,
+):
+    """
+    Chronological stock events for the filtered period (oldest first).
+    Stock in, stock out, and request come from movements; sales are separate events.
+    """
+    from django.db.models import Prefetch, Q
+
+    from .models import StockMovement, StockMovementLine, StockMovementType
+
+    events = []
+    units_in = 0
+    units_out = 0
+    units_request = 0
+    units_sale = 0
+
+    if not shop_ids:
+        return events, units_in, units_out, units_request, units_sale
+
+    line_qs = StockMovementLine.objects.select_related("item").order_by("id")
+    movement_filter = Q(
+        created_at__gte=day_start,
+        created_at__lt=day_end,
+        shop_id__in=shop_ids,
+    )
+
+    if item_mode == "category" and selected_categories:
+        movement_filter &= Q(lines__item__category__in=selected_categories)
+        line_qs = line_qs.filter(item__category__in=selected_categories)
+    elif item_mode == "items" and selected_item_ids:
+        movement_filter &= Q(lines__item_id__in=selected_item_ids)
+        line_qs = line_qs.filter(item_id__in=selected_item_ids)
+
+    movements = (
+        StockMovement.objects.filter(movement_filter)
+        .distinct()
+        .select_related(
+            "shop",
+            "requested_from_shop",
+            "created_by__user",
+        )
+        .prefetch_related(Prefetch("lines", queryset=line_qs))
+        .order_by("created_at", "pk")
+    )
+
+    type_labels = {
+        StockMovementType.IN: "Stock in",
+        StockMovementType.OUT: "Stock out",
+        StockMovementType.REQUEST: "Stock request",
+    }
+
+    for movement in movements:
+        for line in movement.lines.all():
+            events.append(
+                {
+                    "happened_at": movement.created_at,
+                    "event_type": movement.movement_type,
+                    "event_label": type_labels.get(
+                        movement.movement_type, movement.get_movement_type_display()
+                    ),
+                    "shop_name": movement.shop.name if movement.shop else "—",
+                    "from_shop_name": (
+                        movement.requested_from_shop.name
+                        if movement.movement_type == StockMovementType.REQUEST
+                        and movement.requested_from_shop
+                        else ""
+                    ),
+                    "item_name": line.item.name,
+                    "item_category": line.item.category,
+                    "quantity": line.quantity,
+                    "reason": line.get_reason_display() if line.reason else "",
+                    "payment_status": (
+                        line.get_payment_status_display() if line.payment_status else ""
+                    ),
+                    "note": line.note or "",
+                    "by": (
+                        movement.created_by.employee_id if movement.created_by else "—"
+                    ),
+                    "movement_id": movement.pk,
+                }
+            )
+            if movement.movement_type == StockMovementType.IN:
+                units_in += line.quantity
+            elif movement.movement_type == StockMovementType.OUT:
+                units_out += line.quantity
+            elif movement.movement_type == StockMovementType.REQUEST:
+                units_request += line.quantity
+
+    # Sales as separate timeline events (never mixed into stock out).
+    from pos.models import SaleLine
+    from shops.models import ShopReceiptKind, ShopReceiptLine
+
+    item_name_set = {(item.name or "").strip().lower() for item in report_items}
+    item_by_name = {
+        (item.name or "").strip().lower(): item for item in report_items
+    }
+    item_by_id = {item.pk: item for item in report_items}
+
+    receipt_lines = (
+        ShopReceiptLine.objects.filter(
+            receipt__created_at__gte=day_start,
+            receipt__created_at__lt=day_end,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+            receipt__shop_id__in=shop_ids,
+        )
+        .select_related("receipt", "receipt__shop", "receipt__created_by", "item")
+        .order_by("receipt__created_at", "id")
+    )
+    if item_mode == "category" and selected_categories:
+        receipt_lines = receipt_lines.filter(item__category__in=selected_categories)
+    elif item_mode == "items" and selected_item_ids:
+        receipt_lines = receipt_lines.filter(item_id__in=selected_item_ids)
+
+    for line in receipt_lines.iterator(chunk_size=500):
+        matched = item_by_id.get(line.item_id) or item_by_name.get(
+            (line.item_name or "").strip().lower()
+        )
+        events.append(
+            {
+                "happened_at": line.receipt.created_at,
+                "event_type": "sale",
+                "event_label": "Stock sale",
+                "shop_name": (
+                    line.receipt.shop.name if line.receipt.shop_id else "—"
+                ),
+                "from_shop_name": "",
+                "item_name": line.item_name or (matched.name if matched else "—"),
+                "item_category": (
+                    matched.category
+                    if matched
+                    else (line.item.category if line.item_id and line.item else "")
+                ),
+                "quantity": line.quantity,
+                "reason": "",
+                "payment_status": "",
+                "note": "",
+                "by": (
+                    line.receipt.created_by.employee_id
+                    if line.receipt.created_by_id
+                    else "—"
+                ),
+                "movement_id": None,
+            }
+        )
+        units_sale += line.quantity
+
+    if item_mode == "category" and selected_categories:
+        allowed_names = {
+            (item.name or "").strip().lower()
+            for item in report_items
+            if item.category in selected_categories
+        }
+    elif item_mode == "items" and selected_item_ids:
+        selected_set = set(selected_item_ids)
+        allowed_names = {
+            (item.name or "").strip().lower()
+            for item in report_items
+            if item.pk in selected_set
+        }
+    else:
+        allowed_names = item_name_set
+
+    sale_lines = (
+        SaleLine.objects.filter(
+            sale__sold_at__gte=day_start,
+            sale__sold_at__lt=day_end,
+        )
+        .select_related("sale", "sale__employee")
+        .order_by("sale__sold_at", "id")
+    )
+    if shop_ids:
+        sale_lines = sale_lines.filter(
+            sale__employee__assigned_shops__in=shop_ids
+        ).distinct()
+    if allowed_names:
+        sale_lines = sale_lines.filter(
+            product_name__in=[
+                (item.name or "").strip()
+                for item in report_items
+                if (item.name or "").strip().lower() in allowed_names
+            ]
+        )
+
+    for line in sale_lines.iterator(chunk_size=500):
+        key = (line.product_name or "").strip().lower()
+        if allowed_names and key not in allowed_names:
+            continue
+        matched = item_by_name.get(key)
+        events.append(
+            {
+                "happened_at": line.sale.sold_at,
+                "event_type": "sale",
+                "event_label": "Stock sale",
+                "shop_name": "—",
+                "from_shop_name": "",
+                "item_name": line.product_name or (matched.name if matched else "—"),
+                "item_category": matched.category if matched else "",
+                "quantity": line.quantity,
+                "reason": "",
+                "payment_status": "",
+                "note": "",
+                "by": (
+                    line.sale.employee.employee_id if line.sale.employee else "—"
+                ),
+                "movement_id": None,
+            }
+        )
+        units_sale += line.quantity
+
+    events.sort(key=lambda row: (row["happened_at"], row.get("movement_id") or 0))
+    return events, units_in, units_out, units_request, units_sale
+
+
+def stock_report(request, profile, meta, module, *, page_mode="report"):
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+
+    if page_mode not in ("report", "movements"):
+        page_mode = "report"
+
+    range_type, day_start, day_end, filter_context = _report_range_bounds(request)
+
+    filter_shops = actionable_shops_for_profile(profile)
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+    selected_shop_ids = [
+        pk for pk in _parse_id_list(request.GET.getlist("shop_id")) if pk in shops_by_id
+    ]
+    active_shop_ids = selected_shop_ids or [shop.pk for shop in filter_shops]
+
+    item_mode = (request.GET.get("item_mode") or "all").strip().lower()
+    if item_mode not in ("all", "category", "items"):
+        item_mode = "all"
+
+    categories = list(
+        Item.objects.order_by("category")
+        .values_list("category", flat=True)
+        .distinct()
+    )
+    selected_categories = [
+        value.strip()
+        for value in request.GET.getlist("category")
+        if (value or "").strip() and (value or "").strip() in set(categories)
+    ]
+
+    all_items = list(
+        Item.objects.order_by("category", "name").only("id", "name", "category")
+    )
+    items_by_id = {item.pk: item for item in all_items}
+    selected_item_ids = [
+        pk for pk in _parse_id_list(request.GET.getlist("item_id")) if pk in items_by_id
+    ]
+
+    # Incomplete category/item picks fall back to All (the default).
+    if item_mode == "category" and not selected_categories:
+        item_mode = "all"
+    elif item_mode == "items" and not selected_item_ids:
+        item_mode = "all"
+
+    item_qs = Item.objects.order_by("category", "name")
+    if item_mode == "category":
+        item_qs = item_qs.filter(category__in=selected_categories)
+    elif item_mode == "items":
+        item_qs = item_qs.filter(pk__in=selected_item_ids)
+
+    report_items = list(item_qs.only("id", "name", "category", "is_suspended"))
+    filter_items_json = json.dumps(
+        [
+            {"id": item.pk, "name": item.name, "category": item.category}
+            for item in all_items
+        ]
+    )
+    selected_filter_items = [items_by_id[pk] for pk in selected_item_ids if pk in items_by_id]
+
+    no_shop_access = (
+        profile.role in SHOP_ASSIGNABLE_ROLES and not filter_shops
+    )
+    shop_ids_for_query = [] if no_shop_access else active_shop_ids
+
+    movement_events = []
+    units_in = 0
+    units_out = 0
+    units_request = 0
+    units_sale = 0
+    item_report_rows = []
+    totals = {
+        "starting_stock": 0,
+        "stock_request": 0,
+        "stock_in": 0,
+        "stock_out": 0,
+        "stock_sale": 0,
+        "closing_stock": 0,
+    }
+
+    is_movements = page_mode == "movements"
+
+    if is_movements:
+        (
+            movement_events,
+            units_in,
+            units_out,
+            units_request,
+            units_sale,
+        ) = _build_movement_timeline(
+            shop_ids=shop_ids_for_query,
+            day_start=day_start,
+            day_end=day_end,
+            item_mode=item_mode,
+            selected_categories=selected_categories,
+            selected_item_ids=selected_item_ids,
+            report_items=report_items if item_mode != "all" else all_items,
+        )
+    else:
+        item_report_rows = _build_item_report_rows(
+            report_items, shop_ids_for_query, day_start, day_end
+        )
+        for row in item_report_rows:
+            totals["starting_stock"] += row["starting_stock"]
+            totals["stock_request"] += row["stock_request"]
+            totals["stock_in"] += row["stock_in"]
+            totals["stock_out"] += row["stock_out"]
+            totals["stock_sale"] += row["stock_sale"]
+            totals["closing_stock"] += row["closing_stock"]
+        units_in = totals["stock_in"]
+        units_out = totals["stock_out"]
+        units_request = totals["stock_request"]
+        units_sale = totals["stock_sale"]
+
+    report_params = {"range": range_type, "item_mode": item_mode or "all"}
+    if selected_shop_ids:
+        report_params["shop_id"] = selected_shop_ids[0]
+    if range_type == "day":
+        report_params["date"] = filter_context["report_date_value"]
+    elif range_type == "period":
+        report_params["date_from"] = filter_context["report_date_from"]
+        report_params["date_to"] = filter_context["report_date_to"]
+    elif range_type == "month":
+        report_params["month"] = filter_context["report_month_value"]
+    elif range_type == "year":
+        report_params["year"] = filter_context["report_year_value"][:4]
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode=page_mode,
+        report_params=report_params,
+    )
+
+    range_labels = {
+        "day": "Single day",
+        "period": "Period",
+        "month": "Month",
+        "year": "Year",
+    }
+
+    return render(
+        request,
+        "items/stock_report.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "stock_mode": page_mode,
+            "is_movements_page": is_movements,
+            "movement_events": movement_events,
+            "item_report_rows": item_report_rows,
+            "item_report_totals": totals,
+            "movement_count": len(movement_events),
+            "item_count": len(item_report_rows),
+            "units_in": units_in,
+            "units_out": units_out,
+            "units_request": units_request,
+            "units_sale": units_sale,
+            "report_range_label": range_labels[range_type],
+            "filter_shops": filter_shops,
+            "selected_shop_ids": set(selected_shop_ids),
+            "item_mode": item_mode,
+            "categories": categories,
+            "selected_categories": set(selected_categories),
+            "filter_items": all_items,
+            "filter_items_json": filter_items_json,
+            "selected_filter_items": selected_filter_items,
+            "selected_item_ids": set(selected_item_ids),
+            **filter_context,
+        },
+    )
+
+
+@require_http_methods(["GET", "POST"])
+def stock_management(request, profile, meta, module, page_sidebar):
+    from employees.models import EmployeeRole
+    from shops.models import Shop
+
+    from .models import ShopStock
+
+    mode = (request.GET.get("mode") or request.POST.get("mode") or "view").strip().lower()
+    if mode not in ("view", "in", "out", "request", "report", "movements"):
+        mode = "view"
+
+    # Stock In / Out / Request / Report / Movements: shop-manager and IT support.
+    if mode != "view" and profile.role not in (
+        EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.IT_SUPPORT,
+    ):
+        return _stock_redirect(request.path, "view")
+
+    if mode in ("report", "movements"):
+        return stock_report(request, profile, meta, module, page_mode=mode)
+
+    all_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+    action_shops = actionable_shops_for_profile(profile)
+    # Current stock: all shops. Stock in / out / request: only shops allocated to the employee.
+    shops = all_shops if mode == "view" else action_shops
+    shops_by_id = {str(shop.pk): shop for shop in shops}
+
+    def _resolve_shop(raw):
+        raw = (raw or "").strip()
+        return shops_by_id.get(raw)
+
+    selected_shop_id = (request.GET.get("shop_id") or request.POST.get("shop_id") or "").strip()
+    requested_from_id = (
+        request.GET.get("requested_from_shop_id")
+        or request.POST.get("requested_from_shop_id")
+        or ""
+    ).strip()
+
+    # Drop shop_id from the URL when switching into an action mode where it is not allocated.
+    if mode != "view" and selected_shop_id and selected_shop_id not in shops_by_id:
+        selected_shop_id = ""
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode=mode,
+        shop_id=selected_shop_id,
+        requested_from_shop_id=requested_from_id if mode == "request" else "",
+    )
+
+    if request.method == "POST":
+        action_mode = (request.POST.get("mode") or mode).strip().lower()
+        if action_mode not in ("in", "out", "request"):
+            messages.error(request, "Choose Stock In, Stock Out, or Request Stock first.")
+            return _stock_redirect(request.path, "view", shop_id=selected_shop_id)
+        shop_id = (request.POST.get("shop_id") or "").strip()
+        requested_from_post = (request.POST.get("requested_from_shop_id") or "").strip()
+        try:
+            apply_stock_movement(profile, action_mode, request.POST)
+        except ValidationError as exc:
+            for message in (exc.messages if hasattr(exc, "messages") else [str(exc)]):
+                messages.error(request, message)
+            return _stock_redirect(
+                request.path,
+                action_mode,
+                shop_id=shop_id,
+                requested_from_shop_id=requested_from_post,
+            )
+
+        labels = {
+            "in": "Stock in submitted successfully.",
+            "out": "Stock out submitted successfully.",
+            "request": "Stock request submitted successfully.",
+        }
+        messages.success(request, labels[action_mode])
+        return _stock_redirect(
+            request.path,
+            action_mode,
+            shop_id=shop_id,
+            requested_from_shop_id=requested_from_post,
+        )
+
+    selected_shop = _resolve_shop(selected_shop_id)
+    requested_from_shop = None
+    if mode == "request":
+        requested_from_shop = _resolve_shop(requested_from_id)
+        if (
+            selected_shop
+            and requested_from_shop
+            and selected_shop.pk == requested_from_shop.pk
+        ):
+            requested_from_shop = None
+
+    # Action modes with a selected shop use progressive catalog API.
+    use_stock_catalog_api = mode in ("in", "out", "request") and selected_shop is not None
+    if mode == "request" and requested_from_shop is None:
+        use_stock_catalog_api = False
+
+    items_by_category = []
+    item_count = Item.objects.count()
+    category_count = 0
+    shop_total_units = 0
+    display_shops = []
+    show_all_shops = mode == "view" and selected_shop is None
+
+    if mode == "view":
+        display_shops = [selected_shop] if selected_shop else all_shops
+        items = list(
+            Item.objects.select_related("created_by__user").order_by("category", "name")
+        )
+        item_count = len(items)
+        relevant_shop_ids = []
+        if show_all_shops:
+            relevant_shop_ids = [shop.pk for shop in all_shops]
+        elif selected_shop:
+            relevant_shop_ids.append(selected_shop.pk)
+
+        shop_stock_map = {}
+        if relevant_shop_ids and items:
+            for row in ShopStock.objects.filter(
+                shop_id__in=relevant_shop_ids, item__in=items
+            ).values_list("item_id", "shop_id", "quantity"):
+                item_id, shop_id, quantity = row
+                shop_stock_map.setdefault(item_id, {})[shop_id] = quantity
+
+        def shop_qty(item, shop):
+            if shop is None:
+                return 0
+            return shop_stock_map.get(item.pk, {}).get(shop.pk, 0)
+
+        for category, group in groupby(items, key=lambda item: item.category):
+            rows = []
+            for item in group:
+                qty = shop_qty(item, selected_shop)
+                shop_quantities = [shop_qty(item, shop) for shop in display_shops]
+                row_total = sum(shop_quantities) if show_all_shops else qty
+                rows.append(
+                    {
+                        "item": item,
+                        "shop_qty": qty,
+                        "shop_quantities": shop_quantities,
+                        "row_total": row_total,
+                        "requested_from_qty": 0,
+                        "last_buying_price": None,
+                    }
+                )
+            items_by_category.append({"category": category, "items": rows})
+        category_count = len(items_by_category)
+        if show_all_shops:
+            shop_total_units = sum(
+                row["row_total"] for group in items_by_category for row in group["items"]
+            )
+        elif selected_shop:
+            shop_total_units = sum(
+                row["shop_qty"] for group in items_by_category for row in group["items"]
+            )
+    elif use_stock_catalog_api:
+        display_shops = [selected_shop]
+        from django.db.models import Sum
+
+        shop_total_units = (
+            ShopStock.objects.filter(shop=selected_shop).aggregate(total=Sum("quantity"))[
+                "total"
+            ]
+            or 0
+        )
+    else:
+        # Action mode without required shop selection — empty shell.
+        display_shops = [selected_shop] if selected_shop else []
+
+    from employees.access import role_url_segment
+
+    stock_catalog_url = ""
+    if use_stock_catalog_api:
+        stock_catalog_url = reverse(
+            "employees:stock_management_catalog",
+            kwargs={"role_segment": role_url_segment(profile.role)},
+        )
+
+    return render(
+        request,
+        "items/stock_management.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "items_by_category": items_by_category,
+            "shops": shops,
+            "all_shops": all_shops,
+            "display_shops": display_shops,
+            "show_all_shops": show_all_shops,
+            "selected_shop": selected_shop,
+            "requested_from_shop": requested_from_shop,
+            "item_count": item_count,
+            "category_count": category_count,
+            "total_units": shop_total_units,
+            "stock_mode": mode,
+            "is_read_only": mode == "view",
+            "countries": COUNTRY_DIAL_CODES,
+            "supplier_search_url": reverse("employees:supplier_search"),
+            "serial_search_url": reverse("employees:serial_search"),
+            "stock_catalog_url": stock_catalog_url,
+            "use_stock_catalog_api": use_stock_catalog_api,
+        },
+    )
+
+
+@active_employee_required
+@require_http_methods(["GET"])
+def stock_management_catalog(request, role_segment):
+    """Paginated stock-management catalog for in/out/request modes."""
+    from employees.access import get_profile_for_request, role_url_segment
+    from employees.models import EmployeeRole
+
+    profile = get_profile_for_request(request)
+    if profile is None or not profile.is_active_employee:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+    if role_url_segment(profile.role) != role_segment:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    mode = (request.GET.get("mode") or "in").strip().lower()
+    if mode not in ("in", "out", "request"):
+        return JsonResponse({"ok": False, "error": "invalid_mode"}, status=400)
+    if profile.role not in (
+        EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.IT_SUPPORT,
+    ):
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    try:
+        shop_id = int(request.GET.get("shop_id") or 0)
+    except (TypeError, ValueError):
+        shop_id = 0
+    try:
+        from_id = int(request.GET.get("requested_from_shop_id") or 0)
+    except (TypeError, ValueError):
+        from_id = 0
+
+    action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}
+    if shop_id not in action_shops:
+        return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
+    if mode == "request" and from_id not in action_shops:
+        return JsonResponse({"ok": False, "error": "from_shop_required"}, status=400)
+
+    payload = build_stock_catalog_page(
+        shop_id=shop_id,
+        requested_from_shop_id=from_id if mode == "request" else None,
+        mode=mode,
+        q=request.GET.get("q") or "",
+        page=request.GET.get("page") or 1,
+        page_size=request.GET.get("page_size") or 48,
+        include_suspended=True,
+    )
+    return JsonResponse(payload)

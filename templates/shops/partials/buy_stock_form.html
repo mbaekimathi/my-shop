@@ -1,0 +1,322 @@
+<form
+  class="stock-layout stock-layout--action{% if buy_stock_compact %} stock-layout--modal{% endif %}"
+  method="post"
+  action="{% url 'employees:my_shop_buy_stock' shop.pk %}"
+  data-stock-layout
+  data-stock-bulk-form
+  data-supplier-search-url="{{ supplier_search_url }}"
+  data-verify-login-url="{{ verify_login_code_url }}"
+  {% if buy_stock_compact %}data-supplier-print{% endif %}
+>
+  {% csrf_token %}
+  {% if buy_stock_next %}
+  <input type="hidden" name="next" value="{{ buy_stock_next }}">
+  {% endif %}
+  <input type="hidden" name="mode" value="in" data-stock-float-mode-input>
+  <input type="hidden" name="shop_id" value="{{ shop.pk }}" data-stock-shop>
+
+  <section
+    class="stock-panel stock-panel--action"
+    data-animate="rise"
+    data-item-total="{{ item_count }}"
+    data-stock-mode="in"
+    {% if use_stock_catalog_api %}
+    data-stock-catalog-api="{{ stock_catalog_url }}"
+    data-stock-catalog-shop="{{ shop.pk }}"
+    data-stock-catalog-shop-name="{{ shop.name }}"
+    data-stock-catalog-page-size="48"
+    {% if buy_stock_defer_catalog %}data-stock-catalog-defer{% endif %}
+    {% endif %}
+  >
+    <header class="stock-panel-head">
+      <div class="stock-panel-head-top">
+        <div>
+          <p class="stock-kicker">Buy from outside · {{ shop.name }}</p>
+          <h2>Add purchased stock</h2>
+          <p>
+            Open an item, enter the quantity you bought (or serials), buying price,
+            then autofill supplier details and confirm with a staff ID.
+          </p>
+        </div>
+        <div class="stock-stats">
+          <p class="stock-stat">
+            <strong data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</strong>
+            <span>listed</span>
+          </p>
+          <p class="stock-stat">
+            <strong>{{ total_units }}</strong>
+            <span>units at {{ shop.name }}</span>
+          </p>
+        </div>
+      </div>
+
+      <div class="item-search">
+        <label class="item-search-field">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input
+            type="search"
+            placeholder="Search by name, category, or description…"
+            autocomplete="off"
+            data-item-search
+            aria-label="Search items"
+          >
+        </label>
+      </div>
+    </header>
+
+    {% if use_stock_catalog_api and item_count %}
+    <div class="stock-matrix-wrap" data-item-list>
+      <div data-stock-catalog-root>
+        <div class="dashboard-placeholder" data-stock-catalog-loading>
+          <i data-lucide="loader-circle" aria-hidden="true"></i>
+          <p>Loading items…</p>
+        </div>
+      </div>
+      <table class="stock-matrix" hidden>
+        <tbody data-stock-parked></tbody>
+      </table>
+    </div>
+    <div class="shop-floor-catalog-more" data-stock-catalog-more-wrap hidden>
+      <button type="button" class="btn btn--ghost" data-stock-catalog-more>Load more items</button>
+    </div>
+    <div class="item-search-empty" data-item-no-results hidden>
+      <i data-lucide="search-x" aria-hidden="true"></i>
+      <p>No items match your search.</p>
+    </div>
+    {% elif items_by_category %}
+    <div class="stock-matrix-wrap" data-item-list>
+      {% for group in items_by_category %}
+      <section class="stock-category" data-item-category-group>
+        <header class="stock-category-head">
+          <div class="stock-category-title-wrap">
+            <span class="stock-category-mark" aria-hidden="true"></span>
+            <h3 class="stock-category-title">{{ group.category }}</h3>
+          </div>
+          <span class="stock-category-count" data-category-count>{{ group.items|length }}</span>
+        </header>
+        <div class="stock-matrix-scroll">
+          <table class="stock-matrix stock-matrix--single stock-matrix--action">
+            <thead>
+              <tr>
+                <th scope="col" class="stock-matrix-item-col">Item</th>
+                <th scope="col" class="stock-matrix-shop-col">{{ shop.name }}</th>
+                <th scope="col" class="stock-matrix-action-col"><span class="visually-hidden">Action</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in group.items %}
+              {% with item=row.item %}
+              <tr
+                class="stock-matrix-row stock-matrix-row--action{% if item.is_suspended %} is-suspended{% endif %}{% if row.shop_qty == 0 %} is-empty-stock{% endif %}"
+                data-item-row
+                data-item-id="{{ item.pk }}"
+                data-item-name="{{ item.name }}"
+                data-item-stock="{{ row.shop_qty }}"
+                data-track-serial="{% if item.track_serial_number %}1{% else %}0{% endif %}"
+                data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
+              >
+                <th scope="row" class="stock-matrix-item-col">
+                  <button type="button" class="stock-matrix-toggle" data-stock-item-toggle>
+                    <div class="stock-matrix-item">
+                      <strong>{{ item.name }}</strong>
+                      {% if item.is_suspended %}
+                      <span class="stock-item-badge">Suspended</span>
+                      {% endif %}
+                      {% if item.track_serial_number %}
+                      <span class="stock-item-badge stock-item-badge--serial">Serial</span>
+                      {% endif %}
+                    </div>
+                  </button>
+                </th>
+                <td class="stock-matrix-shop-col">
+                  <span
+                    class="stock-matrix-qty{% if row.shop_qty == 0 %} is-empty{% endif %}"
+                    data-stock-display-qty
+                  >{{ row.shop_qty }}</span>
+                </td>
+                <td class="stock-matrix-action-col">
+                  <button type="button" class="stock-matrix-chevron" data-stock-item-toggle aria-label="Open {{ item.name }}">
+                    <i data-lucide="chevron-down" aria-hidden="true"></i>
+                  </button>
+                </td>
+              </tr>
+              <tr class="stock-matrix-form-row" data-stock-item-inputs hidden>
+                <td colspan="3">
+                  <div class="stock-item-inputs stock-item-inputs--matrix">
+                    <input type="hidden" name="item_id" value="{{ item.pk }}" disabled data-stock-field>
+                  </div>
+                </td>
+              </tr>
+              {% endwith %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+    <div class="item-search-empty" data-item-no-results hidden>
+      <i data-lucide="search-x" aria-hidden="true"></i>
+      <p>No items match your search.</p>
+    </div>
+    {% else %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="package" aria-hidden="true"></i>
+      <p>No items registered in the system yet.</p>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if use_stock_catalog_api or items_by_category %}
+  <aside
+    class="stock-float stock-float--in"
+    data-stock-float
+    data-stock-float-mode="in"
+    aria-live="polite"
+  >
+    <div class="stock-float-card">
+      <header class="stock-float-head">
+        <div>
+          <p class="stock-float-kicker">Buy stock</p>
+          <h3>Stock in purchase</h3>
+        </div>
+        <button class="stock-float-clear" type="button" data-stock-float-clear hidden>
+          Clear
+        </button>
+      </header>
+
+      <div class="stock-float-shops">
+        <p class="stock-float-shop-readout">
+          <span>Shop</span>
+          <strong>{{ shop.name }}</strong>
+        </p>
+      </div>
+
+      <div class="stock-float-empty" data-stock-float-empty>
+        <p>
+          Open items, enter quantity/serials and buying price. Use autofill below for supplier details.
+        </p>
+      </div>
+
+      <p class="stock-float-held" data-stock-float-held hidden>
+        <strong data-stock-float-held-count>0</strong>
+        <span>line(s) held while you search</span>
+      </p>
+
+      <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
+
+      <div class="stock-float-apply" data-stock-float-apply>
+        <p class="stock-float-apply-title">Autofill supplier details</p>
+        <input type="hidden" value="" data-stock-float-supplier-id>
+        <label class="stock-float-field">
+          <span>Supplier phone</span>
+          <div class="stock-phone-field" data-stock-phone-field data-stock-float-phone-wrap data-supplier-search-root>
+            <input type="hidden" value="+254" data-stock-float-supplier-dial>
+            <input type="hidden" value="KE" data-stock-float-supplier-iso>
+            <button
+              type="button"
+              class="stock-country-trigger"
+              data-stock-country-trigger
+              aria-label="Select country"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            >
+              <img
+                class="flag-img"
+                src="https://flagcdn.com/w40/ke.png"
+                width="20"
+                height="15"
+                alt=""
+                data-stock-flag-img
+              >
+            </button>
+            <span class="stock-phone-dial" data-stock-dial-display>+254</span>
+            <input
+              type="tel"
+              placeholder="7XXXXXXXX"
+              inputmode="numeric"
+              maxlength="9"
+              autocomplete="tel-national"
+              data-stock-float-supplier-phone
+              data-supplier-search="phone"
+            >
+            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+          </div>
+        </label>
+        <label class="stock-float-field">
+          <span>Supplier name</span>
+          <div class="stock-supplier-name-wrap" data-supplier-search-root>
+            <input
+              type="text"
+              placeholder="SUPPLIER NAME"
+              autocomplete="organization"
+              data-uppercase
+              data-stock-float-supplier-name
+              data-supplier-search="name"
+            >
+            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+          </div>
+        </label>
+        <label class="stock-float-field">
+          <span>Payment status</span>
+          <select data-stock-float-payment>
+            <option value="">Select</option>
+            <option value="unpaid">Unpaid</option>
+            <option value="paid">Paid</option>
+            <option value="partial">Partial</option>
+          </select>
+        </label>
+        <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
+          Autofill to stock-in items
+        </button>
+        <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
+      </div>
+
+      <label class="stock-float-field stock-float-field--login">
+        <span>Staff ID (6 digits)</span>
+        <input
+          type="text"
+          name="login_code"
+          inputmode="numeric"
+          maxlength="6"
+          autocomplete="one-time-code"
+          placeholder="Enter 6-digit staff ID"
+          data-stock-float-login-code
+        >
+      </label>
+      <p class="shop-cart-status stock-float-login-status" data-stock-float-login-status>
+        Enter an active staff member’s 6-digit ID to stock in.
+      </p>
+
+      <button class="stock-float-submit" type="submit" data-stock-float-submit disabled>
+        <i data-lucide="check" aria-hidden="true"></i>
+        <span>Confirm &amp; stock in</span>
+      </button>
+    </div>
+  </aside>
+  {% endif %}
+</form>
+
+<div class="stock-country-menu" data-stock-country-menu hidden>
+  <div class="stock-country-search">
+    <i data-lucide="search" aria-hidden="true"></i>
+    <input type="search" placeholder="Search country" data-stock-country-search aria-label="Search countries">
+  </div>
+  <ul class="stock-country-list" data-stock-country-list>
+    {% for country in countries %}
+    <li>
+      <button
+        type="button"
+        class="stock-country-option{% if country.dial == '+254' %} is-selected{% endif %}"
+        data-iso="{{ country.iso }}"
+        data-dial="{{ country.dial }}"
+        data-name="{{ country.name|lower }}"
+      >
+        <img class="flag-img" src="https://flagcdn.com/w40/{{ country.iso|lower }}.png" width="20" height="15" alt="">
+        <span class="stock-country-name">{{ country.name }}</span>
+        <span class="stock-country-dial">{{ country.dial }}</span>
+      </button>
+    </li>
+    {% endfor %}
+  </ul>
+</div>

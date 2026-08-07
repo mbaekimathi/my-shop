@@ -1,0 +1,54 @@
+<aside class="workspace-sidebar" aria-label="Workspace sidebar" data-workspace-sidebar>
+  <div class="workspace-sidebar-top">
+    <div class="brand brand--nav workspace-brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-text">MY-SHOP</span>
+    </div>
+    <button class="workspace-icon-btn workspace-sidebar-close" type="button" aria-label="Close menu" data-workspace-close>
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+  </div>
+
+  {% if page_sidebar.primary %}
+  <nav class="workspace-nav workspace-nav--primary" aria-label="Page navigation">
+    {% for item in page_sidebar.primary %}
+      {% if item.type == "action" %}
+      <button
+        class="workspace-nav-link{% if item.active %} is-active{% endif %}"
+        type="button"
+        data-modal-open="{{ item.action }}"
+        {% if item.href %}data-href="{{ item.href }}"{% endif %}
+        data-workspace-nav
+      >
+        <i data-lucide="{{ item.icon }}" aria-hidden="true"></i>
+        <span>{{ item.label }}</span>
+      </button>
+      {% else %}
+      <a
+        class="workspace-nav-link{% if item.active %} is-active{% endif %}{% if item.muted %} workspace-nav-link--muted{% endif %}"
+        href="{{ item.href }}"
+        data-workspace-nav
+      >
+        <i data-lucide="{{ item.icon }}" aria-hidden="true"></i>
+        <span>{{ item.label }}</span>
+      </a>
+      {% endif %}
+    {% endfor %}
+  </nav>
+  {% endif %}
+
+  {% if page_sidebar.footer %}
+  <div class="workspace-sidebar-foot">
+    {% for item in page_sidebar.footer %}
+    <a
+      class="workspace-nav-link{% if item.active %} is-active{% endif %}{% if item.danger %} workspace-nav-link--danger{% endif %}{% if item.muted %} workspace-nav-link--muted{% endif %}"
+      href="{{ item.href }}"
+      data-workspace-nav
+    >
+      <i data-lucide="{{ item.icon }}" aria-hidden="true"></i>
+      <span>{{ item.label }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</aside>

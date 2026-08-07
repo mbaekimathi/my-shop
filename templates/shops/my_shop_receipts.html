@@ -1,0 +1,148 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="shop-tool-page shop-receipts-page"
+  data-shop-receipts
+  data-verify-login-url="{{ verify_login_code_url }}"
+  data-receipts-list-url="{{ receipts_list_url }}"
+  data-receipt-detail-url="{{ receipt_detail_url_template }}"
+  data-receipt-return-url="{{ receipt_return_url_template }}"
+  data-print-relay-url="{{ print_relay_url }}"
+  data-print-channels="{{ pos_flags.print_channels|join:',' }}"
+  data-pos-receipt-width="{{ pos_flags.receipt_paper_width|default:'80' }}"
+  data-animate="rise"
+>
+  {% csrf_token %}
+  <header class="shop-tool-head">
+    <p class="shop-tool-kicker">{{ shop.name }}</p>
+    <h2>{{ meta.headline }}</h2>
+    <p class="shop-tool-summary">{{ meta.summary }}</p>
+  </header>
+
+  <div class="shop-receipts-filters stock-report-filters" data-receipts-filters>
+    <label class="stock-report-field shop-receipts-live-search">
+      <span>Live search</span>
+      <input
+        type="search"
+        placeholder="Receipt no., client, phone…"
+        autocomplete="off"
+        data-receipts-search
+      >
+    </label>
+
+    <label class="stock-report-field">
+      <span>Filter</span>
+      <select data-receipts-filter-mode>
+        <option value="day" selected>Single day</option>
+        <option value="period">Period</option>
+        <option value="month">Month</option>
+        <option value="year">Year</option>
+      </select>
+    </label>
+
+    <label class="stock-report-field" data-filter-panel="day">
+      <span>Date</span>
+      <input type="date" data-receipts-day>
+    </label>
+
+    <label class="stock-report-field is-hidden" data-filter-panel="period" hidden>
+      <span>From</span>
+      <input type="date" data-receipts-from>
+    </label>
+
+    <label class="stock-report-field is-hidden" data-filter-panel="period" hidden>
+      <span>To</span>
+      <input type="date" data-receipts-to>
+    </label>
+
+    <label class="stock-report-field is-hidden" data-filter-panel="month" hidden>
+      <span>Month</span>
+      <input type="month" data-receipts-month>
+    </label>
+
+    <label class="stock-report-field is-hidden" data-filter-panel="year" hidden>
+      <span>Year</span>
+      <input type="number" min="2000" max="2100" step="1" placeholder="YYYY" data-receipts-year>
+    </label>
+  </div>
+
+  <div class="shop-receipts-meta">
+    <p data-receipts-count>Loading receipts…</p>
+    <p class="shop-receipts-status" data-receipts-status hidden></p>
+  </div>
+
+  <div class="shop-receipts-table-wrap">
+    <table class="shop-receipts-table">
+      <thead>
+        <tr>
+          <th>Receipt</th>
+          <th>Type</th>
+          <th>Client</th>
+          <th>Total</th>
+          <th>When</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody data-receipts-list>
+        <tr class="shop-receipts-empty-row">
+          <td colspan="6">Loading…</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="shop-receipts-empty" data-receipts-empty hidden>No receipts match this search.</p>
+</section>
+{% endblock %}
+
+{% block workspace_overlays %}
+{{ block.super }}
+<div class="workspace-modal shop-receipt-modal" data-receipt-modal hidden>
+  <div class="workspace-modal-backdrop" data-receipt-modal-close></div>
+  <div
+    class="workspace-modal-dialog shop-receipt-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="receipt-modal-title"
+  >
+    <div class="workspace-modal-head">
+      <h2 id="receipt-modal-title" data-receipt-modal-title>Receipt</h2>
+      <button type="button" class="workspace-icon-btn" data-receipt-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="shop-receipt-modal-body" data-receipt-modal-body>
+      <p class="shop-receipts-status">Loading receipt…</p>
+    </div>
+
+    <div class="workspace-modal-actions shop-receipt-modal-actions" data-receipt-modal-actions hidden>
+      <button type="button" class="btn btn--ghost" data-receipt-reprint>
+        <i data-lucide="printer" aria-hidden="true"></i>
+        Reprint
+      </button>
+      <button type="button" class="btn btn--ghost" data-receipt-start-return hidden>
+        <i data-lucide="undo-2" aria-hidden="true"></i>
+        Return items
+      </button>
+      <button type="button" class="btn btn--ghost" data-receipt-cancel-return hidden>
+        Cancel
+      </button>
+      <button type="button" class="btn btn--primary" data-receipt-confirm-return hidden disabled>
+        Confirm return
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
+<script src="{% static 'js/shop-printer.js' %}?v=16"></script>
+<script src="{% static 'js/my-shop-receipts.js' %}?v=2"></script>
+{% endblock %}

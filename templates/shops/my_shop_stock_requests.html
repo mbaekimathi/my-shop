@@ -1,0 +1,131 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="shop-tool-page" data-animate="rise">
+  <header class="shop-tool-head">
+    <p class="shop-tool-kicker">{{ shop.name }}</p>
+    <h2>{{ meta.headline }}</h2>
+    <p class="shop-tool-summary">{{ meta.summary }}</p>
+  </header>
+
+  <div class="shop-day-status{% if pending_request_count or stock_request_decision_count %} is-open{% endif %}">
+    <i data-lucide="clipboard-list" aria-hidden="true"></i>
+    <div>
+      <strong>
+        {% if pending_request_count or stock_request_decision_count %}
+        {{ pending_request_count }} incoming
+        ·
+        {{ stock_request_decision_count }} update{{ stock_request_decision_count|pluralize }}
+        {% else %}
+        No open stock requests right now
+        {% endif %}
+      </strong>
+      <p>
+        {% if pending_request_count or stock_request_decision_count %}
+        Review the open panels to accept, decline, or acknowledge updates.
+        {% else %}
+        Incoming requests and decision updates for this shop will appear here.
+        {% endif %}
+        {% if previous_request_count %}
+        Showing {{ previous_request_count }} previous request{{ previous_request_count|pluralize }} below.
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  <section class="stock-request-history" aria-labelledby="previous-requests-title">
+    <div class="stock-request-history-head">
+      <h3 id="previous-requests-title">Previous requests</h3>
+      <p>Accepted and declined transfers involving {{ shop.name }}.</p>
+    </div>
+
+    {% if previous_stock_requests %}
+    <ul class="stock-request-list">
+      {% for req in previous_stock_requests %}
+      <li class="stock-request-card stock-request-history-card">
+        <div class="stock-request-card-head">
+          <div>
+            {% if req.request_status == "fulfilled" %}
+            <span class="stock-request-status is-accepted">Accepted</span>
+            {% else %}
+            <span class="stock-request-status is-declined">Declined</span>
+            {% endif %}
+            {% if req.is_incoming %}
+            <span class="stock-request-direction">Incoming</span>
+            {% else %}
+            <span class="stock-request-direction">Outgoing</span>
+            {% endif %}
+            <p class="stock-request-from">
+              {% if req.is_incoming %}
+              From
+              <strong>{% if req.counterparty %}{{ req.counterparty.name }}{% else %}another shop{% endif %}</strong>
+              {% else %}
+              To
+              <strong>{% if req.counterparty %}{{ req.counterparty.name }}{% else %}another shop{% endif %}</strong>
+              {% endif %}
+            </p>
+            <p class="stock-request-meta">
+              {% if req.responded_by %}
+              {{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}
+              ·
+              {% endif %}
+              {% if req.responded_at %}
+              {{ req.responded_at|date:"d M Y · H:i" }}
+              {% else %}
+              {{ req.created_at|date:"d M Y · H:i" }}
+              {% endif %}
+              ·
+              {{ req.units_total }} unit{{ req.units_total|pluralize }}
+            </p>
+          </div>
+        </div>
+
+        <ul class="stock-request-lines">
+          {% for line in req.lines.all %}
+          <li>
+            <span>{{ line.item.name }}</span>
+            <strong>× {{ line.quantity }}</strong>
+          </li>
+          {% empty %}
+          <li>
+            <span>No line items</span>
+            <strong>× 0</strong>
+          </li>
+          {% endfor %}
+        </ul>
+
+        {% if req.request_status == "fulfilled" %}
+          {% if req.is_incoming %}
+          <p class="stock-request-notes">Stock was transferred out of this shop.</p>
+          {% else %}
+          <p class="stock-request-notes">Stock was transferred into this shop.</p>
+          {% endif %}
+        {% else %}
+        <p class="stock-request-notes">No stock was transferred.</p>
+        {% endif %}
+        {% for line in req.lines.all %}
+          {% if line.note %}
+          <p class="stock-request-notes">{{ line.item.name }}: {{ line.note }}</p>
+          {% endif %}
+        {% endfor %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="stock-request-history-empty">No previous requests yet for this shop.</p>
+    {% endif %}
+  </section>
+</section>
+
+{% include "shops/partials/stock_request_modals.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
+<script src="{% static 'js/shop-printer.js' %}?v=18"></script>
+<script src="{% static 'js/my-shop.js' %}?v=36"></script>
+{% endblock %}

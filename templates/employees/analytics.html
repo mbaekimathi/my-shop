@@ -1,0 +1,156 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="ax" data-animate="rise" data-analytics>
+  <header class="ax-top">
+    <div class="ax-top-main">
+      <div class="ax-title">
+        <h2>{{ page.headline }}</h2>
+        <span class="ax-period">{{ report_period_label }}</span>
+      </div>
+      <form class="ax-filters" method="get" data-analytics-filters>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="range" data-analytics-range aria-label="Time range">
+          <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == 'month' %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == 'year' %} selected{% endif %}>Year</option>
+        </select>
+        <input type="date" name="date" value="{{ report_date_value }}" data-range-field="day"{% if report_range != 'day' %} hidden disabled{% endif %} required aria-label="Date">
+        <input type="date" name="date_from" value="{{ report_date_from }}" data-range-field="period"{% if report_range != 'period' %} hidden disabled{% endif %} required aria-label="From">
+        <input type="date" name="date_to" value="{{ report_date_to }}" data-range-field="period"{% if report_range != 'period' %} hidden disabled{% endif %} required aria-label="To">
+        <input type="month" name="month" value="{{ report_month_value }}" data-range-field="month"{% if report_range != 'month' %} hidden disabled{% endif %} required aria-label="Month">
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          data-range-field="year"
+          {% if report_range != 'year' %}hidden disabled{% endif %}
+          required
+          aria-label="Year"
+        >
+        <button type="submit" class="ax-apply">Apply</button>
+      </form>
+    </div>
+    <p class="ax-lead">{{ page.lead }}</p>
+  </header>
+
+  {% if page.alerts %}
+  <div class="ax-alerts" aria-label="Decision alerts">
+    {% for alert in page.alerts %}
+    <article class="ax-alert is-{{ alert.level }}">
+      <div class="ax-alert-main">
+        <strong>{{ alert.title }}</strong>
+        <p>{{ alert.detail }}</p>
+      </div>
+      {% if alert.action %}
+      <p class="ax-alert-action"><span>Do next</span> {{ alert.action }}</p>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if page.metrics %}
+  <div class="ax-kpis ax-kpis--dynamic" aria-label="Key metrics">
+    {% for metric in page.metrics %}
+    <article class="ax-kpi{% if metric.tone and metric.tone != 'neutral' %} is-{{ metric.tone }}{% endif %}">
+      <span>{{ metric.label }}</span>
+      <strong>{{ metric.value }}</strong>
+      {% if metric.hint %}<em>{{ metric.hint }}</em>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if page.insights %}
+  <div class="ax-insights">
+    {% for tip in page.insights %}
+    <article class="ax-insight">
+      <h3>{{ tip.title }}</h3>
+      <p>{{ tip.body }}</p>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if page.tables %}
+  <div class="ax-grid ax-grid--tables">
+    {% for table in page.tables %}
+    <section class="ax-card{% if page.tables|length == 1 %} ax-card--wide{% endif %}">
+      <header class="ax-card-head">
+        <h3>{{ table.title }}</h3>
+      </header>
+      <div class="ax-table-wrap ax-table-wrap--scroll">
+        {% if table.rows %}
+        <table class="ax-table">
+          <thead>
+            <tr>
+              {% for col in table.columns %}<th>{{ col }}</th>{% endfor %}
+            </tr>
+          </thead>
+            <tbody>
+            {% for row in table.rows %}
+            <tr>
+              {% for cell in row %}
+              <td>
+                {% if cell.href %}
+                <a class="ax-link" href="{{ cell.href }}">{{ cell.label }}</a>
+                {% elif cell.label %}
+                {{ cell.label }}
+                {% else %}
+                {{ cell }}
+                {% endif %}
+              </td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="ax-empty">{{ table.empty }}</p>
+        {% endif %}
+      </div>
+      {% if table.footnote %}
+      <p class="ax-footnote">{{ table.footnote }}</p>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const form = document.querySelector("[data-analytics-filters]");
+    if (!form) return;
+    const rangeSelect = form.querySelector("[data-analytics-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const syncRange = () => {
+      const range = rangeSelect?.value || "day";
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.disabled = !match;
+        field.required = match;
+      });
+    };
+    rangeSelect?.addEventListener("change", syncRange);
+    syncRange();
+  })();
+</script>
+{% endblock %}

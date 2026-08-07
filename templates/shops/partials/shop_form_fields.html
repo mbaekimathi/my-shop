@@ -1,0 +1,80 @@
+<label class="field">
+  <span class="field-label">Branch name</span>
+  <input type="text" name="name" value="{{ form_data.name }}" required placeholder="e.g. RICHCOM CBD" id="{{ prefix }}name" data-uppercase autocomplete="organization">
+</label>
+<label class="field">
+  <span class="field-label">Branch location</span>
+  <input type="text" name="location" value="{{ form_data.location }}" required placeholder="e.g. NAIROBI CBD" id="{{ prefix }}location" data-uppercase autocomplete="street-address">
+</label>
+<label class="field">
+  <span class="field-label">Branch email</span>
+  <input type="email" name="email" value="{{ form_data.email }}" required placeholder="e.g. cbd@richcom.co.ke" id="{{ prefix }}email" data-lowercase autocomplete="email">
+</label>
+<label class="field">
+  <span class="field-label">Branch phone number</span>
+  <input type="tel" name="phone_number" value="{{ form_data.phone_number }}" required placeholder="e.g. +254712345678" id="{{ prefix }}phone-number" data-uppercase autocomplete="tel">
+</label>
+<label class="field">
+  <span class="field-label">Branch login code</span>
+  <input
+    type="text"
+    name="login_code"
+    value="{{ form_data.login_code }}"
+    required
+    inputmode="numeric"
+    pattern="[0-9]{6}"
+    maxlength="6"
+    minlength="6"
+    placeholder="e.g. 123456"
+    id="{{ prefix }}login-code"
+    autocomplete="off"
+    title="Enter exactly 6 digits"
+  >
+</label>
+<div class="field-row">
+  <label class="field">
+    <span class="field-label">{% if password_optional %}Branch password <em>(optional)</em>{% else %}Branch password{% endif %}</span>
+    <div class="password-field">
+      <input
+        type="password"
+        name="password"
+        {% if not password_optional %}required{% endif %}
+        autocomplete="new-password"
+        minlength="6"
+        placeholder="{% if password_optional %}Leave blank to keep current{% else %}Min. 6 characters{% endif %}"
+        id="{{ prefix }}password"
+        data-password
+        aria-describedby="{{ prefix }}password-match-status"
+      >
+      <button class="password-toggle" type="button" aria-label="Show password" data-password-toggle>
+        <i data-lucide="eye" aria-hidden="true" data-eye-open></i>
+        <i data-lucide="eye-off" aria-hidden="true" data-eye-closed hidden></i>
+      </button>
+    </div>
+  </label>
+  <label class="field">
+    <span class="field-label">Confirm password</span>
+    <div class="password-field">
+      <input
+        type="password"
+        name="password_confirm"
+        {% if not password_optional %}required{% endif %}
+        autocomplete="new-password"
+        minlength="6"
+        placeholder="{% if password_optional %}Re-enter new password{% else %}Re-enter password{% endif %}"
+        id="{{ prefix }}password-confirm"
+        data-password-confirm
+        aria-describedby="{{ prefix }}password-match-status"
+      >
+      <button class="password-toggle" type="button" aria-label="Show password" data-password-toggle>
+        <i data-lucide="eye" aria-hidden="true" data-eye-open></i>
+        <i data-lucide="eye-off" aria-hidden="true" data-eye-closed hidden></i>
+      </button>
+    </div>
+  </label>
+</div>
+<p class="field-hint" id="{{ prefix }}password-match-status" data-password-match role="status" aria-live="polite"></p>
+<label class="field">
+  <span class="field-label">Branch image <em>(optional)</em></span>
+  <input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif" id="{{ prefix }}image">
+</label>

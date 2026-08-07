@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Registration Submitted — MY-SHOP{% endblock %}
+{% block body_class %}page-auth{% endblock %}
+
+{% block body %}
+<div class="auth-shell auth-shell--solo">
+  <main class="auth-main">
+    <div class="auth-toolbar">
+      <a class="auth-back" href="{% url 'core:landing' %}">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+        <span>Back</span>
+      </a>
+      {% include "partials/theme_toggle.html" %}
+    </div>
+    <div class="auth-card" data-animate="rise">
+      <div class="status-panel">
+        <div class="status-icon status-icon--pending">
+          <i data-lucide="hourglass" aria-hidden="true"></i>
+        </div>
+        <h1>Pending approval</h1>
+        <p>
+          Your registration for employee ID <strong>{{ employee_id }}</strong> was received.
+          Your role is set to <strong>Employee</strong> and your status is
+          <strong>Pending Approval</strong>.
+        </p>
+        <p>
+          An administrator must activate your account before you can sign in.
+        </p>
+        <a class="btn btn--primary btn--block auth-submit" href="{% url 'employees:login' %}">
+          <i data-lucide="log-in" aria-hidden="true"></i>
+          <span>Go to Employee Login</span>
+        </a>
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}

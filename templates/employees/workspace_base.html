@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block body_class %}page-workspace{% endblock %}
+
+{% block body %}
+<div class="workspace" data-workspace data-dashboard-url="{{ page_sidebar.dashboard_url }}">
+  <div class="workspace-overlay" data-workspace-overlay hidden></div>
+
+  {% include "employees/partials/workspace_sidebar.html" %}
+
+  <div class="workspace-frame">
+    {% include "employees/partials/workspace_header.html" %}
+
+    <main class="workspace-main" id="workspace-main">
+      {% block workspace_content %}{% endblock %}
+    </main>
+
+    {% if messages %}
+    <div class="workspace-toast" role="status" aria-live="polite" data-workspace-toast>
+      <ul class="message-list workspace-messages">
+        {% for message in messages %}
+        {% if 'error' in message.tags %}
+        <li class="workspace-toast__item workspace-toast__item--error" data-toast-duration="4000">
+          <span class="workspace-toast__icon" aria-hidden="true">
+            <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
+              <circle class="workspace-toast__ring" cx="26" cy="26" r="24" fill="none" />
+              <path class="workspace-toast__mark workspace-toast__mark--x" fill="none" d="M18 18 L34 34 M34 18 L18 34" />
+            </svg>
+          </span>
+          <span class="workspace-toast__text">{{ message }}</span>
+        </li>
+        {% elif 'warning' in message.tags %}
+        <li class="workspace-toast__item workspace-toast__item--warning" data-toast-duration="4000">
+          <span class="workspace-toast__icon" aria-hidden="true">
+            <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
+              <circle class="workspace-toast__ring" cx="26" cy="26" r="24" fill="none" />
+              <path class="workspace-toast__mark workspace-toast__mark--warn" fill="none" d="M26 16 V30 M26 36 V38" />
+            </svg>
+          </span>
+          <span class="workspace-toast__text">{{ message }}</span>
+        </li>
+        {% else %}
+        <li class="workspace-toast__item workspace-toast__item--success" data-toast-duration="1000">
+          <span class="workspace-toast__icon" aria-hidden="true">
+            <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
+              <circle class="workspace-toast__ring" cx="26" cy="26" r="24" fill="none" />
+              <path class="workspace-toast__mark workspace-toast__mark--check" fill="none" d="M14.5 27.2 l7.1 7.2 16.4-16.8" />
+            </svg>
+          </span>
+          <span class="workspace-toast__text">{{ message }}</span>
+        </li>
+        {% endif %}
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% include "employees/partials/workspace_footer.html" %}
+  </div>
+</div>
+{% block workspace_overlays %}{% endblock %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const root = document.querySelector("[data-workspace]");
+    if (!root) return;
+    const overlay = root.querySelector("[data-workspace-overlay]");
+    const openers = document.querySelectorAll("[data-workspace-open]");
+    const closers = document.querySelectorAll("[data-workspace-close]");
+
+    const setOpen = (open) => {
+      root.classList.toggle("is-sidebar-open", open);
+      if (overlay) overlay.hidden = !open;
+      document.body.classList.toggle("workspace-lock", open);
+    };
+
+    openers.forEach((btn) => btn.addEventListener("click", () => setOpen(true)));
+    closers.forEach((btn) => btn.addEventListener("click", () => setOpen(false)));
+    overlay?.addEventListener("click", () => setOpen(false));
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setOpen(false);
+    });
+
+    root.querySelectorAll("[data-workspace-nav]").forEach((link) => {
+      link.addEventListener("click", () => setOpen(false));
+    });
+
+    // Sidebar action modals: open when present, otherwise follow data-href.
+    const closeWorkspaceActionModal = (name) => {
+      const modal = document.querySelector(`[data-modal="${name}"]`);
+      if (!modal || modal.hidden) return;
+      modal.hidden = true;
+      modal.setAttribute("aria-hidden", "true");
+      const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+      document.body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+    };
+
+    const openWorkspaceActionModal = (name, focusSelector) => {
+      const modal = document.querySelector(`[data-modal="${name}"]`);
+      if (!modal) return false;
+      modal.hidden = false;
+      modal.setAttribute("aria-hidden", "false");
+      document.body.classList.add("workspace-modal-open");
+      modal.dispatchEvent(
+        new CustomEvent(`${name}-modal:open`, { bubbles: true })
+      );
+      if (window.lucide?.createIcons) window.lucide.createIcons();
+      if (focusSelector) {
+        const focusEl = modal.querySelector(focusSelector);
+        window.setTimeout(() => focusEl?.focus(), 40);
+      }
+      return true;
+    };
+
+    ["buy-stock", "register-expense"].forEach((name) => {
+      document.querySelectorAll(`[data-modal-open="${name}"]`).forEach((trigger) => {
+        trigger.addEventListener("click", (event) => {
+          const focusSelector =
+            name === "buy-stock" ? "[data-item-search]" : "[data-expense-category]";
+          if (openWorkspaceActionModal(name, focusSelector)) {
+            event.preventDefault();
+            return;
+          }
+          const href = trigger.getAttribute("data-href");
+          if (href) window.location.assign(href);
+        });
+      });
+
+      document.querySelectorAll(`[data-modal-close="${name}"]`).forEach((el) => {
+        el.addEventListener("click", () => closeWorkspaceActionModal(name));
+      });
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      const countryOpen = document.querySelector(
+        "[data-stock-country-menu]:not([hidden])"
+      );
+      if (countryOpen) return;
+      const openModal = document.querySelector(
+        '.workspace-modal[data-modal]:not([hidden])'
+      );
+      const name = openModal?.getAttribute("data-modal");
+      if (name === "buy-stock" || name === "register-expense") {
+        closeWorkspaceActionModal(name);
+      }
+    });
+
+    const userMenu = document.querySelector("[data-user-menu]");
+    const userMenuTrigger = userMenu?.querySelector("[data-user-menu-trigger]");
+    const userMenuPanel = userMenu?.querySelector("[data-user-menu-panel]");
+    const greetingEl = userMenu?.querySelector("[data-user-greeting]");
+
+    const setUserMenuOpen = (open) => {
+      if (!userMenuTrigger || !userMenuPanel) return;
+      userMenuPanel.hidden = !open;
+      userMenuTrigger.setAttribute("aria-expanded", String(open));
+      if (open && window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    if (greetingEl && userMenuTrigger) {
+      const firstName = userMenuTrigger.dataset.userFirstName || "";
+      const hour = new Date().getHours();
+      let greeting = "Good evening";
+      if (hour < 12) greeting = "Good morning";
+      else if (hour < 17) greeting = "Good afternoon";
+      greetingEl.textContent = firstName ? `${greeting}, ${firstName}` : greeting;
+    }
+
+    userMenuTrigger?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setUserMenuOpen(Boolean(userMenuPanel?.hidden));
+    });
+
+    userMenuPanel?.querySelectorAll("a").forEach((link) => {
+      link.addEventListener("click", () => setUserMenuOpen(false));
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!userMenu?.contains(event.target)) setUserMenuOpen(false);
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && userMenuPanel && !userMenuPanel.hidden) {
+        setUserMenuOpen(false);
+        userMenuTrigger?.focus();
+      }
+    });
+
+    const toast = document.querySelector("[data-workspace-toast]");
+    if (toast) {
+      const items = [...toast.querySelectorAll("[data-toast-duration]")];
+      const duration = Math.max(
+        ...items.map((el) => Number(el.dataset.toastDuration) || 1000),
+        1000
+      );
+      window.setTimeout(() => {
+        toast.classList.add("is-hiding");
+        window.setTimeout(() => toast.remove(), 220);
+      }, duration);
+    }
+  })();
+</script>
+{% endblock %}

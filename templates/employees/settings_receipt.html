@@ -1,0 +1,417 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section class="item-panel item-panel--dense" data-animate="rise" data-pos-settings data-receipt-settings>
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }} Choose print channels and the thermal paper size used at checkout.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="pos-settings-groups">
+    {% for group in pos_setting_groups %}
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>{{ group.title }}</h3>
+        <p>{{ group.summary }}</p>
+      </div>
+      <ul class="pos-settings-list">
+        {% for toggle in group.toggles %}
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>{{ toggle.label }}</strong>
+          </div>
+          <label class="perm-switch">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if toggle.enabled %}checked{% endif %}
+              data-pos-toggle
+              data-field="{{ toggle.field }}"
+              aria-label="{{ toggle.label }}"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if toggle.enabled %}Enabled{% else %}Disabled{% endif %}
+            </span>
+          </label>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+
+    <section class="pos-settings-group receipt-paper-group">
+      <div class="pos-settings-group-head">
+        <h3>Paper size</h3>
+        <p>Select the thermal roll width used by shop printers. The active size is used when receipts print.</p>
+      </div>
+      <div class="receipt-paper-picker" role="group" aria-label="Receipt paper size">
+        <label class="receipt-paper-option{% if receipt_paper_width == '80' %} is-active{% endif %}">
+          <input
+            type="radio"
+            name="receipt_paper_width"
+            value="80"
+            data-receipt-paper
+            {% if receipt_paper_width == "80" %}checked{% endif %}
+          >
+          <span class="receipt-paper-option-copy">
+            <strong>80 mm</strong>
+            <em>Standard thermal roll · wider layout</em>
+          </span>
+        </label>
+        <label class="receipt-paper-option{% if receipt_paper_width == '58' %} is-active{% endif %}">
+          <input
+            type="radio"
+            name="receipt_paper_width"
+            value="58"
+            data-receipt-paper
+            {% if receipt_paper_width == "58" %}checked{% endif %}
+          >
+          <span class="receipt-paper-option-copy">
+            <strong>58 mm</strong>
+            <em>Compact roll · denser layout</em>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <section class="pos-settings-group receipt-format-group">
+      <div class="pos-settings-group-head">
+        <h3>Receipt number format</h3>
+        <p>
+          Short prefix for sale, credit, and quotation codes. New documents use a
+          simple 4-digit sequence (example: <code>S0001</code>).
+        </p>
+      </div>
+      <ul class="pos-settings-list receipt-format-list">
+        <li class="pos-settings-row pos-settings-row--format">
+          <div class="pos-settings-copy">
+            <strong>Sale</strong>
+            <p data-receipt-format-preview="sale">Example: {{ receipt_format_previews.sale }}</p>
+          </div>
+          <label class="receipt-format-field">
+            <input
+              type="text"
+              maxlength="8"
+              spellcheck="false"
+              autocomplete="off"
+              value="{{ receipt_format_sale }}"
+              data-receipt-format="sale"
+              aria-label="Sale receipt number format"
+            >
+          </label>
+        </li>
+        <li class="pos-settings-row pos-settings-row--format">
+          <div class="pos-settings-copy">
+            <strong>Credit</strong>
+            <p data-receipt-format-preview="credit">Example: {{ receipt_format_previews.credit }}</p>
+          </div>
+          <label class="receipt-format-field">
+            <input
+              type="text"
+              maxlength="8"
+              spellcheck="false"
+              autocomplete="off"
+              value="{{ receipt_format_credit }}"
+              data-receipt-format="credit"
+              aria-label="Credit receipt number format"
+            >
+          </label>
+        </li>
+        <li class="pos-settings-row pos-settings-row--format">
+          <div class="pos-settings-copy">
+            <strong>Quotation</strong>
+            <p data-receipt-format-preview="quotation">Example: {{ receipt_format_previews.quotation }}</p>
+          </div>
+          <label class="receipt-format-field">
+            <input
+              type="text"
+              maxlength="8"
+              spellcheck="false"
+              autocomplete="off"
+              value="{{ receipt_format_quotation }}"
+              data-receipt-format="quotation"
+              aria-label="Quotation receipt number format"
+            >
+          </label>
+        </li>
+      </ul>
+    </section>
+
+    <section class="pos-settings-group receipt-payment-group">
+      <div class="pos-settings-group-head">
+        <h3>Payment details</h3>
+        <p>M-Pesa collection details printed on receipts so customers know where to pay.</p>
+      </div>
+      <div class="receipt-payment-body">
+        <div class="receipt-paper-picker receipt-payment-type" role="group" aria-label="M-Pesa collection type">
+          <label class="receipt-paper-option{% if mpesa_collection_type == 'paybill' %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="mpesa_collection_type"
+              value="paybill"
+              data-mpesa-type
+              {% if mpesa_collection_type == "paybill" %}checked{% endif %}
+            >
+            <span class="receipt-paper-option-copy">
+              <strong>Paybill</strong>
+              <em>Business number and account number</em>
+            </span>
+          </label>
+          <label class="receipt-paper-option{% if mpesa_collection_type == 'buy_goods' %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="mpesa_collection_type"
+              value="buy_goods"
+              data-mpesa-type
+              {% if mpesa_collection_type == "buy_goods" %}checked{% endif %}
+            >
+            <span class="receipt-paper-option-copy">
+              <strong>Buy Goods</strong>
+              <em>Till number only</em>
+            </span>
+          </label>
+        </div>
+
+        <ul class="pos-settings-list">
+          <li class="pos-settings-row pos-settings-row--format" data-mpesa-fields="paybill"{% if mpesa_collection_type != "paybill" %} hidden{% endif %}>
+            <div class="pos-settings-copy">
+              <strong>Business number</strong>
+              <p>Paybill shortcode customers dial.</p>
+            </div>
+            <label class="receipt-format-field receipt-format-field--wide">
+              <input
+                type="text"
+                inputmode="numeric"
+                maxlength="8"
+                autocomplete="off"
+                value="{{ mpesa_business_number }}"
+                data-mpesa-field="business_number"
+                aria-label="Paybill business number"
+              >
+            </label>
+          </li>
+          <li class="pos-settings-row pos-settings-row--format" data-mpesa-fields="paybill"{% if mpesa_collection_type != "paybill" %} hidden{% endif %}>
+            <div class="pos-settings-copy">
+              <strong>Account number</strong>
+              <p>Optional account reference for Paybill.</p>
+            </div>
+            <label class="receipt-format-field receipt-format-field--wide">
+              <input
+                type="text"
+                maxlength="40"
+                autocomplete="off"
+                value="{{ mpesa_account_number }}"
+                data-mpesa-field="account_number"
+                aria-label="Paybill account number"
+              >
+            </label>
+          </li>
+          <li class="pos-settings-row pos-settings-row--format" data-mpesa-fields="buy_goods"{% if mpesa_collection_type != "buy_goods" %} hidden{% endif %}>
+            <div class="pos-settings-copy">
+              <strong>Till number</strong>
+              <p>Buy Goods till customers pay to.</p>
+            </div>
+            <label class="receipt-format-field receipt-format-field--wide">
+              <input
+                type="text"
+                inputmode="numeric"
+                maxlength="8"
+                autocomplete="off"
+                value="{{ mpesa_till_number }}"
+                data-mpesa-field="till_number"
+                aria-label="Buy Goods till number"
+              >
+            </label>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="pos-settings-group receipt-font-group">
+      <div class="pos-settings-group-head">
+        <h3>Receipt text style</h3>
+        <p>Choose how large and bold the printed receipt letters appear.</p>
+      </div>
+      <ul class="pos-settings-list">
+        <li class="pos-settings-row pos-settings-row--format">
+          <div class="pos-settings-copy">
+            <strong>Font size</strong>
+            <p>Applies to both 80 mm and 58 mm previews and printouts.</p>
+          </div>
+          <label class="receipt-select-field">
+            <select data-receipt-font-size aria-label="Receipt font size">
+              {% for value, label in receipt_font_size_choices %}
+              <option value="{{ value }}"{% if receipt_font_size == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </li>
+        <li class="pos-settings-row pos-settings-row--format">
+          <div class="pos-settings-copy">
+            <strong>Boldness</strong>
+            <p>Regular through extra bold letter weight.</p>
+          </div>
+          <label class="receipt-select-field">
+            <select data-receipt-font-weight aria-label="Receipt font boldness">
+              {% for value, label in receipt_font_weight_choices %}
+              <option value="{{ value }}"{% if receipt_font_weight == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </li>
+      </ul>
+    </section>
+
+    <section class="pos-settings-group receipt-qr-group">
+      <div class="pos-settings-group-head">
+        <h3>QR code</h3>
+        <p>Print a scannable QR on receipts. When enabled, choose whether it opens the company website or encodes receipt details.</p>
+      </div>
+      <ul class="pos-settings-list">
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>Show QR code on receipt</strong>
+          </div>
+          <label class="perm-switch">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if enable_receipt_qr %}checked{% endif %}
+              data-receipt-qr-enabled
+              aria-label="Show QR code on receipt"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state" data-receipt-qr-enabled-label>
+              {% if enable_receipt_qr %}Enabled{% else %}Disabled{% endif %}
+            </span>
+          </label>
+        </li>
+      </ul>
+
+      <div class="receipt-qr-options" data-receipt-qr-options{% if not enable_receipt_qr %} hidden{% endif %}>
+        <div class="receipt-paper-picker receipt-qr-content" role="group" aria-label="QR code content">
+          <label class="receipt-paper-option{% if receipt_qr_content == 'website' %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="receipt_qr_content"
+              value="website"
+              data-receipt-qr-content
+              {% if receipt_qr_content == "website" %}checked{% endif %}
+            >
+            <span class="receipt-paper-option-copy">
+              <strong>Company website</strong>
+              <em>Opens your website when scanned</em>
+            </span>
+          </label>
+          <label class="receipt-paper-option{% if receipt_qr_content == 'receipt_details' %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="receipt_qr_content"
+              value="receipt_details"
+              data-receipt-qr-content
+              {% if receipt_qr_content == "receipt_details" %}checked{% endif %}
+            >
+            <span class="receipt-paper-option-copy">
+              <strong>Receipt details</strong>
+              <em>Encodes receipt number, total, and shop info</em>
+            </span>
+          </label>
+        </div>
+
+        <ul class="pos-settings-list" data-receipt-qr-website-row{% if receipt_qr_content != "website" %} hidden{% endif %}>
+          <li class="pos-settings-row pos-settings-row--format">
+            <div class="pos-settings-copy">
+              <strong>Website URL</strong>
+              <p>Customers open this link when they scan the QR.</p>
+            </div>
+            <label class="receipt-format-field receipt-format-field--url">
+              <input
+                type="url"
+                maxlength="255"
+                autocomplete="url"
+                placeholder="https://example.com"
+                value="{{ receipt_qr_website }}"
+                data-receipt-qr-website
+                aria-label="Company website URL for QR code"
+              >
+            </label>
+          </li>
+        </ul>
+      </div>
+    </section>
+  </div>
+
+  <section class="receipt-design-panel" data-animate="rise">
+    <div class="receipt-design-head">
+      <div>
+        <h3>Print preview</h3>
+        <p>How a sale receipt appears on 80 mm and 58 mm paper.</p>
+      </div>
+      <div class="receipt-design-actions">
+        <p class="receipt-design-hint" data-receipt-active-label>
+          Active: {% if receipt_paper_width == "58" %}58 mm{% else %}80 mm{% endif %}
+        </p>
+        <button type="button" class="btn btn--ghost" data-receipt-print-sample>
+          Print sample
+        </button>
+      </div>
+    </div>
+
+    {{ receipt_sample|json_script:"receipt-sample-data" }}
+
+    <div class="receipt-design-stage">
+      <article
+        class="receipt-preview-card{% if receipt_paper_width == '80' %} is-selected{% endif %}"
+        data-receipt-preview="80"
+      >
+        <header class="receipt-preview-card-head">
+          <span>80 mm</span>
+          <strong data-receipt-badge-80>{% if receipt_paper_width == "80" %}Selected{% else %}Preview{% endif %}</strong>
+        </header>
+        <div
+          class="receipt-ticket receipt-ticket--80"
+          aria-label="80 millimetre receipt preview"
+          data-receipt-ticket="80"
+          style="--receipt-font-size: {{ receipt_font_size_px_80 }}; --receipt-font-weight: {{ receipt_font_weight_css }};"
+        >
+          {% include "employees/partials/receipt_ticket.html" with size="80" %}
+        </div>
+      </article>
+
+      <article
+        class="receipt-preview-card{% if receipt_paper_width == '58' %} is-selected{% endif %}"
+        data-receipt-preview="58"
+      >
+        <header class="receipt-preview-card-head">
+          <span>58 mm</span>
+          <strong data-receipt-badge-58>{% if receipt_paper_width == "58" %}Selected{% else %}Preview{% endif %}</strong>
+        </header>
+        <div
+          class="receipt-ticket receipt-ticket--58"
+          aria-label="58 millimetre receipt preview"
+          data-receipt-ticket="58"
+          style="--receipt-font-size: {{ receipt_font_size_px_58 }}; --receipt-font-weight: {{ receipt_font_weight_css }};"
+        >
+          {% include "employees/partials/receipt_ticket.html" with size="58" %}
+        </div>
+      </article>
+    </div>
+  </section>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/pos-settings.js' %}"></script>
+<script src="{% static 'js/shop-printer.js' %}?v=16"></script>
+<script src="{% static 'js/receipt-settings.js' %}?v=3"></script>
+{% endblock %}

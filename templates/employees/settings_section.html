@@ -1,0 +1,21 @@
+{% extends "employees/workspace_base.html" %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="item-panel item-panel--dense" data-animate="rise">
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }}</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="dashboard-placeholder">
+    <i data-lucide="{{ meta.icon }}" aria-hidden="true"></i>
+    <p><strong>{{ meta.title }}</strong> is coming soon. This settings section will be available in a future update.</p>
+  </div>
+</section>
+{% endblock %}

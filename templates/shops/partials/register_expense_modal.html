@@ -1,0 +1,34 @@
+{% if register_expense_modal %}
+<div
+  class="workspace-modal register-expense-modal"
+  data-modal="register-expense"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close="register-expense"></div>
+  <div
+    class="workspace-modal-dialog register-expense-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="register-expense-modal-title"
+  >
+    <div class="workspace-modal-head register-expense-modal-head">
+      <div>
+        <p class="register-expense-modal-kicker">{{ shop.name }}</p>
+        <h2 id="register-expense-modal-title">Register expense</h2>
+      </div>
+      <button
+        class="workspace-icon-btn"
+        type="button"
+        aria-label="Close"
+        data-modal-close="register-expense"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="register-expense-modal-body">
+      {% include "shops/partials/register_expense_form.html" with expense_compact=True expense_next=expense_next %}
+    </div>
+  </div>
+</div>
+{% endif %}

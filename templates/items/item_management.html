@@ -1,0 +1,164 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Item Management — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="item-panel item-panel--dense" data-animate="rise" data-item-total="{{ item_count }}">
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Registered items</h2>
+        <p>Search, edit, and manage inventory items.</p>
+      </div>
+      <p class="item-count" data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</p>
+    </div>
+    <div class="item-search">
+      <label class="item-search-field">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input
+          type="search"
+          placeholder="Search by name, category, or description…"
+          autocomplete="off"
+          data-item-search
+          aria-label="Search items"
+        >
+      </label>
+    </div>
+  </div>
+
+  {% if items_by_category %}
+  <div class="item-list" data-item-list>
+    {% for group in items_by_category %}
+    <section class="item-category-group" data-item-category-group>
+      <header class="item-category-head">
+        <h3 class="item-category-title">{{ group.category }}</h3>
+        <span class="item-category-count" data-category-count>{{ group.items|length }}</span>
+      </header>
+      <div class="item-table-wrap">
+        <table class="item-table item-table--dense">
+          <thead>
+            <tr>
+              <th scope="col" class="item-col--item">Item</th>
+              <th scope="col" class="item-col--price">Shop price</th>
+              <th scope="col" class="item-col--range">Price range</th>
+              <th scope="col" class="item-col--status">Status</th>
+              <th scope="col" class="item-col--actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in group.items %}
+            {% include "items/partials/item_row.html" with row=row %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+
+  <div class="item-search-empty" data-item-no-results hidden>
+    <i data-lucide="search-x" aria-hidden="true"></i>
+    <p>No items match your search.</p>
+  </div>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="package" aria-hidden="true"></i>
+    <p>No items registered yet. Open <strong>Register item</strong> from the sidebar to add your first item.</p>
+  </div>
+  {% endif %}
+</section>
+
+<div
+  class="workspace-modal"
+  id="register-item-modal"
+  data-modal="register-item"
+  {% if not open_register_modal %}hidden{% endif %}
+  aria-hidden="{% if open_register_modal %}false{% else %}true{% endif %}"
+>
+  <div class="workspace-modal-backdrop" data-modal-close></div>
+  <div class="workspace-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="register-item-title">
+    <div class="workspace-modal-head">
+      <h2 id="register-item-title">Register item</h2>
+      <button class="workspace-icon-btn" type="button" aria-label="Close" data-modal-close>
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    {% if open_register_modal and form_errors %}
+    <ul class="form-alert-list workspace-modal-errors">
+      {% for error in form_errors %}
+      <li class="form-alert">{{ error }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <form class="workspace-modal-form" method="post" enctype="multipart/form-data" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="action" value="register">
+      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="" %}
+      <div class="workspace-modal-actions">
+        <button class="btn btn--ghost" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn--primary" type="submit">
+          <i data-lucide="plus" aria-hidden="true"></i>
+          <span>Register item</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div
+  class="workspace-modal"
+  id="edit-item-modal"
+  data-modal="edit-item"
+  {% if not open_edit_modal %}hidden{% endif %}
+  aria-hidden="{% if open_edit_modal %}false{% else %}true{% endif %}"
+>
+  <div class="workspace-modal-backdrop" data-modal-close></div>
+  <div class="workspace-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-item-title">
+    <div class="workspace-modal-head">
+      <h2 id="edit-item-title">Edit item</h2>
+      <button class="workspace-icon-btn" type="button" aria-label="Close" data-modal-close>
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    {% if open_edit_modal and form_errors %}
+    <ul class="form-alert-list workspace-modal-errors">
+      {% for error in form_errors %}
+      <li class="form-alert">{{ error }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <form class="workspace-modal-form" method="post" enctype="multipart/form-data" novalidate data-edit-form>
+      {% csrf_token %}
+      <input type="hidden" name="action" value="edit">
+      <input type="hidden" name="item_id" value="{% if edit_item %}{{ edit_item.pk }}{% endif %}" data-edit-item-id>
+      <div class="item-current-image" data-current-image-wrap {% if not open_edit_modal or not edit_item.image %}hidden{% endif %}>
+        <img src="{% if edit_item.image %}{{ edit_item.image.url }}{% endif %}" alt="" width="56" height="56" data-current-image>
+        <label class="field field--checkbox">
+          <input type="checkbox" name="remove_image" value="1" data-remove-image>
+          <span>Remove current image</span>
+        </label>
+      </div>
+      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="edit-" %}
+      <div class="workspace-modal-actions">
+        <button class="btn btn--ghost" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn--primary" type="submit">
+          <i data-lucide="check" aria-hidden="true"></i>
+          <span>Save changes</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/item-management.js' %}?v=7"></script>
+<script src="{% static 'js/item-search.js' %}"></script>
+{% endblock %}

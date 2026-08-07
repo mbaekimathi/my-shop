@@ -1,0 +1,103 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}HR Management — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="item-panel item-panel--dense" data-animate="rise">
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Employees</h2>
+        <p>Manage active and suspended employees.</p>
+      </div>
+      <p class="item-count">
+        {{ employees_page.paginator.count }} employee{{ employees_page.paginator.count|pluralize }}
+        {% if employees_page.paginator.num_pages > 1 %}
+        <span class="staff-count-page">· page {{ employees_page.number }}/{{ employees_page.paginator.num_pages }}</span>
+        {% endif %}
+        {% if pending_count %}
+        · <a href="{{ approvals_url }}">{{ pending_count }} pending</a>
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {% if employees %}
+  <div class="item-table-wrap">
+    <table class="item-table item-table--dense staff-table">
+      <thead>
+        <tr>
+          <th scope="col" class="item-col--item">Employee</th>
+          <th scope="col">ID</th>
+          <th scope="col">Role</th>
+          <th scope="col" class="item-col--status">Status</th>
+          <th scope="col" class="item-col--actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for employee in employees %}
+        {% include "employees/partials/employee_row.html" %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if employees_page.has_other_pages %}
+  <nav class="pagination" aria-label="Employee list pages">
+    {% if pagination.previous_url %}
+    <a class="pagination-link" href="{{ pagination.previous_url }}">
+      <i data-lucide="chevron-left" aria-hidden="true"></i>
+      <span>Previous</span>
+    </a>
+    {% else %}
+    <span class="pagination-link pagination-link--disabled">
+      <i data-lucide="chevron-left" aria-hidden="true"></i>
+      <span>Previous</span>
+    </span>
+    {% endif %}
+
+    <span class="pagination-status">
+      Page {{ employees_page.number }} of {{ employees_page.paginator.num_pages }}
+    </span>
+
+    {% if pagination.next_url %}
+    <a class="pagination-link" href="{{ pagination.next_url }}">
+      <span>Next</span>
+      <i data-lucide="chevron-right" aria-hidden="true"></i>
+    </a>
+    {% else %}
+    <span class="pagination-link pagination-link--disabled">
+      <span>Next</span>
+      <i data-lucide="chevron-right" aria-hidden="true"></i>
+    </span>
+    {% endif %}
+  </nav>
+  {% endif %}
+
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="users" aria-hidden="true"></i>
+    <p>
+      No active or suspended employees yet.
+      {% if pending_count %}
+      <a href="{{ approvals_url }}">Review {{ pending_count }} pending approval{{ pending_count|pluralize }}</a>.
+      {% else %}
+      Use <strong>Register employee</strong> in the sidebar to add your first team member.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+</section>
+
+{% include "employees/partials/hr_register_modal.html" %}
+{% include "employees/partials/hr_edit_employee_modal.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/hr-management.js' %}"></script>
+<script src="{% static 'js/auth.js' %}"></script>
+<script src="{% static 'js/register.js' %}"></script>
+{% endblock %}

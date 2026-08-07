@@ -1,0 +1,881 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Stock Management — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<form
+  class="stock-layout{% if stock_mode != 'view' %} stock-layout--action{% endif %}"
+  method="post"
+  data-stock-layout
+  data-stock-bulk-form
+  {% if stock_mode == 'in' %}data-supplier-search-url="{{ supplier_search_url }}"{% endif %}
+  {% if stock_mode == 'out' %}data-serial-search-url="{{ serial_search_url }}"{% endif %}
+>
+  {% csrf_token %}
+  <input type="hidden" name="mode" value="{{ stock_mode }}" data-stock-float-mode-input>
+
+  <section
+    class="stock-panel{% if stock_mode != 'view' %} stock-panel--action{% endif %}"
+    data-animate="rise"
+    data-item-total="{{ item_count }}"
+    data-stock-mode="{{ stock_mode }}"
+    {% if use_stock_catalog_api %}
+    data-stock-catalog-api="{{ stock_catalog_url }}"
+    data-stock-catalog-shop="{{ selected_shop.pk }}"
+    data-stock-catalog-shop-name="{{ selected_shop.name }}"
+    {% if stock_mode == 'request' and requested_from_shop %}
+    data-stock-catalog-from-shop="{{ requested_from_shop.pk }}"
+    data-stock-catalog-from-shop-name="{{ requested_from_shop.name }}"
+    {% endif %}
+    data-stock-catalog-page-size="48"
+    {% endif %}
+  >
+    <header class="stock-panel-head">
+      <div class="stock-panel-head-top">
+        <div>
+          <p class="stock-kicker">
+            {% if stock_mode == 'out' %}
+            Stock out · {{ selected_shop.name|default:"Select shop" }}
+            {% elif stock_mode == 'request' %}
+            Request stock · Manual
+            {% elif stock_mode == 'in' %}
+            Stock in · {{ selected_shop.name|default:"Select shop" }}
+            {% else %}
+            Current stock · {% if selected_shop %}{{ selected_shop.name }}{% else %}All shops{% endif %}
+            {% endif %}
+          </p>
+          <h2>
+            {% if stock_mode == 'out' %}
+            Remove stock
+            {% elif stock_mode == 'request' %}
+            Request stock
+            {% elif stock_mode == 'in' %}
+            Add stock
+            {% else %}
+            Current stock
+            {% endif %}
+          </h2>
+          <p>
+            {% if stock_mode == 'out' %}
+            Choose an item, enter quantity, reason, and refund details, then submit.
+            {% elif stock_mode == 'request' %}
+            Compare stock between shops, then submit your request.
+            {% elif stock_mode == 'in' %}
+            Open an item, add quantity or serials, then autofill supplier details and submit.
+            {% else %}
+            Browse current stock across shops. This screen is read-only.
+            {% endif %}
+          </p>
+        </div>
+        <div class="stock-stats">
+          <p class="stock-stat">
+            <strong data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</strong>
+            <span>listed</span>
+          </p>
+          {% if stock_mode == 'view' and all_shops %}
+          <p class="stock-stat">
+            <strong>{{ total_units }}</strong>
+            <span>{% if selected_shop %}units at {{ selected_shop.name }}{% else %}units across all shops{% endif %}</span>
+          </p>
+          {% elif selected_shop %}
+          <p class="stock-stat">
+            <strong>{{ total_units }}</strong>
+            <span>units at {{ selected_shop.name }}</span>
+          </p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="stock-shop-bar" data-stock-shop-bar>
+        {% if stock_mode == 'request' %}
+        <label class="stock-shop-pick">
+          <span>Requesting shop</span>
+          <select data-stock-shop-nav name="shop_id" data-stock-shop>
+            <option value="">Select shop</option>
+            {% for shop in shops %}
+            <option value="{{ shop.pk }}"{% if selected_shop and selected_shop.pk == shop.pk %} selected{% endif %}>{{ shop.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="stock-shop-pick">
+          <span>Request from shop</span>
+          <select data-stock-from-nav name="requested_from_shop_id" data-stock-from-shop>
+            <option value="">Select shop</option>
+            {% for shop in shops %}
+            <option value="{{ shop.pk }}"{% if requested_from_shop and requested_from_shop.pk == shop.pk %} selected{% endif %}>{{ shop.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% else %}
+        <label class="stock-shop-pick">
+          <span>Shop</span>
+          <select data-stock-shop-nav name="shop_id" data-stock-shop>
+            <option value="">{% if stock_mode == 'view' %}All shops{% else %}Select shop{% endif %}</option>
+            {% for shop in shops %}
+            <option value="{{ shop.pk }}"{% if selected_shop and selected_shop.pk == shop.pk %} selected{% endif %}>{{ shop.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endif %}
+        {% if not shops %}
+        <p class="stock-shop-bar-hint">
+          {% if stock_mode == 'view' %}
+          Register a shop first.
+          {% else %}
+          No shops are allocated to your account.
+          {% endif %}
+        </p>
+        {% endif %}
+      </div>
+
+      <div class="item-search">
+        <label class="item-search-field">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input
+            type="search"
+            placeholder="Search by name, category, or description…"
+            autocomplete="off"
+            data-item-search
+            aria-label="Search items"
+          >
+        </label>
+      </div>
+    </header>
+
+    {% if stock_mode != 'view' and not selected_shop %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="store" aria-hidden="true"></i>
+      <p>
+        {% if not shops %}
+        No shops are allocated to your account.
+        {% elif stock_mode == 'request' %}
+        Select the requesting shop to continue.
+        {% else %}
+        Select a shop to {% if stock_mode == 'in' %}stock in{% elif stock_mode == 'out' %}stock out{% else %}continue{% endif %}.
+        {% endif %}
+      </p>
+    </div>
+    {% elif stock_mode == 'view' and not all_shops %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="store" aria-hidden="true"></i>
+      <p>Register a shop first to view stock.</p>
+    </div>
+    {% elif stock_mode == 'request' and not requested_from_shop %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="store" aria-hidden="true"></i>
+      <p>Select the shop you are requesting stock from.</p>
+    </div>
+    {% elif use_stock_catalog_api and item_count %}
+    <div class="stock-matrix-wrap" data-item-list>
+      <div data-stock-catalog-root>
+        <div class="dashboard-placeholder" data-stock-catalog-loading>
+          <i data-lucide="loader-circle" aria-hidden="true"></i>
+          <p>Loading items…</p>
+        </div>
+      </div>
+      <table class="stock-matrix" hidden>
+        <tbody data-stock-parked></tbody>
+      </table>
+    </div>
+    <div class="shop-floor-catalog-more" data-stock-catalog-more-wrap hidden>
+      <button type="button" class="btn btn--ghost" data-stock-catalog-more>Load more items</button>
+    </div>
+    <div class="item-search-empty" data-item-no-results hidden>
+      <i data-lucide="search-x" aria-hidden="true"></i>
+      <p>No items match your search.</p>
+    </div>
+    {% elif items_by_category %}
+    <div class="stock-matrix-wrap" data-item-list>
+      {% for group in items_by_category %}
+      <section class="stock-category" data-item-category-group>
+        <header class="stock-category-head">
+          <div class="stock-category-title-wrap">
+            <span class="stock-category-mark" aria-hidden="true"></span>
+            <h3 class="stock-category-title">{{ group.category }}</h3>
+          </div>
+          <span class="stock-category-count" data-category-count>{{ group.items|length }}</span>
+        </header>
+        <div class="stock-matrix-scroll">
+          <table class="stock-matrix{% if stock_mode == 'request' %} stock-matrix--request{% elif show_all_shops %} stock-matrix--all{% else %} stock-matrix--single{% endif %}{% if stock_mode != 'view' %} stock-matrix--action{% endif %}">
+            <thead>
+              <tr>
+                <th scope="col" class="stock-matrix-item-col">Item</th>
+                {% if stock_mode == 'request' %}
+                <th scope="col" class="stock-matrix-shop-col" title="Requesting shop">{{ selected_shop.name }}</th>
+                <th scope="col" class="stock-matrix-shop-col" title="Shop being requested">{{ requested_from_shop.name }}</th>
+                {% elif show_all_shops %}
+                {% for shop in display_shops %}
+                <th scope="col" class="stock-matrix-shop-col">{{ shop.name }}</th>
+                {% endfor %}
+                <th scope="col" class="stock-matrix-total-col">Total</th>
+                {% else %}
+                <th scope="col" class="stock-matrix-shop-col">{{ selected_shop.name }}</th>
+                {% endif %}
+                {% if stock_mode != 'view' %}
+                <th scope="col" class="stock-matrix-action-col"><span class="visually-hidden">Action</span></th>
+                {% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in group.items %}
+              {% with item=row.item %}
+              {% if stock_mode == 'view' %}
+              <tr
+                class="stock-matrix-row{% if item.is_suspended %} is-suspended{% endif %}"
+                data-item-row
+                data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
+              >
+                <th scope="row" class="stock-matrix-item-col">
+                  <div class="stock-matrix-item">
+                    <strong>{{ item.name }}</strong>
+                    {% if item.track_serial_number %}
+                    <span class="stock-item-badge stock-item-badge--serial">Serial</span>
+                    {% endif %}
+                  </div>
+                </th>
+                {% if show_all_shops %}
+                {% for qty in row.shop_quantities %}
+                <td class="stock-matrix-shop-col">
+                  <span class="stock-matrix-qty{% if qty == 0 %} is-empty{% endif %}">{{ qty }}</span>
+                </td>
+                {% endfor %}
+                <td class="stock-matrix-total-col">
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if row.row_total == 0 %} is-empty{% endif %}">{{ row.row_total }}</span>
+                </td>
+                {% else %}
+                <td class="stock-matrix-shop-col">
+                  <span class="stock-matrix-qty{% if row.shop_qty == 0 %} is-empty{% endif %}">{{ row.shop_qty }}</span>
+                </td>
+                {% endif %}
+              </tr>
+              {% else %}
+              <tr
+                class="stock-matrix-row stock-matrix-row--action{% if item.is_suspended %} is-suspended{% endif %}{% if row.shop_qty == 0 %} is-empty-stock{% endif %}"
+                data-item-row
+                data-item-id="{{ item.pk }}"
+                data-item-name="{{ item.name }}"
+                data-item-stock="{{ row.shop_qty }}"
+                data-track-serial="{% if item.track_serial_number and stock_mode != 'request' %}1{% else %}0{% endif %}"
+                data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
+              >
+                <th scope="row" class="stock-matrix-item-col">
+                  <button type="button" class="stock-matrix-toggle" data-stock-item-toggle>
+                    <div class="stock-matrix-item">
+                      <strong>{{ item.name }}</strong>
+                      {% if item.is_suspended %}
+                      <span class="stock-item-badge">Suspended</span>
+                      {% endif %}
+                      {% if item.track_serial_number %}
+                      <span class="stock-item-badge stock-item-badge--serial">Serial</span>
+                      {% endif %}
+                    </div>
+                  </button>
+                </th>
+                <td class="stock-matrix-shop-col">
+                  <span
+                    class="stock-matrix-qty{% if row.shop_qty == 0 %} is-empty{% endif %}"
+                    data-stock-display-qty
+                  >{{ row.shop_qty }}</span>
+                </td>
+                {% if stock_mode == 'request' %}
+                <td class="stock-matrix-shop-col">
+                  <span class="stock-matrix-qty{% if row.requested_from_qty == 0 %} is-empty{% endif %}">{{ row.requested_from_qty }}</span>
+                </td>
+                {% endif %}
+                <td class="stock-matrix-action-col">
+                  <button type="button" class="stock-matrix-chevron" data-stock-item-toggle aria-label="Open {{ item.name }}">
+                    <i data-lucide="chevron-down" aria-hidden="true"></i>
+                  </button>
+                </td>
+              </tr>
+              <tr class="stock-matrix-form-row" data-stock-item-inputs hidden>
+                <td colspan="{% if stock_mode == 'request' %}4{% else %}3{% endif %}">
+                  <div class="stock-item-inputs stock-item-inputs--matrix">
+                    <input type="hidden" name="item_id" value="{{ item.pk }}" disabled data-stock-field>
+
+                    {% if stock_mode == 'in' %}
+                    <div class="stock-in-field-row">
+                      {% if item.track_serial_number %}
+                      <div class="stock-inline-field">
+                        <span>Qty to stock in</span>
+                        <strong class="stock-serial-qty-live stock-serial-qty-live--field">
+                          <span data-stock-serial-count>0</span>
+                        </strong>
+                        <input type="hidden" name="quantity" value="" data-stock-qty data-stock-field disabled>
+                      </div>
+                      {% else %}
+                      <label class="stock-inline-field">
+                        <span>Qty to stock in</span>
+                        <input
+                          type="number"
+                          name="quantity"
+                          min="1"
+                          step="1"
+                          placeholder="0"
+                          inputmode="numeric"
+                          data-stock-qty
+                          data-stock-field
+                          disabled
+                        >
+                      </label>
+                      {% endif %}
+                      <label class="stock-inline-field">
+                        <span class="stock-inline-label-row">
+                          <span>Buying price</span>
+                          {% if row.last_buying_price is not None %}
+                          <em class="stock-prev-price">Prev {{ row.last_buying_price|floatformat:2 }}</em>
+                          {% else %}
+                          <em class="stock-prev-price is-empty">No previous</em>
+                          {% endif %}
+                        </span>
+                        <input
+                          type="number"
+                          name="buying_price"
+                          min="0"
+                          step="0.01"
+                          placeholder="{% if row.last_buying_price is not None %}{{ row.last_buying_price|floatformat:2 }}{% else %}0.00{% endif %}"
+                          inputmode="decimal"
+                          data-stock-buying-price
+                          data-stock-field
+                          {% if row.last_buying_price is not None %}data-stock-prev-buying="{{ row.last_buying_price|floatformat:2 }}"{% endif %}
+                          disabled
+                        >
+                      </label>
+                    </div>
+
+                    <div class="stock-in-field-row stock-in-field-row--supplier">
+                      <input
+                        type="hidden"
+                        name="supplier_id"
+                        value=""
+                        data-stock-supplier-id
+                        data-stock-field
+                        disabled
+                      >
+                      <label class="stock-inline-field stock-inline-field--phone">
+                        <span>Supplier phone</span>
+                        <div class="stock-phone-field" data-stock-phone-field data-supplier-search-root>
+                          <input
+                            type="hidden"
+                            name="supplier_phone_country_code"
+                            value="+254"
+                            data-stock-supplier-dial
+                            data-stock-field
+                            disabled
+                          >
+                          <input type="hidden" value="KE" data-stock-supplier-iso disabled>
+                          <button
+                            type="button"
+                            class="stock-country-trigger"
+                            data-stock-country-trigger
+                            aria-label="Select country"
+                            aria-haspopup="listbox"
+                            aria-expanded="false"
+                          >
+                            <img
+                              class="flag-img"
+                              src="https://flagcdn.com/w40/ke.png"
+                              width="20"
+                              height="15"
+                              alt=""
+                              data-stock-flag-img
+                            >
+                          </button>
+                          <span class="stock-phone-dial" data-stock-dial-display>+254</span>
+                          <input
+                            type="tel"
+                            name="supplier_phone_number"
+                            placeholder="7XXXXXXXX"
+                            inputmode="numeric"
+                            maxlength="9"
+                            autocomplete="tel-national"
+                            data-stock-supplier-phone
+                            data-supplier-search="phone"
+                            data-stock-field
+                            disabled
+                          >
+                          <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+                        </div>
+                      </label>
+                      <label class="stock-inline-field">
+                        <span>Supplier name</span>
+                        <div class="stock-supplier-name-wrap" data-supplier-search-root>
+                          <input
+                            type="text"
+                            name="supplier_name"
+                            placeholder="SUPPLIER NAME"
+                            autocomplete="organization"
+                            data-uppercase
+                            data-stock-supplier-name
+                            data-supplier-search="name"
+                            data-stock-field
+                            disabled
+                          >
+                          <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+                        </div>
+                      </label>
+                      <label class="stock-inline-field">
+                        <span>Payment status</span>
+                        <select name="payment_status" data-stock-payment data-stock-field disabled>
+                          <option value="">Select</option>
+                          <option value="unpaid">Unpaid</option>
+                          <option value="paid">Paid</option>
+                          <option value="partial">Partial</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    {% if item.track_serial_number %}
+                    <div class="stock-inline-field stock-inline-field--serial">
+                      <div class="stock-serial-head">
+                        <span>Serial number</span>
+                        <span class="visually-hidden">Remove</span>
+                      </div>
+                      <div class="stock-serial-list" data-stock-serial-list>
+                        <div class="stock-serial-row">
+                          <input
+                            type="text"
+                            placeholder="Enter serial number"
+                            autocomplete="off"
+                            spellcheck="false"
+                            data-stock-serial-input
+                            data-stock-field
+                            disabled
+                          >
+                          <button
+                            type="button"
+                            class="stock-serial-remove"
+                            data-stock-serial-remove
+                            aria-label="Remove serial"
+                            hidden
+                          >
+                            <i data-lucide="x" aria-hidden="true"></i>
+                          </button>
+                        </div>
+                      </div>
+                      <div class="stock-serial-actions">
+                        <button type="button" class="stock-serial-add" data-stock-serial-add>
+                          <i data-lucide="plus" aria-hidden="true"></i>
+                          Add serial
+                        </button>
+                        <small class="stock-serial-hint">
+                          Quantity updates as you add serials
+                        </small>
+                      </div>
+                      <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
+                    </div>
+                    {% else %}
+                    <input type="hidden" name="serial_numbers" value="" data-stock-field disabled>
+                    {% endif %}
+
+                    {% else %}
+                    {% if stock_mode == 'out' %}
+                    <div class="stock-in-field-row">
+                      {% if item.track_serial_number %}
+                      <div class="stock-inline-field">
+                        <span>Qty to stock out</span>
+                        <strong class="stock-serial-qty-live stock-serial-qty-live--field">
+                          <span data-stock-serial-count>0</span>
+                        </strong>
+                        <input type="hidden" name="quantity" value="" data-stock-qty data-stock-field disabled>
+                      </div>
+                      {% else %}
+                      <label class="stock-inline-field">
+                        <span>Qty to stock out</span>
+                        <input
+                          type="number"
+                          name="quantity"
+                          min="1"
+                          step="1"
+                          placeholder="0"
+                          inputmode="numeric"
+                          data-stock-qty
+                          data-stock-field
+                          disabled
+                        >
+                      </label>
+                      {% endif %}
+                    </div>
+
+                    <div class="stock-in-field-row stock-in-field-row--out-meta">
+                      <label class="stock-inline-field">
+                        <span>Reason</span>
+                        <select name="reason" data-stock-reason data-stock-field disabled>
+                          <option value="">Select</option>
+                          <option value="waste">Waste</option>
+                          <option value="transfer">Transfer</option>
+                          <option value="display">Display</option>
+                          <option value="return">Return</option>
+                        </select>
+                      </label>
+                      <label class="stock-inline-field">
+                        <span>Refund</span>
+                        <select name="refund" data-stock-refund data-stock-field disabled>
+                          <option value="">Select</option>
+                          <option value="no">No</option>
+                          <option value="yes">Yes</option>
+                        </select>
+                      </label>
+                      <label class="stock-inline-field" data-stock-refund-amount-wrap hidden>
+                        <span>Refund amount</span>
+                        <input
+                          type="number"
+                          name="refund_amount"
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                          inputmode="decimal"
+                          data-stock-refund-amount
+                          data-stock-field
+                          disabled
+                        >
+                      </label>
+                    </div>
+
+                    {% if item.track_serial_number %}
+                    <div class="stock-inline-field stock-inline-field--serial">
+                      <div class="stock-serial-head">
+                        <span>Serial number</span>
+                        <span class="visually-hidden">Remove</span>
+                      </div>
+                      <div class="stock-serial-list" data-stock-serial-list>
+                        <div class="stock-serial-row">
+                          <div class="stock-serial-input-wrap" data-serial-search-root>
+                            <input
+                              type="text"
+                              placeholder="Search serial to stock out"
+                              autocomplete="off"
+                              spellcheck="false"
+                              data-stock-serial-input
+                              data-serial-search
+                              data-stock-field
+                              disabled
+                            >
+                            <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
+                          </div>
+                          <button
+                            type="button"
+                            class="stock-serial-remove"
+                            data-stock-serial-remove
+                            aria-label="Remove serial"
+                            hidden
+                          >
+                            <i data-lucide="x" aria-hidden="true"></i>
+                          </button>
+                        </div>
+                      </div>
+                      <div class="stock-serial-actions">
+                        <button type="button" class="stock-serial-add" data-stock-serial-add>
+                          <i data-lucide="plus" aria-hidden="true"></i>
+                          Add serial
+                        </button>
+                        <small class="stock-serial-hint">
+                          Type to search available serials at this shop
+                        </small>
+                      </div>
+                      <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
+                    </div>
+                    {% else %}
+                    <input type="hidden" name="serial_numbers" value="" data-stock-field disabled>
+                    {% endif %}
+
+                    {% else %}
+                    <label class="stock-inline-field">
+                      <span>Qty to request</span>
+                      <input
+                        type="number"
+                        name="quantity"
+                        min="1"
+                        step="1"
+                        placeholder="0"
+                        inputmode="numeric"
+                        data-stock-qty
+                        data-stock-field
+                        disabled
+                      >
+                    </label>
+                    <input type="hidden" name="serial_numbers" value="" data-stock-field disabled>
+                    {% endif %}
+                    {% endif %}
+
+                  </div>
+                </td>
+              </tr>
+              {% endif %}
+              {% endwith %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+    <div class="item-search-empty" data-item-no-results hidden>
+      <i data-lucide="search-x" aria-hidden="true"></i>
+      <p>No items match your search.</p>
+    </div>
+    {% else %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="package" aria-hidden="true"></i>
+      <p>No items registered in the system yet.</p>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if stock_mode == 'in' or stock_mode == 'out' %}
+    {% if selected_shop %}
+  <aside
+    class="stock-float stock-float--{{ stock_mode }}"
+    data-stock-float
+    data-stock-float-mode="{{ stock_mode }}"
+    aria-live="polite"
+  >
+    <div class="stock-float-card">
+      <header class="stock-float-head">
+        <div>
+          <p class="stock-float-kicker">
+            {% if stock_mode == 'in' %}Stock in{% else %}Stock out{% endif %}
+          </p>
+          <h3>
+            {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
+          </h3>
+        </div>
+        <button class="stock-float-clear" type="button" data-stock-float-clear hidden>
+          Clear
+        </button>
+      </header>
+
+      <div class="stock-float-shops">
+        <p class="stock-float-shop-readout">
+          <span>Shop</span>
+          <strong>{{ selected_shop.name }}</strong>
+        </p>
+      </div>
+
+      <div class="stock-float-empty" data-stock-float-empty>
+        <p>
+          {% if stock_mode == 'in' %}
+          Open items, enter quantity/serials and buying price. Use autofill below for supplier details.
+          {% else %}
+          Open items, enter quantity/serials. Use autofill below for reason and refund.
+          {% endif %}
+        </p>
+      </div>
+
+      <p class="stock-float-held" data-stock-float-held hidden>
+        <strong data-stock-float-held-count>0</strong>
+        <span>line(s) held while you search</span>
+      </p>
+
+      <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
+
+      {% if stock_mode == 'in' %}
+      <div class="stock-float-apply" data-stock-float-apply>
+        <p class="stock-float-apply-title">Autofill supplier details</p>
+        <input type="hidden" value="" data-stock-float-supplier-id>
+        <label class="stock-float-field">
+          <span>Supplier phone</span>
+          <div class="stock-phone-field" data-stock-phone-field data-stock-float-phone-wrap data-supplier-search-root>
+            <input type="hidden" value="+254" data-stock-float-supplier-dial>
+            <input type="hidden" value="KE" data-stock-float-supplier-iso>
+            <button
+              type="button"
+              class="stock-country-trigger"
+              data-stock-country-trigger
+              aria-label="Select country"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            >
+              <img
+                class="flag-img"
+                src="https://flagcdn.com/w40/ke.png"
+                width="20"
+                height="15"
+                alt=""
+                data-stock-flag-img
+              >
+            </button>
+            <span class="stock-phone-dial" data-stock-dial-display>+254</span>
+            <input
+              type="tel"
+              placeholder="7XXXXXXXX"
+              inputmode="numeric"
+              maxlength="9"
+              autocomplete="tel-national"
+              data-stock-float-supplier-phone
+              data-supplier-search="phone"
+            >
+            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+          </div>
+        </label>
+        <label class="stock-float-field">
+          <span>Supplier name</span>
+          <div class="stock-supplier-name-wrap" data-supplier-search-root>
+            <input
+              type="text"
+              placeholder="SUPPLIER NAME"
+              autocomplete="organization"
+              data-uppercase
+              data-stock-float-supplier-name
+              data-supplier-search="name"
+            >
+            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+          </div>
+        </label>
+        <label class="stock-float-field">
+          <span>Payment status</span>
+          <select data-stock-float-payment>
+            <option value="">Select</option>
+            <option value="unpaid">Unpaid</option>
+            <option value="paid">Paid</option>
+            <option value="partial">Partial</option>
+          </select>
+        </label>
+        <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
+          Autofill to stock-in items
+        </button>
+        <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
+      </div>
+      {% elif stock_mode == 'out' %}
+      <div class="stock-float-apply" data-stock-float-apply>
+        <p class="stock-float-apply-title">Autofill stock-out details</p>
+        <label class="stock-float-field">
+          <span>Reason</span>
+          <select data-stock-float-reason>
+            <option value="">Select</option>
+            <option value="waste">Waste</option>
+            <option value="transfer">Transfer</option>
+            <option value="display">Display</option>
+            <option value="return">Return</option>
+          </select>
+        </label>
+        <label class="stock-float-field">
+          <span>Refund</span>
+          <select data-stock-float-refund>
+            <option value="">Select</option>
+            <option value="no">No</option>
+            <option value="yes">Yes</option>
+          </select>
+        </label>
+        <label class="stock-float-field" data-stock-float-refund-amount-wrap hidden>
+          <span>Refund amount</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="0.00"
+            inputmode="decimal"
+            data-stock-float-refund-amount
+          >
+        </label>
+        <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
+          Autofill to stock-out items
+        </button>
+        <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
+      </div>
+      {% endif %}
+
+      <button class="stock-float-submit" type="submit" data-stock-float-submit disabled>
+        <i data-lucide="check" aria-hidden="true"></i>
+        <span>
+          {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
+        </span>
+      </button>
+    </div>
+  </aside>
+    {% endif %}
+  {% elif stock_mode == 'request' and selected_shop and requested_from_shop %}
+  <aside
+    class="stock-float stock-float--request"
+    data-stock-float
+    data-stock-float-mode="request"
+    aria-live="polite"
+  >
+    <div class="stock-float-card">
+      <header class="stock-float-head">
+        <div>
+          <p class="stock-float-kicker">Request</p>
+          <h3>Submit request</h3>
+        </div>
+        <button class="stock-float-clear" type="button" data-stock-float-clear hidden>
+          Clear
+        </button>
+      </header>
+
+      <div class="stock-float-shops">
+        <p class="stock-float-shop-readout">
+          <span>Requesting</span>
+          <strong>{{ selected_shop.name }}</strong>
+        </p>
+        <p class="stock-float-shop-readout">
+          <span>From</span>
+          <strong>{{ requested_from_shop.name }}</strong>
+        </p>
+      </div>
+
+      <div class="stock-float-empty" data-stock-float-empty>
+        <p>Click items in the list to open their forms, then fill and submit.</p>
+      </div>
+
+      <p class="stock-float-held" data-stock-float-held hidden>
+        <strong data-stock-float-held-count>0</strong>
+        <span>line(s) held while you search</span>
+      </p>
+
+      <div class="stock-float-summary" data-stock-float-summary hidden>
+        <p>
+          <strong data-stock-ready-count>0</strong>
+          <span>item(s) ready</span>
+        </p>
+        <p>
+          <strong data-stock-ready-units>0</strong>
+          <span>total units</span>
+        </p>
+      </div>
+
+      <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
+
+      <button class="stock-float-submit" type="submit" data-stock-float-submit disabled>
+        <i data-lucide="check" aria-hidden="true"></i>
+        <span>Submit request</span>
+      </button>
+    </div>
+  </aside>
+  {% endif %}
+</form>
+
+{% if stock_mode == 'in' %}
+<div class="stock-country-menu" data-stock-country-menu hidden>
+  <div class="stock-country-search">
+    <i data-lucide="search" aria-hidden="true"></i>
+    <input type="search" placeholder="Search country" data-stock-country-search aria-label="Search countries">
+  </div>
+  <ul class="stock-country-list" data-stock-country-list>
+    {% for country in countries %}
+    <li>
+      <button
+        type="button"
+        class="stock-country-option{% if country.dial == '+254' %} is-selected{% endif %}"
+        data-iso="{{ country.iso }}"
+        data-dial="{{ country.dial }}"
+        data-name="{{ country.name|lower }}"
+      >
+        <img class="flag-img" src="https://flagcdn.com/w40/{{ country.iso|lower }}.png" width="20" height="15" alt="">
+        <span class="stock-country-name">{{ country.name }}</span>
+        <span class="stock-country-dial">{{ country.dial }}</span>
+      </button>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/stock-catalog.js' %}?v=2"></script>
+<script src="{% static 'js/item-search.js' %}?v=4"></script>
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=serial29"></script>
+{% endblock %}

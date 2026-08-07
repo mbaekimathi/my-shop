@@ -1,0 +1,41 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Pending approvals — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+{% include "employees/partials/employee_access_table.html" with panel_title="Pending approvals" panel_description="Assign a <strong>role</strong> and set status to <strong>Active</strong> to approve each employee." empty_message="No employees are waiting for approval. New registrations will appear here." %}
+
+{% include "employees/partials/hr_register_modal.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/hr-management.js' %}"></script>
+<script src="{% static 'js/auth.js' %}"></script>
+<script src="{% static 'js/register.js' %}"></script>
+<script type="module">
+  document.querySelectorAll(".staff-access-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      if (navigator.onLine) return;
+      event.preventDefault();
+      const match = form.action.match(/employees\/([^/]+)\/access/);
+      const employeeId = match?.[1];
+      const role = form.querySelector("[name=role]")?.value;
+      const status = form.querySelector("[name=status]")?.value;
+      try {
+        const { queueOperation } = await import("{% static 'js/offline/sync.js' %}");
+        await queueOperation("update_employee_access", {
+          employee_id: employeeId,
+          role,
+          status,
+        });
+        alert("Offline — access change queued. It will sync when you reconnect.");
+      } catch (_e) {
+        alert("Could not queue change. Try again when online.");
+      }
+    });
+  });
+</script>
+{% endblock %}

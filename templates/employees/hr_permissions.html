@@ -1,0 +1,128 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section class="staff-panel staff-panel--dense" data-animate="rise">
+  <div class="staff-panel-head">
+    <div>
+      <h2>{{ meta.headline }}</h2>
+      <p>{{ meta.summary }}</p>
+    </div>
+    <a class="btn btn--ghost staff-panel-link" href="{{ authorizations_url }}">
+      <i data-lucide="shield-check" aria-hidden="true"></i>
+      <span>Shop authorizations</span>
+    </a>
+  </div>
+
+  {% if permission_modules %}
+  <div class="perm-module-nav" role="navigation" aria-label="Modules">
+    {% for module in permission_modules %}
+    <a class="perm-module-nav-link" href="#module-{{ module.slug }}">
+      <i data-lucide="{{ module.icon }}" aria-hidden="true"></i>
+      <span>{{ module.label }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="perm-modules" data-permission-matrix>
+    {% for module in permission_modules %}
+    <section class="perm-module" id="module-{{ module.slug }}" data-module="{{ module.slug }}">
+      <div class="perm-module-head">
+        <div class="perm-module-title">
+          <i data-lucide="{{ module.icon }}" aria-hidden="true"></i>
+          <div>
+            <h3>{{ module.label }}</h3>
+            <p>{{ module.summary }}</p>
+          </div>
+        </div>
+        <p class="staff-count">{{ module.submodules|length }} submodule{{ module.submodules|length|pluralize }}</p>
+      </div>
+
+      {% if module.rows %}
+      <div class="staff-table-wrap">
+        <table class="staff-table staff-table--dense perm-table">
+          <thead>
+            <tr>
+              <th scope="col">Employee</th>
+              {% for submodule in module.submodules %}
+              <th scope="col" class="perm-col" title="{{ submodule.label }}">{{ submodule.label }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in module.rows %}
+            <tr>
+              <td data-label="Employee">
+                <div class="staff-person">
+                  {% if row.employee.profile_photo %}
+                  <img class="staff-avatar" src="{{ row.employee.profile_photo.url }}" alt="" width="36" height="36">
+                  {% else %}
+                  <span class="staff-avatar staff-avatar--empty" aria-hidden="true">
+                    <i data-lucide="user"></i>
+                  </span>
+                  {% endif %}
+                  <div>
+                    <strong>{{ row.employee.user.get_full_name|default:row.employee.user.username }}</strong>
+                    <small>
+                      <code>{{ row.employee.employee_id }}</code>
+                      · {{ row.employee.get_role_display }}
+                    </small>
+                  </div>
+                </div>
+              </td>
+              {% for toggle in row.toggles %}
+              <td class="perm-col" data-label="{{ toggle.label }}">
+                <label class="perm-switch">
+                  <input
+                    type="checkbox"
+                    class="perm-switch-input"
+                    {% if toggle.allowed %}checked{% endif %}
+                    data-permission-toggle
+                    data-employee-id="{{ row.employee.employee_id }}"
+                    data-module-slug="{{ module.slug }}"
+                    data-submodule-slug="{{ toggle.slug }}"
+                    aria-label="{{ toggle.label }} for {{ row.employee.employee_id }}"
+                  >
+                  <span class="perm-switch-ui" aria-hidden="true"></span>
+                  <span class="perm-switch-state">
+                    {% if toggle.allowed %}Allowed{% else %}Denied{% endif %}
+                  </span>
+                </label>
+              </td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="dashboard-placeholder perm-module-empty">
+        <i data-lucide="users" aria-hidden="true"></i>
+        <p>No approved employees yet. Approve registrations first, then set permissions here.</p>
+      </div>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="{{ meta.icon }}" aria-hidden="true"></i>
+    <p>No modules are configured for permissions yet.</p>
+  </div>
+  {% endif %}
+</section>
+
+{% include "employees/partials/hr_register_modal.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/hr-management.js' %}"></script>
+<script src="{% static 'js/auth.js' %}"></script>
+<script src="{% static 'js/register.js' %}"></script>
+<script src="{% static 'js/hr-permissions.js' %}"></script>
+{% endblock %}

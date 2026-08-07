@@ -1,0 +1,10 @@
+{
+  "name": "MY-SHOP",
+  "short_name": "MY-SHOP",
+  "description": "Employee registration and role-based access",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#061214",
+  "theme_color": "#10282c",
+  "icons": []
+}

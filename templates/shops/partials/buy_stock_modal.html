@@ -1,0 +1,237 @@
+{% if buy_stock_modal %}
+<div
+  class="workspace-modal buy-stock-modal"
+  data-modal="buy-stock"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close="buy-stock"></div>
+  <div
+    class="workspace-modal-dialog buy-stock-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="buy-stock-modal-title"
+  >
+    <div class="workspace-modal-head buy-stock-modal-head">
+      <div>
+        <p class="buy-stock-modal-kicker">{{ shop.name }}</p>
+        <h2 id="buy-stock-modal-title">Buy stock items</h2>
+      </div>
+      <button
+        class="workspace-icon-btn"
+        type="button"
+        aria-label="Close"
+        data-modal-close="buy-stock"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form
+      class="buy-stock-simple"
+      method="post"
+      action="{% url 'employees:my_shop_buy_stock' shop.pk %}"
+      data-stock-layout
+      data-stock-bulk-form
+      data-supplier-print
+      data-supplier-search-url="{{ supplier_search_url }}"
+      data-verify-login-url="{{ verify_login_code_url }}"
+    >
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ buy_stock_next }}">
+      <input type="hidden" name="mode" value="in" data-stock-float-mode-input>
+      <input type="hidden" name="shop_id" value="{{ shop.pk }}" data-stock-shop>
+
+      <div
+        class="buy-stock-simple-main"
+        data-item-total="{{ buy_stock_item_count }}"
+        data-stock-mode="in"
+        data-stock-catalog-api="{{ stock_catalog_url }}"
+        data-stock-catalog-shop="{{ shop.pk }}"
+        data-stock-catalog-shop-name="{{ shop.name }}"
+        data-stock-catalog-page-size="24"
+        data-stock-catalog-defer
+        data-stock-catalog-simple
+        data-stock-catalog-search-first
+      >
+        <label class="buy-stock-simple-search">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input
+            type="search"
+            placeholder="Search item to stock in…"
+            autocomplete="off"
+            data-item-search
+            aria-label="Search items"
+          >
+        </label>
+        <p class="buy-stock-simple-hint">
+          Search, open an item, enter qty and buying price. Then add supplier details below.
+        </p>
+        <p class="buy-stock-simple-count" data-item-visible-count hidden></p>
+
+        <div class="buy-stock-simple-list" data-item-list>
+          <div data-stock-catalog-root>
+            <div class="buy-stock-simple-empty" data-stock-catalog-idle>
+              <i data-lucide="package-search" aria-hidden="true"></i>
+              <p>Search for an item to begin</p>
+            </div>
+          </div>
+          <div class="buy-stock-simple-parked" hidden>
+            <p class="buy-stock-simple-parked-label">Selected for stock-in</p>
+            <div data-stock-parked></div>
+          </div>
+        </div>
+
+        <div class="shop-floor-catalog-more" data-stock-catalog-more-wrap hidden>
+          <button type="button" class="btn btn--ghost btn--sm" data-stock-catalog-more>Load more</button>
+        </div>
+        <div class="item-search-empty buy-stock-simple-no-results" data-item-no-results hidden>
+          <i data-lucide="search-x" aria-hidden="true"></i>
+          <p>No items match your search.</p>
+        </div>
+      </div>
+
+      <aside
+        class="buy-stock-simple-confirm"
+        data-stock-float
+        data-stock-float-mode="in"
+        aria-live="polite"
+      >
+        <div class="buy-stock-simple-confirm-card">
+          <header class="buy-stock-simple-confirm-head">
+            <div>
+              <p class="buy-stock-simple-confirm-kicker">Supplier &amp; confirm</p>
+              <h3>Finish stock-in</h3>
+            </div>
+            <button class="stock-float-clear" type="button" data-stock-float-clear hidden>
+              Clear
+            </button>
+          </header>
+
+          <div class="stock-float-empty" data-stock-float-empty>
+            <p>Pick items above first. Selected lines show here.</p>
+          </div>
+
+          <p class="stock-float-held" data-stock-float-held hidden>
+            <strong data-stock-float-held-count>0</strong>
+            <span>line(s) held while you search</span>
+          </p>
+
+          <ul class="stock-float-lines buy-stock-simple-lines" data-stock-float-lines hidden></ul>
+
+          <div class="buy-stock-simple-supplier" data-stock-float-apply>
+            <input type="hidden" value="" data-stock-float-supplier-id>
+            <label class="stock-float-field">
+              <span>Supplier phone</span>
+              <div class="stock-phone-field" data-stock-phone-field data-stock-float-phone-wrap data-supplier-search-root>
+                <input type="hidden" value="+254" data-stock-float-supplier-dial>
+                <input type="hidden" value="KE" data-stock-float-supplier-iso>
+                <button
+                  type="button"
+                  class="stock-country-trigger"
+                  data-stock-country-trigger
+                  aria-label="Select country"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                >
+                  <img
+                    class="flag-img"
+                    src="https://flagcdn.com/w40/ke.png"
+                    width="20"
+                    height="15"
+                    alt=""
+                    data-stock-flag-img
+                  >
+                </button>
+                <span class="stock-phone-dial" data-stock-dial-display>+254</span>
+                <input
+                  type="tel"
+                  placeholder="7XXXXXXXX"
+                  inputmode="numeric"
+                  maxlength="9"
+                  autocomplete="tel-national"
+                  data-stock-float-supplier-phone
+                  data-supplier-search="phone"
+                >
+                <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+              </div>
+            </label>
+            <label class="stock-float-field">
+              <span>Supplier name</span>
+              <div class="stock-supplier-name-wrap" data-supplier-search-root>
+                <input
+                  type="text"
+                  placeholder="SUPPLIER NAME"
+                  autocomplete="organization"
+                  data-uppercase
+                  data-stock-float-supplier-name
+                  data-supplier-search="name"
+                >
+                <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+              </div>
+            </label>
+            <label class="stock-float-field">
+              <span>Payment status</span>
+              <select data-stock-float-payment>
+                <option value="">Select</option>
+                <option value="unpaid">Unpaid</option>
+                <option value="paid">Paid</option>
+                <option value="partial">Partial</option>
+              </select>
+            </label>
+            <button type="button" class="stock-float-apply-btn visually-hidden" data-stock-float-apply-btn tabindex="-1">
+              Apply supplier
+            </button>
+            <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
+          </div>
+
+          <label class="stock-float-field stock-float-field--login">
+            <span>Staff ID (6 digits)</span>
+            <input
+              type="text"
+              name="login_code"
+              inputmode="numeric"
+              maxlength="6"
+              autocomplete="one-time-code"
+              placeholder="6-digit staff ID"
+              data-stock-float-login-code
+            >
+          </label>
+          <p class="shop-cart-status stock-float-login-status" data-stock-float-login-status>
+            Enter an active staff ID to confirm.
+          </p>
+
+          <button class="stock-float-submit buy-stock-simple-submit" type="submit" data-stock-float-submit disabled>
+            <i data-lucide="printer" aria-hidden="true"></i>
+            <span>Stock in &amp; print receipt</span>
+          </button>
+        </div>
+      </aside>
+    </form>
+
+    <div class="stock-country-menu" data-stock-country-menu hidden>
+      <div class="stock-country-search">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input type="search" placeholder="Search country" data-stock-country-search aria-label="Search countries">
+      </div>
+      <ul class="stock-country-list" data-stock-country-list>
+        {% for country in countries %}
+        <li>
+          <button
+            type="button"
+            class="stock-country-option{% if country.dial == '+254' %} is-selected{% endif %}"
+            data-iso="{{ country.iso }}"
+            data-dial="{{ country.dial }}"
+            data-name="{{ country.name|lower }}"
+          >
+            <img class="flag-img" src="https://flagcdn.com/w40/{{ country.iso|lower }}.png" width="20" height="15" alt="">
+            <span class="stock-country-name">{{ country.name }}</span>
+            <span class="stock-country-dial">{{ country.dial }}</span>
+          </button>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endif %}
