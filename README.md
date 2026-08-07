@@ -26,17 +26,31 @@ Open http://127.0.0.1:8000/
 
 ## Production checklist
 
-Before going live:
+`.env` is minimal — DEBUG, secret key, hosts, CSRF, SSL, media, and Daraja
+callback auto-detect for local vs cPanel/Passenger/Gunicorn.
 
-1. Copy `.env.example` → `.env` and set a strong `DJANGO_SECRET_KEY`
-2. Set `DJANGO_DEBUG=False`
-3. Set `DJANGO_ALLOWED_HOSTS` to your domain(s)
-4. Set `DJANGO_CSRF_TRUSTED_ORIGINS` to `https://your-domain`
-5. Enable MySQL (`MYSQL_ENABLED=True`) with hosting credentials
-6. Run `python manage.py migrate`
-7. Run `python manage.py collectstatic --noinput`
-8. Create a superuser if needed: `python manage.py createsuperuser`
-9. Point Daraja callback to your public HTTPS domain (`DARAJA_CALLBACK_BASE_URL`)
+Usually you only edit MySQL credentials on the host:
+
+```env
+MYSQL_ENABLED=True
+MYSQL_DATABASE=your_db
+MYSQL_USER=your_user
+MYSQL_PASSWORD=your_password
+MYSQL_HOST=localhost
+```
+
+Optional markers/overrides:
+
+- Create an empty `.production` file to force hosted mode
+- Or set `APP_ENV=production` / `APP_ENV=local`
+- Secret key auto-saves to `.secret_key` (gitignored) if unset
+
+Then:
+
+1. `python manage.py migrate`
+2. `python manage.py collectstatic --noinput`
+3. `python manage.py createsuperuser` (optional)
+4. Point Daraja to your public HTTPS domain (auto once you open the site over HTTPS)
 
 ### cPanel (Passenger)
 
@@ -44,12 +58,11 @@ Before going live:
 2. Create a Python Application (Application root = project folder)
 3. Startup file: `passenger_wsgi.py`
 4. Enter the venv and install deps: `pip install -r requirements.txt`
-5. Place `.env` in the project root (never commit it)
-6. Set `SERVE_MEDIA_IN_PRODUCTION=True` if you store uploads on disk
-7. `python manage.py migrate && python manage.py collectstatic --noinput`
-8. Restart the Python app
+5. Place `.env` in the project root with MySQL credentials only (never commit it)
+6. `python manage.py migrate && python manage.py collectstatic --noinput`
+7. Restart the Python app
 
-WhiteNoise serves CSS/JS from `staticfiles/`. Media files are served by Django when `SERVE_MEDIA_IN_PRODUCTION=True` (fine for small cPanel installs).
+WhiteNoise serves CSS/JS from `staticfiles/`. Media is served automatically on hosted installs.
 
 ### VPS (Gunicorn + nginx)
 

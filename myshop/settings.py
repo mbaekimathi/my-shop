@@ -1,5 +1,8 @@
 """
 Django settings for MY-SHOP employee portal.
+
+Most local vs hosted values auto-detect so .env only needs DB credentials
+(and optional overrides).
 """
 
 import os
@@ -7,65 +10,34 @@ import sys
 import warnings
 from pathlib import Path
 
-from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
+
+from myshop.auto_env import (
+    detect_debug,
+    detect_is_hosted,
+    resolve_allowed_hosts,
+    resolve_bool,
+    resolve_csrf_trusted_origins,
+    resolve_secret_key,
+)
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-_DEFAULT_INSECURE_KEY = (
-    "django-insecure-j4yq22z^3zy!-3!ox^x(8d5$8g05b2vsbu*ydtd=zt*_p=ki1%"
-)
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", _DEFAULT_INSECURE_KEY)
+IS_HOSTED = detect_is_hosted(BASE_DIR)
+DEBUG = detect_debug(BASE_DIR)
+SECRET_KEY = resolve_secret_key(BASE_DIR)
 
-DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() in ("1", "true", "yes")
-
-if not DEBUG:
-    if (
-        not SECRET_KEY
-        or SECRET_KEY == _DEFAULT_INSECURE_KEY
-        or SECRET_KEY.startswith("django-insecure")
-        or SECRET_KEY.strip().lower() in {"change-me", "change-me-in-production"}
-    ):
-        raise ImproperlyConfigured(
-            "Set a strong DJANGO_SECRET_KEY before running with DJANGO_DEBUG=False."
-        )
-
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
-    if host.strip()
-]
-
-# Dev-only tunnel hosts (ngrok, etc.). Never auto-added in production.
-if DEBUG:
-    _TUNNEL_ALLOWED_HOSTS = (
-        ".ngrok-free.app",
-        ".ngrok-free.dev",
-        ".ngrok.app",
-        ".ngrok.io",
-        ".loca.lt",
-    )
-    for _tunnel_host in _TUNNEL_ALLOWED_HOSTS:
-        if _tunnel_host not in ALLOWED_HOSTS:
-            ALLOWED_HOSTS.append(_tunnel_host)
+ALLOWED_HOSTS = resolve_allowed_hosts(debug=DEBUG)
 
 # Trust proxy headers (cPanel / nginx / Cloudflare / ngrok).
-USE_X_FORWARDED_HOST = os.getenv("DJANGO_USE_X_FORWARDED_HOST", "True").lower() in (
-    "1",
-    "true",
-    "yes",
-)
+USE_X_FORWARDED_HOST = resolve_bool("DJANGO_USE_X_FORWARDED_HOST", default=True)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
-    if origin.strip()
-]
+CSRF_TRUSTED_ORIGINS = resolve_csrf_trusted_origins()
 
-# Optional override; otherwise Daraja auto-picks browser URL or local ngrok tunnel.
+# Optional override; otherwise auto from request / ngrok.
 DARAJA_CALLBACK_BASE_URL = os.getenv("DARAJA_CALLBACK_BASE_URL", "").strip()
 DARAJA_NGROK_API_URL = os.getenv(
     "DARAJA_NGROK_API_URL", "http://127.0.0.1:4040/api/tunnels"
@@ -98,6 +70,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "core.middleware.AutoHostMiddleware",
     "core.middleware.NoCacheHtmlMiddleware",
 ]
 
@@ -126,7 +99,7 @@ WSGI_APPLICATION = "myshop.wsgi.application"
 # Database
 # ---------------------------------------------------------------------------
 
-MYSQL_ENABLED = os.getenv("MYSQL_ENABLED", "False").lower() in ("1", "true", "yes")
+MYSQL_ENABLED = resolve_bool("MYSQL_ENABLED", default=True)
 
 if MYSQL_ENABLED:
     DATABASES = {
@@ -144,7 +117,10 @@ if MYSQL_ENABLED:
                 "connect_timeout": 5,
             },
             "CONN_MAX_AGE": int(
-                os.getenv("MYSQL_CONN_MAX_AGE", "60" if not DEBUG else "300")
+                os.getenv(
+                    "MYSQL_CONN_MAX_AGE",
+                    "60" if IS_HOSTED or not DEBUG else "300",
+                )
             ),
             "CONN_HEALTH_CHECKS": True,
         }
@@ -164,7 +140,7 @@ else:
         )
 
 # ---------------------------------------------------------------------------
-# Cache & sessions (Redis when available, LocMem fallback for local dev)
+# Cache & sessions (Redis when available, LocMem fallback for local / cPanel)
 # ---------------------------------------------------------------------------
 
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
@@ -196,11 +172,11 @@ else:
     SESSION_ENGINE = "django.contrib.sessions.backends.db"
 
 SESSION_CACHE_ALIAS = "default"
-SESSION_COOKIE_AGE = int(os.getenv("SESSION_COOKIE_AGE", str(60 * 60 * 24 * 14)))  # 14 days
+SESSION_COOKIE_AGE = int(os.getenv("SESSION_COOKIE_AGE", str(60 * 60 * 24 * 14)))
 SESSION_SAVE_EVERY_REQUEST = False
 
 # ---------------------------------------------------------------------------
-# Rate limiting (per client IP, enforced via cache)
+# Rate limiting
 # ---------------------------------------------------------------------------
 
 RATE_LIMITS = {
@@ -226,15 +202,7 @@ RATE_LIMITS = {
     },
 }
 
-# ---------------------------------------------------------------------------
-# Pagination & list sizes
-# ---------------------------------------------------------------------------
-
 EMPLOYEE_LIST_PAGE_SIZE = int(os.getenv("EMPLOYEE_LIST_PAGE_SIZE", "25"))
-
-# ---------------------------------------------------------------------------
-# Celery (optional — requires Redis)
-# ---------------------------------------------------------------------------
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL or "redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
@@ -244,10 +212,6 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "Africa/Nairobi"
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "300"))
-
-# ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -259,10 +223,6 @@ AUTH_PASSWORD_VALIDATORS = [
 LOGIN_URL = "employees:login"
 LOGIN_REDIRECT_URL = "employees:dashboard"
 LOGOUT_REDIRECT_URL = "core:landing"
-
-# ---------------------------------------------------------------------------
-# Static & media
-# ---------------------------------------------------------------------------
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Africa/Nairobi"
@@ -284,19 +244,13 @@ STORAGES = {
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
-# Serve uploaded files in production when no object storage is configured
-# (typical for cPanel shared hosting — set True there).
-SERVE_MEDIA_IN_PRODUCTION = os.getenv("SERVE_MEDIA_IN_PRODUCTION", "False").lower() in (
-    "1",
-    "true",
-    "yes",
+# Auto: serve media from Django on hosted installs unless explicitly disabled.
+SERVE_MEDIA_IN_PRODUCTION = resolve_bool(
+    "SERVE_MEDIA_IN_PRODUCTION",
+    default=IS_HOSTED or not DEBUG,
 )
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 
 LOG_LEVEL = os.getenv("DJANGO_LOG_LEVEL", "INFO" if not DEBUG else "DEBUG")
 LOGGING = {
@@ -328,7 +282,7 @@ LOGGING = {
 }
 
 # ---------------------------------------------------------------------------
-# Production hardening
+# Production hardening (auto when hosted / DEBUG=False)
 # ---------------------------------------------------------------------------
 
 if not DEBUG:
@@ -336,41 +290,13 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = "DENY"
     SECURE_REFERRER_POLICY = "same-origin"
-    SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "True").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "True").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "True").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    SECURE_SSL_REDIRECT = resolve_bool("SECURE_SSL_REDIRECT", default=True)
+    SESSION_COOKIE_SECURE = resolve_bool("SESSION_COOKIE_SECURE", default=True)
+    CSRF_COOKIE_SECURE = resolve_bool("CSRF_COOKIE_SECURE", default=True)
     SESSION_COOKIE_HTTPONLY = True
     CSRF_COOKIE_HTTPONLY = False
     SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv(
-        "SECURE_HSTS_INCLUDE_SUBDOMAINS", "True"
-    ).lower() in ("1", "true", "yes")
-    SECURE_HSTS_PRELOAD = os.getenv("SECURE_HSTS_PRELOAD", "False").lower() in (
-        "1",
-        "true",
-        "yes",
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = resolve_bool(
+        "SECURE_HSTS_INCLUDE_SUBDOMAINS", default=True
     )
-    if not CSRF_TRUSTED_ORIGINS:
-        warnings.warn(
-            "DJANGO_CSRF_TRUSTED_ORIGINS is empty. Set https://your-domain "
-            "for POST forms behind HTTPS.",
-            stacklevel=1,
-        )
-    if not REDIS_URL:
-        warnings.warn(
-            "REDIS_URL is unset. LocMem cache is fine for a single cPanel app; "
-            "use Redis on a multi-worker VPS.",
-            stacklevel=1,
-        )
+    SECURE_HSTS_PRELOAD = resolve_bool("SECURE_HSTS_PRELOAD", default=False)

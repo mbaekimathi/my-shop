@@ -1,4 +1,6 @@
 .env
+.secret_key
+.production
 .venv/
 venv/
 __pycache__/
