@@ -929,7 +929,7 @@
     <div class="workspace-modal-head">
       <div>
         <h2 id="print-stock-title">Print stock</h2>
-        <p class="stock-print-lead">Choose what to include on the printed list.</p>
+        <p class="stock-print-lead">Choose what to include, then print or download an A4 list.</p>
       </div>
       <button
         type="button"
@@ -990,10 +990,41 @@
         </div>
       </div>
 
+      <fieldset class="stock-print-paper">
+        <legend class="stock-print-shops-label">Paper</legend>
+        <div class="stock-print-paper-list">
+          <label class="stock-print-paper-option">
+            <input type="radio" name="print_paper" value="a4" checked>
+            <span>
+              <strong>A4</strong>
+              <small>Office printer</small>
+            </span>
+          </label>
+          <label class="stock-print-paper-option">
+            <input type="radio" name="print_paper" value="80">
+            <span>
+              <strong>80 mm</strong>
+              <small>Thermal roll</small>
+            </span>
+          </label>
+          <label class="stock-print-paper-option">
+            <input type="radio" name="print_paper" value="50">
+            <span>
+              <strong>50 mm</strong>
+              <small>Narrow thermal</small>
+            </span>
+          </label>
+        </div>
+      </fieldset>
+
       <p class="stock-print-status" data-stock-print-status hidden></p>
 
       <div class="workspace-modal-actions">
         <button type="button" class="btn btn--ghost" data-stock-print-close>Cancel</button>
+        <button type="button" class="btn btn--ghost" data-stock-print-download-a4>
+          <i data-lucide="download" aria-hidden="true"></i>
+          <span>Download A4</span>
+        </button>
         <button type="submit" class="btn btn--primary">
           <i data-lucide="printer" aria-hidden="true"></i>
           <span>Print</span>
@@ -1016,6 +1047,6 @@
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% if stock_mode == 'view' %}
-<script src="{% static 'js/stock-print.js' %}?v=1"></script>
+<script src="{% static 'js/stock-print.js' %}?v=5"></script>
 {% endif %}
 {% endblock %}

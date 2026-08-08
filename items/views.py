@@ -1993,6 +1993,12 @@ def stock_management_print(request, role_segment):
     if layout not in ("items", "prices", "stock"):
         layout = "items"
 
+    paper = (request.GET.get("paper") or "a4").strip().lower()
+    if paper in ("58",):
+        paper = "50"
+    if paper not in ("a4", "80", "50"):
+        paper = "a4"
+
     all_shops = list(
         Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
     )
@@ -2022,10 +2028,12 @@ def stock_management_print(request, role_segment):
                 {
                     "error": "Select at least one shop to print prices or stock.",
                     "layout": layout,
+                    "paper": paper,
                     "document": None,
                     "printed_at": timezone.localtime(),
                     "company_name": "",
                     "auto_print": False,
+                    "is_download": False,
                 },
                 status=400,
             )
@@ -2033,16 +2041,29 @@ def stock_management_print(request, role_segment):
     document = build_stock_print_document(layout=layout, shops=selected_shops)
     company = get_company_profile()
     company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    printed_at = timezone.localtime()
+    as_download = (request.GET.get("download") or "").strip() == "1"
 
-    return render(
-        request,
-        "items/stock_print.html",
-        {
-            "document": document,
-            "layout": layout,
-            "error": "",
-            "printed_at": timezone.localtime(),
-            "company_name": company_name,
-            "auto_print": (request.GET.get("auto") or "").strip() == "1",
-        },
-    )
+    if as_download:
+        paper = "a4"
+
+    context = {
+        "document": document,
+        "layout": layout,
+        "paper": paper,
+        "error": "",
+        "printed_at": printed_at,
+        "company_name": company_name,
+        "auto_print": (not as_download)
+        and (request.GET.get("auto") or "").strip() == "1",
+        "is_download": as_download,
+    }
+
+    response = render(request, "items/stock_print.html", context)
+    if as_download:
+        stamp = printed_at.strftime("%Y-%m-%d")
+        layout_slug = layout.replace(" ", "-")
+        filename = f"stock-list-a4-{layout_slug}-{stamp}.html"
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Content-Type"] = "text/html; charset=utf-8"
+    return response
