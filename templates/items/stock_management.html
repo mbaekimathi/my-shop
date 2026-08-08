@@ -122,6 +122,16 @@
             {% endfor %}
           </select>
         </label>
+        {% if stock_mode == 'view' %}
+        <button
+          type="button"
+          class="stock-print-trigger"
+          data-modal-open="print-stock"
+        >
+          <i data-lucide="printer" aria-hidden="true"></i>
+          <span>Print stock</span>
+        </button>
+        {% endif %}
         {% endif %}
         {% if not shops %}
         <p class="stock-shop-bar-hint">
@@ -638,155 +648,166 @@
   >
     <div class="stock-float-card">
       <header class="stock-float-head">
-        <div>
-          <p class="stock-float-kicker">
-            {% if stock_mode == 'in' %}Stock in{% else %}Stock out{% endif %}
-          </p>
-          <h3>
-            {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
-          </h3>
-        </div>
+        <button
+          type="button"
+          class="stock-float-collapse-btn"
+          data-stock-float-toggle
+          aria-expanded="true"
+          aria-controls="stock-float-body"
+        >
+          <span class="stock-float-collapse-copy">
+            <span class="stock-float-kicker">
+              {% if stock_mode == 'in' %}Stock in{% else %}Stock out{% endif %}
+            </span>
+            <span class="stock-float-title">
+              {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
+            </span>
+          </span>
+          <i class="stock-float-collapse-icon" data-lucide="chevron-up" aria-hidden="true"></i>
+        </button>
         <button class="stock-float-clear" type="button" data-stock-float-clear hidden>
           Clear
         </button>
       </header>
 
-      <div class="stock-float-shops">
-        <p class="stock-float-shop-readout">
-          <span>Shop</span>
-          <strong>{{ selected_shop.name }}</strong>
+      <div class="stock-float-body" id="stock-float-body" data-stock-float-body>
+        <div class="stock-float-shops">
+          <p class="stock-float-shop-readout">
+            <span>Shop</span>
+            <strong>{{ selected_shop.name }}</strong>
+          </p>
+        </div>
+
+        <div class="stock-float-empty" data-stock-float-empty>
+          <p>
+            {% if stock_mode == 'in' %}
+            Open items, enter quantity/serials and buying price. Use autofill below for supplier details.
+            {% else %}
+            Open items, enter quantity/serials. Use autofill below for reason and refund.
+            {% endif %}
+          </p>
+        </div>
+
+        <p class="stock-float-held" data-stock-float-held hidden>
+          <strong data-stock-float-held-count>0</strong>
+          <span>line(s) held while you search</span>
         </p>
-      </div>
 
-      <div class="stock-float-empty" data-stock-float-empty>
-        <p>
-          {% if stock_mode == 'in' %}
-          Open items, enter quantity/serials and buying price. Use autofill below for supplier details.
-          {% else %}
-          Open items, enter quantity/serials. Use autofill below for reason and refund.
-          {% endif %}
-        </p>
-      </div>
+        <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
 
-      <p class="stock-float-held" data-stock-float-held hidden>
-        <strong data-stock-float-held-count>0</strong>
-        <span>line(s) held while you search</span>
-      </p>
-
-      <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
-
-      {% if stock_mode == 'in' %}
-      <div class="stock-float-apply" data-stock-float-apply>
-        <p class="stock-float-apply-title">Autofill supplier details</p>
-        <input type="hidden" value="" data-stock-float-supplier-id>
-        <label class="stock-float-field">
-          <span>Supplier phone</span>
-          <div class="stock-phone-field" data-stock-phone-field data-stock-float-phone-wrap data-supplier-search-root>
-            <input type="hidden" value="+254" data-stock-float-supplier-dial>
-            <input type="hidden" value="KE" data-stock-float-supplier-iso>
-            <button
-              type="button"
-              class="stock-country-trigger"
-              data-stock-country-trigger
-              aria-label="Select country"
-              aria-haspopup="listbox"
-              aria-expanded="false"
-            >
-              <img
-                class="flag-img"
-                src="https://flagcdn.com/w40/ke.png"
-                width="20"
-                height="15"
-                alt=""
-                data-stock-flag-img
+        {% if stock_mode == 'in' %}
+        <div class="stock-float-apply" data-stock-float-apply>
+          <p class="stock-float-apply-title">Autofill supplier details</p>
+          <input type="hidden" value="" data-stock-float-supplier-id>
+          <label class="stock-float-field">
+            <span>Supplier phone</span>
+            <div class="stock-phone-field" data-stock-phone-field data-stock-float-phone-wrap data-supplier-search-root>
+              <input type="hidden" value="+254" data-stock-float-supplier-dial>
+              <input type="hidden" value="KE" data-stock-float-supplier-iso>
+              <button
+                type="button"
+                class="stock-country-trigger"
+                data-stock-country-trigger
+                aria-label="Select country"
+                aria-haspopup="listbox"
+                aria-expanded="false"
               >
-            </button>
-            <span class="stock-phone-dial" data-stock-dial-display>+254</span>
+                <img
+                  class="flag-img"
+                  src="https://flagcdn.com/w40/ke.png"
+                  width="20"
+                  height="15"
+                  alt=""
+                  data-stock-flag-img
+                >
+              </button>
+              <span class="stock-phone-dial" data-stock-dial-display>+254</span>
+              <input
+                type="tel"
+                placeholder="7XXXXXXXX"
+                inputmode="numeric"
+                maxlength="9"
+                autocomplete="tel-national"
+                data-stock-float-supplier-phone
+                data-supplier-search="phone"
+              >
+              <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+            </div>
+          </label>
+          <label class="stock-float-field">
+            <span>Supplier name</span>
+            <div class="stock-supplier-name-wrap" data-supplier-search-root>
+              <input
+                type="text"
+                placeholder="SUPPLIER NAME"
+                autocomplete="organization"
+                data-uppercase
+                data-stock-float-supplier-name
+                data-supplier-search="name"
+              >
+              <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+            </div>
+          </label>
+          <label class="stock-float-field">
+            <span>Payment status</span>
+            <select data-stock-float-payment>
+              <option value="">Select</option>
+              <option value="unpaid">Unpaid</option>
+              <option value="paid">Paid</option>
+              <option value="partial">Partial</option>
+            </select>
+          </label>
+          <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
+            Autofill to stock-in items
+          </button>
+          <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
+        </div>
+        {% elif stock_mode == 'out' %}
+        <div class="stock-float-apply" data-stock-float-apply>
+          <p class="stock-float-apply-title">Autofill stock-out details</p>
+          <label class="stock-float-field">
+            <span>Reason</span>
+            <select data-stock-float-reason>
+              <option value="">Select</option>
+              <option value="waste">Waste</option>
+              <option value="transfer">Transfer</option>
+              <option value="display">Display</option>
+              <option value="return">Return</option>
+            </select>
+          </label>
+          <label class="stock-float-field">
+            <span>Refund</span>
+            <select data-stock-float-refund>
+              <option value="">Select</option>
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </label>
+          <label class="stock-float-field" data-stock-float-refund-amount-wrap hidden>
+            <span>Refund amount</span>
             <input
-              type="tel"
-              placeholder="7XXXXXXXX"
-              inputmode="numeric"
-              maxlength="9"
-              autocomplete="tel-national"
-              data-stock-float-supplier-phone
-              data-supplier-search="phone"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="0.00"
+              inputmode="decimal"
+              data-stock-float-refund-amount
             >
-            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
-          </div>
-        </label>
-        <label class="stock-float-field">
-          <span>Supplier name</span>
-          <div class="stock-supplier-name-wrap" data-supplier-search-root>
-            <input
-              type="text"
-              placeholder="SUPPLIER NAME"
-              autocomplete="organization"
-              data-uppercase
-              data-stock-float-supplier-name
-              data-supplier-search="name"
-            >
-            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
-          </div>
-        </label>
-        <label class="stock-float-field">
-          <span>Payment status</span>
-          <select data-stock-float-payment>
-            <option value="">Select</option>
-            <option value="unpaid">Unpaid</option>
-            <option value="paid">Paid</option>
-            <option value="partial">Partial</option>
-          </select>
-        </label>
-        <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
-          Autofill to stock-in items
-        </button>
-        <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
-      </div>
-      {% elif stock_mode == 'out' %}
-      <div class="stock-float-apply" data-stock-float-apply>
-        <p class="stock-float-apply-title">Autofill stock-out details</p>
-        <label class="stock-float-field">
-          <span>Reason</span>
-          <select data-stock-float-reason>
-            <option value="">Select</option>
-            <option value="waste">Waste</option>
-            <option value="transfer">Transfer</option>
-            <option value="display">Display</option>
-            <option value="return">Return</option>
-          </select>
-        </label>
-        <label class="stock-float-field">
-          <span>Refund</span>
-          <select data-stock-float-refund>
-            <option value="">Select</option>
-            <option value="no">No</option>
-            <option value="yes">Yes</option>
-          </select>
-        </label>
-        <label class="stock-float-field" data-stock-float-refund-amount-wrap hidden>
-          <span>Refund amount</span>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="0.00"
-            inputmode="decimal"
-            data-stock-float-refund-amount
-          >
-        </label>
-        <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
-          Autofill to stock-out items
-        </button>
-        <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
-      </div>
-      {% endif %}
+          </label>
+          <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
+            Autofill to stock-out items
+          </button>
+          <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
+        </div>
+        {% endif %}
 
-      <button class="stock-float-submit" type="submit" data-stock-float-submit disabled>
-        <i data-lucide="check" aria-hidden="true"></i>
-        <span>
-          {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
-        </span>
-      </button>
+        <button class="stock-float-submit" type="submit" data-stock-float-submit disabled>
+          <i data-lucide="check" aria-hidden="true"></i>
+          <span>
+            {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
+          </span>
+        </button>
+      </div>
     </div>
   </aside>
     {% endif %}
@@ -799,52 +820,63 @@
   >
     <div class="stock-float-card">
       <header class="stock-float-head">
-        <div>
-          <p class="stock-float-kicker">Request</p>
-          <h3>Submit request</h3>
-        </div>
+        <button
+          type="button"
+          class="stock-float-collapse-btn"
+          data-stock-float-toggle
+          aria-expanded="true"
+          aria-controls="stock-float-body"
+        >
+          <span class="stock-float-collapse-copy">
+            <span class="stock-float-kicker">Request</span>
+            <span class="stock-float-title">Submit request</span>
+          </span>
+          <i class="stock-float-collapse-icon" data-lucide="chevron-up" aria-hidden="true"></i>
+        </button>
         <button class="stock-float-clear" type="button" data-stock-float-clear hidden>
           Clear
         </button>
       </header>
 
-      <div class="stock-float-shops">
-        <p class="stock-float-shop-readout">
-          <span>Requesting</span>
-          <strong>{{ selected_shop.name }}</strong>
+      <div class="stock-float-body" id="stock-float-body" data-stock-float-body>
+        <div class="stock-float-shops">
+          <p class="stock-float-shop-readout">
+            <span>Requesting</span>
+            <strong>{{ selected_shop.name }}</strong>
+          </p>
+          <p class="stock-float-shop-readout">
+            <span>From</span>
+            <strong>{{ requested_from_shop.name }}</strong>
+          </p>
+        </div>
+
+        <div class="stock-float-empty" data-stock-float-empty>
+          <p>Click items in the list to open their forms, then fill and submit.</p>
+        </div>
+
+        <p class="stock-float-held" data-stock-float-held hidden>
+          <strong data-stock-float-held-count>0</strong>
+          <span>line(s) held while you search</span>
         </p>
-        <p class="stock-float-shop-readout">
-          <span>From</span>
-          <strong>{{ requested_from_shop.name }}</strong>
-        </p>
+
+        <div class="stock-float-summary" data-stock-float-summary hidden>
+          <p>
+            <strong data-stock-ready-count>0</strong>
+            <span>item(s) ready</span>
+          </p>
+          <p>
+            <strong data-stock-ready-units>0</strong>
+            <span>total units</span>
+          </p>
+        </div>
+
+        <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
+
+        <button class="stock-float-submit" type="submit" data-stock-float-submit disabled>
+          <i data-lucide="check" aria-hidden="true"></i>
+          <span>Submit request</span>
+        </button>
       </div>
-
-      <div class="stock-float-empty" data-stock-float-empty>
-        <p>Click items in the list to open their forms, then fill and submit.</p>
-      </div>
-
-      <p class="stock-float-held" data-stock-float-held hidden>
-        <strong data-stock-float-held-count>0</strong>
-        <span>line(s) held while you search</span>
-      </p>
-
-      <div class="stock-float-summary" data-stock-float-summary hidden>
-        <p>
-          <strong data-stock-ready-count>0</strong>
-          <span>item(s) ready</span>
-        </p>
-        <p>
-          <strong data-stock-ready-units>0</strong>
-          <span>total units</span>
-        </p>
-      </div>
-
-      <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
-
-      <button class="stock-float-submit" type="submit" data-stock-float-submit disabled>
-        <i data-lucide="check" aria-hidden="true"></i>
-        <span>Submit request</span>
-      </button>
     </div>
   </aside>
   {% endif %}
@@ -877,14 +909,113 @@
 {% endif %}
 {% endblock %}
 
+{% block workspace_overlays %}
+{{ block.super }}
+{% if stock_mode == 'view' %}
+<div
+  class="workspace-modal stock-print-modal"
+  data-modal="print-stock"
+  data-stock-print-url="{{ stock_print_url }}"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close data-stock-print-close></div>
+  <div
+    class="workspace-modal-dialog stock-print-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="print-stock-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <h2 id="print-stock-title">Print stock</h2>
+        <p class="stock-print-lead">Choose what to include on the printed list.</p>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-modal-close
+        data-stock-print-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form class="stock-print-form" data-stock-print-form>
+      <fieldset class="stock-print-options">
+        <legend class="visually-hidden">Print layout</legend>
+
+        <label class="stock-print-option">
+          <input type="radio" name="print_layout" value="items" checked>
+          <span>
+            <strong>Items only</strong>
+            <small>Item names grouped by category</small>
+          </span>
+        </label>
+
+        <label class="stock-print-option">
+          <input type="radio" name="print_layout" value="prices">
+          <span>
+            <strong>Items and price</strong>
+            <small>For the shop(s) you select below</small>
+          </span>
+        </label>
+
+        <label class="stock-print-option">
+          <input type="radio" name="print_layout" value="stock">
+          <span>
+            <strong>Items with current stock</strong>
+            <small>Quantities for the shop(s) you select</small>
+          </span>
+        </label>
+      </fieldset>
+
+      <div class="stock-print-shops" data-stock-print-shops hidden>
+        <p class="stock-print-shops-label">Shops</p>
+        <div class="stock-print-shop-list">
+          {% for shop in shops %}
+          <label class="stock-print-shop">
+            <input
+              type="checkbox"
+              value="{{ shop.pk }}"
+              data-stock-print-shop
+              {% if selected_shop and selected_shop.pk == shop.pk %}checked{% endif %}
+            >
+            <span>{{ shop.name }}</span>
+          </label>
+          {% empty %}
+          <p class="stock-print-empty">No shops available.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <p class="stock-print-status" data-stock-print-status hidden></p>
+
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-stock-print-close>Cancel</button>
+        <button type="submit" class="btn btn--primary">
+          <i data-lucide="printer" aria-hidden="true"></i>
+          <span>Print</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/stock-catalog.js' %}?v=2"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=serial29"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=serial31"></script>
 <script
   src="{% static 'js/serial-scan.js' %}?v=1"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
+{% if stock_mode == 'view' %}
+<script src="{% static 'js/stock-print.js' %}?v=1"></script>
+{% endif %}
 {% endblock %}

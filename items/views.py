@@ -18,6 +18,7 @@ from .services import (
     actionable_shops_for_profile,
     apply_stock_movement,
     build_stock_catalog_page,
+    build_stock_print_document,
     create_item,
     delete_item,
     last_buying_prices_for_items,
@@ -1272,6 +1273,10 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "stock_catalog_url": stock_catalog_url,
             "use_stock_catalog_api": use_stock_catalog_api,
             "catalog_shops_json": catalog_shops_json,
+            "stock_print_url": reverse(
+                "employees:stock_management_print",
+                kwargs={"role_segment": role_url_segment(profile.role)},
+            ),
         },
     )
 
@@ -1960,5 +1965,84 @@ def stock_serial_detail(request, profile, meta, module, item_id):
             "selected_shop_id": selected_shop_id,
             "list_href": list_href,
             "stock_mode": "serials",
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def stock_management_print(request, role_segment):
+    """Printable stock list: items only, items+prices, or items+stock."""
+    from employees.access import get_profile_for_request, role_url_segment
+    from employees.module_permissions import require_module_permission
+    from shops.models import Shop
+    from shops.services import get_company_profile
+    from django.utils import timezone
+
+    profile = get_profile_for_request(request)
+    if profile is None or not profile.is_active_employee:
+        raise Http404("Not found.")
+    if role_url_segment(profile.role) != role_segment:
+        raise Http404("Not found.")
+
+    denied = require_module_permission(request, profile, "stock-management", "view")
+    if denied is not None:
+        return denied
+
+    layout = (request.GET.get("layout") or "items").strip().lower()
+    if layout not in ("items", "prices", "stock"):
+        layout = "items"
+
+    all_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+    shops_by_id = {shop.pk: shop for shop in all_shops}
+
+    selected_shops = []
+    if layout in ("prices", "stock"):
+        raw_ids = request.GET.getlist("shop_id")
+        if not raw_ids and request.GET.get("shop_ids"):
+            raw_ids = [
+                part.strip()
+                for part in str(request.GET.get("shop_ids") or "").split(",")
+                if part.strip()
+            ]
+        for raw in raw_ids:
+            try:
+                shop_id = int(raw)
+            except (TypeError, ValueError):
+                continue
+            shop = shops_by_id.get(shop_id)
+            if shop is not None:
+                selected_shops.append(shop)
+        if not selected_shops:
+            return render(
+                request,
+                "items/stock_print.html",
+                {
+                    "error": "Select at least one shop to print prices or stock.",
+                    "layout": layout,
+                    "document": None,
+                    "printed_at": timezone.localtime(),
+                    "company_name": "",
+                    "auto_print": False,
+                },
+                status=400,
+            )
+
+    document = build_stock_print_document(layout=layout, shops=selected_shops)
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+
+    return render(
+        request,
+        "items/stock_print.html",
+        {
+            "document": document,
+            "layout": layout,
+            "error": "",
+            "printed_at": timezone.localtime(),
+            "company_name": company_name,
+            "auto_print": (request.GET.get("auto") or "").strip() == "1",
         },
     )

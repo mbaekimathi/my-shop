@@ -89,6 +89,61 @@
     if (window.lucide?.createIcons) window.lucide.createIcons();
   };
 
+  const floatToggle = floatRoot?.querySelector("[data-stock-float-toggle]");
+  const floatCollapseMq = window.matchMedia("(max-width: 1199px)");
+  const floatCollapseKey = `stock-float-collapsed:${mode}`;
+
+  const setFloatCollapsed = (collapsed, { persist = true } = {}) => {
+    if (!floatRoot || !floatToggle) return;
+    const next = Boolean(collapsed) && floatCollapseMq.matches;
+    floatRoot.classList.toggle("is-collapsed", next);
+    floatToggle.setAttribute("aria-expanded", next ? "false" : "true");
+    floatToggle.setAttribute(
+      "aria-label",
+      next ? "Open submit section" : "Close submit section"
+    );
+    if (persist && floatCollapseMq.matches) {
+      try {
+        sessionStorage.setItem(floatCollapseKey, next ? "1" : "0");
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  };
+
+  const readStoredFloatCollapsed = () => {
+    try {
+      const stored = sessionStorage.getItem(floatCollapseKey);
+      if (stored === "0") return false;
+      if (stored === "1") return true;
+    } catch (_) {
+      /* ignore */
+    }
+    return true;
+  };
+
+  if (floatRoot && floatToggle) {
+    setFloatCollapsed(readStoredFloatCollapsed(), { persist: false });
+    floatToggle.addEventListener("click", () => {
+      if (!floatCollapseMq.matches) return;
+      setFloatCollapsed(!floatRoot.classList.contains("is-collapsed"));
+    });
+    const syncFloatCollapseForViewport = () => {
+      if (!floatCollapseMq.matches) {
+        floatRoot.classList.remove("is-collapsed");
+        floatToggle.setAttribute("aria-expanded", "true");
+        floatToggle.removeAttribute("aria-label");
+        return;
+      }
+      setFloatCollapsed(readStoredFloatCollapsed(), { persist: false });
+    };
+    if (typeof floatCollapseMq.addEventListener === "function") {
+      floatCollapseMq.addEventListener("change", syncFloatCollapseForViewport);
+    } else if (typeof floatCollapseMq.addListener === "function") {
+      floatCollapseMq.addListener(syncFloatCollapseForViewport);
+    }
+  }
+
   const tracksSerial = (row) =>
     mode !== "request" && row.dataset.trackSerial === "1";
 

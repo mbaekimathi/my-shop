@@ -1534,3 +1534,131 @@ def respond_to_stock_request(
         ]
     )
     return movement
+
+
+STOCK_PRINT_LAYOUTS = ("items", "prices", "stock")
+
+
+def _format_print_money(value) -> str:
+    try:
+        amount = Decimal(value or 0)
+    except (InvalidOperation, TypeError, ValueError):
+        amount = Decimal("0")
+    return f"{amount.quantize(Decimal('0.01')):,.2f}"
+
+
+def build_stock_print_document(*, layout: str, shops) -> dict:
+    """Build printable stock list rows for items / prices / stock layouts."""
+    layout = (layout or "items").strip().lower()
+    if layout not in STOCK_PRINT_LAYOUTS:
+        layout = "items"
+
+    shops = list(shops or [])
+    shop_ids = [shop.pk for shop in shops]
+
+    items = list(
+        Item.objects.order_by("category", "name").only(
+            "id",
+            "name",
+            "category",
+            "shop_price",
+            "maximum_selling_price",
+            "use_individual_shop_prices",
+        )
+    )
+
+    stock_map: dict[tuple[int, int], int] = {}
+    if layout == "stock" and shop_ids and items:
+        item_ids = [item.pk for item in items]
+        for item_id, shop_id, qty in ShopStock.objects.filter(
+            item_id__in=item_ids, shop_id__in=shop_ids
+        ).values_list("item_id", "shop_id", "quantity"):
+            stock_map[(item_id, shop_id)] = int(qty or 0)
+
+    price_overrides: dict[tuple[int, int], Decimal] = {}
+    if layout == "prices" and shop_ids and items:
+        item_ids = [item.pk for item in items]
+        for item_id, shop_id, price in ShopItemPrice.objects.filter(
+            item_id__in=item_ids, shop_id__in=shop_ids
+        ).values_list("item_id", "shop_id", "price"):
+            if price is not None:
+                price_overrides[(item_id, shop_id)] = Decimal(price)
+
+    categories: list[dict] = []
+    current_category = None
+    current_rows: list[dict] = []
+
+    def flush_category():
+        nonlocal current_category, current_rows
+        if current_category is None:
+            return
+        categories.append({"name": current_category, "rows": current_rows})
+        current_rows = []
+
+    for item in items:
+        if item.category != current_category:
+            flush_category()
+            current_category = item.category or "Uncategorised"
+
+        row: dict = {
+            "name": item.name,
+            "category": item.category or "Uncategorised",
+        }
+
+        if layout == "prices":
+            prices = []
+            for shop in shops:
+                override = None
+                if item.use_individual_shop_prices:
+                    override = price_overrides.get((item.pk, shop.pk))
+                amount = item.resolve_list_price(override)
+                prices.append(
+                    {
+                        "shop_id": shop.pk,
+                        "shop_name": shop.name,
+                        "price": _format_print_money(amount),
+                    }
+                )
+            row["prices"] = prices
+            if len(shops) == 1:
+                row["price"] = prices[0]["price"] if prices else "0.00"
+        elif layout == "stock":
+            quantities = []
+            row_total = 0
+            for shop in shops:
+                qty = stock_map.get((item.pk, shop.pk), 0)
+                row_total += qty
+                quantities.append(
+                    {
+                        "shop_id": shop.pk,
+                        "shop_name": shop.name,
+                        "qty": qty,
+                    }
+                )
+            row["quantities"] = quantities
+            row["total"] = row_total
+
+        current_rows.append(row)
+
+    flush_category()
+
+    titles = {
+        "items": "Items only",
+        "prices": "Items and price",
+        "stock": "Items with current stock",
+    }
+    shop_label = ""
+    if layout in ("prices", "stock"):
+        if len(shops) == 1:
+            shop_label = shops[0].name
+        elif shops:
+            shop_label = f"{len(shops)} shops"
+
+    return {
+        "layout": layout,
+        "title": titles.get(layout, "Stock list"),
+        "shop_label": shop_label,
+        "shops": [{"id": shop.pk, "name": shop.name} for shop in shops],
+        "categories": categories,
+        "item_count": sum(len(group["rows"]) for group in categories),
+    }

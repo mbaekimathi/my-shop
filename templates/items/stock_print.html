@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ document.title|default:"Stock list" }} — {{ company_name }}</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 1.25rem;
+      color: #122026;
+      background: #fff;
+      font: 13px/1.45 "Segoe UI", Tahoma, sans-serif;
+    }
+    .print-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-bottom: 1rem;
+    }
+    .print-toolbar button,
+    .print-toolbar a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 2.4rem;
+      padding: 0.4rem 0.9rem;
+      border: 1px solid #c9d3d6;
+      border-radius: 8px;
+      background: #f4f7f8;
+      color: #122026;
+      font: inherit;
+      font-weight: 650;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .print-toolbar button.primary {
+      border-color: #1f6f78;
+      background: #1f6f78;
+      color: #fff;
+    }
+    .print-error {
+      padding: 0.85rem 1rem;
+      border: 1px solid #f0b4b4;
+      border-radius: 10px;
+      background: #fff5f5;
+      color: #8a1f1f;
+      font-weight: 600;
+    }
+    .sheet-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 2px solid #122026;
+    }
+    .sheet-head h1 {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 750;
+    }
+    .sheet-head p {
+      margin: 0.25rem 0 0;
+      color: #4d5f66;
+    }
+    .sheet-meta {
+      text-align: right;
+      color: #4d5f66;
+      font-size: 0.85rem;
+    }
+    .category {
+      margin: 1.1rem 0 0.45rem;
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #4d5f66;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 0.35rem 0.4rem;
+      border-bottom: 1px solid #d7e0e3;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #4d5f66;
+    }
+    td.num, th.num {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .footnote {
+      margin-top: 1rem;
+      color: #4d5f66;
+      font-size: 0.8rem;
+    }
+    @media print {
+      body { padding: 0; }
+      .print-toolbar { display: none !important; }
+      a[href]::after { content: ""; }
+      thead { display: table-header-group; }
+      tr { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-toolbar">
+    <button type="button" class="primary" onclick="window.print()">Print</button>
+    <button type="button" onclick="window.close()">Close</button>
+  </div>
+
+  {% if error %}
+  <p class="print-error">{{ error }}</p>
+  {% elif document %}
+  <header class="sheet-head">
+    <div>
+      <h1>{{ company_name }}</h1>
+      <p>{{ document.title }}{% if document.shop_label %} · {{ document.shop_label }}{% endif %}</p>
+    </div>
+    <div class="sheet-meta">
+      <div>{{ printed_at|date:"d M Y" }} · {{ printed_at|time:"H:i" }}</div>
+      <div>{{ document.item_count }} item{{ document.item_count|pluralize }}</div>
+    </div>
+  </header>
+
+  {% for group in document.categories %}
+  <h2 class="category">{{ group.name }}</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        {% if document.layout == "prices" %}
+          {% if document.shops|length == 1 %}
+          <th class="num">Price</th>
+          {% else %}
+            {% for shop in document.shops %}
+            <th class="num">{{ shop.name }}</th>
+            {% endfor %}
+          {% endif %}
+        {% elif document.layout == "stock" %}
+          {% for shop in document.shops %}
+          <th class="num">{{ shop.name }}</th>
+          {% endfor %}
+          {% if document.shops|length > 1 %}
+          <th class="num">Total</th>
+          {% endif %}
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in group.rows %}
+      <tr>
+        <td>{{ row.name }}</td>
+        {% if document.layout == "prices" %}
+          {% if document.shops|length == 1 %}
+          <td class="num">{{ row.price }}</td>
+          {% else %}
+            {% for price in row.prices %}
+            <td class="num">{{ price.price }}</td>
+            {% endfor %}
+          {% endif %}
+        {% elif document.layout == "stock" %}
+          {% for qty in row.quantities %}
+          <td class="num">{{ qty.qty }}</td>
+          {% endfor %}
+          {% if document.shops|length > 1 %}
+          <td class="num">{{ row.total }}</td>
+          {% endif %}
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% empty %}
+  <p class="footnote">No items to print.</p>
+  {% endfor %}
+
+  <p class="footnote">Generated from Stock Management · {{ document.title }}</p>
+  {% endif %}
+
+  {% if auto_print and document and not error %}
+  <script>
+    window.addEventListener("load", function () {
+      window.setTimeout(function () { window.print(); }, 180);
+    });
+  </script>
+  {% endif %}
+</body>
+</html>

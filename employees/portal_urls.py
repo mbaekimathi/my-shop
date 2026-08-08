@@ -176,6 +176,11 @@ urlpatterns = [
         name="stock_management_catalog",
     ),
     path(
+        "<role_segment:role_segment>/stock-management/print/",
+        views.stock_management_print_proxy,
+        name="stock_management_print",
+    ),
+    path(
         "<role_segment:role_segment>/stock-management/serials/returns/guest/",
         views.stock_serial_return_guest_page,
         name="stock_serial_return_guest",

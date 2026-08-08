@@ -17,6 +17,7 @@ from items.views import (
     item_management_catalog,
     stock_management,
     stock_management_catalog,
+    stock_management_print,
     stock_serial_detail,
     stock_serial_return_client,
 )
@@ -197,6 +198,13 @@ def workspace_module(request, role_segment, module_slug):
 def stock_management_catalog_proxy(request, role_segment):
     """JSON catalog for stock-management action modes."""
     return stock_management_catalog(request, role_segment)
+
+
+@active_employee_required
+@require_GET
+def stock_management_print_proxy(request, role_segment):
+    """Printable stock list for stock-management."""
+    return stock_management_print(request, role_segment)
 
 
 @active_employee_required

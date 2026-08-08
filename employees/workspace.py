@@ -642,6 +642,10 @@ def sidebar_for_stock_management(
                 ),
             ]
             primary.extend(link for mode, link in candidates if _allowed(mode))
+            if active_mode == "view" and _allowed("view"):
+                primary.append(
+                    _action("Print stock", "printer", action="print-stock")
+                )
     else:
         primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
         if _allowed("view"):
@@ -652,6 +656,9 @@ def sidebar_for_stock_management(
                     href=stock_management_url(role, "view", shop_id=shop_id),
                     active=active_mode == "view",
                 )
+            )
+            primary.append(
+                _action("Print stock", "printer", action="print-stock")
             )
 
     return resolve_sidebar_hrefs(
