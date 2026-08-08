@@ -16271,13 +16271,56 @@ body.serial-scan-open {
 }
 
 .serial-scan-reader {
+  position: relative;
   width: 100%;
   min-height: 12rem;
+  background: #0b1416;
 }
 
-.serial-scan-reader video {
+.serial-scan-reader video,
+.serial-scan-video {
+  display: block;
   width: 100% !important;
+  max-height: min(52vh, 22rem);
+  object-fit: cover;
   border-radius: 0 !important;
+  background: #0b1416;
+}
+
+.serial-scan-guide {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(92%, 22rem);
+  height: clamp(5.5rem, 28%, 8.5rem);
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(255, 255, 255, 0.88);
+  border-radius: 12px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.serial-scan-guide::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: color-mix(in srgb, var(--accent, #d9951f) 80%, #fff);
+  opacity: 0.9;
+  animation: serial-scan-line 1.4s ease-in-out infinite;
+}
+
+@keyframes serial-scan-line {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .serial-scan-preview {

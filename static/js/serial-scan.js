@@ -17,16 +17,35 @@
     document.currentScript?.dataset?.html5QrcodeUrl ||
     "/static/vendor/html5-qrcode.min.js";
 
+  const BARCODE_FORMATS = [
+    "code_128",
+    "code_39",
+    "code_93",
+    "ean_13",
+    "ean_8",
+    "upc_a",
+    "upc_e",
+    "itf",
+    "codabar",
+    "qr_code",
+    "data_matrix",
+  ];
+
   let libPromise = null;
   let activeTarget = null;
   let html5Scanner = null;
   let stream = null;
+  let nativeVideo = null;
+  let nativeLoopId = 0;
+  let nativeDetecting = false;
+  let scanLocked = false;
   let modal = null;
   let statusEl = null;
   let readerEl = null;
   let previewEl = null;
   let fileInput = null;
   let cameraInput = null;
+  let barcodeDetector = null;
 
   const normalizeSerial = (value) =>
     String(value || "")
@@ -66,6 +85,22 @@
     return libPromise;
   };
 
+  const getBarcodeDetector = () => {
+    if (!("BarcodeDetector" in window)) return null;
+    if (barcodeDetector) return barcodeDetector;
+    try {
+      barcodeDetector = new window.BarcodeDetector({ formats: BARCODE_FORMATS });
+      return barcodeDetector;
+    } catch (_) {
+      try {
+        barcodeDetector = new window.BarcodeDetector();
+        return barcodeDetector;
+      } catch (_) {
+        return null;
+      }
+    }
+  };
+
   const refreshIcons = () => {
     try {
       window.lucide?.createIcons?.();
@@ -81,7 +116,23 @@
     statusEl.classList.toggle("is-error", Boolean(error));
   };
 
+  const stopNativeLoop = () => {
+    nativeLoopId += 1;
+    nativeDetecting = false;
+    if (nativeVideo) {
+      try {
+        nativeVideo.pause();
+      } catch (_) {
+        /* ignore */
+      }
+      nativeVideo.srcObject = null;
+      nativeVideo.remove();
+      nativeVideo = null;
+    }
+  };
+
   const stopCamera = async () => {
+    stopNativeLoop();
     if (html5Scanner) {
       try {
         const state = html5Scanner.getState?.();
@@ -113,8 +164,9 @@
   const applySerial = (raw, target) => {
     const serial = normalizeSerial(raw);
     const input = target || activeTarget;
-    if (!serial || !input) return false;
+    if (!serial || !input || scanLocked) return false;
 
+    scanLocked = true;
     input.value = serial;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -130,28 +182,18 @@
     }
 
     setStatus(`Scanned: ${serial}`);
-    window.setTimeout(() => closeModal(), 280);
+    window.setTimeout(() => {
+      closeModal().finally(() => {
+        scanLocked = false;
+      });
+    }, 120);
     return true;
   };
 
   const decodeWithBarcodeDetector = async (source) => {
-    if (!("BarcodeDetector" in window)) return null;
+    const detector = getBarcodeDetector();
+    if (!detector) return null;
     try {
-      const detector = new window.BarcodeDetector({
-        formats: [
-          "qr_code",
-          "code_128",
-          "code_39",
-          "code_93",
-          "ean_13",
-          "ean_8",
-          "upc_a",
-          "upc_e",
-          "itf",
-          "codabar",
-          "data_matrix",
-        ],
-      });
       const codes = await detector.detect(source);
       const raw = codes?.[0]?.rawValue;
       return raw ? normalizeSerial(raw) : null;
@@ -184,7 +226,7 @@
     document.body.appendChild(host);
     try {
       const fileScanner = new Html5Qrcode(host.id, { verbose: false });
-      const decoded = await fileScanner.scanFile(file, true);
+      const decoded = await fileScanner.scanFile(file, /* showImage= */ false);
       try {
         fileScanner.clear();
       } catch (_) {
@@ -200,7 +242,111 @@
     applySerial(decodedText);
   };
 
-  const startCamera = async () => {
+  const videoConstraints = () => ({
+    audio: false,
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30, max: 30 },
+    },
+  });
+
+  const buildScanGuide = () => {
+    const guide = document.createElement("div");
+    guide.className = "serial-scan-guide";
+    guide.setAttribute("aria-hidden", "true");
+    return guide;
+  };
+
+  const startNativeCamera = async () => {
+    const detector = getBarcodeDetector();
+    if (!detector || !readerEl || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Native scanner unavailable");
+    }
+
+    setStatus("Starting camera…");
+    await stopCamera();
+
+    stream = await navigator.mediaDevices.getUserMedia(videoConstraints());
+    const video = document.createElement("video");
+    video.className = "serial-scan-video";
+    video.setAttribute("playsinline", "");
+    video.setAttribute("muted", "");
+    video.muted = true;
+    video.autoplay = true;
+    video.srcObject = stream;
+
+    readerEl.innerHTML = "";
+    readerEl.append(video, buildScanGuide());
+    nativeVideo = video;
+
+    await video.play();
+
+    // Continuous autofocus when the device supports it.
+    try {
+      const track = stream.getVideoTracks()?.[0];
+      const caps = track?.getCapabilities?.() || {};
+      if (caps.focusMode?.includes?.("continuous")) {
+        await track.applyConstraints({
+          advanced: [{ focusMode: "continuous" }],
+        });
+      }
+    } catch (_) {
+      /* ignore */
+    }
+
+    const loopToken = ++nativeLoopId;
+    nativeDetecting = false;
+    setStatus("Point at a barcode or QR code");
+
+    const tick = async () => {
+      if (loopToken !== nativeLoopId || scanLocked) return;
+      if (!video || video.readyState < 2) {
+        window.setTimeout(tick, 40);
+        return;
+      }
+      if (!nativeDetecting) {
+        nativeDetecting = true;
+        try {
+          const codes = await detector.detect(video);
+          const raw = codes?.[0]?.rawValue;
+          if (raw && loopToken === nativeLoopId) {
+            onScanSuccess(raw);
+            return;
+          }
+        } catch (_) {
+          /* keep looping */
+        } finally {
+          nativeDetecting = false;
+        }
+      }
+      // ~25 detect attempts/sec without stacking awaits.
+      window.setTimeout(tick, 40);
+    };
+
+    tick();
+  };
+
+  const html5Formats = () => {
+    const Supported = window.Html5QrcodeSupportedFormats;
+    if (!Supported) return undefined;
+    return [
+      Supported.CODE_128,
+      Supported.CODE_39,
+      Supported.CODE_93,
+      Supported.EAN_13,
+      Supported.EAN_8,
+      Supported.UPC_A,
+      Supported.UPC_E,
+      Supported.ITF,
+      Supported.CODABAR,
+      Supported.QR_CODE,
+      Supported.DATA_MATRIX,
+    ].filter((value) => value != null);
+  };
+
+  const startHtml5Camera = async () => {
     setStatus("Starting camera…");
     await stopCamera();
     if (readerEl) readerEl.innerHTML = "";
@@ -210,28 +356,41 @@
       throw new Error("Scanner not ready");
     }
 
-    html5Scanner = new Html5Qrcode(readerEl.id, { verbose: false });
+    const formats = html5Formats();
+    html5Scanner = new Html5Qrcode(readerEl.id, {
+      verbose: false,
+      ...(formats ? { formatsToSupport: formats } : {}),
+    });
+
+    // Wide rectangular box fits 1D barcodes much better than a square.
     const config = {
-      fps: 10,
+      fps: 24,
       qrbox: (viewfinderWidth, viewfinderHeight) => {
-        const edge = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.72);
-        return { width: edge, height: edge };
+        const width = Math.floor(Math.min(viewfinderWidth * 0.92, viewfinderWidth - 16));
+        const height = Math.floor(
+          Math.min(
+            Math.max(viewfinderHeight * 0.28, 110),
+            viewfinderHeight * 0.42,
+            width * 0.45
+          )
+        );
+        return {
+          width: Math.max(180, width),
+          height: Math.max(90, height),
+        };
       },
-      aspectRatio: 1,
+      disableFlip: false,
       experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+      videoConstraints: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 30 },
+      },
     };
 
-    const cameras = await Html5Qrcode.getCameras().catch(() => []);
-    const back =
-      cameras.find((c) => /back|rear|environment/i.test(c.label || "")) ||
-      cameras[cameras.length - 1];
-
-    const cameraConfig = back?.id
-      ? back.id
-      : { facingMode: "environment" };
-
     await html5Scanner.start(
-      cameraConfig,
+      { facingMode: "environment" },
       config,
       (text) => onScanSuccess(text),
       () => {
@@ -239,6 +398,22 @@
       }
     );
     setStatus("Point at a barcode or QR code");
+  };
+
+  const startCamera = async () => {
+    scanLocked = false;
+    if (getBarcodeDetector()) {
+      try {
+        await startNativeCamera();
+        return;
+      } catch (err) {
+        // Fall through to html5-qrcode if native path fails (permission, etc.).
+        if (/NotAllowed|Permission|secure/i.test(String(err?.name || err?.message || ""))) {
+          throw err;
+        }
+      }
+    }
+    await startHtml5Camera();
   };
 
   const ensureModal = () => {
@@ -293,7 +468,7 @@
 
         <p class="serial-scan-status" data-serial-scan-status hidden></p>
         <p class="serial-scan-hint">
-          Supports QR and barcodes. You can still type the serial manually.
+          Supports QR and barcodes. Hold steady — capture is continuous.
         </p>
 
         <input
@@ -378,11 +553,12 @@
   const openModal = (input) => {
     if (!input || input.disabled) return;
     activeTarget = input;
+    scanLocked = false;
     ensureModal();
     modal.classList.add("is-open");
     modal.setAttribute("aria-hidden", "false");
     document.body.classList.add("serial-scan-open");
-    setStatus("Choose live camera, take a photo, or pick an image");
+    setStatus("Starting camera…");
     if (previewEl) {
       previewEl.hidden = true;
       previewEl.removeAttribute("src");
@@ -479,13 +655,14 @@
     ensureModal();
     scanTree(document);
     observe();
-    // Preload library in idle time so first scan is snappy.
+    // Warm native detector + preload library so first scan is snappy.
+    getBarcodeDetector();
     if ("requestIdleCallback" in window) {
       window.requestIdleCallback(() => {
         ensureLib().catch(() => {});
-      }, { timeout: 4000 });
+      }, { timeout: 2500 });
     } else {
-      window.setTimeout(() => ensureLib().catch(() => {}), 1800);
+      window.setTimeout(() => ensureLib().catch(() => {}), 900);
     }
   };
 
