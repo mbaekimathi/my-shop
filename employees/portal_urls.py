@@ -176,6 +176,21 @@ urlpatterns = [
         name="stock_management_catalog",
     ),
     path(
+        "<role_segment:role_segment>/stock-management/serials/returns/guest/",
+        views.stock_serial_return_guest_page,
+        name="stock_serial_return_guest",
+    ),
+    path(
+        "<role_segment:role_segment>/stock-management/serials/returns/<int:client_id>/",
+        views.stock_serial_return_client_page,
+        name="stock_serial_return_client",
+    ),
+    path(
+        "<role_segment:role_segment>/stock-management/serials/<int:item_id>/",
+        views.stock_serial_detail_page,
+        name="stock_serial_detail",
+    ),
+    path(
         "<role_segment:role_segment>/item-management/catalog/",
         views.item_management_catalog_proxy,
         name="item_management_catalog",

@@ -562,7 +562,7 @@ def build_shop_catalog_page(
     q="",
     category="",
     page=1,
-    page_size=48,
+    page_size=120,
 ):
     """Paginated catalog payload for the MY-SHOP floor API."""
     from items.services import _paginate_queryset
@@ -572,10 +572,10 @@ def build_shop_catalog_page(
     except (TypeError, ValueError):
         page = 1
     try:
-        page_size = int(page_size or 48)
+        page_size = int(page_size or 120)
     except (TypeError, ValueError):
-        page_size = 48
-    page_size = min(max(page_size, 12), 96)
+        page_size = 120
+    page_size = min(max(page_size, 24), 240)
 
     qs = _catalog_filter_qs(_catalog_base_qs(), q=q, category=category)
     page_data = _paginate_queryset(qs, page=page, page_size=page_size)
@@ -922,7 +922,7 @@ def my_shop_catalog(request, shop_id):
         q=request.GET.get("q") or "",
         category=request.GET.get("category") or "",
         page=request.GET.get("page") or 1,
-        page_size=request.GET.get("page_size") or 48,
+        page_size=request.GET.get("page_size") or 120,
     )
     return JsonResponse(payload)
 

@@ -3,8 +3,9 @@ import json
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.db.models import F, Q
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods
 
@@ -1062,14 +1063,27 @@ def stock_management(request, profile, meta, module, page_sidebar):
     from .models import ShopStock
 
     mode = (request.GET.get("mode") or request.POST.get("mode") or "view").strip().lower()
-    if mode not in ("view", "in", "out", "request", "report", "movements"):
+    if mode not in (
+        "view",
+        "in",
+        "out",
+        "request",
+        "report",
+        "movements",
+        "serials",
+        "return-clients",
+    ):
         mode = "view"
 
-    denied = require_module_permission(request, profile, "stock-management", mode)
+    # Return-clients shares the serials permission key.
+    permission_mode = "serials" if mode == "return-clients" else mode
+    denied = require_module_permission(
+        request, profile, "stock-management", permission_mode
+    )
     if denied is not None:
         return denied
 
-    # Stock In / Out / Request / Report / Movements: shop-manager and IT support.
+    # Stock In / Out / Request / Report / Movements / Serials: shop-manager and IT support.
     if mode != "view" and profile.role not in (
         EmployeeRole.SHOP_MANAGER,
         EmployeeRole.IT_SUPPORT,
@@ -1078,6 +1092,12 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if mode in ("report", "movements"):
         return stock_report(request, profile, meta, module, page_mode=mode)
+
+    if mode == "serials":
+        return stock_serials(request, profile, meta, module)
+
+    if mode == "return-clients":
+        return stock_serial_returns(request, profile, meta, module)
 
     all_shops = list(
         Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
@@ -1330,3 +1350,615 @@ def stock_management_catalog(request, role_segment):
         include_suspended=True,
     )
     return JsonResponse(payload)
+
+
+def _serial_client_info(receipt):
+    client = receipt.client
+    client_name = ""
+    client_phone = ""
+    if client is not None:
+        client_name = (client.full_name or "").strip()
+        client_phone = (client.phone_number or "").strip()
+    if not client_name:
+        client_name = (receipt.client_name or "").strip()
+    if not client_phone:
+        client_phone = (receipt.client_phone or "").strip()
+    return {
+        "client_name": client_name or "Walk-in",
+        "client_phone": client_phone,
+        "receipt_number": receipt.receipt_number,
+        "shop_name": receipt.shop.name if receipt.shop_id else "—",
+        "kind_label": receipt.get_kind_display(),
+    }
+
+
+def _serial_sale_lookup(item):
+    """Map serial_number → latest active sale/credit info for an item."""
+    from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
+
+    lines = (
+        ShopReceiptLine.objects.filter(
+            item=item,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        )
+        .exclude(receipt__status=ShopReceiptStatus.CANCELLED)
+        .select_related("receipt", "receipt__client", "receipt__shop")
+        .order_by("-receipt__created_at", "-id")
+    )
+    sale_by_serial = {}
+    for line in lines:
+        info = {
+            **_serial_client_info(line.receipt),
+            "sold_at": line.receipt.created_at,
+        }
+        for serial in line.remaining_serial_numbers:
+            if serial not in sale_by_serial:
+                sale_by_serial[serial] = info
+    return sale_by_serial
+
+
+def _serial_return_lookup(item):
+    """Map serial_number → latest return info (original sale client + when returned)."""
+    from shops.models import ShopReceiptKind, ShopReceiptLine
+
+    lines = (
+        ShopReceiptLine.objects.filter(
+            item=item,
+            returned_quantity__gt=0,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        )
+        .select_related("receipt", "receipt__client", "receipt__shop")
+        .order_by(
+            F("receipt__last_returned_at").desc(nulls_last=True),
+            "-receipt__created_at",
+            "-id",
+        )
+    )
+    return_by_serial = {}
+    for line in lines:
+        receipt = line.receipt
+        returned_at = receipt.last_returned_at or receipt.created_at
+        info = {
+            **_serial_client_info(receipt),
+            "returned_at": returned_at,
+            "sold_at": receipt.created_at,
+        }
+        for serial in line.returned_serial_numbers or []:
+            serial = str(serial).strip()
+            if serial and serial not in return_by_serial:
+                return_by_serial[serial] = info
+    return return_by_serial
+
+
+def stock_serials(request, profile, meta, module):
+    """List items that have serial numbers registered."""
+    from django.db.models import Count, Q
+
+    from employees.access import role_url_segment
+
+    search = (request.GET.get("q") or "").strip()
+    selected_shop_id = (request.GET.get("shop_id") or "").strip()
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="serials",
+        shop_id=selected_shop_id,
+        profile=profile,
+    )
+
+    if selected_shop_id.isdigit():
+        shop_pk = int(selected_shop_id)
+        shop_q = Q(serials__shop_id=shop_pk)
+        items_qs = Item.objects.filter(track_serial_number=True).annotate(
+            serial_total=Count("serials", filter=shop_q, distinct=True),
+            serial_in_stock=Count(
+                "serials",
+                filter=shop_q & Q(serials__is_available=True),
+                distinct=True,
+            ),
+            serial_out=Count(
+                "serials",
+                filter=shop_q & Q(serials__is_available=False),
+                distinct=True,
+            ),
+        )
+    else:
+        items_qs = Item.objects.filter(track_serial_number=True).annotate(
+            serial_total=Count("serials", distinct=True),
+            serial_in_stock=Count(
+                "serials",
+                filter=Q(serials__is_available=True),
+                distinct=True,
+            ),
+            serial_out=Count(
+                "serials",
+                filter=Q(serials__is_available=False),
+                distinct=True,
+            ),
+        )
+
+    items_qs = items_qs.filter(serial_total__gt=0).order_by("category", "name")
+    if search:
+        items_qs = items_qs.filter(
+            Q(name__icontains=search) | Q(category__icontains=search)
+        )
+
+    segment = role_url_segment(profile.role)
+    rows = []
+    for item in items_qs:
+        rows.append(
+            {
+                "item": item,
+                "in_stock": item.serial_in_stock,
+                "out": item.serial_out,
+                "total": item.serial_total,
+                "detail_url": reverse(
+                    "employees:stock_serial_detail",
+                    kwargs={
+                        "role_segment": segment,
+                        "item_id": item.pk,
+                    },
+                ),
+            }
+        )
+
+    from shops.models import Shop
+
+    filter_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+
+    return render(
+        request,
+        "items/stock_serials.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "rows": rows,
+            "item_count": len(rows),
+            "search": search,
+            "filter_shops": filter_shops,
+            "selected_shop_id": selected_shop_id,
+            "stock_mode": "serials",
+        },
+    )
+
+
+def _employee_display_name(profile):
+    if profile is None:
+        return "—"
+    user = getattr(profile, "user", None)
+    if user is not None:
+        name = (user.get_full_name() or "").strip() or (user.username or "").strip()
+        if name:
+            return name
+    employee_id = (getattr(profile, "employee_id", None) or "").strip()
+    return employee_id or "—"
+
+
+def _returned_serial_line_queryset(*, shop_id="", client_id=None, client_phone=""):
+    from shops.models import ShopReceiptKind, ShopReceiptLine
+    from shops.services import _normalize_phone
+
+    lines = (
+        ShopReceiptLine.objects.filter(
+            returned_quantity__gt=0,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        )
+        .select_related(
+            "item",
+            "receipt",
+            "receipt__shop",
+            "receipt__client",
+            "receipt__created_by",
+            "receipt__created_by__user",
+            "receipt__last_returned_by",
+            "receipt__last_returned_by__user",
+        )
+        .order_by(
+            F("receipt__last_returned_at").desc(nulls_last=True),
+            "-receipt__created_at",
+            "-id",
+        )
+    )
+    if str(shop_id).isdigit():
+        lines = lines.filter(receipt__shop_id=int(shop_id))
+    if client_id is not None:
+        lines = lines.filter(receipt__client_id=client_id)
+    elif client_phone:
+        normalized = _normalize_phone(client_phone)
+        if normalized:
+            lines = lines.filter(
+                Q(receipt__client__phone_normalized=normalized)
+                | Q(receipt__client_phone__icontains=normalized[-9:])
+            )
+        else:
+            lines = lines.filter(receipt__client_phone__iexact=client_phone)
+    return lines
+
+
+def _client_info_from_receipt(receipt):
+    from shops.services import find_client_by_phone
+
+    client = receipt.client
+    client_name = ""
+    client_phone = ""
+    client_id = None
+    if client is not None:
+        client_id = client.pk
+        client_name = (client.full_name or "").strip()
+        client_phone = (client.phone_number or "").strip()
+    if not client_name:
+        client_name = (receipt.client_name or "").strip()
+    if not client_phone:
+        client_phone = (receipt.client_phone or "").strip()
+    if client_id is None and client_phone:
+        matched = find_client_by_phone(client_phone)
+        if matched is not None:
+            client_id = matched.pk
+            if not client_name:
+                client_name = (matched.full_name or "").strip()
+            if not client_phone:
+                client_phone = (matched.phone_number or "").strip()
+    return {
+        "client_id": client_id,
+        "client_name": client_name or "Walk-in",
+        "client_phone": client_phone,
+    }
+
+
+def _iter_returned_serial_rows(lines):
+    for line in lines:
+        returned_serials = [
+            str(s).strip()
+            for s in (line.returned_serial_numbers or [])
+            if str(s).strip()
+        ]
+        if not returned_serials:
+            continue
+        receipt = line.receipt
+        client_info = _client_info_from_receipt(receipt)
+        item_name = (line.item.name if line.item_id else "") or line.item_name
+        item_category = (line.item.category if line.item_id else "") or ""
+        for serial in returned_serials:
+            yield {
+                **client_info,
+                "item_name": item_name,
+                "item_category": item_category,
+                "serial_number": serial,
+                "receipt_number": receipt.receipt_number,
+                "shop_name": receipt.shop.name if receipt.shop_id else "—",
+                "bought_at": receipt.created_at,
+                "amount_paid": line.unit_price,
+                "served_by": _employee_display_name(receipt.created_by),
+                "returned_at": receipt.last_returned_at or receipt.created_at,
+                "received_by": _employee_display_name(receipt.last_returned_by),
+            }
+
+
+def stock_serial_returns(request, profile, meta, module):
+    """Clients who returned serial-tracked items (name, phone, return count)."""
+    from employees.access import role_url_segment
+    from shops.models import Shop
+
+    search = (request.GET.get("q") or "").strip()
+    selected_shop_id = (request.GET.get("shop_id") or "").strip()
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="return-clients",
+        shop_id=selected_shop_id,
+        profile=profile,
+    )
+
+    lines = _returned_serial_line_queryset(shop_id=selected_shop_id)
+    clients = {}
+    for row in _iter_returned_serial_rows(lines):
+        key = (
+            f"id:{row['client_id']}"
+            if row["client_id"]
+            else f"phone:{(row['client_phone'] or row['client_name']).strip().lower()}"
+        )
+        entry = clients.get(key)
+        if entry is None:
+            entry = {
+                "client_id": row["client_id"],
+                "client_name": row["client_name"],
+                "client_phone": row["client_phone"],
+                "return_count": 0,
+                "last_returned_at": row["returned_at"],
+            }
+            clients[key] = entry
+        entry["return_count"] += 1
+        if row["returned_at"] and (
+            entry["last_returned_at"] is None
+            or row["returned_at"] > entry["last_returned_at"]
+        ):
+            entry["last_returned_at"] = row["returned_at"]
+            entry["client_name"] = row["client_name"]
+            entry["client_phone"] = row["client_phone"]
+
+    segment = role_url_segment(profile.role)
+    rows = []
+    for entry in clients.values():
+        if search:
+            needle = search.lower()
+            hay = f"{entry['client_name']} {entry['client_phone']}".lower()
+            if needle not in hay:
+                continue
+        if entry["client_id"]:
+            detail_url = reverse(
+                "employees:stock_serial_return_client",
+                kwargs={
+                    "role_segment": segment,
+                    "client_id": entry["client_id"],
+                },
+            )
+        else:
+            detail_url = reverse(
+                "employees:stock_serial_return_guest",
+                kwargs={"role_segment": segment},
+            )
+            from urllib.parse import urlencode
+
+            detail_url = (
+                f"{detail_url}?{urlencode({'phone': entry['client_phone'] or '', 'name': entry['client_name']})}"
+            )
+        if selected_shop_id:
+            sep = "&" if "?" in detail_url else "?"
+            detail_url = f"{detail_url}{sep}shop_id={selected_shop_id}"
+        rows.append({**entry, "detail_url": detail_url})
+
+    rows.sort(
+        key=lambda r: (
+            r["last_returned_at"] is None,
+            -(r["last_returned_at"].timestamp() if r["last_returned_at"] else 0),
+            (r["client_name"] or "").lower(),
+        )
+    )
+
+    filter_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+
+    return render(
+        request,
+        "items/stock_serial_returns.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "rows": rows,
+            "client_count": len(rows),
+            "search": search,
+            "filter_shops": filter_shops,
+            "selected_shop_id": selected_shop_id,
+            "stock_mode": "return-clients",
+        },
+    )
+
+
+def stock_serial_return_client(
+    request, profile, meta, module, *, client_id=None, guest_phone="", guest_name=""
+):
+    """All returned serial items for one client."""
+    from employees.access import role_url_segment
+    from shops.models import Client, Shop
+
+    selected_shop_id = (request.GET.get("shop_id") or "").strip()
+    search = (request.GET.get("q") or "").strip()
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="return-clients",
+        shop_id=selected_shop_id,
+        profile=profile,
+    )
+
+    client = None
+    if client_id is not None:
+        client = get_object_or_404(Client, pk=client_id)
+        client_name = (client.full_name or "").strip() or "Client"
+        client_phone = (client.phone_number or "").strip()
+        lines = _returned_serial_line_queryset(
+            shop_id=selected_shop_id, client_id=client.pk
+        )
+    else:
+        guest_phone = (guest_phone or request.GET.get("phone") or "").strip()
+        guest_name = (guest_name or request.GET.get("name") or "").strip()
+        if not guest_phone and not guest_name:
+            raise Http404("Client not found.")
+        client_name = guest_name or "Walk-in"
+        client_phone = guest_phone
+        lines = _returned_serial_line_queryset(
+            shop_id=selected_shop_id, client_phone=guest_phone or guest_name
+        )
+
+    rows = []
+    for row in _iter_returned_serial_rows(lines):
+        if client_id is None:
+            # Guest pages: keep rows matching this phone/name group.
+            phone_match = (row["client_phone"] or "").strip() == client_phone
+            name_match = (row["client_name"] or "").strip().lower() == client_name.lower()
+            if client_phone and not phone_match:
+                continue
+            if not client_phone and not name_match:
+                continue
+        if search:
+            needle = search.lower()
+            hay = " ".join(
+                [
+                    row["serial_number"],
+                    row["item_name"],
+                    row["item_category"],
+                    row["receipt_number"],
+                    row["served_by"],
+                    row["received_by"],
+                ]
+            ).lower()
+            if needle not in hay:
+                continue
+        rows.append(row)
+
+    segment = role_url_segment(profile.role)
+    list_url = reverse(
+        "employees:workspace_module",
+        kwargs={"role_segment": segment, "module_slug": "stock-management"},
+    )
+    list_href = f"{list_url}?mode=return-clients"
+    if selected_shop_id:
+        list_href = f"{list_href}&shop_id={selected_shop_id}"
+
+    filter_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+
+    return render(
+        request,
+        "items/stock_serial_return_client.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "client_name": client_name,
+            "client_phone": client_phone,
+            "rows": rows,
+            "row_count": len(rows),
+            "search": search,
+            "filter_shops": filter_shops,
+            "selected_shop_id": selected_shop_id,
+            "list_href": list_href,
+            "stock_mode": "return-clients",
+        },
+    )
+
+
+def stock_serial_detail(request, profile, meta, module, item_id):
+    """Show all serial numbers for one item: in stock, sold, returned, stocked out."""
+    from employees.access import role_url_segment
+
+    from .models import ItemSerial
+
+    item = get_object_or_404(Item, pk=item_id, track_serial_number=True)
+    selected_shop_id = (request.GET.get("shop_id") or "").strip()
+    search = (request.GET.get("q") or "").strip()
+    status_filter = (request.GET.get("status") or "all").strip().lower()
+    if status_filter not in ("all", "in_stock", "sold", "returned", "out"):
+        status_filter = "all"
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="serials",
+        shop_id=selected_shop_id,
+        profile=profile,
+    )
+
+    serials_qs = ItemSerial.objects.filter(item=item).select_related("shop")
+    if selected_shop_id.isdigit():
+        serials_qs = serials_qs.filter(shop_id=int(selected_shop_id))
+    if search:
+        serials_qs = serials_qs.filter(serial_number__icontains=search)
+
+    sale_by_serial = _serial_sale_lookup(item)
+    return_by_serial = _serial_return_lookup(item)
+    rows = []
+    in_stock_count = 0
+    sold_count = 0
+    returned_count = 0
+    out_count = 0
+
+    for serial in serials_qs:
+        sale = sale_by_serial.get(serial.serial_number)
+        returned = return_by_serial.get(serial.serial_number)
+        # Still on an active sale → sold. After a return, do not flip back to
+        # "In stock" — keep status as Returned until the unit is sold again.
+        if sale is not None:
+            status = "sold"
+            status_label = "Sold"
+            sold_count += 1
+            event = sale
+        elif returned is not None:
+            status = "returned"
+            status_label = "Returned"
+            returned_count += 1
+            event = returned
+        elif serial.is_available:
+            status = "in_stock"
+            status_label = "In stock"
+            in_stock_count += 1
+            event = None
+        else:
+            status = "out"
+            status_label = "Stocked out"
+            out_count += 1
+            event = None
+
+        if status_filter != "all" and status != status_filter:
+            continue
+
+        rows.append(
+            {
+                "serial_number": serial.serial_number,
+                "status": status,
+                "status_label": status_label,
+                "shop_name": serial.shop.name if serial.shop_id else "—",
+                "client_name": event["client_name"] if event else "",
+                "client_phone": event["client_phone"] if event else "",
+                "receipt_number": event["receipt_number"] if event else "",
+                "sold_at": event.get("sold_at") if event else None,
+                "returned_at": event.get("returned_at") if event else None,
+                "kind_label": event["kind_label"] if event else "",
+                "sale_shop_name": event["shop_name"] if event else "",
+            }
+        )
+
+    segment = role_url_segment(profile.role)
+    list_url = reverse(
+        "employees:workspace_module",
+        kwargs={"role_segment": segment, "module_slug": "stock-management"},
+    )
+    list_href = f"{list_url}?mode=serials"
+    if selected_shop_id:
+        list_href = f"{list_href}&shop_id={selected_shop_id}"
+
+    from shops.models import Shop
+
+    filter_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+
+    return render(
+        request,
+        "items/stock_serial_detail.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "item": item,
+            "rows": rows,
+            "row_count": len(rows),
+            "in_stock_count": in_stock_count,
+            "sold_count": sold_count,
+            "returned_count": returned_count,
+            "out_count": out_count,
+            "search": search,
+            "status_filter": status_filter,
+            "filter_shops": filter_shops,
+            "selected_shop_id": selected_shop_id,
+            "list_href": list_href,
+            "stock_mode": "serials",
+        },
+    )

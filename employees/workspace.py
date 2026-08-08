@@ -331,9 +331,8 @@ def sidebar_for_my_shop(
         )
     else:
         dashboard_url = reverse(role_home_url_name(role))
-        primary = [
-            _link("Dashboard", "layout-dashboard", href=dashboard_url),
-        ]
+        # MY-SHOP shop pages: no Dashboard link (shop links only).
+        primary = []
         sign_out = _link("Sign out", "log-out", url_name="employees:logout", danger=True)
     if shop is not None:
         if _allowed("workspace"):
@@ -554,69 +553,95 @@ def sidebar_for_stock_management(
         return profile is None or employee_may(profile, "stock-management", mode)
 
     if role in full_workflow_roles:
-        # Report / movements pages: stock workflow links only (no Dashboard).
-        primary = []
-        if active_mode not in ("report", "movements"):
-            primary.append(
-                _link("Dashboard", "layout-dashboard", href=dashboard_url)
-            )
-        candidates = [
-            (
-                "view",
-                _link(
-                    "Current Stock",
-                    "boxes",
-                    href=stock_management_url(role, "view", shop_id=shop_id),
-                    active=active_mode == "view",
+        primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+        # Serials / return-clients: Serials + Return clients only.
+        if active_mode in ("serials", "return-clients"):
+            if _allowed("serials"):
+                primary.extend(
+                    [
+                        _link(
+                            "Serials",
+                            "hash",
+                            href=stock_management_url(role, "serials", shop_id=shop_id),
+                            active=active_mode == "serials",
+                        ),
+                        _link(
+                            "Return clients",
+                            "undo-2",
+                            href=stock_management_url(
+                                role, "return-clients", shop_id=shop_id
+                            ),
+                            active=active_mode == "return-clients",
+                        ),
+                    ]
+                )
+        else:
+            candidates = [
+                (
+                    "view",
+                    _link(
+                        "Current Stock",
+                        "boxes",
+                        href=stock_management_url(role, "view", shop_id=shop_id),
+                        active=active_mode == "view",
+                    ),
                 ),
-            ),
-            (
-                "in",
-                _link(
-                    "Stock In",
-                    "package-plus",
-                    href=stock_management_url(role, "in", shop_id=shop_id),
-                    active=active_mode == "in",
+                (
+                    "in",
+                    _link(
+                        "Stock In",
+                        "package-plus",
+                        href=stock_management_url(role, "in", shop_id=shop_id),
+                        active=active_mode == "in",
+                    ),
                 ),
-            ),
-            (
-                "out",
-                _link(
-                    "Stock Out",
-                    "package-minus",
-                    href=stock_management_url(role, "out", shop_id=shop_id),
-                    active=active_mode == "out",
+                (
+                    "out",
+                    _link(
+                        "Stock Out",
+                        "package-minus",
+                        href=stock_management_url(role, "out", shop_id=shop_id),
+                        active=active_mode == "out",
+                    ),
                 ),
-            ),
-            (
-                "request",
-                _link(
-                    "Request Stock",
-                    "clipboard-list",
-                    href=stock_management_url(role, "request", **shop_kwargs),
-                    active=active_mode == "request",
+                (
+                    "request",
+                    _link(
+                        "Request Stock",
+                        "clipboard-list",
+                        href=stock_management_url(role, "request", **shop_kwargs),
+                        active=active_mode == "request",
+                    ),
                 ),
-            ),
-            (
-                "movements",
-                _link(
-                    "Stock Movement",
-                    "arrow-down-up",
-                    href=movements_href,
-                    active=active_mode == "movements",
+                (
+                    "serials",
+                    _link(
+                        "Serials",
+                        "hash",
+                        href=stock_management_url(role, "serials", shop_id=shop_id),
+                        active=active_mode == "serials",
+                    ),
                 ),
-            ),
-            (
-                "report",
-                _link(
-                    "Stock Report",
-                    "bar-chart-3",
-                    href=report_href,
-                    active=active_mode == "report",
+                (
+                    "movements",
+                    _link(
+                        "Stock Movement",
+                        "arrow-down-up",
+                        href=movements_href,
+                        active=active_mode == "movements",
+                    ),
                 ),
-            ),
-        ]
-        primary.extend(link for mode, link in candidates if _allowed(mode))
+                (
+                    "report",
+                    _link(
+                        "Stock Report",
+                        "bar-chart-3",
+                        href=report_href,
+                        active=active_mode == "report",
+                    ),
+                ),
+            ]
+            primary.extend(link for mode, link in candidates if _allowed(mode))
     else:
         primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
         if _allowed("view"):

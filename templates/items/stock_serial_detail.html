@@ -1,0 +1,158 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ item.name }} · Serials — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="stock-panel stock-panel--report" data-animate="rise" data-stock-mode="serials">
+  <header class="stock-panel-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">Serials · {{ item.category }}</p>
+        <h2>{{ item.name }}</h2>
+        <p>Every serial for this item — in stock, sold, returned, or stocked out.</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ in_stock_count }}</strong>
+          <span>in stock</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ sold_count }}</strong>
+          <span>sold</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ returned_count }}</strong>
+          <span>returned</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ out_count }}</strong>
+          <span>stocked out</span>
+        </p>
+      </div>
+    </div>
+
+    <form class="stock-report-filters" method="get" data-stock-serial-filters>
+      <a class="stock-report-apply stock-report-apply--ghost" href="{{ list_href }}">Back to serials</a>
+
+      <label class="stock-report-field">
+        <span>Shop</span>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if selected_shop_id == shop.pk|stringformat:"s" %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="stock-report-field">
+        <span>Status</span>
+        <select name="status" aria-label="Status">
+          <option value="all"{% if status_filter == "all" %} selected{% endif %}>All</option>
+          <option value="in_stock"{% if status_filter == "in_stock" %} selected{% endif %}>In stock</option>
+          <option value="sold"{% if status_filter == "sold" %} selected{% endif %}>Sold</option>
+          <option value="returned"{% if status_filter == "returned" %} selected{% endif %}>Returned</option>
+          <option value="out"{% if status_filter == "out" %} selected{% endif %}>Stocked out</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field stock-report-field--grow">
+        <span>Search</span>
+        <input
+          type="search"
+          name="q"
+          value="{{ search }}"
+          placeholder="Serial number…"
+          aria-label="Search serials"
+          data-serial-scan
+        >
+      </label>
+
+      <button type="submit" class="stock-report-apply">Apply</button>
+    </form>
+  </header>
+
+  {% if rows %}
+  <div class="staff-table-wrap stock-report-table-wrap">
+    <table class="staff-table stock-report-table stock-report-table--serial-detail">
+      <thead>
+        <tr>
+          <th scope="col">Serial</th>
+          <th scope="col">Status</th>
+          <th scope="col">Shop</th>
+          <th scope="col">Client</th>
+          <th scope="col">Receipt</th>
+          <th scope="col">When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td data-label="Serial">
+            <strong class="stock-serial-number">{{ row.serial_number }}</strong>
+          </td>
+          <td data-label="Status">
+            <span class="stock-report-type stock-report-type--{% if row.status == 'in_stock' %}in{% elif row.status == 'sold' %}sale{% elif row.status == 'returned' %}request{% else %}out{% endif %}">
+              {{ row.status_label }}
+            </span>
+          </td>
+          <td data-label="Shop">
+            {% if row.status == "sold" or row.status == "returned" %}
+            {{ row.sale_shop_name|default:row.shop_name }}
+            {% else %}
+            {{ row.shop_name }}
+            {% endif %}
+          </td>
+          <td data-label="Client">
+            {% if row.status == "sold" or row.status == "returned" %}
+            <strong>{{ row.client_name }}</strong>
+            {% if row.client_phone %}
+            <span class="stock-report-from">{{ row.client_phone }}</span>
+            {% endif %}
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td data-label="Receipt">
+            {% if row.receipt_number %}
+            {{ row.receipt_number }}
+            {% if row.kind_label %}
+            <span class="stock-report-from">{{ row.kind_label }}</span>
+            {% endif %}
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td data-label="When">
+            {% if row.status == "returned" and row.returned_at %}
+            {{ row.returned_at|date:"d M Y" }} · {{ row.returned_at|time:"H:i" }}
+            <span class="stock-report-from">returned</span>
+            {% elif row.sold_at %}
+            {{ row.sold_at|date:"d M Y" }} · {{ row.sold_at|time:"H:i" }}
+            <span class="stock-report-from">sold</span>
+            {% else %}
+            —
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="stock-report-footnote">Showing {{ row_count }} serial{{ row_count|pluralize }}</p>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="hash" aria-hidden="true"></i>
+    <p>No serials match these filters.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script
+  src="{% static 'js/serial-scan.js' %}?v=1"
+  data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
+></script>
+{% endblock %}

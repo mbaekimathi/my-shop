@@ -11,8 +11,8 @@
 
   if (!apiUrl || !root) return;
 
-  let pageSize = Number(floor.dataset.catalogPageSize || 48) || 48;
-  pageSize = Math.min(Math.max(pageSize, 12), 96);
+  let pageSize = Number(floor.dataset.catalogPageSize || 120) || 120;
+  pageSize = Math.min(Math.max(pageSize, 24), 240);
 
   let totalCount = Number(floor.dataset.itemTotal || 0) || 0;
   let currentPage = 0;

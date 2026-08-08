@@ -11,7 +11,7 @@
   data-shop-id="{{ shop.id }}"
   data-shop-view="cards"
   data-catalog-api="{{ catalog_url }}"
-  data-catalog-page-size="48"
+  data-catalog-page-size="120"
   data-checkout-url="{{ checkout_url }}"
   data-stk-initiate-url="{{ stk_initiate_url }}"
   data-stk-status-url-template="{{ stk_status_url_template }}"
@@ -552,7 +552,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/shop-catalog.js' %}?v=3"></script>
+<script src="{% static 'js/shop-catalog.js' %}?v=4"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script src="{% static 'js/shop-printer.js' %}?v=18"></script>
@@ -561,4 +561,8 @@
 <script src="{% static 'js/input-uppercase.js' %}"></script>
 <script src="{% static 'js/stock-bulk.js' %}?v=serial36"></script>
 <script src="{% static 'js/my-shop-expense.js' %}?v=3"></script>
+<script
+  src="{% static 'js/serial-scan.js' %}?v=1"
+  data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
+></script>
 {% endblock %}

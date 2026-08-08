@@ -17,6 +17,8 @@ from items.views import (
     item_management_catalog,
     stock_management,
     stock_management_catalog,
+    stock_serial_detail,
+    stock_serial_return_client,
 )
 from shops.services import (
     daraja_settings_as_dict,
@@ -195,6 +197,136 @@ def workspace_module(request, role_segment, module_slug):
 def stock_management_catalog_proxy(request, role_segment):
     """JSON catalog for stock-management action modes."""
     return stock_management_catalog(request, role_segment)
+
+
+@active_employee_required
+@require_GET
+def stock_serial_detail_page(request, role_segment, item_id):
+    """Serial numbers for one stock item (in stock vs sold)."""
+    from employees.access import (
+        get_profile_for_request,
+        redirect_to_role_home,
+        role_from_url_segment,
+        role_url_segment,
+    )
+    from employees.models import EmployeeRole
+    from employees.module_permissions import require_module_permission
+    from employees.workspace import get_dashboard_module
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:stock_serial_detail",
+            role_segment=expected,
+            item_id=item_id,
+        )
+
+    module = get_dashboard_module("stock-management", profile.role)
+    if module is None:
+        raise Http404("Module not found.")
+
+    denied = require_module_permission(request, profile, "stock-management", "serials")
+    if denied is not None:
+        return denied
+
+    if profile.role not in (EmployeeRole.SHOP_MANAGER, EmployeeRole.IT_SUPPORT):
+        return redirect_to_role_home(profile)
+
+    meta = {
+        "title": module["label"],
+        "headline": module["label"],
+        "summary": module["summary"],
+        "icon": module["icon"],
+    }
+    return stock_serial_detail(request, profile, meta, module, item_id)
+
+
+def _stock_serials_page_guard(request, role_segment):
+    """Shared auth/permission gate for serial return client pages."""
+    from employees.access import (
+        get_profile_for_request,
+        redirect_to_role_home,
+        role_from_url_segment,
+        role_url_segment,
+    )
+    from employees.models import EmployeeRole
+    from employees.module_permissions import require_module_permission
+    from employees.workspace import get_dashboard_module
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return None, None, None, expected
+
+    module = get_dashboard_module("stock-management", profile.role)
+    if module is None:
+        raise Http404("Module not found.")
+
+    denied = require_module_permission(request, profile, "stock-management", "serials")
+    if denied is not None:
+        return denied, None, None, None
+
+    if profile.role not in (EmployeeRole.SHOP_MANAGER, EmployeeRole.IT_SUPPORT):
+        return redirect_to_role_home(profile), None, None, None
+
+    meta = {
+        "title": module["label"],
+        "headline": module["label"],
+        "summary": module["summary"],
+        "icon": module["icon"],
+    }
+    return None, profile, meta, module
+
+
+@active_employee_required
+@require_GET
+def stock_serial_return_client_page(request, role_segment, client_id):
+    """Returned serial items for one registered client."""
+    denied, profile, meta, module_or_expected = _stock_serials_page_guard(
+        request, role_segment
+    )
+    if denied is not None:
+        return denied
+    if profile is None:
+        return redirect(
+            "employees:stock_serial_return_client",
+            role_segment=module_or_expected,
+            client_id=client_id,
+        )
+    return stock_serial_return_client(
+        request, profile, meta, module_or_expected, client_id=client_id
+    )
+
+
+@active_employee_required
+@require_GET
+def stock_serial_return_guest_page(request, role_segment):
+    """Returned serial items for a walk-in client (phone/name)."""
+    denied, profile, meta, module_or_expected = _stock_serials_page_guard(
+        request, role_segment
+    )
+    if denied is not None:
+        return denied
+    if profile is None:
+        return redirect(
+            "employees:stock_serial_return_guest",
+            role_segment=module_or_expected,
+        )
+    return stock_serial_return_client(
+        request,
+        profile,
+        meta,
+        module_or_expected,
+        guest_phone=request.GET.get("phone") or "",
+        guest_name=request.GET.get("name") or "",
+    )
 
 
 @active_employee_required

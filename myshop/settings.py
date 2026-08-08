@@ -114,12 +114,15 @@ if MYSQL_ENABLED:
             "OPTIONS": {
                 "charset": "utf8mb4",
                 "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-                "connect_timeout": 5,
+                # Fail fast when MariaDB/XAMPP is down or wedged (handshake/query hangs).
+                "connect_timeout": int(os.getenv("MYSQL_CONNECT_TIMEOUT", "5")),
+                "read_timeout": int(os.getenv("MYSQL_READ_TIMEOUT", "30")),
+                "write_timeout": int(os.getenv("MYSQL_WRITE_TIMEOUT", "30")),
             },
             "CONN_MAX_AGE": int(
                 os.getenv(
                     "MYSQL_CONN_MAX_AGE",
-                    "60" if IS_HOSTED or not DEBUG else "300",
+                    "60" if IS_HOSTED or not DEBUG else "120",
                 )
             ),
             "CONN_HEALTH_CHECKS": True,

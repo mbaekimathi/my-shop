@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Serial scan harness</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    body { margin: 1.5rem; font-family: Manrope, sans-serif; background: #10282c; color: #e8f0f1; }
+    .harness { display: grid; gap: 1rem; max-width: 28rem; }
+    .harness h1 { margin: 0; font-family: Syne, sans-serif; font-size: 1.35rem; }
+    .log { white-space: pre-wrap; font-size: 0.8rem; color: #9bb0b4; }
+  </style>
+</head>
+<body>
+  <div class="harness">
+    <h1>Serial scan harness</h1>
+
+    <div class="stock-serial-row" data-harness-stock-row>
+      <input
+        type="text"
+        placeholder="Enter serial number"
+        data-stock-serial-input
+        data-harness-stock-input
+      >
+      <button type="button" class="stock-serial-remove" data-stock-serial-remove aria-label="Remove" hidden>x</button>
+    </div>
+
+    <div class="shop-serial-row" data-harness-sale-row>
+      <div class="shop-serial-input-wrap">
+        <input
+          type="text"
+          placeholder="Search serial number"
+          data-serial-sale-input
+          data-harness-sale-input
+        >
+      </div>
+      <button type="button" class="shop-serial-row-remove" data-serial-sale-remove aria-label="Remove">x</button>
+    </div>
+
+    <div class="stock-serial-input-wrap stock-request-serial-wrap" data-harness-transfer-wrap>
+      <input
+        type="text"
+        placeholder="Search serial to transfer"
+        data-serial-input
+        data-harness-transfer-input
+      >
+    </div>
+
+    <label class="stock-report-field">
+      <span>Search</span>
+      <input
+        type="search"
+        name="q"
+        placeholder="Serial number…"
+        data-serial-scan
+        data-harness-filter-input
+      >
+    </label>
+
+    <p class="log" data-harness-log></p>
+  </div>
+
+  <script src="/static/vendor/html5-qrcode.min.js"></script>
+  <script
+    src="/static/js/serial-scan.js"
+    data-html5-qrcode-url="/static/vendor/html5-qrcode.min.js"
+  ></script>
+  <script>
+    window.__harnessReady = false;
+    window.__harnessLog = [];
+    const logEl = document.querySelector("[data-harness-log]");
+    const log = (msg) => {
+      window.__harnessLog.push(String(msg));
+      if (logEl) logEl.textContent = window.__harnessLog.join("\n");
+    };
+    const waitForScan = () =>
+      new Promise((resolve) => {
+        const tick = () => {
+          if (window.MyShopSerialScan) resolve(window.MyShopSerialScan);
+          else requestAnimationFrame(tick);
+        };
+        tick();
+      });
+    waitForScan().then((api) => {
+      api.enhance(document);
+      window.__harnessReady = true;
+      log("ready");
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Return clients — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="stock-panel stock-panel--report" data-animate="rise" data-stock-mode="return-clients">
+  <header class="stock-panel-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">Stock management · Serials</p>
+        <h2>Return clients</h2>
+        <p>Clients who returned serial-tracked items. Open a client to see every return.</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ client_count }}</strong>
+          <span>client{{ client_count|pluralize }}</span>
+        </p>
+      </div>
+    </div>
+
+    <form class="stock-report-filters" method="get" data-stock-serial-filters>
+      <input type="hidden" name="mode" value="return-clients">
+
+      <label class="stock-report-field">
+        <span>Shop</span>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if selected_shop_id == shop.pk|stringformat:"s" %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="stock-report-field stock-report-field--grow">
+        <span>Search</span>
+        <input
+          type="search"
+          name="q"
+          value="{{ search }}"
+          placeholder="Client name or phone…"
+          aria-label="Search clients"
+        >
+      </label>
+
+      <button type="submit" class="stock-report-apply">Apply</button>
+    </form>
+  </header>
+
+  {% if rows %}
+  <div class="staff-table-wrap stock-report-table-wrap">
+    <table class="staff-table stock-report-table stock-report-table--return-clients">
+      <thead>
+        <tr>
+          <th scope="col">Client</th>
+          <th scope="col">Phone</th>
+          <th scope="col">Returns</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td data-label="Client">
+            <a class="stock-serial-item-link" href="{{ row.detail_url }}">
+              <strong>{{ row.client_name }}</strong>
+            </a>
+          </td>
+          <td data-label="Phone">{{ row.client_phone|default:"—" }}</td>
+          <td data-label="Returns">
+            <a class="stock-serial-item-link" href="{{ row.detail_url }}">
+              <span class="stock-matrix-qty stock-report-qty--request">{{ row.return_count }}</span>
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="stock-report-footnote">Showing {{ client_count }} client{{ client_count|pluralize }}</p>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="undo-2" aria-hidden="true"></i>
+    <p>{% if search or selected_shop_id %}No return clients match these filters.{% else %}No returned serial-tracked items yet.{% endif %}</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
