@@ -21,14 +21,14 @@
         {% for row in rows %}
         {{ row.lines|json_script:row.id }}
         <tr data-ax-receipt-row data-row-id="{{ row.id }}">
-          <td>{{ row.number }}</td>
-          <td>{{ row.shop }}</td>
-          <td>{{ row.item_count }}</td>
-          <td><span class="ax-pill">{{ row.status }}</span></td>
-          <td>{{ row.due }}</td>
-          <td>{{ row.total }}</td>
-          <td>{% if row.when %}{{ row.when|date:"d M Y · H:i" }}{% else %}—{% endif %}</td>
-          <td class="ax-col-actions">
+          <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
+          <td data-label="Shop">{{ row.shop }}</td>
+          <td data-label="Items">{{ row.item_count }}</td>
+          <td data-label="Status"><span class="ax-pill">{{ row.status }}</span></td>
+          <td data-label="Due">{{ row.due }}</td>
+          <td data-label="Total">{{ row.total }}</td>
+          <td data-label="When">{% if row.when %}{{ row.when|date:"d M Y · H:i" }}{% else %}—{% endif %}</td>
+          <td class="ax-col-actions" data-label="View">
             <button
               type="button"
               class="ax-eye"

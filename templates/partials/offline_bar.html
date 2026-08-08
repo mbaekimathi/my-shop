@@ -3,7 +3,8 @@
   <span class="offline-status offline-status--online" data-offline-status>Online</span>
   <span class="offline-pending" data-sync-pending hidden title="Pending sync items">0</span>
   <button type="button" class="offline-sync-btn" data-sync-now hidden>Sync now</button>
-  <span class="offline-hint" data-offline-hint hidden>Offline — changes queue locally</span>
+  <span class="offline-hint" data-offline-hint hidden>Queued changes waiting to sync</span>
+  <span class="offline-sync-error" data-offline-sync-error hidden></span>
 </div>
 <script type="module">
   import { initOffline } from "{% static 'js/offline/init.js' %}";

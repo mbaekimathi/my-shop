@@ -43,7 +43,7 @@
         <button type="submit" class="ax-apply">Apply</button>
       </form>
     </div>
-    <p class="ax-lead">{{ page.lead }}</p>
+    {% if page.lead %}<p class="ax-lead">{{ page.lead }}</p>{% endif %}
   </header>
 
   {% if page.alerts %}
@@ -62,6 +62,24 @@
   </div>
   {% endif %}
 
+  {% if page.trends %}
+  <div class="ax-trends" aria-label="Result trends">
+    {% for trend in page.trends %}
+    <article class="ax-trend-card{% if trend.tone and trend.tone != 'neutral' %} is-{{ trend.tone }}{% endif %}">
+      <span class="ax-trend-label">{{ trend.label }}</span>
+      <strong class="ax-trend-value">{{ trend.value }}</strong>
+      <em class="ax-trend-delta">{{ trend.delta }}</em>
+      {% if trend.spark and not trend.spark.empty %}
+      <svg class="ax-spark" viewBox="0 0 {{ trend.spark.width }} {{ trend.spark.height }}" preserveAspectRatio="none" aria-hidden="true">
+        <path class="ax-spark-area" d="{{ trend.spark.area }}"></path>
+        <polyline class="ax-spark-line" points="{{ trend.spark.points }}" fill="none"></polyline>
+      </svg>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% if page.metrics %}
   <div class="ax-kpis ax-kpis--dynamic" aria-label="Key metrics">
     {% for metric in page.metrics %}
@@ -70,6 +88,179 @@
       <strong>{{ metric.value }}</strong>
       {% if metric.hint %}<em>{{ metric.hint }}</em>{% endif %}
     </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if page.charts %}
+  <div class="ax-charts{% if page.trends %} ax-charts--trend{% endif %}" aria-label="Visual trends">
+    {% for chart in page.charts %}
+    <section class="ax-chart-card{% if chart.kind == 'line' %} ax-chart-card--wide{% endif %}">
+      <header class="ax-chart-head">
+        <h3>{{ chart.title }}</h3>
+        {% if chart.subtitle %}<span>{{ chart.subtitle }}</span>{% endif %}
+      </header>
+
+      {% if chart.kind == "line" %}
+        {% if chart.line and not chart.line.empty %}
+        <div class="ax-line-wrap">
+          <svg class="ax-line-chart" viewBox="0 0 {{ chart.line.width }} {{ chart.line.height }}" role="img" aria-label="{{ chart.title }}">
+            <path class="ax-line-area" d="{{ chart.line.sales_area }}"></path>
+            <polyline class="ax-line-sales" points="{{ chart.line.sales_points }}" fill="none"></polyline>
+            <polyline class="ax-line-expenses" points="{{ chart.line.expense_points }}" fill="none"></polyline>
+            {% for label in chart.line.labels %}
+            <text class="ax-line-label" x="{{ label.x }}" y="{{ chart.line.label_y }}" text-anchor="middle">{{ label.text }}</text>
+            {% endfor %}
+          </svg>
+          <div class="ax-chart-legend">
+            <span class="is-now">Sales</span>
+            <span class="is-expense">Expenses</span>
+          </div>
+        </div>
+        {% else %}
+        <p class="ax-empty">{{ chart.empty }}</p>
+        {% endif %}
+
+      {% elif chart.kind == "delta" %}
+        {% if chart.rows %}
+        <ul class="ax-delta">
+          {% for row in chart.rows %}
+          <li class="ax-delta-row is-{{ row.tone }}">
+            <div class="ax-delta-meta">
+              <span class="ax-bar-label">{{ row.label }}</span>
+              <strong class="ax-delta-change">{{ row.delta }}</strong>
+            </div>
+            <div class="ax-bar-track" aria-hidden="true">
+              <span class="ax-bar-fill" style="width: {{ row.pct }}%"></span>
+            </div>
+            <span class="ax-delta-amount">{{ row.display }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="ax-empty">{{ chart.empty }}</p>
+        {% endif %}
+
+      {% elif chart.kind == "bars" %}
+        {% if chart.bars %}
+        <ul class="ax-bars">
+          {% for bar in chart.bars %}
+          <li class="ax-bar{% if bar.negative %} is-negative{% endif %}">
+            <div class="ax-bar-meta">
+              <span class="ax-bar-label">{{ bar.label }}</span>
+              <strong class="ax-bar-value">{{ bar.display }}</strong>
+            </div>
+            <div class="ax-bar-track" aria-hidden="true">
+              <span class="ax-bar-fill" style="width: {{ bar.pct }}%"></span>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="ax-empty">{{ chart.empty }}</p>
+        {% endif %}
+
+      {% elif chart.kind == "compare" %}
+        {% if chart.rows %}
+        <ul class="ax-compare">
+          {% for row in chart.rows %}
+          <li class="ax-compare-row{% if row.negative %} is-negative{% endif %}">
+            <div class="ax-compare-meta">
+              <span class="ax-bar-label">{{ row.label }}</span>
+              <span class="ax-compare-values">
+                <strong>{{ row.current_display }}</strong>
+                <em>{{ row.prior_display }}</em>
+              </span>
+            </div>
+            <div class="ax-compare-tracks" aria-hidden="true">
+              <div class="ax-bar-track is-now">
+                <span class="ax-bar-fill" style="width: {{ row.current_pct }}%"></span>
+              </div>
+              <div class="ax-bar-track is-prior">
+                <span class="ax-bar-fill" style="width: {{ row.prior_pct }}%"></span>
+              </div>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        <div class="ax-chart-legend" aria-hidden="true">
+          <span class="is-now">Now</span>
+          <span class="is-prior">Prior</span>
+        </div>
+        {% else %}
+        <p class="ax-empty">{{ chart.empty }}</p>
+        {% endif %}
+
+      {% elif chart.kind == "donut" %}
+        {% if chart.slices %}
+        <div class="ax-donut-wrap">
+          <div
+            class="ax-donut"
+            style="background: conic-gradient({{ chart.gradient }})"
+            role="img"
+            aria-label="Payment mix {{ chart.total }}"
+          >
+            <div class="ax-donut-hole">
+              <strong>{{ chart.total }}</strong>
+              <span>Sales</span>
+            </div>
+          </div>
+          <ul class="ax-donut-legend">
+            {% for slice in chart.slices %}
+            <li class="is-{{ slice.tone }}">
+              <span>{{ slice.label }}</span>
+              <strong>{{ slice.display }}</strong>
+              <em>{{ slice.pct }}</em>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% else %}
+        <p class="ax-empty">{{ chart.empty }}</p>
+        {% endif %}
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if page.sections %}
+  <div class="ax-sections" aria-label="Section digests">
+    {% for section in page.sections %}
+    <a class="ax-section{% if section.tone and section.tone != 'neutral' %} is-{{ section.tone }}{% endif %}" href="{{ section.href }}">
+      <header class="ax-section-head">
+        <span class="ax-section-title">
+          {% if section.icon %}<i data-lucide="{{ section.icon }}" aria-hidden="true"></i>{% endif %}
+          {{ section.title }}
+        </span>
+        <span class="ax-section-open">Open</span>
+      </header>
+      <strong class="ax-section-value">{{ section.value }}</strong>
+      {% if section.hint %}<em class="ax-section-hint">{{ section.hint }}</em>{% endif %}
+      {% if section.bars %}
+      <div class="ax-mini-bars" aria-hidden="true">
+        {% for bar in section.bars %}
+        <div class="ax-mini-bar is-{{ bar.tone }}">
+          <span>{{ bar.label }}</span>
+          <div class="ax-bar-track">
+            <span class="ax-bar-fill" style="width: {{ bar.pct }}%"></span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if section.body %}<p class="ax-section-body">{{ section.body }}</p>{% endif %}
+      {% if section.stats %}
+      <dl class="ax-section-stats">
+        {% for stat in section.stats %}
+        <div>
+          <dt>{{ stat.label }}</dt>
+          <dd>{{ stat.value }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+      {% endif %}
+    </a>
     {% endfor %}
   </div>
   {% endif %}
@@ -88,31 +279,63 @@
   {% if page.tables %}
   <div class="ax-grid ax-grid--tables">
     {% for table in page.tables %}
-    <section class="ax-card{% if page.tables|length == 1 %} ax-card--wide{% endif %}">
+    <section class="ax-card{% if page.tables|length == 1 or table.shop_grid %} ax-card--wide{% endif %}">
       <header class="ax-card-head">
         <h3>{{ table.title }}</h3>
       </header>
       <div class="ax-table-wrap ax-table-wrap--scroll">
         {% if table.rows %}
-        <table class="ax-table">
+        <table class="ax-table{% if table.shop_grid %} ax-table--shops{% endif %}">
           <thead>
             <tr>
-              {% for col in table.columns %}<th>{{ col }}</th>{% endfor %}
+              {% for col in table.columns %}
+              <th
+                {% if col.title %}title="{{ col.title }}"{% endif %}
+                {% if forloop.first or col.compact or col.pair or col.total %}
+                class="{% if forloop.first %}ax-th--item{% endif %}{% if col.compact %} ax-th--shop{% endif %}{% if col.pair %} ax-th--pair{% endif %}{% if col.total %} ax-th--total{% endif %}"
+                {% endif %}
+              >
+                {% if col.pair %}
+                <span class="ax-th-pair">
+                  <span class="ax-th-pair-name">{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}</span>
+                  <span class="ax-th-pair-cols" aria-hidden="true"><span>{{ col.pair_qty|default:"Qty" }}</span><span>{{ col.pair_amt|default:"Amt" }}</span></span>
+                </span>
+                {% elif col.label %}
+                {{ col.label }}
+                {% else %}
+                {{ col }}
+                {% endif %}
+              </th>
+              {% endfor %}
             </tr>
           </thead>
-            <tbody>
+          <tbody>
             {% for row in table.rows %}
             <tr>
               {% for cell in row %}
-              <td>
+              {% for col in table.columns %}
+              {% if forloop.parentloop.counter0 == forloop.counter0 %}
+              <td
+                class="{% if forloop.parentloop.first %}ax-cell--primary{% endif %}{% if col.compact or col.pair %} ax-cell--shop{% endif %}{% if cell.kind == 'qty_amount' or col.pair %} ax-cell--pair{% endif %}{% if col.total %} ax-cell--total{% endif %}"
+                data-label="{% if col.label %}{{ col.title|default:col.label }}{% else %}{{ col }}{% endif %}"
+              >
                 {% if cell.href %}
                 <a class="ax-link" href="{{ cell.href }}">{{ cell.label }}</a>
+                {% elif cell.kind == "qty_amount" %}
+                <span class="ax-pair" title="{{ cell.title }}">
+                  <span class="ax-pair-qty">{{ cell.qty }}</span>
+                  <span class="ax-pair-amt">{{ cell.amount }}</span>
+                </span>
+                {% elif cell.tone %}
+                <span class="ax-trend{% if cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}">{{ cell.label }}</span>
                 {% elif cell.label %}
                 {{ cell.label }}
                 {% else %}
                 {{ cell }}
                 {% endif %}
               </td>
+              {% endif %}
+              {% endfor %}
               {% endfor %}
             </tr>
             {% endfor %}

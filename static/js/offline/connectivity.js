@@ -3,12 +3,73 @@
  */
 
 let online = typeof navigator !== "undefined" ? navigator.onLine : true;
+let knownState = null;
+let toastRemoveTimer = null;
 const listeners = new Set();
+
+const OFFLINE_TOAST_OUT_MS = 220;
 
 function refreshLucideIcons() {
   if (window.lucide?.createIcons) {
     window.lucide.createIcons();
   }
+}
+
+function ensureOfflineToast() {
+  let toast = document.querySelector("[data-offline-toast]");
+  if (toast) return toast;
+
+  toast = document.createElement("div");
+  toast.className = "offline-toast";
+  toast.setAttribute("role", "status");
+  toast.setAttribute("aria-live", "assertive");
+  toast.setAttribute("data-offline-toast", "");
+  toast.hidden = true;
+  toast.innerHTML = `
+    <div class="offline-toast__card">
+      <span class="offline-toast__icon" aria-hidden="true">
+        <span class="offline-toast__pulse"></span>
+        <span class="offline-toast__pulse offline-toast__pulse--delay"></span>
+        <i data-lucide="wifi-off" data-offline-toast-icon></i>
+      </span>
+      <div class="offline-toast__copy">
+        <strong class="offline-toast__title">You're turning offline</strong>
+        <span class="offline-toast__sub">Changes will queue locally</span>
+      </div>
+      <button type="button" class="offline-toast__dismiss" data-offline-toast-dismiss aria-label="Dismiss offline notice">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+  `;
+  toast
+    .querySelector("[data-offline-toast-dismiss]")
+    ?.addEventListener("click", () => hideOfflineToast(toast));
+  document.body.appendChild(toast);
+  refreshLucideIcons();
+  return toast;
+}
+
+function hideOfflineToast(toast = document.querySelector("[data-offline-toast]")) {
+  if (!toast || toast.hidden) return;
+  toast.classList.add("is-hiding");
+  window.clearTimeout(toastRemoveTimer);
+  toastRemoveTimer = window.setTimeout(() => {
+    toast.hidden = true;
+    toast.classList.remove("is-hiding", "is-live");
+  }, OFFLINE_TOAST_OUT_MS);
+}
+
+function showOfflineToast() {
+  const toast = ensureOfflineToast();
+  window.clearTimeout(toastRemoveTimer);
+  toast.hidden = false;
+  toast.classList.remove("is-hiding", "is-live");
+  // Restart entrance + live pulse on every offline event
+  toast.style.animation = "none";
+  void toast.offsetWidth;
+  toast.style.animation = "";
+  toast.classList.add("is-live");
+  refreshLucideIcons();
 }
 
 function updateConnectivityIndicators() {
@@ -48,13 +109,20 @@ function updateConnectivityIndicators() {
   document.querySelectorAll("[data-offline-bar]").forEach((bar) => {
     const pending = bar.querySelector("[data-sync-pending]");
     const hasPending = pending && !pending.hidden;
-    bar.hidden = online && !hasPending;
+    const syncError = bar.querySelector("[data-offline-sync-error]");
+    const hasError = syncError && !syncError.hidden;
+    // Status toast covers going-offline; bar stays for queue / errors only
+    bar.hidden = !hasPending && !hasError;
   });
 
   refreshLucideIcons();
 }
 
 function notify() {
+  const wentOffline = knownState === true && online === false;
+  const wentOnline = knownState === false && online === true;
+  knownState = online;
+
   listeners.forEach((fn) => {
     try {
       fn(online);
@@ -64,6 +132,12 @@ function notify() {
   });
   document.documentElement.classList.toggle("is-offline", !online);
   updateConnectivityIndicators();
+
+  if (wentOffline) {
+    showOfflineToast();
+  } else if (wentOnline) {
+    hideOfflineToast();
+  }
 }
 
 export function isOnline() {

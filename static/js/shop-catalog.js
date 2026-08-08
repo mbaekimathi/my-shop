@@ -4,8 +4,6 @@
 
   const apiUrl = floor.getAttribute("data-catalog-api") || "";
   const root = floor.querySelector("[data-catalog-root]");
-  const moreWrap = floor.querySelector("[data-catalog-more-wrap]");
-  const moreBtn = floor.querySelector("[data-catalog-more]");
   const searchInput = floor.querySelector("[data-item-search]");
   const noResults = floor.querySelector("[data-item-no-results]");
   const visibleCountEl = floor.querySelector("[data-item-visible-count]");
@@ -23,6 +21,7 @@
   let activeQuery = "";
   let inFlight = 0;
   let searchTimer = 0;
+  let backgroundLoad = 0;
   const groupEls = new Map();
 
   const money = (value) => {
@@ -64,9 +63,47 @@
     section.innerHTML = `
       <header class="shop-floor-category-head">
         <h3></h3>
-        <span data-category-count>0</span>
+        <div class="shop-floor-category-tools">
+          <div class="shop-floor-scroll-controls" data-category-scroll-controls>
+            <button
+              type="button"
+              class="shop-floor-scroll-btn"
+              data-category-scroll="prev"
+              aria-label="Scroll category left"
+            >
+              <i data-lucide="chevron-left" aria-hidden="true"></i>
+            </button>
+            <button
+              type="button"
+              class="shop-floor-scroll-btn"
+              data-category-scroll="next"
+              aria-label="Scroll category right"
+            >
+              <i data-lucide="chevron-right" aria-hidden="true"></i>
+            </button>
+          </div>
+          <span data-category-count>0</span>
+        </div>
       </header>
-      <div class="shop-floor-grid"></div>
+      <div class="shop-floor-scroll-rail">
+        <button
+          type="button"
+          class="shop-floor-scroll-btn shop-floor-scroll-btn--edge"
+          data-category-scroll="prev"
+          aria-label="Scroll category left"
+        >
+          <i data-lucide="chevron-left" aria-hidden="true"></i>
+        </button>
+        <div class="shop-floor-grid" data-category-scroll-track></div>
+        <button
+          type="button"
+          class="shop-floor-scroll-btn shop-floor-scroll-btn--edge"
+          data-category-scroll="next"
+          aria-label="Scroll category right"
+        >
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
+      </div>
     `;
     section.querySelector("h3").textContent = key;
     root.appendChild(section);
@@ -209,41 +246,146 @@
     if (window.lucide?.createIcons) window.lucide.createIcons();
   };
 
-  const appendItems = (items, { replace }) => {
+  const yieldToBrowser = () =>
+    new Promise((resolve) => {
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(() => resolve(), { timeout: 120 });
+      } else {
+        window.setTimeout(resolve, 0);
+      }
+    });
+
+  const appendItems = async (items, { replace, seq }) => {
     if (replace) {
       groupEls.clear();
       root.innerHTML = "";
     }
-    items.forEach((item) => {
+    const list = Array.isArray(items) ? items : [];
+    const chunkSize = 24;
+    for (let i = 0; i < list.length; i += 1) {
+      if (seq != null && seq !== inFlight) return false;
+      const item = list[i];
       const section = ensureGroup(item.category);
       const grid = section.querySelector(".shop-floor-grid");
       grid.appendChild(buildCard(item));
-    });
+      if ((i + 1) % chunkSize === 0) {
+        await yieldToBrowser();
+      }
+    }
     refreshGroupCounts();
+    return true;
   };
 
-  const fetchPage = async ({ page, q, append }) => {
-    const seq = ++inFlight;
-    setLoading(!append);
-    if (moreBtn) moreBtn.disabled = true;
+  const shopId = floor.dataset.shopId || "0";
+  const cacheKeyFor = (page, q) =>
+    `shop-catalog:${shopId}:p${page}:s${pageSize}:q${String(q || "").toLowerCase()}`;
 
+  const syncUiAfterRender = () => {
+    const visible = root.querySelectorAll("[data-item-row]").length;
+    if (noResults) noResults.hidden = visible > 0 || (!activeQuery && totalCount === 0);
+    if (root) root.hidden = visible === 0 && Boolean(activeQuery);
+    updateCountLabel(visible || totalCount, Boolean(activeQuery));
+    notifyRendered();
+  };
+
+  const fetchCatalogPage = async ({ page, q }) => {
     const params = new URLSearchParams({
       page: String(page),
       page_size: String(pageSize),
     });
     if (q) params.set("q", q);
+    const cacheKey = cacheKeyFor(page, q);
+    const online = typeof navigator === "undefined" || navigator.onLine;
 
-    try {
+    let data = null;
+    let fromCache = false;
+
+    if (online) {
       const response = await fetch(`${apiUrl}?${params.toString()}`, {
         headers: { Accept: "application/json" },
         credentials: "same-origin",
       });
-      const data = await response.json().catch(() => ({}));
-      if (seq !== inFlight) return;
+      data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) {
         throw new Error(data.error || "Catalog load failed");
       }
+      try {
+        const store = await import("./offline/store.js");
+        await store.cacheSet(cacheKey, data, 60 * 60 * 12);
+      } catch (_cacheErr) {
+        /* cache optional */
+      }
+    } else {
+      const store = await import("./offline/store.js");
+      data = await store.cacheGet(cacheKey);
+      fromCache = Boolean(data?.ok);
+      if (!fromCache) {
+        throw new Error("offline_catalog_miss");
+      }
+    }
 
+    return { data, fromCache, cacheKey };
+  };
+
+  const loadRemainingPages = async ({ seq, q }) => {
+    const loadId = ++backgroundLoad;
+    while (seq === inFlight && loadId === backgroundLoad && hasMore && nextPage) {
+      await yieldToBrowser();
+      if (seq !== inFlight || loadId !== backgroundLoad) return;
+
+      const page = nextPage;
+      try {
+        const { data, fromCache } = await fetchCatalogPage({ page, q });
+        if (seq !== inFlight || loadId !== backgroundLoad) return;
+
+        totalCount = Number(data.total || totalCount);
+        floor.dataset.itemTotal = String(totalCount);
+        currentPage = Number(data.page || page);
+        hasMore = Boolean(data.has_more);
+        nextPage = data.next_page || null;
+
+        const ok = await appendItems(data.items, { replace: false, seq });
+        if (!ok || seq !== inFlight || loadId !== backgroundLoad) return;
+
+        if (fromCache) floor.setAttribute("data-catalog-from-cache", "1");
+        else floor.removeAttribute("data-catalog-from-cache");
+        syncUiAfterRender();
+      } catch (_error) {
+        // Keep what is already on screen; stop background fill.
+        hasMore = false;
+        nextPage = null;
+        return;
+      }
+    }
+  };
+
+  const fetchPage = async ({ page, q, append }) => {
+    const seq = ++inFlight;
+    backgroundLoad += 1;
+    setLoading(!append);
+
+    try {
+      let result;
+      try {
+        result = await fetchCatalogPage({ page, q });
+      } catch (_error) {
+        if (seq !== inFlight) return;
+        try {
+          const store = await import("./offline/store.js");
+          const cached = await store.cacheGet(cacheKeyFor(page, q));
+          if (seq === inFlight && cached?.ok) {
+            result = { data: cached, fromCache: true };
+          } else {
+            throw _error;
+          }
+        } catch (_cacheErr) {
+          throw _error;
+        }
+      }
+
+      if (seq !== inFlight) return;
+
+      const { data, fromCache } = result;
       totalCount = Number(data.total || 0);
       floor.dataset.itemTotal = String(totalCount);
       currentPage = Number(data.page || page);
@@ -251,25 +393,29 @@
       nextPage = data.next_page || null;
       activeQuery = String(data.q || q || "");
 
-      appendItems(Array.isArray(data.items) ? data.items : [], { replace: !append });
+      const ok = await appendItems(data.items, { replace: !append, seq });
+      if (!ok || seq !== inFlight) return;
 
-      const visible = root.querySelectorAll("[data-item-row]").length;
-      if (noResults) noResults.hidden = visible > 0 || (!activeQuery && totalCount === 0);
-      if (root) root.hidden = visible === 0 && Boolean(activeQuery);
-      if (moreWrap) moreWrap.hidden = !hasMore;
-      updateCountLabel(visible || totalCount, Boolean(activeQuery));
-      notifyRendered();
+      if (fromCache) floor.setAttribute("data-catalog-from-cache", "1");
+      else floor.removeAttribute("data-catalog-from-cache");
+
+      syncUiAfterRender();
+
+      // First paint is done — keep fetching remaining pages in the background.
+      if (hasMore && nextPage) {
+        loadRemainingPages({ seq, q: activeQuery });
+      }
     } catch (_error) {
       if (seq !== inFlight) return;
       if (!append) {
-        root.innerHTML =
-          '<div class="dashboard-placeholder"><p>Could not load catalog. Try again.</p></div>';
+        const offline = typeof navigator !== "undefined" && !navigator.onLine;
+        root.innerHTML = offline
+          ? '<div class="dashboard-placeholder"><p>Offline — open this shop online once to cache the catalog.</p></div>'
+          : '<div class="dashboard-placeholder"><p>Could not load catalog. Try again.</p></div>';
       }
-      if (moreWrap) moreWrap.hidden = true;
     } finally {
       if (seq === inFlight) {
         setLoading(false);
-        if (moreBtn) moreBtn.disabled = false;
       }
     }
   };
@@ -281,11 +427,6 @@
     hasMore = false;
     fetchPage({ page: 1, q, append: false });
   };
-
-  moreBtn?.addEventListener("click", () => {
-    if (!hasMore || !nextPage) return;
-    fetchPage({ page: nextPage, q: activeQuery, append: true });
-  });
 
   searchInput?.addEventListener("input", () => {
     window.clearTimeout(searchTimer);

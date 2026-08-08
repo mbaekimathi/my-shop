@@ -88,7 +88,7 @@
                     data-available="{{ line.available_qty }}"
                     data-track-serial="{% if line.item.track_serial_number %}1{% else %}0{% endif %}"
                   >
-                    <td>
+                    <td data-label="Item">
                       <div class="stock-transfer-item">
                         <span>{{ line.item.name }}</span>
                         {% if line.item.track_serial_number %}
@@ -96,11 +96,11 @@
                         {% endif %}
                       </div>
                     </td>
-                    <td>{{ line.quantity }}</td>
-                    <td class="{% if line.available_qty < line.quantity %}is-low{% endif %}">
+                    <td data-label="Requested">{{ line.quantity }}</td>
+                    <td class="{% if line.available_qty < line.quantity %}is-low{% endif %}" data-label="Available">
                       {{ line.available_qty }}
                     </td>
-                    <td>
+                    <td data-label="Transfer">
                       <label class="stock-transfer-qty-field">
                         <span class="visually-hidden">Transfer quantity for {{ line.item.name }}</span>
                         <input

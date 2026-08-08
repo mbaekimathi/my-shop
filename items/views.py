@@ -164,15 +164,26 @@ def _validation_errors(exc: ValidationError) -> list:
 
 @require_http_methods(["GET", "POST"])
 def item_management(request, profile, meta, module, page_sidebar):
+    from employees.module_permissions import (
+        module_capabilities,
+        require_module_permission,
+    )
+
     form_data = dict(EMPTY_FORM)
     form_errors = []
     open_register_modal = False
     open_edit_modal = False
     edit_item = None
+    caps = module_capabilities(profile, "item-management")
 
     if request.method == "POST":
         action = (request.POST.get("action") or "register").strip()
         item_id = (request.POST.get("item_id") or "").strip()
+        denied = require_module_permission(
+            request, profile, "item-management", action
+        )
+        if denied is not None:
+            return denied
 
         if action == "register":
             form_data = _form_data_from_post(request.POST)
@@ -214,36 +225,19 @@ def item_management(request, profile, meta, module, page_sidebar):
         else:
             messages.error(request, "Unknown action.")
             return redirect(request.path)
+    else:
+        denied = require_module_permission(request, profile, "item-management", "view")
+        if denied is not None:
+            return denied
 
     pricing_shops = _active_pricing_shops()
-    items = list(
-        Item.objects.select_related("created_by__user").order_by("category", "name")
-    )
+    from employees.access import role_url_segment
 
-    price_rows = ShopItemPrice.objects.filter(item__in=items).values_list(
-        "item_id", "shop_id", "price"
+    item_count = Item.objects.count()
+    item_catalog_url = reverse(
+        "employees:item_management_catalog",
+        kwargs={"role_segment": role_url_segment(profile.role)},
     )
-    prices_list_by_item = {}
-    prices_map_by_item = {}
-    for item_id, shop_id, price in price_rows:
-        prices_list_by_item.setdefault(item_id, []).append(price)
-        prices_map_by_item.setdefault(item_id, {})[shop_id] = price
-
-    items_by_category = []
-    for category, group in groupby(items, key=lambda item: item.category):
-        rows = []
-        for item in group:
-            rows.append(
-                {
-                    "item": item,
-                    "shop_price_display": _shop_price_display(item, prices_list_by_item),
-                    "pricing_mode": (
-                        "individual" if item.use_individual_shop_prices else "single"
-                    ),
-                    "shop_prices_json": _shop_prices_json(item, prices_map_by_item),
-                }
-            )
-        items_by_category.append({"category": category, "items": rows})
 
     return render(
         request,
@@ -255,16 +249,48 @@ def item_management(request, profile, meta, module, page_sidebar):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": page_sidebar,
-            "items_by_category": items_by_category,
-            "item_count": len(items),
+            "items_by_category": [],
+            "item_count": item_count,
+            "use_item_catalog_api": True,
+            "item_catalog_url": item_catalog_url,
             "pricing_shops": pricing_shops,
             "form_data": form_data,
             "form_errors": form_errors,
             "open_register_modal": open_register_modal,
             "open_edit_modal": open_edit_modal,
             "edit_item": edit_item,
+            "module_permissions": caps,
         },
     )
+
+
+@active_employee_required
+@require_http_methods(["GET"])
+def item_management_catalog(request, role_segment):
+    """Paginated item-management catalog."""
+    from employees.access import get_profile_for_request, role_url_segment
+    from employees.module_permissions import require_module_permission
+
+    from .services import build_item_management_catalog_page
+
+    profile = get_profile_for_request(request)
+    if profile is None or not profile.is_active_employee:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+    if role_url_segment(profile.role) != role_segment:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    denied = require_module_permission(
+        request, profile, "item-management", "view", as_json=True
+    )
+    if denied is not None:
+        return denied
+
+    payload = build_item_management_catalog_page(
+        q=request.GET.get("q") or "",
+        page=request.GET.get("page") or 1,
+        page_size=request.GET.get("page_size") or 48,
+    )
+    return JsonResponse(payload)
 
 
 def _stock_redirect(path, mode, *, shop_id="", requested_from_shop_id=""):
@@ -982,6 +1008,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         profile.role,
         active_mode=page_mode,
         report_params=report_params,
+        profile=profile,
     )
 
     range_labels = {
@@ -1018,7 +1045,6 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "item_mode": item_mode,
             "categories": categories,
             "selected_categories": set(selected_categories),
-            "filter_items": all_items,
             "filter_items_json": filter_items_json,
             "selected_filter_items": selected_filter_items,
             "selected_item_ids": set(selected_item_ids),
@@ -1030,6 +1056,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
 @require_http_methods(["GET", "POST"])
 def stock_management(request, profile, meta, module, page_sidebar):
     from employees.models import EmployeeRole
+    from employees.module_permissions import require_module_permission
     from shops.models import Shop
 
     from .models import ShopStock
@@ -1037,6 +1064,10 @@ def stock_management(request, profile, meta, module, page_sidebar):
     mode = (request.GET.get("mode") or request.POST.get("mode") or "view").strip().lower()
     if mode not in ("view", "in", "out", "request", "report", "movements"):
         mode = "view"
+
+    denied = require_module_permission(request, profile, "stock-management", mode)
+    if denied is not None:
+        return denied
 
     # Stock In / Out / Request / Report / Movements: shop-manager and IT support.
     if mode != "view" and profile.role not in (
@@ -1076,6 +1107,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         active_mode=mode,
         shop_id=selected_shop_id,
         requested_from_shop_id=requested_from_id if mode == "request" else "",
+        profile=profile,
     )
 
     if request.method == "POST":
@@ -1083,6 +1115,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
         if action_mode not in ("in", "out", "request"):
             messages.error(request, "Choose Stock In, Stock Out, or Request Stock first.")
             return _stock_redirect(request.path, "view", shop_id=selected_shop_id)
+        denied = require_module_permission(
+            request, profile, "stock-management", action_mode
+        )
+        if denied is not None:
+            return denied
         shop_id = (request.POST.get("shop_id") or "").strip()
         requested_from_post = (request.POST.get("requested_from_shop_id") or "").strip()
         try:
@@ -1121,10 +1158,14 @@ def stock_management(request, profile, meta, module, page_sidebar):
         ):
             requested_from_shop = None
 
-    # Action modes with a selected shop use progressive catalog API.
-    use_stock_catalog_api = mode in ("in", "out", "request") and selected_shop is not None
-    if mode == "request" and requested_from_shop is None:
-        use_stock_catalog_api = False
+    # Action modes with a selected shop, and current-stock view, use progressive catalog API.
+    use_stock_catalog_api = False
+    if mode == "view" and all_shops:
+        use_stock_catalog_api = True
+    elif mode in ("in", "out", "request") and selected_shop is not None:
+        use_stock_catalog_api = True
+        if mode == "request" and requested_from_shop is None:
+            use_stock_catalog_api = False
 
     items_by_category = []
     item_count = Item.objects.count()
@@ -1135,55 +1176,25 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if mode == "view":
         display_shops = [selected_shop] if selected_shop else all_shops
-        items = list(
-            Item.objects.select_related("created_by__user").order_by("category", "name")
+        from django.db.models import Sum
+
+        if selected_shop:
+            shop_total_units = (
+                ShopStock.objects.filter(shop=selected_shop).aggregate(
+                    total=Sum("quantity")
+                )["total"]
+                or 0
+            )
+        elif all_shops:
+            shop_total_units = (
+                ShopStock.objects.filter(
+                    shop_id__in=[shop.pk for shop in all_shops]
+                ).aggregate(total=Sum("quantity"))["total"]
+                or 0
+            )
+        category_count = (
+            Item.objects.order_by("category").values("category").distinct().count()
         )
-        item_count = len(items)
-        relevant_shop_ids = []
-        if show_all_shops:
-            relevant_shop_ids = [shop.pk for shop in all_shops]
-        elif selected_shop:
-            relevant_shop_ids.append(selected_shop.pk)
-
-        shop_stock_map = {}
-        if relevant_shop_ids and items:
-            for row in ShopStock.objects.filter(
-                shop_id__in=relevant_shop_ids, item__in=items
-            ).values_list("item_id", "shop_id", "quantity"):
-                item_id, shop_id, quantity = row
-                shop_stock_map.setdefault(item_id, {})[shop_id] = quantity
-
-        def shop_qty(item, shop):
-            if shop is None:
-                return 0
-            return shop_stock_map.get(item.pk, {}).get(shop.pk, 0)
-
-        for category, group in groupby(items, key=lambda item: item.category):
-            rows = []
-            for item in group:
-                qty = shop_qty(item, selected_shop)
-                shop_quantities = [shop_qty(item, shop) for shop in display_shops]
-                row_total = sum(shop_quantities) if show_all_shops else qty
-                rows.append(
-                    {
-                        "item": item,
-                        "shop_qty": qty,
-                        "shop_quantities": shop_quantities,
-                        "row_total": row_total,
-                        "requested_from_qty": 0,
-                        "last_buying_price": None,
-                    }
-                )
-            items_by_category.append({"category": category, "items": rows})
-        category_count = len(items_by_category)
-        if show_all_shops:
-            shop_total_units = sum(
-                row["row_total"] for group in items_by_category for row in group["items"]
-            )
-        elif selected_shop:
-            shop_total_units = sum(
-                row["shop_qty"] for group in items_by_category for row in group["items"]
-            )
     elif use_stock_catalog_api:
         display_shops = [selected_shop]
         from django.db.models import Sum
@@ -1206,6 +1217,12 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "employees:stock_management_catalog",
             kwargs={"role_segment": role_url_segment(profile.role)},
         )
+
+    import json as _json
+
+    catalog_shops_json = _json.dumps(
+        [{"id": shop.pk, "name": shop.name} for shop in display_shops]
+    )
 
     return render(
         request,
@@ -1234,6 +1251,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "serial_search_url": reverse("employees:serial_search"),
             "stock_catalog_url": stock_catalog_url,
             "use_stock_catalog_api": use_stock_catalog_api,
+            "catalog_shops_json": catalog_shops_json,
         },
     )
 
@@ -1241,9 +1259,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
 @active_employee_required
 @require_http_methods(["GET"])
 def stock_management_catalog(request, role_segment):
-    """Paginated stock-management catalog for in/out/request modes."""
+    """Paginated stock-management catalog for view/in/out/request modes."""
     from employees.access import get_profile_for_request, role_url_segment
     from employees.models import EmployeeRole
+    from employees.module_permissions import require_module_permission
+    from shops.models import Shop
 
     profile = get_profile_for_request(request)
     if profile is None or not profile.is_active_employee:
@@ -1252,13 +1272,14 @@ def stock_management_catalog(request, role_segment):
         return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
 
     mode = (request.GET.get("mode") or "in").strip().lower()
-    if mode not in ("in", "out", "request"):
+    if mode not in ("in", "out", "request", "view"):
         return JsonResponse({"ok": False, "error": "invalid_mode"}, status=400)
-    if profile.role not in (
-        EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.IT_SUPPORT,
-    ):
-        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    denied = require_module_permission(
+        request, profile, "stock-management", mode, as_json=True
+    )
+    if denied is not None:
+        return denied
 
     try:
         shop_id = int(request.GET.get("shop_id") or 0)
@@ -1268,6 +1289,30 @@ def stock_management_catalog(request, role_segment):
         from_id = int(request.GET.get("requested_from_shop_id") or 0)
     except (TypeError, ValueError):
         from_id = 0
+
+    if mode == "view":
+        all_shops = list(
+            Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+        )
+        shops_by_id = {shop.pk: shop for shop in all_shops}
+        if shop_id and shop_id not in shops_by_id:
+            return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
+        payload = build_stock_catalog_page(
+            shop_id=shop_id or None,
+            shop_ids=None if shop_id else [shop.pk for shop in all_shops],
+            mode="view",
+            q=request.GET.get("q") or "",
+            page=request.GET.get("page") or 1,
+            page_size=request.GET.get("page_size") or 48,
+            include_suspended=True,
+        )
+        return JsonResponse(payload)
+
+    if profile.role not in (
+        EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.IT_SUPPORT,
+    ):
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
 
     action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}
     if shop_id not in action_shops:

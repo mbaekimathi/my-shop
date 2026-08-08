@@ -1,7 +1,9 @@
 from functools import wraps
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.shortcuts import redirect
+from django.urls import reverse
 
 from .models import EmployeeProfile, EmployeeRole, EmployeeStatus
 
@@ -115,9 +117,9 @@ def clear_profile_session(request):
         delattr(request, REQUEST_META_ATTR)
     if hasattr(request, REQUEST_PROFILE_ATTR):
         delattr(request, REQUEST_PROFILE_ATTR)
-    from shops.session import clear_active_shop
+    from shops.session import clear_shop_portal_session
 
-    clear_active_shop(request)
+    clear_shop_portal_session(request)
 
 
 
@@ -138,19 +140,32 @@ def redirect_to_role_home(profile):
     return redirect(role_home_url_name(role))
 
 
+def _login_redirect(request, *, message=None, level="error"):
+    """Send anonymous / blocked users to employee login, preserving next."""
+    if message:
+        getattr(messages, level)(request, message)
+    login_url = reverse("employees:login")
+    next_path = request.get_full_path()
+    if next_path and next_path != login_url:
+        return redirect(f"{login_url}?{urlencode({'next': next_path})}")
+    return redirect(login_url)
+
+
 def active_employee_required(view_func):
     """Require an authenticated employee with Active status."""
 
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
         if not request.user.is_authenticated:
-            return redirect("employees:login")
+            return _login_redirect(request)
 
         meta = get_employee_meta_for_request(request)
         if meta is None:
             clear_profile_session(request)
-            messages.error(request, "No employee profile is linked to this account.")
-            return redirect("employees:login")
+            return _login_redirect(
+                request,
+                message="No employee profile is linked to this account.",
+            )
 
         request.session[SESSION_PROFILE_KEY] = {
             "user_id": request.user.pk,
@@ -163,15 +178,16 @@ def active_employee_required(view_func):
             return redirect("employees:pending")
 
         if meta["status"] == EmployeeStatus.SUSPENDED:
-            messages.error(
+            return _login_redirect(
                 request,
-                "Your employee account is suspended. Contact your administrator.",
+                message="Your employee account is suspended. Contact your administrator.",
             )
-            return redirect("employees:login")
 
         if meta["status"] != EmployeeStatus.ACTIVE:
-            messages.error(request, "Your employee account cannot access MY-SHOP yet.")
-            return redirect("employees:login")
+            return _login_redirect(
+                request,
+                message="Your employee account cannot access MY-SHOP yet.",
+            )
 
         return view_func(request, *args, **kwargs)
 

@@ -18,15 +18,6 @@
   </div>
 
   {% if permission_modules %}
-  <div class="perm-module-nav" role="navigation" aria-label="Modules">
-    {% for module in permission_modules %}
-    <a class="perm-module-nav-link" href="#module-{{ module.slug }}">
-      <i data-lucide="{{ module.icon }}" aria-hidden="true"></i>
-      <span>{{ module.label }}</span>
-    </a>
-    {% endfor %}
-  </div>
-
   <div class="perm-modules" data-permission-matrix>
     {% for module in permission_modules %}
     <section class="perm-module" id="module-{{ module.slug }}" data-module="{{ module.slug }}">
@@ -42,7 +33,7 @@
       </div>
 
       {% if module.rows %}
-      <div class="staff-table-wrap">
+      <div class="staff-table-wrap perm-table-scroll">
         <table class="staff-table staff-table--dense perm-table">
           <thead>
             <tr>

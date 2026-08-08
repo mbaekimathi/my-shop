@@ -25,13 +25,13 @@
           ? `<span class="ax-receipt-line-meta">${escapeHtml(line.meta)}</span>`
           : "";
         return `<tr>
-          <td>
+          <td class="ax-cell--primary" data-label="Item">
             <strong>${escapeHtml(line.name || "Item")}</strong>
             ${meta}
           </td>
-          <td>${escapeHtml(line.qty ?? "—")}</td>
-          <td>${escapeHtml(line.unit || "—")}</td>
-          <td>${escapeHtml(line.total || "—")}</td>
+          <td data-label="Qty">${escapeHtml(line.qty ?? "—")}</td>
+          <td data-label="Unit">${escapeHtml(line.unit || "—")}</td>
+          <td data-label="Total">${escapeHtml(line.total || "—")}</td>
         </tr>`;
       })
       .join("");

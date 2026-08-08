@@ -205,36 +205,36 @@
           <tbody>
             {% for event in movement_events %}
             <tr data-stock-live-row data-search-text="{{ event.item_name|lower }} {{ event.item_category|lower }} {{ event.event_label|lower }} {{ event.shop_name|lower }}">
-              <td>
+              <td data-label="When">
                 {% if report_range == 'day' %}
                 {{ event.happened_at|time:"H:i" }}
                 {% else %}
                 {{ event.happened_at|date:"d M Y" }} · {{ event.happened_at|time:"H:i" }}
                 {% endif %}
               </td>
-              <td>
+              <td data-label="Type">
                 <span class="stock-report-type stock-report-type--{{ event.event_type }}">
                   {{ event.event_label }}
                 </span>
               </td>
-              <td>
+              <td data-label="Shop">
                 {{ event.shop_name }}
                 {% if event.from_shop_name %}
                 <span class="stock-report-from">from {{ event.from_shop_name }}</span>
                 {% endif %}
               </td>
-              <td>
+              <td data-label="Item">
                 <strong>{{ event.item_name }}</strong>
                 {% if event.item_category %}
                 <span class="stock-report-from">{{ event.item_category }}</span>
                 {% endif %}
               </td>
-              <td>
+              <td data-label="Units">
                 <span class="stock-matrix-qty stock-report-qty--{{ event.event_type }}{% if event.quantity == 0 %} is-empty{% endif %}">
                   {{ event.quantity }}
                 </span>
               </td>
-              <td>
+              <td data-label="Details">
                 {% if event.reason %}
                 <span class="stock-report-meta">{{ event.reason }}</span>
                 {% endif %}
@@ -248,7 +248,7 @@
                 —
                 {% endif %}
               </td>
-              <td>{{ event.by }}</td>
+              <td data-label="By">{{ event.by }}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -283,26 +283,26 @@
               data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }}"
               {% if row.item.is_suspended %} class="is-suspended"{% endif %}
             >
-              <td>
+              <td data-label="Item">
                 <strong>{{ row.item.name }}</strong>
                 <span class="stock-report-from">{{ row.item.category }}</span>
               </td>
-              <td>
+              <td data-label="Starting stock">
                 <span class="stock-matrix-qty{% if row.starting_stock == 0 %} is-empty{% endif %}">{{ row.starting_stock }}</span>
               </td>
-              <td>
+              <td data-label="Stock request">
                 <span class="stock-matrix-qty stock-report-qty--request{% if row.stock_request == 0 %} is-empty{% endif %}">{{ row.stock_request }}</span>
               </td>
-              <td>
+              <td data-label="Stock in">
                 <span class="stock-matrix-qty stock-report-qty--in{% if row.stock_in == 0 %} is-empty{% endif %}">{{ row.stock_in }}</span>
               </td>
-              <td>
+              <td data-label="Stock out">
                 <span class="stock-matrix-qty stock-report-qty--out{% if row.stock_out == 0 %} is-empty{% endif %}">{{ row.stock_out }}</span>
               </td>
-              <td>
+              <td data-label="Stock sale">
                 <span class="stock-matrix-qty stock-report-qty--sale{% if row.stock_sale == 0 %} is-empty{% endif %}">{{ row.stock_sale }}</span>
               </td>
-              <td>
+              <td data-label="Closing stock">
                 <span class="stock-matrix-qty stock-matrix-qty--total{% if row.closing_stock == 0 %} is-empty{% endif %}">{{ row.closing_stock }}</span>
               </td>
             </tr>
@@ -310,13 +310,13 @@
           </tbody>
           <tfoot>
             <tr>
-              <th scope="row">Total</th>
-              <td><span class="stock-matrix-qty">{{ item_report_totals.starting_stock }}</span></td>
-              <td><span class="stock-matrix-qty stock-report-qty--request">{{ item_report_totals.stock_request }}</span></td>
-              <td><span class="stock-matrix-qty stock-report-qty--in">{{ item_report_totals.stock_in }}</span></td>
-              <td><span class="stock-matrix-qty stock-report-qty--out">{{ item_report_totals.stock_out }}</span></td>
-              <td><span class="stock-matrix-qty stock-report-qty--sale">{{ item_report_totals.stock_sale }}</span></td>
-              <td><span class="stock-matrix-qty stock-matrix-qty--total">{{ item_report_totals.closing_stock }}</span></td>
+              <th scope="row" data-label="Item">Total</th>
+              <td data-label="Starting stock"><span class="stock-matrix-qty">{{ item_report_totals.starting_stock }}</span></td>
+              <td data-label="Stock request"><span class="stock-matrix-qty stock-report-qty--request">{{ item_report_totals.stock_request }}</span></td>
+              <td data-label="Stock in"><span class="stock-matrix-qty stock-report-qty--in">{{ item_report_totals.stock_in }}</span></td>
+              <td data-label="Stock out"><span class="stock-matrix-qty stock-report-qty--out">{{ item_report_totals.stock_out }}</span></td>
+              <td data-label="Stock sale"><span class="stock-matrix-qty stock-report-qty--sale">{{ item_report_totals.stock_sale }}</span></td>
+              <td data-label="Closing stock"><span class="stock-matrix-qty stock-matrix-qty--total">{{ item_report_totals.closing_stock }}</span></td>
             </tr>
           </tfoot>
         </table>

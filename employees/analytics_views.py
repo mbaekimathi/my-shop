@@ -14,8 +14,10 @@ from .access import (
 from .analytics_services import (
     apply_account_payment,
     build_analytics_page,
+    build_analytics_receipts_list,
     build_client_credit_account,
     build_supplier_account,
+    get_analytics_receipt_kind,
     get_analytics_section,
 )
 from .workspace import get_dashboard_module, sidebar_for_analytics
@@ -63,6 +65,14 @@ def _stk_urls_for(profile):
 
 
 def _render_analytics(request, profile, *, section_slug="overview"):
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(
+        request, profile, "analytics", section_slug
+    )
+    if denied is not None:
+        return denied
+
     section = get_analytics_section(section_slug)
     module = get_dashboard_module("analytics", profile.role) or {
         "slug": "analytics",
@@ -83,7 +93,7 @@ def _render_analytics(request, profile, *, section_slug="overview"):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": sidebar_for_analytics(
-                profile.role, active_view=section["slug"]
+                profile.role, active_view=section["slug"], profile=profile
             ),
             **context,
         },
@@ -124,6 +134,71 @@ def analytics_section(request, role_segment, section):
 
 @active_employee_required
 @require_GET
+def analytics_receipts_list(request, role_segment, kind):
+    """Receipt list for one document type (/…/analytics/receipts/<kind>/)."""
+    from .workspace import analytics_section_url
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_receipts_list",
+            role_segment=expected,
+            kind=kind,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", "receipts")
+    if denied is not None:
+        return denied
+
+    kind_spec = get_analytics_receipt_kind(kind)
+    context = build_analytics_receipts_list(
+        profile=profile, request=request, kind=kind_spec["slug"]
+    )
+    back_href = analytics_section_url(profile.role, "receipts")
+    query = request.GET.urlencode()
+    if query:
+        back_href = f"{back_href}?{query}"
+
+    return render(
+        request,
+        "employees/analytics_receipts_list.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": f"{kind_spec['label']} · Analytics",
+                "headline": kind_spec["label"],
+                "summary": "Browse matching receipts across selected shops.",
+                "icon": "receipt",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_analytics(
+                profile.role, active_view="receipts", profile=profile
+            ),
+            "back_href": back_href,
+            "back_label": "Back to receipts",
+            **context,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
 def analytics_client_credit(request, role_segment, client_id):
     """Client account ledger (/…/analytics/clients/<id>/)."""
     from .workspace import analytics_section_url
@@ -148,16 +223,20 @@ def analytics_client_credit(request, role_segment, client_id):
 
         raise Http404("Module not found.")
 
-    account = build_client_credit_account(profile=profile, client_id=client_id)
-    query = request.GET.urlencode()
-    # Prefer returning to the section that matches the URL path.
     from_credits = "/analytics/credits/" in (request.path or "")
     back_section = "credits" if from_credits else "clients"
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", back_section)
+    if denied is not None:
+        return denied
+
+    account = build_client_credit_account(profile=profile, client_id=client_id)
+    query = request.GET.urlencode()
     back_href = analytics_section_url(profile.role, back_section)
     if query:
         back_href = f"{back_href}?{query}"
-
-    sync_callback_base_from_request(request, persist=True)
 
     return render(
         request,
@@ -174,7 +253,7 @@ def analytics_client_credit(request, role_segment, client_id):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": sidebar_for_analytics(
-                profile.role, active_view=back_section
+                profile.role, active_view=back_section, profile=profile
             ),
             "back_href": back_href,
             "back_label": "Back to credits" if from_credits else "Back to clients",
@@ -217,6 +296,12 @@ def analytics_supplier_account(request, role_segment, kind, supplier_id):
 
         raise Http404("Module not found.")
 
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", "suppliers")
+    if denied is not None:
+        return denied
+
     account = build_supplier_account(
         profile=profile, kind=kind, supplier_id=supplier_id
     )
@@ -253,7 +338,7 @@ def analytics_supplier_account(request, role_segment, kind, supplier_id):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": sidebar_for_analytics(
-                profile.role, active_view=back_section
+                profile.role, active_view=back_section, profile=profile
             ),
             "back_href": back_href,
             "back_label": (
@@ -269,6 +354,8 @@ def analytics_supplier_account(request, role_segment, kind, supplier_id):
 @require_POST
 def analytics_account_pay(request, role_segment):
     """Apply an account payment (FIFO across receipts, oldest first)."""
+    from .module_permissions import require_module_permission
+
     profile = get_profile_for_request(request)
     if role_from_url_segment(role_segment) is None:
         from django.http import Http404
@@ -278,6 +365,12 @@ def analytics_account_pay(request, role_segment):
     expected = role_url_segment(profile.role)
     if role_segment != expected:
         return JsonResponse({"ok": False, "error": "Wrong portal."}, status=403)
+
+    denied = require_module_permission(
+        request, profile, "analytics", "account_pay", as_json=True
+    )
+    if denied is not None:
+        return denied
 
     kind = (request.POST.get("kind") or "").strip().lower()
     try:
@@ -323,6 +416,15 @@ def analytics_account_pay_stk(request, role_segment):
     expected = role_url_segment(profile.role)
     if role_segment != expected:
         return JsonResponse({"ok": False, "error": "Wrong portal."}, status=403)
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(
+        request, profile, "analytics", "account_pay", as_json=True
+    )
+    if denied is not None:
+        return denied
+
     sync_callback_base_from_request(request, persist=True)
     if not stk_ready():
         return JsonResponse(

@@ -215,18 +215,42 @@ def _myshop_link(*, active=False):
     return _link("MY-SHOP", "store", href=my_shop_url(), active=active)
 
 
-def _footer_site_links(*, myshop_active=False, settings_active=False, tail):
-    """System settings, MY-SHOP, then page-specific footer links."""
-    return [
-        _link(
-            "System settings",
-            "settings",
-            url_name="employees:settings",
-            active=settings_active,
-        ),
-        _myshop_link(active=myshop_active),
-        *tail,
-    ]
+def _employee_login_switch_link():
+    """Sign out current shop/employee session and open employee login."""
+    return _link(
+        "Employee Login",
+        "log-in",
+        url_name="employees:to_employee_login",
+    )
+
+
+def _footer_site_links(
+    *,
+    myshop_active=False,
+    settings_active=False,
+    employee_login=False,
+    profile=None,
+    tail,
+):
+    """System settings, MY-SHOP (or Employee Login), then page-specific footer links."""
+    from .module_permissions import employee_may_any
+
+    links = []
+    if profile is None or employee_may_any(profile, "settings"):
+        links.append(
+            _link(
+                "System settings",
+                "settings",
+                url_name="employees:settings",
+                active=settings_active,
+            )
+        )
+    if employee_login:
+        links.append(_employee_login_switch_link())
+    elif profile is None or employee_may_any(profile, "my-shop"):
+        links.append(_myshop_link(active=myshop_active))
+    links.extend(tail)
+    return links
 
 
 def resolve_sidebar_hrefs(sidebar):
@@ -240,7 +264,12 @@ def resolve_sidebar_hrefs(sidebar):
     return sidebar
 
 
-def _module_sidebar_links(role, *, active_slug=None):
+def _module_sidebar_links(role, *, active_slug=None, profile=None):
+    from .module_permissions import employee_may_any
+
+    modules = get_dashboard_modules(role)
+    if profile is not None:
+        modules = [module for module in modules if employee_may_any(profile, module["slug"])]
     return [
         _link(
             module["label"],
@@ -248,19 +277,20 @@ def _module_sidebar_links(role, *, active_slug=None):
             href=module["href"],
             active=module["slug"] == active_slug if active_slug else False,
         )
-        for module in get_dashboard_modules(role)
+        for module in modules
     ]
 
 
-def sidebar_for_role_dashboard(role):
+def sidebar_for_role_dashboard(role, profile=None):
     """Sidebar links for role home / dashboard pages."""
     dashboard_url = reverse(role_home_url_name(role))
     return resolve_sidebar_hrefs(
         {
             "page": "role_dashboard",
             "dashboard_url": dashboard_url,
-            "primary": _module_sidebar_links(role),
+            "primary": _module_sidebar_links(role, profile=profile),
             "footer": _footer_site_links(
+                profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],
@@ -277,86 +307,112 @@ def sidebar_for_my_shop(
     active="workspace",
     shop_open=False,
     print_channels=None,
+    portal=False,
+    profile=None,
 ):
     """Sidebar for MY-SHOP entry picker and shop floor workspace."""
-    dashboard_url = reverse(role_home_url_name(role))
+    from .module_permissions import employee_may
+
+    def _allowed(submodule):
+        # Shop portal sessions are not employee-matrix gated.
+        if portal or profile is None:
+            return True
+        return employee_may(profile, "my-shop", submodule)
+
     shops = shops or []
     print_channels = list(print_channels or [])
-    primary = [
-        _link("Dashboard", "layout-dashboard", href=dashboard_url),
-    ]
+    if portal and shop is not None:
+        dashboard_url = reverse(
+            "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
+        )
+        primary = []
+        sign_out = _link(
+            "Sign out", "log-out", url_name="employees:shop_logout", danger=True
+        )
+    else:
+        dashboard_url = reverse(role_home_url_name(role))
+        primary = [
+            _link("Dashboard", "layout-dashboard", href=dashboard_url),
+        ]
+        sign_out = _link("Sign out", "log-out", url_name="employees:logout", danger=True)
     if shop is not None:
-        primary.append(
-            _link(
-                shop.name,
-                "store",
-                href=reverse("employees:my_shop_workspace", kwargs={"shop_id": shop.pk}),
-                active=active == "workspace",
-            )
-        )
-        if shop_open:
+        if _allowed("workspace"):
             primary.append(
                 _link(
-                    "Close shop",
-                    "door-closed",
-                    href=reverse(
-                        "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
-                    ),
-                    active=active == "day_toggle",
+                    shop.name,
+                    "store",
+                    href=reverse("employees:my_shop_workspace", kwargs={"shop_id": shop.pk}),
+                    active=active == "workspace",
                 )
             )
-        else:
+        if _allowed("open_close"):
+            if shop_open:
+                primary.append(
+                    _link(
+                        "Close shop",
+                        "door-closed",
+                        href=reverse(
+                            "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+                        ),
+                        active=active == "day_toggle",
+                    )
+                )
+            else:
+                primary.append(
+                    _link(
+                        "Open shop",
+                        "door-open",
+                        href=reverse(
+                            "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+                        ),
+                        active=active == "day_toggle",
+                    )
+                )
+        if _allowed("buy_stock"):
+            primary.append(
+                _action(
+                    "Buy stock items",
+                    "package-plus",
+                    action="buy-stock",
+                    href=reverse("employees:my_shop_buy_stock", kwargs={"shop_id": shop.pk}),
+                )
+            )
+        if _allowed("stock_requests"):
             primary.append(
                 _link(
-                    "Open shop",
-                    "door-open",
+                    "Stock requests",
+                    "clipboard-list",
                     href=reverse(
-                        "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+                        "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
                     ),
-                    active=active == "day_toggle",
+                    active=active == "stock_requests",
                 )
             )
-        primary.append(
-            _action(
-                "Buy stock items",
-                "package-plus",
-                action="buy-stock",
-                href=reverse("employees:my_shop_buy_stock", kwargs={"shop_id": shop.pk}),
+        if _allowed("register_expense"):
+            primary.append(
+                _action(
+                    "Register expense",
+                    "wallet",
+                    action="register-expense",
+                    href=reverse(
+                        "employees:my_shop_register_expense", kwargs={"shop_id": shop.pk}
+                    ),
+                )
             )
-        )
-        primary.append(
-            _link(
-                "Stock requests",
-                "clipboard-list",
-                href=reverse(
-                    "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
-                ),
-                active=active == "stock_requests",
-            )
-        )
-        primary.append(
-            _action(
-                "Register expense",
-                "wallet",
-                action="register-expense",
-                href=reverse(
-                    "employees:my_shop_register_expense", kwargs={"shop_id": shop.pk}
-                ),
-            )
-        )
-        if print_channels:
+        if print_channels and _allowed("print"):
             primary.append(
                 _action("Connect to printer", "bluetooth", action="connect-printer")
             )
-        primary.append(
-            _link(
-                "Receipts",
-                "receipt",
-                href=reverse("employees:my_shop_receipts", kwargs={"shop_id": shop.pk}),
-                active=active == "receipts",
+        if _allowed("receipts"):
+            primary.append(
+                _link(
+                    "Receipts",
+                    "receipt",
+                    href=reverse("employees:my_shop_receipts", kwargs={"shop_id": shop.pk}),
+                    active=active == "receipts",
+                )
             )
-        )
-        if len(shops) > 1:
+        if not portal and len(shops) > 1:
             primary.append(
                 _link(
                     "Switch shop",
@@ -364,7 +420,7 @@ def sidebar_for_my_shop(
                     href=my_shop_url(switch=True),
                 )
             )
-    else:
+    elif not portal:
         primary.append(
             _link("Choose shop", "store", href=my_shop_url(), active=True)
         )
@@ -375,10 +431,9 @@ def sidebar_for_my_shop(
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
-                myshop_active=True,
-                tail=[
-                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
-                ],
+                employee_login=True,
+                profile=None if portal else profile,
+                tail=[sign_out],
             ),
         }
     )
@@ -396,17 +451,19 @@ def _action(label, icon, *, action, href=None):
     return item
 
 
-def sidebar_for_item_management(role):
+def sidebar_for_item_management(role, profile=None):
     """Sidebar links for the Item Management module."""
+    from .module_permissions import employee_may
+
     dashboard_url = reverse(role_home_url_name(role))
+    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+    if profile is None or employee_may(profile, "item-management", "register"):
+        primary.append(_action("Register item", "plus", action="register-item"))
     return resolve_sidebar_hrefs(
         {
             "page": "item_management",
             "dashboard_url": dashboard_url,
-            "primary": [
-                _link("Dashboard", "layout-dashboard", href=dashboard_url),
-                _action("Register item", "plus", action="register-item"),
-            ],
+            "primary": primary,
             "footer": _footer_site_links(
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
@@ -416,17 +473,19 @@ def sidebar_for_item_management(role):
     )
 
 
-def sidebar_for_shop_management(role):
+def sidebar_for_shop_management(role, profile=None):
     """Sidebar links for the Shop Management module."""
+    from .module_permissions import employee_may
+
     dashboard_url = reverse(role_home_url_name(role))
+    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+    if profile is None or employee_may(profile, "shop-management", "register"):
+        primary.append(_action("Register shop", "plus", action="register-shop"))
     return resolve_sidebar_hrefs(
         {
             "page": "shop_management",
             "dashboard_url": dashboard_url,
-            "primary": [
-                _link("Dashboard", "layout-dashboard", href=dashboard_url),
-                _action("Register shop", "plus", action="register-shop"),
-            ],
+            "primary": primary,
             "footer": _footer_site_links(
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
@@ -468,8 +527,11 @@ def sidebar_for_stock_management(
     shop_id="",
     requested_from_shop_id="",
     report_params=None,
+    profile=None,
 ):
     """Sidebar for stock-management. Full workflow links for shop-manager and IT support."""
+    from .module_permissions import employee_may
+
     dashboard_url = reverse(role_home_url_name(role))
     shop_kwargs = {
         "shop_id": shop_id or "",
@@ -488,6 +550,9 @@ def sidebar_for_stock_management(
         EmployeeRole.IT_SUPPORT,
     }
 
+    def _allowed(mode):
+        return profile is None or employee_may(profile, "stock-management", mode)
+
     if role in full_workflow_roles:
         # Report / movements pages: stock workflow links only (no Dashboard).
         primary = []
@@ -495,56 +560,74 @@ def sidebar_for_stock_management(
             primary.append(
                 _link("Dashboard", "layout-dashboard", href=dashboard_url)
             )
-        primary.extend(
-            [
+        candidates = [
+            (
+                "view",
                 _link(
                     "Current Stock",
                     "boxes",
                     href=stock_management_url(role, "view", shop_id=shop_id),
                     active=active_mode == "view",
                 ),
+            ),
+            (
+                "in",
                 _link(
                     "Stock In",
                     "package-plus",
                     href=stock_management_url(role, "in", shop_id=shop_id),
                     active=active_mode == "in",
                 ),
+            ),
+            (
+                "out",
                 _link(
                     "Stock Out",
                     "package-minus",
                     href=stock_management_url(role, "out", shop_id=shop_id),
                     active=active_mode == "out",
                 ),
+            ),
+            (
+                "request",
                 _link(
                     "Request Stock",
                     "clipboard-list",
                     href=stock_management_url(role, "request", **shop_kwargs),
                     active=active_mode == "request",
                 ),
+            ),
+            (
+                "movements",
                 _link(
                     "Stock Movement",
                     "arrow-down-up",
                     href=movements_href,
                     active=active_mode == "movements",
                 ),
+            ),
+            (
+                "report",
                 _link(
                     "Stock Report",
                     "bar-chart-3",
                     href=report_href,
                     active=active_mode == "report",
                 ),
-            ]
-        )
-    else:
-        primary = [
-            _link("Dashboard", "layout-dashboard", href=dashboard_url),
-            _link(
-                "Current Stock",
-                "boxes",
-                href=stock_management_url(role, "view", shop_id=shop_id),
-                active=active_mode == "view",
             ),
         ]
+        primary.extend(link for mode, link in candidates if _allowed(mode))
+    else:
+        primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+        if _allowed("view"):
+            primary.append(
+                _link(
+                    "Current Stock",
+                    "boxes",
+                    href=stock_management_url(role, "view", shop_id=shop_id),
+                    active=active_mode == "view",
+                )
+            )
 
     return resolve_sidebar_hrefs(
         {
@@ -584,13 +667,12 @@ def hr_management_url(role):
     )
 
 
+# Only ship finished HR sections in the sidebar. Stub routes
+# (payrolls/leaves/performance/audits) remain reachable by URL but stay hidden.
 HR_SIDEBAR_SECTIONS = (
-    {"slug": "payrolls", "label": "Payrolls", "icon": "wallet"},
-    {"slug": "leaves", "label": "Leaves", "icon": "calendar-off"},
     {"slug": "approvals", "label": "Approvals", "icon": "clock-3"},
     {"slug": "authorizations", "label": "Authorizations", "icon": "shield-check"},
-    {"slug": "performance", "label": "Performance", "icon": "trending-up"},
-    {"slug": "audits", "label": "Audits", "icon": "clipboard-list"},
+    {"slug": "permissions", "label": "Permissions", "icon": "key-round"},
 )
 
 
@@ -600,49 +682,78 @@ def _hr_section_href(role, section):
     return hr_section_url(role, section)
 
 
-def sidebar_for_hr_management(role, *, active_view="home"):
-    """Sidebar links for the HR Management module.
+def sidebar_for_hr_management(role, *, active_view="home", profile=None):
+    """Sidebar links for the HR Management module."""
+    from .module_permissions import employee_may
 
-    Register / section links (Payrolls, Leaves, Approvals, …) only appear on the
-    main HR Management home page — not on nested HR section pages.
-    """
     dashboard_url = reverse(role_home_url_name(role))
     hr_url = hr_management_url(role)
-    primary = [
-        _link("Dashboard", "layout-dashboard", href=dashboard_url),
-        _link(
-            "HR Management",
-            "users",
-            href=hr_url,
-            active=active_view == "home",
-        ),
-    ]
-    if active_view == "home":
-        section_links = [
+    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+    if profile is None or employee_may(profile, "hr-management", "home"):
+        primary.append(
             _link(
-                section["label"],
-                section["icon"],
-                href=_hr_section_href(role, section["slug"]),
-                active=False,
+                "HR Management",
+                "users",
+                href=hr_url,
+                active=active_view == "home",
             )
-            for section in HR_SIDEBAR_SECTIONS
-        ]
-        primary.extend(
-            [
-                _action("Register employee", "user-plus", action="register-employee"),
-                *section_links,
-            ]
         )
+    section_links = [
+        _link(
+            section["label"],
+            section["icon"],
+            href=_hr_section_href(role, section["slug"]),
+            active=active_view == section["slug"],
+        )
+        for section in HR_SIDEBAR_SECTIONS
+        if profile is None or employee_may(profile, "hr-management", section["slug"])
+    ]
+    if active_view == "home" and (
+        profile is None or employee_may(profile, "hr-management", "register")
+    ):
+        primary.append(
+            _action("Register employee", "user-plus", action="register-employee")
+        )
+    primary.extend(section_links)
     return resolve_sidebar_hrefs(
         {
             "page": "hr_management",
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
+                profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],
             ),
+        }
+    )
+
+
+def sidebar_for_hr_permissions(role, profile=None):
+    """Sidebar for the permissions matrix — jump links to each module section."""
+    from .permissions_catalog import PERMISSION_MODULES
+
+    dashboard_url = reverse(role_home_url_name(role))
+    primary = [
+        _link("Dashboard", "layout-dashboard", href=dashboard_url),
+        *[
+            _link(
+                module["label"],
+                module["icon"],
+                href=f"#module-{module['slug']}",
+            )
+            for module in PERMISSION_MODULES
+        ],
+    ]
+    return resolve_sidebar_hrefs(
+        {
+            "page": "hr_permissions",
+            "dashboard_url": dashboard_url,
+            "primary": primary,
+            "footer": [
+                _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+            ],
         }
     )
 
@@ -669,9 +780,10 @@ def analytics_section_url(role, section):
     )
 
 
-def sidebar_for_analytics(role, *, active_view="overview"):
+def sidebar_for_analytics(role, *, active_view="overview", profile=None):
     """Sidebar links for Analytics — each section is its own page."""
     from .analytics_services import ANALYTICS_SECTIONS
+    from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
     home_url = analytics_url(role)
@@ -685,21 +797,24 @@ def sidebar_for_analytics(role, *, active_view="overview"):
         )
         for section in ANALYTICS_SECTIONS
         if section["slug"] != "overview"
+        and (profile is None or employee_may(profile, "analytics", section["slug"]))
     ]
+    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+    if profile is None or employee_may(profile, "analytics", "view"):
+        primary.append(
+            _link(
+                "Overview",
+                "layout-grid",
+                href=home_url,
+                active=active_view == "overview",
+            )
+        )
+    primary.extend(section_links)
     return resolve_sidebar_hrefs(
         {
             "page": "analytics",
             "dashboard_url": dashboard_url,
-            "primary": [
-                _link("Dashboard", "layout-dashboard", href=dashboard_url),
-                _link(
-                    "Overview",
-                    "layout-grid",
-                    href=home_url,
-                    active=active_view == "overview",
-                ),
-                *section_links,
-            ],
+            "primary": primary,
             "footer": _footer_site_links(
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
@@ -709,18 +824,18 @@ def sidebar_for_analytics(role, *, active_view="overview"):
     )
 
 
-def sidebar_for_module(role, module_slug):
+def sidebar_for_module(role, module_slug, profile=None):
     """Sidebar links when viewing a dashboard module page."""
     if module_slug == "item-management":
-        return sidebar_for_item_management(role)
+        return sidebar_for_item_management(role, profile=profile)
     if module_slug == "stock-management":
-        return sidebar_for_stock_management(role)
+        return sidebar_for_stock_management(role, profile=profile)
     if module_slug == "hr-management":
-        return sidebar_for_hr_management(role)
+        return sidebar_for_hr_management(role, profile=profile)
     if module_slug == "shop-management":
-        return sidebar_for_shop_management(role)
+        return sidebar_for_shop_management(role, profile=profile)
     if module_slug == "analytics":
-        return sidebar_for_analytics(role)
+        return sidebar_for_analytics(role, profile=profile)
 
     dashboard_url = reverse(role_home_url_name(role))
     return resolve_sidebar_hrefs(
@@ -859,7 +974,7 @@ def get_settings_section(slug):
     }
 
 
-def sidebar_for_settings(role, *, active_view="home"):
+def sidebar_for_settings(role, *, active_view="home", profile=None):
     """Sidebar links unique to the System Settings pages.
 
     Section links (Company profile, theme, POS, payments) only appear on the
@@ -867,17 +982,23 @@ def sidebar_for_settings(role, *, active_view="home"):
     POS settings pages also show Receipt settings in the sidebar.
     Payments settings pages also show Daraja settings in the sidebar.
     """
+    from .module_permissions import employee_may
+
+    def _allowed(submodule):
+        return profile is None or employee_may(profile, "settings", submodule)
+
     dashboard_url = reverse(role_home_url_name(role))
     settings_url = reverse("employees:settings")
-    primary = [
-        _link("Dashboard", "layout-dashboard", href=dashboard_url),
-        _link(
-            "System settings",
-            "settings",
-            href=settings_url,
-            active=active_view == "home",
-        ),
-    ]
+    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+    if _allowed("home"):
+        primary.append(
+            _link(
+                "System settings",
+                "settings",
+                href=settings_url,
+                active=active_view == "home",
+            )
+        )
     if active_view == "home":
         section_links = [
             _link(
@@ -887,46 +1008,51 @@ def sidebar_for_settings(role, *, active_view="home"):
                 active=False,
             )
             for section in get_settings_sections()
+            if _allowed(section["slug"])
         ]
         primary.extend(section_links)
     elif active_view in POS_SIDEBAR_SLUGS:
         pos_section = get_settings_section("company-pos")
         receipt_section = get_settings_section("company-receipt")
-        primary.extend(
-            [
+        if _allowed("company-pos"):
+            primary.append(
                 _link(
                     pos_section["label"],
                     pos_section["icon"],
                     href=pos_section["href"],
                     active=active_view == "company-pos",
-                ),
+                )
+            )
+        if _allowed("company-receipt"):
+            primary.append(
                 _link(
                     receipt_section["label"],
                     receipt_section["icon"],
                     href=receipt_section["href"],
                     active=active_view == "company-receipt",
-                ),
-            ]
-        )
+                )
+            )
     elif active_view in PAYMENTS_SIDEBAR_SLUGS:
         payments_section = get_settings_section("company-payments")
         daraja_section = get_settings_section("company-daraja")
-        primary.extend(
-            [
+        if _allowed("company-payments"):
+            primary.append(
                 _link(
                     payments_section["label"],
                     payments_section["icon"],
                     href=payments_section["href"],
                     active=active_view == "company-payments",
-                ),
+                )
+            )
+        if _allowed("company-daraja"):
+            primary.append(
                 _link(
                     daraja_section["label"],
                     daraja_section["icon"],
                     href=daraja_section["href"],
                     active=active_view == "company-daraja",
-                ),
-            ]
-        )
+                )
+            )
     return resolve_sidebar_hrefs(
         {
             "page": "settings",
@@ -934,6 +1060,7 @@ def sidebar_for_settings(role, *, active_view="home"):
             "primary": primary,
             "footer": _footer_site_links(
                 settings_active=True,
+                profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],

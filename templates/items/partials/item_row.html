@@ -20,28 +20,47 @@
       </div>
     </div>
   </td>
-  <td class="item-cell--price" data-label="Shop price">{{ row.shop_price_display }}</td>
   <td class="item-cell--range" data-label="Price range">
     <span class="item-price-range">
-      <span>KSh {{ row.item.minimum_selling_price|floatformat:2 }}</span>
-      <span class="item-price-range-sep" aria-hidden="true">–</span>
-      <span>KSh {{ row.item.maximum_selling_price|floatformat:2 }}</span>
+      <span class="item-price-range-bound item-price-range-bound--min">
+        <span class="item-price-range-label">Min</span>
+        <span class="item-price-range-amount">KSh {{ row.item.minimum_selling_price|floatformat:2 }}</span>
+      </span>
+      <span class="item-price-range-sep" aria-hidden="true"></span>
+      <span class="item-price-range-bound item-price-range-bound--max">
+        <span class="item-price-range-label">Max</span>
+        <span class="item-price-range-amount">KSh {{ row.item.maximum_selling_price|floatformat:2 }}</span>
+      </span>
     </span>
   </td>
+  {% for shop_row in row.shop_price_rows %}
+  <td class="item-cell--shop" data-label="{{ shop_row.shop_name }}">
+    <span class="item-shop-price-value">KSh {{ shop_row.price }}</span>
+  </td>
+  {% empty %}
+  <td class="item-cell--price" data-label="Shop price">{{ row.shop_price_display }}</td>
+  {% endfor %}
   <td class="item-cell--status" data-label="Status">
-    <div class="item-status-pills">
+    <div class="item-status-icons" role="list">
       {% if row.item.is_suspended %}
-      <span class="status-pill status-pill--suspended">Suspended</span>
+      <span class="item-status-icon item-status-icon--suspended" role="listitem" title="Suspended" aria-label="Suspended">
+        <i data-lucide="circle-pause" aria-hidden="true"></i>
+      </span>
       {% else %}
-      <span class="status-pill status-pill--active">Active</span>
+      <span class="item-status-icon item-status-icon--active" role="listitem" title="Active" aria-label="Active">
+        <i data-lucide="circle-check" aria-hidden="true"></i>
+      </span>
       {% endif %}
       {% if row.item.track_serial_number %}
-      <span class="status-pill status-pill--serial">Serial</span>
+      <span class="item-status-icon item-status-icon--serial" role="listitem" title="Serial tracking" aria-label="Serial tracking">
+        <i data-lucide="hash" aria-hidden="true"></i>
+      </span>
       {% endif %}
     </div>
   </td>
   <td class="item-cell--actions" data-label="Actions">
     <div class="item-actions">
+      {% if module_permissions.edit|default:True %}
       <button
         class="item-action-icon"
         type="button"
@@ -62,6 +81,8 @@
       >
         <i data-lucide="pencil" aria-hidden="true"></i>
       </button>
+      {% endif %}
+      {% if module_permissions.toggle_suspend|default:True %}
       <form class="item-inline-form" method="post">
         {% csrf_token %}
         <input type="hidden" name="action" value="toggle_suspend">
@@ -75,6 +96,8 @@
           <i data-lucide="{% if row.item.is_suspended %}play{% else %}pause{% endif %}" aria-hidden="true"></i>
         </button>
       </form>
+      {% endif %}
+      {% if module_permissions.delete|default:True %}
       <form class="item-inline-form" method="post" data-confirm-delete data-item-name="{{ row.item.name }}">
         {% csrf_token %}
         <input type="hidden" name="action" value="delete">
@@ -88,6 +111,7 @@
           <i data-lucide="trash-2" aria-hidden="true"></i>
         </button>
       </form>
+      {% endif %}
     </div>
   </td>
 </tr>

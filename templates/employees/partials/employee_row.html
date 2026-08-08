@@ -25,6 +25,7 @@
   </td>
   <td class="item-cell--actions" data-label="Actions">
     <div class="item-actions">
+      {% if module_permissions.edit|default:True %}
       <button
         class="item-action-icon"
         type="button"
@@ -44,6 +45,8 @@
       >
         <i data-lucide="pencil" aria-hidden="true"></i>
       </button>
+      {% endif %}
+      {% if module_permissions.toggle_suspend|default:True %}
       <form class="item-inline-form" method="post">
         {% csrf_token %}
         <input type="hidden" name="action" value="toggle_suspend">
@@ -58,6 +61,8 @@
           <i data-lucide="{% if employee.status == 'suspended' %}play{% else %}pause{% endif %}" aria-hidden="true"></i>
         </button>
       </form>
+      {% endif %}
+      {% if module_permissions.delete|default:True %}
       <form
         class="item-inline-form"
         method="post"
@@ -77,6 +82,7 @@
           <i data-lucide="trash-2" aria-hidden="true"></i>
         </button>
       </form>
+      {% endif %}
     </div>
   </td>
 </tr>

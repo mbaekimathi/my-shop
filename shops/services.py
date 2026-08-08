@@ -31,6 +31,15 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 PHONE_RE = re.compile(r"^[\d+\-\s()]{7,40}$")
 LOGIN_CODE_RE = re.compile(r"^\d{6}$")
 MIN_PASSWORD_LENGTH = 6
+_SHOP_LOGIN_DUMMY_HASH = None
+
+
+def _shop_login_dummy_hash() -> str:
+    """Stable dummy hash so missing-shop checks cost about the same as a real miss."""
+    global _SHOP_LOGIN_DUMMY_HASH
+    if _SHOP_LOGIN_DUMMY_HASH is None:
+        _SHOP_LOGIN_DUMMY_HASH = make_password("shop-portal-dummy-not-a-real-secret")
+    return _SHOP_LOGIN_DUMMY_HASH
 
 POS_SETTING_FIELDS = {
     "enable_sale",
@@ -83,8 +92,10 @@ RECEIPT_QR_CONTENTS = ("website", "receipt_details")
 WEBSITE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 
 POS_SETTINGS_CACHE_KEY = "company_pos_settings:v1"
-POS_SETTINGS_CACHE_TTL = 60
+POS_SETTINGS_CACHE_TTL = 300
 DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v1"
+RECEIPT_QR_PREVIEW_CACHE_KEY = "receipt_qr_preview:v1"
+RECEIPT_QR_PREVIEW_CACHE_TTL = 300
 DARAJA_OAUTH_URLS = {
     DarajaEnvironment.SANDBOX: (
         "https://sandbox.safaricom.co.ke/oauth/v1/generate"
@@ -99,6 +110,7 @@ DARAJA_OAUTH_URLS = {
 
 def _invalidate_pos_settings_cache() -> None:
     cache.delete(POS_SETTINGS_CACHE_KEY)
+    cache.delete(RECEIPT_QR_PREVIEW_CACHE_KEY)
 
 
 def _invalidate_daraja_settings_cache() -> None:
@@ -640,6 +652,18 @@ def receipt_qr_for_settings(
         else "website"
     )
     website = (row.receipt_qr_website or "").strip()
+    preview = preview or {}
+    cache_key = (
+        f"{RECEIPT_QR_PREVIEW_CACHE_KEY}:"
+        f"{int(enabled)}:{content}:{website}:"
+        f"{preview.get('receipt_number') or ''}:"
+        f"{preview.get('total') or ''}:"
+        f"{preview.get('kind') or ''}"
+    )
+    cached = cache.get(cache_key)
+    if isinstance(cached, dict):
+        return cached
+
     payload = ""
     label = ""
     if enabled:
@@ -647,7 +671,6 @@ def receipt_qr_for_settings(
             payload = website
             label = "Scan for website"
         else:
-            preview = preview or {}
             payload = receipt_details_qr_payload(
                 receipt_number=preview.get("receipt_number") or "RECEIPT",
                 kind_label=preview.get("kind") or "Sale",
@@ -664,7 +687,7 @@ def receipt_qr_for_settings(
             image = qr_code_data_url(payload, box_size=6, border=2)
         except ValidationError:
             image = ""
-    return {
+    result = {
         "enabled": enabled,
         "content": content,
         "website": website,
@@ -673,17 +696,21 @@ def receipt_qr_for_settings(
         "image_data_url": image,
         "ready": bool(image),
     }
+    cache.set(cache_key, result, RECEIPT_QR_PREVIEW_CACHE_TTL)
+    return result
 
 
 def receipt_qr_for_receipt(receipt, settings_row: CompanyPosSettings | None = None) -> dict:
     row = settings_row or get_company_pos_settings()
-    # Always read latest QR flags — cached POS settings can lag right after toggles.
-    try:
-        row.refresh_from_db(
-            fields=["enable_receipt_qr", "receipt_qr_content", "receipt_qr_website"]
-        )
-    except Exception:
-        row = get_company_pos_settings()
+    # Only hit the DB for QR flags when the caller did not pass settings
+    # (cached POS settings can lag right after toggles in the settings UI).
+    if settings_row is None:
+        try:
+            row.refresh_from_db(
+                fields=["enable_receipt_qr", "receipt_qr_content", "receipt_qr_website"]
+            )
+        except Exception:
+            row = get_company_pos_settings()
     if not row.enable_receipt_qr:
         return {
             "enabled": False,
@@ -813,15 +840,30 @@ def preview_receipt_number(
 
 
 def _next_receipt_sequence(*, shop: Shop, kind: str, prefix: str) -> int:
-    from .models import ShopReceipt
+    """
+    Next sequence for shop+kind.
+
+    Serializes on the shop row and caches the high-water mark so concurrent
+    checkouts do not rescan every historical receipt number.
+    """
+    from .models import Shop, ShopReceipt
 
     prefix = (prefix or "").strip().upper()
-    numbers = ShopReceipt.objects.filter(shop=shop, kind=kind).values_list(
-        "receipt_number", flat=True
-    )
+    Shop.objects.select_for_update().filter(pk=shop.pk).only("pk").first()
+
+    cache_key = f"receipt_seq:v1:{shop.pk}:{kind}:{prefix}"
+    cached = cache.get(cache_key)
+    if isinstance(cached, int) and cached >= 0:
+        nxt = cached + 1
+        cache.set(cache_key, nxt, timeout=60 * 60 * 24)
+        return nxt
+
     max_seq = 0
     matched_prefix = False
-    for raw in numbers:
+    qs = ShopReceipt.objects.filter(shop=shop, kind=kind)
+    if prefix:
+        qs = qs.filter(receipt_number__istartswith=prefix)
+    for raw in qs.values_list("receipt_number", flat=True).iterator(chunk_size=500):
         value = (raw or "").strip().upper()
         if prefix and value.startswith(prefix):
             suffix = value[len(prefix) :]
@@ -832,7 +874,9 @@ def _next_receipt_sequence(*, shop: Shop, kind: str, prefix: str) -> int:
             max_seq = max(max_seq, int(value))
     if not matched_prefix and max_seq == 0:
         max_seq = ShopReceipt.objects.filter(shop=shop, kind=kind).count()
-    return max_seq + 1
+    nxt = max_seq + 1
+    cache.set(cache_key, nxt, timeout=60 * 60 * 24)
+    return nxt
 
 
 def _next_receipt_number(shop: Shop, *, kind: str) -> str:
@@ -840,13 +884,16 @@ def _next_receipt_number(shop: Shop, *, kind: str) -> str:
     from .models import ShopReceipt
 
     prefix = receipt_format_for_kind(kind)
+    cache_key = f"receipt_seq:v1:{shop.pk}:{kind}:{prefix}"
     seq = _next_receipt_sequence(shop=shop, kind=kind, prefix=prefix)
     # Guard against rare collisions (manual imports / format changes).
     for _ in range(10000):
         candidate = format_simple_doc_number(prefix, seq)
         if not ShopReceipt.objects.filter(shop=shop, receipt_number=candidate).exists():
+            cache.set(cache_key, seq, timeout=60 * 60 * 24)
             return candidate
         seq += 1
+    cache.set(cache_key, seq, timeout=60 * 60 * 24)
     # Extremely unlikely fallback.
     return format_simple_doc_number(prefix, seq)
 
@@ -1126,6 +1173,43 @@ def verify_shop_login_code(shop: Shop, code: str) -> bool:
     return bool(LOGIN_CODE_RE.match(code.strip()) and shop.login_code == code.strip())
 
 
+def authenticate_shop_login(login_code: str, password: str):
+    """
+    Authenticate a shop portal sign-in.
+
+    Returns the Shop on success, or None when credentials are invalid /
+    the shop is suspended or hidden. Uses a dummy password check when the
+    shop is missing so timing does not leak existence of a login code.
+    """
+    code = (login_code or "").strip()
+    password = password or ""
+    if not LOGIN_CODE_RE.match(code) or len(password) < 1:
+        return None
+
+    shop = (
+        Shop.objects.filter(login_code=code)
+        .only(
+            "id",
+            "name",
+            "location",
+            "login_code",
+            "password_hash",
+            "is_suspended",
+            "is_hidden",
+        )
+        .first()
+    )
+    if shop is None:
+        check_password(password, _shop_login_dummy_hash())
+        return None
+    if shop.is_hidden or shop.is_suspended:
+        check_password(password, shop.password_hash or _shop_login_dummy_hash())
+        return None
+    if not verify_shop_password(shop, password):
+        return None
+    return shop
+
+
 def _money(value) -> Decimal:
     try:
         amount = Decimal(str(value)).quantize(Decimal("0.01"))
@@ -1189,6 +1273,8 @@ def search_clients_by_name(query: str, *, limit: int = 8):
 
 def upsert_client(*, full_name: str, phone: str, profile=None):
     """Create or update a client from checkout details."""
+    from django.db import IntegrityError
+
     from .models import Client
 
     name = (full_name or "").strip().upper()
@@ -1197,14 +1283,23 @@ def upsert_client(*, full_name: str, phone: str, profile=None):
     if not name or not normalized:
         return None
 
-    client = Client.objects.filter(phone_normalized=normalized).first()
-    if client is None:
-        return Client.objects.create(
-            full_name=name,
-            phone_number=phone_display,
+    try:
+        client, created = Client.objects.get_or_create(
             phone_normalized=normalized,
-            created_by=profile,
+            defaults={
+                "full_name": name,
+                "phone_number": phone_display,
+                "created_by": profile,
+            },
         )
+    except IntegrityError:
+        client = Client.objects.filter(phone_normalized=normalized).first()
+        created = False
+        if client is None:
+            raise
+
+    if created:
+        return client
 
     updates = []
     if name != client.full_name:
@@ -1818,7 +1913,6 @@ def build_expense_supplier_receipt(expense, *, shop: Shop, authorised_by: str = 
     }
 
 
-@transaction.atomic
 def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
     """
     Complete a MY-SHOP cart checkout.
@@ -1852,6 +1946,15 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
     authorising = verify_active_employee_code(login_code)
     if authorising is None:
         raise ValidationError("Enter a valid active staff 6-digit ID.")
+
+    from employees.module_permissions import ensure_employee_may
+
+    ensure_employee_may(
+        authorising,
+        "my-shop",
+        kind,
+        message=f"You do not have permission to complete a {kind}.",
+    )
 
     client_name = (payload.get("client_name") or "").strip().upper()
     client_phone_raw = (payload.get("client_phone") or "").strip()
@@ -1912,300 +2015,301 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
             }
         )
 
-    # Batch-load items, shop prices, and locked stock rows (avoids N+1 under lock).
-    items_by_id = Item.objects.filter(
-        pk__in=item_ids, is_suspended=False
-    ).in_bulk()
-    price_by_item = {
-        item_id: price
-        for item_id, price in ShopItemPrice.objects.filter(
-            shop=shop, item_id__in=item_ids
-        ).values_list("item_id", "price")
-    }
-    stock_by_item = {
-        row.item_id: row
-        for row in ShopStock.objects.select_for_update().filter(
-            shop=shop, item_id__in=item_ids
-        )
-    }
-    missing_stock_ids = [
-        item_id for item_id in item_ids if item_id not in stock_by_item
-    ]
-    if missing_stock_ids:
-        ShopStock.objects.bulk_create(
-            [
-                ShopStock(shop=shop, item_id=item_id, quantity=0)
-                for item_id in missing_stock_ids
-            ],
-            ignore_conflicts=True,
-        )
-        for row in ShopStock.objects.select_for_update().filter(
-            shop=shop, item_id__in=missing_stock_ids
-        ):
-            stock_by_item[row.item_id] = row
-
-    prepared = []
-    has_serial_sale_lines = False
-    for row in parsed_lines:
-        item_id = row["item_id"]
-        qty = row["qty"]
-        unit_price = row["unit_price"]
-        serials = row["serial_numbers"]
-        item = items_by_id.get(item_id)
-        if item is None:
-            errors.append(f"Item #{item_id} is unavailable.")
-            continue
-
-        override = price_by_item.get(item_id) if item.use_individual_shop_prices else None
-        list_price = item.resolve_list_price(override)
-
-        if not pos_settings.enable_discount:
-            unit_price = list_price
-        elif unit_price < item.minimum_selling_price:
-            errors.append(
-                f"“{item.name}” is below the minimum selling price "
-                f"(KSh {item.minimum_selling_price})."
+    with transaction.atomic():
+        # Batch-load items, shop prices, and locked stock rows (avoids N+1 under lock).
+        items_by_id = Item.objects.filter(
+            pk__in=item_ids, is_suspended=False
+        ).in_bulk()
+        price_by_item = {
+            item_id: price
+            for item_id, price in ShopItemPrice.objects.filter(
+                shop=shop, item_id__in=item_ids
+            ).values_list("item_id", "price")
+        }
+        stock_by_item = {
+            row.item_id: row
+            for row in ShopStock.objects.select_for_update().filter(
+                shop=shop, item_id__in=item_ids
             )
-            continue
-
-        stock = stock_by_item.get(item_id)
-        if stock is None:
-            errors.append(f"Item #{item_id} is unavailable.")
-            continue
-        if kind != ShopReceiptKind.QUOTATION and stock.quantity < qty:
-            errors.append(
-                f"Insufficient stock for “{item.name}” "
-                f"(available {stock.quantity}, requested {qty})."
-            )
-            continue
-
-        serial_objects = {}
-        if item.track_serial_number and kind != ShopReceiptKind.QUOTATION:
-            has_serial_sale_lines = True
-            if not serials:
-                errors.append(f"“{item.name}” requires serial numbers.")
-                continue
-            if len(serials) != qty:
-                errors.append(
-                    f"“{item.name}”: quantity must match serial count."
-                )
-                continue
-            available = {
-                serial.serial_number: serial
-                for serial in ItemSerial.objects.select_for_update().filter(
-                    item=item,
-                    shop=shop,
-                    serial_number__in=serials,
-                    is_available=True,
-                )
-            }
-            missing = [s for s in serials if s not in available]
-            if missing:
-                errors.append(
-                    f"“{item.name}”: serial not in stock at {shop.name} "
-                    f"({', '.join(missing[:5])}{'…' if len(missing) > 5 else ''})."
-                )
-                continue
-            serial_objects = available
-        elif serials and not item.track_serial_number:
-            serials = []
-
-        prepared.append(
-            {
-                "item": item,
-                "stock": stock,
-                "qty": qty,
-                "unit_price": unit_price,
-                "line_total": (unit_price * qty).quantize(Decimal("0.01")),
-                "serial_numbers": serials,
-                "serial_objects": serial_objects,
-            }
-        )
-
-    if errors:
-        raise ValidationError(errors)
-    if not prepared:
-        raise ValidationError("Add at least one valid item to the cart.")
-
-    requires_client = (
-        kind in {ShopReceiptKind.CREDIT, ShopReceiptKind.QUOTATION}
-        or has_serial_sale_lines
-    )
-    if requires_client:
-        if not client_name:
-            raise ValidationError("Client full name is required.")
-        if not client_phone_raw:
-            raise ValidationError("Client phone number is required.")
-    elif bool(client_name) != bool(client_phone_raw):
-        raise ValidationError("Provide both client name and phone, or leave both blank.")
-
-    if client_phone_raw:
-        normalized = _normalize_phone(client_phone_raw)
-        if not normalized:
-            raise ValidationError(
-                "Enter a valid Kenyan phone number (e.g. 07XX XXX XXX or +2547XXXXXXXX)."
-            )
-        client_phone = format_kenya_phone(client_phone_raw)
-    if share_whatsapp and not client_phone:
-        raise ValidationError("Client phone is required to share on WhatsApp.")
-
-    subtotal = sum((row["line_total"] for row in prepared), Decimal("0.00"))
-    tax = pos_settings.tax_breakdown(subtotal)
-    total = tax["total"]
-
-    payment_method = ShopPaymentMethod.NONE
-    cash_amount = Decimal("0.00")
-    mpesa_amount = Decimal("0.00")
-
-    if kind == ShopReceiptKind.SALE:
-        if not pos_settings.cash_sale_checkout_enabled():
-            raise ValidationError("No payment methods are enabled in POS settings.")
-        payment_method = (payload.get("payment_method") or "").strip().lower()
-        if payment_method not in {
-            ShopPaymentMethod.CASH,
-            ShopPaymentMethod.MPESA,
-            ShopPaymentMethod.BOTH,
-        }:
-            raise ValidationError("Choose cash, M-Pesa, or both.")
-        if not pos_settings.payment_method_enabled(payment_method):
-            raise ValidationError("That payment method is disabled in POS settings.")
-
-        if payment_method == ShopPaymentMethod.CASH:
-            cash_amount = total
-        elif payment_method == ShopPaymentMethod.MPESA:
-            mpesa_amount = total
-        else:
-            cash_amount = _money(payload.get("cash_amount") or 0)
-            mpesa_amount = _money(payload.get("mpesa_amount") or 0)
-            paid = (cash_amount + mpesa_amount).quantize(Decimal("0.01"))
-            if paid != total:
-                # Tolerate 1-cent drift from client rounding.
-                if abs(paid - total) <= Decimal("0.01"):
-                    mpesa_amount = (total - cash_amount).quantize(Decimal("0.01"))
-                else:
-                    raise ValidationError(
-                        "Cash and M-Pesa amounts must add up to the cart total."
-                    )
-            if cash_amount <= 0 or mpesa_amount <= 0:
-                raise ValidationError(
-                    "For split payment, both cash and M-Pesa amounts must be greater than zero."
-                )
-
-        mpesa_receipt_number = ""
-        from .daraja_stk import require_successful_stk, stk_ready
-
-        stk_id = (payload.get("stk_payment_id") or "").strip()
-        if mpesa_amount > 0 and stk_id:
-            # STK is optional — only validate when the cashier sent a prompt.
-            if not stk_ready():
-                raise ValidationError(
-                    "STK Push is not enabled. Clear the STK payment or enable Daraja."
-                )
-            if not client_phone_raw:
-                raise ValidationError(
-                    "Client phone is required when completing a sale with STK Push."
-                )
-            stk_payment = require_successful_stk(
-                public_id=stk_id,
-                expected_amount=mpesa_amount,
-                expected_phone=client_phone_raw,
-                purpose="sale",
-            )
-            mpesa_receipt_number = stk_payment.mpesa_receipt_number or ""
-        else:
-            mpesa_receipt_number = (payload.get("mpesa_receipt_number") or "").strip()
-    else:
-        mpesa_receipt_number = ""
-
-    client = None
-    if client_phone and client_name:
-        client = upsert_client(
-            full_name=client_name,
-            phone=client_phone,
-            profile=authorising,
-        )
-
-    receipt = ShopReceipt.objects.create(
-        shop=shop,
-        receipt_number=_next_receipt_number(shop, kind=kind),
-        kind=kind,
-        payment_method=payment_method,
-        client=client,
-        client_name=client_name,
-        client_phone=client_phone,
-        subtotal=tax["subtotal"],
-        tax_percent=tax["tax_percent"],
-        tax_amount=tax["tax_amount"],
-        total=total,
-        cash_amount=cash_amount,
-        mpesa_amount=mpesa_amount,
-        mpesa_receipt_number=mpesa_receipt_number,
-        share_whatsapp=share_whatsapp,
-        created_by=authorising,
-    )
-
-    if kind == ShopReceiptKind.SALE:
-        stk_id = (payload.get("stk_payment_id") or "").strip()
-        if stk_id:
-            from .daraja_stk import get_stk_payment
-            from .models import MpesaStkStatus
-
-            stk_row = get_stk_payment(stk_id)
-            if stk_row and stk_row.status == MpesaStkStatus.SUCCESS:
-                stk_row.receipt = receipt
-                stk_row.applied = True
-                stk_row.save(update_fields=["receipt", "applied", "updated_at"])
-
-    line_rows = ShopReceiptLine.objects.bulk_create(
-        [
-            ShopReceiptLine(
-                receipt=receipt,
-                item=row["item"],
-                item_name=row["item"].name,
-                quantity=row["qty"],
-                unit_price=row["unit_price"],
-                line_total=row["line_total"],
-                serial_numbers=row.get("serial_numbers") or [],
-            )
-            for row in prepared
+        }
+        missing_stock_ids = [
+            item_id for item_id in item_ids if item_id not in stock_by_item
         ]
-    )
+        if missing_stock_ids:
+            ShopStock.objects.bulk_create(
+                [
+                    ShopStock(shop=shop, item_id=item_id, quantity=0)
+                    for item_id in missing_stock_ids
+                ],
+                ignore_conflicts=True,
+            )
+            for row in ShopStock.objects.select_for_update().filter(
+                shop=shop, item_id__in=missing_stock_ids
+            ):
+                stock_by_item[row.item_id] = row
 
-    stock_updates = []
-    if kind != ShopReceiptKind.QUOTATION:
-        now = timezone.now()
-        stocks_to_update = []
-        items_to_update = []
-        serials_to_update = []
-        for row in prepared:
-            stock = row["stock"]
-            item = row["item"]
-            stock.quantity -= row["qty"]
-            stock.updated_at = now
-            item.stock = max(0, item.stock - row["qty"])
-            item.updated_at = now
-            stocks_to_update.append(stock)
-            items_to_update.append(item)
-            stock_updates.append(
+        prepared = []
+        has_serial_sale_lines = False
+        for row in parsed_lines:
+            item_id = row["item_id"]
+            qty = row["qty"]
+            unit_price = row["unit_price"]
+            serials = row["serial_numbers"]
+            item = items_by_id.get(item_id)
+            if item is None:
+                errors.append(f"Item #{item_id} is unavailable.")
+                continue
+
+            override = price_by_item.get(item_id) if item.use_individual_shop_prices else None
+            list_price = item.resolve_list_price(override)
+
+            if not pos_settings.enable_discount:
+                unit_price = list_price
+            elif unit_price < item.minimum_selling_price:
+                errors.append(
+                    f"“{item.name}” is below the minimum selling price "
+                    f"(KSh {item.minimum_selling_price})."
+                )
+                continue
+
+            stock = stock_by_item.get(item_id)
+            if stock is None:
+                errors.append(f"Item #{item_id} is unavailable.")
+                continue
+            if kind != ShopReceiptKind.QUOTATION and stock.quantity < qty:
+                errors.append(
+                    f"Insufficient stock for “{item.name}” "
+                    f"(available {stock.quantity}, requested {qty})."
+                )
+                continue
+
+            serial_objects = {}
+            if item.track_serial_number and kind != ShopReceiptKind.QUOTATION:
+                has_serial_sale_lines = True
+                if not serials:
+                    errors.append(f"“{item.name}” requires serial numbers.")
+                    continue
+                if len(serials) != qty:
+                    errors.append(
+                        f"“{item.name}”: quantity must match serial count."
+                    )
+                    continue
+                available = {
+                    serial.serial_number: serial
+                    for serial in ItemSerial.objects.select_for_update().filter(
+                        item=item,
+                        shop=shop,
+                        serial_number__in=serials,
+                        is_available=True,
+                    )
+                }
+                missing = [s for s in serials if s not in available]
+                if missing:
+                    errors.append(
+                        f"“{item.name}”: serial not in stock at {shop.name} "
+                        f"({', '.join(missing[:5])}{'…' if len(missing) > 5 else ''})."
+                    )
+                    continue
+                serial_objects = available
+            elif serials and not item.track_serial_number:
+                serials = []
+
+            prepared.append(
                 {
-                    "id": item.pk,
-                    "quantity": int(stock.quantity),
+                    "item": item,
+                    "stock": stock,
+                    "qty": qty,
+                    "unit_price": unit_price,
+                    "line_total": (unit_price * qty).quantize(Decimal("0.01")),
+                    "serial_numbers": serials,
+                    "serial_objects": serial_objects,
                 }
             )
-            serial_objects = row.get("serial_objects") or {}
-            for serial in row.get("serial_numbers") or []:
-                obj = serial_objects.get(serial)
-                if obj is None:
-                    continue
-                obj.is_available = False
-                obj.updated_at = now
-                serials_to_update.append(obj)
-        ShopStock.objects.bulk_update(stocks_to_update, ["quantity", "updated_at"])
-        Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
-        if serials_to_update:
-            ItemSerial.objects.bulk_update(
-                serials_to_update, ["is_available", "updated_at"]
+
+        if errors:
+            raise ValidationError(errors)
+        if not prepared:
+            raise ValidationError("Add at least one valid item to the cart.")
+
+        requires_client = (
+            kind in {ShopReceiptKind.CREDIT, ShopReceiptKind.QUOTATION}
+            or has_serial_sale_lines
+        )
+        if requires_client:
+            if not client_name:
+                raise ValidationError("Client full name is required.")
+            if not client_phone_raw:
+                raise ValidationError("Client phone number is required.")
+        elif bool(client_name) != bool(client_phone_raw):
+            raise ValidationError("Provide both client name and phone, or leave both blank.")
+
+        if client_phone_raw:
+            normalized = _normalize_phone(client_phone_raw)
+            if not normalized:
+                raise ValidationError(
+                    "Enter a valid Kenyan phone number (e.g. 07XX XXX XXX or +2547XXXXXXXX)."
+                )
+            client_phone = format_kenya_phone(client_phone_raw)
+        if share_whatsapp and not client_phone:
+            raise ValidationError("Client phone is required to share on WhatsApp.")
+
+        subtotal = sum((row["line_total"] for row in prepared), Decimal("0.00"))
+        tax = pos_settings.tax_breakdown(subtotal)
+        total = tax["total"]
+
+        payment_method = ShopPaymentMethod.NONE
+        cash_amount = Decimal("0.00")
+        mpesa_amount = Decimal("0.00")
+
+        if kind == ShopReceiptKind.SALE:
+            if not pos_settings.cash_sale_checkout_enabled():
+                raise ValidationError("No payment methods are enabled in POS settings.")
+            payment_method = (payload.get("payment_method") or "").strip().lower()
+            if payment_method not in {
+                ShopPaymentMethod.CASH,
+                ShopPaymentMethod.MPESA,
+                ShopPaymentMethod.BOTH,
+            }:
+                raise ValidationError("Choose cash, M-Pesa, or both.")
+            if not pos_settings.payment_method_enabled(payment_method):
+                raise ValidationError("That payment method is disabled in POS settings.")
+
+            if payment_method == ShopPaymentMethod.CASH:
+                cash_amount = total
+            elif payment_method == ShopPaymentMethod.MPESA:
+                mpesa_amount = total
+            else:
+                cash_amount = _money(payload.get("cash_amount") or 0)
+                mpesa_amount = _money(payload.get("mpesa_amount") or 0)
+                paid = (cash_amount + mpesa_amount).quantize(Decimal("0.01"))
+                if paid != total:
+                    # Tolerate 1-cent drift from client rounding.
+                    if abs(paid - total) <= Decimal("0.01"):
+                        mpesa_amount = (total - cash_amount).quantize(Decimal("0.01"))
+                    else:
+                        raise ValidationError(
+                            "Cash and M-Pesa amounts must add up to the cart total."
+                        )
+                if cash_amount <= 0 or mpesa_amount <= 0:
+                    raise ValidationError(
+                        "For split payment, both cash and M-Pesa amounts must be greater than zero."
+                    )
+
+            mpesa_receipt_number = ""
+            from .daraja_stk import require_successful_stk, stk_ready
+
+            stk_id = (payload.get("stk_payment_id") or "").strip()
+            if mpesa_amount > 0 and stk_id:
+                # STK is optional — only validate when the cashier sent a prompt.
+                if not stk_ready():
+                    raise ValidationError(
+                        "STK Push is not enabled. Clear the STK payment or enable Daraja."
+                    )
+                if not client_phone_raw:
+                    raise ValidationError(
+                        "Client phone is required when completing a sale with STK Push."
+                    )
+                stk_payment = require_successful_stk(
+                    public_id=stk_id,
+                    expected_amount=mpesa_amount,
+                    expected_phone=client_phone_raw,
+                    purpose="sale",
+                )
+                mpesa_receipt_number = stk_payment.mpesa_receipt_number or ""
+            else:
+                mpesa_receipt_number = (payload.get("mpesa_receipt_number") or "").strip()
+        else:
+            mpesa_receipt_number = ""
+
+        client = None
+        if client_phone and client_name:
+            client = upsert_client(
+                full_name=client_name,
+                phone=client_phone,
+                profile=authorising,
             )
+
+        receipt = ShopReceipt.objects.create(
+            shop=shop,
+            receipt_number=_next_receipt_number(shop, kind=kind),
+            kind=kind,
+            payment_method=payment_method,
+            client=client,
+            client_name=client_name,
+            client_phone=client_phone,
+            subtotal=tax["subtotal"],
+            tax_percent=tax["tax_percent"],
+            tax_amount=tax["tax_amount"],
+            total=total,
+            cash_amount=cash_amount,
+            mpesa_amount=mpesa_amount,
+            mpesa_receipt_number=mpesa_receipt_number,
+            share_whatsapp=share_whatsapp,
+            created_by=authorising,
+        )
+
+        if kind == ShopReceiptKind.SALE:
+            stk_id = (payload.get("stk_payment_id") or "").strip()
+            if stk_id:
+                from .daraja_stk import get_stk_payment
+                from .models import MpesaStkStatus
+
+                stk_row = get_stk_payment(stk_id)
+                if stk_row and stk_row.status == MpesaStkStatus.SUCCESS:
+                    stk_row.receipt = receipt
+                    stk_row.applied = True
+                    stk_row.save(update_fields=["receipt", "applied", "updated_at"])
+
+        line_rows = ShopReceiptLine.objects.bulk_create(
+            [
+                ShopReceiptLine(
+                    receipt=receipt,
+                    item=row["item"],
+                    item_name=row["item"].name,
+                    quantity=row["qty"],
+                    unit_price=row["unit_price"],
+                    line_total=row["line_total"],
+                    serial_numbers=row.get("serial_numbers") or [],
+                )
+                for row in prepared
+            ]
+        )
+
+        stock_updates = []
+        if kind != ShopReceiptKind.QUOTATION:
+            now = timezone.now()
+            stocks_to_update = []
+            items_to_update = []
+            serials_to_update = []
+            for row in prepared:
+                stock = row["stock"]
+                item = row["item"]
+                stock.quantity -= row["qty"]
+                stock.updated_at = now
+                item.stock = max(0, item.stock - row["qty"])
+                item.updated_at = now
+                stocks_to_update.append(stock)
+                items_to_update.append(item)
+                stock_updates.append(
+                    {
+                        "id": item.pk,
+                        "quantity": int(stock.quantity),
+                    }
+                )
+                serial_objects = row.get("serial_objects") or {}
+                for serial in row.get("serial_numbers") or []:
+                    obj = serial_objects.get(serial)
+                    if obj is None:
+                        continue
+                    obj.is_available = False
+                    obj.updated_at = now
+                    serials_to_update.append(obj)
+            ShopStock.objects.bulk_update(stocks_to_update, ["quantity", "updated_at"])
+            Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
+            if serials_to_update:
+                ItemSerial.objects.bulk_update(
+                    serials_to_update, ["is_available", "updated_at"]
+                )
 
     ticket = _build_receipt_ticket_data(receipt, line_rows)
     message = _render_receipt_text(ticket)
@@ -2286,6 +2390,15 @@ def open_shop_day(*, shop: Shop, payload: dict):
     if authorising is None:
         raise ValidationError("Enter a valid active staff 6-digit ID.")
 
+    from employees.module_permissions import ensure_employee_may
+
+    ensure_employee_may(
+        authorising,
+        "my-shop",
+        "open_close",
+        message="You do not have permission to open this shop.",
+    )
+
     if not _truthy(payload.get("stock_confirmed")):
         raise ValidationError("Confirm that stock is up to date before opening.")
 
@@ -2326,6 +2439,15 @@ def close_shop_day(*, shop: Shop, payload: dict):
     authorising = verify_active_employee_code(login_code)
     if authorising is None:
         raise ValidationError("Enter a valid active staff 6-digit ID.")
+
+    from employees.module_permissions import ensure_employee_may
+
+    ensure_employee_may(
+        authorising,
+        "my-shop",
+        "open_close",
+        message="You do not have permission to close this shop.",
+    )
 
     if not _truthy(payload.get("stock_confirmed")):
         raise ValidationError("Confirm that stock is up to date before closing.")
@@ -2476,6 +2598,15 @@ def register_shop_expense(*, shop: Shop, profile, payload: dict) -> dict:
     authorising = verify_active_employee_code(login_code)
     if authorising is None:
         raise ValidationError("Enter a valid active staff 6-digit ID.")
+
+    from employees.module_permissions import ensure_employee_may
+
+    ensure_employee_may(
+        authorising,
+        "my-shop",
+        "register_expense",
+        message="You do not have permission to register expenses.",
+    )
 
     category = (payload.get("category") or "").strip().lower()
     if category not in {choice.value for choice in ExpenseCategory}:
@@ -2813,6 +2944,15 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
     authorising = verify_active_employee_code(login_code)
     if authorising is None:
         raise ValidationError("Enter a valid active staff 6-digit ID.")
+
+    from employees.module_permissions import ensure_employee_may
+
+    ensure_employee_may(
+        authorising,
+        "my-shop",
+        "return_receipt",
+        message="You do not have permission to return receipts.",
+    )
 
     try:
         receipt = (

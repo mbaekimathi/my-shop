@@ -4,7 +4,18 @@
 {% block title %}Item Management — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="item-panel item-panel--dense" data-animate="rise" data-item-total="{{ item_count }}">
+<section
+  class="item-panel item-panel--dense"
+  data-animate="rise"
+  data-item-total="{{ item_count }}"
+  data-can-edit="{% if module_permissions.edit|default:True %}1{% else %}0{% endif %}"
+  data-can-toggle-suspend="{% if module_permissions.toggle_suspend|default:True %}1{% else %}0{% endif %}"
+  data-can-delete="{% if module_permissions.delete|default:True %}1{% else %}0{% endif %}"
+  {% if use_item_catalog_api %}
+  data-item-catalog-api="{{ item_catalog_url }}"
+  data-item-catalog-page-size="48"
+  {% endif %}
+>
   <div class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
@@ -27,47 +38,29 @@
     </div>
   </div>
 
-  {% if items_by_category %}
-  <div class="item-list" data-item-list>
-    {% for group in items_by_category %}
-    <section class="item-category-group" data-item-category-group>
-      <header class="item-category-head">
-        <h3 class="item-category-title">{{ group.category }}</h3>
-        <span class="item-category-count" data-category-count>{{ group.items|length }}</span>
-      </header>
-      <div class="item-table-wrap">
-        <table class="item-table item-table--dense">
-          <thead>
-            <tr>
-              <th scope="col" class="item-col--item">Item</th>
-              <th scope="col" class="item-col--price">Shop price</th>
-              <th scope="col" class="item-col--range">Price range</th>
-              <th scope="col" class="item-col--status">Status</th>
-              <th scope="col" class="item-col--actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in group.items %}
-            {% include "items/partials/item_row.html" with row=row %}
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </section>
-    {% endfor %}
+  {% if use_item_catalog_api and item_count %}
+  <div class="item-list" data-item-list data-item-catalog-root>
+    <div class="dashboard-placeholder" data-item-catalog-loading>
+      <i data-lucide="loader-circle" aria-hidden="true"></i>
+      <p>Loading items…</p>
+    </div>
   </div>
-
+  <div class="item-catalog-more-wrap" data-item-catalog-more-wrap hidden>
+    <button type="button" class="btn btn--ghost" data-item-catalog-more>Load more</button>
+  </div>
   <div class="item-search-empty" data-item-no-results hidden>
     <i data-lucide="search-x" aria-hidden="true"></i>
     <p>No items match your search.</p>
   </div>
-  {% else %}
+  {% elif item_count == 0 %}
   <div class="dashboard-placeholder">
     <i data-lucide="package" aria-hidden="true"></i>
     <p>No items registered yet. Open <strong>Register item</strong> from the sidebar to add your first item.</p>
   </div>
   {% endif %}
 </section>
+
+<input type="hidden" data-item-csrf value="{{ csrf_token }}">
 
 <div
   class="workspace-modal"
@@ -159,6 +152,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/item-management.js' %}?v=7"></script>
-<script src="{% static 'js/item-search.js' %}"></script>
+<script src="{% static 'js/item-catalog.js' %}?v=9"></script>
+<script src="{% static 'js/item-management.js' %}?v=8"></script>
+<script src="{% static 'js/item-search.js' %}?v=2"></script>
 {% endblock %}

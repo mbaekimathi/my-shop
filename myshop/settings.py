@@ -57,7 +57,7 @@ INSTALLED_APPS = [
     "core",
     "employees",
     "items",
-    "shops",
+    "shops.apps.ShopsConfig",
     "pos",
 ]
 
@@ -174,6 +174,16 @@ else:
 SESSION_CACHE_ALIAS = "default"
 SESSION_COOKIE_AGE = int(os.getenv("SESSION_COOKIE_AGE", str(60 * 60 * 24 * 14)))
 SESSION_SAVE_EVERY_REQUEST = False
+
+# Prefer Argon2 for new hashes; keep PBKDF2 so existing passwords still verify
+# and upgrade on next successful login.
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
 
 # ---------------------------------------------------------------------------
 # Rate limiting

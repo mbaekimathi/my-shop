@@ -17,6 +17,14 @@
   const fromShopId = panel.dataset.stockCatalogFromShop || "";
   const shopName = panel.dataset.stockCatalogShopName || "Shop";
   const fromShopName = panel.dataset.stockCatalogFromShopName || "From shop";
+  let viewShops = [];
+  try {
+    viewShops = JSON.parse(panel.dataset.stockCatalogShops || "[]");
+    if (!Array.isArray(viewShops)) viewShops = [];
+  } catch (_err) {
+    viewShops = [];
+  }
+  const showAllShops = mode === "view" && viewShops.length > 1;
   const pageSize = Math.min(
     Math.max(Number(panel.dataset.stockCatalogPageSize || 48) || 48, 12),
     96
@@ -113,6 +121,52 @@
     section = document.createElement("section");
     section.className = "stock-category";
     section.setAttribute("data-item-category-group", "");
+
+    if (mode === "view") {
+      const shopHeaders = showAllShops
+        ? viewShops
+            .map(
+              (shop) =>
+                `<th scope="col" class="stock-matrix-shop-col">${escapeHtml(
+                  shop.name || "Shop"
+                )}</th>`
+            )
+            .join("") +
+          `<th scope="col" class="stock-matrix-total-col">Total</th>`
+        : `<th scope="col" class="stock-matrix-shop-col">${escapeHtml(
+            (viewShops[0] && viewShops[0].name) || shopName
+          )}</th>`;
+      const matrixClass = showAllShops
+        ? "stock-matrix stock-matrix--all"
+        : "stock-matrix stock-matrix--single";
+      section.innerHTML = `
+      <header class="stock-category-head">
+        <div class="stock-category-title-wrap">
+          <span class="stock-category-mark" aria-hidden="true"></span>
+          <h3 class="stock-category-title"></h3>
+        </div>
+        <span class="stock-category-count" data-category-count>0</span>
+      </header>
+      <div class="stock-matrix-scroll">
+        <table class="${matrixClass}">
+          <thead>
+            <tr>
+              <th scope="col" class="stock-matrix-item-col">Item</th>
+              ${shopHeaders}
+            </tr>
+          </thead>
+          <tbody data-stock-catalog-tbody></tbody>
+        </table>
+      </div>`;
+      section.querySelector(".stock-category-title").textContent = key;
+      section.dataset.colCount = String(
+        1 + (showAllShops ? viewShops.length + 1 : 1)
+      );
+      listRoot.appendChild(section);
+      groupEls.set(key, section);
+      return section;
+    }
+
     const colCount = mode === "request" ? 4 : 3;
     section.innerHTML = `
       <header class="stock-category-head">
@@ -376,6 +430,52 @@
     const desc = String(item.description || "");
     const colCount = mode === "request" ? 4 : 3;
 
+    if (mode === "view") {
+      const quantities = Array.isArray(item.shop_quantities)
+        ? item.shop_quantities.map((q) => Math.max(0, Math.floor(Number(q) || 0)))
+        : [stock];
+      const rowTotal = Number.isFinite(Number(item.row_total))
+        ? Math.max(0, Math.floor(Number(item.row_total) || 0))
+        : quantities.reduce((sum, q) => sum + q, 0);
+      const qtyCells = showAllShops
+        ? quantities
+            .map(
+              (qty) =>
+                `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
+                  qty === 0 ? " is-empty" : ""
+                }">${qty}</span></td>`
+            )
+            .join("") +
+          `<td class="stock-matrix-total-col"><span class="stock-matrix-qty stock-matrix-qty--total${
+            rowTotal === 0 ? " is-empty" : ""
+          }">${rowTotal}</span></td>`
+        : `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
+            (quantities[0] || 0) === 0 ? " is-empty" : ""
+          }">${quantities[0] || 0}</span></td>`;
+      const header = document.createElement("tr");
+      header.className = `stock-matrix-row${
+        item.is_suspended ? " is-suspended" : ""
+      }`;
+      header.setAttribute("data-item-row", "");
+      header.setAttribute(
+        "data-search-text",
+        `${name} ${category} ${desc}`.toLowerCase()
+      );
+      header.innerHTML = `
+        <th scope="row" class="stock-matrix-item-col">
+          <div class="stock-matrix-item">
+            <strong>${escapeHtml(name)}</strong>
+            ${
+              item.track_serial
+                ? '<span class="stock-item-badge stock-item-badge--serial">Serial</span>'
+                : ""
+            }
+          </div>
+        </th>
+        ${qtyCells}`;
+      return [header];
+    }
+
     if (simpleMode) {
       const header = document.createElement("article");
       header.className = `buy-stock-pick${
@@ -517,8 +617,8 @@
       if (parkedIds.has(String(item.id))) return;
       const section = ensureGroup(item.category);
       const tbody = section.querySelector("[data-stock-catalog-tbody]");
-      const [header, formRow] = buildPair(item);
-      tbody.append(header, formRow);
+      const nodes = buildPair(item).filter(Boolean);
+      tbody.append(...nodes);
     });
     refreshGroupCounts();
   };
@@ -543,6 +643,34 @@
       ?.addEventListener("click", () => reload(q || activeQuery));
   };
 
+  const cacheKeyFor = (page, q) =>
+    `stock-catalog:${shopId || "all"}:${fromShopId || "0"}:${mode}:p${page}:s${pageSize}:q${String(
+      q || ""
+    ).toLowerCase()}`;
+
+  const applyCatalogData = (data, { q, append }) => {
+    totalCount = Number(data.total || 0);
+    panel.dataset.itemTotal = String(totalCount);
+    hasMore = Boolean(data.has_more);
+    nextPage = data.next_page || null;
+    activeQuery = String(data.q || q || "");
+    if (Array.isArray(data.shops) && data.shops.length && mode === "view") {
+      viewShops = data.shops;
+    }
+    appendItems(Array.isArray(data.items) ? data.items : [], { replace: !append });
+
+    const visible = listRoot.querySelectorAll("[data-item-row]").length;
+    const parkedCount = parked?.querySelectorAll("[data-item-row]").length || 0;
+    if (noResults) {
+      const idle = searchFirst && !activeQuery;
+      noResults.hidden =
+        idle || visible + parkedCount > 0 || (!activeQuery && totalCount === 0);
+    }
+    if (moreWrap) moreWrap.hidden = !hasMore;
+    updateCount(visible + parkedCount || totalCount, Boolean(activeQuery));
+    notify();
+  };
+
   const fetchPage = async ({ page, q, append }) => {
     const seq = ++inFlight;
     if (!append) {
@@ -563,37 +691,83 @@
       params.set("requested_from_shop_id", fromShopId);
     }
     if (q) params.set("q", q);
+    const cacheKey = cacheKeyFor(page, q);
+    const online = typeof navigator === "undefined" || navigator.onLine;
 
     try {
-      const response = await fetch(`${apiUrl}?${params.toString()}`, {
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
-        signal,
-      });
-      const data = await response.json().catch(() => ({}));
-      if (seq !== inFlight) return;
-      if (!response.ok || !data.ok) throw new Error(data.error || "failed");
+      let data = null;
+      let fromCache = false;
 
-      totalCount = Number(data.total || 0);
-      panel.dataset.itemTotal = String(totalCount);
-      hasMore = Boolean(data.has_more);
-      nextPage = data.next_page || null;
-      activeQuery = String(data.q || q || "");
-      appendItems(Array.isArray(data.items) ? data.items : [], { replace: !append });
-
-      const visible = listRoot.querySelectorAll("[data-item-row]").length;
-      const parkedCount = parked?.querySelectorAll("[data-item-row]").length || 0;
-      if (noResults) {
-        const idle = searchFirst && !activeQuery;
-        noResults.hidden =
-          idle || visible + parkedCount > 0 || (!activeQuery && totalCount === 0);
+      if (online) {
+        const response = await fetch(`${apiUrl}?${params.toString()}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+          signal,
+        });
+        data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error(data.error || "failed");
+        try {
+          const store = await import("./offline/store.js");
+          await store.cacheSet(cacheKey, data, 60 * 60 * 12);
+        } catch (_cacheErr) {
+          /* optional */
+        }
+      } else {
+        const store = await import("./offline/store.js");
+        data = await store.cacheGet(cacheKey);
+        fromCache = Boolean(data?.ok);
+        if (!fromCache) throw new Error("offline_catalog_miss");
       }
-      if (moreWrap) moreWrap.hidden = !hasMore;
-      updateCount(visible + parkedCount || totalCount, Boolean(activeQuery));
-      notify();
+
+      if (seq !== inFlight) return;
+      applyCatalogData(data, { q, append });
+      if (fromCache) panel.setAttribute("data-catalog-from-cache", "1");
+      else panel.removeAttribute("data-catalog-from-cache");
+
+      if (
+        online &&
+        !append &&
+        !fromCache &&
+        hasMore &&
+        nextPage &&
+        typeof navigator !== "undefined" &&
+        navigator.onLine
+      ) {
+        const warmPage = nextPage;
+        const warmQ = activeQuery;
+        const warmKey = cacheKeyFor(warmPage, warmQ);
+        const warmParams = new URLSearchParams(params);
+        warmParams.set("page", String(warmPage));
+        fetch(`${apiUrl}?${warmParams.toString()}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        })
+          .then((res) => res.json().catch(() => ({})))
+          .then(async (warmData) => {
+            if (!warmData?.ok) return;
+            try {
+              const store = await import("./offline/store.js");
+              await store.cacheSet(warmKey, warmData, 60 * 60 * 12);
+            } catch (_err) {
+              /* optional */
+            }
+          })
+          .catch(() => {});
+      }
     } catch (err) {
       if (err?.name === "AbortError") return;
       if (seq !== inFlight) return;
+      try {
+        const store = await import("./offline/store.js");
+        const cached = await store.cacheGet(cacheKey);
+        if (seq === inFlight && cached?.ok) {
+          applyCatalogData(cached, { q, append });
+          panel.setAttribute("data-catalog-from-cache", "1");
+          return;
+        }
+      } catch (_cacheErr) {
+        /* fall through */
+      }
       showLoadError({ append, q });
       if (moreWrap) moreWrap.hidden = true;
     } finally {

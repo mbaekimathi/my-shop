@@ -86,6 +86,16 @@
         <i data-lucide="list" aria-hidden="true"></i>
         <span>List</span>
       </button>
+      <button
+        type="button"
+        class="shop-floor-view-btn"
+        data-shop-view-set="scroll"
+        aria-pressed="false"
+        title="Horizontal scroll"
+      >
+        <i data-lucide="gallery-horizontal" aria-hidden="true"></i>
+        <span>Scroll</span>
+      </button>
     </div>
     {% endif %}
     {% if pending_request_count %}
@@ -120,12 +130,6 @@
       <i data-lucide="loader-circle" aria-hidden="true"></i>
       <p>Loading catalog…</p>
     </div>
-  </div>
-
-  <div class="shop-floor-catalog-more" data-catalog-more-wrap hidden>
-    <button type="button" class="btn btn--ghost" data-catalog-more>
-      Load more items
-    </button>
   </div>
 
   <div class="item-search-empty" data-item-no-results hidden>
@@ -548,11 +552,11 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/shop-catalog.js' %}?v=1"></script>
+<script src="{% static 'js/shop-catalog.js' %}?v=3"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script src="{% static 'js/shop-printer.js' %}?v=18"></script>
-<script src="{% static 'js/my-shop.js' %}?v=40"></script>
+<script src="{% static 'js/my-shop.js' %}?v=41"></script>
 <script src="{% static 'js/stock-catalog.js' %}?v=5"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
 <script src="{% static 'js/stock-bulk.js' %}?v=serial36"></script>

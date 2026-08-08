@@ -29,10 +29,12 @@ BUDGET_SYNC_API_BATCH = 0.50
 BUDGET_EMP_ID_CHECK = 0.08
 BUDGET_EMP_ID_CACHE = 0.02
 BUDGET_IDEMPOTENCY = 0.20
+BUDGET_SHOP_CHECKOUT_SYNC = 0.60
 
 CASHIER_ID = "700001"
 CASHIER_PASSWORD = "loop-test-pass"
 SUPER_ADMIN_ID = "700002"
+SHOP_LOGIN_CODE = "799001"
 
 
 def django_ready() -> None:
@@ -191,6 +193,88 @@ def seed_products_if_empty():
         )
 
 
+def seed_shop_floor(cashier_profile):
+    from decimal import Decimal
+
+    from django.contrib.auth.hashers import make_password
+
+    from items.models import Item, ShopStock
+    from shops.models import Shop
+
+    shop, _ = Shop.objects.get_or_create(
+        login_code=SHOP_LOGIN_CODE,
+        defaults={
+            "name": "OFFLINE LOOP SHOP",
+            "location": "NAIROBI",
+            "email": "offline_loop@test.local",
+            "phone_number": "0700000999",
+            "password_hash": make_password(CASHIER_PASSWORD),
+            "created_by": cashier_profile,
+        },
+    )
+    cashier_profile.assigned_shops.add(shop)
+
+    item, _ = Item.objects.get_or_create(
+        name="OFFLINE LOOP ITEM",
+        category="LOOP",
+        defaults={
+            "description": "Offline checkout fixture",
+            "minimum_selling_price": Decimal("10.00"),
+            "maximum_selling_price": Decimal("100.00"),
+            "shop_price": Decimal("25.00"),
+            "stock": 500,
+            "track_serial_number": False,
+            "created_by": cashier_profile,
+        },
+    )
+    if item.stock < 200:
+        item.stock = 500
+        item.save(update_fields=["stock", "updated_at"])
+    ShopStock.objects.update_or_create(
+        shop=shop, item=item, defaults={"quantity": 500}
+    )
+    return shop, item
+
+
+def cleanup_shop_floor() -> None:
+    from items.models import Item, ShopStock
+    from shops.models import Shop, ShopReceipt, ShopReceiptLine
+
+    shop = Shop.objects.filter(login_code=SHOP_LOGIN_CODE).first()
+    if shop is not None:
+        receipt_ids = list(
+            ShopReceipt.objects.filter(shop=shop).values_list("id", flat=True)
+        )
+        ShopReceiptLine.objects.filter(receipt_id__in=receipt_ids).delete()
+        ShopReceipt.objects.filter(id__in=receipt_ids).delete()
+        ShopStock.objects.filter(shop=shop).delete()
+        shop.delete()
+    Item.objects.filter(name="OFFLINE LOOP ITEM", category="LOOP").delete()
+
+
+def build_shop_checkout_payload(shop, item, cashier_profile, client_id: str | None = None) -> dict:
+    return {
+        "client_id": client_id or str(uuid.uuid4()),
+        "shop_id": shop.pk,
+        "checkout": {
+            "kind": "sale",
+            "payment_method": "cash",
+            "client_name": "OFFLINE LOOP CLIENT",
+            "client_phone": "0712345678",
+            "login_code": cashier_profile.employee_id,
+            "share_whatsapp": False,
+            "lines": [
+                {
+                    "id": item.pk,
+                    "qty": 1,
+                    "price": str(item.shop_price),
+                    "serials": [],
+                }
+            ],
+        },
+    }
+
+
 def build_sale_payload(sku: str, client_id: str | None = None) -> dict:
     from pos.models import Product
 
@@ -222,6 +306,7 @@ def run_loop(iterations: int) -> tuple[int, int]:
 
     seed_products_if_empty()
     cashier_user, admin_user, cashier_profile, admin_profile = ensure_users()
+    shop, floor_item = seed_shop_floor(cashier_profile)
     try:
         client = Client()
         client.force_login(cashier_user)
@@ -233,6 +318,7 @@ def run_loop(iterations: int) -> tuple[int, int]:
         )
 
         ping_s, product_s, sale_s, offline_s, sync_s, emp_s, cache_s, idem_s = [], [], [], [], [], [], [], []
+        shop_checkout_s = []
         errors = []
 
         allowed = list(settings.ALLOWED_HOSTS)
@@ -289,6 +375,41 @@ def run_loop(iterations: int) -> tuple[int, int]:
                 if Sale.objects.filter(client_id=dup_id).count() != 1:
                     errors.append(f"idempotency {i}")
 
+                checkout_id = str(uuid.uuid4())
+                checkout_payload = build_shop_checkout_payload(
+                    shop, floor_item, cashier_profile, client_id=checkout_id
+                )
+                from shops.models import ShopReceipt
+
+                before = ShopReceipt.objects.filter(shop=shop).count()
+                t0 = time.perf_counter()
+                res = process_sync_operations(
+                    cashier_profile,
+                    [
+                        {
+                            "id": str(uuid.uuid4()),
+                            "type": "complete_shop_checkout",
+                            "payload": checkout_payload,
+                        }
+                    ],
+                )
+                process_sync_operations(
+                    cashier_profile,
+                    [
+                        {
+                            "id": str(uuid.uuid4()),
+                            "type": "complete_shop_checkout",
+                            "payload": checkout_payload,
+                        }
+                    ],
+                )
+                shop_checkout_s.append(time.perf_counter() - t0)
+                if res["failed"]:
+                    errors.append(f"shop checkout sync {i}")
+                after = ShopReceipt.objects.filter(shop=shop).count()
+                if after != before + 1:
+                    errors.append(f"shop checkout idempotency {i}")
+
                 t0 = time.perf_counter()
                 r = Client().get(f"/employees/api/check-employee-id/?code={code}")
                 emp_s.append(time.perf_counter() - t0)
@@ -301,6 +422,11 @@ def run_loop(iterations: int) -> tuple[int, int]:
                     errors.append(f"cache {i}")
                 cache_s.append(time.perf_counter() - t0)
 
+            # Assigned staff can read catalog without unlocking shop password.
+            r = client.get(f"/my-shop/{shop.id}/catalog/?page=1&page_size=24")
+            if r.status_code != 200 or not r.json().get("ok"):
+                errors.append("shop catalog read access")
+
         results = [
             report("ONLINE ping", ping_s, BUDGET_PING),
             report("ONLINE catalog", product_s, BUDGET_PRODUCTS),
@@ -308,6 +434,7 @@ def run_loop(iterations: int) -> tuple[int, int]:
             report("OFFLINE sync handler", offline_s, BUDGET_OFFLINE_SYNC_HANDLER),
             report("OFFLINE sync API batch", sync_s, BUDGET_SYNC_API_BATCH),
             report("OFFLINE idempotency", idem_s, BUDGET_IDEMPOTENCY),
+            report("OFFLINE shop checkout", shop_checkout_s, BUDGET_SHOP_CHECKOUT_SYNC),
             report("ONLINE emp ID check", emp_s, BUDGET_EMP_ID_CHECK),
             report("CACHE emp ID", cache_s, BUDGET_EMP_ID_CACHE),
         ]
@@ -317,6 +444,7 @@ def run_loop(iterations: int) -> tuple[int, int]:
             print(f"\nLogic errors ({len(errors)}):", errors[:5])
         return passed, failed
     finally:
+        cleanup_shop_floor()
         cleanup_users(cashier_user, admin_user, cashier_profile, admin_profile)
 
 

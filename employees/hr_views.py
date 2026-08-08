@@ -35,7 +35,7 @@ from .services import (
     validate_employee_registration,
     validate_employee_update,
 )
-from .workspace import hr_approvals_url, hr_section_url, sidebar_for_hr_management
+from .workspace import hr_approvals_url, hr_section_url, sidebar_for_hr_permissions, sidebar_for_hr_management
 
 
 HR_SECTIONS = {
@@ -219,6 +219,14 @@ def _handle_authorizations_post(request, profile, page_number):
 
 
 def _render_hr_authorizations(request, profile, section_meta, page_number=1):
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(
+        request, profile, "hr-management", "authorizations"
+    )
+    if denied is not None:
+        return denied
+
     form_data = dict(EMPTY_EMPLOYEE_FORM)
     form_errors = []
     open_register_modal = False
@@ -275,7 +283,7 @@ def _render_hr_authorizations(request, profile, section_meta, page_number=1):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": sidebar_for_hr_management(
-                profile.role, active_view="authorizations"
+                profile.role, active_view="authorizations", profile=profile
             ),
             "employees_page": employees_page,
             "employees": employees,
@@ -405,6 +413,14 @@ def _handle_permissions_post(request, profile):
 
 
 def _render_hr_permissions(request, profile, section_meta):
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(
+        request, profile, "hr-management", "permissions"
+    )
+    if denied is not None:
+        return denied
+
     form_data = dict(EMPTY_EMPLOYEE_FORM)
     form_errors = []
     open_register_modal = False
@@ -466,9 +482,7 @@ def _render_hr_permissions(request, profile, section_meta):
             "section": "permissions",
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_hr_management(
-                profile.role, active_view="permissions"
-            ),
+            "page_sidebar": sidebar_for_hr_permissions(profile.role, profile=profile),
             "permission_modules": modules,
             "authorizations_url": hr_section_url(profile.role, "authorizations"),
             "form_data": form_data,
@@ -541,8 +555,17 @@ def _register_context(request):
 
 
 def _handle_hr_management_post(request, profile, page_number):
+    from .module_permissions import require_module_permission
+
     action = (request.POST.get("action") or "").strip()
     actor = get_profile_for_request(request)
+
+    if action in {"register", "edit", "toggle_suspend", "delete"}:
+        denied = require_module_permission(
+            request, profile, "hr-management", action
+        )
+        if denied is not None:
+            return denied, None
 
     if action == "register":
         form_data, form_errors, open_register_modal = _process_register_post(request)
@@ -660,6 +683,8 @@ def _handle_hr_management_post(request, profile, page_number):
 
 
 def _render_hr_management(request, profile, meta, module, page_sidebar, page_number=1):
+    from .module_permissions import module_capabilities, require_module_permission
+
     form_data = dict(EMPTY_EMPLOYEE_FORM)
     form_errors = []
     open_register_modal = False
@@ -667,6 +692,7 @@ def _render_hr_management(request, profile, meta, module, page_sidebar, page_num
     edit_form_data = {**EMPTY_EMPLOYEE_FORM, "role": EmployeeRole.EMPLOYEE}
     edit_form_errors = []
     edit_employee = None
+    caps = module_capabilities(profile, "hr-management")
 
     if request.method == "POST":
         redirect_response, modal_state = _handle_hr_management_post(
@@ -685,6 +711,9 @@ def _render_hr_management(request, profile, meta, module, page_sidebar, page_num
             edit_form_errors = modal_state["edit_form_errors"]
             edit_employee = modal_state["edit_employee"]
     else:
+        denied = require_module_permission(request, profile, "hr-management", "home")
+        if denied is not None:
+            return denied
         form_data, form_errors, open_register_modal = _register_context(request)
 
     pending_count = EmployeeProfile.objects.filter(
@@ -721,6 +750,7 @@ def _render_hr_management(request, profile, meta, module, page_sidebar, page_num
             "edit_employee": edit_employee,
             "countries": COUNTRY_DIAL_CODES,
             "approvals_url": hr_approvals_url(profile.role),
+            "module_permissions": caps,
             "pagination": pagination_links(
                 employees_page,
                 "hr_management",
@@ -779,7 +809,7 @@ def hr_section(request, role_segment, section):
             "section": section,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_hr_management(profile.role, active_view=section),
+            "page_sidebar": sidebar_for_hr_management(profile.role, active_view=section, profile=profile),
             "form_data": form_data,
             "form_errors": form_errors,
             "open_register_modal": open_register_modal,
@@ -826,7 +856,7 @@ def hr_management_page(request, role_segment, page=None):
         "summary": module["summary"],
         "icon": module["icon"],
     }
-    page_sidebar = sidebar_for_hr_management(profile.role, active_view="home")
+    page_sidebar = sidebar_for_hr_management(profile.role, active_view="home", profile=profile)
     return _render_hr_management(
         request,
         profile,
@@ -840,6 +870,8 @@ def hr_management_page(request, role_segment, page=None):
 @hr_staff_required
 @require_http_methods(["GET", "POST"])
 def hr_employee_approvals(request, role_segment, page=None):
+    from .module_permissions import require_module_permission
+
     profile = get_profile_for_request(request)
     expected_segment = role_url_segment(profile.role)
     if role_segment != expected_segment:
@@ -847,6 +879,12 @@ def hr_employee_approvals(request, role_segment, page=None):
             "employees:hr_employee_approvals",
             role_segment=expected_segment,
         )
+
+    denied = require_module_permission(
+        request, profile, "hr-management", "approvals"
+    )
+    if denied is not None:
+        return denied
 
     redirect_response = redirect_query_page(
         request,
@@ -881,7 +919,7 @@ def hr_employee_approvals(request, role_segment, page=None):
             "meta": meta,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_hr_management(profile.role, active_view="approvals"),
+            "page_sidebar": sidebar_for_hr_management(profile.role, active_view="approvals", profile=profile),
             "employees_page": employees_page,
             "employees": employees_page.object_list,
             "role_choices": EmployeeRole.choices,

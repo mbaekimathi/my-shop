@@ -8,6 +8,8 @@ urlpatterns = [
     path("my-shop/", shop_views.my_shop_entry, name="my_shop"),
     path("my-shop/select/", shop_views.my_shop_select, name="my_shop_select"),
     path("my-shop/leave/", shop_views.my_shop_leave, name="my_shop_leave"),
+    path("shops/login/", shop_views.shop_portal_login, name="shop_login"),
+    path("shops/logout/", shop_views.shop_portal_logout, name="shop_logout"),
     path(
         "my-shop/<int:shop_id>/",
         shop_views.my_shop_workspace,
@@ -174,6 +176,11 @@ urlpatterns = [
         name="stock_management_catalog",
     ),
     path(
+        "<role_segment:role_segment>/item-management/catalog/",
+        views.item_management_catalog_proxy,
+        name="item_management_catalog",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/account-pay/",
         analytics_views.analytics_account_pay,
         name="analytics_account_pay",
@@ -202,6 +209,11 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/credits/clients/<int:client_id>/",
         analytics_views.analytics_client_credit,
         name="analytics_client_credit",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/receipts/<slug:kind>/",
+        analytics_views.analytics_receipts_list,
+        name="analytics_receipts_list",
     ),
     path(
         "<role_segment:role_segment>/analytics/<slug:section>/",

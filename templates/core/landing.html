@@ -103,13 +103,25 @@
 
       <div class="hero-actions" data-animate="rise" data-delay="3">
 
-        <a class="btn btn--primary" href="{% url 'employees:login' %}">
+        <div class="hero-login-stack">
 
-          <i data-lucide="badge-check" aria-hidden="true"></i>
+          <a class="btn btn--primary" href="{% url 'employees:login' %}">
 
-          <span>Employee Login</span>
+            <i data-lucide="badge-check" aria-hidden="true"></i>
 
-        </a>
+            <span>Employee Login</span>
+
+          </a>
+
+          <a class="btn btn--ghost" href="{% url 'employees:shop_login' %}">
+
+            <i data-lucide="store" aria-hidden="true"></i>
+
+            <span>Shop Login</span>
+
+          </a>
+
+        </div>
 
         <a class="btn btn--ghost" href="{% url 'employees:register' %}">
 
@@ -213,13 +225,25 @@
 
       <div class="hero-actions">
 
-        <a class="btn btn--primary" href="{% url 'employees:login' %}">
+        <div class="hero-login-stack">
 
-          <i data-lucide="log-in" aria-hidden="true"></i>
+          <a class="btn btn--primary" href="{% url 'employees:login' %}">
 
-          <span>Employee Login</span>
+            <i data-lucide="log-in" aria-hidden="true"></i>
 
-        </a>
+            <span>Employee Login</span>
+
+          </a>
+
+          <a class="btn btn--ghost btn--ghost-dark" href="{% url 'employees:shop_login' %}">
+
+            <i data-lucide="store" aria-hidden="true"></i>
+
+            <span>Shop Login</span>
+
+          </a>
+
+        </div>
 
         <a class="btn btn--ghost btn--ghost-dark" href="{% url 'employees:register' %}">
 
@@ -264,6 +288,8 @@
   <a href="#capabilities">Capabilities</a>
 
   <a href="{% url 'employees:login' %}">Employee Login</a>
+
+  <a href="{% url 'employees:shop_login' %}">Shop Login</a>
 
   <a href="{% url 'employees:register' %}">Register as Employee</a>
 

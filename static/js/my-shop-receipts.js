@@ -166,16 +166,16 @@
               }`
             : "—";
         return `<tr class="shop-receipts-row" data-receipt-id="${row.id}" tabindex="0">
-  <td>
+  <td data-label="Receipt">
     <strong>${escapeHtml(row.receipt_number)}</strong>
   </td>
-  <td><span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(
+  <td data-label="Type"><span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(
     row.kind
   )}">${escapeHtml(row.kind_label)}</span></td>
-  <td class="shop-receipts-client">${client}</td>
-  <td>KSh ${escapeHtml(money(row.total))}</td>
-  <td>${escapeHtml(row.created_label)}</td>
-  <td><span class="shop-receipt-status ${statusClass(
+  <td class="shop-receipts-client" data-label="Client">${client}</td>
+  <td data-label="Total">KSh ${escapeHtml(money(row.total))}</td>
+  <td data-label="When">${escapeHtml(row.created_label)}</td>
+  <td data-label="Status"><span class="shop-receipt-status ${statusClass(
     row.status
   )}">${escapeHtml(row.status_label)}</span></td>
 </tr>`;
@@ -395,14 +395,14 @@
             ? `<span class="shop-receipt-muted">Returned ${line.returned_quantity} of ${line.quantity}</span>`
             : "";
         return `<tr>
-  <td>
+  <td class="shop-receipt-item-primary" data-label="Item">
     <strong>${escapeHtml(line.item_name)}</strong>
     ${returnedNote}
     ${serials ? `<div class="shop-receipt-serials">${serials}</div>` : ""}
   </td>
-  <td>${line.remaining_quantity}<span class="shop-receipt-muted"> / ${line.quantity}</span></td>
-  <td>KSh ${escapeHtml(money(line.unit_price))}</td>
-  <td>KSh ${escapeHtml(money(line.remaining_total))}</td>
+  <td data-label="Qty">${line.remaining_quantity}<span class="shop-receipt-muted"> / ${line.quantity}</span></td>
+  <td data-label="Price">KSh ${escapeHtml(money(line.unit_price))}</td>
+  <td data-label="Total">KSh ${escapeHtml(money(line.remaining_total))}</td>
 </tr>`;
       })
       .join("");

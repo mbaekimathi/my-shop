@@ -37,4 +37,9 @@ urlpatterns = [
         name="settings_section",
     ),
     path("logout/", views.employee_logout, name="logout"),
+    path(
+        "to-employee-login/",
+        views.switch_to_employee_login,
+        name="to_employee_login",
+    ),
 ]

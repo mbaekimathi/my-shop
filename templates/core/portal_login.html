@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Sign in — MY-SHOP{% endblock %}
+{% block body_class %}page-auth page-auth--portal{% endblock %}
+
+{% block body %}
+<div class="auth-shell auth-shell--portal">
+  <aside class="auth-visual" data-auth-visual>
+    <img
+      class="auth-visual-image"
+      src="{% static 'img/hero-pos.jpg' %}"
+      alt=""
+      decoding="async"
+    >
+    <div class="auth-visual-scrim"></div>
+    <div class="auth-visual-content">
+      <div class="auth-visual-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <p class="brand brand--aside">MY-SHOP</p>
+      </div>
+      <p class="auth-visual-kicker" data-auth-visual-kicker>
+        {% if login_mode == 'shop' %}Branch portal{% else %}Staff portal{% endif %}
+      </p>
+      <p class="auth-visual-lead" data-auth-visual-lead>
+        {% if login_mode == 'shop' %}
+          Open your shop floor with the branch code and password.
+        {% else %}
+          Access your workspace with your employee ID and password.
+        {% endif %}
+      </p>
+      <ul class="auth-visual-points">
+        <li data-auth-point="employee">
+          <i data-lucide="badge-check" aria-hidden="true"></i>
+          <span>Staff sign in with a personal 6-digit employee ID</span>
+        </li>
+        <li data-auth-point="shop">
+          <i data-lucide="store" aria-hidden="true"></i>
+          <span>Shops open with the shared branch login code</span>
+        </li>
+        <li>
+          <i data-lucide="shield-check" aria-hidden="true"></i>
+          <span>One active session keeps access clear and secure</span>
+        </li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="auth-main">
+    <div class="auth-toolbar">
+      <a class="auth-back" href="{% url 'core:landing' %}">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+        <span>Back</span>
+      </a>
+      {% include "partials/connectivity_indicator.html" %}
+      {% include "partials/theme_toggle.html" %}
+    </div>
+
+    <div
+      class="auth-card auth-card--portal"
+      data-animate="rise"
+      data-portal-login
+      data-login-mode="{{ login_mode }}"
+    >
+      <header class="auth-head">
+        <p class="auth-eyebrow">MY-SHOP access</p>
+        <h1>Sign in</h1>
+        <p>Choose how you want to enter, then use your 6-digit code.</p>
+      </header>
+
+      <div class="auth-mode-tabs" role="tablist" aria-label="Sign-in type">
+        <button
+          class="auth-mode-tab auth-mode-tab--employee{% if login_mode == 'employee' %} is-active{% endif %}"
+          type="button"
+          role="tab"
+          id="tab-employee"
+          aria-controls="panel-employee"
+          aria-selected="{% if login_mode == 'employee' %}true{% else %}false{% endif %}"
+          data-auth-tab="employee"
+        >
+          <span class="auth-mode-tab-icon" aria-hidden="true">
+            <i data-lucide="badge-check"></i>
+          </span>
+          <span class="auth-mode-tab-copy">
+            <strong>Employee</strong>
+            <em>Staff ID</em>
+          </span>
+        </button>
+        <button
+          class="auth-mode-tab auth-mode-tab--shop{% if login_mode == 'shop' %} is-active{% endif %}"
+          type="button"
+          role="tab"
+          id="tab-shop"
+          aria-controls="panel-shop"
+          aria-selected="{% if login_mode == 'shop' %}true{% else %}false{% endif %}"
+          data-auth-tab="shop"
+        >
+          <span class="auth-mode-tab-icon" aria-hidden="true">
+            <i data-lucide="store"></i>
+          </span>
+          <span class="auth-mode-tab-copy">
+            <strong>Shop</strong>
+            <em>Branch code</em>
+          </span>
+        </button>
+      </div>
+
+      <section
+        class="auth-panel auth-panel--employee{% if login_mode == 'employee' %} is-active{% endif %}"
+        id="panel-employee"
+        role="tabpanel"
+        aria-labelledby="tab-employee"
+        data-auth-panel="employee"
+        {% if login_mode != 'employee' %}hidden{% endif %}
+      >
+        <header class="auth-panel-head">
+          <span class="auth-panel-badge" aria-hidden="true">
+            <i data-lucide="badge-check"></i>
+          </span>
+          <div>
+            <p class="auth-panel-kicker">Staff access</p>
+            <h2 id="employee-login-title">Employee Login</h2>
+            <p>Use your personal 6-digit employee ID and password.</p>
+          </div>
+        </header>
+
+        {% if employee_error %}
+        <div class="form-alert" role="alert">
+          <i data-lucide="alert-circle" aria-hidden="true"></i>
+          <span>{{ employee_error }}</span>
+        </div>
+        {% endif %}
+
+        <form
+          class="auth-form"
+          method="post"
+          action="{% url 'employees:login' %}"
+          novalidate
+          data-auth-form="employee"
+          autocomplete="on"
+        >
+          {% csrf_token %}
+          {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
+          <label class="field">
+            <span>Employee ID</span>
+            <input
+              type="text"
+              name="username"
+              value="{{ employee_username }}"
+              autocomplete="section-employee username"
+              required
+              inputmode="numeric"
+              pattern="\d{6}"
+              maxlength="6"
+              placeholder="e.g. 820001"
+              data-code-input
+              data-focus-next
+              {% if login_mode == 'employee' %}autofocus{% endif %}
+            >
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <div class="password-field">
+              <input
+                type="password"
+                name="password"
+                autocomplete="section-employee current-password"
+                required
+                minlength="1"
+                placeholder="Enter your password"
+                data-password-input
+              >
+              <button class="password-toggle" type="button" aria-label="Show password" data-password-toggle>
+                <i data-lucide="eye" aria-hidden="true" data-eye-open></i>
+                <i data-lucide="eye-off" aria-hidden="true" data-eye-closed hidden></i>
+              </button>
+            </div>
+          </label>
+          <button class="btn btn--block auth-submit auth-submit--employee" type="submit" data-auth-submit>
+            <i data-lucide="log-in" aria-hidden="true"></i>
+            <span data-auth-submit-label>Sign in as employee</span>
+          </button>
+        </form>
+
+        <p class="auth-switch auth-switch--compact">
+          New to the floor?
+          <a href="{% url 'employees:register' %}">Create an account</a>
+        </p>
+      </section>
+
+      <section
+        class="auth-panel auth-panel--shop{% if login_mode == 'shop' %} is-active{% endif %}"
+        id="panel-shop"
+        role="tabpanel"
+        aria-labelledby="tab-shop"
+        data-auth-panel="shop"
+        {% if login_mode != 'shop' %}hidden{% endif %}
+      >
+        <header class="auth-panel-head">
+          <span class="auth-panel-badge" aria-hidden="true">
+            <i data-lucide="store"></i>
+          </span>
+          <div>
+            <p class="auth-panel-kicker">Branch access</p>
+            <h2 id="shop-login-title">Shop Login</h2>
+            <p>Use the shop’s shared 6-digit code and password.</p>
+          </div>
+        </header>
+
+        {% if shop_error %}
+        <div class="form-alert" role="alert">
+          <i data-lucide="alert-circle" aria-hidden="true"></i>
+          <span>{{ shop_error }}</span>
+        </div>
+        {% endif %}
+
+        <form
+          class="auth-form"
+          method="post"
+          action="{% url 'employees:shop_login' %}"
+          novalidate
+          data-auth-form="shop"
+          autocomplete="on"
+        >
+          {% csrf_token %}
+          <label class="field">
+            <span>Shop code</span>
+            <input
+              type="text"
+              name="login_code"
+              value="{{ shop_login_code }}"
+              autocomplete="section-shop username"
+              required
+              inputmode="numeric"
+              pattern="\d{6}"
+              maxlength="6"
+              placeholder="e.g. 104220"
+              data-code-input
+              data-focus-next
+              {% if login_mode == 'shop' %}autofocus{% endif %}
+            >
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <div class="password-field">
+              <input
+                type="password"
+                name="password"
+                autocomplete="section-shop current-password"
+                required
+                minlength="1"
+                placeholder="Enter shop password"
+                data-password-input
+              >
+              <button class="password-toggle" type="button" aria-label="Show password" data-password-toggle>
+                <i data-lucide="eye" aria-hidden="true" data-eye-open></i>
+                <i data-lucide="eye-off" aria-hidden="true" data-eye-closed hidden></i>
+              </button>
+            </div>
+          </label>
+          <button class="btn btn--block auth-submit auth-submit--shop" type="submit" data-auth-submit>
+            <i data-lucide="store" aria-hidden="true"></i>
+            <span data-auth-submit-label>Open shop floor</span>
+          </button>
+        </form>
+      </section>
+    </div>
+  </main>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/auth.js' %}"></script>
+{% endblock %}

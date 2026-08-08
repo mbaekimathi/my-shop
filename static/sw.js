@@ -1,11 +1,17 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v3";
+const CACHE_VERSION = "myshop-v6";
 
 const PRECACHE = [
   "/static/css/main.css",
   "/static/js/main.js",
   "/static/js/auth.js",
   "/static/js/register.js",
+  "/static/js/my-shop.js",
+  "/static/js/shop-catalog.js",
+  "/static/js/stock-catalog.js",
+  "/static/js/item-catalog.js",
+  "/static/js/shop-printer.js",
+  "/static/js/shop-printer-session.js",
   "/static/js/offline/store.js",
   "/static/js/offline/connectivity.js",
   "/static/js/offline/sync.js",

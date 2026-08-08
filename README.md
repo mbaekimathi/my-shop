@@ -9,6 +9,7 @@ Employee portal, shop POS, analytics, and Daraja M-Pesa STK for retail operation
 - **Database:** MySQL / MariaDB via PyMySQL (SQLite fallback for local bootstrap)
 - **Static:** WhiteNoise
 - **WSGI:** Passenger (cPanel) or Gunicorn (VPS)
+- **Passwords:** Argon2 via `argon2-cffi` (required; install from `requirements.txt`). On cPanel, after `pip install -r requirements.txt`, confirm `python -c "import argon2"` succeeds before restarting Passenger.
 
 ## Quick start (local)
 

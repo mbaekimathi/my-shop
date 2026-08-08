@@ -22,8 +22,13 @@
     data-stock-mode="{{ stock_mode }}"
     {% if use_stock_catalog_api %}
     data-stock-catalog-api="{{ stock_catalog_url }}"
+    {% if selected_shop %}
     data-stock-catalog-shop="{{ selected_shop.pk }}"
     data-stock-catalog-shop-name="{{ selected_shop.name }}"
+    {% endif %}
+    {% if stock_mode == 'view' %}
+    data-stock-catalog-shops="{{ catalog_shops_json }}"
+    {% endif %}
     {% if stock_mode == 'request' and requested_from_shop %}
     data-stock-catalog-from-shop="{{ requested_from_shop.pk }}"
     data-stock-catalog-from-shop-name="{{ requested_from_shop.name }}"

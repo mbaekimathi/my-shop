@@ -30,7 +30,7 @@ def is_rate_limited(scope: str, identifier: str) -> bool:
         count = cache_incr(key)
         return count > max_requests
     except ValueError:
-        cache_set(key, 1, window)
+        cache_set(key, 1, timeout)
         return False
 
 
@@ -52,12 +52,22 @@ def cache_set(key, value, timeout):
     cache.set(key, value, timeout)
 
 
-def rate_limit(scope: str):
-    """Decorator that blocks requests when the client IP exceeds rate limits."""
+def rate_limit(scope: str, *, methods=None):
+    """
+    Decorator that blocks requests when the client IP exceeds rate limits.
+
+    methods: optional iterable of HTTP methods to limit (e.g. ("POST",)).
+    When set, other methods pass through without counting.
+    """
+
+    limited_methods = {method.upper() for method in methods} if methods else None
 
     def decorator(view_func):
         @wraps(view_func)
         def wrapper(request, *args, **kwargs):
+            if limited_methods and request.method.upper() not in limited_methods:
+                return view_func(request, *args, **kwargs)
+
             if is_rate_limited(scope, get_client_ip(request)):
                 accept = request.headers.get("Accept", "")
                 if scope == "check_employee_id" or "application/json" in accept:
@@ -69,6 +79,20 @@ def rate_limit(scope: str):
                         },
                         status=429,
                     )
+                if scope == "login":
+                    from .portal_auth import render_portal_login
+
+                    mode = "shop" if "/shops/" in request.path else "employee"
+                    response = render_portal_login(
+                        request,
+                        login_mode=mode,
+                        rate_limited=True,
+                        employee_username=(request.POST.get("username") or "").strip(),
+                        shop_login_code=(request.POST.get("login_code") or "").strip(),
+                        next_url=(request.POST.get("next") or request.GET.get("next") or ""),
+                    )
+                    response.status_code = 429
+                    return response
                 return HttpResponse(
                     "Too many requests. Please wait a moment and try again.",
                     status=429,

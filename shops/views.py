@@ -1,4 +1,5 @@
 from itertools import groupby
+import re
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
@@ -14,6 +15,7 @@ from employees.access import (
     role_home_url_name,
 )
 from employees.countries import COUNTRY_DIAL_CODES
+from employees.throttle import rate_limit
 from employees.workspace import sidebar_for_my_shop
 from employees.services import verify_active_employee_code
 from items.models import (
@@ -41,6 +43,7 @@ from .daraja_stk import (
     sync_callback_base_from_request,
 )
 from .services import (
+    authenticate_shop_login,
     build_expense_supplier_receipt,
     build_stock_in_supplier_receipt,
     build_stock_request_delivery_note,
@@ -67,9 +70,12 @@ from .services import (
 )
 from .session import (
     clear_active_shop,
+    clear_shop_portal_session,
     get_shop_for_profile,
     resolve_active_shop,
+    resolve_portal_shop,
     set_active_shop,
+    shop_floor_required,
     shops_for_profile,
 )
 
@@ -98,20 +104,36 @@ def _validation_errors(exc: ValidationError) -> list:
 
 def _wants_json_response(request) -> bool:
     accept = (request.headers.get("Accept") or "").lower()
-    return "application/json" in accept or (request.POST.get("ajax") or "") == "1"
+    requested_with = (request.headers.get("X-Requested-With") or "").lower()
+    return (
+        "application/json" in accept
+        or requested_with == "xmlhttprequest"
+        or (request.POST.get("ajax") or "") == "1"
+    )
 
 
 @require_http_methods(["GET", "POST"])
 def shop_management(request, profile, meta, module, page_sidebar):
+    from employees.module_permissions import (
+        module_capabilities,
+        require_module_permission,
+    )
+
     form_data = dict(EMPTY_FORM)
     form_errors = []
     open_register_modal = False
     open_edit_modal = False
     edit_shop = None
+    caps = module_capabilities(profile, "shop-management")
 
     if request.method == "POST":
         action = (request.POST.get("action") or "register").strip()
         shop_id = (request.POST.get("shop_id") or "").strip()
+        denied = require_module_permission(
+            request, profile, "shop-management", action
+        )
+        if denied is not None:
+            return denied
 
         if action == "register":
             form_data = _form_data_from_post(request.POST)
@@ -160,6 +182,10 @@ def shop_management(request, profile, meta, module, page_sidebar):
         else:
             messages.error(request, "Unknown action.")
             return redirect(request.path)
+    else:
+        denied = require_module_permission(request, profile, "shop-management", "view")
+        if denied is not None:
+            return denied
 
     shops = list(Shop.objects.select_related("created_by__user").order_by("name"))
 
@@ -180,6 +206,7 @@ def shop_management(request, profile, meta, module, page_sidebar):
             "open_register_modal": open_register_modal,
             "open_edit_modal": open_edit_modal,
             "edit_shop": edit_shop,
+            "module_permissions": caps,
         },
     )
 
@@ -200,6 +227,119 @@ def _shop_select_url(*, shop_id=""):
 def _enter_shop(request, shop):
     set_active_shop(request, shop)
     return redirect(_shop_workspace_url(shop))
+
+
+def _shops_for_floor(profile, shop):
+    if profile is None:
+        return [shop]
+    return shops_for_profile(profile)
+
+
+def _shop_floor_chrome(shop, profile, shops, *, active, print_channels=None):
+    portal = profile is None
+    return {
+        "profile": profile,
+        "role_label": "Shop portal" if portal else profile.get_role_display(),
+        "status_label": "Signed in" if portal else profile.get_status_display(),
+        "page_sidebar": sidebar_for_my_shop(
+            None if portal else profile.role,
+            shop=shop,
+            shops=shops,
+            active=active,
+            shop_open=get_open_shop_day(shop) is not None,
+            print_channels=print_channels,
+            portal=portal,
+            profile=profile,
+        ),
+        "shop": shop,
+        "shops": shops,
+        "shop_portal": portal,
+    }
+
+
+def _require_my_shop_permission(
+    request,
+    profile,
+    submodule,
+    *,
+    as_json=False,
+    login_code=None,
+    actor=None,
+    portal_ok=False,
+):
+    """
+    Gate MY-SHOP actions against the acting employee.
+
+    Shop portal sessions have no employee profile. Browsing is allowed with the
+    shop password (`portal_ok=True`). Mutations must pass the staff 6-digit ID
+    (`login_code` / `actor`) so that employee's matrix permissions apply.
+    """
+    from employees.module_permissions import require_module_permission
+    from employees.services import verify_active_employee_code
+
+    acting = actor
+    if acting is None and login_code is not None:
+        acting = verify_active_employee_code(login_code)
+    if acting is None:
+        acting = profile
+    if acting is None:
+        if portal_ok:
+            return None
+        error = "Enter a valid active staff 6-digit ID."
+        if as_json:
+            from django.http import JsonResponse
+
+            return JsonResponse({"ok": False, "error": error}, status=403)
+        from django.contrib import messages
+        from django.shortcuts import redirect
+
+        messages.error(request, error)
+        return redirect(request.path)
+
+    return require_module_permission(
+        request, acting, "my-shop", submodule, as_json=as_json
+    )
+
+
+@rate_limit("login", methods=("POST",))
+@require_http_methods(["GET", "POST"])
+def shop_portal_login(request):
+    """Public shop portal: sign in with 6-digit shop code + password."""
+    from employees.portal_auth import begin_shop_portal_session, render_portal_login
+
+    portal_shop = resolve_portal_shop(request)
+    if portal_shop is not None and request.method == "GET":
+        return redirect(_shop_workspace_url(portal_shop))
+
+    error = None
+    login_code = ""
+    if request.method == "POST":
+        login_code = re.sub(r"\D+", "", request.POST.get("login_code") or "")[:6]
+        password = request.POST.get("password") or ""
+        if len(login_code) != 6:
+            error = "Enter the 6-digit shop code."
+        elif len(password) < 1:
+            error = "Enter the shop password."
+        else:
+            shop = authenticate_shop_login(login_code, password)
+            if shop is None:
+                error = "Invalid shop code or password. Please try again."
+            else:
+                begin_shop_portal_session(request, shop)
+                return redirect(_shop_workspace_url(shop))
+
+    return render_portal_login(
+        request,
+        login_mode="shop",
+        shop_error=error,
+        shop_login_code=login_code,
+    )
+
+
+@require_http_methods(["GET", "POST"])
+def shop_portal_logout(request):
+    clear_shop_portal_session(request)
+    return redirect("employees:shop_login")
 
 
 def _render_shop_login(
@@ -236,30 +376,31 @@ def _render_shop_login(
     )
 
 
-@active_employee_required
-@require_http_methods(["GET"])
+@require_http_methods(["GET", "POST"])
 def my_shop_entry(request):
-    """MY-SHOP link: end any shop session and require shop password login."""
-    clear_active_shop(request)
-    profile = get_profile_for_request(request)
-    shops = shops_for_profile(profile)
+    """MY-SHOP sidebar: end employee session and open shop portal login."""
+    from django.contrib.auth import logout
 
-    if not shops:
-        messages.info(
-            request,
-            "No active shops are assigned to your account yet. Contact HR for shop access.",
-        )
-        return redirect(role_home_url_name(profile.role))
+    from employees.access import clear_profile_session
 
-    return redirect(_shop_select_url())
+    clear_profile_session(request)
+    logout(request)
+    return redirect("employees:shop_login")
 
 
 @active_employee_required
 @require_http_methods(["GET", "POST"])
 def my_shop_select(request):
     """Select an authorised shop and authenticate with the shop password."""
-    clear_active_shop(request)
+    from employees.module_permissions import employee_may_any, permission_denied_response
+
     profile = get_profile_for_request(request)
+    if not employee_may_any(profile, "my-shop"):
+        return permission_denied_response(
+            request,
+            profile,
+            message="You do not have permission to access MY-SHOP.",
+        )
     shops = shops_for_profile(profile)
 
     if not shops:
@@ -290,6 +431,11 @@ def my_shop_select(request):
         return _enter_shop(request, shop)
 
     preferred = get_shop_for_profile(profile, request.GET.get("shop_id"))
+    active = resolve_active_shop(request, profile)
+    # Resume unlocked shop unless the user is switching to a different shop.
+    if active is not None and (preferred is None or str(preferred.pk) == str(active.pk)):
+        return redirect(_shop_workspace_url(active))
+
     if preferred is None and len(shops) == 1:
         preferred = shops[0]
 
@@ -329,7 +475,7 @@ def _catalog_base_qs():
 
 
 def _catalog_filter_qs(qs, *, q="", category=""):
-    from django.db.models import Q
+    from items.services import item_text_search_q
 
     category = (category or "").strip()
     if category:
@@ -337,13 +483,7 @@ def _catalog_filter_qs(qs, *, q="", category=""):
 
     query = (q or "").strip()
     if query:
-        tokens = [token for token in query.lower().split() if token]
-        for token in tokens:
-            qs = qs.filter(
-                Q(name__icontains=token)
-                | Q(category__icontains=token)
-                | Q(description__icontains=token)
-            )
+        qs = qs.filter(item_text_search_q(query))
     return qs
 
 
@@ -425,7 +565,7 @@ def build_shop_catalog_page(
     page_size=48,
 ):
     """Paginated catalog payload for the MY-SHOP floor API."""
-    from django.core.paginator import Paginator
+    from items.services import _paginate_queryset
 
     try:
         page = max(1, int(page or 1))
@@ -438,11 +578,8 @@ def build_shop_catalog_page(
     page_size = min(max(page_size, 12), 96)
 
     qs = _catalog_filter_qs(_catalog_base_qs(), q=q, category=category)
-    total = qs.count()
-    paginator = Paginator(qs, page_size)
-    page_obj = paginator.get_page(page)
-    items = list(page_obj.object_list)
-    rows = _catalog_rows_for_items(shop, items)
+    page_data = _paginate_queryset(qs, page=page, page_size=page_size)
+    rows = _catalog_rows_for_items(shop, page_data["items"])
 
     categories = list(
         Item.objects.filter(is_suspended=False)
@@ -453,11 +590,11 @@ def build_shop_catalog_page(
 
     return {
         "ok": True,
-        "total": total,
-        "page": page_obj.number,
+        "total": page_data["total"],
+        "page": page_data["page"],
         "page_size": page_size,
-        "has_more": page_obj.has_next(),
-        "next_page": page_obj.next_page_number() if page_obj.has_next() else None,
+        "has_more": page_data["has_more"],
+        "next_page": page_data["next_page"],
         "categories": categories,
         "items": rows,
         "q": (q or "").strip(),
@@ -519,7 +656,7 @@ def _stock_request_decisions_for_shop(shop):
     )
 
 
-def _previous_stock_requests_for_shop(shop, *, limit=50):
+def _previous_stock_requests_for_shop(shop, *, limit=20):
     """Fulfilled/declined requests this shop supplied or requested."""
     rows = list(
         StockMovement.objects.filter(
@@ -554,7 +691,18 @@ def _previous_stock_requests_for_shop(shop, *, limit=50):
 
 
 def _require_active_shop_session(request, shop_id):
+    portal_shop = resolve_portal_shop(request)
+    if portal_shop is not None:
+        if str(portal_shop.pk) != str(shop_id):
+            messages.error(request, "You are signed into a different shop.")
+            return None, None, redirect(_shop_workspace_url(portal_shop))
+        return None, portal_shop, None
+
     profile = get_profile_for_request(request)
+    if profile is None:
+        messages.info(request, "Sign in with the shop code to open this workspace.")
+        return None, None, redirect("employees:shop_login")
+
     shop = get_shop_for_profile(profile, shop_id)
     if shop is None:
         messages.error(request, "You are not authorised to open that shop.")
@@ -567,15 +715,60 @@ def _require_active_shop_session(request, shop_id):
     return profile, shop, None
 
 
-@active_employee_required
+def _require_shop_read_access(request, shop_id):
+    """
+    Read-only shop access for catalog APIs.
+
+    Allows portal session, unlocked shop session, or an employee who is already
+    assigned to the shop (so catalogs can be cached before the password unlock).
+    Mutations still use _require_active_shop_session.
+    """
+    portal_shop = resolve_portal_shop(request)
+    if portal_shop is not None:
+        if str(portal_shop.pk) != str(shop_id):
+            return None, None, JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
+        return None, portal_shop, None
+
+    profile = get_profile_for_request(request)
+    if profile is None or not profile.is_active_employee:
+        return None, None, JsonResponse(
+            {"ok": False, "error": "Shop session required."}, status=403
+        )
+
+    shop = get_shop_for_profile(profile, shop_id)
+    if shop is None:
+        from employees.models import EmployeeRole
+        from shops.models import Shop
+
+        if profile.role in (
+            EmployeeRole.SUPER_ADMIN,
+            EmployeeRole.COMPANY_MANAGER,
+            EmployeeRole.IT_SUPPORT,
+        ):
+            shop = Shop.objects.filter(
+                pk=shop_id, is_hidden=False, is_suspended=False
+            ).first()
+        if shop is None:
+            return None, None, JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
+    return profile, shop, None
+
+
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_workspace(request, shop_id):
     """Shop floor workspace: requires an authenticated shop session."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return denied
+    denied = _require_my_shop_permission(request, profile, "workspace", portal_ok=True)
+    if denied:
+        return denied
 
-    shops = shops_for_profile(profile)
+    shops = _shops_for_floor(profile, shop)
     item_count = Item.objects.filter(is_suspended=False).count()
     category_count = (
         Item.objects.filter(is_suspended=False)
@@ -592,10 +785,16 @@ def my_shop_workspace(request, shop_id):
     enabled_payments = pos_flags["payment_methods"]
     enabled_print_channels = pos_flags["print_channels"]
     # Sale needs at least one payment method; otherwise hide it from the cart.
+    from employees.module_permissions import employee_may
+
     cart_kinds = [
         kind
         for kind in enabled_kinds
-        if kind != "sale" or pos_flags["cash_sale_checkout"]
+        if (kind != "sale" or pos_flags["cash_sale_checkout"])
+        and (
+            profile is None
+            or employee_may(profile, "my-shop", kind)
+        )
     ]
     default_kind = cart_kinds[0] if cart_kinds else ""
     default_payment = enabled_payments[0] if enabled_payments else ""
@@ -608,7 +807,6 @@ def my_shop_workspace(request, shop_id):
 
     buy_stock_ctx = _buy_stock_items_context(shop)
     buy_stock_item_count = buy_stock_ctx["item_count"]
-    sync_callback_base_from_request(request, persist=True)
 
     meta = {
         "title": shop.name,
@@ -620,20 +818,14 @@ def my_shop_workspace(request, shop_id):
         request,
         "shops/my_shop_workspace.html",
         {
-            "profile": profile,
-            "meta": meta,
-            "role_label": profile.get_role_display(),
-            "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_my_shop(
-                profile.role,
-                shop=shop,
-                shops=shops,
+            **_shop_floor_chrome(
+                shop,
+                profile,
+                shops,
                 active="workspace",
-                shop_open=get_open_shop_day(shop) is not None,
                 print_channels=enabled_print_channels,
             ),
-            "shop": shop,
-            "shops": shops,
+            "meta": meta,
             "item_count": item_count,
             "category_count": category_count,
             "pending_stock_requests": pending_requests,
@@ -714,13 +906,16 @@ def my_shop_workspace(request, shop_id):
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_catalog(request, shop_id):
     """Paginated JSON catalog for the MY-SHOP floor (keeps first HTML light)."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_shop_read_access(request, shop_id)
     if denied:
-        return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+        return denied
+    denied = _require_my_shop_permission(request, profile, "workspace", as_json=True, portal_ok=True)
+    if denied:
+        return denied
 
     payload = build_shop_catalog_page(
         shop,
@@ -753,19 +948,8 @@ def _render_my_shop_tool_page(
         "icon": icon,
     }
     context = {
-        "profile": profile,
+        **_shop_floor_chrome(shop, profile, shops, active=active),
         "meta": meta,
-        "role_label": profile.get_role_display(),
-        "status_label": profile.get_status_display(),
-        "page_sidebar": sidebar_for_my_shop(
-            profile.role,
-            shop=shop,
-            shops=shops,
-            active=active,
-            shop_open=get_open_shop_day(shop) is not None,
-        ),
-        "shop": shop,
-        "shops": shops,
     }
     if extra_context:
         context.update(extra_context)
@@ -800,13 +984,16 @@ def _buy_stock_items_context(shop):
     }
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_buy_stock_catalog(request, shop_id):
     """Paginated buy-stock catalog JSON."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_shop_read_access(request, shop_id)
     if denied:
-        return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+        return denied
+    denied = _require_my_shop_permission(request, profile, "buy_stock", as_json=True, portal_ok=True)
+    if denied:
+        return denied
 
     payload = build_stock_catalog_page(
         shop_id=shop.pk,
@@ -819,15 +1006,28 @@ def my_shop_buy_stock_catalog(request, shop_id):
     return JsonResponse(payload)
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET", "POST"])
 def my_shop_buy_stock(request, shop_id):
     """Buy stock from an outside supplier and stock it into the active shop."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
+        if _wants_json_response(request):
+            return JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
+        return denied
+    denied = _require_my_shop_permission(
+        request,
+        profile,
+        "buy_stock",
+        as_json=_wants_json_response(request),
+        portal_ok=True,
+    )
+    if denied:
         return denied
 
-    shops = shops_for_profile(profile)
+    shops = _shops_for_floor(profile, shop)
 
     if request.method == "POST":
         wants_json = _wants_json_response(request)
@@ -841,11 +1041,20 @@ def my_shop_buy_stock(request, shop_id):
                 )
             messages.error(request, "Enter a valid active staff 6-digit ID.")
         else:
+            denied = _require_my_shop_permission(
+                request,
+                profile,
+                "buy_stock",
+                as_json=wants_json,
+                actor=authorising,
+            )
+            if denied:
+                return denied
             post = request.POST.copy()
             post["shop_id"] = str(shop.pk)
             post["mode"] = "in"
             try:
-                movement = apply_stock_movement(profile, "in", post)
+                movement = apply_stock_movement(authorising, "in", post)
             except ValidationError as exc:
                 errors = _validation_errors(exc)
                 if wants_json:
@@ -903,15 +1112,18 @@ def my_shop_buy_stock(request, shop_id):
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_stock_requests(request, shop_id):
     """Review incoming stock requests and request decision updates."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return denied
+    denied = _require_my_shop_permission(request, profile, "stock_requests", portal_ok=True)
+    if denied:
+        return denied
 
-    shops = shops_for_profile(profile)
+    shops = _shops_for_floor(profile, shop)
     pending_requests = _pending_stock_requests_for_shop(shop)
     request_decisions = _stock_request_decisions_for_shop(shop)
     previous_requests = _previous_stock_requests_for_shop(shop)
@@ -943,15 +1155,28 @@ def my_shop_stock_requests(request, shop_id):
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET", "POST"])
 def my_shop_register_expense(request, shop_id):
     """Register an outside expense against the active shop."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
+        if _wants_json_response(request):
+            return JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
+        return denied
+    denied = _require_my_shop_permission(
+        request,
+        profile,
+        "register_expense",
+        as_json=_wants_json_response(request),
+        portal_ok=True,
+    )
+    if denied:
         return denied
 
-    shops = shops_for_profile(profile)
+    shops = _shops_for_floor(profile, shop)
     form_errors = []
     form_data = {
         "category": "",
@@ -1062,7 +1287,7 @@ def my_shop_register_expense(request, shop_id):
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def expense_supplier_search_api(request):
     """Search expense suppliers by name or phone."""
@@ -1087,15 +1312,18 @@ def expense_supplier_search_api(request):
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_receipts(request, shop_id):
     """Browse, reprint, and return receipts for the active shop."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return denied
+    denied = _require_my_shop_permission(request, profile, "receipts", portal_ok=True)
+    if denied:
+        return denied
 
-    shops = shops_for_profile(profile)
+    shops = _shops_for_floor(profile, shop)
     pos_settings = get_company_pos_settings()
     pos_flags = pos_settings_as_dict(pos_settings)
     return _render_my_shop_tool_page(
@@ -1132,20 +1360,23 @@ def my_shop_receipts(request, shop_id):
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_reprint(request, shop_id):
     """Legacy reprint URL — redirect to receipts."""
     return redirect("employees:my_shop_receipts", shop_id=shop_id)
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_receipts_list(request, shop_id):
     """JSON list of shop receipts with live search and date filters."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(request, profile, "receipts", as_json=True, portal_ok=True)
+    if denied:
+        return denied
 
     try:
         payload = list_shop_receipts(
@@ -1172,13 +1403,16 @@ def my_shop_receipts_list(request, shop_id):
     return JsonResponse(payload)
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_receipt_detail(request, shop_id, receipt_id):
     """JSON detail for one shop receipt (modal + reprint payload)."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(request, profile, "receipts", as_json=True, portal_ok=True)
+    if denied:
+        return denied
 
     try:
         payload = get_shop_receipt_detail(shop=shop, receipt_id=receipt_id)
@@ -1195,7 +1429,7 @@ def my_shop_receipt_detail(request, shop_id, receipt_id):
     return JsonResponse(payload)
 
 
-@active_employee_required
+@shop_floor_required
 @require_POST
 def my_shop_receipt_return(request, shop_id, receipt_id):
     """Return one or more items from a sale/credit receipt (staff ID required)."""
@@ -1204,6 +1438,9 @@ def my_shop_receipt_return(request, shop_id, receipt_id):
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(request, profile, "return_receipt", as_json=True, portal_ok=True)
+    if denied:
+        return denied
 
     try:
         if request.content_type and "application/json" in request.content_type:
@@ -1234,15 +1471,18 @@ def my_shop_receipt_return(request, shop_id, receipt_id):
     return JsonResponse(result)
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET", "POST"])
 def my_shop_day_toggle(request, shop_id):
     """Open or close the shop day with balances, stock confirm, and staff ID."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return denied
+    denied = _require_my_shop_permission(request, profile, "open_close", portal_ok=True)
+    if denied:
+        return denied
 
-    shops = shops_for_profile(profile)
+    shops = _shops_for_floor(profile, shop)
     open_session = get_open_shop_day(shop)
     is_open = open_session is not None
     mode = "close" if is_open else "open"
@@ -1316,7 +1556,7 @@ def my_shop_day_toggle(request, shop_id):
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_POST
 def my_shop_verify_login_code(request, shop_id):
     """Validate an active employee 6-digit ID before accept/decline is unlocked."""
@@ -1331,17 +1571,20 @@ def my_shop_verify_login_code(request, shop_id):
             {"ok": False, "error": "Not a valid active staff ID."},
             status=400,
         )
+    from employees.module_permissions import my_shop_capabilities
+
     name = authorising.user.get_full_name() or authorising.user.username
     return JsonResponse(
         {
             "ok": True,
             "employee_id": authorising.employee_id,
             "name": name,
+            "capabilities": my_shop_capabilities(authorising),
         }
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_POST
 def my_shop_checkout(request, shop_id):
     """Complete cart checkout as sale, credit, or quotation."""
@@ -1369,6 +1612,18 @@ def my_shop_checkout(request, shop_id):
             }
     except (TypeError, ValueError, json.JSONDecodeError):
         return JsonResponse({"ok": False, "error": "Invalid checkout payload."}, status=400)
+
+    kind = str(payload.get("kind") or "").strip().lower()
+    perm_key = kind if kind in {"sale", "credit", "quotation"} else "workspace"
+    denied = _require_my_shop_permission(
+        request,
+        profile,
+        perm_key,
+        as_json=True,
+        login_code=payload.get("login_code"),
+    )
+    if denied:
+        return denied
 
     try:
         result = complete_shop_checkout(shop=shop, profile=profile, payload=payload)
@@ -1405,7 +1660,7 @@ def my_shop_checkout(request, shop_id):
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_POST
 def my_shop_stk_initiate(request, shop_id):
     """Start an STK Push for the M-Pesa portion of a sale checkout."""
@@ -1414,6 +1669,9 @@ def my_shop_stk_initiate(request, shop_id):
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(request, profile, "sale", as_json=True, portal_ok=True)
+    if denied:
+        return denied
     sync_callback_base_from_request(request, persist=True)
     if not stk_ready():
         return JsonResponse(
@@ -1456,7 +1714,7 @@ def my_shop_stk_initiate(request, shop_id):
     )
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_stk_status(request, shop_id, payment_id):
     """Poll STK Push status for a shop sale."""
@@ -1514,7 +1772,7 @@ def _is_lan_printer_host(host: str) -> bool:
     return False
 
 
-@active_employee_required
+@shop_floor_required
 @require_POST
 def my_shop_print_relay(request, shop_id):
     """Relay ESC/POS bytes to a LAN Wi‑Fi/Ethernet thermal printer (port 9100)."""
@@ -1525,6 +1783,9 @@ def my_shop_print_relay(request, shop_id):
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(request, profile, "print", as_json=True, portal_ok=True)
+    if denied:
+        return denied
 
     pos = get_company_pos_settings()
     if not pos.print_channel_enabled("wifi"):
@@ -1615,7 +1876,7 @@ def my_shop_print_relay(request, shop_id):
     return JsonResponse({"ok": True, "host": host, "port": port})
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET", "POST"])
 def my_shop_wifi_printer_scan(request, shop_id):
     """Scan the server LAN for Wi‑Fi/Ethernet printers (printer ports only)."""
@@ -1624,6 +1885,9 @@ def my_shop_wifi_printer_scan(request, shop_id):
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(request, profile, "print", as_json=True, portal_ok=True)
+    if denied:
+        return denied
 
     pos = get_company_pos_settings()
     if not pos.print_channel_enabled("wifi"):
@@ -1654,7 +1918,7 @@ def my_shop_wifi_printer_scan(request, shop_id):
     return JsonResponse(result)
 
 
-@active_employee_required
+@shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_client_lookup(request, shop_id):
     """Look up registered clients by phone or live-search by name."""
@@ -1701,12 +1965,16 @@ def my_shop_client_lookup(request, shop_id):
     return JsonResponse({"ok": True, "found": False, "results": []})
 
 
-@active_employee_required
+@shop_floor_required
 @require_POST
 def my_shop_stock_request_respond(request, shop_id, request_id):
     """Accept or decline a pending stock request (requires shop login code)."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
+        if _wants_json_response(request):
+            return JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
         return denied
 
     movement = get_object_or_404(
@@ -1781,11 +2049,14 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
     return redirect(next_url)
 
 
-@active_employee_required
+@shop_floor_required
 @require_POST
 def my_shop_stock_request_result_ack(request, shop_id, request_id):
     """Requesting shop acknowledges an accept/decline notification."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(request, profile, "respond_stock_request", portal_ok=True)
     if denied:
         return denied
 
@@ -1805,7 +2076,7 @@ def my_shop_stock_request_result_ack(request, shop_id, request_id):
     return redirect("employees:my_shop_workspace", shop_id=shop.pk)
 
 
-@active_employee_required
+@shop_floor_required
 @require_POST
 def my_shop_stock_request_results_ack_all(request, shop_id):
     """Acknowledge all pending accept/decline notifications for this shop."""

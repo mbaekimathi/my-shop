@@ -142,53 +142,58 @@
     });
   };
 
-  document.querySelectorAll("[data-edit-item]").forEach((button) => {
-    button.addEventListener("click", () => {
-      if (!editForm) return;
+  const openEditFromButton = (button) => {
+    if (!editForm || !button) return;
 
-      const dataset = button.dataset;
-      if (itemIdInput) itemIdInput.value = dataset.itemId || "";
-      setField("category", dataset.category);
-      setField("name", dataset.name);
-      setField("description", dataset.description);
-      setField("minimum_selling_price", dataset.minimumSellingPrice);
-      setField("maximum_selling_price", dataset.maximumSellingPrice);
-      setField("shop_price", dataset.shopPrice);
-      setPricingMode(dataset.pricingMode === "individual" ? "individual" : "single");
-      setShopPrices(
-        dataset.shopPrices,
-        dataset.maximumSellingPrice || dataset.shopPrice
-      );
-      setCheckbox(
-        "track_serial_number",
-        dataset.trackSerialNumber === "1" || dataset.trackSerialNumber === "true"
-      );
+    const dataset = button.dataset;
+    if (itemIdInput) itemIdInput.value = dataset.itemId || "";
+    setField("category", dataset.category);
+    setField("name", dataset.name);
+    setField("description", dataset.description);
+    setField("minimum_selling_price", dataset.minimumSellingPrice);
+    setField("maximum_selling_price", dataset.maximumSellingPrice);
+    setField("shop_price", dataset.shopPrice);
+    setPricingMode(dataset.pricingMode === "individual" ? "individual" : "single");
+    setShopPrices(
+      dataset.shopPrices,
+      dataset.maximumSellingPrice || dataset.shopPrice
+    );
+    setCheckbox(
+      "track_serial_number",
+      dataset.trackSerialNumber === "1" || dataset.trackSerialNumber === "true"
+    );
 
-      if (window.initUppercaseInputs) window.initUppercaseInputs(editForm);
+    if (window.initUppercaseInputs) window.initUppercaseInputs(editForm);
 
-      const fileInput = editForm.querySelector('input[type="file"][name="image"]');
-      if (fileInput) fileInput.value = "";
-      if (removeImage) removeImage.checked = false;
+    const fileInput = editForm.querySelector('input[type="file"][name="image"]');
+    if (fileInput) fileInput.value = "";
+    if (removeImage) removeImage.checked = false;
 
-      if (dataset.imageUrl && imageWrap && currentImage) {
-        currentImage.src = dataset.imageUrl;
-        imageWrap.hidden = false;
-      } else if (imageWrap) {
-        imageWrap.hidden = true;
-        if (currentImage) currentImage.removeAttribute("src");
-      }
+    if (dataset.imageUrl && imageWrap && currentImage) {
+      currentImage.src = dataset.imageUrl;
+      imageWrap.hidden = false;
+    } else if (imageWrap) {
+      imageWrap.hidden = true;
+      if (currentImage) currentImage.removeAttribute("src");
+    }
 
-      setModalOpen(editModal, true);
-    });
+    setModalOpen(editModal, true);
+  };
+
+  // Progressive catalog rows are created after bind — use delegation.
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-edit-item]");
+    if (!button) return;
+    openEditFromButton(button);
   });
 
-  document.querySelectorAll("[data-confirm-delete]").forEach((form) => {
-    form.addEventListener("submit", (event) => {
-      const name = form.dataset.itemName || "this item";
-      if (!window.confirm(`Delete “${name}”? This cannot be undone.`)) {
-        event.preventDefault();
-      }
-    });
+  document.addEventListener("submit", (event) => {
+    const form = event.target.closest?.("[data-confirm-delete]");
+    if (!form) return;
+    const name = form.dataset.itemName || "this item";
+    if (!window.confirm(`Delete “${name}”? This cannot be undone.`)) {
+      event.preventDefault();
+    }
   });
 
 })();

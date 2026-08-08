@@ -19,6 +19,53 @@
     {% include "partials/theme_toggle.html" %}
 
     <div class="workspace-user-menu" data-user-menu>
+      {% if workspace.is_shop_portal %}
+      <button
+        class="workspace-user-trigger"
+        type="button"
+        aria-expanded="false"
+        aria-haspopup="menu"
+        aria-controls="workspace-user-dropdown"
+        data-user-menu-trigger
+        data-user-first-name="{{ workspace.shop.name|default:portal_shop.name }}"
+      >
+        <span class="workspace-user-avatar workspace-user-avatar--empty" aria-hidden="true">
+          <i data-lucide="store"></i>
+        </span>
+        <span class="workspace-user-meta">
+          <span class="workspace-user-greeting" data-user-greeting>Hello</span>
+          <strong>{{ workspace.shop.name|default:portal_shop.name }}</strong>
+        </span>
+        <i class="workspace-user-chevron" data-lucide="chevron-down" aria-hidden="true"></i>
+      </button>
+
+      <div
+        class="workspace-user-dropdown"
+        id="workspace-user-dropdown"
+        role="menu"
+        hidden
+        data-user-menu-panel
+      >
+        <div class="workspace-user-dropdown-head">
+          <span class="workspace-user-avatar workspace-user-avatar--empty" aria-hidden="true">
+            <i data-lucide="store"></i>
+          </span>
+          <div>
+            <strong>{{ workspace.shop.name|default:portal_shop.name }}</strong>
+            <small>{{ workspace.shop.location|default:portal_shop.location }}</small>
+          </div>
+        </div>
+        <div class="workspace-user-dropdown-divider" role="separator"></div>
+        <a
+          class="workspace-user-dropdown-item workspace-user-dropdown-item--danger"
+          role="menuitem"
+          href="{{ workspace.logout_url }}"
+        >
+          <i data-lucide="log-out" aria-hidden="true"></i>
+          <span>Sign out</span>
+        </a>
+      </div>
+      {% else %}
       {% with person=profile|default:workspace.profile %}
       <button
         class="workspace-user-trigger"
@@ -82,6 +129,7 @@
         </a>
       </div>
       {% endwith %}
+      {% endif %}
     </div>
   </div>
 </header>

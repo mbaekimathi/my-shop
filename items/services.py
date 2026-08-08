@@ -41,6 +41,47 @@ def _normalize_national_phone(phone: str, dial: str = "") -> str:
     return digits[:9]
 
 
+def item_text_search_q(query: str):
+    """
+    Build an Item text filter that prefers indexed name/category.
+
+    Multi-word queries avoid scanning description (TEXT) on every token — that
+    path dominated stock-catalog search latency.
+    """
+    from django.db.models import Q
+
+    phrase = (query or "").strip()
+    tokens = [t for t in phrase.lower().split() if t]
+    if not tokens:
+        return Q()
+    if len(tokens) == 1:
+        token = tokens[0]
+        return (
+            Q(name__icontains=token)
+            | Q(category__icontains=token)
+            | Q(description__icontains=token)
+        )
+    token_q = Q()
+    for token in tokens:
+        token_q &= Q(name__icontains=token) | Q(category__icontains=token)
+    return Q(name__icontains=phrase) | token_q
+
+
+def _paginate_queryset(qs, *, page: int, page_size: int):
+    """Slice pagination with a single COUNT (avoids Django Paginator's second count)."""
+    total = qs.count()
+    offset = (page - 1) * page_size
+    items = list(qs[offset : offset + page_size])
+    has_more = offset + page_size < total
+    return {
+        "total": total,
+        "page": page,
+        "items": items,
+        "has_more": has_more,
+        "next_page": page + 1 if has_more else None,
+    }
+
+
 def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
     """
     Latest stock-in buying price per item (one subquery each), avoiding full
@@ -89,6 +130,7 @@ def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
 def build_stock_catalog_page(
     *,
     shop_id=None,
+    shop_ids=None,
     requested_from_shop_id=None,
     mode: str = "in",
     q: str = "",
@@ -97,10 +139,12 @@ def build_stock_catalog_page(
     include_suspended: bool = True,
 ):
     """
-    Paginated stock matrix rows for buy-stock / stock-management action modes.
+    Paginated stock matrix rows for buy-stock / stock-management action modes
+    and current-stock (view) mode.
     """
-    from django.core.paginator import Paginator
-    from django.db.models import Q, Sum
+    from django.db.models import Sum
+
+    from shops.models import Shop
 
     try:
         page = max(1, int(page or 1))
@@ -128,22 +172,33 @@ def build_stock_catalog_page(
 
     query = (q or "").strip()
     if query:
-        for token in [t for t in query.lower().split() if t]:
-            qs = qs.filter(
-                Q(name__icontains=token)
-                | Q(category__icontains=token)
-                | Q(description__icontains=token)
-            )
+        qs = qs.filter(item_text_search_q(query))
 
-    total = qs.count()
-    paginator = Paginator(qs, page_size)
-    page_obj = paginator.get_page(page)
-    items = list(page_obj.object_list)
+    page_data = _paginate_queryset(qs, page=page, page_size=page_size)
+    total = page_data["total"]
+    items = page_data["items"]
+    has_more = page_data["has_more"]
+    next_page = page_data["next_page"]
+    page = page_data["page"]
     item_ids = [item.pk for item in items]
+
+    view_shop_ids = []
+    if mode == "view":
+        if shop_id:
+            view_shop_ids = [int(shop_id)]
+        elif shop_ids:
+            view_shop_ids = [int(sid) for sid in shop_ids if sid]
+        else:
+            view_shop_ids = list(
+                Shop.objects.filter(is_hidden=False, is_suspended=False)
+                .order_by("name")
+                .values_list("pk", flat=True)
+            )
 
     shop_qty_map = {}
     from_qty_map = {}
-    if item_ids and shop_id:
+    multi_qty_map = {}
+    if item_ids and shop_id and mode != "view":
         shop_qty_map = {
             item_id: qty
             for item_id, qty in ShopStock.objects.filter(
@@ -157,6 +212,11 @@ def build_stock_catalog_page(
                 shop_id=requested_from_shop_id, item_id__in=item_ids
             ).values_list("item_id", "quantity")
         }
+    if item_ids and view_shop_ids:
+        for item_id, sid, qty in ShopStock.objects.filter(
+            shop_id__in=view_shop_ids, item_id__in=item_ids
+        ).values_list("item_id", "shop_id", "quantity"):
+            multi_qty_map.setdefault(item_id, {})[sid] = int(qty)
 
     last_buying = {}
     if mode == "in" and item_ids:
@@ -164,27 +224,45 @@ def build_stock_catalog_page(
             item_ids, prefer_shop_id=shop_id
         )
 
+    shops_meta = []
+    if mode == "view" and view_shop_ids:
+        shops_by_id = {
+            shop.pk: shop
+            for shop in Shop.objects.filter(pk__in=view_shop_ids).only("id", "name")
+        }
+        for sid in view_shop_ids:
+            shop = shops_by_id.get(sid)
+            if shop:
+                shops_meta.append({"id": shop.pk, "name": shop.name})
+
     rows = []
     for item in items:
         description = (item.description or "").strip()
         if len(description) > 120:
             description = description[:117].rstrip() + "..."
         price = last_buying.get(item.pk)
-        rows.append(
-            {
-                "id": item.pk,
-                "name": item.name,
-                "category": item.category,
-                "description": description,
-                "shop_qty": int(shop_qty_map.get(item.pk, 0)),
-                "requested_from_qty": int(from_qty_map.get(item.pk, 0)),
-                "track_serial": bool(item.track_serial_number),
-                "is_suspended": bool(item.is_suspended),
-                "last_buying_price": (
-                    format(price, "f") if price is not None else None
-                ),
-            }
-        )
+        row = {
+            "id": item.pk,
+            "name": item.name,
+            "category": item.category,
+            "description": description,
+            "shop_qty": int(shop_qty_map.get(item.pk, 0)),
+            "requested_from_qty": int(from_qty_map.get(item.pk, 0)),
+            "track_serial": bool(item.track_serial_number),
+            "is_suspended": bool(item.is_suspended),
+            "last_buying_price": (
+                format(price, "f") if price is not None else None
+            ),
+        }
+        if mode == "view":
+            quantities = [
+                int(multi_qty_map.get(item.pk, {}).get(sid, 0)) for sid in view_shop_ids
+            ]
+            row["shop_quantities"] = quantities
+            row["row_total"] = sum(quantities)
+            if len(view_shop_ids) == 1:
+                row["shop_qty"] = quantities[0] if quantities else 0
+        rows.append(row)
 
     total_units = 0
     if shop_id:
@@ -194,20 +272,149 @@ def build_stock_catalog_page(
             ]
             or 0
         )
+    elif mode == "view" and view_shop_ids:
+        total_units = (
+            ShopStock.objects.filter(shop_id__in=view_shop_ids).aggregate(
+                total=Sum("quantity")
+            )["total"]
+            or 0
+        )
 
     return {
         "ok": True,
         "mode": mode,
         "total": total,
-        "page": page_obj.number,
+        "page": page,
         "page_size": page_size,
-        "has_more": page_obj.has_next(),
-        "next_page": page_obj.next_page_number() if page_obj.has_next() else None,
+        "has_more": has_more,
+        "next_page": next_page,
         "total_units": int(total_units),
         "items": rows,
         "q": query,
         "shop_id": shop_id,
         "requested_from_shop_id": requested_from_shop_id,
+        "shops": shops_meta,
+        "show_all_shops": mode == "view" and len(view_shop_ids) > 1,
+    }
+
+
+def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48):
+    """Paginated item-management rows with shop price display fields."""
+    try:
+        page = max(1, int(page or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(page_size or 48)
+    except (TypeError, ValueError):
+        page_size = 48
+    page_size = min(max(page_size, 12), 96)
+
+    qs = Item.objects.only(
+        "id",
+        "category",
+        "name",
+        "description",
+        "minimum_selling_price",
+        "maximum_selling_price",
+        "shop_price",
+        "use_individual_shop_prices",
+        "track_serial_number",
+        "is_suspended",
+        "image",
+    ).order_by("category", "name")
+
+    query = (q or "").strip()
+    if query:
+        qs = qs.filter(item_text_search_q(query))
+
+    page_data = _paginate_queryset(qs, page=page, page_size=page_size)
+    total = page_data["total"]
+    items = page_data["items"]
+    has_more = page_data["has_more"]
+    next_page = page_data["next_page"]
+    page = page_data["page"]
+    item_ids = [item.pk for item in items]
+    active_shops = _active_shops()
+
+    prices_list_by_item = {}
+    prices_map_by_item = {}
+    if item_ids:
+        for item_id, shop_id, price in ShopItemPrice.objects.filter(
+            item_id__in=item_ids
+        ).values_list("item_id", "shop_id", "price"):
+            prices_list_by_item.setdefault(item_id, []).append(price)
+            prices_map_by_item.setdefault(item_id, {})[shop_id] = price
+
+    rows = []
+    for item in items:
+        description = (item.description or "").strip()
+        prices = prices_list_by_item.get(item.pk) or []
+        item_shop_map = prices_map_by_item.get(item.pk) or {}
+        if not item.use_individual_shop_prices or not prices:
+            shop_price_display = f"KSh {item.shop_price:.2f}"
+        else:
+            low = min(prices)
+            high = max(prices)
+            shop_price_display = (
+                f"KSh {low:.2f}" if low == high else f"KSh {low:.2f} – {high:.2f}"
+            )
+        shop_prices = {
+            str(shop_id): f"{price:.2f}" for shop_id, price in item_shop_map.items()
+        }
+        shop_price_rows = []
+        for shop in active_shops:
+            if item.use_individual_shop_prices:
+                override = item_shop_map.get(shop.pk)
+                resolved = item.resolve_list_price(override)
+            else:
+                resolved = item.resolve_list_price(None)
+            shop_price_rows.append(
+                {
+                    "shop_id": shop.pk,
+                    "shop_name": shop.name,
+                    "price": f"{resolved:.2f}",
+                }
+            )
+        image_url = ""
+        try:
+            if item.image:
+                image_url = item.image.url
+        except Exception:
+            image_url = ""
+        rows.append(
+            {
+                "id": item.pk,
+                "name": item.name,
+                "category": item.category,
+                "description": description,
+                "minimum_selling_price": f"{item.minimum_selling_price:.2f}",
+                "maximum_selling_price": f"{item.maximum_selling_price:.2f}",
+                "shop_price": f"{item.shop_price:.2f}",
+                "shop_price_display": shop_price_display,
+                "pricing_mode": (
+                    "individual" if item.use_individual_shop_prices else "single"
+                ),
+                "shop_prices": shop_prices,
+                "shop_price_rows": shop_price_rows,
+                "track_serial": bool(item.track_serial_number),
+                "is_suspended": bool(item.is_suspended),
+                "image_url": image_url,
+            }
+        )
+
+    return {
+        "ok": True,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_more": has_more,
+        "next_page": next_page,
+        "shops": [
+            {"id": shop.pk, "name": shop.name} for shop in active_shops
+        ],
+        "items": rows,
+        "q": query,
     }
 
 
@@ -1142,6 +1349,16 @@ def respond_to_stock_request(
     authorising = verify_active_employee_code(login_code)
     if authorising is None:
         raise ValidationError("Enter a valid active staff 6-digit ID.")
+
+    from employees.module_permissions import ensure_employee_may
+
+    ensure_employee_may(
+        authorising,
+        "my-shop",
+        "respond_stock_request",
+        message="You do not have permission to accept or decline stock requests.",
+    )
+
     # Prefer the authorising employee as responder when available.
     if authorising is not None:
         profile = authorising

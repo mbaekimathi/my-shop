@@ -7,9 +7,17 @@ from django.db import IntegrityError
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods
 
-from items.views import item_management, stock_management, stock_management_catalog
+import re
+
+from items.views import (
+    item_management,
+    item_management_catalog,
+    stock_management,
+    stock_management_catalog,
+)
 from shops.services import (
     daraja_settings_as_dict,
     get_company_pos_settings,
@@ -113,13 +121,15 @@ def _render_role_page(request, expected_role):
             "meta": meta,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_role_dashboard(expected_role),
+            "page_sidebar": sidebar_for_role_dashboard(expected_role, profile=profile),
         },
     )
 
 
 @active_employee_required
 def workspace_module(request, role_segment, module_slug):
+    from .module_permissions import employee_may_any, permission_denied_response
+
     profile = get_profile_for_request(request)
     if role_from_url_segment(role_segment) is None:
         raise Http404("Role portal not found.")
@@ -136,7 +146,14 @@ def workspace_module(request, role_segment, module_slug):
     if module is None:
         raise Http404("Module not found.")
 
-    page_sidebar = sidebar_for_module(profile.role, module_slug)
+    if not employee_may_any(profile, module_slug):
+        return permission_denied_response(
+            request,
+            profile,
+            message=f"You do not have permission to access {module['label']}.",
+        )
+
+    page_sidebar = sidebar_for_module(profile.role, module_slug, profile=profile)
     meta = {
         "title": module["label"],
         "headline": module["label"],
@@ -180,44 +197,84 @@ def stock_management_catalog_proxy(request, role_segment):
     return stock_management_catalog(request, role_segment)
 
 
-@rate_limit("login")
+@active_employee_required
+@require_GET
+def item_management_catalog_proxy(request, role_segment):
+    """JSON catalog for item-management list."""
+    return item_management_catalog(request, role_segment)
+
+
+def _safe_login_next(request, raw_next):
+    """Return an internal next path when it is safe to redirect after login."""
+    candidate = (raw_next or "").strip()
+    if not candidate:
+        return ""
+    if url_has_allowed_host_and_scheme(
+        candidate,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return candidate
+    return ""
+
+
+@rate_limit("login", methods=("POST",))
 @require_http_methods(["GET", "POST"])
 def employee_login(request):
+    from .portal_auth import begin_employee_session, render_portal_login
+
+    next_url = _safe_login_next(
+        request,
+        request.POST.get("next") if request.method == "POST" else request.GET.get("next"),
+    )
+
     if request.user.is_authenticated:
         profile = get_profile(request.user)
         if profile and profile.is_active_employee:
+            if next_url:
+                return redirect(next_url)
             return redirect_to_role_home(profile)
         if profile and profile.status == EmployeeStatus.PENDING_APPROVAL:
             return redirect("employees:pending")
         logout(request)
 
     error = None
+    username = ""
     if request.method == "POST":
-        username = request.POST.get("username", "").strip()
+        username = re.sub(r"\D+", "", request.POST.get("username", ""))[:6]
         password = request.POST.get("password", "")
-        user = authenticate(request, username=username, password=password)
-
-        if user is None:
-            error = "Invalid employee ID or password. Please try again."
+        if len(username) != 6:
+            error = "Enter your 6-digit employee ID."
         else:
-            profile = get_profile(user)
-            if profile is None:
-                error = "No employee profile found for this account."
-            elif profile.status == EmployeeStatus.PENDING_APPROVAL:
-                error = (
-                    "Your account is pending approval. "
-                    "You can sign in once an administrator activates you."
-                )
-            elif profile.status == EmployeeStatus.SUSPENDED:
-                error = "Your account is suspended. Contact your administrator."
-            elif profile.status != EmployeeStatus.ACTIVE:
-                error = "Your account is not active. Contact your administrator."
+            user = authenticate(request, username=username, password=password)
+            if user is None:
+                error = "Invalid employee ID or password. Please try again."
             else:
-                login(request, user)
-                store_profile_session(request, profile)
-                return redirect_to_role_home(profile)
+                profile = get_profile(user)
+                if profile is None:
+                    error = "No employee profile found for this account."
+                elif profile.status == EmployeeStatus.PENDING_APPROVAL:
+                    error = (
+                        "Your account is pending approval. "
+                        "You can sign in once an administrator activates you."
+                    )
+                elif profile.status == EmployeeStatus.SUSPENDED:
+                    error = "Your account is suspended. Contact your administrator."
+                elif profile.status != EmployeeStatus.ACTIVE:
+                    error = "Your account is not active. Contact your administrator."
+                else:
+                    begin_employee_session(request, user, profile)
+                    if next_url:
+                        return redirect(next_url)
+                    return redirect_to_role_home(profile)
 
-    return render(request, "employees/login.html", {"error": error})
+    return render_portal_login(
+        request,
+        login_mode="employee",
+        employee_error=error,
+        next_url=next_url,
+        employee_username=username,
+    )
 
 
 @rate_limit("register")
@@ -502,7 +559,12 @@ def employee_profile(request):
 
 @active_employee_required
 def employee_settings(request):
+    from .module_permissions import employee_may, require_module_permission
+
     profile = get_profile_for_request(request)
+    denied = require_module_permission(request, profile, "settings", "home")
+    if denied is not None:
+        return denied
     meta = {
         "title": "System Settings",
         "headline": "System settings",
@@ -517,8 +579,14 @@ def employee_settings(request):
             "meta": meta,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "settings_sections": get_settings_sections(),
-            "page_sidebar": sidebar_for_settings(profile.role, active_view="home"),
+            "settings_sections": [
+                section
+                for section in get_settings_sections()
+                if employee_may(profile, "settings", section["slug"])
+            ],
+            "page_sidebar": sidebar_for_settings(
+                profile.role, active_view="home", profile=profile
+            ),
         },
     )
 
@@ -526,10 +594,18 @@ def employee_settings(request):
 @active_employee_required
 @require_http_methods(["GET", "POST"])
 def employee_settings_section(request, section):
+    from .module_permissions import require_module_permission
+
     profile = get_profile_for_request(request)
     settings_section = get_settings_section(section)
     if settings_section is None:
         raise Http404("Settings section not found.")
+
+    denied = require_module_permission(
+        request, profile, "settings", settings_section["slug"]
+    )
+    if denied is not None:
+        return denied
 
     meta = {
         "title": settings_section["label"],
@@ -544,7 +620,7 @@ def employee_settings_section(request, section):
         "role_label": profile.get_role_display(),
         "status_label": profile.get_status_display(),
         "page_sidebar": sidebar_for_settings(
-            profile.role, active_view=settings_section["slug"]
+            profile.role, active_view=settings_section["slug"], profile=profile
         ),
     }
 
@@ -572,8 +648,7 @@ def _company_daraja_settings(request, context):
     from shops.daraja_stk import sync_callback_base_from_request
     from shops.models import DarajaEnvironment
 
-    # Always mirror the URL the admin is browsing with (hosted or local/ngrok).
-    sync_callback_base_from_request(request, persist=True)
+    # Avoid ngrok/network probes on every GET — only sync when mutating.
     row = get_daraja_settings()
     wants_json = (
         request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -1175,3 +1250,11 @@ def employee_logout(request):
     clear_profile_session(request)
     logout(request)
     return redirect("core:landing")
+
+
+@require_http_methods(["GET", "POST"])
+def switch_to_employee_login(request):
+    """End shop or employee session and open the employee login page."""
+    clear_profile_session(request)
+    logout(request)
+    return redirect("employees:login")

@@ -53,9 +53,41 @@
   const shopFloor = document.querySelector(".shop-floor[data-shop-view]");
   if (shopFloor) {
     const VIEW_KEY = "richcom.myShop.catalogView";
+    const VIEW_MODES = new Set(["cards", "list", "scroll"]);
     const viewButtons = shopFloor.querySelectorAll("[data-shop-view-set]");
+
+    const syncCategoryScrollControls = (section) => {
+      const track = section.querySelector("[data-category-scroll-track]");
+      const buttons = section.querySelectorAll("[data-category-scroll]");
+      if (!track || !buttons.length) return;
+
+      const isScrollView = shopFloor.dataset.shopView === "scroll";
+      if (!isScrollView) {
+        buttons.forEach((btn) => {
+          btn.disabled = true;
+        });
+        return;
+      }
+
+      const maxScroll = Math.max(0, track.scrollWidth - track.clientWidth);
+      const canScroll = maxScroll > 4;
+      const atStart = track.scrollLeft <= 4;
+      const atEnd = track.scrollLeft >= maxScroll - 4;
+
+      buttons.forEach((btn) => {
+        const isPrev = btn.dataset.categoryScroll === "prev";
+        btn.disabled = !canScroll || (isPrev ? atStart : atEnd);
+      });
+    };
+
+    const syncAllCategoryScrollControls = () => {
+      shopFloor
+        .querySelectorAll("[data-item-category-group]")
+        .forEach((section) => syncCategoryScrollControls(section));
+    };
+
     const applyView = (view) => {
-      const next = view === "list" ? "list" : "cards";
+      const next = VIEW_MODES.has(view) ? view : "cards";
       shopFloor.dataset.shopView = next;
       viewButtons.forEach((btn) => {
         const active = btn.dataset.shopViewSet === next;
@@ -67,6 +99,12 @@
       } catch (_) {
         /* ignore quota / private mode */
       }
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          syncAllCategoryScrollControls();
+          if (window.lucide?.createIcons) window.lucide.createIcons();
+        });
+      });
     };
 
     let saved = "";
@@ -75,13 +113,58 @@
     } catch (_) {
       saved = "";
     }
-    applyView(saved === "list" || saved === "cards" ? saved : shopFloor.dataset.shopView);
+    applyView(VIEW_MODES.has(saved) ? saved : shopFloor.dataset.shopView);
 
     shopFloor.addEventListener("click", (event) => {
-      const btn = event.target.closest?.("[data-shop-view-set]");
-      if (!btn || !shopFloor.contains(btn)) return;
-      applyView(btn.dataset.shopViewSet);
+      const viewBtn = event.target.closest?.("[data-shop-view-set]");
+      if (viewBtn && shopFloor.contains(viewBtn)) {
+        applyView(viewBtn.dataset.shopViewSet);
+        return;
+      }
+
+      const scrollBtn = event.target.closest?.("[data-category-scroll]");
+      if (!scrollBtn || !shopFloor.contains(scrollBtn)) return;
+      if (shopFloor.dataset.shopView !== "scroll") return;
+      if (scrollBtn.disabled) return;
+
+      const section = scrollBtn.closest("[data-item-category-group]");
+      const track = section?.querySelector("[data-category-scroll-track]");
+      if (!track) return;
+
+      const dir = scrollBtn.dataset.categoryScroll === "prev" ? -1 : 1;
+      const step = Math.max(track.clientWidth * 0.78, 220);
+      track.scrollBy({ left: dir * step, behavior: "smooth" });
     });
+
+    shopFloor.addEventListener(
+      "scroll",
+      (event) => {
+        const track = event.target;
+        if (!(track instanceof HTMLElement)) return;
+        if (!track.hasAttribute("data-category-scroll-track")) return;
+        const section = track.closest("[data-item-category-group]");
+        if (section) syncCategoryScrollControls(section);
+      },
+      true
+    );
+
+    window.addEventListener("resize", () => {
+      syncAllCategoryScrollControls();
+    });
+
+    document.addEventListener("shop-catalog:rendered", () => {
+      requestAnimationFrame(syncAllCategoryScrollControls);
+    });
+
+    const catalogRoot = shopFloor.querySelector("[data-catalog-root]");
+    if (catalogRoot && typeof MutationObserver === "function") {
+      let syncTimer = 0;
+      const observer = new MutationObserver(() => {
+        window.clearTimeout(syncTimer);
+        syncTimer = window.setTimeout(syncAllCategoryScrollControls, 60);
+      });
+      observer.observe(catalogRoot, { childList: true, subtree: true });
+    }
   }
 
   const syncModalOpen = () => {
@@ -1807,25 +1890,7 @@
           : "Printing receipt…"
       );
 
-      try {
-        const response = await fetch(checkoutUrl, {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            "X-CSRFToken": getCsrfToken(checkoutForm),
-          },
-          credentials: "same-origin",
-          body: JSON.stringify(payload),
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.ok) {
-          setCartStatus(data.error || "Could not complete the receipt.", {
-            error: true,
-          });
-          return;
-        }
-
+      const finishSuccessfulCheckout = async (data, { queued = false } = {}) => {
         const soldLines = [...cart.values()].map((line) => ({
           id: line.id,
           qty: line.qty,
@@ -1853,12 +1918,18 @@
           );
         }
         setCartOpen(false);
-        setCartStatus(data.message || "Receipt completed.", { ok: true });
+        setCartStatus(
+          queued
+            ? data.message || "Sale queued — it will sync when you reconnect."
+            : data.message || "Receipt completed.",
+          { ok: true }
+        );
         if (data.whatsapp_url) {
           window.open(data.whatsapp_url, "_blank", "noopener");
         }
         const channel = resolvePrintChannel(data.print_via || printVia || "");
         const shouldPrint =
+          !queued &&
           hasEnabledPrintChannels() &&
           Boolean(channel) &&
           Boolean(data.receipt_text) &&
@@ -1878,7 +1949,81 @@
             data.receipt_ticket || null
           );
         }
+      };
+
+      const queueOfflineCheckout = async () => {
+        if (needsStk && !stkConfirmed?.id) {
+          setCartStatus(
+            "M-Pesa STK needs a network connection. Switch to cash or reconnect.",
+            { error: true }
+          );
+          return false;
+        }
+        if (
+          kind === "sale" &&
+          (payload.payment_method === "mpesa" || payload.payment_method === "both") &&
+          !payload.stk_payment_id
+        ) {
+          setCartStatus(
+            "M-Pesa sales without a completed STK prompt need a network connection.",
+            { error: true }
+          );
+          return false;
+        }
+        const clientId =
+          (crypto?.randomUUID && crypto.randomUUID()) ||
+          `checkout-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const shopId = Number(cartRoot?.dataset?.shopId || 0) || 0;
+        const { queueOperation } = await import("./offline/sync.js");
+        await queueOperation("complete_shop_checkout", {
+          client_id: clientId,
+          shop_id: shopId,
+          checkout: payload,
+        });
+        await finishSuccessfulCheckout(
+          {
+            ok: true,
+            message: "Sale queued offline — it will sync when you reconnect.",
+            stock_updates: [],
+          },
+          { queued: true }
+        );
+        return true;
+      };
+
+      try {
+        const online = typeof navigator === "undefined" || navigator.onLine;
+        if (!online) {
+          await queueOfflineCheckout();
+          return;
+        }
+
+        const response = await fetch(checkoutUrl, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCsrfToken(checkoutForm),
+          },
+          credentials: "same-origin",
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          setCartStatus(data.error || "Could not complete the receipt.", {
+            error: true,
+          });
+          return;
+        }
+        await finishSuccessfulCheckout(data);
       } catch (err) {
+        // Network failure while supposedly online — queue for sync.
+        try {
+          const queued = await queueOfflineCheckout();
+          if (queued) return;
+        } catch (_queueErr) {
+          /* fall through */
+        }
         setCartStatus(
           err?.message || "Network error while completing the receipt.",
           { error: true }

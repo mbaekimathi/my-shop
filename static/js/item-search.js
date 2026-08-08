@@ -9,7 +9,8 @@
   // Progressive catalog APIs own search/filter.
   if (
     itemPanel.hasAttribute("data-catalog-api") ||
-    itemPanel.hasAttribute("data-stock-catalog-api")
+    itemPanel.hasAttribute("data-stock-catalog-api") ||
+    itemPanel.hasAttribute("data-item-catalog-api")
   ) {
     return;
   }
