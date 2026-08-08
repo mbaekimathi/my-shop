@@ -7,17 +7,23 @@
   <style>
     :root {
       color-scheme: light;
-      --ink: #000;
-      --muted: #333;
-      --line: #000;
-      --head-fill: #e8e8e8;
+      --ink: #122026;
+      --muted: #5a6b72;
+      --line: #1c2a30;
+      --line-soft: #c5d1d4;
+      --head-fill: #eef3f5;
+      --category-fill: #dfe8eb;
+      --row-alt: #f7fafb;
       --accent: #1f6f78;
+      --accent-soft: #e6f2f3;
+      --page-bg: #e8eef0;
+      --sheet-bg: #ffffff;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       color: var(--ink);
-      background: #fff;
+      background: var(--sheet-bg);
       -webkit-font-smoothing: antialiased;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
@@ -25,17 +31,19 @@
     .print-toolbar {
       display: flex;
       flex-wrap: wrap;
+      align-items: center;
       gap: 0.5rem;
-      margin: 0 0 0.75rem;
+      margin: 0 0 0.85rem;
     }
     .print-toolbar button {
       display: inline-flex;
       align-items: center;
-      min-height: 2.25rem;
-      padding: 0.35rem 0.8rem;
-      border: 1px solid #999;
-      border-radius: 0;
-      background: #f3f3f3;
+      justify-content: center;
+      min-height: 2.35rem;
+      padding: 0.4rem 0.95rem;
+      border: 1px solid #c9d3d6;
+      border-radius: 8px;
+      background: #f4f7f8;
       color: var(--ink);
       font: inherit;
       font-weight: 650;
@@ -46,38 +54,55 @@
       background: var(--accent);
       color: #fff;
     }
+    .print-toolbar button:hover {
+      filter: brightness(0.97);
+    }
     .download-note {
-      margin: 0 0 0.75rem;
-      padding: 0.4rem 0;
-      border: 0;
-      border-bottom: 1px solid #000;
-      background: transparent;
+      margin: 0 0 0.85rem;
+      padding: 0.55rem 0.75rem;
+      border: 1px solid #d5e0e3;
+      border-radius: 8px;
+      background: var(--accent-soft);
       color: var(--muted);
       font-size: 0.82rem;
+      line-height: 1.4;
     }
     .print-error {
-      padding: 0.75rem 0;
+      padding: 0.85rem 1rem;
+      border: 1px solid #f0b4b4;
+      border-radius: 8px;
+      background: #fff5f5;
       color: #8a1f1f;
       font-weight: 600;
     }
+
     .sheet-head {
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
-      gap: 0.75rem;
-      margin: 0 0 0.5rem;
-      padding: 0 0 0.4rem;
-      border-bottom: 2px solid #000;
+      gap: 1rem;
+      margin: 0 0 0.85rem;
+      padding: 0 0 0.7rem;
+      border-bottom: 2.5px solid var(--line);
     }
     .sheet-brand { min-width: 0; }
+    .doc-kicker {
+      margin: 0 0 0.25rem;
+      color: var(--accent);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
     .sheet-head h1 {
       margin: 0;
       font-weight: 750;
-      letter-spacing: -0.02em;
-      line-height: 1.15;
+      letter-spacing: -0.025em;
+      line-height: 1.12;
+      color: var(--ink);
     }
     .sheet-subtitle {
-      margin: 0.12rem 0 0;
+      margin: 0.28rem 0 0;
       color: var(--muted);
       font-weight: 550;
     }
@@ -85,86 +110,180 @@
       flex-shrink: 0;
       text-align: right;
       color: var(--muted);
-      line-height: 1.35;
+      line-height: 1.4;
     }
     .sheet-meta strong {
       display: block;
       color: var(--ink);
       font-weight: 700;
     }
-    .paper-tag {
-      display: inline-block;
-      margin-top: 0.1rem;
-      font-size: 0.68em;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
+    .meta-chips {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 0.35rem;
+      margin-top: 0.4rem;
+    }
+    .meta-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.18rem 0.45rem;
+      border: 1px solid #d0d8db;
+      border-radius: 999px;
+      background: var(--head-fill);
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
     }
 
-    /* Excel-style grid */
+    /* Excel-style grid — polished */
     table.sheet-grid {
       width: 100%;
       border-collapse: collapse;
-      border: 1px solid #000;
+      border: 1.5px solid var(--line);
       table-layout: fixed;
+      margin: 0 0 0.85rem;
     }
     table.sheet-grid th,
     table.sheet-grid td {
-      border: 1px solid #000;
-      padding: 0.28rem 0.35rem;
+      border: 1px solid var(--line-soft);
+      padding: 0.38rem 0.5rem;
       text-align: left;
       vertical-align: middle;
       word-wrap: break-word;
+      overflow-wrap: anywhere;
       background: #fff;
     }
     table.sheet-grid thead th {
       background: var(--head-fill);
       font-weight: 750;
-      letter-spacing: 0.03em;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
       text-align: center;
+      border-color: var(--line-soft);
+      border-bottom: 1.5px solid var(--line);
+      color: var(--ink);
     }
     table.sheet-grid th.col-item,
     table.sheet-grid td.col-item {
       text-align: left;
+      border-left-color: var(--line);
+      border-right: 1.5px solid var(--line);
+    }
+    table.sheet-grid th:last-child,
+    table.sheet-grid td:last-child {
+      border-right-color: var(--line);
+    }
+    table.sheet-grid tbody tr:last-child td {
+      border-bottom-color: var(--line);
+    }
+    table.sheet-grid thead tr:first-child th {
+      border-top-color: var(--line);
+    }
+    table.sheet-grid tbody tr:nth-child(even) td {
+      background: var(--row-alt);
     }
     table.sheet-grid td.num,
     table.sheet-grid th.num {
       text-align: right;
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum" 1;
     }
     table.sheet-grid td.blank {
-      height: 1.35rem;
+      height: 1.45rem;
     }
     .category-row th {
-      background: #d9d9d9 !important;
+      background: var(--category-fill) !important;
       text-align: left !important;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.07em;
       font-weight: 750;
+      color: var(--ink);
+      border-color: var(--line) !important;
+      padding-top: 0.42rem;
+      padding-bottom: 0.42rem;
     }
     .footnote {
-      margin-top: 0.55rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 0.4rem 1rem;
+      margin-top: 0.35rem;
+      padding-top: 0.55rem;
+      border-top: 1px solid var(--line-soft);
       color: var(--muted);
       font-size: 0.72rem;
     }
 
-    /* ===== A4 ===== */
+    /* ===== A4 (screen + print) ===== */
     body.paper-a4 {
-      padding: 0.6rem 0.15rem 1rem;
-      font: 12px/1.3 "Segoe UI", Arial, sans-serif;
+      padding: 1rem 0.75rem 1.5rem;
+      font: 12.5px/1.35 "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--page-bg);
     }
-    body.paper-a4 .sheet { width: 100%; }
-    body.paper-a4 .sheet-head h1 { font-size: 1.25rem; }
-    body.paper-a4 .sheet-subtitle { font-size: 0.88rem; }
-    body.paper-a4 .sheet-meta { font-size: 0.78rem; }
-    body.paper-a4 table.sheet-grid th { font-size: 0.68rem; }
+    body.paper-a4 .sheet {
+      width: min(210mm, 100%);
+      max-width: 100%;
+      margin: 0 auto;
+      padding: 12mm 11mm 14mm;
+      background: var(--sheet-bg);
+      border: 1px solid #d5e0e3;
+      box-shadow: 0 10px 28px rgba(18, 32, 38, 0.08);
+    }
+    body.paper-a4 .print-toolbar,
+    body.paper-a4 .download-note,
+    body.paper-a4 .print-error {
+      width: min(210mm, 100%);
+      max-width: 100%;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    body.paper-a4 .sheet-head h1 { font-size: clamp(1.15rem, 2.4vw, 1.45rem); }
+    body.paper-a4 .sheet-subtitle { font-size: 0.9rem; }
+    body.paper-a4 .sheet-meta { font-size: 0.8rem; }
+    body.paper-a4 table.sheet-grid th { font-size: 0.66rem; }
     body.paper-a4 table.sheet-grid td { font-size: 0.9rem; }
-    body.paper-a4 table.sheet-grid .col-item { width: 40%; }
+    body.paper-a4 table.sheet-grid .col-item { width: 42%; }
     body.paper-a4 table.sheet-grid .col-qty { width: 12%; }
-    body.paper-a4 table.sheet-grid .col-notes { width: 24%; }
-    body.paper-a4 table.sheet-grid .col-extra { width: 24%; }
-    body.paper-a4 table.sheet-grid .num { width: 5.5rem; }
+    body.paper-a4 table.sheet-grid .col-notes { width: 23%; }
+    body.paper-a4 table.sheet-grid .col-extra { width: 23%; }
+    body.paper-a4 table.sheet-grid .num { width: 5.75rem; }
+    body.paper-a4 table.sheet-grid.cols-many .col-item { width: 28%; }
+    body.paper-a4 table.sheet-grid.cols-many .num { width: auto; }
+
+    @media (max-width: 720px) {
+      body.paper-a4 {
+        padding: 0.65rem 0.45rem 1rem;
+      }
+      body.paper-a4 .sheet {
+        padding: 0.85rem 0.7rem 1.1rem;
+        border: 0;
+        box-shadow: none;
+      }
+      body.paper-a4 .sheet-head {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.55rem;
+      }
+      body.paper-a4 .sheet-meta,
+      body.paper-a4 .meta-chips {
+        text-align: left;
+        justify-content: flex-start;
+      }
+      body.paper-a4 .sheet-grid-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 0 0 0.85rem;
+        border: 1.5px solid var(--line);
+      }
+      body.paper-a4 .sheet-grid-wrap table.sheet-grid {
+        margin: 0;
+        border: 0;
+        min-width: 520px;
+      }
+    }
 
     /* ===== 80 mm ===== */
     body.paper-80 {
@@ -173,30 +292,40 @@
       margin: 0 auto;
       padding: 2mm 1.5mm 2.5mm;
       font: 10px/1.25 "Segoe UI", Arial, sans-serif;
+      background: #fff;
     }
     body.paper-80 .sheet-head {
       flex-direction: column;
       align-items: stretch;
       gap: 0.2rem;
     }
-    body.paper-80 .sheet-meta { text-align: left; }
+    body.paper-80 .sheet-meta,
+    body.paper-80 .meta-chips {
+      text-align: left;
+      justify-content: flex-start;
+    }
+    body.paper-80 .doc-kicker { font-size: 0.58rem; }
     body.paper-80 .sheet-head h1 { font-size: 1rem; }
     body.paper-80 .sheet-subtitle { font-size: 0.8rem; }
     body.paper-80 .sheet-meta { font-size: 0.72rem; }
+    body.paper-80 .meta-chip { font-size: 0.58rem; }
+    body.paper-80 table.sheet-grid {
+      margin-bottom: 0.55rem;
+    }
     body.paper-80 table.sheet-grid th,
     body.paper-80 table.sheet-grid td {
       padding: 0.2rem 0.22rem;
     }
     body.paper-80 table.sheet-grid th { font-size: 0.58rem; }
     body.paper-80 table.sheet-grid td { font-size: 0.78rem; }
-    /* Names half width; remaining half = stock write columns */
     body.paper-80 table.sheet-grid .col-item { width: 50%; }
     body.paper-80 table.sheet-grid .col-stock {
       width: 25%;
       text-align: center;
     }
-    body.paper-80 table.sheet-grid td.col-stock {
-      height: 1.35rem;
+    body.paper-80 table.sheet-grid td.col-stock { height: 1.35rem; }
+    body.paper-80 table.sheet-grid tbody tr:nth-child(even) td {
+      background: #fff;
     }
 
     /* ===== 50 mm ===== */
@@ -206,6 +335,7 @@
       margin: 0 auto;
       padding: 1.5mm 1mm 2mm;
       font: 8.5px/1.2 "Segoe UI", Arial, sans-serif;
+      background: #fff;
     }
     body.paper-50 .sheet-head {
       flex-direction: column;
@@ -214,10 +344,17 @@
       margin-bottom: 0.35rem;
       padding-bottom: 0.3rem;
     }
-    body.paper-50 .sheet-meta { text-align: left; }
+    body.paper-50 .sheet-meta,
+    body.paper-50 .meta-chips {
+      text-align: left;
+      justify-content: flex-start;
+    }
+    body.paper-50 .doc-kicker { font-size: 0.52rem; }
     body.paper-50 .sheet-head h1 { font-size: 0.9rem; }
     body.paper-50 .sheet-subtitle { font-size: 0.7rem; }
     body.paper-50 .sheet-meta { font-size: 0.65rem; }
+    body.paper-50 .meta-chip { font-size: 0.52rem; padding: 0.1rem 0.3rem; }
+    body.paper-50 table.sheet-grid { margin-bottom: 0.4rem; }
     body.paper-50 table.sheet-grid th,
     body.paper-50 table.sheet-grid td {
       padding: 0.14rem 0.16rem;
@@ -229,8 +366,9 @@
       width: 25%;
       text-align: center;
     }
-    body.paper-50 table.sheet-grid td.col-stock {
-      height: 1.2rem;
+    body.paper-50 table.sheet-grid td.col-stock { height: 1.2rem; }
+    body.paper-50 table.sheet-grid tbody tr:nth-child(even) td {
+      background: #fff;
     }
 
     @media print {
@@ -239,16 +377,24 @@
       a[href]::after { content: ""; }
       thead { display: table-header-group; }
       tr { break-inside: avoid; }
-      th, .category-row th {
+      table.sheet-grid { break-inside: auto; }
+      th, .category-row th,
+      table.sheet-grid tbody tr:nth-child(even) td {
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
       }
       table.sheet-grid,
       table.sheet-grid th,
       table.sheet-grid td {
-        border-color: #000 !important;
+        border-color: #222 !important;
       }
-      .sheet-head { border-bottom-color: #000; }
+      table.sheet-grid th.col-item,
+      table.sheet-grid td.col-item,
+      .category-row th,
+      .sheet-head {
+        border-color: #111 !important;
+      }
+      .sheet-head { border-bottom-color: #111; }
 
       {% if paper == "80" %}
       @page { size: 80mm auto; margin: 1.5mm; }
@@ -257,6 +403,7 @@
         max-width: 76mm;
         margin: 0;
         padding: 1mm;
+        background: #fff;
       }
       {% elif paper == "50" %}
       @page { size: 50mm auto; margin: 1mm; }
@@ -265,23 +412,45 @@
         max-width: 46mm;
         margin: 0;
         padding: 0.8mm;
+        background: #fff;
       }
       {% else %}
-      @page { size: A4; margin: 8mm 6mm 10mm; }
-      body.paper-a4 { padding: 0; width: auto; }
+      @page { size: A4; margin: 10mm 9mm 12mm; }
+      body.paper-a4 {
+        padding: 0;
+        width: auto;
+        background: #fff;
+      }
+      body.paper-a4 .sheet {
+        width: auto;
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        box-shadow: none;
+      }
+      body.paper-a4 .sheet-grid-wrap {
+        overflow: visible;
+        border: 0;
+        margin: 0 0 0.85rem;
+      }
+      body.paper-a4 .sheet-grid-wrap table.sheet-grid {
+        min-width: 0;
+        border: 1.5px solid #111;
+      }
       {% endif %}
     }
   </style>
 </head>
 <body class="paper-{{ paper|default:'a4' }}">
   <div class="print-toolbar">
-    <button type="button" class="primary" onclick="window.print()">Print</button>
+    <button type="button" class="primary" onclick="window.print()">Print / Save PDF</button>
     {% if not is_download %}
     <button type="button" onclick="window.close()">Close</button>
     {% endif %}
   </div>
   {% if is_download %}
-  <p class="download-note">A4 stock list — open Print to print on A4 or save as PDF.</p>
+  <p class="download-note">A4 document ready — use <strong>Print / Save PDF</strong> and choose your printer or “Microsoft Print to PDF”.</p>
   {% endif %}
 
   {% if error %}
@@ -290,22 +459,28 @@
   <div class="sheet">
   <header class="sheet-head">
     <div class="sheet-brand">
+      <p class="doc-kicker">Stock management</p>
       <h1>{{ company_name }}</h1>
       <p class="sheet-subtitle">{{ document.title }}{% if document.shop_label %} · {{ document.shop_label }}{% endif %}</p>
     </div>
     <div class="sheet-meta">
       <strong>{{ printed_at|date:"d M Y" }} · {{ printed_at|time:"H:i" }}</strong>
-      <div>{{ document.item_count }} item{{ document.item_count|pluralize }}</div>
-      <div class="paper-tag">
-        {% if paper == "80" %}80 mm thermal
-        {% elif paper == "50" %}50 mm thermal
-        {% else %}A4{% endif %}
+      <div class="meta-chips">
+        <span class="meta-chip">{{ document.item_count }} item{{ document.item_count|pluralize }}</span>
+        <span class="meta-chip">
+          {% if paper == "80" %}80 mm
+          {% elif paper == "50" %}50 mm
+          {% else %}A4{% endif %}
+        </span>
       </div>
     </div>
   </header>
 
   {% for group in document.categories %}
-  <table class="sheet-grid">
+  {% if paper == "a4" and document.layout != "items" and document.shops|length > 3 %}
+  <div class="sheet-grid-wrap">
+  {% endif %}
+  <table class="sheet-grid{% if paper == 'a4' and document.layout != 'items' and document.shops|length > 3 %} cols-many{% endif %}">
     <thead>
       <tr class="category-row">
         <th colspan="{% if paper == '80' or paper == '50' %}3{% elif document.layout == 'items' %}4{% elif document.layout == 'prices' %}{% if document.shops|length == 1 %}2{% else %}{{ document.shops|length|add:1 }}{% endif %}{% elif document.layout == 'stock' %}{% if document.shops|length > 1 %}{{ document.shops|length|add:2 }}{% else %}2{% endif %}{% else %}2{% endif %}">{{ group.name }}</th>
@@ -313,7 +488,6 @@
       <tr>
         <th class="col-item">Item</th>
         {% if paper == "80" or paper == "50" %}
-          {# Thermal: names half width, blank columns for handwritten stock #}
           <th class="col-stock">Stock</th>
           <th class="col-stock">Stock</th>
         {% elif document.layout == "items" %}
@@ -369,11 +543,17 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if paper == "a4" and document.layout != "items" and document.shops|length > 3 %}
+  </div>
+  {% endif %}
   {% empty %}
-  <p class="footnote">No items to print.</p>
+  <p class="footnote"><span>No items to print.</span></p>
   {% endfor %}
 
-  <p class="footnote">Stock Management · {{ document.title }}</p>
+  <p class="footnote">
+    <span>Generated from Stock Management · {{ document.title }}</span>
+    <span>{{ company_name }}</span>
+  </p>
   </div>
   {% endif %}
 
