@@ -929,7 +929,8 @@
     <div class="workspace-modal-head">
       <div>
         <h2 id="print-stock-title">Print stock</h2>
-        <p class="stock-print-lead">Choose what to include, then print or download an A4 list.</p>
+        <p class="stock-print-lead">Choose what to include, then print or download an A4 PDF.</p>
+        <p class="stock-print-pages" data-stock-print-pages hidden></p>
       </div>
       <button
         type="button"
@@ -1023,7 +1024,7 @@
         <button type="button" class="btn btn--ghost" data-stock-print-close>Cancel</button>
         <button type="button" class="btn btn--ghost" data-stock-print-download-a4>
           <i data-lucide="download" aria-hidden="true"></i>
-          <span>Download A4</span>
+          <span>Download A4 PDF</span>
         </button>
         <button type="submit" class="btn btn--primary">
           <i data-lucide="printer" aria-hidden="true"></i>
@@ -1047,6 +1048,6 @@
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% if stock_mode == 'view' %}
-<script src="{% static 'js/stock-print.js' %}?v=5"></script>
+<script src="{% static 'js/stock-print.js' %}?v=7"></script>
 {% endif %}
 {% endblock %}

@@ -80,75 +80,75 @@
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
-      gap: 1rem;
-      margin: 0 0 0.85rem;
-      padding: 0 0 0.7rem;
-      border-bottom: 2.5px solid var(--line);
+      gap: 0.65rem;
+      margin: 0 0 0.45rem;
+      padding: 0 0 0.4rem;
+      border-bottom: 1.5px solid var(--line);
     }
     .sheet-brand { min-width: 0; }
     .doc-kicker {
-      margin: 0 0 0.25rem;
+      margin: 0 0 0.1rem;
       color: var(--accent);
-      font-size: 0.68rem;
-      font-weight: 750;
-      letter-spacing: 0.1em;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
     }
     .sheet-head h1 {
       margin: 0;
-      font-weight: 750;
-      letter-spacing: -0.025em;
-      line-height: 1.12;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
       color: var(--ink);
     }
     .sheet-subtitle {
-      margin: 0.28rem 0 0;
+      margin: 0.12rem 0 0;
       color: var(--muted);
-      font-weight: 550;
+      font-weight: 500;
     }
     .sheet-meta {
       flex-shrink: 0;
       text-align: right;
       color: var(--muted);
-      line-height: 1.4;
+      line-height: 1.3;
     }
     .sheet-meta strong {
       display: block;
       color: var(--ink);
-      font-weight: 700;
+      font-weight: 650;
     }
     .meta-chips {
       display: flex;
       flex-wrap: wrap;
       justify-content: flex-end;
-      gap: 0.35rem;
-      margin-top: 0.4rem;
+      gap: 0.22rem;
+      margin-top: 0.22rem;
     }
     .meta-chip {
       display: inline-flex;
       align-items: center;
-      padding: 0.18rem 0.45rem;
+      padding: 0.08rem 0.32rem;
       border: 1px solid #d0d8db;
-      border-radius: 999px;
+      border-radius: 4px;
       background: var(--head-fill);
       color: var(--muted);
-      font-size: 0.68rem;
-      font-weight: 650;
-      letter-spacing: 0.02em;
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
     }
 
-    /* Excel-style grid — polished */
+    /* Excel-style grid — compact */
     table.sheet-grid {
       width: 100%;
       border-collapse: collapse;
-      border: 1.5px solid var(--line);
+      border: 1px solid var(--line);
       table-layout: fixed;
-      margin: 0 0 0.85rem;
+      margin: 0 0 0.45rem;
     }
     table.sheet-grid th,
     table.sheet-grid td {
       border: 1px solid var(--line-soft);
-      padding: 0.38rem 0.5rem;
+      padding: 0.16rem 0.32rem;
       text-align: left;
       vertical-align: middle;
       word-wrap: break-word;
@@ -157,19 +157,19 @@
     }
     table.sheet-grid thead th {
       background: var(--head-fill);
-      font-weight: 750;
-      letter-spacing: 0.04em;
+      font-weight: 700;
+      letter-spacing: 0.03em;
       text-transform: uppercase;
       text-align: center;
       border-color: var(--line-soft);
-      border-bottom: 1.5px solid var(--line);
+      border-bottom: 1px solid var(--line);
       color: var(--ink);
     }
     table.sheet-grid th.col-item,
     table.sheet-grid td.col-item {
       text-align: left;
       border-left-color: var(--line);
-      border-right: 1.5px solid var(--line);
+      border-right: 1px solid var(--line);
     }
     table.sheet-grid th:last-child,
     table.sheet-grid td:last-child {
@@ -192,45 +192,46 @@
       font-feature-settings: "tnum" 1;
     }
     table.sheet-grid td.blank {
-      height: 1.45rem;
+      height: 1.05rem;
     }
     .category-row th {
       background: var(--category-fill) !important;
       text-align: left !important;
       text-transform: uppercase;
-      letter-spacing: 0.07em;
-      font-weight: 750;
+      letter-spacing: 0.05em;
+      font-weight: 700;
       color: var(--ink);
       border-color: var(--line) !important;
-      padding-top: 0.42rem;
-      padding-bottom: 0.42rem;
+      padding-top: 0.2rem;
+      padding-bottom: 0.2rem;
     }
     .footnote {
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
-      gap: 0.4rem 1rem;
-      margin-top: 0.35rem;
-      padding-top: 0.55rem;
+      gap: 0.3rem 0.75rem;
+      margin-top: 0.2rem;
+      padding-top: 0.35rem;
       border-top: 1px solid var(--line-soft);
       color: var(--muted);
-      font-size: 0.72rem;
+      font-size: 0.68rem;
     }
 
     /* ===== A4 (screen + print) ===== */
     body.paper-a4 {
-      padding: 1rem 0.75rem 1.5rem;
-      font: 12.5px/1.35 "Segoe UI", system-ui, -apple-system, sans-serif;
+      padding: 0.75rem 0.55rem 1.1rem;
+      /* Standard body size for office print lists (~10pt) */
+      font: 10pt/1.25 "Segoe UI", Arial, Helvetica, sans-serif;
       background: var(--page-bg);
     }
     body.paper-a4 .sheet {
       width: min(210mm, 100%);
       max-width: 100%;
       margin: 0 auto;
-      padding: 12mm 11mm 14mm;
+      padding: 8mm 8mm 9mm;
       background: var(--sheet-bg);
       border: 1px solid #d5e0e3;
-      box-shadow: 0 10px 28px rgba(18, 32, 38, 0.08);
+      box-shadow: 0 6px 18px rgba(18, 32, 38, 0.06);
     }
     body.paper-a4 .print-toolbar,
     body.paper-a4 .download-note,
@@ -240,16 +241,17 @@
       margin-left: auto;
       margin-right: auto;
     }
-    body.paper-a4 .sheet-head h1 { font-size: clamp(1.15rem, 2.4vw, 1.45rem); }
-    body.paper-a4 .sheet-subtitle { font-size: 0.9rem; }
-    body.paper-a4 .sheet-meta { font-size: 0.8rem; }
-    body.paper-a4 table.sheet-grid th { font-size: 0.66rem; }
-    body.paper-a4 table.sheet-grid td { font-size: 0.9rem; }
+    body.paper-a4 .sheet-head h1 { font-size: 14pt; }
+    body.paper-a4 .sheet-subtitle { font-size: 9pt; }
+    body.paper-a4 .sheet-meta { font-size: 8.5pt; }
+    body.paper-a4 .meta-chip { font-size: 7.5pt; }
+    body.paper-a4 table.sheet-grid th { font-size: 7.5pt; }
+    body.paper-a4 table.sheet-grid td { font-size: 10pt; }
     body.paper-a4 table.sheet-grid .col-item { width: 42%; }
     body.paper-a4 table.sheet-grid .col-qty { width: 12%; }
     body.paper-a4 table.sheet-grid .col-notes { width: 23%; }
     body.paper-a4 table.sheet-grid .col-extra { width: 23%; }
-    body.paper-a4 table.sheet-grid .num { width: 5.75rem; }
+    body.paper-a4 table.sheet-grid .num { width: 5.25rem; }
     body.paper-a4 table.sheet-grid.cols-many .col-item { width: 28%; }
     body.paper-a4 table.sheet-grid.cols-many .num { width: auto; }
 
@@ -415,11 +417,12 @@
         background: #fff;
       }
       {% else %}
-      @page { size: A4; margin: 10mm 9mm 12mm; }
+      @page { size: A4; margin: 8mm 7mm 9mm; }
       body.paper-a4 {
         padding: 0;
         width: auto;
         background: #fff;
+        font: 10pt/1.25 "Segoe UI", Arial, Helvetica, sans-serif;
       }
       body.paper-a4 .sheet {
         width: auto;
@@ -432,11 +435,11 @@
       body.paper-a4 .sheet-grid-wrap {
         overflow: visible;
         border: 0;
-        margin: 0 0 0.85rem;
+        margin: 0 0 0.45rem;
       }
       body.paper-a4 .sheet-grid-wrap table.sheet-grid {
         min-width: 0;
-        border: 1.5px solid #111;
+        border: 1px solid #111;
       }
       {% endif %}
     }
@@ -472,6 +475,11 @@
           {% elif paper == "50" %}50 mm
           {% else %}A4{% endif %}
         </span>
+        {% if paper == "a4" or is_download %}
+        {% with pages=a4_page_estimate|default:document.a4_page_estimate|default:1 %}
+        <span class="meta-chip">≈ {{ pages }} page{{ pages|pluralize }}</span>
+        {% endwith %}
+        {% endif %}
       </div>
     </div>
   </header>

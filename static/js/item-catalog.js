@@ -9,6 +9,7 @@
   const searchInput = panel.querySelector("[data-item-search]");
   const noResults = panel.querySelector("[data-item-no-results]");
   const visibleCountEl = panel.querySelector("[data-item-visible-count]");
+  const sortButtons = panel.querySelectorAll("[data-item-sort]");
   const csrf =
     document.querySelector("[data-item-csrf]")?.value ||
     document.querySelector("input[name=csrfmiddlewaretoken]")?.value ||
@@ -23,11 +24,13 @@
   let nextPage = 1;
   let hasMore = false;
   let activeQuery = "";
+  let activeSort = "category";
   let inFlight = 0;
   let searchTimer = 0;
   let catalogShops = [];
   let shopColumnsOpen = false;
   const groupEls = new Map();
+  let flatTbody = null;
   const canEdit = panel.dataset.canEdit !== "0";
   const canToggleSuspend = panel.dataset.canToggleSuspend !== "0";
   const canDelete = panel.dataset.canDelete !== "0";
@@ -51,6 +54,15 @@
       visibleCountEl.textContent = `${totalCount} item${totalCount === 1 ? "" : "s"}`;
       visibleCountEl.hidden = false;
     }
+  };
+
+  const syncSortUi = () => {
+    sortButtons.forEach((btn) => {
+      const sort = btn.getAttribute("data-item-sort") || "category";
+      const active = sort === activeSort;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
   };
 
   const syncShopColumnsUi = () => {
@@ -86,6 +98,23 @@
       )
       .join("");
 
+  const tableHeadHtml = ({ includeCategory }) => `
+    <thead>
+      <tr>
+        <th scope="col" class="item-col--item">Item</th>
+        ${
+          includeCategory
+            ? `<th scope="col" class="item-col--category">Category</th>`
+            : ""
+        }
+        <th scope="col" class="item-col--range">Price range</th>
+        ${shopPriceHeadHtml()}
+        ${shopHeaderCells()}
+        <th scope="col" class="item-col--status">Status</th>
+        <th scope="col" class="item-col--actions">Actions</th>
+      </tr>
+    </thead>`;
+
   const ensureGroup = (category) => {
     const key = category || "Uncategorised";
     let section = groupEls.get(key);
@@ -101,16 +130,7 @@
       </header>
       <div class="item-table-wrap">
         <table class="item-table item-table--dense">
-          <thead>
-            <tr>
-              <th scope="col" class="item-col--item">Item</th>
-              <th scope="col" class="item-col--range">Price range</th>
-              ${shopPriceHeadHtml()}
-              ${shopHeaderCells()}
-              <th scope="col" class="item-col--status">Status</th>
-              <th scope="col" class="item-col--actions">Actions</th>
-            </tr>
-          </thead>
+          ${tableHeadHtml({ includeCategory: false })}
           <tbody></tbody>
         </table>
       </div>`;
@@ -118,6 +138,23 @@
     root.appendChild(section);
     groupEls.set(key, section);
     return section.querySelector("tbody");
+  };
+
+  const ensureFlatTable = () => {
+    if (flatTbody) return flatTbody;
+    const section = document.createElement("section");
+    section.className = "item-category-group item-category-group--flat";
+    section.setAttribute("data-item-flat-list", "");
+    section.innerHTML = `
+      <div class="item-table-wrap">
+        <table class="item-table item-table--dense">
+          ${tableHeadHtml({ includeCategory: true })}
+          <tbody></tbody>
+        </table>
+      </div>`;
+    root.appendChild(section);
+    flatTbody = section.querySelector("tbody");
+    return flatTbody;
   };
 
   const refreshGroupCounts = () => {
@@ -175,7 +212,7 @@
     return `${viewBtn}${shopCells}`;
   };
 
-  const buildRow = (item) => {
+  const buildRow = (item, { includeCategory }) => {
     const name = String(item.name || "");
     const category = String(item.category || "");
     const description = String(item.description || "");
@@ -195,6 +232,12 @@
       ? `<img class="item-thumb" src="${escapeHtml(imageUrl)}" alt="" width="32" height="32">`
       : `<span class="item-thumb item-thumb--empty" aria-hidden="true"><i data-lucide="package"></i></span>`;
 
+    const categoryCell = includeCategory
+      ? `<td class="item-cell--category" data-label="Category">${escapeHtml(
+          category || "Uncategorised"
+        )}</td>`
+      : "";
+
     tr.innerHTML = `
       <td class="item-cell--item" data-label="Item">
         <div class="item-person">
@@ -205,6 +248,7 @@
           </div>
         </div>
       </td>
+      ${categoryCell}
       <td class="item-cell--range" data-label="Price range">
         <span class="item-price-range">
           <span class="item-price-range-bound item-price-range-bound--min">
@@ -321,24 +365,30 @@
   const appendItems = (items, { replace }) => {
     if (replace) {
       groupEls.clear();
+      flatTbody = null;
       root.innerHTML = "";
     }
+    const byName = activeSort === "name";
     items.forEach((item) => {
-      const tbody = ensureGroup(item.category);
-      tbody.appendChild(buildRow(item));
+      const tbody = byName ? ensureFlatTable() : ensureGroup(item.category);
+      tbody.appendChild(buildRow(item, { includeCategory: byName }));
     });
-    refreshGroupCounts();
+    if (!byName) refreshGroupCounts();
   };
 
-  const cacheKeyFor = (page, q) =>
-    `item-catalog:p${page}:s${pageSize}:q${String(q || "").toLowerCase()}`;
+  const cacheKeyFor = (page, q, sort) =>
+    `item-catalog:p${page}:s${pageSize}:q${String(q || "").toLowerCase()}:sort${
+      sort || "category"
+    }`;
 
-  const applyCatalogData = (data, { page, q, append }) => {
+  const applyCatalogData = (data, { page, q, sort, append }) => {
     totalCount = Number(data.total || 0);
     panel.dataset.itemTotal = String(totalCount);
     hasMore = Boolean(data.has_more);
     nextPage = data.next_page || null;
     activeQuery = String(data.q || q || "");
+    activeSort = String(data.sort || sort || "category");
+    syncSortUi();
     if (Array.isArray(data.shops)) {
       catalogShops = data.shops;
     }
@@ -353,7 +403,7 @@
     syncShopColumnsUi();
   };
 
-  const fetchPage = async ({ page, q, append }) => {
+  const fetchPage = async ({ page, q, sort, append }) => {
     const seq = ++inFlight;
     if (!append) {
       root.innerHTML =
@@ -361,12 +411,14 @@
     }
     if (moreBtn) moreBtn.disabled = true;
 
+    const sortKey = sort || activeSort || "category";
     const params = new URLSearchParams({
       page: String(page),
       page_size: String(pageSize),
+      sort: sortKey,
     });
     if (q) params.set("q", q);
-    const cacheKey = cacheKeyFor(page, q);
+    const cacheKey = cacheKeyFor(page, q, sortKey);
 
     try {
       let data = null;
@@ -398,7 +450,7 @@
       }
 
       if (seq !== inFlight) return;
-      applyCatalogData(data, { page, q, append });
+      applyCatalogData(data, { page, q, sort: sortKey, append });
       if (fromCache) {
         panel.setAttribute("data-catalog-from-cache", "1");
       } else {
@@ -416,10 +468,12 @@
       ) {
         const warmPage = nextPage;
         const warmQ = activeQuery;
-        const warmKey = cacheKeyFor(warmPage, warmQ);
+        const warmSort = activeSort;
+        const warmKey = cacheKeyFor(warmPage, warmQ, warmSort);
         const warmParams = new URLSearchParams({
           page: String(warmPage),
           page_size: String(pageSize),
+          sort: warmSort,
         });
         if (warmQ) warmParams.set("q", warmQ);
         fetch(`${apiUrl}?${warmParams.toString()}`, {
@@ -444,7 +498,7 @@
         const store = await import("./offline/store.js");
         const cached = await store.cacheGet(cacheKey);
         if (seq === inFlight && cached?.ok) {
-          applyCatalogData(cached, { page, q, append });
+          applyCatalogData(cached, { page, q, sort: sortKey, append });
           panel.setAttribute("data-catalog-from-cache", "1");
           return;
         }
@@ -465,27 +519,38 @@
     }
   };
 
-  const reload = (q = "") => {
+  const reload = (q = activeQuery, sort = activeSort) => {
     groupEls.clear();
+    flatTbody = null;
     nextPage = 1;
     hasMore = false;
-    fetchPage({ page: 1, q, append: false });
+    activeSort = sort;
+    syncSortUi();
+    fetchPage({ page: 1, q, sort, append: false });
   };
 
   moreBtn?.addEventListener("click", () => {
     if (!hasMore || !nextPage) return;
-    fetchPage({ page: nextPage, q: activeQuery, append: true });
+    fetchPage({ page: nextPage, q: activeQuery, sort: activeSort, append: true });
   });
 
   searchInput?.addEventListener("input", () => {
     window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {
-      reload(String(searchInput.value || "").trim());
+      reload(String(searchInput.value || "").trim(), activeSort);
     }, 220);
   });
   searchInput?.addEventListener("search", () => {
     window.clearTimeout(searchTimer);
-    reload(String(searchInput.value || "").trim());
+    reload(String(searchInput.value || "").trim(), activeSort);
+  });
+
+  sortButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sort = btn.getAttribute("data-item-sort") || "category";
+      if (sort === activeSort) return;
+      reload(activeQuery, sort);
+    });
   });
 
   panel.addEventListener("click", (event) => {
@@ -496,6 +561,7 @@
     syncShopColumnsUi();
   });
 
+  syncSortUi();
   syncShopColumnsUi();
-  reload("");
+  reload("", "category");
 })();

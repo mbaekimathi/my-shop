@@ -3,7 +3,7 @@ import json
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.db.models import F, Q
 from django.urls import reverse
@@ -19,8 +19,10 @@ from .services import (
     apply_stock_movement,
     build_stock_catalog_page,
     build_stock_print_document,
+    build_stock_print_pdf,
     create_item,
     delete_item,
+    estimate_stock_print_a4_pages,
     last_buying_prices_for_items,
     search_available_serials,
     search_suppliers,
@@ -291,6 +293,7 @@ def item_management_catalog(request, role_segment):
         q=request.GET.get("q") or "",
         page=request.GET.get("page") or 1,
         page_size=request.GET.get("page_size") or 48,
+        sort=request.GET.get("sort") or "category",
     )
     return JsonResponse(payload)
 
@@ -2022,6 +2025,14 @@ def stock_management_print(request, role_segment):
             if shop is not None:
                 selected_shops.append(shop)
         if not selected_shops:
+            if (request.GET.get("estimate") or "").strip() == "1":
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "Select at least one shop to print prices or stock.",
+                    },
+                    status=400,
+                )
             return render(
                 request,
                 "items/stock_print.html",
@@ -2034,6 +2045,7 @@ def stock_management_print(request, role_segment):
                     "company_name": "",
                     "auto_print": False,
                     "is_download": False,
+                    "a4_page_estimate": 1,
                 },
                 status=400,
             )
@@ -2043,9 +2055,36 @@ def stock_management_print(request, role_segment):
     company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
     printed_at = timezone.localtime()
     as_download = (request.GET.get("download") or "").strip() == "1"
+    as_estimate = (request.GET.get("estimate") or "").strip() == "1"
+
+    if as_estimate:
+        pages = int(document.get("a4_page_estimate") or estimate_stock_print_a4_pages(document))
+        return JsonResponse(
+            {
+                "ok": True,
+                "paper": "a4",
+                "layout": layout,
+                "item_count": document.get("item_count") or 0,
+                "category_count": len(document.get("categories") or []),
+                "a4_page_estimate": pages,
+                "shop_label": document.get("shop_label") or "",
+            }
+        )
 
     if as_download:
         paper = "a4"
+        pdf_bytes = build_stock_print_pdf(
+            document=document,
+            company_name=company_name,
+            printed_at=printed_at,
+        )
+        stamp = printed_at.strftime("%Y-%m-%d")
+        layout_slug = layout.replace(" ", "-")
+        filename = f"stock-list-a4-{layout_slug}-{stamp}.pdf"
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Content-Length"] = str(len(pdf_bytes))
+        return response
 
     context = {
         "document": document,
@@ -2054,16 +2093,10 @@ def stock_management_print(request, role_segment):
         "error": "",
         "printed_at": printed_at,
         "company_name": company_name,
-        "auto_print": (not as_download)
-        and (request.GET.get("auto") or "").strip() == "1",
-        "is_download": as_download,
+        "a4_page_estimate": document.get("a4_page_estimate")
+        or estimate_stock_print_a4_pages(document),
+        "auto_print": (request.GET.get("auto") or "").strip() == "1",
+        "is_download": False,
     }
 
-    response = render(request, "items/stock_print.html", context)
-    if as_download:
-        stamp = printed_at.strftime("%Y-%m-%d")
-        layout_slug = layout.replace(" ", "-")
-        filename = f"stock-list-a4-{layout_slug}-{stamp}.html"
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
-        response["Content-Type"] = "text/html; charset=utf-8"
-    return response
+    return render(request, "items/stock_print.html", context)

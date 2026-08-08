@@ -298,7 +298,7 @@ def build_stock_catalog_page(
     }
 
 
-def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48):
+def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48, sort="category"):
     """Paginated item-management rows with shop price display fields."""
     try:
         page = max(1, int(page or 1))
@@ -309,6 +309,11 @@ def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48):
     except (TypeError, ValueError):
         page_size = 48
     page_size = min(max(page_size, 12), 96)
+
+    sort_key = (sort or "category").strip().lower()
+    if sort_key not in {"category", "name"}:
+        sort_key = "category"
+    order_by = ("name", "category") if sort_key == "name" else ("category", "name")
 
     qs = Item.objects.only(
         "id",
@@ -322,7 +327,7 @@ def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48):
         "track_serial_number",
         "is_suspended",
         "image",
-    ).order_by("category", "name")
+    ).order_by(*order_by)
 
     query = (q or "").strip()
     if query:
@@ -415,6 +420,7 @@ def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48):
         ],
         "items": rows,
         "q": query,
+        "sort": sort_key,
     }
 
 
@@ -1538,6 +1544,36 @@ def respond_to_stock_request(
 
 STOCK_PRINT_LAYOUTS = ("items", "prices", "stock")
 
+# A4 printable height with @page margins 8mm / 9mm (297 - 17).
+_STOCK_PRINT_A4_PAGE_MM = 280.0
+_STOCK_PRINT_A4_HEADER_MM = 20.0
+_STOCK_PRINT_A4_FOOTNOTE_MM = 6.0
+_STOCK_PRINT_A4_CATEGORY_OVERHEAD_MM = 7.2
+_STOCK_PRINT_A4_ROW_MM = 5.0
+_STOCK_PRINT_A4_TABLE_GAP_MM = 1.5
+
+
+def estimate_stock_print_a4_pages(document: dict | None) -> int:
+    """Estimate how many A4 sheets the stock print document will use."""
+    import math
+
+    if not document:
+        return 1
+    categories = document.get("categories") or []
+    item_count = int(document.get("item_count") or 0)
+    if item_count <= 0 and not categories:
+        return 1
+
+    height = _STOCK_PRINT_A4_HEADER_MM + _STOCK_PRINT_A4_FOOTNOTE_MM
+    for group in categories:
+        rows = len(group.get("rows") or [])
+        height += (
+            _STOCK_PRINT_A4_CATEGORY_OVERHEAD_MM
+            + rows * _STOCK_PRINT_A4_ROW_MM
+            + _STOCK_PRINT_A4_TABLE_GAP_MM
+        )
+    return max(1, math.ceil(height / _STOCK_PRINT_A4_PAGE_MM))
+
 
 def _format_print_money(value) -> str:
     try:
@@ -1654,11 +1690,328 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
         elif shops:
             shop_label = f"{len(shops)} shops"
 
-    return {
+    item_count = sum(len(group["rows"]) for group in categories)
+    document = {
         "layout": layout,
         "title": titles.get(layout, "Stock list"),
         "shop_label": shop_label,
         "shops": [{"id": shop.pk, "name": shop.name} for shop in shops],
         "categories": categories,
-        "item_count": sum(len(group["rows"]) for group in categories),
+        "item_count": item_count,
     }
+    document["a4_page_estimate"] = estimate_stock_print_a4_pages(document)
+    return document
+
+
+def build_stock_print_pdf(
+    *,
+    document: dict,
+    company_name: str,
+    printed_at,
+) -> bytes:
+    """Render the stock print document as an A4 PDF."""
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=8 * mm,
+        rightMargin=8 * mm,
+        topMargin=8 * mm,
+        bottomMargin=9 * mm,
+        title=f"{company_name} — {document.get('title') or 'Stock list'}",
+        author=company_name or "MY-SHOP",
+    )
+
+    ink = colors.HexColor("#122026")
+    muted = colors.HexColor("#5a6b72")
+    line = colors.HexColor("#1c2a30")
+    line_soft = colors.HexColor("#c5d1d4")
+    head_fill = colors.HexColor("#eef3f5")
+    category_fill = colors.HexColor("#dfe8eb")
+    row_alt = colors.HexColor("#f7fafb")
+    accent = colors.HexColor("#1f6f78")
+
+    styles = getSampleStyleSheet()
+    kicker = ParagraphStyle(
+        "StockKicker",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=7,
+        textColor=accent,
+        leading=9,
+        spaceAfter=1,
+    )
+    title_style = ParagraphStyle(
+        "StockTitle",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=14,
+        textColor=ink,
+        leading=17,
+        spaceAfter=1,
+    )
+    subtitle_style = ParagraphStyle(
+        "StockSubtitle",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        textColor=muted,
+        leading=11,
+    )
+    meta_style = ParagraphStyle(
+        "StockMeta",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=8.5,
+        textColor=ink,
+        leading=11,
+        alignment=TA_RIGHT,
+    )
+    meta_sub = ParagraphStyle(
+        "StockMetaSub",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=7.5,
+        textColor=muted,
+        leading=10,
+        alignment=TA_RIGHT,
+    )
+    cell_style = ParagraphStyle(
+        "StockCell",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        textColor=ink,
+        leading=11,
+    )
+    head_cell = ParagraphStyle(
+        "StockHeadCell",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=7.5,
+        textColor=ink,
+        leading=9,
+    )
+    foot_style = ParagraphStyle(
+        "StockFoot",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=7,
+        textColor=muted,
+        leading=9,
+    )
+
+    layout = (document.get("layout") or "items").strip().lower()
+    shops = list(document.get("shops") or [])
+    item_count = int(document.get("item_count") or 0)
+    page_estimate = int(document.get("a4_page_estimate") or 1)
+    shop_label = (document.get("shop_label") or "").strip()
+    subtitle = document.get("title") or "Stock list"
+    if shop_label:
+        subtitle = f"{subtitle} · {shop_label}"
+
+    stamp = printed_at.strftime("%d %b %Y · %H:%M") if printed_at else ""
+    page_word = "page" if page_estimate == 1 else "pages"
+    item_word = "item" if item_count == 1 else "items"
+    meta_bits = f"{item_count} {item_word} · A4 · ≈ {page_estimate} {page_word}"
+
+    def _esc(text: str) -> str:
+        return (
+            str(text or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    header = Table(
+        [
+            [
+                [
+                    Paragraph("STOCK MANAGEMENT", kicker),
+                    Paragraph(_esc(company_name or "MY-SHOP"), title_style),
+                    Paragraph(_esc(subtitle), subtitle_style),
+                ],
+                [
+                    Paragraph(_esc(stamp), meta_style),
+                    Paragraph(_esc(meta_bits), meta_sub),
+                ],
+            ]
+        ],
+        colWidths=[doc.width * 0.62, doc.width * 0.38],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LINEBELOW", (0, 0), (-1, -1), 1.25, line),
+            ]
+        )
+    )
+
+    story: list = [header, Spacer(1, 4 * mm)]
+
+    def _col_count() -> int:
+        if layout == "items":
+            return 4
+        if layout == "prices":
+            return 2 if len(shops) <= 1 else 1 + len(shops)
+        if layout == "stock":
+            return (len(shops) + 1) if len(shops) > 1 else max(2, 1 + len(shops))
+        return 2
+
+    def _header_labels() -> list[str]:
+        labels = ["Item"]
+        if layout == "items":
+            labels.extend(["Qty", "Notes", ""])
+        elif layout == "prices":
+            if len(shops) <= 1:
+                labels.append("Price")
+            else:
+                labels.extend([shop.get("name") or "Shop" for shop in shops])
+        elif layout == "stock":
+            labels.extend([shop.get("name") or "Shop" for shop in shops])
+            if len(shops) > 1:
+                labels.append("Total")
+        return labels
+
+    def _row_values(row: dict) -> list:
+        values = [Paragraph(_esc(row.get("name") or ""), cell_style)]
+        if layout == "items":
+            values.extend(["", "", ""])
+        elif layout == "prices":
+            if len(shops) <= 1:
+                values.append(_esc(row.get("price") or "0.00"))
+            else:
+                for price in row.get("prices") or []:
+                    values.append(_esc(price.get("price") or "0.00"))
+        elif layout == "stock":
+            for qty in row.get("quantities") or []:
+                values.append(str(qty.get("qty") if qty.get("qty") is not None else 0))
+            if len(shops) > 1:
+                values.append(str(row.get("total") if row.get("total") is not None else 0))
+        return values
+
+    labels = _header_labels()
+    ncols = max(len(labels), _col_count())
+    usable = doc.width
+
+    if layout == "items":
+        col_widths = [
+            usable * 0.42,
+            usable * 0.12,
+            usable * 0.23,
+            usable * 0.23,
+        ]
+    elif ncols <= 2:
+        col_widths = [usable * 0.62, usable * 0.38]
+    else:
+        item_w = usable * (0.28 if ncols > 4 else 0.36)
+        rest = (usable - item_w) / max(1, ncols - 1)
+        col_widths = [item_w] + [rest] * (ncols - 1)
+
+    categories = document.get("categories") or []
+    if not categories:
+        story.append(Paragraph("No items to print.", foot_style))
+    else:
+        for group in categories:
+            cat_name = _esc(str(group.get("name") or "Uncategorised").upper())
+            cat_row = [Paragraph(cat_name, head_cell)] + [""] * (ncols - 1)
+            head_row = []
+            for label in labels[:ncols]:
+                head_row.append(Paragraph(_esc(label), head_cell) if label else "")
+            while len(head_row) < ncols:
+                head_row.append("")
+
+            data = [cat_row, head_row]
+            for row in group.get("rows") or []:
+                values = _row_values(row)
+                while len(values) < ncols:
+                    values.append("")
+                data.append(values[:ncols])
+
+            table = Table(data, colWidths=col_widths[:ncols], repeatRows=2)
+            style_cmds = [
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("TEXTCOLOR", (0, 0), (-1, -1), ink),
+                ("GRID", (0, 0), (-1, -1), 0.4, line_soft),
+                ("BOX", (0, 0), (-1, -1), 0.8, line),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 2.2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2),
+                ("BACKGROUND", (0, 0), (-1, 0), category_fill),
+                ("SPAN", (0, 0), (-1, 0)),
+                ("BACKGROUND", (0, 1), (-1, 1), head_fill),
+                ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 1), (-1, 1), 7.5),
+                ("ALIGN", (1, 1), (-1, 1), "CENTER"),
+                ("ALIGN", (1, 2), (-1, -1), "RIGHT"),
+                ("LINEBEFORE", (1, 0), (1, -1), 0.7, line),
+            ]
+            for r in range(2, len(data)):
+                if (r - 2) % 2 == 1:
+                    style_cmds.append(("BACKGROUND", (0, r), (-1, r), row_alt))
+            if layout == "items":
+                # Blank write-in columns stay left-aligned / empty.
+                style_cmds.append(("ALIGN", (1, 2), (-1, -1), "LEFT"))
+
+            table.setStyle(TableStyle(style_cmds))
+            story.append(table)
+            story.append(Spacer(1, 2.2 * mm))
+
+    foot = Table(
+        [
+            [
+                Paragraph(
+                    _esc(
+                        f"Generated from Stock Management · {document.get('title') or 'Stock list'}"
+                    ),
+                    foot_style,
+                ),
+                Paragraph(
+                    _esc(company_name or "MY-SHOP"),
+                    ParagraphStyle(
+                        "StockFootRight",
+                        parent=foot_style,
+                        alignment=TA_RIGHT,
+                    ),
+                ),
+            ]
+        ],
+        colWidths=[doc.width * 0.7, doc.width * 0.3],
+    )
+    foot.setStyle(
+        TableStyle(
+            [
+                ("LINEABOVE", (0, 0), (-1, -1), 0.5, line_soft),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    story.append(foot)
+
+    doc.build(story)
+    return buffer.getvalue()

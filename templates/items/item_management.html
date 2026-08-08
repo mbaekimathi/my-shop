@@ -35,6 +35,28 @@
           aria-label="Search items"
         >
       </label>
+      <div class="item-sort-toggle" role="group" aria-label="List items by">
+        <button
+          type="button"
+          class="item-sort-btn is-active"
+          data-item-sort="category"
+          aria-pressed="true"
+          title="Group by category"
+        >
+          <i data-lucide="folders" aria-hidden="true"></i>
+          <span>Category</span>
+        </button>
+        <button
+          type="button"
+          class="item-sort-btn"
+          data-item-sort="name"
+          aria-pressed="false"
+          title="Sort A to Z"
+        >
+          <i data-lucide="arrow-down-a-z" aria-hidden="true"></i>
+          <span>A–Z</span>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -152,7 +174,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/item-catalog.js' %}?v=9"></script>
+<script src="{% static 'js/item-catalog.js' %}?v=10"></script>
 <script src="{% static 'js/item-management.js' %}?v=8"></script>
 <script src="{% static 'js/item-search.js' %}?v=2"></script>
 {% endblock %}

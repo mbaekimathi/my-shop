@@ -1,5 +1,6 @@
 /**
  * Print stock popup — choose layout, paper size, then print or download A4.
+ * Shows an estimated A4 page count before printing.
  */
 (function () {
   "use strict";
@@ -11,6 +12,7 @@
   const printUrl = modal.getAttribute("data-stock-print-url") || "";
   const shopsPanel = modal.querySelector("[data-stock-print-shops]");
   const statusEl = modal.querySelector("[data-stock-print-status]");
+  const pagesEl = modal.querySelector("[data-stock-print-pages]");
   const shopSelect = document.querySelector("[data-stock-shop-nav]");
   const downloadBtn = modal.querySelector("[data-stock-print-download-a4]");
 
@@ -20,11 +22,20 @@
     50: { w: 340, h: 720 },
   };
 
+  let estimateTimer = 0;
+  let estimateSeq = 0;
+
   const setStatus = (message, { error = false } = {}) => {
     if (!statusEl) return;
     statusEl.hidden = !message;
     statusEl.textContent = message || "";
     statusEl.classList.toggle("is-error", Boolean(error));
+  };
+
+  const setPagesHint = (message) => {
+    if (!pagesEl) return;
+    pagesEl.hidden = !message;
+    pagesEl.textContent = message || "";
   };
 
   const selectedLayout = () =>
@@ -62,13 +73,19 @@
       (el) => el.value
     );
 
-  const buildParams = ({ paper, auto = false, download = false } = {}) => {
+  const buildParams = ({
+    paper,
+    auto = false,
+    download = false,
+    estimate = false,
+  } = {}) => {
     const layout = selectedLayout();
     const params = new URLSearchParams();
     params.set("layout", layout);
     params.set("paper", paper || "a4");
     if (auto) params.set("auto", "1");
     if (download) params.set("download", "1");
+    if (estimate) params.set("estimate", "1");
 
     if (layout === "prices" || layout === "stock") {
       const shopIds = selectedShopIds();
@@ -78,6 +95,56 @@
       shopIds.forEach((id) => params.append("shop_id", id));
     }
     return { error: "", params };
+  };
+
+  const refreshA4PageEstimate = async () => {
+    if (!printUrl || !pagesEl) return;
+
+    const paper = selectedPaper();
+    if (paper !== "a4") {
+      setPagesHint("Thermal rolls print as one continuous strip (not A4 pages).");
+      return;
+    }
+
+    const built = buildParams({ paper: "a4", estimate: true });
+    if (built.error) {
+      setPagesHint(built.error);
+      return;
+    }
+
+    const seq = ++estimateSeq;
+    setPagesHint("Checking A4 page count…");
+
+    try {
+      const response = await fetch(`${printUrl}?${built.params.toString()}`, {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      const data = await response.json().catch(() => null);
+      if (seq !== estimateSeq) return;
+      if (!response.ok || !data?.ok) {
+        setPagesHint(data?.error || "Could not estimate A4 pages.");
+        return;
+      }
+      const pages = Number(data.a4_page_estimate) || 1;
+      const items = Number(data.item_count) || 0;
+      const pageLabel = pages === 1 ? "page" : "pages";
+      const itemLabel = items === 1 ? "item" : "items";
+      setPagesHint(
+        `A4 estimate: about ${pages} ${pageLabel} (${items} ${itemLabel}).`
+      );
+    } catch (_) {
+      if (seq !== estimateSeq) return;
+      setPagesHint("Could not estimate A4 pages.");
+    }
+  };
+
+  const scheduleA4PageEstimate = () => {
+    window.clearTimeout(estimateTimer);
+    estimateTimer = window.setTimeout(() => {
+      refreshA4PageEstimate();
+    }, 180);
   };
 
   const filenameFromDisposition = (header, fallback) => {
@@ -102,6 +169,7 @@
     preselectShopsFromPage();
     syncShopsVisibility();
     setStatus("");
+    scheduleA4PageEstimate();
     try {
       window.lucide?.createIcons?.();
     } catch (_) {
@@ -118,6 +186,9 @@
     const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
     document.body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
     setStatus("");
+    setPagesHint("");
+    window.clearTimeout(estimateTimer);
+    estimateSeq += 1;
   };
 
   document.querySelectorAll('[data-modal-open="print-stock"]').forEach((trigger) => {
@@ -135,7 +206,15 @@
   });
 
   form?.addEventListener("change", (event) => {
-    if (event.target?.name === "print_layout") syncShopsVisibility();
+    const name = event.target?.name;
+    if (name === "print_layout") syncShopsVisibility();
+    if (
+      name === "print_layout"
+      || name === "print_paper"
+      || event.target?.matches?.("[data-stock-print-shop]")
+    ) {
+      scheduleA4PageEstimate();
+    }
   });
 
   window.addEventListener("keydown", (event) => {
@@ -157,20 +236,26 @@
 
     const url = `${printUrl}?${built.params.toString()}`;
     downloadBtn.disabled = true;
-    setStatus("Preparing A4 download…");
+    setStatus("Preparing A4 PDF…");
 
     try {
       const response = await fetch(url, {
         method: "GET",
         credentials: "same-origin",
-        headers: { Accept: "text/html,application/xhtml+xml" },
+        headers: { Accept: "application/pdf" },
       });
       if (!response.ok) {
-        let message = "Could not download the A4 list.";
+        let message = "Could not download the A4 PDF.";
         try {
-          const text = await response.text();
-          const match = text.match(/class="print-error"[^>]*>([^<]+)/i);
-          if (match?.[1]) message = match[1].trim();
+          const contentType = response.headers.get("Content-Type") || "";
+          if (contentType.includes("application/json")) {
+            const data = await response.json();
+            if (data?.error) message = data.error;
+          } else {
+            const text = await response.text();
+            const match = text.match(/class="print-error"[^>]*>([^<]+)/i);
+            if (match?.[1]) message = match[1].trim();
+          }
         } catch (_) {
           /* ignore */
         }
@@ -178,7 +263,7 @@
       }
 
       const blob = await response.blob();
-      const fallbackName = `stock-list-a4-${new Date().toISOString().slice(0, 10)}.html`;
+      const fallbackName = `stock-list-a4-${new Date().toISOString().slice(0, 10)}.pdf`;
       const filename = filenameFromDisposition(
         response.headers.get("Content-Disposition"),
         fallbackName
@@ -186,14 +271,14 @@
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = filename;
+      link.download = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
       closeModal();
     } catch (err) {
-      setStatus(err?.message || "Could not download the A4 list.", { error: true });
+      setStatus(err?.message || "Could not download the A4 PDF.", { error: true });
     } finally {
       downloadBtn.disabled = false;
     }
