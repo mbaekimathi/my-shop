@@ -32,6 +32,11 @@ urlpatterns = [
     path("profile/", views.employee_profile, name="profile"),
     path("settings/", views.employee_settings, name="settings"),
     path(
+        "settings/communications/",
+        views.legacy_settings_communications_redirect,
+        name="legacy_settings_communications",
+    ),
+    path(
         "settings/<slug:section>/",
         views.employee_settings_section,
         name="settings_section",

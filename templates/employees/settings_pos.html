@@ -5,15 +5,30 @@
 
 {% block workspace_content %}
 {% csrf_token %}
-<section class="item-panel item-panel--dense" data-animate="rise" data-pos-settings>
-  <div class="item-panel-head">
+<section
+  class="item-panel item-panel--dense item-panel--pos-settings"
+  data-animate="rise"
+  data-pos-settings
+>
+  <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
+        <p class="stock-kicker">Settings · POS</p>
         <h2>{{ meta.headline }}</h2>
-        <p>{{ meta.summary }} Enable or disable options shown on the shop checkout page.</p>
+        <p>{{ meta.summary }} Toggle what appears on the shop checkout page.</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong data-pos-enabled-count>{{ pos_enabled_count }}</strong>
+          <span>of {{ pos_toggle_count }} on</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ pos_setting_groups|length }}</strong>
+          <span>group{{ pos_setting_groups|length|pluralize }}</span>
+        </p>
       </div>
     </div>
-  </div>
+  </header>
 
   <div class="pos-settings-groups">
     {% for group in pos_setting_groups %}
@@ -39,7 +54,7 @@
             >
             <span class="perm-switch-ui" aria-hidden="true"></span>
             <span class="perm-switch-state">
-              {% if toggle.enabled %}Enabled{% else %}Disabled{% endif %}
+              {% if toggle.enabled %}On{% else %}Off{% endif %}
             </span>
           </label>
         </li>
@@ -48,15 +63,15 @@
         <li class="pos-settings-row pos-settings-row--tax" data-tax-percent-row{% if not pos_settings.enable_tax %} hidden{% endif %}>
           <div class="pos-settings-copy">
             <strong>Tax percentage</strong>
-            <p>Applied on the items subtotal when tax is enabled.</p>
+            <p>Applied on the items subtotal when tax is on.</p>
           </div>
           <label class="pos-tax-percent-field">
             <input
               type="number"
               min="0"
               max="100"
-              step="0.01"
-              inputmode="decimal"
+              step="1"
+              inputmode="numeric"
               value="{{ tax_percent_value }}"
               data-tax-percent-input
               aria-label="Tax percentage"
@@ -74,5 +89,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=2"></script>
 {% endblock %}

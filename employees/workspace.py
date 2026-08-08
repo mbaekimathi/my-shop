@@ -74,6 +74,12 @@ DASHBOARD_MODULES = (
         "icon": "store",
         "summary": "Configure shops, floors, and operations.",
     },
+    {
+        "slug": "whatsapp",
+        "label": "WhatsApp",
+        "icon": "messages-square",
+        "summary": "WhatsApp client broadcasts from POS purchase history.",
+    },
 )
 
 DASHBOARD_MODULE_BY_SLUG = {module["slug"]: module for module in DASHBOARD_MODULES}
@@ -562,15 +568,13 @@ def sidebar_for_stock_management(
                         _link(
                             "Serials",
                             "hash",
-                            href=stock_management_url(role, "serials", shop_id=shop_id),
+                            href=stock_management_url(role, "serials"),
                             active=active_mode == "serials",
                         ),
                         _link(
                             "Return clients",
                             "undo-2",
-                            href=stock_management_url(
-                                role, "return-clients", shop_id=shop_id
-                            ),
+                            href=stock_management_url(role, "return-clients"),
                             active=active_mode == "return-clients",
                         ),
                     ]
@@ -618,7 +622,7 @@ def sidebar_for_stock_management(
                     _link(
                         "Serials",
                         "hash",
-                        href=stock_management_url(role, "serials", shop_id=shop_id),
+                        href=stock_management_url(role, "serials"),
                         active=active_mode == "serials",
                     ),
                 ),
@@ -856,6 +860,50 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
     )
 
 
+def sidebar_for_communications(role, *, active_view="home", profile=None):
+    """Sidebar links for the WhatsApp module."""
+    from .module_permissions import employee_may
+
+    dashboard_url = reverse(role_home_url_name(role))
+    segment = role_url_segment(role)
+    whatsapp_url = reverse(
+        "employees:workspace_module",
+        kwargs={"role_segment": segment, "module_slug": "whatsapp"},
+    )
+    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+    if profile is None or employee_may(profile, "whatsapp", "view"):
+        primary.append(
+            _link(
+                "WhatsApp",
+                "messages-square",
+                href=whatsapp_url,
+                active=active_view == "home",
+            )
+        )
+    if profile is None or employee_may(profile, "settings", "whatsapp"):
+        primary.append(
+            _link(
+                "WhatsApp settings",
+                "settings-2",
+                href=settings_section_url("whatsapp"),
+                active=active_view == "settings",
+            )
+        )
+    return resolve_sidebar_hrefs(
+        {
+            "page": "whatsapp",
+            "dashboard_url": dashboard_url,
+            "primary": primary,
+            "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
 def sidebar_for_module(role, module_slug, profile=None):
     """Sidebar links when viewing a dashboard module page."""
     if module_slug == "item-management":
@@ -868,6 +916,8 @@ def sidebar_for_module(role, module_slug, profile=None):
         return sidebar_for_shop_management(role, profile=profile)
     if module_slug == "analytics":
         return sidebar_for_analytics(role, profile=profile)
+    if module_slug == "whatsapp":
+        return sidebar_for_communications(role, profile=profile)
 
     dashboard_url = reverse(role_home_url_name(role))
     return resolve_sidebar_hrefs(
@@ -954,6 +1004,12 @@ SETTINGS_SECTIONS = (
         "label": "Company payments settings",
         "icon": "credit-card",
         "summary": "Daraja STK Push and M-Pesa API settlement preferences.",
+    },
+    {
+        "slug": "whatsapp",
+        "label": "WhatsApp settings",
+        "icon": "messages-square",
+        "summary": "API credentials for WhatsApp, Message, and Text channels.",
     },
 )
 
@@ -1083,6 +1139,30 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
                     daraja_section["icon"],
                     href=daraja_section["href"],
                     active=active_view == "company-daraja",
+                )
+            )
+    elif active_view == "whatsapp":
+        whatsapp_section = get_settings_section("whatsapp")
+        segment = role_url_segment(role)
+        whatsapp_url = reverse(
+            "employees:workspace_module",
+            kwargs={"role_segment": segment, "module_slug": "whatsapp"},
+        )
+        if profile is None or employee_may(profile, "whatsapp", "view"):
+            primary.append(
+                _link(
+                    "WhatsApp",
+                    "messages-square",
+                    href=whatsapp_url,
+                )
+            )
+        if _allowed("whatsapp"):
+            primary.append(
+                _link(
+                    whatsapp_section["label"],
+                    whatsapp_section["icon"],
+                    href=whatsapp_section["href"],
+                    active=True,
                 )
             )
     return resolve_sidebar_hrefs(

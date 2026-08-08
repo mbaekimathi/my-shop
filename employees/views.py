@@ -22,7 +22,9 @@ from items.views import (
     stock_serial_return_client,
 )
 from shops.services import (
+    communications_settings_as_dict,
     daraja_settings_as_dict,
+    get_communications_settings,
     get_company_pos_settings,
     get_company_profile,
     get_daraja_settings,
@@ -40,6 +42,9 @@ from shops.services import (
     set_receipt_qr_settings,
     update_company_profile,
     update_daraja_settings,
+    update_message_channel_settings,
+    update_sms_settings,
+    update_whatsapp_settings,
 )
 from shops.views import shop_management
 
@@ -55,6 +60,7 @@ from .access import (
     store_profile_session,
 )
 from .analytics_views import analytics_dashboard
+from communications.views import communications_dashboard
 from .countries import COUNTRY_DIAL_CODES
 from .hr_views import hr_management_page
 from .models import EmployeeProfile, EmployeeRole, EmployeeStatus, SHOP_ASSIGNABLE_ROLES
@@ -130,6 +136,22 @@ def _render_role_page(request, expected_role):
 
 
 @active_employee_required
+def legacy_communications_redirect(request, role_segment):
+    """Old /…/communications/ bookmarks → /…/whatsapp/."""
+    return redirect(
+        "employees:workspace_module",
+        role_segment=role_segment,
+        module_slug="whatsapp",
+    )
+
+
+@active_employee_required
+def legacy_settings_communications_redirect(request):
+    """Old /settings/communications/ → /settings/whatsapp/."""
+    return redirect("employees:settings_section", section="whatsapp")
+
+
+@active_employee_required
 def workspace_module(request, role_segment, module_slug):
     from .module_permissions import employee_may_any, permission_denied_response
 
@@ -178,6 +200,9 @@ def workspace_module(request, role_segment, module_slug):
 
     if module_slug == "analytics":
         return analytics_dashboard(request, profile, meta, module, page_sidebar)
+
+    if module_slug == "whatsapp":
+        return communications_dashboard(request, profile, meta, module, page_sidebar)
 
     return render(
         request,
@@ -781,7 +806,111 @@ def employee_settings_section(request, section):
     if settings_section["slug"] in ("company-payments", "company-daraja"):
         return _company_daraja_settings(request, context)
 
+    if settings_section["slug"] == "whatsapp":
+        return _company_communications_settings(request, context)
+
     return render(request, "employees/settings_section.html", context)
+
+
+def _company_communications_settings(request, context):
+    from shops.models import SmsProvider
+
+    row = get_communications_settings()
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or "application/json" in (request.headers.get("Accept") or "")
+    )
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+
+        if action == "save_whatsapp_settings":
+            try:
+                row = update_whatsapp_settings(
+                    phone_number_id=request.POST.get("whatsapp_phone_number_id") or "",
+                    business_account_id=request.POST.get("whatsapp_business_account_id")
+                    or "",
+                    access_token=request.POST.get("whatsapp_access_token") or "",
+                    from_number=request.POST.get("whatsapp_from_number") or "",
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "message": "WhatsApp API saved.",
+                        **communications_settings_as_dict(row),
+                    }
+                )
+            messages.success(request, "WhatsApp API saved.")
+            return redirect(request.path)
+
+        if action == "save_sms_settings":
+            try:
+                row = update_sms_settings(
+                    provider=request.POST.get("sms_provider") or "",
+                    api_key=request.POST.get("sms_api_key") or "",
+                    api_secret=request.POST.get("sms_api_secret") or "",
+                    sender_id=request.POST.get("sms_sender_id") or "",
+                    api_base_url=request.POST.get("sms_api_base_url") or "",
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "message": "Text API saved.",
+                        **communications_settings_as_dict(row),
+                    }
+                )
+            messages.success(request, "Text API saved.")
+            return redirect(request.path)
+
+        if action == "save_message_settings":
+            try:
+                row = update_message_channel_settings(
+                    from_name=request.POST.get("message_from_name") or "",
+                    reply_to=request.POST.get("message_reply_to") or "",
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "message": "Message API saved.",
+                        **communications_settings_as_dict(row),
+                    }
+                )
+            messages.success(request, "Message API saved.")
+            return redirect(request.path)
+
+        if wants_json:
+            return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
+        messages.error(request, "Unknown action.")
+        return redirect(request.path)
+
+    context.update(
+        {
+            "comms": communications_settings_as_dict(row),
+            "sms_providers": SmsProvider.choices,
+        }
+    )
+    return render(request, "employees/settings_communications.html", context)
 
 
 def _company_daraja_settings(request, context):
@@ -1200,20 +1329,28 @@ def _company_pos_settings(
 
     pos = get_company_pos_settings()
     groups = []
+    enabled_count = 0
+    toggle_count = 0
     for group in setting_groups:
+        toggles = []
+        for field, label in group["toggles"]:
+            enabled = bool(getattr(pos, field))
+            toggle_count += 1
+            if enabled:
+                enabled_count += 1
+            toggles.append(
+                {
+                    "field": field,
+                    "label": label,
+                    "enabled": enabled,
+                }
+            )
         groups.append(
             {
                 "title": group["title"],
                 "summary": group["summary"],
                 "show_tax_percent": bool(group.get("show_tax_percent")),
-                "toggles": [
-                    {
-                        "field": field,
-                        "label": label,
-                        "enabled": bool(getattr(pos, field)),
-                    }
-                    for field, label in group["toggles"]
-                ],
+                "toggles": toggles,
             }
         )
     paper_width = pos.receipt_paper_width if pos.receipt_paper_width in ("80", "58") else "80"
@@ -1238,7 +1375,9 @@ def _company_pos_settings(
             "pos_settings": pos,
             "pos_setting_groups": groups,
             "pos_settings_flags": pos_settings_as_dict(pos),
-            "tax_percent_value": f"{pos.tax_percent:.2f}",
+            "pos_enabled_count": enabled_count,
+            "pos_toggle_count": toggle_count,
+            "tax_percent_value": f"{pos.tax_percent:.0f}",
             "receipt_paper_width": paper_width,
             "receipt_font_size": font["size"],
             "receipt_font_weight": font["weight"],

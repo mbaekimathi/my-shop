@@ -16,6 +16,7 @@
     "";
 
   const activeLabel = root.querySelector("[data-receipt-active-label]");
+  const paperStat = root.querySelector("[data-receipt-paper-stat]");
   const badge80 = root.querySelector("[data-receipt-badge-80]");
   const badge58 = root.querySelector("[data-receipt-badge-58]");
 
@@ -49,6 +50,9 @@
     });
     if (activeLabel) {
       activeLabel.textContent = `Active: ${width} mm`;
+    }
+    if (paperStat) {
+      paperStat.textContent = `${width} mm`;
     }
     if (badge80) badge80.textContent = width === "80" ? "Selected" : "Preview";
     if (badge58) badge58.textContent = width === "58" ? "Selected" : "Preview";
@@ -385,7 +389,7 @@
     const content = selectedQrContent();
     if (qrOptions) qrOptions.hidden = !enabled;
     if (qrWebsiteRow) qrWebsiteRow.hidden = !enabled || content !== "website";
-    if (qrEnabledLabel) qrEnabledLabel.textContent = enabled ? "Enabled" : "Disabled";
+    if (qrEnabledLabel) qrEnabledLabel.textContent = enabled ? "On" : "Off";
     root.querySelectorAll(".receipt-qr-content .receipt-paper-option").forEach((option) => {
       const input = option.querySelector("[data-receipt-qr-content]");
       option.classList.toggle("is-active", Boolean(input?.checked));

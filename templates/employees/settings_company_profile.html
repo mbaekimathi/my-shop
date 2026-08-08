@@ -4,15 +4,29 @@
 {% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="item-panel item-panel--dense" data-animate="rise">
-  <div class="item-panel-head">
+<section
+  class="item-panel item-panel--dense item-panel--company-profile"
+  data-animate="rise"
+>
+  <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
+        <p class="stock-kicker">Settings · Profile</p>
         <h2>{{ meta.headline }}</h2>
-        <p>{{ meta.summary }}</p>
+        <p>{{ meta.summary }} Branding and contact details used on receipts and shop pages.</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{% if company_profile.logo %}Yes{% else %}No{% endif %}</strong>
+          <span>logo</span>
+        </p>
+        <p class="stock-stat">
+          <strong>4</strong>
+          <span>fields</span>
+        </p>
       </div>
     </div>
-  </div>
+  </header>
 
   <form
     class="company-profile-form"
@@ -22,100 +36,112 @@
   >
     {% csrf_token %}
 
-    <div class="company-logo-upload" data-logo-upload>
-      <div class="company-logo-mark" data-logo-preview>
-        {% if company_profile.logo %}
-        <img
-          src="{{ company_profile.logo.url }}"
-          alt="{{ form_data.name|default:'Company' }} logo"
-          data-logo-image
-        >
-        <i data-lucide="image" aria-hidden="true" data-logo-placeholder hidden></i>
-        {% else %}
-        <img src="" alt="" hidden data-logo-image>
-        <i data-lucide="image" aria-hidden="true" data-logo-placeholder></i>
-        {% endif %}
+    <section class="pos-settings-group company-profile-group">
+      <div class="pos-settings-group-head">
+        <h3>Company logo</h3>
+        <p>Shown on receipts and the company brand mark.</p>
       </div>
-      <div class="company-logo-actions">
-        <span class="field-label">Company logo</span>
-        <p>PNG or JPG · transparent preferred · max 5 MB</p>
-        <div class="company-logo-buttons">
-          <label class="btn btn--ghost company-logo-btn">
-            <i data-lucide="upload" aria-hidden="true"></i>
-            <span>Upload logo</span>
-            <input
-              type="file"
-              name="logo"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              hidden
-              data-logo-input
-            >
-          </label>
+      <div class="company-logo-upload" data-logo-upload>
+        <div class="company-logo-mark" data-logo-preview>
           {% if company_profile.logo %}
-          <label class="btn btn--ghost company-logo-btn company-logo-btn--danger">
-            <input type="checkbox" name="remove_logo" value="1" hidden data-logo-remove>
-            <i data-lucide="trash-2" aria-hidden="true"></i>
-            <span>Remove</span>
-          </label>
+          <img
+            src="{{ company_profile.logo.url }}"
+            alt="{{ form_data.name|default:'Company' }} logo"
+            data-logo-image
+          >
+          <i data-lucide="image" aria-hidden="true" data-logo-placeholder hidden></i>
+          {% else %}
+          <img src="" alt="" hidden data-logo-image>
+          <i data-lucide="image" aria-hidden="true" data-logo-placeholder></i>
           {% endif %}
         </div>
+        <div class="company-logo-actions">
+          <strong>Upload image</strong>
+          <p>PNG or JPG · transparent preferred · max 5 MB</p>
+          <div class="company-logo-buttons">
+            <label class="btn btn--ghost company-logo-btn">
+              <i data-lucide="upload" aria-hidden="true"></i>
+              <span>Upload logo</span>
+              <input
+                type="file"
+                name="logo"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                hidden
+                data-logo-input
+              >
+            </label>
+            {% if company_profile.logo %}
+            <label class="btn btn--ghost company-logo-btn company-logo-btn--danger">
+              <input type="checkbox" name="remove_logo" value="1" hidden data-logo-remove>
+              <i data-lucide="trash-2" aria-hidden="true"></i>
+              <span>Remove</span>
+            </label>
+            {% endif %}
+          </div>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <div class="company-profile-fields">
-      <label class="field">
-        <span class="field-label">Company name</span>
-        <input
-          type="text"
-          name="name"
-          value="{{ form_data.name }}"
-          required
-          autocomplete="organization"
-          placeholder="RICHCOM LTD"
-          data-uppercase
-        >
-      </label>
-
-      <div class="field-row">
+    <section class="pos-settings-group company-profile-group">
+      <div class="pos-settings-group-head">
+        <h3>Company details</h3>
+        <p>Name and contact info printed on receipts.</p>
+      </div>
+      <div class="company-profile-fields">
         <label class="field">
-          <span class="field-label">Company phone number</span>
+          <span class="field-label">Company name</span>
           <input
-            type="tel"
-            name="phone_number"
-            value="{{ form_data.phone_number }}"
+            type="text"
+            name="name"
+            value="{{ form_data.name }}"
             required
-            autocomplete="tel"
-            placeholder="+254 700 000 000"
+            autocomplete="organization"
+            placeholder="RICHCOM LTD"
             data-uppercase
           >
         </label>
+
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">Phone number</span>
+            <input
+              type="tel"
+              name="phone_number"
+              value="{{ form_data.phone_number }}"
+              required
+              autocomplete="tel"
+              placeholder="+254 700 000 000"
+              data-uppercase
+            >
+          </label>
+          <label class="field">
+            <span class="field-label">Email</span>
+            <input
+              type="email"
+              name="email"
+              value="{{ form_data.email }}"
+              required
+              autocomplete="email"
+              placeholder="info@company.com"
+              data-lowercase
+            >
+          </label>
+        </div>
+
         <label class="field">
-          <span class="field-label">Company email</span>
+          <span class="field-label">Location</span>
           <input
-            type="email"
-            name="email"
-            value="{{ form_data.email }}"
+            type="text"
+            name="location"
+            value="{{ form_data.location }}"
             required
-            autocomplete="email"
-            placeholder="info@company.com"
-            data-lowercase
+            autocomplete="street-address"
+            placeholder="NAIROBI, KENYA"
+            data-uppercase
           >
         </label>
       </div>
-
-      <label class="field">
-        <span class="field-label">Company location</span>
-        <input
-          type="text"
-          name="location"
-          value="{{ form_data.location }}"
-          required
-          autocomplete="street-address"
-          placeholder="NAIROBI, KENYA"
-          data-uppercase
-        >
-      </label>
-    </div>
+    </section>
 
     <div class="company-profile-actions">
       <button type="submit" class="btn btn--primary">
@@ -130,5 +156,5 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/company-profile.js' %}"></script>
+<script src="{% static 'js/company-profile.js' %}?v=2"></script>
 {% endblock %}

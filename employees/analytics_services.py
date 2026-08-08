@@ -26,6 +26,7 @@ from shops.models import (
     ExpenseCategory,
     ExpensePaymentStatus,
     ExpenseSupplier,
+    ShopDaySession,
     ShopReceipt,
     ShopReceiptKind,
     ShopReceiptLine,
@@ -38,13 +39,19 @@ ANALYTICS_SECTIONS = (
         "slug": "overview",
         "label": "Overview",
         "icon": "layout-grid",
-        "summary": "Simple result trends — sales, expenses, net, and shop movement.",
+        "summary": "Result trends — sales, expenses, net, and day open/close balances.",
     },
     {
         "slug": "revenue",
         "label": "Revenue",
         "icon": "banknote",
-        "summary": "Sales, payments, and expenses by shop — count and amount, plus totals.",
+        "summary": "Sales, payments, expenses, and day open/close balances by shop.",
+    },
+    {
+        "slug": "balances",
+        "label": "Balances",
+        "icon": "scale",
+        "summary": "Shop day opening and closing balances vs expected till from sales.",
     },
     {
         "slug": "sales",
@@ -754,6 +761,110 @@ def _trend_line_chart(
     }
 
 
+def _shop_movement_chart(
+    rows: list[dict],
+    *,
+    width: int = 640,
+    height: int = 220,
+) -> dict:
+    """Grouped column chart: opening / sales / closing / prior per shop."""
+    if not rows:
+        return {
+            "width": width,
+            "height": height,
+            "empty": True,
+            "bars": [],
+            "labels": [],
+            "grid": [],
+            "max_label": _money_ksh(0),
+        }
+
+    series_keys = ("opening", "sales", "closing", "prior")
+    values = []
+    for row in rows:
+        for key in series_keys:
+            values.append(float(Decimal(row.get(key) or 0)))
+    hi = max(values) if values else 0.0
+    if hi <= 0:
+        hi = 1.0
+
+    pad_top, pad_bottom, pad_left, pad_right = 18, 36, 44, 10
+    plot_h = height - pad_top - pad_bottom
+    plot_w = width - pad_left - pad_right
+    n = len(rows)
+    group_w = plot_w / max(n, 1)
+    bar_gap = 2.0
+    series_n = len(series_keys)
+    bar_w = max(4.0, min(18.0, (group_w - 16) / series_n - bar_gap))
+    cluster_w = series_n * bar_w + (series_n - 1) * bar_gap
+
+    def _y(value: float) -> float:
+        return pad_top + plot_h - (value / hi) * plot_h
+
+    grid = []
+    for step in (0.0, 0.5, 1.0):
+        y = _y(hi * step)
+        amount = Decimal(str(hi * step)).quantize(Decimal("0.01"))
+        if amount >= 1000:
+            label = f"{(amount / 1000):.1f}k".replace(".0k", "k")
+        else:
+            label = f"{amount:,.0f}"
+        grid.append(
+            {
+                "y": f"{y:.1f}",
+                "label": label,
+            }
+        )
+
+    bars = []
+    labels = []
+    for index, row in enumerate(rows):
+        group_x = pad_left + index * group_w + (group_w - cluster_w) / 2
+        full_label = (row.get("label") or "Shop").strip() or "Shop"
+        short = full_label
+        if len(short) > 12:
+            parts = [part for part in short.split() if part]
+            short = parts[0] if parts else short[:11]
+            if len(short) > 12:
+                short = short[:11] + "…"
+        labels.append(
+            {
+                "x": f"{pad_left + index * group_w + group_w / 2:.1f}",
+                "text": short,
+                "title": full_label,
+            }
+        )
+        for series_index, key in enumerate(series_keys):
+            value = float(Decimal(row.get(key) or 0))
+            x = group_x + series_index * (bar_w + bar_gap)
+            y = _y(value)
+            h = max(0.0, pad_top + plot_h - y)
+            bars.append(
+                {
+                    "x": f"{x:.1f}",
+                    "y": f"{y:.1f}",
+                    "width": f"{bar_w:.1f}",
+                    "height": f"{h:.1f}",
+                    "series": key,
+                    "title": f"{full_label} · {key}: {_money_ksh(value)}",
+                }
+            )
+
+    return {
+        "width": width,
+        "height": height,
+        "empty": all(v == 0 for v in values),
+        "bars": bars,
+        "labels": labels,
+        "label_y": height - 10,
+        "grid": grid,
+        "baseline_y": f"{pad_top + plot_h:.1f}",
+        "max_label": _money_ksh(hi),
+        "plot_left": pad_left,
+        "axis_x": pad_left - 6,
+    }
+
+
 def _parse_shop_ids(raw_values, shops_by_id):
     ids = []
     for raw in raw_values:
@@ -859,6 +970,7 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
     builders = {
         "overview": _build_overview,
         "revenue": _build_revenue,
+        "balances": _build_balances,
         "sales": _build_sales,
         "items": _build_items,
         "stock": _build_stock,
@@ -1358,6 +1470,204 @@ def _common_receipt_sets(filters):
     return sales, prev_sales, credits, quotes, expenses
 
 
+def _day_balance_data(filters) -> dict:
+    """Opening/closing day balances and till variance for the active period."""
+    from collections import defaultdict
+
+    shop_ids = filters["active_shop_ids"]
+    start, end = filters["start"], filters["end"]
+    empty_shop = {
+        "open_sessions": 0,
+        "close_sessions": 0,
+        "opening_cash": _zero(),
+        "opening_mpesa": _zero(),
+        "opening_credit": _zero(),
+        "closing_cash": _zero(),
+        "closing_mpesa": _zero(),
+        "closing_credit": _zero(),
+        "session_open_cash": _zero(),
+        "session_open_mpesa": _zero(),
+        "cash_sales": _zero(),
+        "mpesa_sales": _zero(),
+        "expenses": _zero(),
+        "expected_cash": _zero(),
+        "expected_mpesa": _zero(),
+        "cash_variance": _zero(),
+        "mpesa_variance": _zero(),
+    }
+
+    by_shop: dict[int, dict] = defaultdict(lambda: dict(empty_shop))
+
+    for row in (
+        ShopDaySession.objects.filter(
+            shop_id__in=shop_ids,
+            opened_at__gte=start,
+            opened_at__lt=end,
+        )
+        .values("shop_id")
+        .annotate(
+            sessions=Count("id"),
+            cash=Coalesce(Sum("opening_cash"), _zero()),
+            mpesa=Coalesce(Sum("opening_mpesa"), _zero()),
+            credit=Coalesce(Sum("opening_credit"), _zero()),
+        )
+    ):
+        entry = by_shop[row["shop_id"]]
+        entry["open_sessions"] = int(row["sessions"] or 0)
+        entry["opening_cash"] = Decimal(row["cash"] or 0)
+        entry["opening_mpesa"] = Decimal(row["mpesa"] or 0)
+        entry["opening_credit"] = Decimal(row["credit"] or 0)
+
+    closed_sessions = list(
+        ShopDaySession.objects.filter(
+            shop_id__in=shop_ids,
+            closed_at__isnull=False,
+            closed_at__gte=start,
+            closed_at__lt=end,
+        ).only(
+            "id",
+            "shop_id",
+            "opened_at",
+            "closed_at",
+            "opening_cash",
+            "opening_mpesa",
+            "opening_credit",
+            "closing_cash",
+            "closing_mpesa",
+            "closing_credit",
+        )
+    )
+
+    sales_by_shop: dict[int, list] = defaultdict(list)
+    expenses_by_shop: dict[int, list] = defaultdict(list)
+    if closed_sessions:
+        min_opened = min(session.opened_at for session in closed_sessions)
+        max_closed = max(session.closed_at for session in closed_sessions)
+        for row in (
+            ShopReceipt.objects.filter(
+                shop_id__in=shop_ids,
+                kind=ShopReceiptKind.SALE,
+                created_at__gte=min_opened,
+                created_at__lt=max_closed,
+            )
+            .exclude(status=ShopReceiptStatus.CANCELLED)
+            .values("shop_id", "created_at", "cash_amount", "mpesa_amount")
+        ):
+            sales_by_shop[row["shop_id"]].append(row)
+        for row in Expense.objects.filter(
+            shop_id__in=shop_ids,
+            created_at__gte=min_opened,
+            created_at__lt=max_closed,
+        ).values("shop_id", "created_at", "amount"):
+            expenses_by_shop[row["shop_id"]].append(row)
+
+    session_rows = []
+    for session in closed_sessions:
+        entry = by_shop[session.shop_id]
+        entry["close_sessions"] += 1
+        entry["closing_cash"] += Decimal(session.closing_cash or 0)
+        entry["closing_mpesa"] += Decimal(session.closing_mpesa or 0)
+        entry["closing_credit"] += Decimal(session.closing_credit or 0)
+        entry["session_open_cash"] += Decimal(session.opening_cash or 0)
+        entry["session_open_mpesa"] += Decimal(session.opening_mpesa or 0)
+
+        cash_sales = _zero()
+        mpesa_sales = _zero()
+        for sale in sales_by_shop.get(session.shop_id, []):
+            when = sale["created_at"]
+            if session.opened_at <= when < session.closed_at:
+                cash_sales += Decimal(sale["cash_amount"] or 0)
+                mpesa_sales += Decimal(sale["mpesa_amount"] or 0)
+
+        expense_total = _zero()
+        for expense in expenses_by_shop.get(session.shop_id, []):
+            when = expense["created_at"]
+            if session.opened_at <= when < session.closed_at:
+                expense_total += Decimal(expense["amount"] or 0)
+
+        expected_cash = (
+            Decimal(session.opening_cash or 0) + cash_sales - expense_total
+        )
+        expected_mpesa = Decimal(session.opening_mpesa or 0) + mpesa_sales
+        closing_cash = Decimal(session.closing_cash or 0)
+        closing_mpesa = Decimal(session.closing_mpesa or 0)
+        cash_variance = closing_cash - expected_cash
+        mpesa_variance = closing_mpesa - expected_mpesa
+
+        entry["cash_sales"] += cash_sales
+        entry["mpesa_sales"] += mpesa_sales
+        entry["expenses"] += expense_total
+        entry["expected_cash"] += expected_cash
+        entry["expected_mpesa"] += expected_mpesa
+        entry["cash_variance"] += cash_variance
+        entry["mpesa_variance"] += mpesa_variance
+
+        session_rows.append(
+            {
+                "shop_id": session.shop_id,
+                "opened_at": session.opened_at,
+                "closed_at": session.closed_at,
+                "opening_cash": Decimal(session.opening_cash or 0),
+                "opening_mpesa": Decimal(session.opening_mpesa or 0),
+                "opening_credit": Decimal(session.opening_credit or 0),
+                "closing_cash": closing_cash,
+                "closing_mpesa": closing_mpesa,
+                "closing_credit": Decimal(session.closing_credit or 0),
+                "cash_sales": cash_sales,
+                "mpesa_sales": mpesa_sales,
+                "expenses": expense_total,
+                "expected_cash": expected_cash,
+                "expected_mpesa": expected_mpesa,
+                "cash_variance": cash_variance,
+                "mpesa_variance": mpesa_variance,
+            }
+        )
+
+    totals = dict(empty_shop)
+    for entry in by_shop.values():
+        for key, value in entry.items():
+            totals[key] += value
+
+    return {
+        "by_shop": dict(by_shop),
+        "totals": totals,
+        "session_rows": session_rows,
+    }
+
+
+def _amount_map_from_balances(
+    by_shop: dict[int, dict], key: str
+) -> dict[int, tuple[int, Decimal]]:
+    """Map shop → (session count, amount) for day-balance fields."""
+    result: dict[int, tuple[int, Decimal]] = {}
+    for shop_id, entry in by_shop.items():
+        amount = Decimal(entry.get(key) or 0)
+        if key.startswith("closing") or key in {
+            "cash_variance",
+            "mpesa_variance",
+            "expected_cash",
+            "expected_mpesa",
+            "session_open_cash",
+            "session_open_mpesa",
+            "cash_sales",
+            "mpesa_sales",
+            "expenses",
+        }:
+            sessions = int(entry.get("close_sessions") or 0)
+        else:
+            sessions = int(entry.get("open_sessions") or 0)
+        if sessions or amount:
+            result[shop_id] = (sessions, amount)
+    return result
+
+
+def _variance_tone(value) -> str:
+    amount = Decimal(value or 0)
+    if amount == 0:
+        return "good"
+    return "bad"
+
+
 def _build_overview(filters):
     """Simple result trends: big deltas, sales timeline, shop movement."""
     from datetime import timedelta
@@ -1369,6 +1679,7 @@ def _build_overview(filters):
     start, end = filters["start"], filters["end"]
     prev_start, prev_end = filters["prev_start"], filters["prev_end"]
     sales, prev_sales, credits, _quotes, expenses = _common_receipt_sets(filters)
+    day_balances = _day_balance_data(filters)
 
     sales_total = _sum_total(sales)
     prev_sales_total = _sum_total(prev_sales)
@@ -1386,23 +1697,22 @@ def _build_overview(filters):
     net_total = sales_total - expense_total
     prev_net = prev_sales_total - prev_expense_total
     credit_total = _sum_total(credits)
-    prev_credit_total = _sum_total(
-        _receipts_qs(
-            shop_ids=shop_ids,
-            start=prev_start,
-            end=prev_end,
-            kinds=[ShopReceiptKind.CREDIT],
-        )
+    credit_payments = Decimal(
+        credits.aggregate(paid=Coalesce(Sum("amount_paid"), _zero()))["paid"] or 0
     )
+    credit_due = credit_total - credit_payments
 
     sales_hint, sales_tone = _trend_hint(sales_total, prev_sales_total)
     expense_hint, expense_tone = _trend_hint(
         expense_total, prev_expense_total, invert=True
     )
     net_hint, net_tone = _trend_hint(net_total, prev_net)
-    credit_hint, credit_tone = _trend_hint(
-        credit_total, prev_credit_total, invert=True
-    )
+
+    opening_cash = day_balances["totals"]["opening_cash"]
+    closing_cash = day_balances["totals"]["closing_cash"]
+    cash_variance = day_balances["totals"]["cash_variance"]
+    open_days = int(day_balances["totals"]["open_sessions"] or 0)
+    close_days = int(day_balances["totals"]["close_sessions"] or 0)
 
     duration = end - start
     if duration <= timedelta(hours=36):
@@ -1439,6 +1749,10 @@ def _build_overview(filters):
 
     sales_by_label = _label_map(sales.values_list("created_at", "total"))
     expense_by_label = _label_map(expenses.values_list("created_at", "amount"))
+    credits_by_label = _label_map(credits.values_list("created_at", "total"))
+    payments_by_label = _label_map(
+        credits.values_list("created_at", "amount_paid")
+    )
 
     labels: list[str] = []
     if bucket_kind == "month":
@@ -1475,7 +1789,21 @@ def _build_overview(filters):
         for label in labels
     ]
     line_chart = _trend_line_chart(timeline)
+    credit_timeline = [
+        (
+            label,
+            credits_by_label.get(label, _zero()),
+            payments_by_label.get(label, _zero()),
+        )
+        for label in labels
+    ]
+    credit_line_chart = _trend_line_chart(credit_timeline)
 
+    variance_hint = (
+        "balanced"
+        if cash_variance == 0
+        else f"{'over' if cash_variance > 0 else 'short'} vs expected"
+    )
     trends = [
         {
             "label": "Sales",
@@ -1499,11 +1827,27 @@ def _build_overview(filters):
             "spark": _sparkline([row[1] - row[2] for row in timeline]),
         },
         {
-            "label": "Credits",
-            "value": _money_ksh(credit_total),
-            "delta": credit_hint,
-            "tone": credit_tone,
-            "spark": _sparkline([prev_credit_total, credit_total]),
+            "label": "Opening cash",
+            "value": _money_ksh(opening_cash),
+            "delta": f"{open_days} day{'s' if open_days != 1 else ''} opened",
+            "tone": "neutral",
+            "spark": _sparkline([opening_cash, closing_cash]),
+        },
+        {
+            "label": "Closing cash",
+            "value": _money_ksh(closing_cash),
+            "delta": f"{close_days} day{'s' if close_days != 1 else ''} closed",
+            "tone": "neutral",
+            "spark": _sparkline([opening_cash, closing_cash]),
+        },
+        {
+            "label": "Cash variance",
+            "value": _money_ksh(cash_variance),
+            "delta": variance_hint,
+            "tone": _variance_tone(cash_variance),
+            "spark": _sparkline(
+                [day_balances["totals"]["expected_cash"], closing_cash]
+            ),
         },
     ]
 
@@ -1520,27 +1864,30 @@ def _build_overview(filters):
         )
     }
 
-    shop_moves = []
+    balance_by_shop = day_balances["by_shop"]
+    shop_chart_rows = []
     for shop in shops:
         current = sales_by_shop.get(shop.pk, _zero())
         prior = prev_sales_by_shop.get(shop.pk, _zero())
-        if not current and not prior:
+        balances = balance_by_shop.get(shop.pk, {})
+        opening = Decimal(balances.get("opening_cash") or 0)
+        closing = Decimal(balances.get("closing_cash") or 0)
+        if not current and not prior and not opening and not closing:
             continue
-        hint, tone = _trend_hint(current, prior)
-        shop_moves.append(
+        shop_chart_rows.append(
             {
                 "label": shop.name,
-                "delta": hint,
-                "tone": tone,
-                "display": _money_ksh(current),
-                "diff": current - prior,
+                "opening": opening,
+                "sales": current,
+                "closing": closing,
+                "prior": prior,
+                "sort": max(abs(current), abs(prior), abs(opening), abs(closing)),
             }
         )
-    shop_moves.sort(key=lambda row: (-abs(row["diff"]), row["label"].lower()))
-    move_scale = _chart_scale(*(abs(row["diff"]) for row in shop_moves))
-    for row in shop_moves:
-        row["pct"] = _bar_pct(abs(row["diff"]), move_scale)
-        del row["diff"]
+    shop_chart_rows.sort(key=lambda row: (-row["sort"], row["label"].lower()))
+    for row in shop_chart_rows:
+        del row["sort"]
+    shop_chart = _shop_movement_chart(shop_chart_rows)
 
     return {
         "headline": "Trends",
@@ -1554,14 +1901,30 @@ def _build_overview(filters):
                 "title": "Sales vs expenses",
                 "subtitle": "Through this period",
                 "line": line_chart,
+                "legend_a": "Sales",
+                "legend_b": "Expenses",
                 "empty": "No activity in this period.",
             },
             {
-                "kind": "delta",
+                "kind": "line",
+                "title": "Credits vs payments",
+                "subtitle": (
+                    f"Issued {_money_ksh(credit_total)} · "
+                    f"paid {_money_ksh(credit_payments)} · "
+                    f"due {_money_ksh(credit_due)}"
+                ),
+                "line": credit_line_chart,
+                "legend_a": "Credits",
+                "legend_b": "Payments",
+                "series_b": "payments",
+                "empty": "No credit activity in this period.",
+            },
+            {
+                "kind": "shop_bars",
                 "title": "Shop movement",
-                "subtitle": "Sales vs prior",
-                "rows": shop_moves,
-                "empty": "No shop sales to compare.",
+                "subtitle": "Open · sales · close · prior",
+                "bars_chart": shop_chart,
+                "empty": "No shop sales or day balances to chart.",
             },
         ],
         "sections": [],
@@ -1617,6 +1980,8 @@ def _build_revenue(filters):
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     start, end = filters["start"], filters["end"]
     sales, _prev_sales, credits, quotes, expenses = _common_receipt_sets(filters)
+    day_balances = _day_balance_data(filters)
+    balance_by_shop = day_balances["by_shop"]
 
     sales_by_shop: dict[int, tuple[int, Decimal]] = {}
     cash_by_shop: dict[int, tuple[int, Decimal]] = {}
@@ -1684,11 +2049,32 @@ def _build_revenue(filters):
             Decimal(row["amount"] or 0),
         )
 
+    open_cash_by_shop = _amount_map_from_balances(balance_by_shop, "opening_cash")
+    close_cash_by_shop = _amount_map_from_balances(balance_by_shop, "closing_cash")
+    cash_var_by_shop = _amount_map_from_balances(balance_by_shop, "cash_variance")
+    open_mpesa_by_shop = _amount_map_from_balances(balance_by_shop, "opening_mpesa")
+    close_mpesa_by_shop = _amount_map_from_balances(balance_by_shop, "closing_mpesa")
+    mpesa_var_by_shop = _amount_map_from_balances(balance_by_shop, "mpesa_variance")
+
+    day_metric_labels = {
+        "Open cash",
+        "Close cash",
+        "Cash var",
+        "Open M-Pesa",
+        "Close M-Pesa",
+        "M-Pesa var",
+    }
     metric_maps = [
         ("Credits", credits_by_shop),
         ("Sales", sales_by_shop),
         ("Cash", cash_by_shop),
+        ("Open cash", open_cash_by_shop),
+        ("Close cash", close_cash_by_shop),
+        ("Cash var", cash_var_by_shop),
         ("M-Pesa", mpesa_by_shop),
+        ("Open M-Pesa", open_mpesa_by_shop),
+        ("Close M-Pesa", close_mpesa_by_shop),
+        ("M-Pesa var", mpesa_var_by_shop),
         ("Stock", stock_by_shop),
         ("Expenses", expenses_by_shop),
         ("Net", None),  # sales − expenses (stock tracked separately)
@@ -1726,7 +2112,7 @@ def _build_revenue(filters):
             {
                 "label": label,
                 "pair": True,
-                "pair_qty": "Docs",
+                "pair_qty": "Days" if label in day_metric_labels else "Docs",
                 "pair_amt": "Amt",
             }
         )
@@ -1788,7 +2174,222 @@ def _build_revenue(filters):
                 columns,
                 table_rows,
                 empty="No revenue data for selected shops and period.",
+                footnote=(
+                    "Open/Close and variance use shop day sessions. "
+                    "Cash var = closing - (opening + cash sales - expenses). "
+                    "M-Pesa var = closing - (opening + M-Pesa sales)."
+                ),
             )
+        ],
+    }
+
+
+def _build_balances(filters):
+    """Day open/close balances vs expected till from sales and expenses."""
+    from django.utils import timezone
+
+    shop_ids = filters["active_shop_ids"]
+    shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
+    day_balances = _day_balance_data(filters)
+    by_shop = day_balances["by_shop"]
+    totals = day_balances["totals"]
+
+    metrics = [
+        _metric(
+            "Opening cash",
+            _money_ksh(totals["opening_cash"]),
+            hint=f"{int(totals['open_sessions'] or 0)} days opened",
+        ),
+        _metric(
+            "Closing cash",
+            _money_ksh(totals["closing_cash"]),
+            hint=f"{int(totals['close_sessions'] or 0)} days closed",
+        ),
+        _metric(
+            "Expected cash",
+            _money_ksh(totals["expected_cash"]),
+            hint="Open + cash sales − expenses",
+        ),
+        _metric(
+            "Cash variance",
+            _money_ksh(totals["cash_variance"]),
+            hint="Closing − expected",
+            tone=_variance_tone(totals["cash_variance"]),
+        ),
+        _metric(
+            "Opening M-Pesa",
+            _money_ksh(totals["opening_mpesa"]),
+        ),
+        _metric(
+            "Closing M-Pesa",
+            _money_ksh(totals["closing_mpesa"]),
+        ),
+        _metric(
+            "M-Pesa variance",
+            _money_ksh(totals["mpesa_variance"]),
+            hint="Closing − (open + sales)",
+            tone=_variance_tone(totals["mpesa_variance"]),
+        ),
+    ]
+
+    shops_sorted = sorted(
+        shops,
+        key=lambda shop: (
+            -Decimal(by_shop.get(shop.pk, {}).get("closing_cash") or 0),
+            shop.name.lower(),
+        ),
+    )
+
+    summary_columns = [
+        "Shop",
+        {"label": "Open cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
+        {"label": "Close cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
+        {"label": "Expected", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
+        {"label": "Cash var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
+        {"label": "Open M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
+        {"label": "Close M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
+        {"label": "M-Pesa var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
+    ]
+
+    def _pair(shop_id: int, sessions_key: str, amount_key: str):
+        entry = by_shop.get(shop_id, {})
+        qty = int(entry.get(sessions_key) or 0)
+        amount = Decimal(entry.get(amount_key) or 0)
+        return _qty_amount_cell(qty, amount, title=f"{qty} · {_money_ksh(amount)}")
+
+    summary_rows = []
+    for shop in shops_sorted:
+        entry = by_shop.get(shop.pk)
+        if not entry:
+            continue
+        if not (
+            entry["open_sessions"]
+            or entry["close_sessions"]
+            or entry["opening_cash"]
+            or entry["closing_cash"]
+            or entry["opening_mpesa"]
+            or entry["closing_mpesa"]
+        ):
+            continue
+        summary_rows.append(
+            [
+                shop.name,
+                _pair(shop.pk, "open_sessions", "opening_cash"),
+                _pair(shop.pk, "close_sessions", "closing_cash"),
+                _pair(shop.pk, "close_sessions", "expected_cash"),
+                _pair(shop.pk, "close_sessions", "cash_variance"),
+                _pair(shop.pk, "open_sessions", "opening_mpesa"),
+                _pair(shop.pk, "close_sessions", "closing_mpesa"),
+                _pair(shop.pk, "close_sessions", "mpesa_variance"),
+            ]
+        )
+
+    if summary_rows:
+        summary_rows.append(
+            [
+                "Total",
+                _qty_amount_cell(
+                    totals["open_sessions"], totals["opening_cash"]
+                ),
+                _qty_amount_cell(
+                    totals["close_sessions"], totals["closing_cash"]
+                ),
+                _qty_amount_cell(
+                    totals["close_sessions"], totals["expected_cash"]
+                ),
+                _qty_amount_cell(
+                    totals["close_sessions"], totals["cash_variance"]
+                ),
+                _qty_amount_cell(
+                    totals["open_sessions"], totals["opening_mpesa"]
+                ),
+                _qty_amount_cell(
+                    totals["close_sessions"], totals["closing_mpesa"]
+                ),
+                _qty_amount_cell(
+                    totals["close_sessions"], totals["mpesa_variance"]
+                ),
+            ]
+        )
+
+    shops_by_id = {shop.pk: shop for shop in shops}
+    session_columns = [
+        "Shop",
+        "Opened",
+        "Closed",
+        "Open cash",
+        "Cash sales",
+        "Expenses",
+        "Expected",
+        "Close cash",
+        "Cash var",
+        "Open M-Pesa",
+        "M-Pesa sales",
+        "Close M-Pesa",
+        "M-Pesa var",
+    ]
+    session_rows = []
+    for row in sorted(
+        day_balances["session_rows"],
+        key=lambda item: item["closed_at"] or item["opened_at"],
+        reverse=True,
+    ):
+        shop = shops_by_id.get(row["shop_id"])
+        shop_name = shop.name if shop else f"Shop {row['shop_id']}"
+        opened = timezone.localtime(row["opened_at"]).strftime("%d %b %H:%M")
+        closed = timezone.localtime(row["closed_at"]).strftime("%d %b %H:%M")
+        cash_var = row["cash_variance"]
+        mpesa_var = row["mpesa_variance"]
+        session_rows.append(
+            [
+                shop_name,
+                opened,
+                closed,
+                _money_ksh(row["opening_cash"]),
+                _money_ksh(row["cash_sales"]),
+                _money_ksh(row["expenses"]),
+                _money_ksh(row["expected_cash"]),
+                _money_ksh(row["closing_cash"]),
+                {
+                    "label": _money_ksh(cash_var),
+                    "tone": _variance_tone(cash_var),
+                },
+                _money_ksh(row["opening_mpesa"]),
+                _money_ksh(row["mpesa_sales"]),
+                _money_ksh(row["closing_mpesa"]),
+                {
+                    "label": _money_ksh(mpesa_var),
+                    "tone": _variance_tone(mpesa_var),
+                },
+            ]
+        )
+
+    return {
+        "headline": "Day balances",
+        "lead": (
+            "Opening and closing till balances from shop day sessions, "
+            "compared with expected cash and M-Pesa from sales."
+        ),
+        "alerts": [],
+        "metrics": metrics,
+        "insights": [],
+        "tables": [
+            _table(
+                "Balances by shop",
+                summary_columns,
+                summary_rows,
+                empty="No shop day open/close records for this period.",
+                footnote=(
+                    "Expected cash = opening + cash sales − expenses during the day. "
+                    "Expected M-Pesa = opening + M-Pesa sales."
+                ),
+            ),
+            _table(
+                "Closed day sessions",
+                session_columns,
+                session_rows,
+                empty="No closed shop days in this period.",
+            ),
         ],
     }
 

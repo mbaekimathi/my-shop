@@ -3,6 +3,7 @@ from django.urls import path
 from shops import views as shop_views
 
 from . import analytics_views, converters, hr_views, views  # noqa: F401 — registers role_segment converter
+from communications import views as communications_views
 
 urlpatterns = [
     path("my-shop/", shop_views.my_shop_entry, name="my_shop"),
@@ -239,6 +240,92 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/<slug:section>/",
         analytics_views.analytics_section,
         name="analytics_section",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/api/status/",
+        communications_views.communications_api_status,
+        name="whatsapp_api_status",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/api/inbox/",
+        communications_views.communications_api_inbox,
+        name="whatsapp_api_inbox",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/api/analytics/",
+        communications_views.communications_api_analytics,
+        name="whatsapp_api_analytics",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/api/logout/",
+        communications_views.communications_api_logout,
+        name="whatsapp_api_logout",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/api/recipients/",
+        communications_views.communications_api_recipients,
+        name="whatsapp_api_recipients",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/api/preview/",
+        communications_views.communications_api_preview,
+        name="whatsapp_api_preview",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/api/send/",
+        communications_views.communications_api_send,
+        name="whatsapp_api_send",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/api/campaigns/<int:campaign_id>/",
+        communications_views.communications_api_campaign,
+        name="whatsapp_api_campaign",
+    ),
+    # Legacy /communications/ → /whatsapp/
+    path(
+        "<role_segment:role_segment>/communications/api/status/",
+        communications_views.communications_api_status,
+        name="communications_api_status",
+    ),
+    path(
+        "<role_segment:role_segment>/communications/api/inbox/",
+        communications_views.communications_api_inbox,
+        name="communications_api_inbox",
+    ),
+    path(
+        "<role_segment:role_segment>/communications/api/analytics/",
+        communications_views.communications_api_analytics,
+        name="communications_api_analytics",
+    ),
+    path(
+        "<role_segment:role_segment>/communications/api/logout/",
+        communications_views.communications_api_logout,
+        name="communications_api_logout",
+    ),
+    path(
+        "<role_segment:role_segment>/communications/api/recipients/",
+        communications_views.communications_api_recipients,
+        name="communications_api_recipients",
+    ),
+    path(
+        "<role_segment:role_segment>/communications/api/preview/",
+        communications_views.communications_api_preview,
+        name="communications_api_preview",
+    ),
+    path(
+        "<role_segment:role_segment>/communications/api/send/",
+        communications_views.communications_api_send,
+        name="communications_api_send",
+    ),
+    path(
+        "<role_segment:role_segment>/communications/api/campaigns/<int:campaign_id>/",
+        communications_views.communications_api_campaign,
+        name="communications_api_campaign",
+    ),
+    path(
+        "<role_segment:role_segment>/communications/",
+        views.legacy_communications_redirect,
+        name="legacy_communications_module",
     ),
     path(
         "<role_segment:role_segment>/<slug:module_slug>/",

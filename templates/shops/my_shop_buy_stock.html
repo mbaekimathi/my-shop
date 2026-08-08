@@ -4,23 +4,57 @@
 {% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="shop-tool-page" data-animate="rise">
-  <header class="shop-tool-head">
-    <p class="shop-tool-kicker">{{ shop.name }}</p>
-    <h2>{{ meta.headline }}</h2>
-    <p class="shop-tool-summary">{{ meta.summary }}</p>
-  </header>
-</section>
-
 {% include "shops/partials/buy_stock_form.html" %}
+
+<div
+  class="workspace-modal stock-serial-modal"
+  data-stock-serial-modal
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-stock-serial-modal-close></div>
+  <div
+    class="workspace-modal-dialog stock-serial-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="buy-stock-serial-modal-title"
+  >
+    <header class="workspace-modal-head">
+      <div>
+        <p class="stock-serial-modal-kicker" data-stock-serial-modal-shop></p>
+        <h2 id="buy-stock-serial-modal-title" data-stock-serial-modal-title>Serial numbers</h2>
+      </div>
+      <button type="button" class="workspace-modal-close" data-stock-serial-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+    <div class="stock-serial-modal-body">
+      <p class="stock-serial-qty-live">
+        Qty <span data-stock-serial-modal-count>0</span>
+      </p>
+      <div class="stock-serial-list" data-stock-serial-modal-list></div>
+      <div class="stock-serial-actions">
+        <button type="button" class="stock-serial-add" data-stock-serial-modal-add>
+          <i data-lucide="plus" aria-hidden="true"></i>
+          Add serial
+        </button>
+        <small class="stock-serial-hint">Quantity updates as you add serials</small>
+      </div>
+    </div>
+    <div class="workspace-modal-actions">
+      <button type="button" class="btn btn--ghost" data-stock-serial-modal-close>Cancel</button>
+      <button type="button" class="btn btn--primary" data-stock-serial-modal-done>Done</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=5"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=12"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=serial36"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix7"></script>
 <script
   src="{% static 'js/serial-scan.js' %}?v=2"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"

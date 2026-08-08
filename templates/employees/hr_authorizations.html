@@ -4,91 +4,106 @@
 {% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="staff-panel staff-panel--dense" data-animate="rise">
-  <div class="staff-panel-head">
-    <div>
-      <h2>{{ meta.headline }}</h2>
-      <p>{{ meta.summary }}</p>
+<section
+  class="item-panel item-panel--dense item-panel--hr item-panel--auth"
+  data-animate="rise"
+  data-hr-auth-panel
+>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">HR management · Authorizations</p>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }}</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ employees_page.paginator.count }}</strong>
+          <span>employee{{ employees_page.paginator.count|pluralize }}</span>
+        </p>
+        {% if shops %}
+        <p class="stock-stat">
+          <strong>{{ shops|length }}</strong>
+          <span>shop{{ shops|length|pluralize }}</span>
+        </p>
+        {% endif %}
+      </div>
     </div>
-    <div class="staff-panel-actions">
-      <a class="btn btn--primary staff-panel-link" href="{{ permissions_url }}">
+
+    <div class="hr-auth-toolbar">
+      <a class="btn btn--ghost staff-panel-link" href="{{ permissions_url }}">
         <i data-lucide="key-round" aria-hidden="true"></i>
         <span>Module permissions</span>
       </a>
-      <p class="staff-count">
-        {{ employees_page.paginator.count }} record{{ employees_page.paginator.count|pluralize }}
-        {% if employees_page.paginator.num_pages > 1 %}
-        <span class="staff-count-page">· page {{ employees_page.number }} of {{ employees_page.paginator.num_pages }}</span>
-        {% endif %}
-      </p>
     </div>
-  </div>
+  </header>
 
   {% if employees %}
-  <div class="staff-table-wrap">
-    <table class="staff-table staff-table--dense staff-table--shop-auth">
+  <div class="item-table-wrap item-table-wrap--hr">
+    <table
+      class="item-table item-table--dense item-table--hr item-table--auth"
+      style="--hr-auth-shop-count: {{ shops|length|default:1 }};"
+    >
       <thead>
         <tr>
-          <th scope="col">Employee</th>
-          <th scope="col">ID</th>
-          <th scope="col">Role</th>
-          <th scope="col">Delegated shops</th>
-          <th scope="col"><span class="visually-hidden">Save</span></th>
+          <th scope="col" class="item-col--item">Employee</th>
+          {% for shop in shops %}
+          <th
+            scope="col"
+            class="hr-auth-col--shop"
+            title="{{ shop.name }}{% if shop.location %} · {{ shop.location }}{% endif %}{% if shop.is_suspended %} · suspended{% endif %}"
+          >
+            {{ shop.name }}
+          </th>
+          {% endfor %}
+          <th scope="col" class="hr-auth-col--save"><span class="visually-hidden">Save</span></th>
         </tr>
       </thead>
       <tbody>
         {% for employee in employees %}
         <tr>
-          <td data-label="Employee">
-            <div class="staff-person">
+          <td class="item-cell--item" data-label="Employee">
+            <div class="item-person">
               {% if employee.profile_photo %}
-              <img class="staff-avatar" src="{{ employee.profile_photo.url }}" alt="" width="36" height="36">
+              <img class="item-thumb" src="{{ employee.profile_photo.url }}" alt="" width="28" height="28">
               {% else %}
-              <span class="staff-avatar staff-avatar--empty" aria-hidden="true">
+              <span class="item-thumb item-thumb--empty" aria-hidden="true">
                 <i data-lucide="user"></i>
               </span>
               {% endif %}
-              <div>
+              <div class="item-person-copy">
                 <strong>{{ employee.user.get_full_name|default:employee.user.username }}</strong>
-                <small>{{ employee.user.email|default:employee.full_phone }}</small>
+                <small>{{ employee.get_role_display }}</small>
               </div>
             </div>
           </td>
-          <td data-label="ID"><code>{{ employee.employee_id }}</code></td>
-          <td data-label="Role">
-            <span class="staff-role-badge">{{ employee.get_role_display }}</span>
+          {% for shop in shops %}
+          <td class="hr-auth-col--shop" data-label="{{ shop.name }}">
+            <label class="hr-auth-shop-check{% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %} is-disabled{% endif %}">
+              <input
+                form="auth-shops-{{ employee.employee_id }}"
+                type="checkbox"
+                name="shop_ids"
+                value="{{ shop.pk }}"
+                {% if shop.pk in employee.assigned_shop_ids %}checked{% endif %}
+                {% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %}disabled{% endif %}
+                aria-label="{{ shop.name }} for {{ employee.employee_id }}"
+              >
+              <span class="visually-hidden">{{ shop.name }}</span>
+            </label>
           </td>
-          <td colspan="2" data-label="Delegated shops">
-            <form class="staff-access-form staff-access-form--shops" method="post">
+          {% endfor %}
+          <td class="hr-auth-col--save" data-label="Save">
+            <form
+              id="auth-shops-{{ employee.employee_id }}"
+              class="hr-auth-save-form"
+              method="post"
+            >
               {% csrf_token %}
               <input type="hidden" name="action" value="assign_shop">
               <input type="hidden" name="employee_id" value="{{ employee.employee_id }}">
               <input type="hidden" name="list_page" value="{{ employees_page.number }}">
-              <fieldset class="staff-shop-picker">
-                <legend class="visually-hidden">Shops for {{ employee.employee_id }}</legend>
-                {% if shops %}
-                <div class="staff-shop-list" role="group" aria-label="Delegated shops for {{ employee.employee_id }}">
-                  {% for shop in shops %}
-                  <label class="staff-shop-option{% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %} is-disabled{% endif %}">
-                    <input
-                      type="checkbox"
-                      name="shop_ids"
-                      value="{{ shop.pk }}"
-                      {% if shop.pk in employee.assigned_shop_ids %}checked{% endif %}
-                      {% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %}disabled{% endif %}
-                    >
-                    <span>
-                      <strong>{{ shop.name }}</strong>
-                      <small>{{ shop.location }}{% if shop.is_suspended %} · suspended{% endif %}</small>
-                    </span>
-                  </label>
-                  {% endfor %}
-                </div>
-                {% else %}
-                <p class="staff-shop-empty">No shops available.</p>
-                {% endif %}
-              </fieldset>
-              <button class="btn btn--primary staff-save" type="submit">
+              <button class="btn btn--primary hr-auth-save" type="submit" title="Save shop assignments">
                 <i data-lucide="check" aria-hidden="true"></i>
                 <span>Save</span>
               </button>
@@ -102,6 +117,10 @@
 
   {% if employees_page.has_other_pages %}
   {% include "employees/partials/pagination_nav.html" with pagination_label="Shop authorization pages" %}
+  {% else %}
+  <p class="stock-report-footnote">
+    Showing {{ employees|length }} of {{ employees_page.paginator.count }} employee{{ employees_page.paginator.count|pluralize }}
+  </p>
   {% endif %}
 
   {% else %}
@@ -128,7 +147,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/hr-management.js' %}"></script>
+<script src="{% static 'js/hr-management.js' %}?v=4"></script>
 <script src="{% static 'js/auth.js' %}"></script>
 <script src="{% static 'js/register.js' %}"></script>
 {% endblock %}

@@ -12,6 +12,7 @@ from django.utils import timezone
 from employees.countries import COUNTRY_DIAL_CODES
 
 from .models import (
+    CompanyCommunicationsSettings,
     CompanyDarajaSettings,
     CompanyPosSettings,
     CompanyProfile,
@@ -24,6 +25,7 @@ from .models import (
     ShopPaymentMethod,
     ShopReceiptKind,
     ShopReceiptStatus,
+    SmsProvider,
 )
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -94,8 +96,21 @@ WEBSITE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 POS_SETTINGS_CACHE_KEY = "company_pos_settings:v1"
 POS_SETTINGS_CACHE_TTL = 300
 DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v1"
+COMMUNICATIONS_SETTINGS_CACHE_KEY = "company_communications_settings:v1"
 RECEIPT_QR_PREVIEW_CACHE_KEY = "receipt_qr_preview:v1"
 RECEIPT_QR_PREVIEW_CACHE_TTL = 300
+
+COMMUNICATIONS_TOGGLE_FIELDS = {
+    "enable_whatsapp",
+    "enable_message",
+    "enable_sms",
+    "enable_automations",
+    "enable_bulk_send",
+    "auto_sale_receipt",
+    "auto_quotation",
+    "auto_payment_reminder",
+    "auto_credit_due",
+}
 DARAJA_OAUTH_URLS = {
     DarajaEnvironment.SANDBOX: (
         "https://sandbox.safaricom.co.ke/oauth/v1/generate"
@@ -117,6 +132,10 @@ def _invalidate_daraja_settings_cache() -> None:
     cache.delete(DARAJA_SETTINGS_CACHE_KEY)
 
 
+def _invalidate_communications_settings_cache() -> None:
+    cache.delete(COMMUNICATIONS_SETTINGS_CACHE_KEY)
+
+
 def get_company_pos_settings() -> CompanyPosSettings:
     cached = cache.get(POS_SETTINGS_CACHE_KEY)
     if cached is not None:
@@ -133,6 +152,186 @@ def get_daraja_settings() -> CompanyDarajaSettings:
     settings_row, _ = CompanyDarajaSettings.objects.get_or_create(pk=1)
     cache.set(DARAJA_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
     return settings_row
+
+
+def get_communications_settings() -> CompanyCommunicationsSettings:
+    cached = cache.get(COMMUNICATIONS_SETTINGS_CACHE_KEY)
+    if cached is not None:
+        return cached
+    settings_row, _ = CompanyCommunicationsSettings.objects.get_or_create(pk=1)
+    cache.set(COMMUNICATIONS_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
+    return settings_row
+
+
+def communications_settings_as_dict(
+    settings_row: CompanyCommunicationsSettings | None = None,
+) -> dict:
+    row = settings_row or get_communications_settings()
+    return {
+        "enable_whatsapp": bool(row.enable_whatsapp),
+        "enable_message": bool(row.enable_message),
+        "enable_sms": bool(row.enable_sms),
+        "enable_automations": bool(row.enable_automations),
+        "enable_bulk_send": bool(row.enable_bulk_send),
+        "auto_sale_receipt": bool(row.auto_sale_receipt),
+        "auto_quotation": bool(row.auto_quotation),
+        "auto_payment_reminder": bool(row.auto_payment_reminder),
+        "auto_credit_due": bool(row.auto_credit_due),
+        "whatsapp_phone_number_id": row.whatsapp_phone_number_id or "",
+        "whatsapp_business_account_id": row.whatsapp_business_account_id or "",
+        "whatsapp_from_number": row.whatsapp_from_number or "",
+        "whatsapp_access_token_set": bool((row.whatsapp_access_token or "").strip()),
+        "has_whatsapp_credentials": row.has_whatsapp_credentials(),
+        "sms_provider": row.sms_provider or SmsProvider.AFRICAS_TALKING,
+        "sms_sender_id": row.sms_sender_id or "",
+        "sms_api_base_url": row.sms_api_base_url or "",
+        "sms_api_key_set": bool((row.sms_api_key or "").strip()),
+        "sms_api_secret_set": bool((row.sms_api_secret or "").strip()),
+        "has_sms_credentials": row.has_sms_credentials(),
+        "message_from_name": row.message_from_name or "",
+        "message_reply_to": row.message_reply_to or "",
+        "updated_at": row.updated_at,
+    }
+
+
+def set_communications_setting(*, field: str, enabled: bool) -> CompanyCommunicationsSettings:
+    if field not in COMMUNICATIONS_TOGGLE_FIELDS:
+        raise ValidationError("Unknown communications setting.")
+    row = get_communications_settings()
+    if enabled:
+        if field == "enable_whatsapp" and not row.has_whatsapp_credentials():
+            raise ValidationError(
+                "Save WhatsApp credentials below before enabling WhatsApp."
+            )
+        if field == "enable_sms" and not row.has_sms_credentials():
+            raise ValidationError("Save SMS credentials below before enabling Text.")
+        if field == "enable_message" and not (row.message_from_name or "").strip():
+            raise ValidationError(
+                "Set a sender name under Message settings before enabling Message."
+            )
+        if field == "enable_bulk_send" and not (
+            row.enable_whatsapp or row.enable_sms or row.enable_message
+        ):
+            raise ValidationError(
+                "Enable at least one channel (WhatsApp, Message, or Text) before bulk send."
+            )
+        if field == "enable_automations" and not (
+            row.enable_whatsapp or row.enable_sms or row.enable_message
+        ):
+            raise ValidationError(
+                "Enable at least one channel before turning on automations."
+            )
+    setattr(row, field, bool(enabled))
+    update_fields = [field, "updated_at"]
+    if field in {"enable_whatsapp", "enable_sms", "enable_message"} and not enabled:
+        if not (row.enable_whatsapp or row.enable_sms or row.enable_message):
+            row.enable_automations = False
+            row.enable_bulk_send = False
+            update_fields.extend(["enable_automations", "enable_bulk_send"])
+    row.save(update_fields=update_fields)
+    _invalidate_communications_settings_cache()
+    return get_communications_settings()
+
+
+def update_whatsapp_settings(
+    *,
+    phone_number_id: str = "",
+    business_account_id: str = "",
+    access_token: str = "",
+    from_number: str = "",
+) -> CompanyCommunicationsSettings:
+    row = get_communications_settings()
+    phone_number_id = (phone_number_id or "").strip() or row.whatsapp_phone_number_id
+    business_account_id = (business_account_id or "").strip()
+    access_token = (access_token or "").strip()
+    from_number = (from_number or "").strip()
+
+    row.whatsapp_phone_number_id = phone_number_id
+    row.whatsapp_business_account_id = business_account_id
+    if access_token:
+        row.whatsapp_access_token = access_token
+    row.whatsapp_from_number = from_number
+
+    if not row.has_whatsapp_credentials():
+        raise ValidationError(
+            "Phone number ID and access token are required for WhatsApp."
+        )
+
+    row.save(
+        update_fields=[
+            "whatsapp_phone_number_id",
+            "whatsapp_business_account_id",
+            "whatsapp_access_token",
+            "whatsapp_from_number",
+            "updated_at",
+        ]
+    )
+    _invalidate_communications_settings_cache()
+    return get_communications_settings()
+
+
+def update_sms_settings(
+    *,
+    provider: str = "",
+    api_key: str = "",
+    api_secret: str = "",
+    sender_id: str = "",
+    api_base_url: str = "",
+) -> CompanyCommunicationsSettings:
+    row = get_communications_settings()
+    provider = (provider or "").strip() or row.sms_provider
+    if provider not in {choice.value for choice in SmsProvider}:
+        raise ValidationError("Select a valid SMS provider.")
+    api_key = (api_key or "").strip()
+    api_secret = (api_secret or "").strip()
+    sender_id = (sender_id or "").strip()
+    api_base_url = (api_base_url or "").strip()
+
+    row.sms_provider = provider
+    if api_key:
+        row.sms_api_key = api_key
+    if api_secret:
+        row.sms_api_secret = api_secret
+    row.sms_sender_id = sender_id
+    row.sms_api_base_url = api_base_url
+
+    if not row.has_sms_credentials():
+        raise ValidationError("API key and sender ID are required for Text / SMS.")
+
+    row.save(
+        update_fields=[
+            "sms_provider",
+            "sms_api_key",
+            "sms_api_secret",
+            "sms_sender_id",
+            "sms_api_base_url",
+            "updated_at",
+        ]
+    )
+    _invalidate_communications_settings_cache()
+    return get_communications_settings()
+
+
+def update_message_channel_settings(
+    *,
+    from_name: str = "",
+    reply_to: str = "",
+) -> CompanyCommunicationsSettings:
+    row = get_communications_settings()
+    from_name = (from_name or "").strip()
+    reply_to = (reply_to or "").strip().lower()
+    if not from_name:
+        raise ValidationError("Enter a sender name for the Message channel.")
+    if reply_to:
+        try:
+            validate_email(reply_to)
+        except ValidationError as exc:
+            raise ValidationError("Enter a valid reply-to email.") from exc
+    row.message_from_name = from_name
+    row.message_reply_to = reply_to
+    row.save(update_fields=["message_from_name", "message_reply_to", "updated_at"])
+    _invalidate_communications_settings_cache()
+    return get_communications_settings()
 
 
 def daraja_settings_as_dict(settings_row: CompanyDarajaSettings | None = None) -> dict:
@@ -2353,6 +2552,21 @@ def get_open_shop_day(shop: Shop):
         ShopDaySession.objects.filter(shop=shop, closed_at__isnull=True)
         .select_related("opened_by__user")
         .first()
+    )
+
+
+def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
+    """Recent open/closed day sessions for a shop (newest first)."""
+    from .models import ShopDaySession
+
+    try:
+        limit_n = max(1, min(int(limit or 30), 100))
+    except (TypeError, ValueError):
+        limit_n = 30
+    return list(
+        ShopDaySession.objects.filter(shop=shop)
+        .select_related("opened_by__user", "closed_by__user")
+        .order_by("-opened_at")[:limit_n]
     )
 
 

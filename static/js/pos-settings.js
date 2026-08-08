@@ -15,10 +15,18 @@
     readCookie("csrftoken") ||
     "";
 
+  const enabledCountEl = root.querySelector("[data-pos-enabled-count]");
+
+  function syncEnabledCount() {
+    if (!enabledCountEl) return;
+    const on = root.querySelectorAll("[data-pos-toggle]:checked").length;
+    enabledCountEl.textContent = String(on);
+  }
+
   function setStateLabel(input, enabled) {
     const label = input.closest(".perm-switch")?.querySelector(".perm-switch-state");
     if (label) {
-      label.textContent = enabled ? "Enabled" : "Disabled";
+      label.textContent = enabled ? "On" : "Off";
     }
     input.closest(".perm-switch")?.classList.toggle("is-denied", !enabled);
   }
@@ -79,12 +87,14 @@
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(Boolean(data.enabled));
         }
+        syncEnabledCount();
       } catch (error) {
         input.checked = previous;
         setStateLabel(input, previous);
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(previous);
         }
+        syncEnabledCount();
         window.alert(error.message || "Could not save setting.");
       } finally {
         input.disabled = false;
@@ -108,7 +118,7 @@
             tax_percent: value,
           })
         );
-        lastSaved = Number(data.tax_percent).toFixed(2);
+        lastSaved = String(Math.round(Number(data.tax_percent)));
         taxInput.value = lastSaved;
         taxInput.classList.remove("is-error");
       } catch (error) {

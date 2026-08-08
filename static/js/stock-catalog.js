@@ -24,7 +24,20 @@
   } catch (_err) {
     viewShops = [];
   }
-  const showAllShops = mode === "view" && viewShops.length > 1;
+  const editableMatrix =
+    panel.hasAttribute("data-stock-editable-matrix") &&
+    (mode === "in" || mode === "out" || mode === "request") &&
+    viewShops.length > 0;
+  // View (and legacy browse) use a read-only multi-shop matrix.
+  const browseAllShops =
+    !editableMatrix &&
+    (mode === "view" ||
+      ((mode === "in" || mode === "out" || mode === "request") && !shopId)) &&
+    viewShops.length > 0;
+  const showAllShops =
+    (editableMatrix || browseAllShops) && viewShops.length > 1;
+  const readOnlyMatrix = browseAllShops;
+  const multiShopMatrix = editableMatrix || readOnlyMatrix;
   const pageSize = Math.min(
     Math.max(Number(panel.dataset.stockCatalogPageSize || 48) || 48, 12),
     96
@@ -57,7 +70,7 @@
   const money = (value) => {
     if (value == null || value === "") return null;
     const n = Number(value);
-    return Number.isFinite(n) ? n.toFixed(2) : null;
+    return Number.isFinite(n) ? String(Math.round(n)) : null;
   };
 
   const simpleMode = panel.hasAttribute("data-stock-catalog-simple");
@@ -82,6 +95,11 @@
 
   const isFilledPair = (headerRow) => {
     if (!headerRow) return false;
+    if (editableMatrix) {
+      return [...headerRow.querySelectorAll("[data-stock-shop-cell]")].some(
+        (cell) => Number(cell.querySelector("[data-stock-qty]")?.value || 0) > 0
+      );
+    }
     if (headerRow.classList.contains("is-open")) return true;
     const inputs = headerRow.nextElementSibling;
     if (!inputs?.matches?.("[data-stock-item-inputs]")) return false;
@@ -94,6 +112,10 @@
     listRoot.querySelectorAll("[data-item-row][data-item-id]").forEach((row) => {
       if (!isFilledPair(row)) return;
       if (parked.contains(row)) return;
+      if (editableMatrix) {
+        parked.appendChild(row);
+        return;
+      }
       const inputs = row.nextElementSibling;
       parked.appendChild(row);
       if (inputs?.matches?.("[data-stock-item-inputs]")) parked.appendChild(inputs);
@@ -122,23 +144,66 @@
     section.className = "stock-category";
     section.setAttribute("data-item-category-group", "");
 
-    if (mode === "view") {
-      const shopHeaders = showAllShops
+    if (multiShopMatrix) {
+      const shopHeaders = editableMatrix
         ? viewShops
+            .map((shop) => {
+              const name = escapeHtml(shop.name || "Shop");
+              const shopIdAttr = escapeHtml(String(shop.id || ""));
+              if (mode === "in") {
+                return `<th scope="col" class="stock-matrix-shop-col stock-th--pair" title="${name}">
+                  <span class="stock-th-pair">
+                    <span class="stock-th-pair-name">${name}</span>
+                    <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span><span>Buy</span></span>
+                  </span>
+                </th>`;
+              }
+              if (mode === "request") {
+                return `<th
+                  scope="col"
+                  class="stock-matrix-shop-col stock-th--pair stock-th--request"
+                  title="Click to set ${name} as requesting shop"
+                  data-stock-request-shop-header
+                  data-shop-id="${shopIdAttr}"
+                  data-shop-name="${name}"
+                  tabindex="0"
+                  role="button"
+                >
+                  <span class="stock-th-pair">
+                    <span class="stock-th-pair-name">${name}</span>
+                    <span class="stock-th-pair-role" data-stock-request-role>From</span>
+                    <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span></span>
+                  </span>
+                </th>`;
+              }
+              return `<th scope="col" class="stock-matrix-shop-col stock-th--pair" title="${name}">
+                <span class="stock-th-pair">
+                  <span class="stock-th-pair-name">${name}</span>
+                  <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span></span>
+                </span>
+              </th>`;
+            })
+            .join("")
+        : viewShops
             .map(
               (shop) =>
                 `<th scope="col" class="stock-matrix-shop-col">${escapeHtml(
                   shop.name || "Shop"
                 )}</th>`
             )
-            .join("") +
-          `<th scope="col" class="stock-matrix-total-col">Total</th>`
-        : `<th scope="col" class="stock-matrix-shop-col">${escapeHtml(
-            (viewShops[0] && viewShops[0].name) || shopName
-          )}</th>`;
-      const matrixClass = showAllShops
-        ? "stock-matrix stock-matrix--all"
-        : "stock-matrix stock-matrix--single";
+            .join("");
+      const totalHeader = editableMatrix
+        ? ""
+        : showAllShops
+          ? `<th scope="col" class="stock-matrix-total-col">Total</th>`
+          : "";
+      const matrixClass = [
+        "stock-matrix",
+        showAllShops || editableMatrix ? "stock-matrix--all" : "stock-matrix--single",
+        editableMatrix ? "stock-matrix--editable stock-matrix--list" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
       section.innerHTML = `
       <header class="stock-category-head">
         <div class="stock-category-title-wrap">
@@ -147,12 +212,13 @@
         </div>
         <span class="stock-category-count" data-category-count>0</span>
       </header>
-      <div class="stock-matrix-scroll">
+      <div class="stock-matrix-scroll${editableMatrix ? " stock-matrix-scroll--list" : ""}">
         <table class="${matrixClass}">
           <thead>
             <tr>
               <th scope="col" class="stock-matrix-item-col">Item</th>
               ${shopHeaders}
+              ${totalHeader}
             </tr>
           </thead>
           <tbody data-stock-catalog-tbody></tbody>
@@ -160,7 +226,7 @@
       </div>`;
       section.querySelector(".stock-category-title").textContent = key;
       section.dataset.colCount = String(
-        1 + (showAllShops ? viewShops.length + 1 : 1)
+        1 + viewShops.length + (editableMatrix || !showAllShops ? 0 : 1)
       );
       listRoot.appendChild(section);
       groupEls.set(key, section);
@@ -295,9 +361,9 @@
             type="number"
             name="buying_price"
             min="0"
-            step="0.01"
-            placeholder="${prev || "0.00"}"
-            inputmode="decimal"
+            step="1"
+            placeholder="${prev || "0"}"
+            inputmode="numeric"
             data-stock-buying-price
             data-stock-field
             ${prev ? `data-stock-prev-buying="${prev}"` : ""}
@@ -401,9 +467,9 @@
             type="number"
             name="refund_amount"
             min="0"
-            step="0.01"
-            placeholder="0.00"
-            inputmode="decimal"
+            step="1"
+            placeholder="0"
+            inputmode="numeric"
             data-stock-refund-amount
             data-stock-field
             disabled
@@ -420,6 +486,92 @@
     </label>
     <input type="hidden" name="serial_numbers" value="" data-stock-field disabled>`;
 
+  const buildShopCell = (item, shop, stockQty) => {
+    const prev = money(item.last_buying_price);
+    const track = item.track_serial && mode !== "request" ? "1" : "0";
+    const shopLabel = escapeHtml(shop.name || "Shop");
+    const qtyControl =
+      mode === "request" || !item.track_serial
+        ? `<input
+          type="number"
+          class="stock-list-input"
+          name="quantity"
+          min="1"
+          step="1"
+          placeholder="0"
+          inputmode="numeric"
+          aria-label="Quantity at ${shopLabel}"
+          data-stock-qty
+        >`
+        : `<input
+          type="text"
+          class="stock-list-input stock-list-input--serial"
+          name="quantity"
+          value=""
+          placeholder="0"
+          inputmode="numeric"
+          readonly
+          data-stock-qty
+          data-stock-serial-open
+          data-stock-serial-count
+          aria-label="Enter serials for quantity at ${shopLabel}"
+          title="Click to enter serial numbers"
+        >`;
+    const priceBlock =
+      mode === "in"
+        ? `<input
+            type="number"
+            class="stock-list-input stock-list-input--price"
+            name="buying_price"
+            min="0"
+            step="1"
+            placeholder="${prev || "0"}"
+            inputmode="numeric"
+            aria-label="Buying price at ${shopLabel}"
+            title="${prev ? `Previous ${prev}` : "Buying price"}"
+            data-stock-buying-price
+            ${prev ? `data-stock-prev-buying="${prev}"` : ""}
+          >`
+        : mode === "out"
+          ? `<input type="hidden" name="reason" value="" data-stock-reason data-stock-field disabled>
+           <input type="hidden" name="refund" value="" data-stock-refund data-stock-field disabled>
+           <input type="hidden" name="refund_amount" value="" data-stock-refund-amount data-stock-field disabled>`
+          : "";
+    const supplierHidden =
+      mode === "in"
+        ? `<input type="hidden" name="supplier_id" value="" data-stock-supplier-id data-stock-field disabled>
+           <input type="hidden" name="supplier_phone_country_code" value="+254" data-stock-supplier-dial data-stock-field disabled>
+           <input type="hidden" value="KE" data-stock-supplier-iso disabled>
+           <input type="hidden" name="supplier_phone_number" value="" data-stock-supplier-phone data-stock-field disabled>
+           <input type="hidden" name="supplier_name" value="" data-stock-supplier-name data-stock-field disabled>
+           <input type="hidden" name="payment_status" value="" data-stock-payment data-stock-field disabled>`
+        : "";
+    const pairClass =
+      mode === "in"
+        ? "stock-list-pair stock-list-pair--in"
+        : "stock-list-pair stock-list-pair--out";
+    return `<td class="stock-matrix-shop-col stock-matrix-shop-col--edit">
+      <div
+        class="stock-shop-cell ${pairClass}"
+        data-stock-shop-cell
+        data-item-id="${item.id}"
+        data-item-name="${escapeHtml(item.name || "")}"
+        data-shop-id="${shop.id}"
+        data-shop-name="${shopLabel}"
+        data-item-stock="${stockQty}"
+        data-track-serial="${track}"
+      >
+        <span class="stock-list-stock${stockQty === 0 ? " is-empty" : ""}" data-stock-display-qty>${stockQty}</span>
+        <input type="hidden" name="item_id" value="${item.id}" disabled data-stock-field>
+        <input type="hidden" name="line_shop_id" value="${shop.id}" disabled data-stock-field>
+        ${qtyControl}
+        ${priceBlock}
+        <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
+        ${supplierHidden}
+      </div>
+    </td>`;
+  };
+
   const buildPair = (item) => {
     const stock = Math.max(0, Math.floor(Number(item.shop_qty) || 0));
     const fromQty = Math.max(0, Math.floor(Number(item.requested_from_qty) || 0));
@@ -430,7 +582,44 @@
     const desc = String(item.description || "");
     const colCount = mode === "request" ? 4 : 3;
 
-    if (mode === "view") {
+    if (editableMatrix) {
+      const quantities = Array.isArray(item.shop_quantities)
+        ? item.shop_quantities.map((q) => Math.max(0, Math.floor(Number(q) || 0)))
+        : viewShops.map(() => stock);
+      const cells = viewShops
+        .map((shop, index) =>
+          buildShopCell(item, shop, quantities[index] || 0)
+        )
+        .join("");
+      const header = document.createElement("tr");
+      header.className = `stock-matrix-row stock-matrix-row--editable${
+        item.is_suspended ? " is-suspended" : ""
+      }`;
+      header.setAttribute("data-item-row", "");
+      header.setAttribute("data-item-id", String(item.id));
+      header.setAttribute("data-item-name", name);
+      header.setAttribute("data-track-serial", track);
+      header.setAttribute(
+        "data-search-text",
+        `${name} ${category} ${desc}`.toLowerCase()
+      );
+      header.innerHTML = `
+        <th scope="row" class="stock-matrix-item-col">
+          <div class="stock-matrix-item">
+            <strong>${escapeHtml(name)}</strong>
+            ${item.is_suspended ? '<span class="stock-item-badge">Suspended</span>' : ""}
+            ${
+              item.track_serial
+                ? '<span class="stock-item-badge stock-item-badge--serial">Serial</span>'
+                : ""
+            }
+          </div>
+        </th>
+        ${cells}`;
+      return [header];
+    }
+
+    if (readOnlyMatrix) {
       const quantities = Array.isArray(item.shop_quantities)
         ? item.shop_quantities.map((q) => Math.max(0, Math.floor(Number(q) || 0)))
         : [stock];
@@ -654,7 +843,7 @@
     hasMore = Boolean(data.has_more);
     nextPage = data.next_page || null;
     activeQuery = String(data.q || q || "");
-    if (Array.isArray(data.shops) && data.shops.length && mode === "view") {
+    if (Array.isArray(data.shops) && data.shops.length && multiShopMatrix) {
       viewShops = data.shops;
     }
     appendItems(Array.isArray(data.items) ? data.items : [], { replace: !append });

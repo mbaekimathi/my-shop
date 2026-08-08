@@ -4,15 +4,15 @@
 {% block title %}{{ client_name }} · Returns — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="stock-panel stock-panel--report" data-animate="rise" data-stock-mode="return-clients">
+<section class="stock-panel stock-panel--report stock-panel--serials" data-animate="rise" data-stock-mode="return-clients">
   <header class="stock-panel-head">
     <div class="stock-panel-head-top">
       <div>
-        <p class="stock-kicker">Return clients</p>
+        <p class="stock-kicker">Return clients · All shops</p>
         <h2>{{ client_name }}</h2>
         <p>
           {% if client_phone %}{{ client_phone }} · {% endif %}
-          All serial-tracked items this client has returned.
+          All serial-tracked items this client has returned across shops.
         </p>
       </div>
       <div class="stock-stats">
@@ -23,18 +23,8 @@
       </div>
     </div>
 
-    <form class="stock-report-filters" method="get" data-stock-serial-filters>
-      <a class="stock-report-apply stock-report-apply--ghost" href="{{ list_href }}">Back to return clients</a>
-
-      <label class="stock-report-field">
-        <span>Shop</span>
-        <select name="shop_id" aria-label="Shop">
-          <option value="">All shops</option>
-          {% for shop in filter_shops %}
-          <option value="{{ shop.pk }}"{% if selected_shop_id == shop.pk|stringformat:"s" %} selected{% endif %}>{{ shop.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
+    <form class="stock-report-filters stock-report-filters--serials" method="get" data-stock-serial-filters>
+      <a class="stock-report-apply stock-report-apply--ghost" href="{{ list_href }}">Back</a>
 
       <label class="stock-report-field stock-report-field--grow">
         <span>Search</span>
@@ -42,7 +32,7 @@
           type="search"
           name="q"
           value="{{ search }}"
-          placeholder="Item, serial, receipt…"
+          placeholder="Item, serial, receipt, shop…"
           aria-label="Search returns"
           data-serial-scan
         >
@@ -56,57 +46,60 @@
   </header>
 
   {% if rows %}
-  <div class="staff-table-wrap stock-report-table-wrap">
-    <table class="staff-table stock-report-table stock-report-table--serial-returns">
+  <div class="stock-matrix-scroll stock-matrix-scroll--list stock-serials-scroll">
+    <table class="stock-serials-table stock-serials-table--detail stock-serials-table--client-returns">
       <thead>
         <tr>
-          <th scope="col">Item</th>
-          <th scope="col">Serial</th>
+          <th scope="col" class="stock-serials-col--item">Item</th>
+          <th scope="col" class="stock-serials-col--serial">Serial</th>
+          <th scope="col">Shop</th>
           <th scope="col">Receipt</th>
-          <th scope="col">Date bought</th>
-          <th scope="col">Amount paid</th>
+          <th scope="col">Bought</th>
+          <th scope="col" class="stock-serials-col--num">Paid</th>
           <th scope="col">Served by</th>
-          <th scope="col">Date returned</th>
-          <th scope="col">Who received</th>
+          <th scope="col">Returned</th>
+          <th scope="col">Received by</th>
         </tr>
       </thead>
       <tbody>
         {% for row in rows %}
         <tr>
-          <td data-label="Item">
-            <strong>{{ row.item_name }}</strong>
-            {% if row.item_category %}
-            <span class="stock-report-from">{{ row.item_category }}</span>
-            {% endif %}
-            <span class="stock-report-from">{{ row.shop_name }}</span>
+          <td class="stock-serials-col--item" data-label="Item">
+            <span class="stock-serials-stack">
+              <strong>{{ row.item_name }}</strong>
+              {% if row.item_category %}
+              <span class="stock-report-from">{{ row.item_category }}</span>
+              {% endif %}
+            </span>
           </td>
-          <td data-label="Serial">
+          <td class="stock-serials-col--serial" data-label="Serial">
             <strong class="stock-serial-number">{{ row.serial_number }}</strong>
           </td>
+          <td data-label="Shop">{{ row.shop_name }}</td>
           <td data-label="Receipt">{{ row.receipt_number }}</td>
-          <td data-label="Date bought">
+          <td data-label="Bought">
             {% if row.bought_at %}
             {{ row.bought_at|date:"d M Y" }} · {{ row.bought_at|time:"H:i" }}
             {% else %}
-            —
+            <span class="stock-serials-empty">—</span>
             {% endif %}
           </td>
-          <td data-label="Amount paid">KSh {{ row.amount_paid|floatformat:2 }}</td>
+          <td class="stock-serials-col--num" data-label="Paid">{{ row.amount_paid|floatformat:0 }}</td>
           <td data-label="Served by">{{ row.served_by }}</td>
-          <td data-label="Date returned">
+          <td data-label="Returned">
             {% if row.returned_at %}
             {{ row.returned_at|date:"d M Y" }} · {{ row.returned_at|time:"H:i" }}
             {% else %}
-            —
+            <span class="stock-serials-empty">—</span>
             {% endif %}
           </td>
-          <td data-label="Who received">{{ row.received_by }}</td>
+          <td data-label="Received by">{{ row.received_by }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-  <p class="stock-report-footnote">Showing {{ row_count }} return{{ row_count|pluralize }}</p>
+  <p class="stock-report-footnote">Showing {{ row_count }} return{{ row_count|pluralize }} across all shops</p>
   {% else %}
   <div class="dashboard-placeholder">
     <i data-lucide="undo-2" aria-hidden="true"></i>

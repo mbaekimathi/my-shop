@@ -1,0 +1,306 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section
+  class="comms is-simple{% if bridge.status == 'connected' %} is-linked{% endif %}"
+  data-animate="rise"
+  data-comms
+  data-mode="simple"
+  data-api-status="{{ comms_api.status }}"
+  data-api-logout="{{ comms_api.logout }}"
+  data-api-recipients="{{ comms_api.recipients }}"
+  data-api-preview="{{ comms_api.preview }}"
+  data-api-send="{{ comms_api.send }}"
+  data-api-campaign="{{ comms_api.campaign }}"
+  data-api-inbox="{{ comms_api.inbox }}"
+  data-api-analytics="{{ comms_api.analytics }}"
+>
+  <div class="comms-app">
+    <header class="comms-wa-bar">
+      <div class="comms-wa-brand">
+        <span class="comms-wa-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" focusable="false">
+            <path fill="currentColor" d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2zm.01 1.67c2.2 0 4.26.86 5.82 2.42a8.22 8.22 0 0 1 2.41 5.83c0 4.54-3.7 8.23-8.24 8.23-1.48 0-2.93-.39-4.19-1.15l-.3-.17-3.12.82.83-3.04-.2-.32a8.2 8.2 0 0 1-1.26-4.38c0-4.54 3.7-8.24 8.25-8.24zM8.68 7.53c-.17 0-.36.03-.55.09-.19.06-.47.23-.68.46-.21.24-.8.78-.8 1.9 0 1.12.82 2.2.93 2.35.12.15 1.58 2.52 3.9 3.43 1.95.77 2.34.61 2.76.58.42-.04 1.36-.56 1.55-1.09.19-.54.19-1 .13-1.09-.06-.1-.22-.15-.46-.27-.24-.12-1.36-.67-1.57-.75-.21-.08-.36-.12-.52.12-.15.24-.6.75-.74.9-.13.15-.27.17-.5.06-.24-.12-1-.37-1.9-1.17-.7-.63-1.18-1.4-1.32-1.64-.13-.24-.01-.37.1-.49.11-.11.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.32-.75-1.8-.19-.45-.4-.4-.55-.4z"/>
+          </svg>
+        </span>
+        <div class="comms-wa-brand-copy">
+          <strong>WhatsApp</strong>
+          <span data-comms-phone>{% if bridge.wa_phone %}{{ bridge.wa_phone }}{% else %}Link a device to start{% endif %}</span>
+        </div>
+      </div>
+
+      <div class="comms-wa-bar-actions">
+        <span class="comms-pill" data-comms-status-pill data-status="{{ bridge.status }}">
+          {% if bridge.status == "connected" %}Connected{% elif bridge.status == "qr_pending" %}Scan QR{% else %}Not connected{% endif %}
+        </span>
+        <button type="button" class="comms-icon-btn" data-comms-refresh title="Check connection" aria-label="Check connection">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 6V3L8 7l4 4V8c2.76 0 5 2.24 5 5a5 5 0 0 1-9.9 1H5.08A7 7 0 0 0 19 13c0-3.87-3.13-7-7-7z"/></svg>
+        </button>
+        <button type="button" class="comms-icon-btn comms-icon-btn--danger" data-comms-logout title="Disconnect" aria-label="Disconnect" {% if bridge.status == "disconnected" %}hidden{% endif %}>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5a2 2 0 0 0-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
+        </button>
+        <div class="comms-mode" role="group" aria-label="Page mode">
+          <button type="button" class="comms-mode-btn is-active" data-comms-mode="simple">Simple</button>
+          <button type="button" class="comms-mode-btn" data-comms-mode="advanced">Advanced</button>
+        </div>
+      </div>
+    </header>
+
+    <ol class="comms-steps" aria-label="Send steps">
+      <li class="comms-step" data-comms-step="1" data-state="todo"><span class="comms-step-num">1</span><span class="comms-step-label">Connect</span></li>
+      <li class="comms-step" data-comms-step="2" data-state="todo"><span class="comms-step-num">2</span><span class="comms-step-label">Choose</span></li>
+      <li class="comms-step" data-comms-step="3" data-state="todo"><span class="comms-step-num">3</span><span class="comms-step-label">Write</span></li>
+      <li class="comms-step" data-comms-step="4" data-state="todo"><span class="comms-step-num">4</span><span class="comms-step-label">Send</span></li>
+    </ol>
+
+    <section class="comms-connect" aria-label="WhatsApp connection" data-comms-panel="connect">
+      <div class="comms-connect-main">
+        <div class="comms-connect-copy">
+          <h3>Connect WhatsApp</h3>
+          <p data-comms-connect-help>{{ bridge_hints.connect_help }}</p>
+        </div>
+      </div>
+      <div class="comms-help" data-comms-bridge-help {% if bridge.status == "connected" %}hidden{% endif %}>
+        <p data-comms-bridge-help-text>{{ bridge_hints.help_text }}</p>
+        <pre class="comms-code" data-comms-bridge-cmd>{{ bridge_hints.cmd }}</pre>
+        <p class="comms-help-note" data-comms-bridge-note>{{ bridge_hints.note }}</p>
+      </div>
+      <p class="comms-error" data-comms-bridge-error {% if not bridge.last_error %}hidden{% endif %}></p>
+      <div class="comms-qr" data-comms-qr-wrap {% if bridge.status != "qr_pending" or not bridge.qr_data_url %}hidden{% endif %}>
+        <div class="comms-qr-frame">
+          <img data-comms-qr alt="WhatsApp QR code" {% if bridge.qr_data_url %}src="{{ bridge.qr_data_url }}"{% endif %}>
+        </div>
+        <div>
+          <strong>Scan with your phone</strong>
+          <p>WhatsApp → Linked devices → Link a device</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="comms-shell">
+      <aside class="comms-pane-list" aria-label="WhatsApp sidebar">
+        <div class="comms-pane-list-head">
+          <h3>Chats</h3>
+          <button type="button" class="comms-icon-btn comms-icon-btn--soft" data-comms-open-contacts title="New message" aria-label="New message">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+          </button>
+        </div>
+
+        <nav class="comms-side-tabs" role="tablist" aria-label="Sidebar">
+          <button type="button" class="comms-side-tab is-active" role="tab" aria-selected="true" data-comms-side-tab="inbox">
+            Inbox
+            <span class="comms-side-tab-badge" data-comms-history-badge {% if not reply_unread_count %}hidden{% endif %}>{{ reply_unread_count|default:0 }}</span>
+          </button>
+          <button type="button" class="comms-side-tab" role="tab" aria-selected="false" data-comms-side-tab="analytics">
+            Analytics
+          </button>
+        </nav>
+
+        <div class="comms-side-panels">
+          <div class="comms-side-panel is-active" data-comms-side-panel="inbox" role="tabpanel">
+            <div class="comms-inbox" data-comms-inbox>
+              <p class="comms-empty">No replies yet</p>
+            </div>
+          </div>
+
+          <div class="comms-side-panel" data-comms-side-panel="analytics" role="tabpanel" hidden>
+            <div class="comms-analytics" data-comms-analytics>
+              <p class="comms-empty">Loading…</p>
+            </div>
+            <div class="comms-log" data-comms-log hidden>
+              <header class="comms-log-head">
+                <strong data-comms-log-title>Send details</strong>
+                <button type="button" class="comms-btn comms-btn--ghost" data-comms-log-close>Close</button>
+              </header>
+              <div class="comms-table-wrap">
+                <table class="comms-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Phone</th>
+                      <th>Status</th>
+                      <th class="comms-advanced-only">Tries</th>
+                      <th>Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody data-comms-log-body></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="comms-side-foot">
+          <button type="button" class="comms-btn comms-btn--wa" data-comms-open-contacts data-comms-pick-label>
+            New message
+          </button>
+          <div class="comms-picked" data-comms-picked></div>
+        </div>
+      </aside>
+
+      <section class="comms-pane-chat" aria-label="Compose" data-comms-panel="compose">
+        <header class="comms-chat-head">
+          <button type="button" class="comms-chat-pick" data-comms-open-contacts title="New message">
+            <div class="comms-chat-avatar" aria-hidden="true" data-comms-chat-avatar>M</div>
+            <div class="comms-chat-head-copy">
+              <strong data-comms-preview-for>Message preview</strong>
+              <span data-comms-chat-sub>Tap to choose who to message</span>
+            </div>
+          </button>
+        </header>
+
+        <div class="comms-chat-wallpaper">
+          <div class="comms-chat-day">Today</div>
+          <div class="comms-bubble-row">
+            <div class="comms-bubble" data-comms-preview>Your personalized message will appear here.</div>
+            <span class="comms-bubble-meta" aria-hidden="true">
+              <svg class="comms-ticks" viewBox="0 0 16 11" width="16" height="11"><path fill="currentColor" d="M11.07 0.7 5.4 6.37 2.93 3.9 1.8 5.03l3.6 3.6 6.8-6.8zM14.6.7l-1.13 1.13L7.87 7.43l1.13 1.13L14.6 2.96 15.73 1.83z"/></svg>
+            </span>
+          </div>
+        </div>
+
+        <div class="comms-composer" data-comms-panel="send">
+          <div class="comms-placeholders" data-comms-placeholders>
+            <button type="button" class="comms-chip" data-comms-insert="{first_name}">First name</button>
+            <button type="button" class="comms-chip" data-comms-insert="{last_product}">Last product</button>
+            <button type="button" class="comms-chip comms-system-only" data-comms-insert="{full_name}">Full name</button>
+            <button type="button" class="comms-chip comms-system-only" data-comms-insert="{last_name}">Last name</button>
+            <button type="button" class="comms-chip comms-system-only" data-comms-insert="{last_purchase_date}">Last purchase</button>
+          </div>
+
+          <div class="comms-composer-row">
+            <label class="comms-attach" title="Attach photo">
+              <input type="file" accept="image/*" data-comms-image hidden>
+              <span class="comms-attach-btn" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 0 1 5 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5a2.5 2.5 0 0 0 5 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
+              </span>
+            </label>
+            <label class="comms-composer-box">
+              <span class="visually-hidden">Message</span>
+              <textarea data-comms-body rows="1" placeholder="Type a message"></textarea>
+            </label>
+            <button type="button" class="comms-send-fab" data-comms-send disabled title="Send now" aria-label="Send now">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+          </div>
+          <p class="comms-file-name" data-comms-image-name hidden></p>
+          <p class="comms-hint" data-comms-send-hint>Connect WhatsApp to send.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="comms-contacts-modal" data-comms-contacts-modal hidden>
+    <button type="button" class="comms-contacts-backdrop" data-comms-contacts-close aria-label="Close contacts"></button>
+    <div
+      class="comms-contacts-dialog comms-contacts-dialog--wide"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="comms-contacts-title"
+      data-comms-contacts-dialog
+    >
+      <header class="comms-contacts-head">
+        <div>
+          <h3 id="comms-contacts-title">New message</h3>
+        </div>
+        <button type="button" class="comms-icon-btn comms-icon-btn--ink" data-comms-contacts-close aria-label="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M18.3 5.71 12 12.01 5.7 5.7 4.29 7.11 10.59 13.4 4.29 19.7 5.7 21.11 12 14.82l6.3 6.29 1.41-1.41-6.29-6.3 6.29-6.29z"/></svg>
+        </button>
+      </header>
+
+      <div class="comms-contacts-body">
+        <div class="comms-filters">
+          <label class="comms-field">
+            <span>Audience</span>
+            <select data-comms-audience-select aria-label="Audience group">
+              {% for value, label in audience_types %}
+            <option
+              value="{{ value }}"
+              data-label="{{ label }}"
+              {% if value == 'whatsapp' %}selected{% endif %}
+            >
+              {{ label }} — {% for row in audience_summary %}{% if row.value == value %}{% if row.count is None %}—{% else %}{{ row.count }}{% endif %}{% endif %}{% endfor %}
+            </option>
+            {% endfor %}
+          </select>
+          </label>
+
+          <label class="comms-field" data-comms-wa-type-field>
+            <span>Type</span>
+            <select data-comms-wa-type aria-label="WhatsApp type">
+              <option value="groups" selected>Groups</option>
+              <option value="contacts">Contacts</option>
+            </select>
+          </label>
+
+          <div class="comms-system-panel" data-comms-system-panel hidden>
+            <label class="comms-field">
+              <span>Bought in</span>
+              <select data-comms-last-purchase aria-label="Bought in">
+                {% for value, label in last_purchase_windows.items %}
+                <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="comms-field" data-comms-items-field>
+              <span>Item bought</span>
+              <select data-comms-item-select aria-label="Item bought">
+                <option value="">Any item</option>
+              </select>
+            </label>
+            <label class="comms-field" data-comms-tx-field>
+              <span>Transactions</span>
+              <select data-comms-min-transactions aria-label="Transactions made">
+                {% for value, label in transaction_mins %}
+                <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="comms-match-banner" data-comms-match-banner data-state="idle" aria-live="polite">
+          <div class="comms-match-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+          </div>
+          <div class="comms-match-copy">
+            <strong class="comms-match-title" data-comms-match-title>No clients yet</strong>
+            <span class="comms-count-row">
+              <strong data-comms-count>0</strong>
+              <span>of <em data-comms-pool-count>0</em> selected</span>
+            </span>
+          </div>
+        </div>
+        <p class="comms-count-note" data-comms-count-note></p>
+
+        <label class="comms-field comms-search-field">
+          <span class="visually-hidden">Search contacts</span>
+          <input type="search" data-comms-search placeholder="Search name or phone…" autocomplete="off">
+        </label>
+
+        <div class="comms-select-bar">
+          <button type="button" class="comms-btn comms-btn--ghost" data-comms-select-all>Select all</button>
+          <button type="button" class="comms-btn comms-btn--ghost" data-comms-select-none>Clear</button>
+          <span class="comms-modal-count"><strong data-comms-modal-count>0</strong> selected</span>
+        </div>
+
+        <div class="comms-recipient-list" data-comms-recipients aria-live="polite"></div>
+      </div>
+
+      <footer class="comms-contacts-foot">
+        <button type="button" class="comms-btn comms-btn--ghost" data-comms-contacts-close>Cancel</button>
+        <button type="button" class="comms-btn comms-btn--wa" data-comms-contacts-done>Done</button>
+      </footer>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/communications.js' %}?v=28"></script>
+{% endblock %}

@@ -134,6 +134,22 @@
       });
     });
 
+    const openModalFromQuery = () => {
+      const params = new URLSearchParams(window.location.search);
+      const name = (params.get("modal") || "").trim();
+      if (name !== "buy-stock" && name !== "register-expense") return;
+      const focusSelector =
+        name === "buy-stock" ? "[data-item-search]" : "[data-expense-category]";
+      if (!openWorkspaceActionModal(name, focusSelector)) return;
+      params.delete("modal");
+      const query = params.toString();
+      const next = `${window.location.pathname}${query ? `?${query}` : ""}${
+        window.location.hash || ""
+      }`;
+      window.history.replaceState({}, "", next);
+    };
+    openModalFromQuery();
+
     window.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       const countryOpen = document.querySelector(

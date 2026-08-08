@@ -23,6 +23,707 @@
 
   if (mode === "view") return;
 
+  /* ── Multi-shop matrix (stock in/out/request management) ─────────────── */
+  if (form.hasAttribute("data-stock-multi-shop") && (mode === "in" || mode === "out" || mode === "request")) {
+    const floatRoot = document.querySelector("[data-stock-float]");
+    const emptyEl = floatRoot?.querySelector("[data-stock-float-empty]");
+    const heldEl = floatRoot?.querySelector("[data-stock-float-held]");
+    const heldCountEl = floatRoot?.querySelector("[data-stock-float-held-count]");
+    const linesEl = floatRoot?.querySelector("[data-stock-float-lines]");
+    const clearBtn = floatRoot?.querySelector("[data-stock-float-clear]");
+    const submitBtn = floatRoot?.querySelector("[data-stock-float-submit]");
+    const shopLabelEl = floatRoot?.querySelector("[data-stock-float-shop-label]");
+    const requestingLabelEl = floatRoot?.querySelector(
+      "[data-stock-float-requesting-label]"
+    );
+    const requestingShopInput = form.querySelector("[data-stock-requesting-shop]");
+    const applyStatus = floatRoot?.querySelector("[data-stock-float-apply-status]");
+    const applyBtn = floatRoot?.querySelector("[data-stock-float-apply-btn]");
+    const floatSupplierName = floatRoot?.querySelector("[data-stock-float-supplier-name]");
+    const floatSupplierDial = floatRoot?.querySelector("[data-stock-float-supplier-dial]");
+    const floatSupplierPhone = floatRoot?.querySelector("[data-stock-float-supplier-phone]");
+    const floatSupplierId = floatRoot?.querySelector("[data-stock-float-supplier-id]");
+    const floatPayment = floatRoot?.querySelector("[data-stock-float-payment]");
+    const floatReason = floatRoot?.querySelector("[data-stock-float-reason]");
+    const floatRefund = floatRoot?.querySelector("[data-stock-float-refund]");
+    const floatRefundAmount = floatRoot?.querySelector("[data-stock-float-refund-amount]");
+    const floatRefundAmountWrap = floatRoot?.querySelector(
+      "[data-stock-float-refund-amount-wrap]"
+    );
+    const serialModal = document.querySelector("[data-stock-serial-modal]");
+    const serialModalList = serialModal?.querySelector("[data-stock-serial-modal-list]");
+    const serialModalCount = serialModal?.querySelector("[data-stock-serial-modal-count]");
+    const serialModalTitle = serialModal?.querySelector("[data-stock-serial-modal-title]");
+    const serialModalShop = serialModal?.querySelector("[data-stock-serial-modal-shop]");
+    const serialSearchUrl = form.getAttribute("data-serial-search-url") || "";
+    const usesCatalogApi = panel.hasAttribute("data-stock-catalog-api");
+    let catalogBusy = usesCatalogApi && panel.hasAttribute("data-stock-catalog-busy");
+    let activeSerialCell = null;
+    let serialSearchTimer = 0;
+    let serialSearchSeq = 0;
+    let requestingShopId = (requestingShopInput?.value || "").trim();
+    let requestingShopName = "";
+    if (mode === "request" && !requestingShopId) {
+      requestingShopId =
+        new URLSearchParams(window.location.search).get("shop_id") || "";
+    }
+
+    const cells = () => [
+      ...panel.querySelectorAll("[data-stock-shop-cell]"),
+      ...(document
+        .querySelector("[data-stock-parked]")
+        ?.querySelectorAll("[data-stock-shop-cell]") || []),
+    ];
+
+    const normalizePhone = (value) => String(value || "").replace(/\D/g, "").slice(0, 9);
+    const setApplyStatus = (message, isError = false) => {
+      if (!applyStatus) return;
+      if (!message) {
+        applyStatus.hidden = true;
+        applyStatus.textContent = "";
+        applyStatus.classList.remove("is-error");
+        return;
+      }
+      applyStatus.hidden = false;
+      applyStatus.textContent = message;
+      applyStatus.classList.toggle("is-error", isError);
+    };
+
+    const cellQty = (cell) => {
+      const raw = cell.querySelector("[data-stock-qty]")?.value || "";
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    };
+
+    const cellHasPrice = (cell) => {
+      if (mode !== "in") return true;
+      const raw = cell.querySelector("[data-stock-buying-price]")?.value;
+      if (raw == null || String(raw).trim() === "") return false;
+      const n = Number(raw);
+      return Number.isFinite(n) && n >= 0 && Number.isInteger(n);
+    };
+
+    const tracksSerial = (cell) => cell.getAttribute("data-track-serial") === "1";
+
+    const markFilled = (cell) => {
+      const filled = cellQty(cell) > 0;
+      cell.classList.toggle("is-filled", filled);
+      cell.closest("[data-item-row]")?.classList.toggle(
+        "is-filled",
+        [...(cell.closest("[data-item-row]")?.querySelectorAll("[data-stock-shop-cell]") || [])].some(
+          (c) => cellQty(c) > 0
+        )
+      );
+    };
+
+    const collectReady = () =>
+      cells()
+        .map((cell) => {
+          const qty = cellQty(cell);
+          if (!qty) return null;
+          if (mode === "request" && requestingShopId && cell.dataset.shopId === requestingShopId) {
+            return null;
+          }
+          return {
+            cell,
+            id: cell.dataset.itemId,
+            name: cell.dataset.itemName || "Item",
+            shopId: cell.dataset.shopId,
+            shopName: cell.dataset.shopName || "Shop",
+            quantity: qty,
+          };
+        })
+        .filter(Boolean);
+
+    const floatSupplierReady = () => {
+      if (mode !== "in") return false;
+      const name = (floatSupplierName?.value || "").trim();
+      const dial = (floatSupplierDial?.value || "").trim();
+      const phone = normalizePhone(floatSupplierPhone?.value);
+      const payment = (floatPayment?.value || "").trim();
+      return Boolean(name && dial && phone.length === 9 && payment);
+    };
+
+    const floatOutReady = () => {
+      if (mode !== "out") return false;
+      const reason = (floatReason?.value || "").trim();
+      const refund = (floatRefund?.value || "").trim();
+      if (!reason || !refund) return false;
+      if (refund === "yes") {
+        const amount = Number(floatRefundAmount?.value);
+        return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+      }
+      return true;
+    };
+
+    const syncRequestingColumn = () => {
+      if (mode !== "request") return;
+      if (requestingShopInput) requestingShopInput.value = requestingShopId || "";
+      document.querySelectorAll("[data-stock-request-shop-header]").forEach((header) => {
+        const isRequesting = requestingShopId && header.dataset.shopId === requestingShopId;
+        header.classList.toggle("is-requesting", Boolean(isRequesting));
+        const roleEl = header.querySelector("[data-stock-request-role]");
+        if (roleEl) roleEl.textContent = isRequesting ? "Requesting" : "From";
+        if (isRequesting) requestingShopName = header.dataset.shopName || requestingShopName;
+      });
+      if (requestingLabelEl) {
+        requestingLabelEl.textContent = requestingShopName || "Select a shop column";
+      }
+      cells().forEach((cell) => {
+        const isRequesting =
+          requestingShopId && cell.dataset.shopId === requestingShopId;
+        cell.classList.toggle("is-requesting-shop", Boolean(isRequesting));
+        const qty = cell.querySelector("[data-stock-qty]");
+        if (!qty) return;
+        if (isRequesting) {
+          qty.value = "";
+          qty.disabled = true;
+          qty.setAttribute("title", "This is the requesting shop");
+        } else {
+          qty.disabled = false;
+          qty.removeAttribute("title");
+        }
+        markFilled(cell);
+      });
+    };
+
+    const setRequestingShop = (shopId, shopName) => {
+      if (mode !== "request") return;
+      const nextId = String(shopId || "").trim();
+      if (requestingShopId === nextId) {
+        requestingShopId = "";
+        requestingShopName = "";
+      } else {
+        requestingShopId = nextId;
+        requestingShopName = shopName || "Shop";
+      }
+      syncRequestingColumn();
+      renderSummary();
+    };
+
+    const canSubmit = (ready) => {
+      if (!ready.length) return false;
+      if (mode === "in") {
+        if (!ready.every((item) => cellHasPrice(item.cell))) return false;
+        return floatSupplierReady();
+      }
+      if (mode === "request") {
+        return Boolean(requestingShopId);
+      }
+      return floatOutReady();
+    };
+
+    const stampMeta = (cell) => {
+      if (mode === "request") return;
+      if (mode === "in") {
+        const payment = cell.querySelector("[data-stock-payment]");
+        const name = cell.querySelector("[data-stock-supplier-name]");
+        const phone = cell.querySelector("[data-stock-supplier-phone]");
+        const dial = cell.querySelector("[data-stock-supplier-dial]");
+        const supplierId = cell.querySelector("[data-stock-supplier-id]");
+        if (payment) payment.value = floatPayment?.value || "";
+        if (name) name.value = (floatSupplierName?.value || "").trim();
+        if (dial) dial.value = floatSupplierDial?.value || "+254";
+        if (phone) phone.value = normalizePhone(floatSupplierPhone?.value);
+        if (supplierId) supplierId.value = floatSupplierId?.value || "";
+      } else {
+        const reason = cell.querySelector("[data-stock-reason]");
+        const refund = cell.querySelector("[data-stock-refund]");
+        const amount = cell.querySelector("[data-stock-refund-amount]");
+        if (reason) reason.value = floatReason?.value || "";
+        if (refund) refund.value = floatRefund?.value || "";
+        if (amount) {
+          amount.value =
+            floatRefund?.value === "yes" ? floatRefundAmount?.value || "" : "";
+        }
+      }
+    };
+
+    const enableReadyFields = (ready) => {
+      // Disable all matrix fields first so empty cells are not posted.
+      cells().forEach((cell) => {
+        cell.querySelectorAll("[data-stock-field], [data-stock-qty], [data-stock-buying-price]").forEach(
+          (field) => {
+            field.disabled = true;
+          }
+        );
+      });
+      ready.forEach((item) => {
+        stampMeta(item.cell);
+        item.cell
+          .querySelectorAll("[data-stock-field], [data-stock-qty], [data-stock-buying-price]")
+          .forEach((field) => {
+            field.disabled = false;
+          });
+      });
+    };
+
+    const renderSummary = () => {
+      const ready = collectReady();
+      const units = ready.reduce((sum, item) => sum + item.quantity, 0);
+      const shopIds = new Set(ready.map((item) => item.shopId).filter(Boolean));
+      if (shopLabelEl) {
+        if (mode === "request") {
+          shopLabelEl.textContent =
+            shopIds.size === 0
+              ? "—"
+              : shopIds.size === 1
+                ? ready.find((item) => item.shopId)?.shopName || "1 shop"
+                : `${shopIds.size} shops`;
+        } else {
+          const singleShopName = panel.dataset.stockCatalogShopName || "";
+          shopLabelEl.textContent =
+            shopIds.size === 0
+              ? singleShopName || "All shops"
+              : shopIds.size === 1
+                ? ready.find((item) => item.shopId)?.shopName || "1 shop"
+                : `${shopIds.size} shops`;
+        }
+      }
+      if (emptyEl) emptyEl.hidden = ready.length > 0;
+      if (linesEl) {
+        linesEl.hidden = ready.length === 0;
+        linesEl.innerHTML = ready
+          .map(
+            (item) =>
+              `<li>
+                <span title="${item.name} · ${item.shopName}">${item.name} · ${
+                mode === "request" ? `from ${item.shopName}` : item.shopName
+              }</span>
+                <strong>×${item.quantity}</strong>
+                <button type="button" data-stock-float-remove data-item-id="${item.id}" data-shop-id="${item.shopId}" aria-label="Clear ${item.name} at ${item.shopName}">×</button>
+              </li>`
+          )
+          .join("");
+      }
+      const parked = document.querySelector("[data-stock-parked]");
+      const held = parked
+        ? [...parked.querySelectorAll("[data-stock-shop-cell]")].filter(
+            (c) => cellQty(c) > 0
+          ).length
+        : 0;
+      if (heldEl) heldEl.hidden = held === 0;
+      if (heldCountEl) heldCountEl.textContent = String(held);
+      if (clearBtn) clearBtn.hidden = ready.length === 0;
+      if (submitBtn) {
+        submitBtn.disabled = catalogBusy || !canSubmit(ready);
+      }
+    };
+
+    const clearCell = (cell) => {
+      const qty = cell.querySelector("[data-stock-qty]");
+      const price = cell.querySelector("[data-stock-buying-price]");
+      const serials = cell.querySelector("[data-stock-serials]");
+      if (qty) qty.value = "";
+      if (price) price.value = "";
+      if (serials) serials.value = "";
+      markFilled(cell);
+    };
+
+    const clearAll = () => {
+      cells().forEach(clearCell);
+      setApplyStatus("");
+      renderSummary();
+    };
+
+    const refreshIcons = () => {
+      if (window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    const modalSerials = () =>
+      [...(serialModalList?.querySelectorAll("[data-stock-serial-input]") || [])]
+        .map((input) => String(input.value || "").trim().toUpperCase())
+        .filter(Boolean);
+
+    const syncModalCount = () => {
+      const serials = modalSerials();
+      if (serialModalCount) serialModalCount.textContent = String(serials.length);
+      serialModalList
+        ?.querySelectorAll("[data-stock-serial-remove]")
+        .forEach((btn) => {
+          btn.hidden = (serialModalList?.querySelectorAll(".stock-serial-row").length || 0) <= 1;
+        });
+    };
+
+    const createModalSerialRow = (serial = "") => {
+      if (!serialModalList) return null;
+      const row = document.createElement("div");
+      row.className = "stock-serial-row";
+      let parent = row;
+      if (mode === "out") {
+        const wrap = document.createElement("div");
+        wrap.className = "stock-serial-input-wrap";
+        wrap.setAttribute("data-serial-search-root", "");
+        row.appendChild(wrap);
+        parent = wrap;
+      }
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder =
+        mode === "out" ? "Search serial to stock out" : "Enter serial number";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.setAttribute("data-stock-serial-input", "");
+      if (mode === "out") input.setAttribute("data-serial-search", "");
+      input.value = serial;
+      parent.appendChild(input);
+      if (mode === "out") {
+        const suggest = document.createElement("div");
+        suggest.className = "stock-supplier-suggest";
+        suggest.setAttribute("data-serial-suggest", "");
+        suggest.hidden = true;
+        parent.appendChild(suggest);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "stock-serial-remove";
+      remove.setAttribute("data-stock-serial-remove", "");
+      remove.setAttribute("aria-label", "Remove serial");
+      remove.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
+      row.appendChild(remove);
+      serialModalList.appendChild(row);
+      refreshIcons();
+      syncModalCount();
+      return input;
+    };
+
+    const openSerialModal = (cell) => {
+      activeSerialCell = cell;
+      const itemName = cell.dataset.itemName || "Item";
+      const shopName = cell.dataset.shopName || "Shop";
+      if (serialModalTitle) serialModalTitle.textContent = itemName;
+      if (serialModalShop) serialModalShop.textContent = shopName;
+      if (serialModalList) serialModalList.innerHTML = "";
+      const existing = String(cell.querySelector("[data-stock-serials]")?.value || "")
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (existing.length) existing.forEach((s) => createModalSerialRow(s));
+      else createModalSerialRow("");
+      syncModalCount();
+      serialModal.hidden = false;
+      serialModal.setAttribute("aria-hidden", "false");
+      document.body.classList.add("workspace-modal-open");
+      serialModalList?.querySelector("[data-stock-serial-input]")?.focus();
+    };
+
+    const closeSerialModal = ({ save = false } = {}) => {
+      if (save && activeSerialCell) {
+        const serials = modalSerials();
+        const unique = [...new Set(serials)];
+        const serialHidden = activeSerialCell.querySelector("[data-stock-serials]");
+        const qtyInput = activeSerialCell.querySelector("[data-stock-qty]");
+        if (serialHidden) serialHidden.value = unique.join("\n");
+        if (qtyInput) qtyInput.value = unique.length ? String(unique.length) : "";
+        markFilled(activeSerialCell);
+        renderSummary();
+      }
+      activeSerialCell = null;
+      if (serialModal) {
+        serialModal.hidden = true;
+        serialModal.setAttribute("aria-hidden", "true");
+      }
+      document.body.classList.remove("workspace-modal-open");
+    };
+
+    const runSerialSearch = async (input) => {
+      if (mode !== "out" || !serialSearchUrl || !activeSerialCell) return;
+      const itemId = activeSerialCell.dataset.itemId || "";
+      const shopId = activeSerialCell.dataset.shopId || "";
+      if (!itemId || !shopId) return;
+      const root = input.closest("[data-serial-search-root]");
+      const suggest = root?.querySelector("[data-serial-suggest]");
+      if (!suggest) return;
+      const query = String(input.value || "").trim().toUpperCase();
+      const seq = ++serialSearchSeq;
+      const params = new URLSearchParams({
+        item_id: itemId,
+        shop_id: shopId,
+        q: query,
+      });
+      modalSerials().forEach((serial) => {
+        if (serial !== query) params.append("exclude", serial);
+      });
+      try {
+        const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (seq !== serialSearchSeq) return;
+        const results = Array.isArray(data.results) ? data.results : [];
+        suggest.innerHTML = "";
+        if (!results.length) {
+          suggest.hidden = true;
+          return;
+        }
+        results.slice(0, 8).forEach((serial) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = serial;
+          btn.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+            input.value = serial;
+            suggest.hidden = true;
+            syncModalCount();
+            createModalSerialRow("")?.focus();
+          });
+          suggest.appendChild(btn);
+        });
+        suggest.hidden = false;
+      } catch (_err) {
+        /* ignore */
+      }
+    };
+
+    // Float collapse (mobile)
+    const floatToggle = floatRoot?.querySelector("[data-stock-float-toggle]");
+    const floatCollapseMq = window.matchMedia("(max-width: 1199px)");
+    const floatCollapseKey = `stock-float-collapsed:${mode}`;
+    const setFloatCollapsed = (collapsed, { persist = true } = {}) => {
+      if (!floatRoot || !floatToggle) return;
+      const next = Boolean(collapsed) && floatCollapseMq.matches;
+      floatRoot.classList.toggle("is-collapsed", next);
+      floatToggle.setAttribute("aria-expanded", next ? "false" : "true");
+      if (persist) {
+        try {
+          sessionStorage.setItem(floatCollapseKey, next ? "1" : "0");
+        } catch (_err) {
+          /* ignore */
+        }
+      }
+    };
+    floatToggle?.addEventListener("click", () => {
+      setFloatCollapsed(!floatRoot.classList.contains("is-collapsed"));
+    });
+    try {
+      setFloatCollapsed(sessionStorage.getItem(floatCollapseKey) === "1", {
+        persist: false,
+      });
+    } catch (_err) {
+      setFloatCollapsed(true, { persist: false });
+    }
+
+    if (floatRefund) {
+      floatRefund.addEventListener("change", () => {
+        const show = floatRefund.value === "yes";
+        if (floatRefundAmountWrap) floatRefundAmountWrap.hidden = !show;
+        if (!show && floatRefundAmount) floatRefundAmount.value = "";
+        renderSummary();
+      });
+    }
+
+    panel.addEventListener("input", (event) => {
+      const cell = event.target.closest?.("[data-stock-shop-cell]");
+      if (!cell) return;
+      if (
+        event.target.matches("[data-stock-qty], [data-stock-buying-price]")
+      ) {
+        markFilled(cell);
+        renderSummary();
+      }
+    });
+
+    const openSerialFromEvent = (event) => {
+      const openEl = event.target.closest?.("[data-stock-serial-open]");
+      if (!openEl) return false;
+      event.preventDefault();
+      const cell = openEl.closest("[data-stock-shop-cell]");
+      if (cell) openSerialModal(cell);
+      return true;
+    };
+
+    panel.addEventListener("click", (event) => {
+      openSerialFromEvent(event);
+    });
+    panel.addEventListener("focusin", (event) => {
+      openSerialFromEvent(event);
+    });
+    panel.addEventListener("keydown", (event) => {
+      if (!event.target.matches?.("[data-stock-serial-open]")) return;
+      if (event.key === "Enter" || event.key === " ") {
+        openSerialFromEvent(event);
+      } else if (event.key.length === 1 || event.key === "Backspace") {
+        // Quantity is derived from serials — block direct edits.
+        event.preventDefault();
+        openSerialFromEvent(event);
+      }
+    });
+
+    document
+      .querySelector("[data-stock-parked]")
+      ?.addEventListener("click", (event) => {
+        openSerialFromEvent(event);
+      });
+    document
+      .querySelector("[data-stock-parked]")
+      ?.addEventListener("focusin", (event) => {
+        openSerialFromEvent(event);
+      });
+
+    serialModal?.addEventListener("click", (event) => {
+      if (event.target.closest("[data-stock-serial-modal-close]")) {
+        event.preventDefault();
+        closeSerialModal({ save: false });
+        return;
+      }
+      if (event.target.closest("[data-stock-serial-modal-done]")) {
+        event.preventDefault();
+        closeSerialModal({ save: true });
+        return;
+      }
+      if (event.target.closest("[data-stock-serial-modal-add]")) {
+        event.preventDefault();
+        createModalSerialRow("")?.focus();
+        return;
+      }
+      const remove = event.target.closest("[data-stock-serial-remove]");
+      if (remove) {
+        event.preventDefault();
+        remove.closest(".stock-serial-row")?.remove();
+        if (!serialModalList?.querySelector(".stock-serial-row")) {
+          createModalSerialRow("");
+        }
+        syncModalCount();
+      }
+    });
+
+    serialModal?.addEventListener("input", (event) => {
+      if (!event.target.matches("[data-stock-serial-input]")) return;
+      event.target.value = String(event.target.value || "").toUpperCase();
+      syncModalCount();
+      if (mode === "out" && event.target.matches("[data-serial-search]")) {
+        window.clearTimeout(serialSearchTimer);
+        serialSearchTimer = window.setTimeout(
+          () => runSerialSearch(event.target),
+          220
+        );
+      }
+    });
+
+    serialModal?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSerialModal({ save: false });
+      }
+    });
+
+    floatRoot?.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest("[data-stock-float-remove]");
+      if (!removeBtn) return;
+      event.preventDefault();
+      const itemId = removeBtn.getAttribute("data-item-id");
+      const shopId = removeBtn.getAttribute("data-shop-id");
+      const cell = cells().find(
+        (c) => c.dataset.itemId === itemId && c.dataset.shopId === shopId
+      );
+      if (cell) clearCell(cell);
+      renderSummary();
+    });
+
+    clearBtn?.addEventListener("click", clearAll);
+
+    applyBtn?.addEventListener("click", () => {
+      if (mode === "request") return;
+      const ready = collectReady();
+      if (!ready.length) {
+        setApplyStatus("Add quantity on at least one shop cell first.", true);
+        return;
+      }
+      if (mode === "in" && !floatSupplierReady()) {
+        setApplyStatus("Enter supplier name, phone, and payment status.", true);
+        return;
+      }
+      if (mode === "out" && !floatOutReady()) {
+        setApplyStatus("Choose reason and refund details.", true);
+        return;
+      }
+      ready.forEach((item) => stampMeta(item.cell));
+      setApplyStatus(
+        mode === "in"
+          ? "Supplier details ready for submit."
+          : "Stock-out details ready for submit."
+      );
+      renderSummary();
+    });
+
+    ["input", "change"].forEach((evt) => {
+      floatRoot?.addEventListener(evt, () => renderSummary());
+    });
+
+    panel.addEventListener("click", (event) => {
+      if (mode !== "request") return;
+      const header = event.target.closest("[data-stock-request-shop-header]");
+      if (!header || !panel.contains(header)) return;
+      event.preventDefault();
+      setRequestingShop(header.dataset.shopId, header.dataset.shopName);
+    });
+
+    panel.addEventListener("keydown", (event) => {
+      if (mode !== "request") return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const header = event.target.closest("[data-stock-request-shop-header]");
+      if (!header || !panel.contains(header)) return;
+      event.preventDefault();
+      setRequestingShop(header.dataset.shopId, header.dataset.shopName);
+    });
+
+    form.addEventListener("submit", (event) => {
+      if (catalogBusy || panel.hasAttribute("data-stock-catalog-busy")) {
+        event.preventDefault();
+        setApplyStatus("Still loading items — wait a moment, then submit.", true);
+        return;
+      }
+      const ready = collectReady();
+      if (!ready.length) {
+        event.preventDefault();
+        setApplyStatus("Enter quantity on at least one shop cell.", true);
+        return;
+      }
+      if (mode === "request" && !requestingShopId) {
+        event.preventDefault();
+        setApplyStatus("Click a shop column header to set the requesting shop.", true);
+        return;
+      }
+      if (mode === "in" && !ready.every((item) => cellHasPrice(item.cell))) {
+        event.preventDefault();
+        setApplyStatus("Enter buying price for each ready shop cell.", true);
+        return;
+      }
+      if (mode === "in" && !floatSupplierReady()) {
+        event.preventDefault();
+        setApplyStatus("Enter supplier name, phone, and payment status.", true);
+        floatSupplierPhone?.focus();
+        return;
+      }
+      if (mode === "out" && !floatOutReady()) {
+        event.preventDefault();
+        setApplyStatus("Choose reason and refund details.", true);
+        return;
+      }
+      if (mode === "request" && requestingShopInput) {
+        requestingShopInput.value = requestingShopId;
+      }
+      enableReadyFields(ready);
+    });
+
+    document.addEventListener("stock-catalog:rendered", () => {
+      syncRequestingColumn();
+      cells().forEach(markFilled);
+      renderSummary();
+    });
+    document.addEventListener("stock-catalog:busy", (event) => {
+      catalogBusy = Boolean(event.detail?.busy);
+      renderSummary();
+    });
+
+    syncRequestingColumn();
+    renderSummary();
+    return;
+  }
+  /* ── End multi-shop matrix ───────────────────────────────────────────── */
+
   const floatRoot = document.querySelector("[data-stock-float]");
   const emptyEl = floatRoot?.querySelector("[data-stock-float-empty]");
   const heldEl = floatRoot?.querySelector("[data-stock-float-held]");
@@ -403,8 +1104,12 @@
     return Number.isFinite(value) && value > 0 ? value : 0;
   };
 
-  const rowHasBuyingPrice = (row) =>
-    (getInputsRow(row)?.querySelector("[data-stock-buying-price]")?.value || "").trim() !== "";
+  const rowHasBuyingPrice = (row) => {
+    const raw = (getInputsRow(row)?.querySelector("[data-stock-buying-price]")?.value || "").trim();
+    if (!raw) return false;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 && Number.isInteger(n);
+  };
 
   const rowHasSupplierDetails = (row) => {
     const inputs = getInputsRow(row);
@@ -424,7 +1129,7 @@
     if (!reason || (refund !== "yes" && refund !== "no")) return false;
     if (refund === "yes") {
       const amount = Number(inputs.querySelector("[data-stock-refund-amount]")?.value || 0);
-      return Number.isFinite(amount) && amount > 0;
+      return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
     }
     return true;
   };
@@ -556,7 +1261,9 @@
         const floatReady = details.reason && (details.refund === "yes" || details.refund === "no");
         const refundOk =
           details.refund !== "yes" ||
-          (Number(details.refundAmount) > 0 && Number.isFinite(Number(details.refundAmount)));
+          (Number.isInteger(Number(details.refundAmount)) &&
+            Number(details.refundAmount) > 0 &&
+            Number.isFinite(Number(details.refundAmount)));
         if (floatReady && refundOk) {
           appliedDetails = details;
           writeOutMeta(row, details);
@@ -1024,8 +1731,8 @@
       }
       if (details.refund === "yes") {
         const amount = Number(details.refundAmount);
-        if (!Number.isFinite(amount) || amount <= 0) {
-          setApplyStatus("Enter a refund amount greater than zero.", true);
+        if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+          setApplyStatus("Enter a whole-number refund amount greater than zero.", true);
           floatRefundAmount?.focus();
           return false;
         }
@@ -1751,7 +2458,9 @@
       const details = readFloatDetails();
       const refundOk =
         details.refund !== "yes" ||
-        (Number(details.refundAmount) > 0 && Number.isFinite(Number(details.refundAmount)));
+        (Number.isInteger(Number(details.refundAmount)) &&
+          Number(details.refundAmount) > 0 &&
+          Number.isFinite(Number(details.refundAmount)));
       const fallback =
         details.reason && (details.refund === "yes" || details.refund === "no") && refundOk
           ? details

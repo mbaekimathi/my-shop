@@ -95,7 +95,7 @@
   {% if page.charts %}
   <div class="ax-charts{% if page.trends %} ax-charts--trend{% endif %}" aria-label="Visual trends">
     {% for chart in page.charts %}
-    <section class="ax-chart-card{% if chart.kind == 'line' %} ax-chart-card--wide{% endif %}">
+    <section class="ax-chart-card{% if chart.kind == 'line' or chart.kind == 'shop_bars' %} ax-chart-card--wide{% endif %}">
       <header class="ax-chart-head">
         <h3>{{ chart.title }}</h3>
         {% if chart.subtitle %}<span>{{ chart.subtitle }}</span>{% endif %}
@@ -107,14 +107,45 @@
           <svg class="ax-line-chart" viewBox="0 0 {{ chart.line.width }} {{ chart.line.height }}" role="img" aria-label="{{ chart.title }}">
             <path class="ax-line-area" d="{{ chart.line.sales_area }}"></path>
             <polyline class="ax-line-sales" points="{{ chart.line.sales_points }}" fill="none"></polyline>
-            <polyline class="ax-line-expenses" points="{{ chart.line.expense_points }}" fill="none"></polyline>
+            <polyline class="ax-line-{{ chart.series_b|default:'expenses' }}" points="{{ chart.line.expense_points }}" fill="none"></polyline>
             {% for label in chart.line.labels %}
             <text class="ax-line-label" x="{{ label.x }}" y="{{ chart.line.label_y }}" text-anchor="middle">{{ label.text }}</text>
             {% endfor %}
           </svg>
           <div class="ax-chart-legend">
+            <span class="is-now">{{ chart.legend_a|default:"Sales" }}</span>
+            <span class="is-{{ chart.series_b|default:'expense' }}">{{ chart.legend_b|default:"Expenses" }}</span>
+          </div>
+        </div>
+        {% else %}
+        <p class="ax-empty">{{ chart.empty }}</p>
+        {% endif %}
+
+      {% elif chart.kind == "shop_bars" %}
+        {% if chart.bars_chart and not chart.bars_chart.empty %}
+        <div class="ax-line-wrap">
+          <svg class="ax-shop-chart" viewBox="0 0 {{ chart.bars_chart.width }} {{ chart.bars_chart.height }}" role="img" aria-label="{{ chart.title }}">
+            {% for tick in chart.bars_chart.grid %}
+            <line class="ax-shop-grid" x1="{{ chart.bars_chart.plot_left }}" x2="{{ chart.bars_chart.width }}" y1="{{ tick.y }}" y2="{{ tick.y }}"></line>
+            <text class="ax-shop-axis" x="{{ chart.bars_chart.axis_x }}" y="{{ tick.y }}" text-anchor="end" dominant-baseline="middle">{{ tick.label }}</text>
+            {% endfor %}
+            <line class="ax-shop-baseline" x1="{{ chart.bars_chart.plot_left }}" x2="{{ chart.bars_chart.width }}" y1="{{ chart.bars_chart.baseline_y }}" y2="{{ chart.bars_chart.baseline_y }}"></line>
+            {% for bar in chart.bars_chart.bars %}
+            <rect class="ax-shop-bar is-{{ bar.series }}" x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}" rx="2">
+              <title>{{ bar.title }}</title>
+            </rect>
+            {% endfor %}
+            {% for label in chart.bars_chart.labels %}
+            <text class="ax-line-label" x="{{ label.x }}" y="{{ chart.bars_chart.label_y }}" text-anchor="middle">
+              <title>{{ label.title }}</title>{{ label.text }}
+            </text>
+            {% endfor %}
+          </svg>
+          <div class="ax-chart-legend">
+            <span class="is-opening">Opening</span>
             <span class="is-now">Sales</span>
-            <span class="is-expense">Expenses</span>
+            <span class="is-closing">Closing</span>
+            <span class="is-prior">Prior</span>
           </div>
         </div>
         {% else %}

@@ -76,6 +76,7 @@
         name &&
         Number.isFinite(amount) &&
         amount > 0 &&
+        Number.isInteger(amount) &&
         payment &&
         supplierName &&
         dial &&

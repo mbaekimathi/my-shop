@@ -5,7 +5,7 @@
 
 {% block workspace_content %}
 <section
-  class="shop-tool-page shop-receipts-page"
+  class="item-panel item-panel--dense item-panel--receipts shop-receipts-page"
   data-shop-receipts
   data-verify-login-url="{{ verify_login_code_url }}"
   data-receipts-list-url="{{ receipts_list_url }}"
@@ -17,66 +17,77 @@
   data-animate="rise"
 >
   {% csrf_token %}
-  <header class="shop-tool-head">
-    <p class="shop-tool-kicker">{{ shop.name }}</p>
-    <h2>{{ meta.headline }}</h2>
-    <p class="shop-tool-summary">{{ meta.summary }}</p>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">{{ shop.name }} · Receipts</p>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }}</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong data-receipts-count-stat>—</strong>
+          <span>listed</span>
+        </p>
+      </div>
+    </div>
+
+    <div class="stock-report-filters stock-report-filters--serials shop-receipts-filters" data-receipts-filters>
+      <label class="stock-report-field stock-report-field--grow shop-receipts-live-search">
+        <span>Search</span>
+        <input
+          type="search"
+          placeholder="Receipt no., client, phone…"
+          autocomplete="off"
+          data-receipts-search
+          aria-label="Search receipts"
+        >
+      </label>
+
+      <label class="stock-report-field">
+        <span>Filter</span>
+        <select data-receipts-filter-mode>
+          <option value="day" selected>Single day</option>
+          <option value="period">Period</option>
+          <option value="month">Month</option>
+          <option value="year">Year</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field" data-filter-panel="day">
+        <span>Date</span>
+        <input type="date" data-receipts-day>
+      </label>
+
+      <label class="stock-report-field is-hidden" data-filter-panel="period" hidden>
+        <span>From</span>
+        <input type="date" data-receipts-from>
+      </label>
+
+      <label class="stock-report-field is-hidden" data-filter-panel="period" hidden>
+        <span>To</span>
+        <input type="date" data-receipts-to>
+      </label>
+
+      <label class="stock-report-field is-hidden" data-filter-panel="month" hidden>
+        <span>Month</span>
+        <input type="month" data-receipts-month>
+      </label>
+
+      <label class="stock-report-field is-hidden" data-filter-panel="year" hidden>
+        <span>Year</span>
+        <input type="number" min="2000" max="2100" step="1" placeholder="YYYY" data-receipts-year>
+      </label>
+    </div>
   </header>
-
-  <div class="shop-receipts-filters stock-report-filters" data-receipts-filters>
-    <label class="stock-report-field shop-receipts-live-search">
-      <span>Live search</span>
-      <input
-        type="search"
-        placeholder="Receipt no., client, phone…"
-        autocomplete="off"
-        data-receipts-search
-      >
-    </label>
-
-    <label class="stock-report-field">
-      <span>Filter</span>
-      <select data-receipts-filter-mode>
-        <option value="day" selected>Single day</option>
-        <option value="period">Period</option>
-        <option value="month">Month</option>
-        <option value="year">Year</option>
-      </select>
-    </label>
-
-    <label class="stock-report-field" data-filter-panel="day">
-      <span>Date</span>
-      <input type="date" data-receipts-day>
-    </label>
-
-    <label class="stock-report-field is-hidden" data-filter-panel="period" hidden>
-      <span>From</span>
-      <input type="date" data-receipts-from>
-    </label>
-
-    <label class="stock-report-field is-hidden" data-filter-panel="period" hidden>
-      <span>To</span>
-      <input type="date" data-receipts-to>
-    </label>
-
-    <label class="stock-report-field is-hidden" data-filter-panel="month" hidden>
-      <span>Month</span>
-      <input type="month" data-receipts-month>
-    </label>
-
-    <label class="stock-report-field is-hidden" data-filter-panel="year" hidden>
-      <span>Year</span>
-      <input type="number" min="2000" max="2100" step="1" placeholder="YYYY" data-receipts-year>
-    </label>
-  </div>
 
   <div class="shop-receipts-meta">
     <p data-receipts-count>Loading receipts…</p>
     <p class="shop-receipts-status" data-receipts-status hidden></p>
   </div>
 
-  <div class="shop-receipts-table-wrap">
-    <table class="shop-receipts-table">
+  <div class="item-table-wrap shop-receipts-table-wrap">
+    <table class="shop-receipts-table shop-receipts-table--dense">
       <thead>
         <tr>
           <th>Receipt</th>
@@ -109,8 +120,11 @@
     aria-modal="true"
     aria-labelledby="receipt-modal-title"
   >
-    <div class="workspace-modal-head">
-      <h2 id="receipt-modal-title" data-receipt-modal-title>Receipt</h2>
+    <div class="workspace-modal-head shop-receipt-modal-head">
+      <div>
+        <p class="shop-receipt-modal-kicker">{{ shop.name }} · Receipt</p>
+        <h2 id="receipt-modal-title" data-receipt-modal-title>Receipt</h2>
+      </div>
       <button type="button" class="workspace-icon-btn" data-receipt-modal-close aria-label="Close">
         <i data-lucide="x" aria-hidden="true"></i>
       </button>
@@ -144,5 +158,5 @@
 {{ block.super }}
 <script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script src="{% static 'js/shop-printer.js' %}?v=16"></script>
-<script src="{% static 'js/my-shop-receipts.js' %}?v=4"></script>
+<script src="{% static 'js/my-shop-receipts.js' %}?v=5"></script>
 {% endblock %}

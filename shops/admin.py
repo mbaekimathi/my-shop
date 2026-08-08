@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     Client,
+    CompanyCommunicationsSettings,
     CompanyPosSettings,
     CompanyProfile,
     Expense,
@@ -66,6 +67,21 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "enable_receipt_qr",
         "receipt_qr_content",
         "receipt_qr_website",
+        "updated_at",
+    )
+    readonly_fields = ("updated_at",)
+
+
+@admin.register(CompanyCommunicationsSettings)
+class CompanyCommunicationsSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "enable_whatsapp",
+        "enable_message",
+        "enable_sms",
+        "enable_automations",
+        "enable_bulk_send",
+        "sms_provider",
         "updated_at",
     )
     readonly_fields = ("updated_at",)

@@ -252,10 +252,14 @@ def _render_hr_authorizations(request, profile, section_meta, page_number=1):
     )
     employees_page = paginator.get_page(page_number)
     employees = list(employees_page.object_list)
+    shops = list(_available_shops_queryset())
     for employee in employees:
         employee.assigned_shop_ids = {
             shop.pk for shop in employee.assigned_shops.all()
         }
+        employee.assigned_shop_names = [
+            shop.name for shop in shops if shop.pk in employee.assigned_shop_ids
+        ]
     segment = role_url_segment(profile.role)
     base_url = reverse(
         "employees:hr_section",
@@ -287,7 +291,7 @@ def _render_hr_authorizations(request, profile, section_meta, page_number=1):
             ),
             "employees_page": employees_page,
             "employees": employees,
-            "shops": list(_available_shops_queryset()),
+            "shops": shops,
             "permissions_url": hr_section_url(profile.role, "permissions"),
             "form_data": form_data,
             "form_errors": form_errors,
@@ -683,6 +687,8 @@ def _handle_hr_management_post(request, profile, page_number):
 
 
 def _render_hr_management(request, profile, meta, module, page_sidebar, page_number=1):
+    from django.db.models import Q
+
     from .module_permissions import module_capabilities, require_module_permission
 
     form_data = dict(EMPTY_EMPLOYEE_FORM)
@@ -693,6 +699,7 @@ def _render_hr_management(request, profile, meta, module, page_sidebar, page_num
     edit_form_errors = []
     edit_employee = None
     caps = module_capabilities(profile, "hr-management")
+    search = (request.GET.get("q") or "").strip()
 
     if request.method == "POST":
         redirect_response, modal_state = _handle_hr_management_post(
@@ -719,13 +726,36 @@ def _render_hr_management(request, profile, meta, module, page_sidebar, page_num
     pending_count = EmployeeProfile.objects.filter(
         status=EmployeeStatus.PENDING_APPROVAL
     ).count()
+    employees_qs = _managed_employees_queryset()
+    if search:
+        employees_qs = employees_qs.filter(
+            Q(employee_id__icontains=search)
+            | Q(user__first_name__icontains=search)
+            | Q(user__last_name__icontains=search)
+            | Q(user__username__icontains=search)
+            | Q(user__email__icontains=search)
+            | Q(phone_number__icontains=search)
+        )
     paginator = Paginator(
-        _managed_employees_queryset(),
+        employees_qs,
         settings.EMPLOYEE_LIST_PAGE_SIZE,
     )
     employees_page = paginator.get_page(page_number)
     employees = _attach_phone_country_iso(list(employees_page.object_list))
     segment = role_url_segment(profile.role)
+
+    pagination = pagination_links(
+        employees_page,
+        "hr_management",
+        url_kwargs={"role_segment": segment},
+    )
+    if search:
+        from urllib.parse import urlencode
+
+        suffix = f"?{urlencode({'q': search})}"
+        for key in ("previous_url", "next_url"):
+            if pagination.get(key):
+                pagination[key] = f"{pagination[key]}{suffix}"
 
     return render(
         request,
@@ -740,6 +770,7 @@ def _render_hr_management(request, profile, meta, module, page_sidebar, page_num
             "pending_count": pending_count,
             "employees_page": employees_page,
             "employees": employees,
+            "search": search,
             "role_choices": EmployeeRole.choices,
             "form_data": form_data,
             "form_errors": form_errors,
@@ -751,11 +782,7 @@ def _render_hr_management(request, profile, meta, module, page_sidebar, page_num
             "countries": COUNTRY_DIAL_CODES,
             "approvals_url": hr_approvals_url(profile.role),
             "module_permissions": caps,
-            "pagination": pagination_links(
-                employees_page,
-                "hr_management",
-                url_kwargs={"role_segment": segment},
-            ),
+            "pagination": pagination,
         },
     )
 

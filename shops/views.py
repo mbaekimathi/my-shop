@@ -33,7 +33,7 @@ from items.services import (
     respond_to_stock_request,
 )
 
-from .models import Expense, ExpenseCategory, ExpensePaymentStatus, Shop
+from .models import ExpenseCategory, ExpensePaymentStatus, Shop
 from .daraja_stk import (
     get_stk_payment,
     handle_stk_callback,
@@ -56,6 +56,7 @@ from .services import (
     get_company_pos_settings,
     get_open_shop_day,
     get_shop_receipt_detail,
+    list_shop_day_sessions,
     list_shop_receipts,
     open_shop_day,
     pos_settings_as_dict,
@@ -958,6 +959,8 @@ def _render_my_shop_tool_page(
 
 def _buy_stock_items_context(shop):
     """Lean shell context for buy-stock — catalog loads via JSON API."""
+    import json as _json
+
     from django.db.models import Sum
 
     item_count = Item.objects.count()
@@ -981,6 +984,9 @@ def _buy_stock_items_context(shop):
             "employees:my_shop_buy_stock_catalog", kwargs={"shop_id": shop.pk}
         ),
         "use_stock_catalog_api": True,
+        "catalog_shops_json": _json.dumps(
+            [{"id": shop.pk, "name": shop.name}]
+        ),
     }
 
 
@@ -1158,7 +1164,7 @@ def my_shop_stock_requests(request, shop_id):
 @shop_floor_required
 @require_http_methods(["GET", "POST"])
 def my_shop_register_expense(request, shop_id):
-    """Register an outside expense against the active shop."""
+    """Register an outside expense against the active shop (modal on workspace)."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         if _wants_json_response(request):
@@ -1176,115 +1182,72 @@ def my_shop_register_expense(request, shop_id):
     if denied:
         return denied
 
-    shops = _shops_for_floor(profile, shop)
-    form_errors = []
+    workspace_url = reverse(
+        "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
+    )
+    expense_modal_url = f"{workspace_url}?modal=register-expense"
+
+    if request.method == "GET":
+        return redirect(expense_modal_url)
+
     form_data = {
-        "category": "",
-        "name": "",
-        "amount": "",
-        "payment_status": "",
-        "supplier_id": "",
-        "supplier_name": "",
-        "supplier_phone_country_code": "+254",
-        "supplier_phone_country_iso": "KE",
-        "supplier_phone_number": "",
-        "login_code": "",
+        "category": (request.POST.get("category") or "").strip().lower(),
+        "name": (request.POST.get("name") or "").strip().upper(),
+        "amount": (request.POST.get("amount") or "").strip(),
+        "payment_status": (request.POST.get("payment_status") or "").strip().lower(),
+        "supplier_id": (request.POST.get("supplier_id") or "").strip(),
+        "supplier_name": (request.POST.get("supplier_name") or "").strip().upper(),
+        "supplier_phone_country_code": (
+            request.POST.get("supplier_phone_country_code") or "+254"
+        ).strip(),
+        "supplier_phone_country_iso": (
+            request.POST.get("supplier_phone_country_iso") or "KE"
+        )
+        .strip()
+        .upper(),
+        "supplier_phone_number": (
+            request.POST.get("supplier_phone_number") or ""
+        ).strip(),
+        "login_code": (request.POST.get("login_code") or "").strip(),
     }
-
-    if request.method == "POST":
-        wants_json = _wants_json_response(request)
-        form_data = {
-            "category": (request.POST.get("category") or "").strip().lower(),
-            "name": (request.POST.get("name") or "").strip().upper(),
-            "amount": (request.POST.get("amount") or "").strip(),
-            "payment_status": (request.POST.get("payment_status") or "").strip().lower(),
-            "supplier_id": (request.POST.get("supplier_id") or "").strip(),
-            "supplier_name": (request.POST.get("supplier_name") or "").strip().upper(),
-            "supplier_phone_country_code": (
-                request.POST.get("supplier_phone_country_code") or "+254"
-            ).strip(),
-            "supplier_phone_country_iso": (
-                request.POST.get("supplier_phone_country_iso") or "KE"
-            ).strip().upper(),
-            "supplier_phone_number": (
-                request.POST.get("supplier_phone_number") or ""
-            ).strip(),
-            "login_code": (request.POST.get("login_code") or "").strip(),
-        }
-        try:
-            result = register_shop_expense(
-                shop=shop, profile=profile, payload=form_data
+    wants_json = _wants_json_response(request)
+    try:
+        result = register_shop_expense(shop=shop, profile=profile, payload=form_data)
+    except ValidationError as exc:
+        form_errors = _validation_errors(exc)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": form_errors[0]
+                    if form_errors
+                    else "Could not record expense.",
+                },
+                status=400,
             )
-        except ValidationError as exc:
-            form_errors = _validation_errors(exc)
-            if wants_json:
-                return JsonResponse(
-                    {
-                        "ok": False,
-                        "error": form_errors[0]
-                        if form_errors
-                        else "Could not record expense.",
-                    },
-                    status=400,
-                )
-        else:
-            messages.success(request, result["message"])
-            next_url = (request.POST.get("next") or "").strip()
-            if not (next_url.startswith("/") and not next_url.startswith("//")):
-                next_url = reverse(
-                    "employees:my_shop_register_expense", kwargs={"shop_id": shop.pk}
-                )
-            if wants_json:
-                print_payload = build_expense_supplier_receipt(
-                    result["expense"],
-                    shop=shop,
-                    authorised_by=result.get("authorised_by") or "",
-                )
-                return JsonResponse(
-                    {
-                        "ok": True,
-                        "message": result["message"],
-                        "next": next_url,
-                        **print_payload,
-                    }
-                )
-            return redirect(next_url)
+        for message in form_errors:
+            messages.error(request, message)
+        return redirect(expense_modal_url)
 
-    recent_expenses = list(
-        Expense.objects.filter(shop=shop)
-        .select_related("created_by__user", "supplier")
-        .order_by("-created_at")[:8]
-    )
-
-    return _render_my_shop_tool_page(
-        request,
-        shop=shop,
-        profile=profile,
-        shops=shops,
-        active="expense",
-        title=f"Register expense — {shop.name}",
-        headline="Register expense",
-        summary=(
-            f"Record an outside expense for {shop.name}: category, amount, "
-            f"supplier details, payment status, and staff ID."
-        ),
-        icon="wallet",
-        template_name="shops/my_shop_register_expense.html",
-        extra_context={
-            "form_data": form_data,
-            "form_errors": form_errors,
-            "expense_categories": ExpenseCategory.choices,
-            "payment_statuses": ExpensePaymentStatus.choices,
-            "countries": COUNTRY_DIAL_CODES,
-            "recent_expenses": recent_expenses,
-            "expense_supplier_search_url": reverse(
-                "employees:expense_supplier_search"
-            ),
-            "verify_login_code_url": reverse(
-                "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
-            ),
-        },
-    )
+    messages.success(request, result["message"])
+    next_url = (request.POST.get("next") or "").strip()
+    if not (next_url.startswith("/") and not next_url.startswith("//")):
+        next_url = workspace_url
+    if wants_json:
+        print_payload = build_expense_supplier_receipt(
+            result["expense"],
+            shop=shop,
+            authorised_by=result.get("authorised_by") or "",
+        )
+        return JsonResponse(
+            {
+                "ok": True,
+                "message": result["message"],
+                "next": next_url,
+                **print_payload,
+            }
+        )
+    return redirect(next_url)
 
 
 @shop_floor_required
@@ -1527,6 +1490,7 @@ def my_shop_day_toggle(request, shop_id):
     open_session = get_open_shop_day(shop)
     is_open = open_session is not None
     mode = "close" if is_open else "open"
+    day_sessions = list_shop_day_sessions(shop, limit=40)
 
     return _render_my_shop_tool_page(
         request,
@@ -1547,6 +1511,8 @@ def my_shop_day_toggle(request, shop_id):
             "mode": mode,
             "is_open": is_open,
             "open_session": open_session,
+            "day_sessions": day_sessions,
+            "day_session_count": len(day_sessions),
             "form_data": form_data,
             "form_errors": form_errors,
             "verify_login_code_url": reverse(

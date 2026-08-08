@@ -5,33 +5,36 @@
 
 {% block workspace_content %}
 <form
-  class="stock-layout{% if stock_mode != 'view' %} stock-layout--action{% endif %}"
+  class="stock-layout{% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %} stock-layout--action{% endif %}"
   method="post"
   data-stock-layout
   data-stock-bulk-form
   {% if stock_mode == 'in' %}data-supplier-search-url="{{ supplier_search_url }}"{% endif %}
   {% if stock_mode == 'out' %}data-serial-search-url="{{ serial_search_url }}"{% endif %}
+  {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}data-stock-multi-shop="1"{% endif %}
 >
   {% csrf_token %}
   <input type="hidden" name="mode" value="{{ stock_mode }}" data-stock-float-mode-input>
+  {% if stock_mode == 'request' %}
+  <input type="hidden" name="shop_id" value="" data-stock-requesting-shop>
+  {% endif %}
 
   <section
-    class="stock-panel{% if stock_mode != 'view' %} stock-panel--action{% endif %}"
+    class="stock-panel{% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %} stock-panel--action{% endif %}"
     data-animate="rise"
     data-item-total="{{ item_count }}"
     data-stock-mode="{{ stock_mode }}"
     {% if use_stock_catalog_api %}
     data-stock-catalog-api="{{ stock_catalog_url }}"
-    {% if selected_shop %}
+    {% if selected_shop and stock_mode != 'in' and stock_mode != 'out' and stock_mode != 'request' %}
     data-stock-catalog-shop="{{ selected_shop.pk }}"
     data-stock-catalog-shop-name="{{ selected_shop.name }}"
     {% endif %}
-    {% if stock_mode == 'view' %}
+    {% if stock_mode == 'view' or stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
     data-stock-catalog-shops="{{ catalog_shops_json }}"
     {% endif %}
-    {% if stock_mode == 'request' and requested_from_shop %}
-    data-stock-catalog-from-shop="{{ requested_from_shop.pk }}"
-    data-stock-catalog-from-shop-name="{{ requested_from_shop.name }}"
+    {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
+    data-stock-editable-matrix="1"
     {% endif %}
     data-stock-catalog-page-size="48"
     {% endif %}
@@ -41,11 +44,11 @@
         <div>
           <p class="stock-kicker">
             {% if stock_mode == 'out' %}
-            Stock out · {{ selected_shop.name|default:"Select shop" }}
+            Stock out · All shops
             {% elif stock_mode == 'request' %}
-            Request stock · Manual
+            Request stock · All shops
             {% elif stock_mode == 'in' %}
-            Stock in · {{ selected_shop.name|default:"Select shop" }}
+            Stock in · All shops
             {% else %}
             Current stock · {% if selected_shop %}{{ selected_shop.name }}{% else %}All shops{% endif %}
             {% endif %}
@@ -63,11 +66,11 @@
           </h2>
           <p>
             {% if stock_mode == 'out' %}
-            Choose an item, enter quantity, reason, and refund details, then submit.
+            Enter quantity per shop. Serial items open a popup. Set reason and refund in the submit panel.
             {% elif stock_mode == 'request' %}
-            Compare stock between shops, then submit your request.
+            Click a shop header to set the requesting shop, then enter qty under the shops you are requesting from.
             {% elif stock_mode == 'in' %}
-            Open an item, add quantity or serials, then autofill supplier details and submit.
+            Enter quantity and buying price per shop. Serial items open a popup. Set supplier details in the submit panel.
             {% else %}
             Browse current stock across shops. This screen is read-only.
             {% endif %}
@@ -83,6 +86,13 @@
             <strong>{{ total_units }}</strong>
             <span>{% if selected_shop %}units at {{ selected_shop.name }}{% else %}units across all shops{% endif %}</span>
           </p>
+          {% elif stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
+          {% if shops %}
+          <p class="stock-stat">
+            <strong>{{ total_units }}</strong>
+            <span>units across all shops</span>
+          </p>
+          {% endif %}
           {% elif selected_shop %}
           <p class="stock-stat">
             <strong>{{ total_units }}</strong>
@@ -93,36 +103,16 @@
       </div>
 
       <div class="stock-shop-bar" data-stock-shop-bar>
-        {% if stock_mode == 'request' %}
-        <label class="stock-shop-pick">
-          <span>Requesting shop</span>
-          <select data-stock-shop-nav name="shop_id" data-stock-shop>
-            <option value="">Select shop</option>
-            {% for shop in shops %}
-            <option value="{{ shop.pk }}"{% if selected_shop and selected_shop.pk == shop.pk %} selected{% endif %}>{{ shop.name }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label class="stock-shop-pick">
-          <span>Request from shop</span>
-          <select data-stock-from-nav name="requested_from_shop_id" data-stock-from-shop>
-            <option value="">Select shop</option>
-            {% for shop in shops %}
-            <option value="{{ shop.pk }}"{% if requested_from_shop and requested_from_shop.pk == shop.pk %} selected{% endif %}>{{ shop.name }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        {% else %}
+        {% if stock_mode == 'view' %}
         <label class="stock-shop-pick">
           <span>Shop</span>
           <select data-stock-shop-nav name="shop_id" data-stock-shop>
-            <option value="">{% if stock_mode == 'view' %}All shops{% else %}Select shop{% endif %}</option>
+            <option value="">All shops</option>
             {% for shop in shops %}
             <option value="{{ shop.pk }}"{% if selected_shop and selected_shop.pk == shop.pk %} selected{% endif %}>{{ shop.name }}</option>
             {% endfor %}
           </select>
         </label>
-        {% if stock_mode == 'view' %}
         <button
           type="button"
           class="stock-print-trigger"
@@ -131,7 +121,16 @@
           <i data-lucide="printer" aria-hidden="true"></i>
           <span>Print stock</span>
         </button>
-        {% endif %}
+        {% elif stock_mode == 'request' %}
+        <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
+          <i data-lucide="columns-3" aria-hidden="true"></i>
+          <span>Click a shop column to set <strong>Requesting</strong>, then enter qty under other shops</span>
+        </p>
+        {% else %}
+        <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
+          <i data-lucide="columns-3" aria-hidden="true"></i>
+          <span>All shops — enter qty{% if stock_mode == 'in' %} and buying price{% endif %} under each shop</span>
+        </p>
         {% endif %}
         {% if not shops %}
         <p class="stock-shop-bar-hint">
@@ -158,16 +157,45 @@
       </div>
     </header>
 
-    {% if stock_mode != 'view' and not selected_shop %}
+    {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
+    {% if not shops %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="store" aria-hidden="true"></i>
+      <p>No shops are allocated to your account.</p>
+    </div>
+    {% elif use_stock_catalog_api and item_count %}
+    <div class="stock-matrix-wrap" data-item-list>
+      <div data-stock-catalog-root>
+        <div class="dashboard-placeholder" data-stock-catalog-loading>
+          <i data-lucide="loader-circle" aria-hidden="true"></i>
+          <p>Loading items…</p>
+        </div>
+      </div>
+      <table class="stock-matrix" hidden>
+        <tbody data-stock-parked></tbody>
+      </table>
+    </div>
+    <div class="shop-floor-catalog-more" data-stock-catalog-more-wrap hidden>
+      <button type="button" class="btn btn--ghost" data-stock-catalog-more>Load more items</button>
+    </div>
+    <div class="item-search-empty" data-item-no-results hidden>
+      <i data-lucide="search-x" aria-hidden="true"></i>
+      <p>No items match your search.</p>
+    </div>
+    {% else %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="package" aria-hidden="true"></i>
+      <p>No items registered in the system yet.</p>
+    </div>
+    {% endif %}
+    {% elif stock_mode != 'view' and not selected_shop %}
     <div class="dashboard-placeholder">
       <i data-lucide="store" aria-hidden="true"></i>
       <p>
         {% if not shops %}
         No shops are allocated to your account.
-        {% elif stock_mode == 'request' %}
-        Select the requesting shop to continue.
         {% else %}
-        Select a shop to {% if stock_mode == 'in' %}stock in{% elif stock_mode == 'out' %}stock out{% else %}continue{% endif %}.
+        Select a shop to continue.
         {% endif %}
       </p>
     </div>
@@ -175,11 +203,6 @@
     <div class="dashboard-placeholder">
       <i data-lucide="store" aria-hidden="true"></i>
       <p>Register a shop first to view stock.</p>
-    </div>
-    {% elif stock_mode == 'request' and not requested_from_shop %}
-    <div class="dashboard-placeholder">
-      <i data-lucide="store" aria-hidden="true"></i>
-      <p>Select the shop you are requesting stock from.</p>
     </div>
     {% elif use_stock_catalog_api and item_count %}
     <div class="stock-matrix-wrap" data-item-list>
@@ -339,7 +362,7 @@
                         <span class="stock-inline-label-row">
                           <span>Buying price</span>
                           {% if row.last_buying_price is not None %}
-                          <em class="stock-prev-price">Prev {{ row.last_buying_price|floatformat:2 }}</em>
+                          <em class="stock-prev-price">Prev {{ row.last_buying_price|floatformat:0 }}</em>
                           {% else %}
                           <em class="stock-prev-price is-empty">No previous</em>
                           {% endif %}
@@ -348,12 +371,12 @@
                           type="number"
                           name="buying_price"
                           min="0"
-                          step="0.01"
-                          placeholder="{% if row.last_buying_price is not None %}{{ row.last_buying_price|floatformat:2 }}{% else %}0.00{% endif %}"
-                          inputmode="decimal"
+                          step="1"
+                          placeholder="{% if row.last_buying_price is not None %}{{ row.last_buying_price|floatformat:0 }}{% else %}0{% endif %}"
+                          inputmode="numeric"
                           data-stock-buying-price
                           data-stock-field
-                          {% if row.last_buying_price is not None %}data-stock-prev-buying="{{ row.last_buying_price|floatformat:2 }}"{% endif %}
+                          {% if row.last_buying_price is not None %}data-stock-prev-buying="{{ row.last_buying_price|floatformat:0 }}"{% endif %}
                           disabled
                         >
                       </label>
@@ -538,9 +561,9 @@
                           type="number"
                           name="refund_amount"
                           min="0"
-                          step="0.01"
-                          placeholder="0.00"
-                          inputmode="decimal"
+                          step="1"
+                          placeholder="0"
+                          inputmode="numeric"
                           data-stock-refund-amount
                           data-stock-field
                           disabled
@@ -638,8 +661,8 @@
     {% endif %}
   </section>
 
-  {% if stock_mode == 'in' or stock_mode == 'out' %}
-    {% if selected_shop %}
+  {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
+  {% if shops %}
   <aside
     class="stock-float stock-float--{{ stock_mode }}"
     data-stock-float
@@ -657,10 +680,10 @@
         >
           <span class="stock-float-collapse-copy">
             <span class="stock-float-kicker">
-              {% if stock_mode == 'in' %}Stock in{% else %}Stock out{% endif %}
+              {% if stock_mode == 'in' %}Stock in{% elif stock_mode == 'out' %}Stock out{% else %}Request{% endif %}
             </span>
             <span class="stock-float-title">
-              {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
+              {% if stock_mode == 'in' %}Submit stock in{% elif stock_mode == 'out' %}Submit stock out{% else %}Submit request{% endif %}
             </span>
           </span>
           <i class="stock-float-collapse-icon" data-lucide="chevron-up" aria-hidden="true"></i>
@@ -672,18 +695,31 @@
 
       <div class="stock-float-body" id="stock-float-body" data-stock-float-body>
         <div class="stock-float-shops">
+          {% if stock_mode == 'request' %}
           <p class="stock-float-shop-readout">
-            <span>Shop</span>
-            <strong>{{ selected_shop.name }}</strong>
+            <span>Requesting</span>
+            <strong data-stock-float-requesting-label>Select a shop column</strong>
           </p>
+          <p class="stock-float-shop-readout">
+            <span>From</span>
+            <strong data-stock-float-shop-label>—</strong>
+          </p>
+          {% else %}
+          <p class="stock-float-shop-readout">
+            <span>Shops</span>
+            <strong data-stock-float-shop-label>All shops</strong>
+          </p>
+          {% endif %}
         </div>
 
         <div class="stock-float-empty" data-stock-float-empty>
           <p>
             {% if stock_mode == 'in' %}
-            Open items, enter quantity/serials and buying price. Use autofill below for supplier details.
+            Enter qty and buying price per shop. Use autofill below for supplier details.
+            {% elif stock_mode == 'out' %}
+            Enter qty per shop. Use autofill below for reason and refund.
             {% else %}
-            Open items, enter quantity/serials. Use autofill below for reason and refund.
+            Click a shop header to set Requesting, then enter qty under shops you are requesting from.
             {% endif %}
           </p>
         </div>
@@ -788,9 +824,9 @@
             <input
               type="number"
               min="0"
-              step="0.01"
-              placeholder="0.00"
-              inputmode="decimal"
+              step="1"
+              placeholder="0"
+              inputmode="numeric"
               data-stock-float-refund-amount
             >
           </label>
@@ -799,86 +835,20 @@
           </button>
           <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
         </div>
+        {% elif stock_mode == 'request' %}
+        <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
         {% endif %}
 
         <button class="stock-float-submit" type="submit" data-stock-float-submit disabled>
           <i data-lucide="check" aria-hidden="true"></i>
           <span>
-            {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
+            {% if stock_mode == 'in' %}Submit stock in{% elif stock_mode == 'out' %}Submit stock out{% else %}Submit request{% endif %}
           </span>
         </button>
       </div>
     </div>
   </aside>
-    {% endif %}
-  {% elif stock_mode == 'request' and selected_shop and requested_from_shop %}
-  <aside
-    class="stock-float stock-float--request"
-    data-stock-float
-    data-stock-float-mode="request"
-    aria-live="polite"
-  >
-    <div class="stock-float-card">
-      <header class="stock-float-head">
-        <button
-          type="button"
-          class="stock-float-collapse-btn"
-          data-stock-float-toggle
-          aria-expanded="true"
-          aria-controls="stock-float-body"
-        >
-          <span class="stock-float-collapse-copy">
-            <span class="stock-float-kicker">Request</span>
-            <span class="stock-float-title">Submit request</span>
-          </span>
-          <i class="stock-float-collapse-icon" data-lucide="chevron-up" aria-hidden="true"></i>
-        </button>
-        <button class="stock-float-clear" type="button" data-stock-float-clear hidden>
-          Clear
-        </button>
-      </header>
-
-      <div class="stock-float-body" id="stock-float-body" data-stock-float-body>
-        <div class="stock-float-shops">
-          <p class="stock-float-shop-readout">
-            <span>Requesting</span>
-            <strong>{{ selected_shop.name }}</strong>
-          </p>
-          <p class="stock-float-shop-readout">
-            <span>From</span>
-            <strong>{{ requested_from_shop.name }}</strong>
-          </p>
-        </div>
-
-        <div class="stock-float-empty" data-stock-float-empty>
-          <p>Click items in the list to open their forms, then fill and submit.</p>
-        </div>
-
-        <p class="stock-float-held" data-stock-float-held hidden>
-          <strong data-stock-float-held-count>0</strong>
-          <span>line(s) held while you search</span>
-        </p>
-
-        <div class="stock-float-summary" data-stock-float-summary hidden>
-          <p>
-            <strong data-stock-ready-count>0</strong>
-            <span>item(s) ready</span>
-          </p>
-          <p>
-            <strong data-stock-ready-units>0</strong>
-            <span>total units</span>
-          </p>
-        </div>
-
-        <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
-
-        <button class="stock-float-submit" type="submit" data-stock-float-submit disabled>
-          <i data-lucide="check" aria-hidden="true"></i>
-          <span>Submit request</span>
-        </button>
-      </div>
-    </div>
-  </aside>
+  {% endif %}
   {% endif %}
 </form>
 
@@ -1035,14 +1005,64 @@
   </div>
 </div>
 {% endif %}
+
+{% if stock_mode == 'in' or stock_mode == 'out' %}
+<div
+  class="workspace-modal stock-serial-modal"
+  data-stock-serial-modal
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-stock-serial-modal-close></div>
+  <div
+    class="workspace-modal-dialog stock-serial-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stock-serial-modal-title"
+  >
+    <header class="workspace-modal-head">
+      <div>
+        <p class="stock-serial-modal-kicker" data-stock-serial-modal-shop></p>
+        <h2 id="stock-serial-modal-title" data-stock-serial-modal-title>Serial numbers</h2>
+      </div>
+      <button type="button" class="workspace-modal-close" data-stock-serial-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+    <div class="stock-serial-modal-body">
+      <p class="stock-serial-qty-live">
+        Qty <span data-stock-serial-modal-count>0</span>
+      </p>
+      <div class="stock-serial-list" data-stock-serial-modal-list></div>
+      <div class="stock-serial-actions">
+        <button type="button" class="stock-serial-add" data-stock-serial-modal-add>
+          <i data-lucide="plus" aria-hidden="true"></i>
+          Add serial
+        </button>
+        <small class="stock-serial-hint">
+          {% if stock_mode == 'out' %}
+          Type to search available serials at this shop
+          {% else %}
+          Quantity updates as you add serials
+          {% endif %}
+        </small>
+      </div>
+    </div>
+    <div class="workspace-modal-actions">
+      <button type="button" class="btn btn--ghost" data-stock-serial-modal-close>Cancel</button>
+      <button type="button" class="btn btn--primary" data-stock-serial-modal-done>Done</button>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=2"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=11"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=serial31"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix6"></script>
 <script
   src="{% static 'js/serial-scan.js' %}?v=2"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"

@@ -5,16 +5,30 @@
 
 {% block workspace_content %}
 <section
-  class="shop-tool-page shop-day-page"
+  class="item-panel item-panel--dense item-panel--shop-day shop-day-page"
   data-shop-day
   data-mode="{{ mode }}"
   data-verify-login-url="{{ verify_login_code_url }}"
   data-animate="rise"
 >
-  <header class="shop-tool-head">
-    <p class="shop-tool-kicker">{{ shop.name }}</p>
-    <h2>{{ meta.headline }}</h2>
-    <p class="shop-tool-summary">{{ meta.summary }}</p>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">{{ shop.name }} · Day</p>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }}</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{% if is_open %}Open{% else %}Closed{% endif %}</strong>
+          <span>status</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ day_session_count }}</strong>
+          <span>record{{ day_session_count|pluralize }}</span>
+        </p>
+      </div>
+    </div>
   </header>
 
   {% if is_open and open_session %}
@@ -23,10 +37,11 @@
     <div>
       <strong>Shop is open</strong>
       <p>
-        Opened
-        {{ open_session.opened_at|date:"d M Y, H:i" }}
-        by
-        {{ open_session.opened_by.user.get_full_name|default:open_session.opened_by.user.username }}
+        Opened {{ open_session.opened_at|date:"d M Y · H:i" }}
+        by {{ open_session.opened_by.user.get_full_name|default:open_session.opened_by.user.username }}
+        · Cash {{ open_session.opening_cash|floatformat:0 }}
+        · M-Pesa {{ open_session.opening_mpesa|floatformat:0 }}
+        · Credit {{ open_session.opening_credit|floatformat:0 }}
       </p>
     </div>
   </div>
@@ -56,6 +71,11 @@
   >
     {% csrf_token %}
 
+    <div class="pos-settings-group-head shop-day-form-head">
+      <h3>{% if is_open %}Closing balances{% else %}Opening balances{% endif %}</h3>
+      <p>Whole shillings · confirm stock · staff ID</p>
+    </div>
+
     <div class="shop-day-balances">
       <label class="shop-cart-input">
         <span>{% if is_open %}Closing{% else %}Opening{% endif %} cash</span>
@@ -63,11 +83,11 @@
           type="number"
           name="cash_amount"
           min="0"
-          step="0.01"
-          inputmode="decimal"
+          step="1"
+          inputmode="numeric"
           required
           value="{{ form_data.cash_amount }}"
-          placeholder="0.00"
+          placeholder="0"
         >
       </label>
       <label class="shop-cart-input">
@@ -76,11 +96,11 @@
           type="number"
           name="mpesa_amount"
           min="0"
-          step="0.01"
-          inputmode="decimal"
+          step="1"
+          inputmode="numeric"
           required
           value="{{ form_data.mpesa_amount }}"
-          placeholder="0.00"
+          placeholder="0"
         >
       </label>
       <label class="shop-cart-input">
@@ -89,11 +109,11 @@
           type="number"
           name="credit_amount"
           min="0"
-          step="0.01"
-          inputmode="decimal"
+          step="1"
+          inputmode="numeric"
           required
           value="{{ form_data.credit_amount }}"
-          placeholder="0.00"
+          placeholder="0"
         >
       </label>
     </div>
@@ -146,10 +166,82 @@
       </button>
     </div>
   </form>
+
+  <section class="shop-day-history" aria-labelledby="day-records-title">
+    <div class="shop-day-history-head">
+      <h3 id="day-records-title">Day records</h3>
+      <p>Open and close history for {{ shop.name }}.</p>
+    </div>
+
+    {% if day_sessions %}
+    <div class="item-table-wrap shop-day-table-wrap">
+      <table class="shop-day-table">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Opened</th>
+            <th>Opening</th>
+            <th>Closed</th>
+            <th>Closing</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for session in day_sessions %}
+          <tr{% if session.is_open %} class="is-open"{% endif %}>
+            <td data-label="Status">
+              {% if session.is_open %}
+              <span class="shop-day-pill is-open">Open</span>
+              {% else %}
+              <span class="shop-day-pill is-closed">Closed</span>
+              {% endif %}
+            </td>
+            <td data-label="Opened">
+              <strong>{{ session.opened_at|date:"d M Y · H:i" }}</strong>
+              <span class="shop-day-table-sub">
+                {{ session.opened_by.user.get_full_name|default:session.opened_by.user.username }}
+              </span>
+            </td>
+            <td class="shop-day-table-balances" data-label="Opening">
+              <span>Cash {{ session.opening_cash|floatformat:0 }}</span>
+              <span>M-Pesa {{ session.opening_mpesa|floatformat:0 }}</span>
+              <span>Credit {{ session.opening_credit|floatformat:0 }}</span>
+            </td>
+            <td data-label="Closed">
+              {% if session.closed_at %}
+              <strong>{{ session.closed_at|date:"d M Y · H:i" }}</strong>
+              <span class="shop-day-table-sub">
+                {% if session.closed_by %}
+                {{ session.closed_by.user.get_full_name|default:session.closed_by.user.username }}
+                {% else %}
+                —
+                {% endif %}
+              </span>
+              {% else %}
+              <span class="shop-day-table-sub">Still open</span>
+              {% endif %}
+            </td>
+            <td class="shop-day-table-balances" data-label="Closing">
+              {% if session.closed_at %}
+              <span>Cash {{ session.closing_cash|floatformat:0 }}</span>
+              <span>M-Pesa {{ session.closing_mpesa|floatformat:0 }}</span>
+              <span>Credit {{ session.closing_credit|floatformat:0 }}</span>
+              {% else %}
+              <span class="shop-day-table-sub">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="shop-day-history-empty">No open/close records yet for this shop.</p>
+    {% endif %}
+  </section>
 </section>
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/my-shop-day.js' %}?v=1"></script>
+<script src="{% static 'js/my-shop-day.js' %}?v=2"></script>
 {% endblock %}

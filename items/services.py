@@ -182,9 +182,14 @@ def build_stock_catalog_page(
     page = page_data["page"]
     item_ids = [item.pk for item in items]
 
+    # Multi-shop matrix for view and for in/out/request when shop_ids are provided.
+    multi_shop_modes = {"view", "in", "out", "request"}
+    use_multi_shop = mode in multi_shop_modes and (
+        bool(shop_ids) or (mode == "view" and not shop_id)
+    )
     view_shop_ids = []
-    if mode == "view":
-        if shop_id:
+    if use_multi_shop:
+        if shop_id and not shop_ids:
             view_shop_ids = [int(shop_id)]
         elif shop_ids:
             view_shop_ids = [int(sid) for sid in shop_ids if sid]
@@ -198,7 +203,7 @@ def build_stock_catalog_page(
     shop_qty_map = {}
     from_qty_map = {}
     multi_qty_map = {}
-    if item_ids and shop_id and mode != "view":
+    if item_ids and shop_id and not use_multi_shop:
         shop_qty_map = {
             item_id: qty
             for item_id, qty in ShopStock.objects.filter(
@@ -225,7 +230,7 @@ def build_stock_catalog_page(
         )
 
     shops_meta = []
-    if mode == "view" and view_shop_ids:
+    if view_shop_ids:
         shops_by_id = {
             shop.pk: shop
             for shop in Shop.objects.filter(pk__in=view_shop_ids).only("id", "name")
@@ -254,7 +259,7 @@ def build_stock_catalog_page(
                 format(price, "f") if price is not None else None
             ),
         }
-        if mode == "view":
+        if use_multi_shop:
             quantities = [
                 int(multi_qty_map.get(item.pk, {}).get(sid, 0)) for sid in view_shop_ids
             ]
@@ -265,14 +270,14 @@ def build_stock_catalog_page(
         rows.append(row)
 
     total_units = 0
-    if shop_id:
+    if shop_id and not use_multi_shop:
         total_units = (
             ShopStock.objects.filter(shop_id=shop_id).aggregate(total=Sum("quantity"))[
                 "total"
             ]
             or 0
         )
-    elif mode == "view" and view_shop_ids:
+    elif view_shop_ids:
         total_units = (
             ShopStock.objects.filter(shop_id__in=view_shop_ids).aggregate(
                 total=Sum("quantity")
@@ -294,7 +299,8 @@ def build_stock_catalog_page(
         "shop_id": shop_id,
         "requested_from_shop_id": requested_from_shop_id,
         "shops": shops_meta,
-        "show_all_shops": mode == "view" and len(view_shop_ids) > 1,
+        "show_all_shops": use_multi_shop and len(view_shop_ids) > 1,
+        "editable_matrix": mode in ("in", "out", "request") and use_multi_shop,
     }
 
 
@@ -885,6 +891,11 @@ def _parse_movement_lines(data, movement_type: str):
         if hasattr(data, "getlist")
         else data.get("refund_amount") or []
     )
+    raw_line_shops = (
+        data.getlist("line_shop_id")
+        if hasattr(data, "getlist")
+        else data.get("line_shop_id") or []
+    )
 
     if isinstance(raw_ids, str):
         raw_ids = [raw_ids]
@@ -912,6 +923,8 @@ def _parse_movement_lines(data, movement_type: str):
         raw_refunds = [raw_refunds]
     if isinstance(raw_refund_amounts, str):
         raw_refund_amounts = [raw_refund_amounts]
+    if isinstance(raw_line_shops, str):
+        raw_line_shops = [raw_line_shops]
 
     if not raw_ids:
         raise ValidationError("Enter quantity on at least one item.")
@@ -1025,6 +1038,13 @@ def _parse_movement_lines(data, movement_type: str):
             "serial_numbers": serials,
             "track_serial_number": tracks_serial,
         }
+        line_shop = (
+            str(raw_line_shops[index]).strip()
+            if index < len(raw_line_shops)
+            else ""
+        )
+        if line_shop:
+            line["shop_id"] = line_shop
         if movement_type == StockMovementType.IN:
             line["buying_price"] = buying_price
             line["payment_status"] = payment_status
@@ -1086,218 +1106,262 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
     }:
         raise ValidationError("Unknown stock action.")
 
-    if movement_type == StockMovementType.REQUEST:
-        shop = _get_active_shop(data.get("shop_id"), label="requesting shop")
-        _assert_shop_allowed(profile, shop, label="requesting shop")
-        requested_from = _get_active_shop(
-            data.get("requested_from_shop_id"),
-            label="shop to request from",
-        )
-        if str(shop.pk) == str(requested_from.pk):
-            raise ValidationError("Requesting shop and requested shop must be different.")
-    else:
-        shop = _get_active_shop(data.get("shop_id"), label="shop")
-        _assert_shop_allowed(profile, shop)
-        requested_from = None
-        if shop.is_suspended:
-            raise ValidationError(f"Shop “{shop.name}” is suspended.")
-
     line_payloads = _parse_movement_lines(data, movement_type)
 
+    if movement_type == StockMovementType.REQUEST:
+        # shop_id = requesting (destination). Per-line shop_id = from shop.
+        requesting_shop = _get_active_shop(
+            data.get("shop_id"), label="requesting shop"
+        )
+        _assert_shop_allowed(profile, requesting_shop, label="requesting shop")
+        fallback_from = str(data.get("requested_from_shop_id") or "").strip()
+        grouped_from: dict[str, list] = {}
+        for line in line_payloads:
+            from_sid = str(line.get("shop_id") or fallback_from).strip()
+            if not from_sid:
+                raise ValidationError(
+                    "Select a shop to request from for each stock line."
+                )
+            if str(from_sid) == str(requesting_shop.pk):
+                raise ValidationError(
+                    "Requesting shop and requested shop must be different."
+                )
+            grouped_from.setdefault(from_sid, []).append(line)
+
+        shop_groups = []
+        for from_sid, lines in grouped_from.items():
+            from_shop = _get_active_shop(from_sid, label="shop to request from")
+            _assert_shop_allowed(profile, from_shop, label="shop to request from")
+            if from_shop.is_suspended:
+                raise ValidationError(f"Shop “{from_shop.name}” is suspended.")
+            shop_groups.append((requesting_shop, lines, from_shop))
+    else:
+        # Group lines by shop (per-line shop_id from multi-shop matrix, else form shop_id).
+        fallback_shop_id = str(data.get("shop_id") or "").strip()
+        grouped: dict[str, list] = {}
+        for line in line_payloads:
+            sid = str(line.get("shop_id") or fallback_shop_id).strip()
+            if not sid:
+                raise ValidationError("Select a shop for each stock line.")
+            line["shop_id"] = sid
+            grouped.setdefault(sid, []).append(line)
+
+        shop_groups = []
+        for sid, lines in grouped.items():
+            shop = _get_active_shop(sid, label="shop")
+            _assert_shop_allowed(profile, shop)
+            if shop.is_suspended:
+                raise ValidationError(f"Shop “{shop.name}” is suspended.")
+            shop_groups.append((shop, lines, None))
+
+    last_movement = None
     with transaction.atomic():
+        all_item_ids = [
+            line["item_id"] for _shop, lines, _from in shop_groups for line in lines
+        ]
         items = {
             str(item.pk): item
-            for item in Item.objects.select_for_update().filter(
-                pk__in=[line["item_id"] for line in line_payloads]
-            )
+            for item in Item.objects.select_for_update().filter(pk__in=all_item_ids)
         }
 
-        prepared = []
-        errors = []
-        for line in line_payloads:
-            item = items.get(line["item_id"])
-            if item is None:
-                errors.append("One of the selected items could not be found.")
-                continue
-            if item.is_suspended and movement_type != StockMovementType.REQUEST:
-                errors.append(f"“{item.name}” is suspended and cannot be moved.")
-                continue
+        for shop, group_lines, requested_from in shop_groups:
+            prepared = []
+            errors = []
+            for line in group_lines:
+                item = items.get(line["item_id"])
+                if item is None:
+                    errors.append("One of the selected items could not be found.")
+                    continue
+                if item.is_suspended and movement_type != StockMovementType.REQUEST:
+                    errors.append(f"“{item.name}” is suspended and cannot be moved.")
+                    continue
 
-            shop_stock, _ = ShopStock.objects.select_for_update().get_or_create(
-                shop=shop,
-                item=item,
-                defaults={"quantity": 0},
-            )
-            line["shop_stock"] = shop_stock
-
-            if movement_type == StockMovementType.REQUEST:
-                from_stock, _ = ShopStock.objects.select_for_update().get_or_create(
-                    shop=requested_from,
+                shop_stock, _ = ShopStock.objects.select_for_update().get_or_create(
+                    shop=shop,
                     item=item,
                     defaults={"quantity": 0},
                 )
-                line["requested_from_stock"] = from_stock
+                line["shop_stock"] = shop_stock
 
-            serials = line.get("serial_numbers") or []
-            if item.track_serial_number and movement_type != StockMovementType.REQUEST:
-                if not serials:
-                    errors.append(f"“{item.name}” requires serial numbers.")
-                    continue
-                if len(serials) != line["quantity"]:
-                    errors.append(f"“{item.name}”: quantity must match serial count.")
-                    continue
-
-                if movement_type == StockMovementType.IN:
-                    existing_rows = list(
-                        ItemSerial.objects.select_for_update().filter(
-                            item=item, serial_number__in=serials
-                        )
+                if movement_type == StockMovementType.REQUEST:
+                    from_stock, _ = ShopStock.objects.select_for_update().get_or_create(
+                        shop=requested_from,
+                        item=item,
+                        defaults={"quantity": 0},
                     )
-                    available_dupes = [
-                        row.serial_number for row in existing_rows if row.is_available
-                    ]
-                    if available_dupes:
+                    line["requested_from_stock"] = from_stock
+
+                serials = line.get("serial_numbers") or []
+                if item.track_serial_number and movement_type != StockMovementType.REQUEST:
+                    if not serials:
                         errors.append(
-                            f"“{item.name}”: serial already in stock "
-                            f"({', '.join(sorted(available_dupes)[:5])}"
-                            f"{'…' if len(available_dupes) > 5 else ''})."
+                            f"“{item.name}” at {shop.name} requires serial numbers."
                         )
                         continue
-                    line["reactivate_serials"] = {
-                        row.serial_number: row
-                        for row in existing_rows
-                        if not row.is_available
-                    }
+                    if len(serials) != line["quantity"]:
+                        errors.append(
+                            f"“{item.name}” at {shop.name}: quantity must match serial count."
+                        )
+                        continue
+
+                    if movement_type == StockMovementType.IN:
+                        existing_rows = list(
+                            ItemSerial.objects.select_for_update().filter(
+                                item=item, serial_number__in=serials
+                            )
+                        )
+                        available_dupes = [
+                            row.serial_number
+                            for row in existing_rows
+                            if row.is_available
+                        ]
+                        if available_dupes:
+                            errors.append(
+                                f"“{item.name}”: serial already in stock "
+                                f"({', '.join(sorted(available_dupes)[:5])}"
+                                f"{'…' if len(available_dupes) > 5 else ''})."
+                            )
+                            continue
+                        line["reactivate_serials"] = {
+                            row.serial_number: row
+                            for row in existing_rows
+                            if not row.is_available
+                        }
+
+                    if movement_type == StockMovementType.OUT:
+                        available = {
+                            serial.serial_number: serial
+                            for serial in ItemSerial.objects.select_for_update().filter(
+                                item=item,
+                                shop=shop,
+                                serial_number__in=serials,
+                                is_available=True,
+                            )
+                        }
+                        missing = [s for s in serials if s not in available]
+                        if missing:
+                            errors.append(
+                                f"“{item.name}”: serial not in stock at {shop.name} "
+                                f"({', '.join(missing[:5])}{'…' if len(missing) > 5 else ''})."
+                            )
+                            continue
+                        line["serial_objects"] = available
 
                 if movement_type == StockMovementType.OUT:
-                    available = {
-                        serial.serial_number: serial
-                        for serial in ItemSerial.objects.select_for_update().filter(
-                            item=item,
-                            shop=shop,
-                            serial_number__in=serials,
-                            is_available=True,
-                        )
-                    }
-                    missing = [s for s in serials if s not in available]
-                    if missing:
+                    if shop_stock.quantity < line["quantity"]:
                         errors.append(
-                            f"“{item.name}”: serial not in stock at {shop.name} "
-                            f"({', '.join(missing[:5])}{'…' if len(missing) > 5 else ''})."
+                            f"Insufficient stock for “{item.name}” at {shop.name} "
+                            f"(available {shop_stock.quantity}, requested {line['quantity']})."
                         )
                         continue
-                    line["serial_objects"] = available
+                prepared.append((item, line))
 
-            if movement_type == StockMovementType.OUT:
-                if shop_stock.quantity < line["quantity"]:
-                    errors.append(
-                        f"Insufficient stock for “{item.name}” at {shop.name} "
-                        f"(available {shop_stock.quantity}, requested {line['quantity']})."
-                    )
-                    continue
-            prepared.append((item, line))
+            if errors:
+                raise ValidationError(errors)
+            if not prepared:
+                raise ValidationError("Select at least one valid item.")
 
-        if errors:
-            raise ValidationError(errors)
-        if not prepared:
-            raise ValidationError("Select at least one valid item.")
-
-        movement = StockMovement.objects.create(
-            movement_type=movement_type,
-            shop=shop,
-            requested_from_shop=requested_from,
-            request_status=(
-                StockRequestStatus.PENDING
-                if movement_type == StockMovementType.REQUEST
-                else ""
-            ),
-            created_by=profile,
-        )
-
-        paid_total = Decimal("0.00")
-        for item, line in prepared:
-            StockMovementLine.objects.create(
-                movement=movement,
-                item=item,
-                quantity=line["quantity"],
-                buying_price=line.get("buying_price"),
-                payment_status=line.get("payment_status", ""),
-                reason=line.get("reason", ""),
-                refund=line.get("refund", ""),
-                refund_amount=line.get("refund_amount"),
-                note=line.get("note", ""),
-                serial_numbers=line.get("serial_numbers") or [],
-                supplier_name=line.get("supplier_name", ""),
-                supplier_phone_country_code=line.get("supplier_phone_country_code", ""),
-                supplier_phone_number=line.get("supplier_phone_number", ""),
+            movement = StockMovement.objects.create(
+                movement_type=movement_type,
+                shop=shop,
+                requested_from_shop=requested_from,
+                request_status=(
+                    StockRequestStatus.PENDING
+                    if movement_type == StockMovementType.REQUEST
+                    else ""
+                ),
+                created_by=profile,
             )
-            if movement_type == StockMovementType.IN:
-                status = (line.get("payment_status") or "").strip()
-                if status == StockPaymentStatus.PAID:
-                    qty = int(line["quantity"] or 0)
-                    unit = Decimal(line.get("buying_price") or 0)
-                    paid_total += (unit * qty).quantize(Decimal("0.01"))
+            last_movement = movement
 
-            shop_stock = line["shop_stock"]
+            paid_total = Decimal("0.00")
+            for item, line in prepared:
+                StockMovementLine.objects.create(
+                    movement=movement,
+                    item=item,
+                    quantity=line["quantity"],
+                    buying_price=line.get("buying_price"),
+                    payment_status=line.get("payment_status", ""),
+                    reason=line.get("reason", ""),
+                    refund=line.get("refund", ""),
+                    refund_amount=line.get("refund_amount"),
+                    note=line.get("note", ""),
+                    serial_numbers=line.get("serial_numbers") or [],
+                    supplier_name=line.get("supplier_name", ""),
+                    supplier_phone_country_code=line.get(
+                        "supplier_phone_country_code", ""
+                    ),
+                    supplier_phone_number=line.get("supplier_phone_number", ""),
+                )
+                if movement_type == StockMovementType.IN:
+                    status = (line.get("payment_status") or "").strip()
+                    if status == StockPaymentStatus.PAID:
+                        qty = int(line["quantity"] or 0)
+                        unit = Decimal(line.get("buying_price") or 0)
+                        paid_total += (unit * qty).quantize(Decimal("0.01"))
 
-            if movement_type == StockMovementType.IN:
-                if item.track_serial_number:
-                    reactivate = line.get("reactivate_serials") or {}
-                    create_serials = []
-                    for serial in line["serial_numbers"]:
-                        existing = reactivate.get(serial)
-                        if existing:
-                            existing.is_available = True
-                            existing.shop = shop
-                            existing.save(
-                                update_fields=["is_available", "shop", "updated_at"]
-                            )
-                        else:
-                            create_serials.append(
-                                ItemSerial(
-                                    item=item,
-                                    shop=shop,
-                                    serial_number=serial,
-                                    is_available=True,
+                shop_stock = line["shop_stock"]
+
+                if movement_type == StockMovementType.IN:
+                    if item.track_serial_number:
+                        reactivate = line.get("reactivate_serials") or {}
+                        create_serials = []
+                        for serial in line["serial_numbers"]:
+                            existing = reactivate.get(serial)
+                            if existing:
+                                existing.is_available = True
+                                existing.shop = shop
+                                existing.save(
+                                    update_fields=[
+                                        "is_available",
+                                        "shop",
+                                        "updated_at",
+                                    ]
                                 )
-                            )
-                    if create_serials:
-                        ItemSerial.objects.bulk_create(create_serials)
-                shop_stock.quantity += line["quantity"]
-                shop_stock.save(update_fields=["quantity", "updated_at"])
-                item.stock += line["quantity"]
-                item.save(update_fields=["stock", "updated_at"])
+                            else:
+                                create_serials.append(
+                                    ItemSerial(
+                                        item=item,
+                                        shop=shop,
+                                        serial_number=serial,
+                                        is_available=True,
+                                    )
+                                )
+                        if create_serials:
+                            ItemSerial.objects.bulk_create(create_serials)
+                    shop_stock.quantity += line["quantity"]
+                    shop_stock.save(update_fields=["quantity", "updated_at"])
+                    item.stock += line["quantity"]
+                    item.save(update_fields=["stock", "updated_at"])
 
-            elif movement_type == StockMovementType.OUT:
-                if item.track_serial_number:
-                    serial_objects = line.get("serial_objects") or {}
-                    for serial in line["serial_numbers"]:
-                        obj = serial_objects[serial]
-                        obj.is_available = False
-                        obj.save(update_fields=["is_available", "updated_at"])
-                shop_stock.quantity -= line["quantity"]
-                shop_stock.save(update_fields=["quantity", "updated_at"])
-                item.stock = max(0, item.stock - line["quantity"])
-                item.save(update_fields=["stock", "updated_at"])
+                elif movement_type == StockMovementType.OUT:
+                    if item.track_serial_number:
+                        serial_objects = line.get("serial_objects") or {}
+                        for serial in line["serial_numbers"]:
+                            obj = serial_objects[serial]
+                            obj.is_available = False
+                            obj.save(update_fields=["is_available", "updated_at"])
+                    shop_stock.quantity -= line["quantity"]
+                    shop_stock.save(update_fields=["quantity", "updated_at"])
+                    item.stock = max(0, item.stock - line["quantity"])
+                    item.save(update_fields=["stock", "updated_at"])
 
-            # REQUEST only records the ask — no stock change until fulfilled.
+            if movement_type == StockMovementType.IN:
+                upsert_suppliers_from_lines([line for _item, line in prepared])
+                if paid_total > 0:
+                    line_statuses = {
+                        (line.get("payment_status") or "").strip()
+                        for _item, line in prepared
+                    }
+                    if line_statuses == {StockPaymentStatus.PAID}:
+                        movement_status = StockPaymentStatus.PAID
+                    else:
+                        movement_status = StockPaymentStatus.PARTIAL
+                    movement.amount_paid = paid_total
+                    movement.payment_status = movement_status
+                    movement.save(update_fields=["amount_paid", "payment_status"])
 
-        if movement_type == StockMovementType.IN:
-            upsert_suppliers_from_lines([line for _item, line in prepared])
-            if paid_total > 0:
-                line_statuses = {
-                    (line.get("payment_status") or "").strip()
-                    for _item, line in prepared
-                }
-                if line_statuses == {StockPaymentStatus.PAID}:
-                    movement_status = StockPaymentStatus.PAID
-                else:
-                    movement_status = StockPaymentStatus.PARTIAL
-                movement.amount_paid = paid_total
-                movement.payment_status = movement_status
-                movement.save(update_fields=["amount_paid", "payment_status"])
-
-    return movement
+    return last_movement
 
 
 def _normalize_serial_list(values) -> list[str]:

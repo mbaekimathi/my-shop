@@ -522,6 +522,73 @@ class CompanyDarajaSettings(models.Model):
         return "STK not ready"
 
 
+class SmsProvider(models.TextChoices):
+    AFRICAS_TALKING = "africas_talking", "Africa's Talking"
+    TWILIO = "twilio", "Twilio"
+    CUSTOM = "custom", "Custom HTTP"
+
+
+class CompanyCommunicationsSettings(models.Model):
+    """Company-wide messaging channels, automations, and bulk send (singleton)."""
+
+    # Channels
+    enable_whatsapp = models.BooleanField(default=False)
+    enable_message = models.BooleanField(default=False)
+    enable_sms = models.BooleanField(default=False)
+
+    # Capabilities
+    enable_automations = models.BooleanField(default=False)
+    enable_bulk_send = models.BooleanField(default=False)
+
+    # Automation triggers (used when enable_automations is on)
+    auto_sale_receipt = models.BooleanField(default=False)
+    auto_quotation = models.BooleanField(default=False)
+    auto_payment_reminder = models.BooleanField(default=False)
+    auto_credit_due = models.BooleanField(default=False)
+
+    # WhatsApp Cloud API
+    whatsapp_phone_number_id = models.CharField(max_length=64, blank=True, default="")
+    whatsapp_business_account_id = models.CharField(max_length=64, blank=True, default="")
+    whatsapp_access_token = models.CharField(max_length=512, blank=True, default="")
+    whatsapp_from_number = models.CharField(max_length=32, blank=True, default="")
+
+    # SMS / text
+    sms_provider = models.CharField(
+        max_length=32,
+        choices=SmsProvider.choices,
+        default=SmsProvider.AFRICAS_TALKING,
+    )
+    sms_api_key = models.CharField(max_length=255, blank=True, default="")
+    sms_api_secret = models.CharField(max_length=255, blank=True, default="")
+    sms_sender_id = models.CharField(max_length=32, blank=True, default="")
+    sms_api_base_url = models.CharField(max_length=255, blank=True, default="")
+
+    # In-app / message channel
+    message_from_name = models.CharField(max_length=120, blank=True, default="")
+    message_reply_to = models.EmailField(blank=True, default="")
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company WhatsApp settings"
+        verbose_name_plural = "Company WhatsApp settings"
+
+    def __str__(self):
+        return "Company WhatsApp settings"
+
+    def has_whatsapp_credentials(self) -> bool:
+        return bool(
+            (self.whatsapp_phone_number_id or "").strip()
+            and (self.whatsapp_access_token or "").strip()
+        )
+
+    def has_sms_credentials(self) -> bool:
+        return bool(
+            (self.sms_api_key or "").strip()
+            and (self.sms_sender_id or "").strip()
+        )
+
+
 class MpesaStkPurpose(models.TextChoices):
     SALE = "sale", "Sale checkout"
     CREDIT = "credit", "Credit account pay"

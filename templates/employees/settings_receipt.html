@@ -5,15 +5,31 @@
 
 {% block workspace_content %}
 {% csrf_token %}
-<section class="item-panel item-panel--dense" data-animate="rise" data-pos-settings data-receipt-settings>
-  <div class="item-panel-head">
+<section
+  class="item-panel item-panel--dense item-panel--receipt-settings"
+  data-animate="rise"
+  data-pos-settings
+  data-receipt-settings
+>
+  <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
+        <p class="stock-kicker">Settings · Receipt</p>
         <h2>{{ meta.headline }}</h2>
         <p>{{ meta.summary }} Choose print channels and the thermal paper size used at checkout.</p>
       </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong data-pos-enabled-count>{{ pos_enabled_count }}</strong>
+          <span>of {{ pos_toggle_count }} on</span>
+        </p>
+        <p class="stock-stat">
+          <strong data-receipt-paper-stat>{% if receipt_paper_width == "58" %}58{% else %}80{% endif %} mm</strong>
+          <span>paper</span>
+        </p>
+      </div>
     </div>
-  </div>
+  </header>
 
   <div class="pos-settings-groups">
     {% for group in pos_setting_groups %}
@@ -39,7 +55,7 @@
             >
             <span class="perm-switch-ui" aria-hidden="true"></span>
             <span class="perm-switch-state">
-              {% if toggle.enabled %}Enabled{% else %}Disabled{% endif %}
+              {% if toggle.enabled %}On{% else %}Off{% endif %}
             </span>
           </label>
         </li>
@@ -51,7 +67,7 @@
     <section class="pos-settings-group receipt-paper-group">
       <div class="pos-settings-group-head">
         <h3>Paper size</h3>
-        <p>Select the thermal roll width used by shop printers. The active size is used when receipts print.</p>
+        <p>Thermal roll width used when receipts print.</p>
       </div>
       <div class="receipt-paper-picker" role="group" aria-label="Receipt paper size">
         <label class="receipt-paper-option{% if receipt_paper_width == '80' %} is-active{% endif %}">
@@ -64,7 +80,7 @@
           >
           <span class="receipt-paper-option-copy">
             <strong>80 mm</strong>
-            <em>Standard thermal roll · wider layout</em>
+            <em>Standard · wider</em>
           </span>
         </label>
         <label class="receipt-paper-option{% if receipt_paper_width == '58' %} is-active{% endif %}">
@@ -77,7 +93,7 @@
           >
           <span class="receipt-paper-option-copy">
             <strong>58 mm</strong>
-            <em>Compact roll · denser layout</em>
+            <em>Compact · denser</em>
           </span>
         </label>
       </div>
@@ -86,10 +102,7 @@
     <section class="pos-settings-group receipt-format-group">
       <div class="pos-settings-group-head">
         <h3>Receipt number format</h3>
-        <p>
-          Short prefix for sale, credit, and quotation codes. New documents use a
-          simple 4-digit sequence (example: <code>S0001</code>).
-        </p>
+        <p>Short prefix + 4-digit sequence (example: <code>S0001</code>).</p>
       </div>
       <ul class="pos-settings-list receipt-format-list">
         <li class="pos-settings-row pos-settings-row--format">
@@ -149,7 +162,7 @@
     <section class="pos-settings-group receipt-payment-group">
       <div class="pos-settings-group-head">
         <h3>Payment details</h3>
-        <p>M-Pesa collection details printed on receipts so customers know where to pay.</p>
+        <p>M-Pesa collection details printed on receipts.</p>
       </div>
       <div class="receipt-payment-body">
         <div class="receipt-paper-picker receipt-payment-type" role="group" aria-label="M-Pesa collection type">
@@ -163,7 +176,7 @@
             >
             <span class="receipt-paper-option-copy">
               <strong>Paybill</strong>
-              <em>Business number and account number</em>
+              <em>Business + account</em>
             </span>
           </label>
           <label class="receipt-paper-option{% if mpesa_collection_type == 'buy_goods' %} is-active{% endif %}">
@@ -176,7 +189,7 @@
             >
             <span class="receipt-paper-option-copy">
               <strong>Buy Goods</strong>
-              <em>Till number only</em>
+              <em>Till only</em>
             </span>
           </label>
         </div>
@@ -202,7 +215,7 @@
           <li class="pos-settings-row pos-settings-row--format" data-mpesa-fields="paybill"{% if mpesa_collection_type != "paybill" %} hidden{% endif %}>
             <div class="pos-settings-copy">
               <strong>Account number</strong>
-              <p>Optional account reference for Paybill.</p>
+              <p>Optional account reference.</p>
             </div>
             <label class="receipt-format-field receipt-format-field--wide">
               <input
@@ -239,13 +252,13 @@
     <section class="pos-settings-group receipt-font-group">
       <div class="pos-settings-group-head">
         <h3>Receipt text style</h3>
-        <p>Choose how large and bold the printed receipt letters appear.</p>
+        <p>Size and weight of printed receipt text.</p>
       </div>
       <ul class="pos-settings-list">
         <li class="pos-settings-row pos-settings-row--format">
           <div class="pos-settings-copy">
             <strong>Font size</strong>
-            <p>Applies to both 80 mm and 58 mm previews and printouts.</p>
+            <p>Applies to 80 mm and 58 mm printouts.</p>
           </div>
           <label class="receipt-select-field">
             <select data-receipt-font-size aria-label="Receipt font size">
@@ -258,7 +271,7 @@
         <li class="pos-settings-row pos-settings-row--format">
           <div class="pos-settings-copy">
             <strong>Boldness</strong>
-            <p>Regular through extra bold letter weight.</p>
+            <p>Regular through extra bold.</p>
           </div>
           <label class="receipt-select-field">
             <select data-receipt-font-weight aria-label="Receipt font boldness">
@@ -274,7 +287,7 @@
     <section class="pos-settings-group receipt-qr-group">
       <div class="pos-settings-group-head">
         <h3>QR code</h3>
-        <p>Print a scannable QR on receipts. When enabled, choose whether it opens the company website or encodes receipt details.</p>
+        <p>Optional scannable QR on printed receipts.</p>
       </div>
       <ul class="pos-settings-list">
         <li class="pos-settings-row">
@@ -291,7 +304,7 @@
             >
             <span class="perm-switch-ui" aria-hidden="true"></span>
             <span class="perm-switch-state" data-receipt-qr-enabled-label>
-              {% if enable_receipt_qr %}Enabled{% else %}Disabled{% endif %}
+              {% if enable_receipt_qr %}On{% else %}Off{% endif %}
             </span>
           </label>
         </li>
@@ -309,7 +322,7 @@
             >
             <span class="receipt-paper-option-copy">
               <strong>Company website</strong>
-              <em>Opens your website when scanned</em>
+              <em>Opens your site</em>
             </span>
           </label>
           <label class="receipt-paper-option{% if receipt_qr_content == 'receipt_details' %} is-active{% endif %}">
@@ -322,7 +335,7 @@
             >
             <span class="receipt-paper-option-copy">
               <strong>Receipt details</strong>
-              <em>Encodes receipt number, total, and shop info</em>
+              <em>Number, total, shop</em>
             </span>
           </label>
         </div>
@@ -331,7 +344,7 @@
           <li class="pos-settings-row pos-settings-row--format">
             <div class="pos-settings-copy">
               <strong>Website URL</strong>
-              <p>Customers open this link when they scan the QR.</p>
+              <p>Opened when the QR is scanned.</p>
             </div>
             <label class="receipt-format-field receipt-format-field--url">
               <input
@@ -350,11 +363,12 @@
     </section>
   </div>
 
-  <section class="receipt-design-panel" data-animate="rise">
+  <section class="receipt-design-panel">
     <div class="receipt-design-head">
       <div>
+        <p class="stock-kicker">Preview</p>
         <h3>Print preview</h3>
-        <p>How a sale receipt appears on 80 mm and 58 mm paper.</p>
+        <p>Sale receipt on 80 mm and 58 mm paper.</p>
       </div>
       <div class="receipt-design-actions">
         <p class="receipt-design-hint" data-receipt-active-label>
@@ -411,7 +425,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=2"></script>
 <script src="{% static 'js/shop-printer.js' %}?v=16"></script>
-<script src="{% static 'js/receipt-settings.js' %}?v=3"></script>
+<script src="{% static 'js/receipt-settings.js' %}?v=4"></script>
 {% endblock %}

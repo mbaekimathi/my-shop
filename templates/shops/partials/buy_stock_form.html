@@ -4,6 +4,7 @@
   action="{% url 'employees:my_shop_buy_stock' shop.pk %}"
   data-stock-layout
   data-stock-bulk-form
+  data-stock-multi-shop="1"
   data-supplier-search-url="{{ supplier_search_url }}"
   data-verify-login-url="{{ verify_login_code_url }}"
   {% if buy_stock_compact %}data-supplier-print{% endif %}
@@ -16,7 +17,7 @@
   <input type="hidden" name="shop_id" value="{{ shop.pk }}" data-stock-shop>
 
   <section
-    class="stock-panel stock-panel--action"
+    class="stock-panel stock-panel--action stock-panel--buy"
     data-animate="rise"
     data-item-total="{{ item_count }}"
     data-stock-mode="in"
@@ -24,6 +25,8 @@
     data-stock-catalog-api="{{ stock_catalog_url }}"
     data-stock-catalog-shop="{{ shop.pk }}"
     data-stock-catalog-shop-name="{{ shop.name }}"
+    data-stock-catalog-shops="{{ catalog_shops_json }}"
+    data-stock-editable-matrix="1"
     data-stock-catalog-page-size="48"
     {% if buy_stock_defer_catalog %}data-stock-catalog-defer{% endif %}
     {% endif %}
@@ -31,11 +34,10 @@
     <header class="stock-panel-head">
       <div class="stock-panel-head-top">
         <div>
-          <p class="stock-kicker">Buy from outside · {{ shop.name }}</p>
+          <p class="stock-kicker">Buy stock · {{ shop.name }}</p>
           <h2>Add purchased stock</h2>
           <p>
-            Open an item, enter the quantity you bought (or serials), buying price,
-            then autofill supplier details and confirm with a staff ID.
+            Enter qty and buying price in the list. Autofill supplier details in the panel, then confirm with a staff ID.
           </p>
         </div>
         <div class="stock-stats">
@@ -48,6 +50,13 @@
             <span>units at {{ shop.name }}</span>
           </p>
         </div>
+      </div>
+
+      <div class="stock-shop-bar" data-stock-shop-bar>
+        <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
+          <i data-lucide="columns-3" aria-hidden="true"></i>
+          <span>Enter qty and buying price under {{ shop.name }}. Serial items open a popup.</span>
+        </p>
       </div>
 
       <div class="item-search">
@@ -94,56 +103,101 @@
           </div>
           <span class="stock-category-count" data-category-count>{{ group.items|length }}</span>
         </header>
-        <div class="stock-matrix-scroll">
-          <table class="stock-matrix stock-matrix--single stock-matrix--action">
+        <div class="stock-matrix-scroll stock-matrix-scroll--list">
+          <table class="stock-matrix stock-matrix--all stock-matrix--editable stock-matrix--list">
             <thead>
               <tr>
                 <th scope="col" class="stock-matrix-item-col">Item</th>
-                <th scope="col" class="stock-matrix-shop-col">{{ shop.name }}</th>
-                <th scope="col" class="stock-matrix-action-col"><span class="visually-hidden">Action</span></th>
+                <th scope="col" class="stock-matrix-shop-col stock-th--pair" title="{{ shop.name }}">
+                  <span class="stock-th-pair">
+                    <span class="stock-th-pair-name">{{ shop.name }}</span>
+                    <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span><span>Buy</span></span>
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {% for row in group.items %}
               {% with item=row.item %}
               <tr
-                class="stock-matrix-row stock-matrix-row--action{% if item.is_suspended %} is-suspended{% endif %}{% if row.shop_qty == 0 %} is-empty-stock{% endif %}"
+                class="stock-matrix-row stock-matrix-row--editable{% if item.is_suspended %} is-suspended{% endif %}"
                 data-item-row
                 data-item-id="{{ item.pk }}"
                 data-item-name="{{ item.name }}"
-                data-item-stock="{{ row.shop_qty }}"
                 data-track-serial="{% if item.track_serial_number %}1{% else %}0{% endif %}"
                 data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
               >
                 <th scope="row" class="stock-matrix-item-col">
-                  <button type="button" class="stock-matrix-toggle" data-stock-item-toggle>
-                    <div class="stock-matrix-item">
-                      <strong>{{ item.name }}</strong>
-                      {% if item.is_suspended %}
-                      <span class="stock-item-badge">Suspended</span>
-                      {% endif %}
-                      {% if item.track_serial_number %}
-                      <span class="stock-item-badge stock-item-badge--serial">Serial</span>
-                      {% endif %}
-                    </div>
-                  </button>
+                  <div class="stock-matrix-item">
+                    <strong>{{ item.name }}</strong>
+                    {% if item.is_suspended %}
+                    <span class="stock-item-badge">Suspended</span>
+                    {% endif %}
+                    {% if item.track_serial_number %}
+                    <span class="stock-item-badge stock-item-badge--serial">Serial</span>
+                    {% endif %}
+                  </div>
                 </th>
-                <td class="stock-matrix-shop-col">
-                  <span
-                    class="stock-matrix-qty{% if row.shop_qty == 0 %} is-empty{% endif %}"
-                    data-stock-display-qty
-                  >{{ row.shop_qty }}</span>
-                </td>
-                <td class="stock-matrix-action-col">
-                  <button type="button" class="stock-matrix-chevron" data-stock-item-toggle aria-label="Open {{ item.name }}">
-                    <i data-lucide="chevron-down" aria-hidden="true"></i>
-                  </button>
-                </td>
-              </tr>
-              <tr class="stock-matrix-form-row" data-stock-item-inputs hidden>
-                <td colspan="3">
-                  <div class="stock-item-inputs stock-item-inputs--matrix">
+                <td class="stock-matrix-shop-col stock-matrix-shop-col--edit">
+                  <div
+                    class="stock-shop-cell stock-list-pair stock-list-pair--in"
+                    data-stock-shop-cell
+                    data-item-id="{{ item.pk }}"
+                    data-item-name="{{ item.name }}"
+                    data-shop-id="{{ shop.pk }}"
+                    data-shop-name="{{ shop.name }}"
+                    data-item-stock="{{ row.shop_qty }}"
+                    data-track-serial="{% if item.track_serial_number %}1{% else %}0{% endif %}"
+                  >
+                    <span class="stock-list-stock{% if row.shop_qty == 0 %} is-empty{% endif %}" data-stock-display-qty>{{ row.shop_qty }}</span>
                     <input type="hidden" name="item_id" value="{{ item.pk }}" disabled data-stock-field>
+                    <input type="hidden" name="line_shop_id" value="{{ shop.pk }}" disabled data-stock-field>
+                    {% if item.track_serial_number %}
+                    <input
+                      type="text"
+                      class="stock-list-input stock-list-input--serial"
+                      name="quantity"
+                      value=""
+                      placeholder="0"
+                      inputmode="numeric"
+                      readonly
+                      data-stock-qty
+                      data-stock-serial-open
+                      data-stock-serial-count
+                      aria-label="Enter serials for quantity at {{ shop.name }}"
+                      title="Click to enter serial numbers"
+                    >
+                    {% else %}
+                    <input
+                      type="number"
+                      class="stock-list-input"
+                      name="quantity"
+                      min="1"
+                      step="1"
+                      placeholder="0"
+                      inputmode="numeric"
+                      aria-label="Quantity at {{ shop.name }}"
+                      data-stock-qty
+                    >
+                    {% endif %}
+                    <input
+                      type="number"
+                      class="stock-list-input stock-list-input--price"
+                      name="buying_price"
+                      min="0"
+                      step="1"
+                      placeholder="0"
+                      inputmode="numeric"
+                      aria-label="Buying price at {{ shop.name }}"
+                      data-stock-buying-price
+                    >
+                    <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
+                    <input type="hidden" name="supplier_id" value="" data-stock-supplier-id data-stock-field disabled>
+                    <input type="hidden" name="supplier_phone_country_code" value="+254" data-stock-supplier-dial data-stock-field disabled>
+                    <input type="hidden" value="KE" data-stock-supplier-iso disabled>
+                    <input type="hidden" name="supplier_phone_number" value="" data-stock-supplier-phone data-stock-field disabled>
+                    <input type="hidden" name="supplier_name" value="" data-stock-supplier-name data-stock-field disabled>
+                    <input type="hidden" name="payment_status" value="" data-stock-payment data-stock-field disabled>
                   </div>
                 </td>
               </tr>
@@ -188,13 +242,13 @@
       <div class="stock-float-shops">
         <p class="stock-float-shop-readout">
           <span>Shop</span>
-          <strong>{{ shop.name }}</strong>
+          <strong data-stock-float-shop-label>{{ shop.name }}</strong>
         </p>
       </div>
 
       <div class="stock-float-empty" data-stock-float-empty>
         <p>
-          Open items, enter quantity/serials and buying price. Use autofill below for supplier details.
+          Enter quantity and buying price in the list. Use autofill below for supplier details.
         </p>
       </div>
 

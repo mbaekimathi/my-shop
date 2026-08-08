@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "items",
     "shops.apps.ShopsConfig",
     "pos",
+    "communications.apps.CommunicationsConfig",
 ]
 
 MIDDLEWARE = [
@@ -225,6 +226,21 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "Africa/Nairobi"
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "300"))
+
+# Personal WhatsApp bridge (local on VPS, or remote URL for cPanel → helper host)
+WHATSAPP_BRIDGE_URL = os.getenv("WHATSAPP_BRIDGE_URL", "http://127.0.0.1:3100").strip()
+WHATSAPP_BRIDGE_SECRET = os.getenv("WHATSAPP_BRIDGE_SECRET", "").strip()
+WHATSAPP_BRIDGE_PORT = int(os.getenv("WHATSAPP_BRIDGE_PORT", "3100"))
+WHATSAPP_MEDIA_MAX_BYTES = int(os.getenv("WHATSAPP_MEDIA_MAX_BYTES", str(4 * 1024 * 1024)))
+# auto | celery | inline | cron — see communications.campaigns.enqueue_campaign
+COMMS_SEND_MODE = (os.getenv("COMMS_SEND_MODE", "auto") or "auto").strip().lower()
+COMMS_INLINE_SEND = (os.getenv("COMMS_INLINE_SEND", "") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+COMMS_CRON_BATCH_SIZE = int(os.getenv("COMMS_CRON_BATCH_SIZE", "15"))
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

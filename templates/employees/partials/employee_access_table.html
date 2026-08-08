@@ -1,80 +1,112 @@
-<section class="staff-panel staff-panel--dense" data-animate="rise">
-  <div class="staff-panel-head">
-    <div>
-      <h2>{{ panel_title|default:"Employee access" }}</h2>
-      <p>{{ panel_description|default:"Select <strong>Role</strong> and <strong>Status</strong> for each employee, then save."|safe }}</p>
+<section
+  class="item-panel item-panel--dense item-panel--hr item-panel--approvals"
+  data-animate="rise"
+>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">HR management · Approvals</p>
+        <h2>{{ panel_title|default:"Pending approvals" }}</h2>
+        <p>{{ panel_description|default:"Assign a <strong>role</strong> and set status to <strong>Active</strong> to approve each employee."|safe }}</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ employees_page.paginator.count }}</strong>
+          <span>pending</span>
+        </p>
+        {% if employees_page.paginator.num_pages > 1 %}
+        <p class="stock-stat">
+          <strong>{{ employees_page.number }}/{{ employees_page.paginator.num_pages }}</strong>
+          <span>page</span>
+        </p>
+        {% endif %}
+      </div>
     </div>
-    <p class="staff-count item-count">
-      {{ employees_page.paginator.count }} record{{ employees_page.paginator.count|pluralize }}
-      {% if employees_page.paginator.num_pages > 1 %}
-      <span class="staff-count-page">· page {{ employees_page.number }}/{{ employees_page.paginator.num_pages }}</span>
-      {% endif %}
-    </p>
-  </div>
+  </header>
 
   {% if employees %}
-  <div class="staff-table-wrap">
-    <table class="staff-table staff-table--dense">
+  <div class="item-table-wrap item-table-wrap--hr">
+    <table class="item-table item-table--dense item-table--hr item-table--approvals">
       <thead>
         <tr>
-          <th scope="col">Employee</th>
-          <th scope="col">ID</th>
-          <th scope="col">Role</th>
-          <th scope="col">Status</th>
-          <th scope="col"><span class="visually-hidden">Save</span></th>
+          <th scope="col" class="item-col--item">Employee</th>
+          <th scope="col" class="hr-approve-col--role">Role</th>
+          <th scope="col" class="hr-approve-col--status">Status</th>
+          <th scope="col" class="hr-approve-col--save"><span class="visually-hidden">Save</span></th>
         </tr>
       </thead>
       <tbody>
         {% for employee in employees %}
         <tr>
-          <td data-label="Employee">
-            <div class="staff-person">
+          <td class="item-cell--item" data-label="Employee">
+            <div class="item-person">
               {% if employee.profile_photo %}
-              <img class="staff-avatar" src="{{ employee.profile_photo.url }}" alt="" width="36" height="36">
+              <img class="item-thumb" src="{{ employee.profile_photo.url }}" alt="" width="28" height="28">
               {% else %}
-              <span class="staff-avatar staff-avatar--empty" aria-hidden="true">
+              <span class="item-thumb item-thumb--empty" aria-hidden="true">
                 <i data-lucide="user"></i>
               </span>
               {% endif %}
-              <div>
+              <div class="item-person-copy">
                 <strong>{{ employee.user.get_full_name|default:employee.user.username }}</strong>
-                <small>{{ employee.user.email|default:employee.full_phone }}</small>
+                <small>
+                  {{ employee.full_phone|default:employee.user.email|default:employee.employee_id }}
+                </small>
               </div>
             </div>
           </td>
-          <td data-label="ID"><code>{{ employee.employee_id }}</code></td>
-          <td colspan="3" data-label="Access">
+          <td class="hr-approve-col--role" data-label="Role">
             <form
-              class="staff-access-form"
+              id="approve-{{ employee.employee_id }}"
+              class="hr-approve-form staff-access-form"
               method="post"
               action="{% url 'employees:update_employee_access' employee.employee_id %}"
+              hidden
             >
               {% csrf_token %}
               <input type="hidden" name="list_page" value="{{ employees_page.number }}">
               {% if return_to %}
               <input type="hidden" name="return_to" value="{{ return_to }}">
               {% endif %}
-              <label class="staff-select">
-                <span class="visually-hidden">Role</span>
-                <select name="role" required aria-label="Role for {{ employee.employee_id }}">
-                  {% for value, label in role_choices %}
-                  <option value="{{ value }}"{% if employee.role == value %} selected{% endif %}>{{ label }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-              <label class="staff-select">
-                <span class="visually-hidden">Status</span>
-                <select name="status" required aria-label="Status for {{ employee.employee_id }}">
-                  {% for value, label in status_choices %}
-                  <option value="{{ value }}"{% if employee.status == value %} selected{% endif %}>{{ label }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-              <button class="btn btn--primary staff-save" type="submit">
-                <i data-lucide="check" aria-hidden="true"></i>
-                <span>Save</span>
-              </button>
             </form>
+            <label class="hr-approve-select">
+              <span class="visually-hidden">Role</span>
+              <select
+                form="approve-{{ employee.employee_id }}"
+                name="role"
+                required
+                aria-label="Role for {{ employee.employee_id }}"
+              >
+                {% for value, label in role_choices %}
+                <option value="{{ value }}"{% if employee.role == value %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </td>
+          <td class="hr-approve-col--status" data-label="Status">
+            <label class="hr-approve-select">
+              <span class="visually-hidden">Status</span>
+              <select
+                form="approve-{{ employee.employee_id }}"
+                name="status"
+                required
+                aria-label="Status for {{ employee.employee_id }}"
+              >
+                {% for value, label in status_choices %}
+                <option value="{{ value }}"{% if employee.status == value %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </td>
+          <td class="hr-approve-col--save" data-label="Save">
+            <button
+              class="btn btn--primary hr-approve-save"
+              type="submit"
+              form="approve-{{ employee.employee_id }}"
+            >
+              <i data-lucide="check" aria-hidden="true"></i>
+              <span>Save</span>
+            </button>
           </td>
         </tr>
         {% endfor %}
@@ -83,13 +115,17 @@
   </div>
 
   {% if employees_page.has_other_pages %}
-  {% include "employees/partials/pagination_nav.html" with pagination_label="Employee list pages" %}
+  {% include "employees/partials/pagination_nav.html" with pagination_label="Approval list pages" %}
+  {% else %}
+  <p class="stock-report-footnote">
+    Showing {{ employees|length }} of {{ employees_page.paginator.count }} pending approval{{ employees_page.paginator.count|pluralize }}
+  </p>
   {% endif %}
 
   {% else %}
   <div class="dashboard-placeholder">
-    <i data-lucide="users" aria-hidden="true"></i>
-    <p>{{ empty_message|default:"No employee profiles yet. New registrations will appear here for role and status assignment." }}</p>
+    <i data-lucide="clock-3" aria-hidden="true"></i>
+    <p>{{ empty_message|default:"No employees are waiting for approval. New registrations will appear here." }}</p>
   </div>
   {% endif %}
 </section>

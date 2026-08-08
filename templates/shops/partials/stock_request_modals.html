@@ -61,7 +61,7 @@
                 <span class="stock-transfer-party-meta">
                   {% if req.created_by %}
                   {{ req.created_by.user.get_full_name|default:req.created_by.user.username }}
-                  Â·
+                  ·
                   {% endif %}
                   {{ req.created_at|timesince }} ago
                 </span>
@@ -108,6 +108,7 @@
                           name="qty_{{ line.pk }}"
                           min="0"
                           max="{{ line.transfer_max }}"
+                          step="1"
                           value="{% if line.item.track_serial_number %}0{% else %}{{ line.transfer_max }}{% endif %}"
                           inputmode="numeric"
                           data-transfer-qty
@@ -176,7 +177,7 @@
                 >
               </label>
               <p class="stock-request-code-hint" data-verify-status>
-                Enter any active staff memberâ€™s 6-digit ID (any role) to unlock Accept and Decline.
+                Enter any active staff member’s 6-digit ID (any role) to unlock Accept and Decline.
               </p>
             </div>
 
@@ -263,9 +264,11 @@
                 </strong>
               </p>
               <p class="stock-request-meta">
+                {% if req.request_status == "fulfilled" %}Accepted{% else %}Declined{% endif %}
                 {% if req.responded_by %}
-                {{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}
-                Â·
+                by
+                <strong>{{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}</strong>
+                ·
                 {% endif %}
                 {% if req.responded_at %}{{ req.responded_at|timesince }} ago{% else %}recently{% endif %}
               </p>
@@ -283,7 +286,7 @@
             {% for line in req.lines.all %}
             <li>
               <span>{{ line.item.name }}</span>
-              <strong>Ã— {{ line.quantity }}</strong>
+              <strong>× {{ line.quantity }}</strong>
             </li>
             {% endfor %}
           </ul>

@@ -4,32 +4,50 @@
 {% block title %}HR Management — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="item-panel item-panel--dense" data-animate="rise">
-  <div class="item-panel-head">
+<section class="item-panel item-panel--dense item-panel--hr" data-animate="rise" data-hr-panel>
+  <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
+        <p class="stock-kicker">HR management · Team</p>
         <h2>Employees</h2>
-        <p>Manage active and suspended employees.</p>
+        <p>Active and suspended team members. Edit, suspend, or remove from here.</p>
       </div>
-      <p class="item-count">
-        {{ employees_page.paginator.count }} employee{{ employees_page.paginator.count|pluralize }}
-        {% if employees_page.paginator.num_pages > 1 %}
-        <span class="staff-count-page">· page {{ employees_page.number }}/{{ employees_page.paginator.num_pages }}</span>
-        {% endif %}
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ employees_page.paginator.count }}</strong>
+          <span>listed</span>
+        </p>
         {% if pending_count %}
-        · <a href="{{ approvals_url }}">{{ pending_count }} pending</a>
+        <p class="stock-stat">
+          <strong><a href="{{ approvals_url }}">{{ pending_count }}</a></strong>
+          <span>pending</span>
+        </p>
         {% endif %}
-      </p>
+      </div>
     </div>
-  </div>
+
+    <form class="stock-report-filters stock-report-filters--serials" method="get" role="search">
+      <label class="stock-report-field stock-report-field--grow">
+        <span>Search</span>
+        <input
+          type="search"
+          name="q"
+          value="{{ search }}"
+          placeholder="Name, ID, email, or phone…"
+          aria-label="Search employees"
+        >
+      </label>
+      <button type="submit" class="stock-report-apply">Apply</button>
+    </form>
+  </header>
 
   {% if employees %}
-  <div class="item-table-wrap">
-    <table class="item-table item-table--dense staff-table">
+  <div class="item-table-wrap item-table-wrap--hr">
+    <table class="item-table item-table--dense item-table--hr">
       <thead>
         <tr>
           <th scope="col" class="item-col--item">Employee</th>
-          <th scope="col">ID</th>
+          <th scope="col" class="item-col--id">ID</th>
           <th scope="col">Role</th>
           <th scope="col" class="item-col--status">Status</th>
           <th scope="col" class="item-col--actions">Actions</th>
@@ -44,7 +62,7 @@
   </div>
 
   {% if employees_page.has_other_pages %}
-  <nav class="pagination" aria-label="Employee list pages">
+  <nav class="pagination pagination--hr" aria-label="Employee list pages">
     {% if pagination.previous_url %}
     <a class="pagination-link" href="{{ pagination.previous_url }}">
       <i data-lucide="chevron-left" aria-hidden="true"></i>
@@ -73,17 +91,26 @@
     </span>
     {% endif %}
   </nav>
+  {% else %}
+  <p class="stock-report-footnote">
+    Showing {{ employees|length }} of {{ employees_page.paginator.count }} employee{{ employees_page.paginator.count|pluralize }}
+    {% if search %} matching “{{ search }}”{% endif %}
+  </p>
   {% endif %}
 
   {% else %}
   <div class="dashboard-placeholder">
     <i data-lucide="users" aria-hidden="true"></i>
     <p>
+      {% if search %}
+      No employees match “{{ search }}”.
+      {% else %}
       No active or suspended employees yet.
       {% if pending_count %}
       <a href="{{ approvals_url }}">Review {{ pending_count }} pending approval{{ pending_count|pluralize }}</a>.
       {% else %}
       Use <strong>Register employee</strong> in the sidebar to add your first team member.
+      {% endif %}
       {% endif %}
     </p>
   </div>
@@ -97,7 +124,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/hr-management.js' %}"></script>
+<script src="{% static 'js/hr-management.js' %}?v=2"></script>
 <script src="{% static 'js/auth.js' %}"></script>
 <script src="{% static 'js/register.js' %}"></script>
 {% endblock %}

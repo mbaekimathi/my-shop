@@ -1154,7 +1154,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             return _stock_redirect(
                 request.path,
                 action_mode,
-                shop_id=shop_id,
+                shop_id=shop_id if action_mode == "request" else "",
                 requested_from_shop_id=requested_from_post,
             )
 
@@ -1167,7 +1167,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         return _stock_redirect(
             request.path,
             action_mode,
-            shop_id=shop_id,
+            shop_id=shop_id if action_mode == "request" else "",
             requested_from_shop_id=requested_from_post,
         )
 
@@ -1182,26 +1182,27 @@ def stock_management(request, profile, meta, module, page_sidebar):
         ):
             requested_from_shop = None
 
-    # Action modes with a selected shop, and current-stock view, use progressive catalog API.
+    # Current stock, stock in/out/request (all shops) use the catalog API.
     use_stock_catalog_api = False
     if mode == "view" and all_shops:
         use_stock_catalog_api = True
-    elif mode in ("in", "out", "request") and selected_shop is not None:
+    elif mode in ("in", "out", "request") and shops:
         use_stock_catalog_api = True
-        if mode == "request" and requested_from_shop is None:
-            use_stock_catalog_api = False
 
     items_by_category = []
     item_count = Item.objects.count()
     category_count = 0
     shop_total_units = 0
     display_shops = []
-    show_all_shops = mode == "view" and selected_shop is None
+    # Stock in/out/request always show all actionable shops as columns.
+    show_all_shops = mode == "view" and selected_shop is None and bool(all_shops)
+    if mode in ("in", "out", "request") and shops:
+        show_all_shops = len(shops) > 1
+
+    from django.db.models import Sum
 
     if mode == "view":
         display_shops = [selected_shop] if selected_shop else all_shops
-        from django.db.models import Sum
-
         if selected_shop:
             shop_total_units = (
                 ShopStock.objects.filter(shop=selected_shop).aggregate(
@@ -1219,10 +1220,19 @@ def stock_management(request, profile, meta, module, page_sidebar):
         category_count = (
             Item.objects.order_by("category").values("category").distinct().count()
         )
-    elif use_stock_catalog_api:
+    elif mode in ("in", "out", "request") and shops:
+        display_shops = list(shops)
+        shop_total_units = (
+            ShopStock.objects.filter(shop_id__in=[shop.pk for shop in shops]).aggregate(
+                total=Sum("quantity")
+            )["total"]
+            or 0
+        )
+        category_count = (
+            Item.objects.order_by("category").values("category").distinct().count()
+        )
+    elif use_stock_catalog_api and selected_shop is not None:
         display_shops = [selected_shop]
-        from django.db.models import Sum
-
         shop_total_units = (
             ShopStock.objects.filter(shop=selected_shop).aggregate(total=Sum("quantity"))[
                 "total"
@@ -1343,14 +1353,26 @@ def stock_management_catalog(request, role_segment):
         return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
 
     action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}
+    # Stock in/out/request: always all actionable shops as editable columns.
+    if mode in ("in", "out", "request"):
+        if not action_shops:
+            return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
+        payload = build_stock_catalog_page(
+            shop_id=None,
+            shop_ids=list(action_shops.keys()),
+            mode=mode,
+            q=request.GET.get("q") or "",
+            page=request.GET.get("page") or 1,
+            page_size=request.GET.get("page_size") or 48,
+            include_suspended=True,
+        )
+        return JsonResponse(payload)
+
     if shop_id not in action_shops:
         return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
-    if mode == "request" and from_id not in action_shops:
-        return JsonResponse({"ok": False, "error": "from_shop_required"}, status=400)
 
     payload = build_stock_catalog_page(
         shop_id=shop_id,
-        requested_from_shop_id=from_id if mode == "request" else None,
         mode=mode,
         q=request.GET.get("q") or "",
         page=request.GET.get("page") or 1,
@@ -1439,64 +1461,72 @@ def _serial_return_lookup(item):
 
 
 def stock_serials(request, profile, meta, module):
-    """List items that have serial numbers registered."""
+    """List serial-tracked items with in-stock counts for every shop."""
     from django.db.models import Count, Q
 
     from employees.access import role_url_segment
+    from shops.models import Shop
+
+    from .models import ItemSerial
 
     search = (request.GET.get("q") or "").strip()
-    selected_shop_id = (request.GET.get("shop_id") or "").strip()
 
     page_sidebar = sidebar_for_stock_management(
         profile.role,
         active_mode="serials",
-        shop_id=selected_shop_id,
+        shop_id="",
         profile=profile,
     )
 
-    if selected_shop_id.isdigit():
-        shop_pk = int(selected_shop_id)
-        shop_q = Q(serials__shop_id=shop_pk)
-        items_qs = Item.objects.filter(track_serial_number=True).annotate(
-            serial_total=Count("serials", filter=shop_q, distinct=True),
-            serial_in_stock=Count(
-                "serials",
-                filter=shop_q & Q(serials__is_available=True),
-                distinct=True,
-            ),
-            serial_out=Count(
-                "serials",
-                filter=shop_q & Q(serials__is_available=False),
-                distinct=True,
-            ),
-        )
-    else:
-        items_qs = Item.objects.filter(track_serial_number=True).annotate(
-            serial_total=Count("serials", distinct=True),
-            serial_in_stock=Count(
-                "serials",
-                filter=Q(serials__is_available=True),
-                distinct=True,
-            ),
-            serial_out=Count(
-                "serials",
-                filter=Q(serials__is_available=False),
-                distinct=True,
-            ),
-        )
+    display_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
 
+    items_qs = Item.objects.filter(track_serial_number=True).annotate(
+        serial_total=Count("serials", distinct=True),
+        serial_in_stock=Count(
+            "serials",
+            filter=Q(serials__is_available=True),
+            distinct=True,
+        ),
+        serial_out=Count(
+            "serials",
+            filter=Q(serials__is_available=False),
+            distinct=True,
+        ),
+    )
     items_qs = items_qs.filter(serial_total__gt=0).order_by("category", "name")
     if search:
         items_qs = items_qs.filter(
             Q(name__icontains=search) | Q(category__icontains=search)
         )
 
+    items = list(items_qs)
+    item_ids = [item.pk for item in items]
+    shop_in_map: dict[int, dict[int, int]] = {}
+    if item_ids and display_shops:
+        for item_id, shop_id, qty in (
+            ItemSerial.objects.filter(
+                item_id__in=item_ids,
+                is_available=True,
+                shop_id__in=[shop.pk for shop in display_shops],
+            )
+            .values("item_id", "shop_id")
+            .annotate(qty=Count("id"))
+            .values_list("item_id", "shop_id", "qty")
+        ):
+            shop_in_map.setdefault(item_id, {})[shop_id] = int(qty)
+
     segment = role_url_segment(profile.role)
     rows = []
-    for item in items_qs:
+    for item in items:
+        per_shop = [
+            int(shop_in_map.get(item.pk, {}).get(shop.pk, 0)) for shop in display_shops
+        ]
         rows.append(
             {
                 "item": item,
+                "shop_in_stock": per_shop,
                 "in_stock": item.serial_in_stock,
                 "out": item.serial_out,
                 "total": item.serial_total,
@@ -1509,12 +1539,6 @@ def stock_serials(request, profile, meta, module):
                 ),
             }
         )
-
-    from shops.models import Shop
-
-    filter_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
 
     return render(
         request,
@@ -1529,8 +1553,9 @@ def stock_serials(request, profile, meta, module):
             "rows": rows,
             "item_count": len(rows),
             "search": search,
-            "filter_shops": filter_shops,
-            "selected_shop_id": selected_shop_id,
+            "display_shops": display_shops,
+            "show_all_shops": len(display_shops) > 1,
+            "selected_shop_id": "",
             "stock_mode": "serials",
         },
     )
@@ -1639,6 +1664,7 @@ def _iter_returned_serial_rows(lines):
                 "item_category": item_category,
                 "serial_number": serial,
                 "receipt_number": receipt.receipt_number,
+                "shop_id": receipt.shop_id,
                 "shop_name": receipt.shop.name if receipt.shop_id else "—",
                 "bought_at": receipt.created_at,
                 "amount_paid": line.unit_price,
@@ -1649,21 +1675,25 @@ def _iter_returned_serial_rows(lines):
 
 
 def stock_serial_returns(request, profile, meta, module):
-    """Clients who returned serial-tracked items (name, phone, return count)."""
+    """Clients who returned serial-tracked items across all shops."""
     from employees.access import role_url_segment
     from shops.models import Shop
 
     search = (request.GET.get("q") or "").strip()
-    selected_shop_id = (request.GET.get("shop_id") or "").strip()
 
     page_sidebar = sidebar_for_stock_management(
         profile.role,
         active_mode="return-clients",
-        shop_id=selected_shop_id,
+        shop_id="",
         profile=profile,
     )
 
-    lines = _returned_serial_line_queryset(shop_id=selected_shop_id)
+    display_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+    shop_index = {shop.pk: index for index, shop in enumerate(display_shops)}
+
+    lines = _returned_serial_line_queryset(shop_id="")
     clients = {}
     for row in _iter_returned_serial_rows(lines):
         key = (
@@ -1678,10 +1708,14 @@ def stock_serial_returns(request, profile, meta, module):
                 "client_name": row["client_name"],
                 "client_phone": row["client_phone"],
                 "return_count": 0,
+                "shop_returns": [0] * len(display_shops),
                 "last_returned_at": row["returned_at"],
             }
             clients[key] = entry
         entry["return_count"] += 1
+        shop_pk = row.get("shop_id")
+        if shop_pk in shop_index:
+            entry["shop_returns"][shop_index[shop_pk]] += 1
         if row["returned_at"] and (
             entry["last_returned_at"] is None
             or row["returned_at"] > entry["last_returned_at"]
@@ -1716,9 +1750,6 @@ def stock_serial_returns(request, profile, meta, module):
             detail_url = (
                 f"{detail_url}?{urlencode({'phone': entry['client_phone'] or '', 'name': entry['client_name']})}"
             )
-        if selected_shop_id:
-            sep = "&" if "?" in detail_url else "?"
-            detail_url = f"{detail_url}{sep}shop_id={selected_shop_id}"
         rows.append({**entry, "detail_url": detail_url})
 
     rows.sort(
@@ -1727,10 +1758,6 @@ def stock_serial_returns(request, profile, meta, module):
             -(r["last_returned_at"].timestamp() if r["last_returned_at"] else 0),
             (r["client_name"] or "").lower(),
         )
-    )
-
-    filter_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
     )
 
     return render(
@@ -1746,8 +1773,9 @@ def stock_serial_returns(request, profile, meta, module):
             "rows": rows,
             "client_count": len(rows),
             "search": search,
-            "filter_shops": filter_shops,
-            "selected_shop_id": selected_shop_id,
+            "display_shops": display_shops,
+            "show_all_shops": len(display_shops) > 1,
+            "selected_shop_id": "",
             "stock_mode": "return-clients",
         },
     )
@@ -1756,17 +1784,16 @@ def stock_serial_returns(request, profile, meta, module):
 def stock_serial_return_client(
     request, profile, meta, module, *, client_id=None, guest_phone="", guest_name=""
 ):
-    """All returned serial items for one client."""
+    """All returned serial items for one client across all shops."""
     from employees.access import role_url_segment
-    from shops.models import Client, Shop
+    from shops.models import Client
 
-    selected_shop_id = (request.GET.get("shop_id") or "").strip()
     search = (request.GET.get("q") or "").strip()
 
     page_sidebar = sidebar_for_stock_management(
         profile.role,
         active_mode="return-clients",
-        shop_id=selected_shop_id,
+        shop_id="",
         profile=profile,
     )
 
@@ -1775,9 +1802,7 @@ def stock_serial_return_client(
         client = get_object_or_404(Client, pk=client_id)
         client_name = (client.full_name or "").strip() or "Client"
         client_phone = (client.phone_number or "").strip()
-        lines = _returned_serial_line_queryset(
-            shop_id=selected_shop_id, client_id=client.pk
-        )
+        lines = _returned_serial_line_queryset(shop_id="", client_id=client.pk)
     else:
         guest_phone = (guest_phone or request.GET.get("phone") or "").strip()
         guest_name = (guest_name or request.GET.get("name") or "").strip()
@@ -1786,7 +1811,7 @@ def stock_serial_return_client(
         client_name = guest_name or "Walk-in"
         client_phone = guest_phone
         lines = _returned_serial_line_queryset(
-            shop_id=selected_shop_id, client_phone=guest_phone or guest_name
+            shop_id="", client_phone=guest_phone or guest_name
         )
 
     rows = []
@@ -1807,6 +1832,7 @@ def stock_serial_return_client(
                     row["item_name"],
                     row["item_category"],
                     row["receipt_number"],
+                    row["shop_name"],
                     row["served_by"],
                     row["received_by"],
                 ]
@@ -1821,12 +1847,6 @@ def stock_serial_return_client(
         kwargs={"role_segment": segment, "module_slug": "stock-management"},
     )
     list_href = f"{list_url}?mode=return-clients"
-    if selected_shop_id:
-        list_href = f"{list_href}&shop_id={selected_shop_id}"
-
-    filter_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
 
     return render(
         request,
@@ -1843,8 +1863,6 @@ def stock_serial_return_client(
             "rows": rows,
             "row_count": len(rows),
             "search": search,
-            "filter_shops": filter_shops,
-            "selected_shop_id": selected_shop_id,
             "list_href": list_href,
             "stock_mode": "return-clients",
         },
@@ -1852,13 +1870,12 @@ def stock_serial_return_client(
 
 
 def stock_serial_detail(request, profile, meta, module, item_id):
-    """Show all serial numbers for one item: in stock, sold, returned, stocked out."""
+    """Show all serial numbers for one item across every shop."""
     from employees.access import role_url_segment
 
     from .models import ItemSerial
 
     item = get_object_or_404(Item, pk=item_id, track_serial_number=True)
-    selected_shop_id = (request.GET.get("shop_id") or "").strip()
     search = (request.GET.get("q") or "").strip()
     status_filter = (request.GET.get("status") or "all").strip().lower()
     if status_filter not in ("all", "in_stock", "sold", "returned", "out"):
@@ -1867,13 +1884,11 @@ def stock_serial_detail(request, profile, meta, module, item_id):
     page_sidebar = sidebar_for_stock_management(
         profile.role,
         active_mode="serials",
-        shop_id=selected_shop_id,
+        shop_id="",
         profile=profile,
     )
 
     serials_qs = ItemSerial.objects.filter(item=item).select_related("shop")
-    if selected_shop_id.isdigit():
-        serials_qs = serials_qs.filter(shop_id=int(selected_shop_id))
     if search:
         serials_qs = serials_qs.filter(serial_number__icontains=search)
 
@@ -1936,14 +1951,6 @@ def stock_serial_detail(request, profile, meta, module, item_id):
         kwargs={"role_segment": segment, "module_slug": "stock-management"},
     )
     list_href = f"{list_url}?mode=serials"
-    if selected_shop_id:
-        list_href = f"{list_href}&shop_id={selected_shop_id}"
-
-    from shops.models import Shop
-
-    filter_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
 
     return render(
         request,
@@ -1964,8 +1971,6 @@ def stock_serial_detail(request, profile, meta, module, item_id):
             "out_count": out_count,
             "search": search,
             "status_filter": status_filter,
-            "filter_shops": filter_shops,
-            "selected_shop_id": selected_shop_id,
             "list_href": list_href,
             "stock_mode": "serials",
         },

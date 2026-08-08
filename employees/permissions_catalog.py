@@ -90,6 +90,15 @@ PERMISSION_MODULES = (
         ),
     },
     {
+        "slug": "whatsapp",
+        "label": "WhatsApp",
+        "icon": "messages-square",
+        "summary": "Personal WhatsApp broadcasts, inbox replies, and send analytics.",
+        "submodules": (
+            {"slug": "view", "label": "View WhatsApp"},
+        ),
+    },
+    {
         "slug": "my-shop",
         "label": "MY-SHOP",
         "icon": "shopping-bag",
@@ -150,4 +159,4 @@ def is_valid_permission_key(module_slug, submodule_slug):
     if module is None:
         return False
     return any(sub["slug"] == submodule_slug for sub in module["submodules"])
-
+

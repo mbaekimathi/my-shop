@@ -1,0 +1,229 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section
+  class="item-panel item-panel--dense"
+  data-animate="rise"
+  data-comms-settings
+>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">Settings · WhatsApp</p>
+        <h2>{{ meta.headline }}</h2>
+        <p>Set up the APIs used to send WhatsApp, Message, and Text to clients.</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="pos-settings-groups daraja-settings-groups">
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>WhatsApp API</h3>
+        <p>Meta WhatsApp Cloud API credentials.</p>
+      </div>
+      <form class="daraja-credentials-form" data-comms-form="whatsapp" novalidate>
+        <input type="hidden" name="action" value="save_whatsapp_settings">
+        <div class="daraja-status" data-comms-whatsapp-status>
+          {% if comms.has_whatsapp_credentials %}
+          <span class="daraja-status-pill is-ok">API configured</span>
+          {% else %}
+          <span class="daraja-status-pill">Not configured</span>
+          <em>Enter phone number ID and access token, then save.</em>
+          {% endif %}
+        </div>
+        <div class="daraja-fields">
+          <label class="daraja-field">
+            <span>Phone number ID</span>
+            <input
+              type="text"
+              name="whatsapp_phone_number_id"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="From Meta Developer"
+              value="{{ comms.whatsapp_phone_number_id }}"
+              required
+            >
+          </label>
+          <label class="daraja-field">
+            <span>Business account ID</span>
+            <input
+              type="text"
+              name="whatsapp_business_account_id"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Optional"
+              value="{{ comms.whatsapp_business_account_id }}"
+            >
+          </label>
+          <label class="daraja-field">
+            <span>Display / from number</span>
+            <input
+              type="text"
+              name="whatsapp_from_number"
+              autocomplete="off"
+              inputmode="tel"
+              placeholder="e.g. 2547XXXXXXXX"
+              value="{{ comms.whatsapp_from_number }}"
+            >
+          </label>
+          <label class="daraja-field daraja-field--wide">
+            <span>Access token</span>
+            <input
+              type="password"
+              name="whatsapp_access_token"
+              autocomplete="new-password"
+              spellcheck="false"
+              placeholder="{% if comms.whatsapp_access_token_set %}Saved — enter a new token to replace{% else %}Permanent or temporary token{% endif %}"
+              {% if not comms.whatsapp_access_token_set %}required{% endif %}
+            >
+          </label>
+        </div>
+        <div class="daraja-form-actions">
+          <button type="submit" class="btn btn--primary">Save WhatsApp API</button>
+          <p class="daraja-form-message" data-comms-message hidden></p>
+        </div>
+      </form>
+    </section>
+
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Message API</h3>
+        <p>Sender identity for the Message channel API.</p>
+      </div>
+      <form class="daraja-credentials-form" data-comms-form="message" novalidate>
+        <input type="hidden" name="action" value="save_message_settings">
+        <div class="daraja-status" data-comms-message-status>
+          {% if comms.message_from_name %}
+          <span class="daraja-status-pill is-ok">API configured</span>
+          {% else %}
+          <span class="daraja-status-pill">Not configured</span>
+          <em>Enter a sender name, then save.</em>
+          {% endif %}
+        </div>
+        <div class="daraja-fields">
+          <label class="daraja-field">
+            <span>Sender name</span>
+            <input
+              type="text"
+              name="message_from_name"
+              autocomplete="organization"
+              maxlength="120"
+              placeholder="e.g. MY-SHOP Support"
+              value="{{ comms.message_from_name }}"
+              required
+            >
+          </label>
+          <label class="daraja-field">
+            <span>Reply-to email</span>
+            <input
+              type="email"
+              name="message_reply_to"
+              autocomplete="email"
+              placeholder="Optional"
+              value="{{ comms.message_reply_to }}"
+            >
+          </label>
+        </div>
+        <div class="daraja-form-actions">
+          <button type="submit" class="btn btn--primary">Save Message API</button>
+          <p class="daraja-form-message" data-comms-message hidden></p>
+        </div>
+      </form>
+    </section>
+
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Text (SMS) API</h3>
+        <p>SMS provider API credentials.</p>
+      </div>
+      <form class="daraja-credentials-form" data-comms-form="sms" novalidate>
+        <input type="hidden" name="action" value="save_sms_settings">
+        <div class="daraja-status" data-comms-sms-status>
+          {% if comms.has_sms_credentials %}
+          <span class="daraja-status-pill is-ok">API configured</span>
+          {% else %}
+          <span class="daraja-status-pill">Not configured</span>
+          <em>Enter API key and sender ID, then save.</em>
+          {% endif %}
+        </div>
+        <div class="daraja-env-picker" role="group" aria-label="SMS provider">
+          {% for value, label in sms_providers %}
+          <label class="daraja-env-option{% if comms.sms_provider == value %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="sms_provider"
+              value="{{ value }}"
+              data-comms-sms-provider
+              {% if comms.sms_provider == value %}checked{% endif %}
+            >
+            <span>
+              <strong>{{ label }}</strong>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+        <div class="daraja-fields">
+          <label class="daraja-field">
+            <span>Sender ID</span>
+            <input
+              type="text"
+              name="sms_sender_id"
+              autocomplete="off"
+              maxlength="32"
+              placeholder="Approved sender name / number"
+              value="{{ comms.sms_sender_id }}"
+              required
+            >
+          </label>
+          <label class="daraja-field">
+            <span>API key / username</span>
+            <input
+              type="text"
+              name="sms_api_key"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="{% if comms.sms_api_key_set %}Saved — enter a new key to replace{% else %}Provider API key{% endif %}"
+              {% if not comms.sms_api_key_set %}required{% endif %}
+            >
+          </label>
+          <label class="daraja-field">
+            <span>API secret / auth token</span>
+            <input
+              type="password"
+              name="sms_api_secret"
+              autocomplete="new-password"
+              spellcheck="false"
+              placeholder="{% if comms.sms_api_secret_set %}Saved — enter a new secret to replace{% else %}Optional for some providers{% endif %}"
+            >
+          </label>
+          <label class="daraja-field daraja-field--wide">
+            <span>Custom API base URL</span>
+            <input
+              type="url"
+              name="sms_api_base_url"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Only for Custom HTTP provider"
+              value="{{ comms.sms_api_base_url }}"
+            >
+          </label>
+        </div>
+        <div class="daraja-form-actions">
+          <button type="submit" class="btn btn--primary">Save Text API</button>
+          <p class="daraja-form-message" data-comms-message hidden></p>
+        </div>
+      </form>
+    </section>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/communications-settings.js' %}?v=2"></script>
+{% endblock %}

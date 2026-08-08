@@ -24,6 +24,7 @@
   const countEl = root.querySelector("[data-receipts-count]");
   const statusEl = root.querySelector("[data-receipts-status]");
   const emptyEl = root.querySelector("[data-receipts-empty]");
+  const countStatEl = root.querySelector("[data-receipts-count-stat]");
   const filterPanels = root.querySelectorAll("[data-filter-panel]");
 
   const modal = document.querySelector("[data-receipt-modal]");
@@ -79,10 +80,9 @@
 
   const money = (value) => {
     const n = Number(value);
-    if (!Number.isFinite(n)) return String(value ?? "0.00");
-    return n.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+    if (!Number.isFinite(n)) return String(value ?? "0");
+    return Math.round(n).toLocaleString(undefined, {
+      maximumFractionDigits: 0,
     });
   };
 
@@ -142,6 +142,9 @@
 
   const renderList = (receipts, count) => {
     if (!listEl) return;
+    if (countStatEl) {
+      countStatEl.textContent = String(count || receipts.length || 0);
+    }
     if (!receipts.length) {
       listEl.innerHTML = "";
       if (emptyEl) emptyEl.hidden = false;
@@ -173,8 +176,8 @@
     row.kind
   )}">${escapeHtml(row.kind_label)}</span></td>
   <td class="shop-receipts-client" data-label="Client">${client}</td>
-  <td data-label="Total">KSh ${escapeHtml(money(row.total))}</td>
-  <td data-label="When">${escapeHtml(row.created_label)}</td>
+  <td class="shop-receipts-total" data-label="Total">KSh ${escapeHtml(money(row.total))}</td>
+  <td class="shop-receipts-when" data-label="When">${escapeHtml(row.created_label)}</td>
   <td data-label="Status"><span class="shop-receipt-status ${statusClass(
     row.status
   )}">${escapeHtml(row.status_label)}</span></td>
@@ -432,7 +435,7 @@
       ? `<div class="shop-receipt-return-serials">${serialOptions}</div>`
       : `<label class="shop-receipt-return-qty">
   <span>Qty</span>
-  <input type="number" min="1" max="${maxQty}" value="${maxQty}" data-return-qty>
+  <input type="number" min="1" max="${maxQty}" step="1" value="${maxQty}" data-return-qty>
 </label>`
   }
 </div>`;
@@ -443,7 +446,7 @@
       modalBody.innerHTML = `
 <div class="shop-receipt-detail" data-detail-panel>
   <div class="shop-receipt-summary">
-    <div>
+    <div class="shop-receipt-summary-badges">
       <span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(
         receipt.kind
       )}">${escapeHtml(receipt.kind_label)}</span>
@@ -451,13 +454,15 @@
         receipt.status
       )}">${escapeHtml(receipt.status_label)}</span>
     </div>
-    <p><strong>${escapeHtml(receipt.created_label || "")}</strong></p>
+    <p class="shop-receipt-summary-when"><strong>${escapeHtml(
+      receipt.created_label || ""
+    )}</strong></p>
     <p class="shop-receipt-muted">Cashier: ${escapeHtml(
       receipt.cashier || "—"
     )}</p>
   </div>
   ${clientBlock}
-  <div class="shop-receipt-card">
+  <div class="shop-receipt-card shop-receipt-card--items">
     <h3>Items</h3>
     <div class="shop-receipt-items-wrap">
       <table class="shop-receipt-items">
@@ -495,7 +500,7 @@
   </div>
 </div>
 <div class="shop-receipt-return" data-return-panel hidden>
-  <p class="shop-receipt-muted">Select one or more items to return. Stock will be restored and the sale/credit updated automatically.</p>
+  <p class="shop-receipt-muted">Select items to return. Stock is restored and the sale/credit updates automatically.</p>
   <div class="shop-receipt-return-list">
     ${
       returnRows ||
