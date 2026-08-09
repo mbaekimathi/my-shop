@@ -28,3 +28,5 @@ passenger_wsgi.pyc
 whatsapp-bridge/node_modules/
 whatsapp-bridge/.wwebjs_auth/
 whatsapp-bridge/.wwebjs_cache/
+whatsapp-bridge/.bridge.pid
+whatsapp-bridge/bridge.log

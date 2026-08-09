@@ -101,6 +101,12 @@ class ShopStock(models.Model):
         related_name="shop_stocks",
     )
     quantity = models.PositiveIntegerField(default=0)
+    average_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Weighted average unit cost for this shop's on-hand stock.",
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -267,6 +273,12 @@ class StockMovementLine(models.Model):
         null=True,
         blank=True,
         db_index=True,
+    )
+    unit_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Cost per unit removed on stock-out (shop weighted average at the time).",
     )
     payment_status = models.CharField(
         max_length=16,

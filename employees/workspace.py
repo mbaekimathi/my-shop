@@ -350,71 +350,81 @@ def sidebar_for_my_shop(
                     active=active == "workspace",
                 )
             )
-        if _allowed("open_close"):
-            if shop_open:
+        # Floor tools only on the main shop page — not on buy-stock / receipts / etc.
+        if active == "workspace":
+            if _allowed("open_close"):
+                if shop_open:
+                    primary.append(
+                        _link(
+                            "Close shop",
+                            "door-closed",
+                            href=reverse(
+                                "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+                            ),
+                            active=active == "day_toggle",
+                        )
+                    )
+                else:
+                    primary.append(
+                        _link(
+                            "Open shop",
+                            "door-open",
+                            href=reverse(
+                                "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+                            ),
+                            active=active == "day_toggle",
+                        )
+                    )
+            if _allowed("buy_stock"):
                 primary.append(
-                    _link(
-                        "Close shop",
-                        "door-closed",
-                        href=reverse(
-                            "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
-                        ),
-                        active=active == "day_toggle",
+                    _action(
+                        "Buy stock items",
+                        "package-plus",
+                        action="buy-stock",
+                        href=reverse("employees:my_shop_buy_stock", kwargs={"shop_id": shop.pk}),
                     )
                 )
-            else:
+            if _allowed("stock_requests"):
                 primary.append(
                     _link(
-                        "Open shop",
-                        "door-open",
+                        "Stock requests",
+                        "clipboard-list",
                         href=reverse(
-                            "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+                            "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
                         ),
-                        active=active == "day_toggle",
+                        active=active == "stock_requests",
                     )
                 )
-        if _allowed("buy_stock"):
+            if _allowed("register_expense"):
+                primary.append(
+                    _action(
+                        "Register expense",
+                        "wallet",
+                        action="register-expense",
+                        href=reverse(
+                            "employees:my_shop_register_expense", kwargs={"shop_id": shop.pk}
+                        ),
+                    )
+                )
+            if print_channels and _allowed("print"):
+                primary.append(
+                    _action("Connect to printer", "bluetooth", action="connect-printer")
+                )
+            if _allowed("receipts"):
+                primary.append(
+                    _link(
+                        "Receipts",
+                        "receipt",
+                        href=reverse("employees:my_shop_receipts", kwargs={"shop_id": shop.pk}),
+                        active=active == "receipts",
+                    )
+                )
+        elif active == "stock_requests" and _allowed("stock_requests"):
             primary.append(
                 _action(
-                    "Buy stock items",
-                    "package-plus",
-                    action="buy-stock",
-                    href=reverse("employees:my_shop_buy_stock", kwargs={"shop_id": shop.pk}),
-                )
-            )
-        if _allowed("stock_requests"):
-            primary.append(
-                _link(
-                    "Stock requests",
-                    "clipboard-list",
-                    href=reverse(
-                        "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
-                    ),
-                    active=active == "stock_requests",
-                )
-            )
-        if _allowed("register_expense"):
-            primary.append(
-                _action(
-                    "Register expense",
-                    "wallet",
-                    action="register-expense",
-                    href=reverse(
-                        "employees:my_shop_register_expense", kwargs={"shop_id": shop.pk}
-                    ),
-                )
-            )
-        if print_channels and _allowed("print"):
-            primary.append(
-                _action("Connect to printer", "bluetooth", action="connect-printer")
-            )
-        if _allowed("receipts"):
-            primary.append(
-                _link(
-                    "Receipts",
-                    "receipt",
-                    href=reverse("employees:my_shop_receipts", kwargs={"shop_id": shop.pk}),
-                    active=active == "receipts",
+                    "Request stock",
+                    "plus",
+                    action="request-stock",
                 )
             )
         if not portal and len(shops) > 1:

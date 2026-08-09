@@ -456,6 +456,14 @@ app.get("/debug-contacts-sample", async (_req, res) => {
   }
 });
 
+app.get("/health", (_req, res) => {
+  res.json({
+    ok: true,
+    ready: Boolean(state.ready),
+    state: state.status,
+  });
+});
+
 app.get("/status", (_req, res) => {
   res.json({
     ok: true,

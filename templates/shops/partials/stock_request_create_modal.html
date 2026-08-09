@@ -1,0 +1,163 @@
+<div
+  class="workspace-modal stock-request-modal stock-create-modal"
+  data-stock-create-modal
+  data-modal="request-stock"
+  hidden
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="stock-create-modal-title"
+>
+  <div class="workspace-modal-backdrop" data-stock-create-close></div>
+  <div class="workspace-modal-dialog stock-request-dialog stock-transfer-dialog stock-create-request-dialog">
+    <div class="workspace-modal-head stock-create-head">
+      <div class="stock-create-head-copy">
+        <p class="stock-transfer-kicker">{{ shop.name }} · Stock request</p>
+        <h2 id="stock-create-modal-title">Request stock</h2>
+        <p class="stock-create-head-summary">
+          Ask another shop to send items into <strong>{{ shop.name }}</strong>.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-stock-create-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form
+      method="post"
+      action="{{ create_stock_request_url }}"
+      class="stock-create-request-form"
+      data-stock-create-form
+      novalidate
+    >
+      {% csrf_token %}
+      <div class="stock-request-modal-body stock-create-body">
+        {% if request_from_shops %}
+        <div class="stock-create-route" aria-label="Request route">
+          <label class="stock-create-route-party stock-create-route-party--from">
+            <span class="stock-create-route-label">From shop</span>
+            <select name="requested_from_shop_id" required data-stock-create-from>
+              <option value="">Select a shop…</option>
+              {% for other in request_from_shops %}
+              <option value="{{ other.id }}">{{ other.name }}{% if other.location %} · {{ other.location }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="stock-create-route-arrow" aria-hidden="true">
+            <i data-lucide="arrow-right"></i>
+          </div>
+          <div class="stock-create-route-party">
+            <span class="stock-create-route-label">To</span>
+            <strong>{{ shop.name }}</strong>
+            {% if shop.location %}
+            <span class="stock-create-route-meta">{{ shop.location }}</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <section class="stock-create-panel" aria-labelledby="stock-create-items-title">
+          <div class="stock-create-panel-head">
+            <div>
+              <h3 id="stock-create-items-title">Items</h3>
+              <p>Enter a quantity on each line you need.</p>
+            </div>
+            <p class="stock-create-selected" data-stock-create-selected hidden>
+              <strong data-stock-create-selected-count>0</strong>
+              <span>selected</span>
+            </p>
+          </div>
+
+          <label class="stock-create-search">
+            <i data-lucide="search" aria-hidden="true"></i>
+            <input
+              type="search"
+              placeholder="Search items…"
+              autocomplete="off"
+              data-stock-create-search
+              aria-label="Search items"
+            >
+          </label>
+
+          <div class="stock-create-items-head" aria-hidden="true">
+            <span>Item</span>
+            <span>Qty</span>
+          </div>
+
+          <div class="stock-create-items" data-stock-create-items>
+            {% for item in request_items %}
+            <label
+              class="stock-create-item-row"
+              data-stock-create-row
+              data-item-name="{{ item.name|lower }}"
+            >
+              <span class="stock-create-item-name">{{ item.name }}</span>
+              <input type="hidden" name="item_id" value="{{ item.id }}" disabled data-stock-create-id>
+              <input
+                type="number"
+                name="quantity"
+                min="1"
+                step="1"
+                inputmode="numeric"
+                placeholder="0"
+                data-stock-create-qty
+                aria-label="Quantity for {{ item.name }}"
+              >
+            </label>
+            {% empty %}
+            <p class="stock-create-empty">No items available to request.</p>
+            {% endfor %}
+          </div>
+          <p class="stock-create-empty stock-create-empty--search" data-stock-create-no-results hidden>
+            No items match your search.
+          </p>
+        </section>
+
+        <section class="stock-create-confirm" aria-labelledby="stock-create-confirm-title">
+          <div class="stock-create-confirm-head">
+            <h3 id="stock-create-confirm-title">Confirm</h3>
+            <p>Optional note and active staff ID.</p>
+          </div>
+
+          <label class="field stock-create-field">
+            <span class="field-label">Note <em>(optional)</em></span>
+            <input type="text" name="notes" maxlength="500" placeholder="e.g. Needed for weekend sales">
+          </label>
+
+          <label class="field stock-create-field stock-create-field--code">
+            <span class="field-label">Active staff ID</span>
+            <input
+              type="text"
+              name="login_code"
+              inputmode="numeric"
+              maxlength="6"
+              autocomplete="one-time-code"
+              placeholder="6-digit ID"
+              required
+              data-stock-create-code
+            >
+          </label>
+        </section>
+        {% else %}
+        <div class="stock-create-empty stock-create-empty--block">
+          <i data-lucide="store" aria-hidden="true"></i>
+          <p>No other shops are available to request from.</p>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="workspace-modal-actions stock-request-modal-actions stock-create-actions">
+        <button type="button" class="btn btn--ghost" data-stock-create-close>Cancel</button>
+        {% if request_from_shops and request_items %}
+        <button type="submit" class="btn btn--primary" data-stock-create-submit>
+          <i data-lucide="send" aria-hidden="true"></i>
+          <span>Send request</span>
+        </button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>

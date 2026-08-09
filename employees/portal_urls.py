@@ -37,6 +37,11 @@ urlpatterns = [
         name="my_shop_stock_requests",
     ),
     path(
+        "my-shop/<int:shop_id>/stock-requests/create/",
+        shop_views.my_shop_stock_request_create,
+        name="my_shop_stock_request_create",
+    ),
+    path(
         "my-shop/<int:shop_id>/register-expense/",
         shop_views.my_shop_register_expense,
         name="my_shop_register_expense",

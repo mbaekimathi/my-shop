@@ -4,7 +4,7 @@
 {% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="ax" data-animate="rise" data-analytics>
+<section class="ax" data-animate="rise" data-analytics data-ax-section="{{ section_slug }}">
   <header class="ax-top">
     <div class="ax-top-main">
       <div class="ax-title">
@@ -81,7 +81,7 @@
   {% endif %}
 
   {% if page.metrics %}
-  <div class="ax-kpis ax-kpis--dynamic" aria-label="Key metrics">
+  <div class="ax-kpis ax-kpis--dynamic{% if page.metrics|length > 6 %} ax-kpis--wide{% endif %}" aria-label="Key metrics">
     {% for metric in page.metrics %}
     <article class="ax-kpi{% if metric.tone and metric.tone != 'neutral' %} is-{{ metric.tone }}{% endif %}">
       <span>{{ metric.label }}</span>
@@ -310,20 +310,30 @@
   {% if page.tables %}
   <div class="ax-grid ax-grid--tables">
     {% for table in page.tables %}
-    <section class="ax-card{% if page.tables|length == 1 or table.shop_grid %} ax-card--wide{% endif %}">
+    <section class="ax-card{% if page.tables|length == 1 or table.shop_grid %} ax-card--wide{% endif %}{% if table.shop_grid %} ax-card--matrix{% endif %}">
       <header class="ax-card-head">
         <h3>{{ table.title }}</h3>
+        {% if table.shop_grid %}
+        <span class="ax-card-hint">Hover amounts for full KSh</span>
+        {% endif %}
       </header>
+      {% if table.shop_grid and section_slug == "revenue" %}
+      <div class="ax-band-legend" aria-label="Column groups">
+        <span class="is-flow">Trading</span>
+        <span class="is-till">Costs</span>
+        <span class="is-pl">Result</span>
+      </div>
+      {% endif %}
       <div class="ax-table-wrap ax-table-wrap--scroll">
         {% if table.rows %}
-        <table class="ax-table{% if table.shop_grid %} ax-table--shops{% endif %}">
+        <table class="ax-table{% if table.shop_grid %} ax-table--shops{% endif %}{% if section_slug == 'revenue' %} ax-table--pl{% endif %}">
           <thead>
             <tr>
               {% for col in table.columns %}
               <th
                 {% if col.title %}title="{{ col.title }}"{% endif %}
-                {% if forloop.first or col.compact or col.pair or col.total %}
-                class="{% if forloop.first %}ax-th--item{% endif %}{% if col.compact %} ax-th--shop{% endif %}{% if col.pair %} ax-th--pair{% endif %}{% if col.total %} ax-th--total{% endif %}"
+                {% if forloop.first or col.compact or col.pair or col.total or col.band %}
+                class="{% if forloop.first %}ax-th--item{% endif %}{% if col.compact %} ax-th--shop{% endif %}{% if col.pair %} ax-th--pair{% endif %}{% if col.total %} ax-th--total{% endif %}{% if col.band %} ax-th--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-th--band-start{% endif %}"
                 {% endif %}
               >
                 {% if col.pair %}
@@ -342,12 +352,12 @@
           </thead>
           <tbody>
             {% for row in table.rows %}
-            <tr>
+            <tr{% if table.shop_grid and forloop.last %} class="ax-row--total"{% endif %}>
               {% for cell in row %}
               {% for col in table.columns %}
               {% if forloop.parentloop.counter0 == forloop.counter0 %}
               <td
-                class="{% if forloop.parentloop.first %}ax-cell--primary{% endif %}{% if col.compact or col.pair %} ax-cell--shop{% endif %}{% if cell.kind == 'qty_amount' or col.pair %} ax-cell--pair{% endif %}{% if col.total %} ax-cell--total{% endif %}"
+                class="{% if forloop.parentloop.first %}ax-cell--primary{% endif %}{% if col.compact or col.pair %} ax-cell--shop{% endif %}{% if cell.kind == 'qty_amount' or col.pair %} ax-cell--pair{% endif %}{% if cell.kind == 'money' or cell.kind == 'pct' %} ax-cell--money{% endif %}{% if col.total %} ax-cell--total{% endif %}{% if col.band %} ax-cell--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-cell--band-start{% endif %}"
                 data-label="{% if col.label %}{{ col.title|default:col.label }}{% else %}{{ col }}{% endif %}"
               >
                 {% if cell.href %}
@@ -357,6 +367,8 @@
                   <span class="ax-pair-qty">{{ cell.qty }}</span>
                   <span class="ax-pair-amt">{{ cell.amount }}</span>
                 </span>
+                {% elif cell.kind == "money" or cell.kind == "pct" %}
+                <span class="ax-money{% if cell.tone and cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
                 {% elif cell.tone %}
                 <span class="ax-trend{% if cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}">{{ cell.label }}</span>
                 {% elif cell.label %}

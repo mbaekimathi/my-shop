@@ -167,7 +167,19 @@ class ShopReceiptLine(models.Model):
     quantity = models.PositiveIntegerField()
     returned_quantity = models.PositiveIntegerField(default=0)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Cost per unit at sale (weighted average / last buy snapshot).",
+    )
     line_total = models.DecimalField(max_digits=12, decimal_places=2)
+    line_cogs = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="unit_cost × original quantity at sale; remaining COGS uses unit_cost × remaining qty.",
+    )
     serial_numbers = models.JSONField(default=list, blank=True)
     returned_serial_numbers = models.JSONField(default=list, blank=True)
 
@@ -688,6 +700,7 @@ class ExpenseCategory(models.TextChoices):
     OFFICE = "office", "Office supplies"
     SECURITY = "security", "Security"
     FOOD = "food", "Food & refreshments"
+    OWNER_DRAWINGS = "owner_drawings", "Owner drawings"
     MISC = "misc", "Miscellaneous"
 
 

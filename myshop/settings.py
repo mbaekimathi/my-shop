@@ -231,6 +231,8 @@ CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "300"))
 WHATSAPP_BRIDGE_URL = os.getenv("WHATSAPP_BRIDGE_URL", "http://127.0.0.1:3100").strip()
 WHATSAPP_BRIDGE_SECRET = os.getenv("WHATSAPP_BRIDGE_SECRET", "").strip()
 WHATSAPP_BRIDGE_PORT = int(os.getenv("WHATSAPP_BRIDGE_PORT", "3100"))
+# Auto-start local helper when unreachable (default on for localhost bridge).
+WHATSAPP_BRIDGE_AUTOSTART = (os.getenv("WHATSAPP_BRIDGE_AUTOSTART") or "auto").strip()
 WHATSAPP_MEDIA_MAX_BYTES = int(os.getenv("WHATSAPP_MEDIA_MAX_BYTES", str(4 * 1024 * 1024)))
 # auto | celery | inline | cron — see communications.campaigns.enqueue_campaign
 COMMS_SEND_MODE = (os.getenv("COMMS_SEND_MODE", "auto") or "auto").strip().lower()

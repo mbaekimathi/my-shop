@@ -1,5 +1,6 @@
 from itertools import groupby
 import re
+from decimal import Decimal
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
@@ -50,10 +51,12 @@ from .services import (
     close_shop_day,
     complete_shop_checkout,
     create_shop,
+    day_session_balance_summary,
     delete_shop,
     find_client_by_phone,
     format_kenya_phone,
     get_company_pos_settings,
+    get_last_closed_shop_day,
     get_open_shop_day,
     get_shop_receipt_detail,
     list_shop_day_sessions,
@@ -1142,7 +1145,8 @@ def my_shop_stock_requests(request, shop_id):
         title=f"Stock requests — {shop.name}",
         headline="Stock requests",
         summary=(
-            f"Incoming transfers, request updates, and previous requests for {shop.name}."
+            f"Request stock from another shop, review incoming transfers, "
+            f"and see previous requests for {shop.name}."
         ),
         icon="clipboard-list",
         template_name="shops/my_shop_stock_requests.html",
@@ -1157,8 +1161,97 @@ def my_shop_stock_requests(request, shop_id):
             "verify_login_code_url": reverse(
                 "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
             ),
+            "create_stock_request_url": reverse(
+                "employees:my_shop_stock_request_create", kwargs={"shop_id": shop.pk}
+            ),
+            "request_from_shops": list(
+                Shop.objects.filter(is_hidden=False, is_suspended=False)
+                .exclude(pk=shop.pk)
+                .order_by("name")
+                .only("id", "name", "location")
+            ),
+            "request_items": list(
+                Item.objects.filter(is_suspended=False)
+                .order_by("name")
+                .values("id", "name")[:800]
+            ),
         },
     )
+
+
+@shop_floor_required
+@require_http_methods(["POST"])
+def my_shop_stock_request_create(request, shop_id):
+    """Create an outgoing stock request from this shop to another shop."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        if _wants_json_response(request):
+            return JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
+        return denied
+
+    wants_json = _wants_json_response(request)
+    login_code = (request.POST.get("login_code") or "").strip()
+    authorising = verify_active_employee_code(login_code)
+    if authorising is None:
+        error = "Enter a valid active staff 6-digit ID."
+        if wants_json:
+            return JsonResponse({"ok": False, "error": error}, status=400)
+        messages.error(request, error)
+        return redirect("employees:my_shop_stock_requests", shop_id=shop.pk)
+
+    denied = _require_my_shop_permission(
+        request,
+        profile,
+        "stock_requests",
+        as_json=wants_json,
+        actor=authorising,
+    )
+    if denied:
+        return denied
+
+    from_shop_id = (request.POST.get("requested_from_shop_id") or "").strip()
+    notes = (request.POST.get("notes") or "").strip()
+    post = request.POST.copy()
+    post["shop_id"] = str(shop.pk)
+    post["requested_from_shop_id"] = from_shop_id
+    post["mode"] = "request"
+
+    try:
+        movement = apply_stock_movement(authorising, StockMovementType.REQUEST, post)
+    except ValidationError as exc:
+        errors = _validation_errors(exc)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": errors[0] if errors else "Could not create stock request.",
+                },
+                status=400,
+            )
+        for message in errors:
+            messages.error(request, message)
+        return redirect("employees:my_shop_stock_requests", shop_id=shop.pk)
+
+    if notes and not (movement.notes or "").strip():
+        movement.notes = notes[:2000]
+        movement.save(update_fields=["notes"])
+
+    line_count = movement.lines.count()
+    from_name = (
+        movement.requested_from_shop.name
+        if movement.requested_from_shop_id
+        else "another shop"
+    )
+    success = (
+        f"Requested {line_count} item{'' if line_count == 1 else 's'} "
+        f"from {from_name}."
+    )
+    messages.success(request, success)
+    if wants_json:
+        return JsonResponse({"ok": True, "message": success, "request_id": movement.pk})
+    return redirect("employees:my_shop_stock_requests", shop_id=shop.pk)
 
 
 @shop_floor_required
@@ -1491,6 +1584,39 @@ def my_shop_day_toggle(request, shop_id):
     is_open = open_session is not None
     mode = "close" if is_open else "open"
     day_sessions = list_shop_day_sessions(shop, limit=40)
+    open_summary = (
+        day_session_balance_summary(open_session) if open_session else {}
+    )
+    last_closed = None if is_open else get_last_closed_shop_day(shop)
+
+    # Suggest expected closing balances when closing (leave blank if user typed).
+    if is_open and open_summary and not form_errors:
+        if not form_data["cash_amount"]:
+            form_data["cash_amount"] = str(
+                int(open_summary["expected_cash"].quantize(Decimal("1")))
+            )
+        if not form_data["mpesa_amount"]:
+            form_data["mpesa_amount"] = str(
+                int(open_summary["expected_mpesa"].quantize(Decimal("1")))
+            )
+        if not form_data["credit_amount"]:
+            form_data["credit_amount"] = str(
+                int(open_summary["expected_credit"].quantize(Decimal("1")))
+            )
+    # Suggest last closing as opening balances when starting a new day.
+    elif not is_open and last_closed and not form_errors:
+        if not form_data["cash_amount"] and last_closed.closing_cash is not None:
+            form_data["cash_amount"] = str(
+                int(Decimal(last_closed.closing_cash).quantize(Decimal("1")))
+            )
+        if not form_data["mpesa_amount"] and last_closed.closing_mpesa is not None:
+            form_data["mpesa_amount"] = str(
+                int(Decimal(last_closed.closing_mpesa).quantize(Decimal("1")))
+            )
+        if not form_data["credit_amount"] and last_closed.closing_credit is not None:
+            form_data["credit_amount"] = str(
+                int(Decimal(last_closed.closing_credit).quantize(Decimal("1")))
+            )
 
     return _render_my_shop_tool_page(
         request,
@@ -1501,9 +1627,11 @@ def my_shop_day_toggle(request, shop_id):
         title=("Close shop" if is_open else "Open shop") + f" — {shop.name}",
         headline="Close shop" if is_open else "Open shop",
         summary=(
-            f"Record closing balances and close {shop.name}."
+            f"Record closing cash, M-Pesa, and credit balances for {shop.name}, "
+            f"then review opening/closing history below."
             if is_open
-            else f"Record opening balances and open {shop.name}."
+            else f"Record opening cash, M-Pesa, and credit balances for {shop.name}. "
+            f"Each open/close is saved in the list below."
         ),
         icon="door-closed" if is_open else "door-open",
         template_name="shops/my_shop_day_toggle.html",
@@ -1511,6 +1639,8 @@ def my_shop_day_toggle(request, shop_id):
             "mode": mode,
             "is_open": is_open,
             "open_session": open_session,
+            "open_summary": open_summary,
+            "last_closed": last_closed,
             "day_sessions": day_sessions,
             "day_session_count": len(day_sessions),
             "form_data": form_data,

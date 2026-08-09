@@ -66,7 +66,7 @@
       </div>
       <div class="comms-help" data-comms-bridge-help {% if bridge.status == "connected" %}hidden{% endif %}>
         <p data-comms-bridge-help-text>{{ bridge_hints.help_text }}</p>
-        <pre class="comms-code" data-comms-bridge-cmd>{{ bridge_hints.cmd }}</pre>
+        <pre class="comms-code" data-comms-bridge-cmd {% if not bridge_hints.cmd %}hidden{% endif %}>{{ bridge_hints.cmd }}</pre>
         <p class="comms-help-note" data-comms-bridge-note>{{ bridge_hints.note }}</p>
       </div>
       <p class="comms-error" data-comms-bridge-error {% if not bridge.last_error %}hidden{% endif %}></p>
@@ -302,5 +302,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/communications.js' %}?v=28"></script>
+<script src="{% static 'js/communications.js' %}?v=29"></script>
 {% endblock %}

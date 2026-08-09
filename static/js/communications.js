@@ -347,17 +347,33 @@
     );
 
     if (els.help) els.help.hidden = connected;
-    if (els.helpCmd && data.cmd) els.helpCmd.textContent = data.cmd;
+    if (els.helpCmd) {
+      if (data.cmd) {
+        els.helpCmd.hidden = false;
+        els.helpCmd.textContent = data.cmd;
+      } else {
+        els.helpCmd.hidden = true;
+        els.helpCmd.textContent = "";
+      }
+    }
     if (els.helpNote && data.note) els.helpNote.textContent = data.note;
     if (els.helpText) {
       if (bridgeStatus === "qr_pending") {
         els.helpText.textContent = "QR is ready — scan it with your phone.";
       } else if (unreachable || bridgeStatus === "disconnected") {
-        els.helpText.textContent =
-          data.help_text ||
-          (data.mode === "remote"
-            ? "Cannot reach the remote WhatsApp helper yet."
-            : "WhatsApp helper is not running yet. Start it once, then come back here.");
+        if (data.mode === "local-auto" || data.autostart === true) {
+          els.helpText.textContent =
+            data.help_text ||
+            (data.last_error && /starting/i.test(data.last_error)
+              ? data.last_error
+              : "Starting WhatsApp helper automatically…");
+        } else {
+          els.helpText.textContent =
+            data.help_text ||
+            (data.mode === "remote"
+              ? "Cannot reach the remote WhatsApp helper yet."
+              : "WhatsApp helper is not running yet. Start it once, then come back here.");
+        }
       } else {
         els.helpText.textContent = friendly || "Waiting for WhatsApp…";
       }
@@ -372,7 +388,7 @@
       } else {
         els.connectHelp.textContent =
           data.connect_help ||
-          "Start the WhatsApp helper, then scan the QR code with your phone.";
+          "WhatsApp is starting automatically. Scan the QR when it appears.";
       }
     }
 

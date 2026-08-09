@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import Count, F, Q, Sum
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.db.models.functions import Coalesce
 from django.http import Http404
 
@@ -15,6 +15,7 @@ from items.models import (
     StockMovement,
     StockMovementLine,
     StockMovementType,
+    StockOutReason,
     StockPaymentStatus,
     StockRequestStatus,
     Supplier,
@@ -45,7 +46,7 @@ ANALYTICS_SECTIONS = (
         "slug": "revenue",
         "label": "Revenue",
         "icon": "banknote",
-        "summary": "Sales, payments, expenses, and day open/close balances by shop.",
+        "summary": "Profit by shop — net sales, COGS, margin, shrinkage, OpEx, and operating profit.",
     },
     {
         "slug": "balances",
@@ -127,6 +128,14 @@ def _money_ksh(value) -> str:
     return f"KSh {_money(value)}"
 
 
+def _money_dense(value) -> str:
+    """Compact amount for wide shop matrices (full value kept in cell title)."""
+    amount = Decimal(value or 0).quantize(Decimal("0.01"))
+    if amount == amount.to_integral_value():
+        return f"{int(amount):,}"
+    return f"{amount:,.2f}"
+
+
 def _shop_col(
     shop,
     *,
@@ -162,12 +171,55 @@ def _shop_col(
 def _qty_amount_cell(qty, amount, *, title: str = "") -> dict:
     """Quantity and amount side by side, styled as distinct values."""
     qty_label = str(int(qty or 0))
-    amount_label = _money_ksh(amount)
+    amount_label = _money_dense(amount)
+    full = _money_ksh(amount)
     return {
         "kind": "qty_amount",
         "qty": qty_label,
         "amount": amount_label,
-        "title": title or f"{qty_label} · {amount_label}",
+        "title": title or f"{qty_label} · {full}",
+    }
+
+
+def _money_cell(amount, *, tone: str = "neutral", title: str = "") -> dict:
+    """Single amount cell for P&L-style analytics tables."""
+    tone_map = {
+        "success": "good",
+        "ok": "good",
+        "danger": "bad",
+        "error": "bad",
+        "warning": "warn",
+        "warn": "warn",
+        "good": "good",
+        "bad": "bad",
+        "neutral": "neutral",
+    }
+    full = _money_ksh(amount)
+    return {
+        "kind": "money",
+        "label": _money_dense(amount),
+        "title": title or full,
+        "tone": tone_map.get(tone, "neutral"),
+    }
+
+
+def _pct_cell(pct, *, tone: str = "neutral", title: str = "") -> dict:
+    value = Decimal(pct or 0).quantize(Decimal("0.1"))
+    tone_map = {
+        "success": "good",
+        "danger": "bad",
+        "warning": "warn",
+        "good": "good",
+        "bad": "bad",
+        "warn": "warn",
+        "neutral": "neutral",
+    }
+    label = f"{value}%"
+    return {
+        "kind": "pct",
+        "label": label,
+        "title": title or f"Gross margin {label}",
+        "tone": tone_map.get(tone, "neutral"),
     }
 
 
@@ -904,26 +956,177 @@ def _alert(level, title, detail, action=""):
 
 
 def _metric(label, value, hint="", tone="neutral"):
-    return {"label": label, "value": value, "hint": hint, "tone": tone}
+    tone_map = {
+        "success": "good",
+        "ok": "good",
+        "danger": "bad",
+        "error": "bad",
+        "warning": "warn",
+        "warn": "warn",
+        "good": "good",
+        "bad": "bad",
+        "neutral": "neutral",
+    }
+    return {
+        "label": label,
+        "value": value,
+        "hint": hint,
+        "tone": tone_map.get(tone, "neutral"),
+    }
 
 
-def _table(title, columns, rows, empty="No data for this period.", footnote=""):
-    shop_grid = any(
-        isinstance(col, dict) and (col.get("compact") or col.get("pair"))
-        for col in columns
-    )
+def _table(title, columns, rows, empty="No data for this period.", footnote="", shop_grid=None):
+    if shop_grid is None:
+        shop_grid = any(
+            isinstance(col, dict) and (col.get("compact") or col.get("pair"))
+            for col in columns
+        )
     return {
         "title": title,
         "columns": columns,
         "rows": rows,
         "empty": empty,
         "footnote": footnote,
-        "shop_grid": shop_grid,
+        "shop_grid": bool(shop_grid),
     }
 
 
 def _insight(title, body):
     return {"title": title, "body": body}
+
+
+SHRINKAGE_REASONS = frozenset(
+    {
+        StockOutReason.WASTE,
+        StockOutReason.DISPLAY,
+    }
+)
+
+
+def _cogs_by_shop_for_period(*, shop_ids, start, end) -> dict[int, tuple[int, Decimal]]:
+    """COGS from stamped sale/credit line costs (with last-buy fallback)."""
+    cogs_by_shop: dict[int, tuple[int, Decimal]] = {}
+    trading_line_qs = ShopReceiptLine.objects.filter(
+        receipt__shop_id__in=shop_ids,
+        receipt__created_at__gte=start,
+        receipt__created_at__lt=end,
+        receipt__kind__in=[ShopReceiptKind.SALE, ShopReceiptKind.CREDIT],
+    ).exclude(receipt__status=ShopReceiptStatus.CANCELLED)
+    for row in trading_line_qs.values("receipt__shop_id").annotate(
+        lines=Count("id"),
+        cogs=Coalesce(
+            Sum(
+                ExpressionWrapper(
+                    F("unit_cost") * (F("quantity") - F("returned_quantity")),
+                    output_field=DecimalField(max_digits=14, decimal_places=2),
+                )
+            ),
+            _zero(),
+        ),
+    ):
+        cogs_by_shop[row["receipt__shop_id"]] = (
+            int(row["lines"] or 0),
+            Decimal(row["cogs"] or 0).quantize(Decimal("0.01")),
+        )
+
+    missing_cost_lines = list(
+        trading_line_qs.filter(unit_cost=0)
+        .exclude(item_id__isnull=True)
+        .values("receipt__shop_id", "item_id", "quantity", "returned_quantity")
+    )
+    if missing_cost_lines:
+        from items.services import last_buying_prices_for_items
+
+        item_ids = {row["item_id"] for row in missing_cost_lines if row["item_id"]}
+        fallback_prices = last_buying_prices_for_items(item_ids)
+        for row in missing_cost_lines:
+            item_id = row["item_id"]
+            unit = Decimal(fallback_prices.get(item_id) or 0)
+            if unit <= 0:
+                continue
+            remaining = max(
+                0, int(row["quantity"] or 0) - int(row["returned_quantity"] or 0)
+            )
+            if remaining <= 0:
+                continue
+            shop_id = row["receipt__shop_id"]
+            extra = (unit * remaining).quantize(Decimal("0.01"))
+            docs, amt = cogs_by_shop.get(shop_id, (0, _zero()))
+            cogs_by_shop[shop_id] = (docs, amt + extra)
+    return cogs_by_shop
+
+
+def _shrinkage_by_shop_for_period(
+    *, shop_ids, start, end
+) -> dict[int, tuple[int, Decimal]]:
+    """Waste/display stock-out cost by shop (inventory losses)."""
+    shrinkage_by_shop: dict[int, tuple[int, Decimal]] = {}
+    out_lines = StockMovementLine.objects.filter(
+        movement__shop_id__in=shop_ids,
+        movement__movement_type=StockMovementType.OUT,
+        movement__created_at__gte=start,
+        movement__created_at__lt=end,
+        reason__in=SHRINKAGE_REASONS,
+    )
+    for row in out_lines.values("movement__shop_id").annotate(
+        docs=Count("id"),
+        amount=Coalesce(
+            Sum(
+                ExpressionWrapper(
+                    F("unit_cost") * F("quantity"),
+                    output_field=DecimalField(max_digits=14, decimal_places=2),
+                )
+            ),
+            _zero(),
+        ),
+    ):
+        shrinkage_by_shop[row["movement__shop_id"]] = (
+            int(row["docs"] or 0),
+            Decimal(row["amount"] or 0).quantize(Decimal("0.01")),
+        )
+
+    # Fallback for older outs stamped without unit_cost.
+    missing = list(
+        out_lines.filter(unit_cost=0).values(
+            "movement__shop_id", "item_id", "quantity"
+        )
+    )
+    if missing:
+        from items.services import last_buying_prices_for_items
+
+        item_ids = {row["item_id"] for row in missing if row["item_id"]}
+        fallback_prices = last_buying_prices_for_items(item_ids)
+        for row in missing:
+            unit = Decimal(fallback_prices.get(row["item_id"]) or 0)
+            if unit <= 0:
+                continue
+            qty = int(row["quantity"] or 0)
+            if qty <= 0:
+                continue
+            shop_id = row["movement__shop_id"]
+            extra = (unit * qty).quantize(Decimal("0.01"))
+            docs, amt = shrinkage_by_shop.get(shop_id, (0, _zero()))
+            shrinkage_by_shop[shop_id] = (docs, amt + extra)
+    return shrinkage_by_shop
+
+
+def _opex_and_drawings_by_shop(expenses_qs) -> tuple[dict, dict]:
+    opex_by_shop: dict[int, tuple[int, Decimal]] = {}
+    drawings_by_shop: dict[int, tuple[int, Decimal]] = {}
+    for row in expenses_qs.values("shop_id", "category").annotate(
+        docs=Count("id"),
+        amount=Coalesce(Sum("amount"), _zero()),
+    ):
+        shop_id = row["shop_id"]
+        amount = Decimal(row["amount"] or 0)
+        docs = int(row["docs"] or 0)
+        if row["category"] == ExpenseCategory.OWNER_DRAWINGS:
+            d_docs, d_amt = drawings_by_shop.get(shop_id, (0, _zero()))
+            drawings_by_shop[shop_id] = (d_docs + docs, d_amt + amount)
+        else:
+            o_docs, o_amt = opex_by_shop.get(shop_id, (0, _zero()))
+            opex_by_shop[shop_id] = (o_docs + docs, o_amt + amount)
+    return opex_by_shop, drawings_by_shop
 
 
 def _filters_context(profile, request):
@@ -1683,19 +1886,72 @@ def _build_overview(filters):
 
     sales_total = _sum_total(sales)
     prev_sales_total = _sum_total(prev_sales)
-    expense_total = Decimal(
-        expenses.aggregate(amount=Coalesce(Sum("amount"), _zero()))["amount"] or 0
+    sales_subtotal = Decimal(
+        sales.aggregate(amount=Coalesce(Sum("subtotal"), _zero()))["amount"] or 0
     )
-    prev_expense_total = Decimal(
-        Expense.objects.filter(
-            shop_id__in=shop_ids,
-            created_at__gte=prev_start,
-            created_at__lt=prev_end,
-        ).aggregate(amount=Coalesce(Sum("amount"), _zero()))["amount"]
+    credit_subtotal = Decimal(
+        credits.aggregate(amount=Coalesce(Sum("subtotal"), _zero()))["amount"] or 0
+    )
+    net_sales = sales_subtotal + credit_subtotal
+    cogs_by_shop = _cogs_by_shop_for_period(shop_ids=shop_ids, start=start, end=end)
+    shrinkage_by_shop = _shrinkage_by_shop_for_period(
+        shop_ids=shop_ids, start=start, end=end
+    )
+    opex_by_shop, drawings_by_shop = _opex_and_drawings_by_shop(expenses)
+    cogs_total = sum((amt for _d, amt in cogs_by_shop.values()), _zero())
+    shrinkage_total = sum((amt for _d, amt in shrinkage_by_shop.values()), _zero())
+    opex_total = sum((amt for _d, amt in opex_by_shop.values()), _zero())
+    drawings_total = sum((amt for _d, amt in drawings_by_shop.values()), _zero())
+    gross_total = net_sales - cogs_total
+    operating_total = gross_total - opex_total - shrinkage_total
+
+    prev_sales_qs = _receipts_qs(
+        shop_ids=shop_ids,
+        start=prev_start,
+        end=prev_end,
+        kinds=[ShopReceiptKind.SALE],
+    )
+    prev_credits_qs = _receipts_qs(
+        shop_ids=shop_ids,
+        start=prev_start,
+        end=prev_end,
+        kinds=[ShopReceiptKind.CREDIT],
+    )
+    prev_net_sales = Decimal(
+        prev_sales_qs.aggregate(amount=Coalesce(Sum("subtotal"), _zero()))["amount"]
+        or 0
+    ) + Decimal(
+        prev_credits_qs.aggregate(amount=Coalesce(Sum("subtotal"), _zero()))["amount"]
         or 0
     )
-    net_total = sales_total - expense_total
-    prev_net = prev_sales_total - prev_expense_total
+    prev_cogs = sum(
+        (
+            amt
+            for _d, amt in _cogs_by_shop_for_period(
+                shop_ids=shop_ids, start=prev_start, end=prev_end
+            ).values()
+        ),
+        _zero(),
+    )
+    prev_shrinkage = sum(
+        (
+            amt
+            for _d, amt in _shrinkage_by_shop_for_period(
+                shop_ids=shop_ids, start=prev_start, end=prev_end
+            ).values()
+        ),
+        _zero(),
+    )
+    prev_expenses = Expense.objects.filter(
+        shop_id__in=shop_ids,
+        created_at__gte=prev_start,
+        created_at__lt=prev_end,
+    )
+    prev_opex_by_shop, _prev_drawings = _opex_and_drawings_by_shop(prev_expenses)
+    prev_opex = sum((amt for _d, amt in prev_opex_by_shop.values()), _zero())
+    prev_gross = prev_net_sales - prev_cogs
+    prev_operating = prev_gross - prev_opex - prev_shrinkage
+
     credit_total = _sum_total(credits)
     credit_payments = Decimal(
         credits.aggregate(paid=Coalesce(Sum("amount_paid"), _zero()))["paid"] or 0
@@ -1703,10 +1959,9 @@ def _build_overview(filters):
     credit_due = credit_total - credit_payments
 
     sales_hint, sales_tone = _trend_hint(sales_total, prev_sales_total)
-    expense_hint, expense_tone = _trend_hint(
-        expense_total, prev_expense_total, invert=True
-    )
-    net_hint, net_tone = _trend_hint(net_total, prev_net)
+    expense_hint, expense_tone = _trend_hint(opex_total, prev_opex, invert=True)
+    operating_hint, operating_tone = _trend_hint(operating_total, prev_operating)
+    gross_hint, gross_tone = _trend_hint(gross_total, prev_gross)
 
     opening_cash = day_balances["totals"]["opening_cash"]
     closing_cash = day_balances["totals"]["closing_cash"]
@@ -1804,6 +2059,11 @@ def _build_overview(filters):
         if cash_variance == 0
         else f"{'over' if cash_variance > 0 else 'short'} vs expected"
     )
+    margin_pct = (
+        ((gross_total / net_sales) * Decimal("100")).quantize(Decimal("0.1"))
+        if net_sales > 0
+        else _zero()
+    )
     trends = [
         {
             "label": "Sales",
@@ -1813,17 +2073,24 @@ def _build_overview(filters):
             "spark": _sparkline([row[1] for row in timeline]),
         },
         {
-            "label": "Expenses",
-            "value": _money_ksh(expense_total),
+            "label": "Gross profit",
+            "value": _money_ksh(gross_total),
+            "delta": f"{gross_hint} · margin {margin_pct}%",
+            "tone": gross_tone,
+            "spark": _sparkline([row[1] for row in timeline]),
+        },
+        {
+            "label": "OpEx",
+            "value": _money_ksh(opex_total),
             "delta": expense_hint,
             "tone": expense_tone,
             "spark": _sparkline([row[2] for row in timeline]),
         },
         {
-            "label": "Net",
-            "value": _money_ksh(net_total),
-            "delta": net_hint,
-            "tone": net_tone,
+            "label": "Operating profit",
+            "value": _money_ksh(operating_total),
+            "delta": operating_hint,
+            "tone": operating_tone,
             "spark": _sparkline([row[1] - row[2] for row in timeline]),
         },
         {
@@ -1889,11 +2156,53 @@ def _build_overview(filters):
         del row["sort"]
     shop_chart = _shop_movement_chart(shop_chart_rows)
 
+    alerts = []
+    if shrinkage_total > 0:
+        alerts.append(
+            _alert(
+                "warning",
+                "Shrinkage in period",
+                f"Waste/display stock-outs cost {_money_ksh(shrinkage_total)} "
+                f"(included in operating profit).",
+                "Review stock-out reasons on the Stock page.",
+            )
+        )
+    if drawings_total > 0:
+        alerts.append(
+            _alert(
+                "info",
+                "Owner drawings",
+                f"{_money_ksh(drawings_total)} recorded — equity, not operating expense.",
+            )
+        )
+
     return {
         "headline": "Trends",
-        "lead": "",
-        "alerts": [],
-        "metrics": [],
+        "lead": (
+            "Operating profit = net sales (ex-tax) − COGS − OpEx − shrinkage. "
+            "Cash variance is till control, not profit."
+        ),
+        "alerts": alerts,
+        "metrics": [
+            _metric(
+                "Net sales",
+                _money_ksh(net_sales),
+                hint="Sales + credits, ex-tax",
+            ),
+            _metric("COGS", _money_ksh(cogs_total), hint="Cost of goods sold"),
+            _metric(
+                "Gross profit",
+                _money_ksh(gross_total),
+                hint=f"Margin {margin_pct}%",
+                tone="success" if gross_total >= 0 else "danger",
+            ),
+            _metric(
+                "Operating profit",
+                _money_ksh(operating_total),
+                hint="After OpEx and shrinkage",
+                tone="success" if operating_total >= 0 else "danger",
+            ),
+        ],
         "trends": trends,
         "charts": [
             {
@@ -1979,205 +2288,256 @@ def _build_revenue(filters):
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     start, end = filters["start"], filters["end"]
-    sales, _prev_sales, credits, quotes, expenses = _common_receipt_sets(filters)
-    day_balances = _day_balance_data(filters)
-    balance_by_shop = day_balances["by_shop"]
+    sales, _prev_sales, credits, _quotes, expenses = _common_receipt_sets(filters)
 
     sales_by_shop: dict[int, tuple[int, Decimal]] = {}
-    cash_by_shop: dict[int, tuple[int, Decimal]] = {}
-    mpesa_by_shop: dict[int, tuple[int, Decimal]] = {}
+    cash_by_shop: dict[int, Decimal] = {}
+    mpesa_by_shop: dict[int, Decimal] = {}
+    sales_subtotal_by_shop: dict[int, Decimal] = {}
     for row in sales.values("shop_id").annotate(
         docs=Count("id"),
         amount=Coalesce(Sum("total"), _zero()),
+        subtotal=Coalesce(Sum("subtotal"), _zero()),
         cash=Coalesce(Sum("cash_amount"), _zero()),
         mpesa=Coalesce(Sum("mpesa_amount"), _zero()),
     ):
         shop_id = row["shop_id"]
         sales_by_shop[shop_id] = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
-        cash_by_shop[shop_id] = (0, Decimal(row["cash"] or 0))
-        mpesa_by_shop[shop_id] = (0, Decimal(row["mpesa"] or 0))
+        sales_subtotal_by_shop[shop_id] = Decimal(row["subtotal"] or 0)
+        cash_by_shop[shop_id] = Decimal(row["cash"] or 0)
+        mpesa_by_shop[shop_id] = Decimal(row["mpesa"] or 0)
 
-    expenses_by_shop: dict[int, tuple[int, Decimal]] = {}
-    for row in expenses.values("shop_id").annotate(
-        docs=Count("id"),
-        amount=Coalesce(Sum("amount"), _zero()),
-    ):
-        expenses_by_shop[row["shop_id"]] = (
-            int(row["docs"] or 0),
-            Decimal(row["amount"] or 0),
-        )
-
-    stock_by_shop: dict[int, tuple[int, Decimal]] = {}
-    for row in (
-        StockMovement.objects.filter(
-            shop_id__in=shop_ids,
-            movement_type=StockMovementType.IN,
-            created_at__gte=start,
-            created_at__lt=end,
-        )
-        .values("shop_id")
-        .annotate(
-            docs=Count("id"),
-            amount=Coalesce(
-                Sum(F("lines__buying_price") * F("lines__quantity")),
-                _zero(),
-            ),
-        )
-    ):
-        stock_by_shop[row["shop_id"]] = (
-            int(row["docs"] or 0),
-            Decimal(row["amount"] or 0),
-        )
+    opex_by_shop, drawings_by_shop = _opex_and_drawings_by_shop(expenses)
 
     credits_by_shop: dict[int, tuple[int, Decimal]] = {}
+    credits_subtotal_by_shop: dict[int, Decimal] = {}
     for row in credits.values("shop_id").annotate(
         docs=Count("id"),
         amount=Coalesce(Sum("total"), _zero()),
+        subtotal=Coalesce(Sum("subtotal"), _zero()),
     ):
         credits_by_shop[row["shop_id"]] = (
             int(row["docs"] or 0),
             Decimal(row["amount"] or 0),
         )
+        credits_subtotal_by_shop[row["shop_id"]] = Decimal(row["subtotal"] or 0)
 
-    quotes_by_shop: dict[int, tuple[int, Decimal]] = {}
-    for row in quotes.values("shop_id").annotate(
-        docs=Count("id"),
-        amount=Coalesce(Sum("total"), _zero()),
-    ):
-        quotes_by_shop[row["shop_id"]] = (
-            int(row["docs"] or 0),
-            Decimal(row["amount"] or 0),
+    cogs_by_shop = _cogs_by_shop_for_period(shop_ids=shop_ids, start=start, end=end)
+    shrinkage_by_shop = _shrinkage_by_shop_for_period(
+        shop_ids=shop_ids, start=start, end=end
+    )
+
+    net_sales_by_shop: dict[int, tuple[int, Decimal]] = {}
+    gross_by_shop: dict[int, Decimal] = {}
+    margin_by_shop: dict[int, Decimal] = {}
+    operating_by_shop: dict[int, Decimal] = {}
+    for shop in shops:
+        sid = shop.pk
+        sale_docs, _sale_total = sales_by_shop.get(sid, (0, _zero()))
+        credit_docs, _credit_total = credits_by_shop.get(sid, (0, _zero()))
+        net_sales = sales_subtotal_by_shop.get(sid, _zero()) + credits_subtotal_by_shop.get(
+            sid, _zero()
         )
-
-    open_cash_by_shop = _amount_map_from_balances(balance_by_shop, "opening_cash")
-    close_cash_by_shop = _amount_map_from_balances(balance_by_shop, "closing_cash")
-    cash_var_by_shop = _amount_map_from_balances(balance_by_shop, "cash_variance")
-    open_mpesa_by_shop = _amount_map_from_balances(balance_by_shop, "opening_mpesa")
-    close_mpesa_by_shop = _amount_map_from_balances(balance_by_shop, "closing_mpesa")
-    mpesa_var_by_shop = _amount_map_from_balances(balance_by_shop, "mpesa_variance")
-
-    day_metric_labels = {
-        "Open cash",
-        "Close cash",
-        "Cash var",
-        "Open M-Pesa",
-        "Close M-Pesa",
-        "M-Pesa var",
-    }
-    metric_maps = [
-        ("Credits", credits_by_shop),
-        ("Sales", sales_by_shop),
-        ("Cash", cash_by_shop),
-        ("Open cash", open_cash_by_shop),
-        ("Close cash", close_cash_by_shop),
-        ("Cash var", cash_var_by_shop),
-        ("M-Pesa", mpesa_by_shop),
-        ("Open M-Pesa", open_mpesa_by_shop),
-        ("Close M-Pesa", close_mpesa_by_shop),
-        ("M-Pesa var", mpesa_var_by_shop),
-        ("Stock", stock_by_shop),
-        ("Expenses", expenses_by_shop),
-        ("Net", None),  # sales − expenses (stock tracked separately)
-        ("Quotations", quotes_by_shop),
-    ]
-
-    def _shop_metric_pair(shop_id: int, label: str, by_shop):
-        if label == "Net":
-            sales_amt = sales_by_shop.get(shop_id, (0, _zero()))[1]
-            exp_amt = expenses_by_shop.get(shop_id, (0, _zero()))[1]
-            return _qty_amount_cell(
-                0,
-                sales_amt - exp_amt,
-                title=_money_ksh(sales_amt - exp_amt),
-            )
-        qty, amount = (by_shop or {}).get(shop_id, (0, _zero()))
-        return _qty_amount_cell(
-            qty,
-            amount,
-            title=f"{int(qty or 0)} · {_money_ksh(amount)}",
+        cogs_amt = cogs_by_shop.get(sid, (0, _zero()))[1]
+        opex_amt = opex_by_shop.get(sid, (0, _zero()))[1]
+        shrink_amt = shrinkage_by_shop.get(sid, (0, _zero()))[1]
+        gross = net_sales - cogs_amt
+        operating = gross - opex_amt - shrink_amt
+        margin = (
+            ((gross / net_sales) * Decimal("100")).quantize(Decimal("0.1"))
+            if net_sales > 0
+            else _zero()
         )
+        net_sales_by_shop[sid] = (sale_docs + credit_docs, net_sales)
+        gross_by_shop[sid] = gross
+        margin_by_shop[sid] = margin
+        operating_by_shop[sid] = operating
 
-    # Shops with highest sales first; include shops with no sales too.
     shops_sorted = sorted(
         shops,
         key=lambda shop: (
-            -sales_by_shop.get(shop.pk, (0, _zero()))[1],
+            -net_sales_by_shop.get(shop.pk, (0, _zero()))[1],
             shop.name.lower(),
         ),
     )
 
-    columns = ["Shop"]
-    for label, _by_shop in metric_maps:
-        columns.append(
-            {
-                "label": label,
-                "pair": True,
-                "pair_qty": "Days" if label in day_metric_labels else "Docs",
-                "pair_amt": "Amt",
-            }
-        )
+    def _shop_pl_row(shop_id: int) -> list:
+        docs, net = net_sales_by_shop.get(shop_id, (0, _zero()))
+        cogs = cogs_by_shop.get(shop_id, (0, _zero()))[1]
+        gross = gross_by_shop.get(shop_id, _zero())
+        margin = margin_by_shop.get(shop_id, _zero())
+        shrink = shrinkage_by_shop.get(shop_id, (0, _zero()))[1]
+        opex = opex_by_shop.get(shop_id, (0, _zero()))[1]
+        operating = operating_by_shop.get(shop_id, _zero())
+        drawings = drawings_by_shop.get(shop_id, (0, _zero()))[1]
+        return [
+            _qty_amount_cell(docs, net, title=f"{docs} docs · {_money_ksh(net)}"),
+            _money_cell(cogs),
+            _money_cell(gross, tone="good" if gross >= 0 else "bad"),
+            _pct_cell(margin, tone="good" if margin >= 0 else "bad"),
+            _money_cell(shrink, tone="warn" if shrink > 0 else "neutral"),
+            _money_cell(opex),
+            _money_cell(operating, tone="good" if operating >= 0 else "bad"),
+            _money_cell(drawings),
+        ]
+
+    columns = [
+        "Shop",
+        {
+            "label": "Net sales",
+            "title": "Sale + credit subtotals (ex-tax), docs above amount",
+            "pair": True,
+            "pair_qty": "Docs",
+            "pair_amt": "Amt",
+            "band": "pl",
+            "band_start": True,
+        },
+        {"label": "COGS", "title": "Cost of goods sold", "band": "pl"},
+        {"label": "Gross", "title": "Gross profit = net sales − COGS", "band": "pl"},
+        {"label": "Margin", "title": "Gross profit ÷ net sales", "band": "pl"},
+        {"label": "Shrink", "title": "Waste + display stock-outs at cost", "band": "cost"},
+        {"label": "OpEx", "title": "Operating expenses (excludes drawings)", "band": "cost"},
+        {
+            "label": "Operating",
+            "title": "Operating profit = gross − shrink − OpEx",
+            "band": "result",
+            "band_start": True,
+        },
+        {
+            "label": "Drawings",
+            "title": "Owner drawings (equity, not OpEx)",
+            "band": "result",
+        },
+    ]
 
     table_rows = []
     for shop in shops_sorted:
-        cells = [shop.name]
-        for label, by_shop in metric_maps:
-            cells.append(_shop_metric_pair(shop.pk, label, by_shop))
-        table_rows.append(cells)
+        table_rows.append([shop.name, *_shop_pl_row(shop.pk)])
+
+    total_net_sales = sum(
+        (net_sales_by_shop.get(shop.pk, (0, _zero()))[1] for shop in shops_sorted),
+        _zero(),
+    )
+    total_docs = sum(
+        (net_sales_by_shop.get(shop.pk, (0, _zero()))[0] for shop in shops_sorted),
+        0,
+    )
+    total_cogs = sum(
+        (cogs_by_shop.get(shop.pk, (0, _zero()))[1] for shop in shops_sorted),
+        _zero(),
+    )
+    total_gross = sum((gross_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero())
+    total_opex = sum(
+        (opex_by_shop.get(shop.pk, (0, _zero()))[1] for shop in shops_sorted),
+        _zero(),
+    )
+    total_operating = sum(
+        (operating_by_shop.get(shop.pk, _zero()) for shop in shops_sorted),
+        _zero(),
+    )
+    total_drawings = sum(
+        (drawings_by_shop.get(shop.pk, (0, _zero()))[1] for shop in shops_sorted),
+        _zero(),
+    )
+    total_shrinkage = sum(
+        (shrinkage_by_shop.get(shop.pk, (0, _zero()))[1] for shop in shops_sorted),
+        _zero(),
+    )
+    total_cash = sum((cash_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero())
+    total_mpesa = sum((mpesa_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero())
+    margin_pct = (
+        ((total_gross / total_net_sales) * Decimal("100")).quantize(Decimal("0.1"))
+        if total_net_sales > 0
+        else _zero()
+    )
 
     if shops_sorted:
-        total_cells = ["Total"]
-        for label, by_shop in metric_maps:
-            if label == "Net":
-                total_sales = sum(
-                    (sales_by_shop.get(shop.pk, (0, _zero()))[1] for shop in shops_sorted),
-                    _zero(),
-                )
-                total_exp = sum(
-                    (
-                        expenses_by_shop.get(shop.pk, (0, _zero()))[1]
-                        for shop in shops_sorted
-                    ),
-                    _zero(),
-                )
-                total_cells.append(
-                    _qty_amount_cell(
-                        0,
-                        total_sales - total_exp,
-                        title=_money_ksh(total_sales - total_exp),
-                    )
-                )
-            else:
-                total_qty = 0
-                total_amount = _zero()
-                for shop in shops_sorted:
-                    qty, amount = (by_shop or {}).get(shop.pk, (0, _zero()))
-                    total_qty += int(qty or 0)
-                    total_amount += Decimal(amount or 0)
-                total_cells.append(
-                    _qty_amount_cell(
-                        total_qty,
-                        total_amount,
-                        title=f"{total_qty} · {_money_ksh(total_amount)}",
-                    )
-                )
-        table_rows.append(total_cells)
+        table_rows.append(
+            [
+                "Total",
+                _qty_amount_cell(
+                    total_docs,
+                    total_net_sales,
+                    title=f"{total_docs} docs · {_money_ksh(total_net_sales)}",
+                ),
+                _money_cell(total_cogs),
+                _money_cell(total_gross, tone="good" if total_gross >= 0 else "bad"),
+                _pct_cell(margin_pct, tone="good" if margin_pct >= 0 else "bad"),
+                _money_cell(
+                    total_shrinkage,
+                    tone="warn" if total_shrinkage > 0 else "neutral",
+                ),
+                _money_cell(total_opex),
+                _money_cell(
+                    total_operating,
+                    tone="good" if total_operating >= 0 else "bad",
+                ),
+                _money_cell(total_drawings),
+            ]
+        )
 
     return {
         "headline": "Revenue",
-        "lead": "",
+        "lead": (
+            "Shop profit statement: Net sales → COGS → Gross → Shrink → OpEx → Operating. "
+            "Day till open/close lives on Balances; quotations and stock-in have their own pages."
+        ),
         "alerts": [],
-        "metrics": [],
+        "metrics": [
+            _metric(
+                "Net sales",
+                _money_ksh(total_net_sales),
+                hint="Sales + credits, ex-tax",
+            ),
+            _metric(
+                "Gross profit",
+                _money_ksh(total_gross),
+                hint=f"Margin {margin_pct}%",
+                tone="good" if total_gross >= 0 else "bad",
+            ),
+            _metric(
+                "Operating profit",
+                _money_ksh(total_operating),
+                hint="After shrink + OpEx",
+                tone="good" if total_operating >= 0 else "bad",
+            ),
+            _metric(
+                "COGS",
+                _money_ksh(total_cogs),
+                hint="Cost of goods sold",
+            ),
+            _metric(
+                "Shrinkage",
+                _money_ksh(total_shrinkage),
+                hint="Waste + display at cost",
+                tone="warn" if total_shrinkage > 0 else "neutral",
+            ),
+            _metric(
+                "OpEx",
+                _money_ksh(total_opex),
+                hint="Excludes owner drawings",
+            ),
+            _metric(
+                "Collected",
+                _money_ksh(total_cash + total_mpesa),
+                hint=f"Cash {_money_dense(total_cash)} · M-Pesa {_money_dense(total_mpesa)}",
+            ),
+        ],
         "insights": [],
         "tables": [
             _table(
-                "Revenue by shop",
+                "Profit by shop",
                 columns,
                 table_rows,
                 empty="No revenue data for selected shops and period.",
+                shop_grid=True,
                 footnote=(
-                    "Open/Close and variance use shop day sessions. "
-                    "Cash var = closing - (opening + cash sales - expenses). "
-                    "M-Pesa var = closing - (opening + M-Pesa sales)."
+                    "Net sales = sale + credit subtotals (ex-tax). "
+                    "COGS = unit cost at checkout × qty remaining after returns. "
+                    "Gross = net sales − COGS. Margin = gross ÷ net sales. "
+                    "Operating = gross − shrinkage − OpEx. "
+                    "Drawings are equity, not an operating expense. "
+                    "Till variances and stock purchases are on Balances / Stock."
                 ),
             )
         ],
@@ -2491,30 +2851,46 @@ def _build_sales(filters):
 def _build_items(filters):
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
+    start, end = filters["start"], filters["end"]
 
-    sales = _receipts_qs(
+    trading = _receipts_qs(
         shop_ids=shop_ids,
-        start=filters["start"],
-        end=filters["end"],
-        kinds=[ShopReceiptKind.SALE],
+        start=start,
+        end=end,
+        kinds=[ShopReceiptKind.SALE, ShopReceiptKind.CREDIT],
     )
     sold_lines = (
-        ShopReceiptLine.objects.filter(receipt__in=sales)
+        ShopReceiptLine.objects.filter(receipt__in=trading)
         .values("item_id", "item_name", "receipt__shop_id")
         .annotate(
             units=Coalesce(Sum(F("quantity") - F("returned_quantity")), 0),
             value=Coalesce(
-                Sum((F("quantity") - F("returned_quantity")) * F("unit_price")),
+                Sum(
+                    ExpressionWrapper(
+                        (F("quantity") - F("returned_quantity")) * F("unit_price"),
+                        output_field=DecimalField(max_digits=14, decimal_places=2),
+                    )
+                ),
+                _zero(),
+            ),
+            cogs=Coalesce(
+                Sum(
+                    ExpressionWrapper(
+                        (F("quantity") - F("returned_quantity")) * F("unit_cost"),
+                        output_field=DecimalField(max_digits=14, decimal_places=2),
+                    )
+                ),
                 _zero(),
             ),
         )
     )
 
-    # item_id -> {name, by_shop: {shop_id: (units, value)}, total_units, total_value}
+    # item_id -> {name, by_shop: {shop_id: (units, value, cogs)}, totals}
     by_item: dict[int | None, dict] = {}
     for row in sold_lines:
         units = int(row["units"] or 0)
         value = Decimal(row["value"] or 0)
+        cogs = Decimal(row["cogs"] or 0)
         if units <= 0 and not value:
             continue
         item_id = row["item_id"]
@@ -2525,38 +2901,125 @@ def _build_items(filters):
                 "by_shop": {},
                 "total_units": 0,
                 "total_value": _zero(),
+                "total_cogs": _zero(),
             }
             by_item[item_id] = entry
         elif row["item_name"] and not entry["name"]:
             entry["name"] = row["item_name"]
         shop_id = row["receipt__shop_id"]
-        prev_units, prev_value = entry["by_shop"].get(shop_id, (0, _zero()))
-        entry["by_shop"][shop_id] = (prev_units + units, prev_value + value)
+        prev_units, prev_value, prev_cogs = entry["by_shop"].get(
+            shop_id, (0, _zero(), _zero())
+        )
+        entry["by_shop"][shop_id] = (
+            prev_units + units,
+            prev_value + value,
+            prev_cogs + cogs,
+        )
         entry["total_units"] += units
         entry["total_value"] += value
+        entry["total_cogs"] += cogs
+
+    # Fallback COGS for lines with zero unit_cost — apply at item total level.
+    missing = list(
+        ShopReceiptLine.objects.filter(receipt__in=trading, unit_cost=0)
+        .exclude(item_id__isnull=True)
+        .values("item_id", "quantity", "returned_quantity")
+    )
+    if missing:
+        from items.services import last_buying_prices_for_items
+
+        prices = last_buying_prices_for_items(
+            {row["item_id"] for row in missing if row["item_id"]}
+        )
+        for row in missing:
+            entry = by_item.get(row["item_id"])
+            if entry is None:
+                continue
+            unit = Decimal(prices.get(row["item_id"]) or 0)
+            if unit <= 0:
+                continue
+            remaining = max(
+                0, int(row["quantity"] or 0) - int(row["returned_quantity"] or 0)
+            )
+            if remaining <= 0:
+                continue
+            entry["total_cogs"] += (unit * remaining).quantize(Decimal("0.01"))
 
     sold_rows = []
+    loss_makers = 0
     for entry in sorted(
         by_item.values(),
-        key=lambda row: (-row["total_units"], row["name"].lower()),
+        key=lambda row: (
+            -(row["total_value"] - row["total_cogs"]),
+            row["name"].lower(),
+        ),
     ):
+        gross = entry["total_value"] - entry["total_cogs"]
+        margin = (
+            ((gross / entry["total_value"]) * Decimal("100")).quantize(Decimal("0.1"))
+            if entry["total_value"] > 0
+            else _zero()
+        )
+        if gross < 0:
+            loss_makers += 1
         cells = [entry["name"]]
         for shop in shops:
-            shop_units, shop_value = entry["by_shop"].get(shop.pk, (0, _zero()))
+            shop_units, shop_value, _shop_cogs = entry["by_shop"].get(
+                shop.pk, (0, _zero(), _zero())
+            )
             cells.append(_qty_amount_cell(shop_units, shop_value))
         cells.append(_qty_amount_cell(entry["total_units"], entry["total_value"]))
+        cells.append(_money_ksh(entry["total_cogs"]))
+        cells.append(_money_ksh(gross))
+        cells.append(f"{margin}%")
         sold_rows.append(cells)
 
     columns = ["Item"]
     for shop in shops:
         columns.append(_shop_col(shop, pair=True))
-    columns.append(_pair_total_col())
+    columns.extend([_pair_total_col(), "COGS", "Gross", "Margin"])
+
+    total_sales = sum((e["total_value"] for e in by_item.values()), _zero())
+    total_cogs = sum((e["total_cogs"] for e in by_item.values()), _zero())
+    total_gross = total_sales - total_cogs
+    overall_margin = (
+        ((total_gross / total_sales) * Decimal("100")).quantize(Decimal("0.1"))
+        if total_sales > 0
+        else _zero()
+    )
+
+    alerts = []
+    if loss_makers:
+        alerts.append(
+            _alert(
+                "warning",
+                "Items sold below cost",
+                f"{loss_makers} item{'s' if loss_makers != 1 else ''} show negative "
+                f"gross profit in this period.",
+                "Raise selling price or check buying cost.",
+            )
+        )
 
     return {
         "headline": "Items sold",
-        "lead": "",
-        "alerts": [],
-        "metrics": [],
+        "lead": "Ranked by gross profit. Margin uses stamped cost (or last buy fallback).",
+        "alerts": alerts,
+        "metrics": [
+            _metric("Sales value", _money_ksh(total_sales), hint="Ex-tax line totals"),
+            _metric("COGS", _money_ksh(total_cogs)),
+            _metric(
+                "Gross profit",
+                _money_ksh(total_gross),
+                hint=f"Margin {overall_margin}%",
+                tone="success" if total_gross >= 0 else "danger",
+            ),
+            _metric(
+                "Loss-makers",
+                str(loss_makers),
+                hint="Items with negative GP",
+                tone="warning" if loss_makers else "neutral",
+            ),
+        ],
         "insights": [],
         "tables": [
             _table(
@@ -2564,6 +3027,7 @@ def _build_items(filters):
                 columns,
                 sold_rows,
                 empty="No items sold in this period.",
+                footnote="Includes sales and credits. Qty/Amt are net of returns.",
             )
         ],
     }
@@ -2572,6 +3036,7 @@ def _build_items(filters):
 def _build_stock(filters):
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
+    start, end = filters["start"], filters["end"]
 
     stock_rows = list(
         ShopStock.objects.filter(shop_id__in=shop_ids)
@@ -2580,50 +3045,151 @@ def _build_stock(filters):
     )
 
     by_item: dict[int, dict] = {}
+    total_value = _zero()
+    zero_cost_qty = 0
     for row in stock_rows:
         item = row.item
         if item is None:
             continue
         qty = int(row.quantity or 0)
+        if qty <= 0:
+            continue
+        avg = Decimal(row.average_cost or 0)
+        value = (avg * qty).quantize(Decimal("0.01"))
+        if avg <= 0:
+            zero_cost_qty += qty
         entry = by_item.get(item.pk)
         if entry is None:
             entry = {
                 "name": item.name or "Item",
                 "by_shop": {},
                 "total_qty": 0,
+                "total_value": _zero(),
             }
             by_item[item.pk] = entry
-        entry["by_shop"][row.shop_id] = qty
+        entry["by_shop"][row.shop_id] = (qty, value)
         entry["total_qty"] += qty
+        entry["total_value"] += value
+        total_value += value
 
     table_rows = []
     for entry in sorted(
         by_item.values(),
-        key=lambda row: (-row["total_qty"], row["name"].lower()),
+        key=lambda row: (-row["total_value"], row["name"].lower()),
     ):
         cells = [entry["name"]]
         for shop in shops:
-            cells.append(str(entry["by_shop"].get(shop.pk, 0)))
-        cells.append(str(entry["total_qty"]))
+            qty, value = entry["by_shop"].get(shop.pk, (0, _zero()))
+            cells.append(_qty_amount_cell(qty, value) if qty else "—")
+        cells.append(_qty_amount_cell(entry["total_qty"], entry["total_value"]))
         table_rows.append(cells)
 
     columns = ["Item"]
     for shop in shops:
-        columns.append(_shop_col(shop))
-    columns.append("Total")
+        columns.append(_shop_col(shop, pair=True))
+    columns.append(_pair_total_col())
+
+    purchases = _zero()
+    for row in (
+        StockMovement.objects.filter(
+            shop_id__in=shop_ids,
+            movement_type=StockMovementType.IN,
+            created_at__gte=start,
+            created_at__lt=end,
+        )
+        .values("shop_id")
+        .annotate(
+            amount=Coalesce(
+                Sum(F("lines__buying_price") * F("lines__quantity")),
+                _zero(),
+            ),
+        )
+    ):
+        purchases += Decimal(row["amount"] or 0)
+
+    cogs_total = sum(
+        (
+            amt
+            for _d, amt in _cogs_by_shop_for_period(
+                shop_ids=shop_ids, start=start, end=end
+            ).values()
+        ),
+        _zero(),
+    )
+    shrinkage_total = sum(
+        (
+            amt
+            for _d, amt in _shrinkage_by_shop_for_period(
+                shop_ids=shop_ids, start=start, end=end
+            ).values()
+        ),
+        _zero(),
+    )
+    # Period bridge (no stored opening snapshot):
+    # implied opening ≈ closing + COGS + shrinkage − purchases
+    implied_opening = total_value + cogs_total + shrinkage_total - purchases
+    net_inventory_move = purchases - cogs_total - shrinkage_total
+
+    alerts = []
+    if zero_cost_qty > 0:
+        alerts.append(
+            _alert(
+                "warning",
+                "Stock without cost",
+                f"{zero_cost_qty} unit(s) on hand have average cost 0 — "
+                f"valuation and COGS may be understated.",
+                "Record stock-in with buying price, or revalue after next purchase.",
+            )
+        )
 
     return {
         "headline": "Stock on hand",
-        "lead": "",
-        "alerts": [],
-        "metrics": [],
+        "lead": (
+            "Value = qty × shop average cost. "
+            "Period check: purchases − COGS − shrinkage should explain inventory movement."
+        ),
+        "alerts": alerts,
+        "metrics": [
+            _metric(
+                "Inventory value",
+                _money_ksh(total_value),
+                hint=f"{sum(e['total_qty'] for e in by_item.values())} units on hand",
+            ),
+            _metric(
+                "Purchases",
+                _money_ksh(purchases),
+                hint="Stock-in this period",
+            ),
+            _metric("COGS", _money_ksh(cogs_total), hint="Sold this period"),
+            _metric(
+                "Shrinkage",
+                _money_ksh(shrinkage_total),
+                hint="Waste/display at cost",
+                tone="warning" if shrinkage_total > 0 else "neutral",
+            ),
+            _metric(
+                "Implied opening",
+                _money_ksh(implied_opening),
+                hint="Closing + COGS + shrinkage − purchases",
+            ),
+            _metric(
+                "Net inventory move",
+                _money_ksh(net_inventory_move),
+                hint="Purchases − COGS − shrinkage",
+            ),
+        ],
         "insights": [],
         "tables": [
             _table(
-                "All stock by shop",
+                "Stock value by shop",
                 columns,
                 table_rows,
                 empty="No stock for selected shops.",
+                footnote=(
+                    "Docs/Amt cells show quantity · stock value. "
+                    "Implied opening is derived (no day-open stock snapshot yet). "
+                    "Inter-shop transfers can skew the period bridge."
+                ),
             )
         ],
     }

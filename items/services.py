@@ -82,6 +82,65 @@ def _paginate_queryset(qs, *, page: int, page_size: int):
     }
 
 
+def _money_cost(value) -> Decimal:
+    try:
+        amount = Decimal(str(value if value is not None else 0))
+    except (InvalidOperation, TypeError, ValueError):
+        amount = Decimal("0")
+    if amount < 0:
+        amount = Decimal("0")
+    return amount.quantize(Decimal("0.01"))
+
+
+def weighted_average_cost(
+    *,
+    old_qty: int,
+    old_avg,
+    in_qty: int,
+    in_price,
+) -> Decimal:
+    """Blend existing average cost with an incoming quantity at a unit price."""
+    old_q = max(0, int(old_qty or 0))
+    new_q = max(0, int(in_qty or 0))
+    old_avg_dec = _money_cost(old_avg)
+    in_price_dec = _money_cost(in_price)
+    if new_q <= 0:
+        return old_avg_dec
+    if old_q <= 0:
+        return in_price_dec
+    total_qty = old_q + new_q
+    blended = (old_avg_dec * old_q) + (in_price_dec * new_q)
+    return (blended / Decimal(total_qty)).quantize(Decimal("0.01"))
+
+
+def apply_stock_in_average_cost(shop_stock: ShopStock, *, qty: int, unit_cost) -> Decimal:
+    """
+    Update shop stock weighted average for an inbound quantity.
+
+    Expects ``shop_stock.quantity`` to be the on-hand qty *before* the inbound add.
+    """
+    qty = max(0, int(qty or 0))
+    unit = _money_cost(unit_cost)
+    old_qty = max(0, int(shop_stock.quantity or 0))
+    new_avg = weighted_average_cost(
+        old_qty=old_qty,
+        old_avg=getattr(shop_stock, "average_cost", 0),
+        in_qty=qty,
+        in_price=unit,
+    )
+    shop_stock.average_cost = new_avg
+    return new_avg
+
+
+def resolve_sale_unit_cost(shop_stock: ShopStock | None, *, fallback=None) -> Decimal:
+    """Unit cost to stamp on a sale/credit line."""
+    if shop_stock is not None:
+        avg = _money_cost(getattr(shop_stock, "average_cost", 0))
+        if avg > 0:
+            return avg
+    return _money_cost(fallback)
+
+
 def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
     """
     Latest stock-in buying price per item (one subquery each), avoiding full
@@ -1131,7 +1190,8 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
         shop_groups = []
         for from_sid, lines in grouped_from.items():
             from_shop = _get_active_shop(from_sid, label="shop to request from")
-            _assert_shop_allowed(profile, from_shop, label="shop to request from")
+            # Requester must be allowed on the destination shop only; the supply
+            # shop is the peer being asked, not a shop they must be assigned to.
             if from_shop.is_suspended:
                 raise ValidationError(f"Shop “{from_shop.name}” is suspended.")
             shop_groups.append((requesting_shop, lines, from_shop))
@@ -1261,6 +1321,13 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
             if not prepared:
                 raise ValidationError("Select at least one valid item.")
 
+            out_fallback_costs = {}
+            if movement_type == StockMovementType.OUT:
+                out_fallback_costs = last_buying_prices_for_items(
+                    [item.pk for item, _line in prepared],
+                    prefer_shop_id=shop.pk,
+                )
+
             movement = StockMovement.objects.create(
                 movement_type=movement_type,
                 shop=shop,
@@ -1276,11 +1343,19 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
 
             paid_total = Decimal("0.00")
             for item, line in prepared:
+                out_unit_cost = None
+                if movement_type == StockMovementType.OUT:
+                    out_unit_cost = resolve_sale_unit_cost(
+                        line["shop_stock"],
+                        fallback=out_fallback_costs.get(item.pk),
+                    )
+                    line["unit_cost"] = out_unit_cost
                 StockMovementLine.objects.create(
                     movement=movement,
                     item=item,
                     quantity=line["quantity"],
                     buying_price=line.get("buying_price"),
+                    unit_cost=out_unit_cost or Decimal("0.00"),
                     payment_status=line.get("payment_status", ""),
                     reason=line.get("reason", ""),
                     refund=line.get("refund", ""),
@@ -1329,8 +1404,15 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
                                 )
                         if create_serials:
                             ItemSerial.objects.bulk_create(create_serials)
+                    apply_stock_in_average_cost(
+                        shop_stock,
+                        qty=line["quantity"],
+                        unit_cost=line.get("buying_price") or 0,
+                    )
                     shop_stock.quantity += line["quantity"]
-                    shop_stock.save(update_fields=["quantity", "updated_at"])
+                    shop_stock.save(
+                        update_fields=["quantity", "average_cost", "updated_at"]
+                    )
                     item.stock += line["quantity"]
                     item.save(update_fields=["stock", "updated_at"])
 
@@ -1345,6 +1427,7 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
                     shop_stock.save(update_fields=["quantity", "updated_at"])
                     item.stock = max(0, item.stock - line["quantity"])
                     item.save(update_fields=["stock", "updated_at"])
+                    # average_cost is unchanged on outbound; unit_cost was stamped on the line.
 
             if movement_type == StockMovementType.IN:
                 upsert_suppliers_from_lines([line for _item, line in prepared])
@@ -1586,10 +1669,18 @@ def respond_to_stock_request(
         if qty <= 0:
             continue
 
+        transfer_unit_cost = _money_cost(getattr(supplier_stock, "average_cost", 0))
+        apply_stock_in_average_cost(
+            requester_stock,
+            qty=qty,
+            unit_cost=transfer_unit_cost,
+        )
         supplier_stock.quantity -= qty
         supplier_stock.save(update_fields=["quantity", "updated_at"])
         requester_stock.quantity += qty
-        requester_stock.save(update_fields=["quantity", "updated_at"])
+        requester_stock.save(
+            update_fields=["quantity", "average_cost", "updated_at"]
+        )
 
     movement.request_status = StockRequestStatus.FULFILLED
     movement.requester_notified = False

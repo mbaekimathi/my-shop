@@ -2247,6 +2247,14 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
             ):
                 stock_by_item[row.item_id] = row
 
+        from items.services import last_buying_prices_for_items, resolve_sale_unit_cost
+
+        fallback_costs = {}
+        if kind != ShopReceiptKind.QUOTATION:
+            fallback_costs = last_buying_prices_for_items(
+                item_ids, prefer_shop_id=shop.pk
+            )
+
         prepared = []
         has_serial_sale_lines = False
         for row in parsed_lines:
@@ -2313,13 +2321,29 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
             elif serials and not item.track_serial_number:
                 serials = []
 
+            unit_cost = Decimal("0.00")
+            line_cogs = Decimal("0.00")
+            if kind != ShopReceiptKind.QUOTATION:
+                unit_cost = resolve_sale_unit_cost(
+                    stock, fallback=fallback_costs.get(item_id)
+                )
+                line_cogs = (unit_cost * qty).quantize(Decimal("0.01"))
+                if unit_cost > 0 and unit_price < unit_cost:
+                    errors.append(
+                        f"“{item.name}” is below cost "
+                        f"(sell KSh {unit_price}, cost KSh {unit_cost})."
+                    )
+                    continue
+
             prepared.append(
                 {
                     "item": item,
                     "stock": stock,
                     "qty": qty,
                     "unit_price": unit_price,
+                    "unit_cost": unit_cost,
                     "line_total": (unit_price * qty).quantize(Decimal("0.01")),
+                    "line_cogs": line_cogs,
                     "serial_numbers": serials,
                     "serial_objects": serial_objects,
                 }
@@ -2467,7 +2491,9 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
                     item_name=row["item"].name,
                     quantity=row["qty"],
                     unit_price=row["unit_price"],
+                    unit_cost=row.get("unit_cost") or Decimal("0.00"),
                     line_total=row["line_total"],
+                    line_cogs=row.get("line_cogs") or Decimal("0.00"),
                     serial_numbers=row.get("serial_numbers") or [],
                 )
                 for row in prepared
@@ -2555,19 +2581,184 @@ def get_open_shop_day(shop: Shop):
     )
 
 
-def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
-    """Recent open/closed day sessions for a shop (newest first)."""
+def get_last_closed_shop_day(shop: Shop):
+    """Most recently closed day session for a shop (for opening balance hints)."""
     from .models import ShopDaySession
+
+    return (
+        ShopDaySession.objects.filter(shop=shop, closed_at__isnull=False)
+        .select_related("closed_by__user", "opened_by__user")
+        .order_by("-closed_at")
+        .first()
+    )
+
+
+def _session_activity_totals(session, *, sales=None, expenses=None) -> dict:
+    """Cash/M-Pesa sales and expenses that fall inside a day session window."""
+    from decimal import Decimal
+
+    opened = session.opened_at
+    closed = session.closed_at or timezone.now()
+    cash_sales = Decimal("0.00")
+    mpesa_sales = Decimal("0.00")
+    expense_total = Decimal("0.00")
+
+    for sale in sales or []:
+        when = sale["created_at"]
+        if opened <= when < closed:
+            cash_sales += Decimal(sale.get("cash_amount") or 0)
+            mpesa_sales += Decimal(sale.get("mpesa_amount") or 0)
+
+    for expense in expenses or []:
+        when = expense["created_at"]
+        if opened <= when < closed:
+            expense_total += Decimal(expense.get("amount") or 0)
+
+    opening_cash = Decimal(session.opening_cash or 0)
+    opening_mpesa = Decimal(session.opening_mpesa or 0)
+    opening_credit = Decimal(session.opening_credit or 0)
+    expected_cash = opening_cash + cash_sales - expense_total
+    expected_mpesa = opening_mpesa + mpesa_sales
+
+    closing_cash = (
+        Decimal(session.closing_cash)
+        if session.closing_cash is not None
+        else None
+    )
+    closing_mpesa = (
+        Decimal(session.closing_mpesa)
+        if session.closing_mpesa is not None
+        else None
+    )
+    closing_credit = (
+        Decimal(session.closing_credit)
+        if session.closing_credit is not None
+        else None
+    )
+
+    return {
+        "opening_cash": opening_cash,
+        "opening_mpesa": opening_mpesa,
+        "opening_credit": opening_credit,
+        "opening_total": opening_cash + opening_mpesa + opening_credit,
+        "closing_cash": closing_cash,
+        "closing_mpesa": closing_mpesa,
+        "closing_credit": closing_credit,
+        "closing_total": (
+            None
+            if closing_cash is None
+            else (closing_cash + (closing_mpesa or 0) + (closing_credit or 0))
+        ),
+        "cash_sales": cash_sales,
+        "mpesa_sales": mpesa_sales,
+        "sales_total": cash_sales + mpesa_sales,
+        "expenses": expense_total,
+        "expected_cash": expected_cash,
+        "expected_mpesa": expected_mpesa,
+        "expected_credit": opening_credit,
+        "expected_total": expected_cash + expected_mpesa + opening_credit,
+        "cash_variance": (
+            None if closing_cash is None else closing_cash - expected_cash
+        ),
+        "mpesa_variance": (
+            None if closing_mpesa is None else closing_mpesa - expected_mpesa
+        ),
+        "credit_variance": (
+            None if closing_credit is None else closing_credit - opening_credit
+        ),
+        "total_variance": (
+            None
+            if closing_cash is None
+            else (closing_cash + (closing_mpesa or 0) + (closing_credit or 0))
+            - (expected_cash + expected_mpesa + opening_credit)
+        ),
+    }
+
+
+def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
+    """Recent open/closed day sessions for a shop (newest first), with balances."""
+    from .models import Expense, ShopDaySession, ShopReceipt
 
     try:
         limit_n = max(1, min(int(limit or 30), 100))
     except (TypeError, ValueError):
         limit_n = 30
-    return list(
+
+    sessions = list(
         ShopDaySession.objects.filter(shop=shop)
         .select_related("opened_by__user", "closed_by__user")
         .order_by("-opened_at")[:limit_n]
     )
+    if not sessions:
+        return []
+
+    min_opened = min(session.opened_at for session in sessions)
+    max_closed = max(
+        (session.closed_at or timezone.now()) for session in sessions
+    )
+    sales = list(
+        ShopReceipt.objects.filter(
+            shop=shop,
+            kind=ShopReceiptKind.SALE,
+            created_at__gte=min_opened,
+            created_at__lt=max_closed,
+        )
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .values("created_at", "cash_amount", "mpesa_amount")
+    )
+    expenses = list(
+        Expense.objects.filter(
+            shop=shop,
+            created_at__gte=min_opened,
+            created_at__lt=max_closed,
+        ).values("created_at", "amount")
+    )
+
+    rows = []
+    for session in sessions:
+        activity = _session_activity_totals(
+            session, sales=sales, expenses=expenses
+        )
+        rows.append(
+            {
+                "session": session,
+                "is_open": session.is_open,
+                "opened_at": session.opened_at,
+                "closed_at": session.closed_at,
+                "opened_by": session.opened_by,
+                "closed_by": session.closed_by,
+                **activity,
+            }
+        )
+    return rows
+
+
+def day_session_balance_summary(session) -> dict:
+    """Live expected balances for one session (open or closed)."""
+    from .models import Expense, ShopReceipt
+
+    if session is None:
+        return {}
+
+    closed = session.closed_at or timezone.now()
+    sales = list(
+        ShopReceipt.objects.filter(
+            shop_id=session.shop_id,
+            kind=ShopReceiptKind.SALE,
+            created_at__gte=session.opened_at,
+            created_at__lt=closed,
+        )
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .values("created_at", "cash_amount", "mpesa_amount")
+    )
+    expenses = list(
+        Expense.objects.filter(
+            shop_id=session.shop_id,
+            created_at__gte=session.opened_at,
+            created_at__lt=closed,
+        ).values("created_at", "amount")
+    )
+    return _session_activity_totals(session, sales=sales, expenses=expenses)
 
 
 def _parse_balance_fields(payload: dict) -> dict:
@@ -3150,7 +3341,7 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
     """
     from employees.services import verify_active_employee_code
     from items.models import Item, ItemSerial, ShopStock
-    from items.services import _normalize_serial_list
+    from items.services import _normalize_serial_list, apply_stock_in_average_cost
 
     from .models import ShopReceipt, ShopReceiptLine
 
@@ -3306,6 +3497,12 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         stock = stock_by_item.get(item.pk)
         if stock is None:
             continue
+        return_unit_cost = Decimal(line.unit_cost or 0)
+        apply_stock_in_average_cost(
+            stock,
+            qty=qty,
+            unit_cost=return_unit_cost,
+        )
         stock.quantity += qty
         stock.updated_at = now
         item.stock = int(item.stock or 0) + qty
@@ -3336,7 +3533,9 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         ["returned_quantity", "returned_serial_numbers", "line_total"],
     )
     if stocks_to_update:
-        ShopStock.objects.bulk_update(stocks_to_update, ["quantity", "updated_at"])
+        ShopStock.objects.bulk_update(
+            stocks_to_update, ["quantity", "average_cost", "updated_at"]
+        )
     if items_to_update:
         Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
     if serials_to_update:

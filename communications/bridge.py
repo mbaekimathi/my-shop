@@ -42,7 +42,18 @@ def bridge_is_local() -> bool:
 
 def bridge_deploy_hints() -> dict[str, str]:
     """UI copy for VPS (local bridge) vs cPanel (remote bridge)."""
+    from .launcher import autostart_enabled
+
     local = bridge_is_local()
+    if local and autostart_enabled():
+        return {
+            "mode": "local-auto",
+            "connect_help": "WhatsApp is starting automatically on this server. Scan the QR when it appears.",
+            "help_text": "Starting WhatsApp helper automatically…",
+            "cmd": "",
+            "note": "No manual start needed. Keep Node.js installed on the server; you only scan the QR once.",
+            "autostart": True,
+        }
     if local:
         return {
             "mode": "local",
@@ -50,6 +61,7 @@ def bridge_deploy_hints() -> dict[str, str]:
             "help_text": "WhatsApp helper is not running yet.",
             "cmd": "cd whatsapp-bridge\nnpm start",
             "note": "On a VPS, keep the helper running with systemd or PM2. You only scan the QR once.",
+            "autostart": False,
         }
     return {
         "mode": "remote",
@@ -68,6 +80,7 @@ def bridge_deploy_hints() -> dict[str, str]:
             "set the same WHATSAPP_BRIDGE_SECRET on both sides, and use a public HTTPS URL "
             "(or Cloudflare Tunnel / ngrok)."
         ),
+        "autostart": False,
     }
 
 
@@ -128,22 +141,41 @@ def fetch_bridge_status() -> dict[str, Any]:
     if result.get("unreachable") or (
         not result.get("ok", True) and "state" not in result
     ):
-        row.status = BRIDGE_STATUS_DISCONNECTED
-        row.qr_data_url = ""
-        row.wa_phone = ""
-        row.last_error = result.get("error") or "Bridge unreachable"
-        row.save(
-            update_fields=[
-                "status",
-                "qr_data_url",
-                "wa_phone",
-                "last_error",
-                "updated_at",
-            ]
-        )
-        payload = bridge_state_as_dict(row)
-        payload.update(bridge_deploy_hints())
-        return payload
+        from .launcher import ensure_bridge_running
+
+        launch = ensure_bridge_running()
+        if launch.get("started") or launch.get("booting"):
+            # Give Chromium a moment, then re-check.
+            import time
+
+            time.sleep(1.2)
+            result = _request("GET", "/status", timeout=3.0)
+
+        if result.get("unreachable") or (
+            not result.get("ok", True) and "state" not in result
+        ):
+            row.status = BRIDGE_STATUS_DISCONNECTED
+            row.qr_data_url = ""
+            row.wa_phone = ""
+            if launch.get("error"):
+                row.last_error = str(launch["error"])
+            elif launch.get("booting") or launch.get("started"):
+                row.last_error = "WhatsApp helper is starting…"
+            else:
+                row.last_error = result.get("error") or "Bridge unreachable"
+            row.save(
+                update_fields=[
+                    "status",
+                    "qr_data_url",
+                    "wa_phone",
+                    "last_error",
+                    "updated_at",
+                ]
+            )
+            payload = bridge_state_as_dict(row)
+            payload.update(bridge_deploy_hints())
+            payload["launch"] = launch
+            return payload
 
     state = (result.get("state") or "").strip().lower()
     row.qr_data_url = (result.get("qr_data_url") or result.get("qr") or "")[:200000]

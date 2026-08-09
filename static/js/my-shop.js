@@ -240,8 +240,135 @@
     syncModalOpen();
   }
 
+  const createModal = document.querySelector("[data-stock-create-modal]");
+  const createControls = bindModal({
+    modal: createModal,
+    openSelectors: "[data-stock-create-open]",
+    closeSelectors: "[data-stock-create-close]",
+    autoOpen: false,
+  });
+
+  if (createModal) {
+    const searchInput = createModal.querySelector("[data-stock-create-search]");
+    const rows = [...createModal.querySelectorAll("[data-stock-create-row]")];
+    const form = createModal.querySelector("[data-stock-create-form]");
+
+    document.querySelectorAll('[data-modal-open="request-stock"]').forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        createControls?.open();
+        window.setTimeout(() => {
+          createModal.querySelector("[data-stock-create-from]")?.focus();
+        }, 40);
+      });
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    if ((params.get("modal") || "").trim() === "request-stock") {
+      createControls?.open();
+      params.delete("modal");
+      const query = params.toString();
+      const next = `${window.location.pathname}${query ? `?${query}` : ""}${
+        window.location.hash || ""
+      }`;
+      window.history.replaceState({}, "", next);
+    }
+
+    const syncRowEnabled = (row) => {
+      const qty = row.querySelector("[data-stock-create-qty]");
+      const idInput = row.querySelector("[data-stock-create-id]");
+      const hasQty = Number(qty?.value || 0) > 0;
+      if (idInput) idInput.disabled = !hasQty;
+      // Qty stays editable; empty values are stripped on submit.
+      if (qty) qty.disabled = false;
+      row.classList.toggle("is-active", hasQty);
+    };
+
+    const selectedBadge = createModal.querySelector("[data-stock-create-selected]");
+    const selectedCount = createModal.querySelector("[data-stock-create-selected-count]");
+    const noResults = createModal.querySelector("[data-stock-create-no-results]");
+
+    const syncSelectedCount = () => {
+      const count = rows.filter((row) => {
+        const qty = row.querySelector("[data-stock-create-qty]");
+        return Number(qty?.value || 0) > 0;
+      }).length;
+      if (selectedCount) selectedCount.textContent = String(count);
+      if (selectedBadge) selectedBadge.hidden = count < 1;
+    };
+
+    const syncSearch = () => {
+      const q = String(searchInput?.value || "").trim().toLowerCase();
+      let visible = 0;
+      rows.forEach((row) => {
+        const name = row.getAttribute("data-item-name") || "";
+        const match = !q || name.includes(q);
+        row.hidden = !match;
+        if (match) visible += 1;
+      });
+      if (noResults) noResults.hidden = !q || visible > 0;
+    };
+
+    rows.forEach((row) => {
+      const qty = row.querySelector("[data-stock-create-qty]");
+      if (!qty) return;
+      qty.disabled = false;
+      qty.addEventListener("input", () => {
+        syncRowEnabled(row);
+        syncSelectedCount();
+      });
+      qty.addEventListener("change", () => {
+        syncRowEnabled(row);
+        syncSelectedCount();
+      });
+      syncRowEnabled(row);
+    });
+    syncSelectedCount();
+
+    searchInput?.addEventListener("input", syncSearch);
+
+    form?.addEventListener("submit", (event) => {
+      const fromShop = form.querySelector("[data-stock-create-from]");
+      const code = form.querySelector("[data-stock-create-code]");
+      rows.forEach((row) => {
+        const qty = row.querySelector("[data-stock-create-qty]");
+        const idInput = row.querySelector("[data-stock-create-id]");
+        const hasQty = Number(qty?.value || 0) > 0;
+        if (qty) qty.disabled = !hasQty;
+        if (idInput) idInput.disabled = !hasQty;
+      });
+      const activeRows = rows.filter((row) => {
+        const qty = row.querySelector("[data-stock-create-qty]");
+        return Number(qty?.value || 0) > 0 && !qty.disabled;
+      });
+      if (!fromShop?.value) {
+        event.preventDefault();
+        rows.forEach((row) => syncRowEnabled(row));
+        window.alert("Select a shop to request from.");
+        fromShop?.focus();
+        return;
+      }
+      if (!activeRows.length) {
+        event.preventDefault();
+        rows.forEach((row) => syncRowEnabled(row));
+        window.alert("Enter a quantity for at least one item.");
+        return;
+      }
+      if (!String(code?.value || "").trim()) {
+        event.preventDefault();
+        rows.forEach((row) => syncRowEnabled(row));
+        window.alert("Enter an active staff 6-digit ID.");
+        code?.focus();
+      }
+    });
+  }
+
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || selectModal) return;
+    if (createModal && !createModal.hidden) {
+      createControls?.close();
+      return;
+    }
     if (requestModal && !requestModal.hidden) {
       requestControls?.close();
       return;

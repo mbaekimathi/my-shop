@@ -15,19 +15,21 @@
         <h2>{{ meta.headline }}</h2>
         <p>{{ meta.summary }}</p>
       </div>
-      <div class="stock-stats">
-        <p class="stock-stat">
-          <strong>{{ pending_request_count }}</strong>
-          <span>incoming</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ stock_request_decision_count }}</strong>
-          <span>update{{ stock_request_decision_count|pluralize }}</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ previous_request_count }}</strong>
-          <span>previous</span>
-        </p>
+      <div class="stock-requests-head-actions">
+        <div class="stock-stats">
+          <p class="stock-stat">
+            <strong>{{ pending_request_count }}</strong>
+            <span>incoming</span>
+          </p>
+          <p class="stock-stat">
+            <strong>{{ stock_request_decision_count }}</strong>
+            <span>update{{ stock_request_decision_count|pluralize }}</span>
+          </p>
+          <p class="stock-stat">
+            <strong>{{ previous_request_count }}</strong>
+            <span>previous</span>
+          </p>
+        </div>
       </div>
     </div>
   </header>
@@ -140,13 +142,14 @@
 </section>
 
 {% include "shops/partials/stock_request_modals.html" %}
+{% include "shops/partials/stock_request_create_modal.html" %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script src="{% static 'js/shop-printer.js' %}?v=18"></script>
-<script src="{% static 'js/my-shop.js' %}?v=36"></script>
+<script src="{% static 'js/my-shop.js' %}?v=40"></script>
 <script
   src="{% static 'js/serial-scan.js' %}?v=2"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
