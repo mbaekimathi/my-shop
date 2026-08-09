@@ -208,6 +208,18 @@
         ...row.querySelectorAll("[data-stock-shop-cell]"),
       ].some((c) => cellQty(c) > 0);
       row.classList.toggle("is-filled", rowFilled);
+    };
+
+    const promoteRowAfterLeave = (row) => {
+      if (!row) return;
+      // Refresh filled state from current inputs, then move only after the user left.
+      row.querySelectorAll("[data-stock-shop-cell]").forEach((cell) => {
+        cell.classList.toggle("is-filled", cellQty(cell) > 0);
+      });
+      const rowFilled = [
+        ...row.querySelectorAll("[data-stock-shop-cell]"),
+      ].some((c) => cellQty(c) > 0);
+      row.classList.toggle("is-filled", rowFilled);
       reorderFilledRow(row);
     };
 
@@ -729,14 +741,15 @@
     };
 
     const closeSerialModal = ({ save = false } = {}) => {
-      if (save && activeSerialCell) {
+      const cell = activeSerialCell;
+      if (save && cell) {
         const serials = modalSerials();
         const unique = [...new Set(serials)];
-        const serialHidden = activeSerialCell.querySelector("[data-stock-serials]");
-        const qtyInput = activeSerialCell.querySelector("[data-stock-qty]");
+        const serialHidden = cell.querySelector("[data-stock-serials]");
+        const qtyInput = cell.querySelector("[data-stock-qty]");
         if (serialHidden) serialHidden.value = unique.join("\n");
         if (qtyInput) qtyInput.value = unique.length ? String(unique.length) : "";
-        markFilled(activeSerialCell);
+        markFilled(cell);
         renderSummary();
       }
       activeSerialCell = null;
@@ -745,6 +758,8 @@
         serialModal.setAttribute("aria-hidden", "true");
       }
       document.body.classList.remove("workspace-modal-open");
+      // Keep row in place until the user moves on; only refresh filled styling.
+      if (cell) markFilled(cell);
     };
 
     const runSerialSearch = async (input) => {
@@ -844,6 +859,26 @@
         markFilled(cell);
         renderSummary();
       }
+    });
+
+    // Promote/sink only after the user leaves the item row (moves to another item).
+    panel.addEventListener("focusout", (event) => {
+      const fromRow = event.target.closest?.("[data-item-row]");
+      if (!fromRow) return;
+      const toEl = event.relatedTarget;
+      const toRow =
+        toEl instanceof Element ? toEl.closest("[data-item-row]") : null;
+      if (toRow === fromRow) return;
+      // Ignore blur into the serial modal — user is still editing this cell.
+      if (
+        toEl instanceof Element &&
+        serialModal &&
+        !serialModal.hidden &&
+        serialModal.contains(toEl)
+      ) {
+        return;
+      }
+      promoteRowAfterLeave(fromRow);
     });
 
     const openSerialFromEvent = (event) => {
@@ -2077,32 +2112,8 @@
   const syncFilled = (row) => {
     const qty = getQty(row);
     const filled = qty > 0;
-    const wasFilled = row.classList.contains("is-filled");
     row.classList.toggle("is-filled", filled);
     syncItemRemoveControls(row);
-
-    if (filled && !wasFilled) {
-      moveItemPairToTop(row);
-    } else if (!filled && wasFilled) {
-      const parked = parkedRoot();
-      const simpleParked = parked?.closest?.(".buy-stock-simple-parked");
-      if (simpleParked && parked.contains(row)) {
-        const listParent =
-          panel.querySelector(
-            "[data-stock-catalog-root] .buy-stock-pick-stack, [data-stock-catalog-root]"
-          ) || row.parentElement;
-        if (listParent && listParent !== parked) {
-          listParent.appendChild(row);
-          const inputs = getInputsRow(row);
-          if (inputs) listParent.appendChild(inputs);
-        }
-        syncParkedVisibility();
-      } else {
-        moveItemPairToBottom(row);
-      }
-    } else if (filled) {
-      moveItemPairToTop(row);
-    }
 
     const current = Number(row.dataset.itemStock || 0);
     const qtyEl = row.querySelector("[data-stock-display-qty]");
