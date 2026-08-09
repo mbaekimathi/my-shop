@@ -16,6 +16,7 @@ from .models import (
     CompanyDarajaSettings,
     CompanyPosSettings,
     CompanyProfile,
+    CompanyStockSettings,
     DarajaEnvironment,
     Expense,
     ExpenseCategory,
@@ -143,6 +144,55 @@ def get_company_pos_settings() -> CompanyPosSettings:
     settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
     cache.set(POS_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
     return settings_row
+
+
+STOCK_SETTINGS_CACHE_KEY = "company_stock_settings:v1"
+STOCK_SETTING_FIELDS = frozenset(
+    {
+        "require_buying_price_on_in",
+        "require_supplier_on_in",
+        "require_payment_status_on_in",
+        "require_reason_on_out",
+        "require_refund_on_out",
+        "require_note_on_request",
+    }
+)
+
+
+def _invalidate_stock_settings_cache() -> None:
+    cache.delete(STOCK_SETTINGS_CACHE_KEY)
+
+
+def get_company_stock_settings() -> CompanyStockSettings:
+    cached = cache.get(STOCK_SETTINGS_CACHE_KEY)
+    if isinstance(cached, CompanyStockSettings):
+        return cached
+    settings_row, _ = CompanyStockSettings.objects.get_or_create(pk=1)
+    cache.set(STOCK_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
+    return settings_row
+
+
+def set_company_stock_setting(*, field: str, enabled: bool) -> CompanyStockSettings:
+    if field not in STOCK_SETTING_FIELDS:
+        raise ValidationError("Unknown stock setting.")
+    settings_row = get_company_stock_settings()
+    setattr(settings_row, field, bool(enabled))
+    settings_row.save(update_fields=[field, "updated_at"])
+    _invalidate_stock_settings_cache()
+    return get_company_stock_settings()
+
+
+def stock_settings_as_dict(settings_row: CompanyStockSettings | None = None) -> dict:
+    row = settings_row or get_company_stock_settings()
+    return {
+        "require_buying_price_on_in": bool(row.require_buying_price_on_in),
+        "require_supplier_on_in": bool(row.require_supplier_on_in),
+        "require_payment_status_on_in": bool(row.require_payment_status_on_in),
+        "require_reason_on_out": bool(row.require_reason_on_out),
+        "require_refund_on_out": bool(row.require_refund_on_out),
+        "require_note_on_request": bool(row.require_note_on_request),
+        "requirements": row.as_requirements_dict(),
+    }
 
 
 def get_daraja_settings() -> CompanyDarajaSettings:

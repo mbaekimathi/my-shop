@@ -1118,15 +1118,172 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
 
 
 def stock_settings(request, profile, meta, module):
-    """Reference page: compulsory inputs for stock in, out, and request."""
+    """Configure which stock in/out/request fields are compulsory."""
+    from employees.models import EmployeeRole
     from employees.workspace import sidebar_for_stock_management, stock_management_url
+    from shops.services import (
+        get_company_stock_settings,
+        set_company_stock_setting,
+        stock_settings_as_dict,
+    )
 
     page_sidebar = sidebar_for_stock_management(
         profile.role,
         active_mode="settings",
         profile=profile,
     )
-    role = profile.role
+    can_edit = profile.role in (
+        EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.IT_SUPPORT,
+    )
+    wants_json = (
+        "application/json" in (request.headers.get("Accept") or "").lower()
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or (request.POST.get("ajax") or "") == "1"
+    )
+
+    if request.method == "POST":
+        if not can_edit:
+            if wants_json:
+                return JsonResponse(
+                    {"ok": False, "error": "You cannot change stock settings."},
+                    status=403,
+                )
+            messages.error(request, "You cannot change stock settings.")
+            return redirect(stock_management_url(profile.role, "settings"))
+
+        action = (request.POST.get("action") or "").strip()
+        if action == "toggle_stock_setting":
+            field = (request.POST.get("field") or "").strip()
+            enabled = (request.POST.get("enabled") or "").strip() in (
+                "1",
+                "true",
+                "True",
+                "on",
+                "yes",
+            )
+            try:
+                row = set_company_stock_setting(field=field, enabled=enabled)
+            except ValidationError as exc:
+                message = (
+                    exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+                )
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(stock_management_url(profile.role, "settings"))
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "field": field,
+                        "enabled": bool(getattr(row, field)),
+                        "settings": stock_settings_as_dict(row),
+                    }
+                )
+            messages.success(request, "Stock setting updated.")
+            return redirect(stock_management_url(profile.role, "settings"))
+
+        if wants_json:
+            return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
+        messages.error(request, "Unknown action.")
+        return redirect(stock_management_url(profile.role, "settings"))
+
+    settings_row = get_company_stock_settings()
+    setting_groups = (
+        {
+            "key": "in",
+            "title": "Stock In",
+            "summary": "Buying stock into a shop",
+            "icon": "package-plus",
+            "open_url": stock_management_url(profile.role, "in"),
+            "open_label": "Open Stock In",
+            "always_required": (
+                (
+                    "Quantity / serials",
+                    "At least one line with qty, or serials when tracked",
+                ),
+                ("Shop", "Which shop receives the stock"),
+            ),
+            "toggles": (
+                {
+                    "field": "require_buying_price_on_in",
+                    "label": "Buying price",
+                    "hint": "Whole-number cost per unit on every stocked line",
+                    "enabled": settings_row.require_buying_price_on_in,
+                },
+                {
+                    "field": "require_supplier_on_in",
+                    "label": "Supplier phone & name",
+                    "hint": "Country dial + 9-digit phone and supplier name",
+                    "enabled": settings_row.require_supplier_on_in,
+                },
+                {
+                    "field": "require_payment_status_on_in",
+                    "label": "Payment status",
+                    "hint": "Unpaid, paid, or partial",
+                    "enabled": settings_row.require_payment_status_on_in,
+                },
+            ),
+        },
+        {
+            "key": "out",
+            "title": "Stock Out",
+            "summary": "Removing stock from a shop",
+            "icon": "package-minus",
+            "open_url": stock_management_url(profile.role, "out"),
+            "open_label": "Open Stock Out",
+            "always_required": (
+                (
+                    "Quantity / serials",
+                    "Units to remove; serials when the item tracks them",
+                ),
+                ("Shop", "Which shop the stock leaves from"),
+            ),
+            "toggles": (
+                {
+                    "field": "require_reason_on_out",
+                    "label": "Reason",
+                    "hint": "Waste, transfer, display, or return",
+                    "enabled": settings_row.require_reason_on_out,
+                },
+                {
+                    "field": "require_refund_on_out",
+                    "label": "Refund details",
+                    "hint": "Yes/no, and amount when refund is yes",
+                    "enabled": settings_row.require_refund_on_out,
+                },
+            ),
+        },
+        {
+            "key": "request",
+            "title": "Request Stock",
+            "summary": "Asking another shop for stock",
+            "icon": "clipboard-list",
+            "open_url": stock_management_url(profile.role, "request"),
+            "open_label": "Open Request",
+            "always_required": (
+                (
+                    "Quantity",
+                    "At least one line with quantity greater than zero",
+                ),
+                ("Requesting shop", "Who is requesting"),
+                (
+                    "From shop",
+                    "Shop(s) you are requesting from (must differ)",
+                ),
+            ),
+            "toggles": (),
+        },
+    )
+    enabled_count = sum(
+        1
+        for group in setting_groups
+        for toggle in group["toggles"]
+        if toggle["enabled"]
+    )
+    toggle_count = sum(len(group["toggles"]) for group in setting_groups)
+
     return render(
         request,
         "items/stock_settings.html",
@@ -1135,9 +1292,11 @@ def stock_settings(request, profile, meta, module):
             "page_module": module,
             "page_sidebar": page_sidebar,
             "stock_mode": "settings",
-            "stock_in_url": stock_management_url(role, "in"),
-            "stock_out_url": stock_management_url(role, "out"),
-            "stock_request_url": stock_management_url(role, "request"),
+            "can_edit_stock_settings": can_edit,
+            "stock_setting_groups": setting_groups,
+            "stock_settings_enabled_count": enabled_count,
+            "stock_settings_toggle_count": toggle_count,
+            "stock_requirements_json": json.dumps(settings_row.as_requirements_dict()),
         },
     )
 
@@ -1448,6 +1607,12 @@ def stock_management(request, profile, meta, module, page_sidebar):
     selected_shop_ids_json = _json.dumps(selected_shop_ids)
     selected_shop_ids_csv = ",".join(str(sid) for sid in selected_shop_ids)
 
+    from shops.services import get_company_stock_settings
+
+    stock_requirements_json = _json.dumps(
+        get_company_stock_settings().as_requirements_dict()
+    )
+
     if shop_filter_active:
         if len(selected_shops) == 1:
             shop_filter_label = selected_shops[0].name
@@ -1493,6 +1658,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "stock_catalog_url": stock_catalog_url,
             "use_stock_catalog_api": use_stock_catalog_api,
             "catalog_shops_json": catalog_shops_json,
+            "stock_requirements_json": stock_requirements_json,
             "stock_print_url": reverse(
                 "employees:stock_management_print",
                 kwargs={"role_segment": role_url_segment(profile.role)},

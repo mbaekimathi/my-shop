@@ -966,6 +966,8 @@ def _buy_stock_items_context(shop):
 
     from django.db.models import Sum
 
+    from shops.services import get_company_stock_settings
+
     item_count = Item.objects.count()
     total_units = (
         ShopStock.objects.filter(shop=shop).aggregate(total=Sum("quantity"))["total"]
@@ -989,6 +991,9 @@ def _buy_stock_items_context(shop):
         "use_stock_catalog_api": True,
         "catalog_shops_json": _json.dumps(
             [{"id": shop.pk, "name": shop.name}]
+        ),
+        "stock_requirements_json": _json.dumps(
+            get_company_stock_settings().as_requirements_dict()
         ),
     }
 

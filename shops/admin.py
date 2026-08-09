@@ -5,6 +5,7 @@ from .models import (
     CompanyCommunicationsSettings,
     CompanyPosSettings,
     CompanyProfile,
+    CompanyStockSettings,
     Expense,
     ExpenseSupplier,
     Shop,
@@ -67,6 +68,21 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "enable_receipt_qr",
         "receipt_qr_content",
         "receipt_qr_website",
+        "updated_at",
+    )
+    readonly_fields = ("updated_at",)
+
+
+@admin.register(CompanyStockSettings)
+class CompanyStockSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "require_buying_price_on_in",
+        "require_supplier_on_in",
+        "require_payment_status_on_in",
+        "require_reason_on_out",
+        "require_refund_on_out",
+        "require_note_on_request",
         "updated_at",
     )
     readonly_fields = ("updated_at",)

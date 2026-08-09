@@ -4,149 +4,123 @@
 {% block title %}Stock Settings — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="stock-panel stock-panel--settings" data-animate="rise" data-stock-mode="settings">
-  <header class="stock-panel-head">
+{% csrf_token %}
+<section
+  class="stock-panel stock-panel--settings"
+  data-animate="rise"
+  data-stock-mode="settings"
+  data-stock-settings
+  data-can-edit="{% if can_edit_stock_settings %}1{% else %}0{% endif %}"
+>
+  <header class="stock-panel-head stock-settings-head">
     <div class="stock-panel-head-top">
       <div>
         <p class="stock-kicker">Stock settings</p>
         <h2>Compulsory inputs</h2>
         <p>
-          Fields that must be filled before Stock In, Stock Out, or Request Stock can be submitted.
-          Serial-tracked items also require serial numbers that match the quantity.
+          Choose which details staff must fill before submitting stock in, stock out, or a request.
+          Core fields stay locked so movements always stay valid.
         </p>
+      </div>
+      <div class="stock-settings-meter" aria-label="Optional rules enabled">
+        <p class="stock-settings-meter-value">
+          <strong data-stock-settings-enabled-count>{{ stock_settings_enabled_count }}</strong>
+          <span>/ {{ stock_settings_toggle_count }}</span>
+        </p>
+        <p class="stock-settings-meter-label">optional rules on</p>
       </div>
     </div>
   </header>
 
+  {% if not can_edit_stock_settings %}
+  <p class="stock-settings-readonly">
+    <i data-lucide="lock" aria-hidden="true"></i>
+    <span>View only — shop managers and IT support can change these rules.</span>
+  </p>
+  {% endif %}
+
   <div class="stock-settings-grid">
-    <article class="stock-settings-card stock-settings-card--in">
+    {% for group in stock_setting_groups %}
+    <article class="stock-settings-card stock-settings-card--{{ group.key }}">
       <header class="stock-settings-card-head">
         <span class="stock-settings-card-icon" aria-hidden="true">
-          <i data-lucide="package-plus"></i>
+          <i data-lucide="{{ group.icon }}"></i>
         </span>
-        <div>
-          <h3>Stock In</h3>
-          <p>Buying stock into a shop</p>
+        <div class="stock-settings-card-titles">
+          <h3>{{ group.title }}</h3>
+          <p>{{ group.summary }}</p>
         </div>
-        <a class="stock-settings-card-link" href="{{ stock_in_url }}">Open Stock In</a>
+        <a class="stock-settings-card-link" href="{{ group.open_url }}">
+          <span>{{ group.open_label }}</span>
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+        </a>
       </header>
-      <ul class="stock-settings-list">
-        <li>
-          <strong>Shop</strong>
-          <span>Which shop receives the stock (per line or shop filter)</span>
-        </li>
-        <li>
-          <strong>Quantity</strong>
-          <span>Units to add (or serial count for serial items)</span>
-        </li>
-        <li>
-          <strong>Buying price</strong>
-          <span>Whole-number cost per unit for every stocked line</span>
-        </li>
-        <li>
-          <strong>Supplier phone</strong>
-          <span>Country dial code + 9-digit national number</span>
-        </li>
-        <li>
-          <strong>Supplier name</strong>
-          <span>Must match or be selected from live search after phone</span>
-        </li>
-        <li>
-          <strong>Payment status</strong>
-          <span>Unpaid, paid, or partial</span>
-        </li>
-        <li>
-          <strong>Serial numbers</strong>
-          <span>Required only when the item tracks serials (count = qty)</span>
-        </li>
-        <li class="stock-settings-list-note">
-          <strong>Buy stock (shop floor)</strong>
-          <span>Also requires a verified 6-digit staff ID</span>
-        </li>
-      </ul>
-    </article>
 
-    <article class="stock-settings-card stock-settings-card--out">
-      <header class="stock-settings-card-head">
-        <span class="stock-settings-card-icon" aria-hidden="true">
-          <i data-lucide="package-minus"></i>
-        </span>
-        <div>
-          <h3>Stock Out</h3>
-          <p>Removing stock from a shop</p>
-        </div>
-        <a class="stock-settings-card-link" href="{{ stock_out_url }}">Open Stock Out</a>
-      </header>
-      <ul class="stock-settings-list">
-        <li>
-          <strong>Shop</strong>
-          <span>Which shop the stock leaves from</span>
-        </li>
-        <li>
-          <strong>Quantity</strong>
-          <span>Units to remove (must not exceed available stock)</span>
-        </li>
-        <li>
-          <strong>Reason</strong>
-          <span>Waste, transfer, display, or return</span>
-        </li>
-        <li>
-          <strong>Refund</strong>
-          <span>Yes or no</span>
-        </li>
-        <li>
-          <strong>Refund amount</strong>
-          <span>Required when refund is yes — whole number greater than zero</span>
-        </li>
-        <li>
-          <strong>Serial numbers</strong>
-          <span>Required only when the item tracks serials (must exist in that shop)</span>
-        </li>
-      </ul>
-    </article>
+      <div class="stock-settings-section">
+        <p class="stock-settings-section-label">Always required</p>
+        <ul class="stock-settings-list">
+          {% for label, hint in group.always_required %}
+          <li class="stock-settings-row stock-settings-row--locked">
+            <div class="stock-settings-copy">
+              <strong>{{ label }}</strong>
+              <span>{{ hint }}</span>
+            </div>
+            <span class="stock-settings-locked">
+              <i data-lucide="shield-check" aria-hidden="true"></i>
+              Locked
+            </span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
 
-    <article class="stock-settings-card stock-settings-card--request">
-      <header class="stock-settings-card-head">
-        <span class="stock-settings-card-icon" aria-hidden="true">
-          <i data-lucide="clipboard-list"></i>
-        </span>
-        <div>
-          <h3>Request Stock</h3>
-          <p>Asking another shop for stock</p>
-        </div>
-        <a class="stock-settings-card-link" href="{{ stock_request_url }}">Open Request</a>
-      </header>
-      <ul class="stock-settings-list">
-        <li>
-          <strong>Requesting shop</strong>
-          <span>Click a shop column header to mark who is requesting</span>
-        </li>
-        <li>
-          <strong>From shop</strong>
-          <span>Enter quantity under the shop(s) you are requesting from</span>
-        </li>
-        <li>
-          <strong>Quantity</strong>
-          <span>At least one line with quantity greater than zero</span>
-        </li>
-        <li>
-          <strong>Different shops</strong>
-          <span>Requesting shop and from-shop cannot be the same</span>
-        </li>
-        <li class="stock-settings-list-note">
-          <strong>Not required</strong>
-          <span>Supplier, payment, reason, refund, or serials at request time</span>
-        </li>
-        <li class="stock-settings-list-note">
-          <strong>Shop floor create</strong>
-          <span>May also require a verified 6-digit staff ID</span>
-        </li>
-      </ul>
+      <div class="stock-settings-section">
+        <p class="stock-settings-section-label">Optional rules</p>
+        <ul class="stock-settings-list">
+          {% for toggle in group.toggles %}
+          <li class="stock-settings-row">
+            <div class="stock-settings-copy">
+              <strong>{{ toggle.label }}</strong>
+              <span>{{ toggle.hint }}</span>
+            </div>
+            <label class="perm-switch{% if not can_edit_stock_settings %} is-disabled{% endif %}{% if not toggle.enabled %} is-denied{% endif %}">
+              <input
+                type="checkbox"
+                class="perm-switch-input"
+                {% if toggle.enabled %}checked{% endif %}
+                {% if not can_edit_stock_settings %}disabled{% endif %}
+                data-stock-setting-toggle
+                data-field="{{ toggle.field }}"
+                aria-label="{{ toggle.label }}"
+              >
+              <span class="perm-switch-ui" aria-hidden="true"></span>
+              <span class="perm-switch-state">
+                {% if toggle.enabled %}On{% else %}Off{% endif %}
+              </span>
+            </label>
+          </li>
+          {% empty %}
+          <li class="stock-settings-row stock-settings-row--empty">
+            <div class="stock-settings-copy">
+              <strong>Nothing optional here</strong>
+              <span>Request stock only uses the locked fields above.</span>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
     </article>
+    {% endfor %}
   </div>
 
   <p class="stock-settings-footnote">
-    Submit stays blocked until every ready line has these details. The submit panel jumps to the first incomplete field if you try early.
+    <i data-lucide="zap" aria-hidden="true"></i>
+    <span>Changes apply immediately to Stock In, Stock Out, Request Stock, and shop-floor buy stock.</span>
   </p>
 </section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/stock-settings.js' %}?v=2"></script>
 {% endblock %}

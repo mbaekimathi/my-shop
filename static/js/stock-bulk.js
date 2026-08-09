@@ -81,6 +81,27 @@
 
   if (mode === "view") return;
 
+  const readStockRequirements = () => {
+    const defaults = {
+      in: { buying_price: true, supplier: true, payment_status: true },
+      out: { reason: true, refund: true },
+      request: { note: false },
+    };
+    try {
+      const raw = form.getAttribute("data-stock-requirements") || "";
+      if (!raw) return defaults;
+      const parsed = JSON.parse(raw);
+      return {
+        in: { ...defaults.in, ...(parsed.in || {}) },
+        out: { ...defaults.out, ...(parsed.out || {}) },
+        request: { ...defaults.request, ...(parsed.request || {}) },
+      };
+    } catch (_err) {
+      return defaults;
+    }
+  };
+  const stockReq = readStockRequirements();
+
   /* ── Multi-shop matrix (stock in/out/request management) ─────────────── */
   if (form.hasAttribute("data-stock-multi-shop") && (mode === "in" || mode === "out" || mode === "request")) {
     const floatRoot =
@@ -157,6 +178,7 @@
 
     const cellHasPrice = (cell) => {
       if (mode !== "in") return true;
+      if (!stockReq.in.buying_price) return true;
       const raw = cell.querySelector("[data-stock-buying-price]")?.value;
       if (raw == null || String(raw).trim() === "") return false;
       const n = Number(raw);
@@ -298,11 +320,14 @@
       const dial = (floatSupplierDial?.value || "").trim();
       const phone = normalizePhone(floatSupplierPhone?.value);
       const payment = (floatPayment?.value || "").trim();
-      return Boolean(name && dial && phone.length === 9 && payment);
+      if (stockReq.in.supplier && !(name && dial && phone.length === 9)) return false;
+      if (stockReq.in.payment_status && !payment) return false;
+      return true;
     };
 
     const supplierCoreReady = () => {
       if (mode !== "in") return false;
+      if (!stockReq.in.supplier) return true;
       const name = (floatSupplierName?.value || "").trim();
       const dial = (floatSupplierDial?.value || "").trim();
       const phone = normalizePhone(floatSupplierPhone?.value);
@@ -313,32 +338,43 @@
       if (mode !== "out") return false;
       const reason = (floatReason?.value || "").trim();
       const refund = (floatRefund?.value || "").trim();
-      if (!reason || !refund) return false;
-      if (refund === "yes") {
-        const amount = Number(floatRefundAmount?.value);
-        return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+      if (stockReq.out.reason && !reason) return false;
+      if (stockReq.out.refund) {
+        if (!refund) return false;
+        if (refund === "yes") {
+          const amount = Number(floatRefundAmount?.value);
+          return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+        }
       }
       return true;
     };
 
     const cellHasSupplier = (cell) => {
+      if (!stockReq.in.supplier && !stockReq.in.payment_status) return true;
       const name = (cell.querySelector("[data-stock-supplier-name]")?.value || "").trim();
       const phone = normalizePhone(
         cell.querySelector("[data-stock-supplier-phone]")?.value
       );
       const payment = (cell.querySelector("[data-stock-payment]")?.value || "").trim();
-      return Boolean(name && phone.length === 9 && payment);
+      const supplierOk =
+        !stockReq.in.supplier || Boolean(name && phone.length === 9);
+      const paymentOk = !stockReq.in.payment_status || Boolean(payment);
+      return supplierOk && paymentOk;
     };
 
     const cellHasOutDetails = (cell) => {
+      if (!stockReq.out.reason && !stockReq.out.refund) return true;
       const reason = (cell.querySelector("[data-stock-reason]")?.value || "").trim();
       const refund = (cell.querySelector("[data-stock-refund]")?.value || "").trim();
-      if (!reason || !refund) return false;
-      if (refund === "yes") {
-        const amount = Number(
-          cell.querySelector("[data-stock-refund-amount]")?.value
-        );
-        return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+      if (stockReq.out.reason && !reason) return false;
+      if (stockReq.out.refund) {
+        if (!refund) return false;
+        if (refund === "yes") {
+          const amount = Number(
+            cell.querySelector("[data-stock-refund-amount]")?.value
+          );
+          return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+        }
       }
       return true;
     };
@@ -433,24 +469,33 @@
       const ready = collectReady();
       if (!ready.length) return 0;
       if (mode === "in") {
-        if (!supplierCoreReady()) return 0;
+        if (stockReq.in.supplier && !supplierCoreReady()) return 0;
         ready.forEach((item) => stampMeta(item.cell));
         if (!silent) {
           if (floatSupplierReady()) {
             setApplyStatus(
               `Supplier details applied to ${ready.length} item(s).`
             );
+          } else if (stockReq.in.payment_status && !(floatPayment?.value || "").trim()) {
+            setApplyStatus(
+              "Details applied. Select payment status to submit.",
+              true
+            );
           } else {
             setApplyStatus(
-              "Supplier name and phone applied. Select payment status to submit.",
-              true
+              `Details applied to ${ready.length} item(s).`
             );
           }
         }
         return ready.length;
       }
       if (mode === "out") {
-        if (!floatOutReady()) return 0;
+        if (
+          (stockReq.out.reason || stockReq.out.refund) &&
+          !floatOutReady()
+        ) {
+          return 0;
+        }
         ready.forEach((item) => stampMeta(item.cell));
         if (!silent) {
           setApplyStatus(
@@ -1885,6 +1930,7 @@
   };
 
   const rowHasBuyingPrice = (row) => {
+    if (!stockReq.in.buying_price) return true;
     const raw = (getInputsRow(row)?.querySelector("[data-stock-buying-price]")?.value || "").trim();
     if (!raw) return false;
     const n = Number(raw);
@@ -1892,31 +1938,43 @@
   };
 
   const rowHasSupplierDetails = (row) => {
+    if (!stockReq.in.supplier && !stockReq.in.payment_status) return true;
     const inputs = getInputsRow(row);
     if (!inputs) return false;
     const payment = (inputs.querySelector("[data-stock-payment]")?.value || "").trim();
     const name = (inputs.querySelector("[data-stock-supplier-name]")?.value || "").trim();
     const phone = (inputs.querySelector("[data-stock-supplier-phone]")?.value || "").trim();
     const dial = (inputs.querySelector("[data-stock-supplier-dial]")?.value || "").trim();
-    return Boolean(payment && name && phone && dial);
+    const supplierOk =
+      !stockReq.in.supplier || Boolean(name && phone && dial);
+    const paymentOk = !stockReq.in.payment_status || Boolean(payment);
+    return supplierOk && paymentOk;
   };
 
   const rowHasOutDetails = (row) => {
+    if (!stockReq.out.reason && !stockReq.out.refund) return true;
     const inputs = getInputsRow(row);
     if (!inputs) return false;
     const reason = (inputs.querySelector("[data-stock-reason]")?.value || "").trim();
     const refund = (inputs.querySelector("[data-stock-refund]")?.value || "").trim().toLowerCase();
-    if (!reason || (refund !== "yes" && refund !== "no")) return false;
-    if (refund === "yes") {
-      const amount = Number(inputs.querySelector("[data-stock-refund-amount]")?.value || 0);
-      return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+    if (stockReq.out.reason && !reason) return false;
+    if (stockReq.out.refund) {
+      if (refund !== "yes" && refund !== "no") return false;
+      if (refund === "yes") {
+        const amount = Number(inputs.querySelector("[data-stock-refund-amount]")?.value || 0);
+        return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+      }
     }
     return true;
   };
 
   const rowReadyToPark = (row) => {
     const qty = getQty(row);
-    if (mode === "in") return qty > 0 && rowHasBuyingPrice(row);
+    if (mode === "in") {
+      if (!qty) return false;
+      if (stockReq.in.buying_price && !rowHasBuyingPrice(row)) return false;
+      return true;
+    }
     return qty > 0;
   };
 
@@ -2202,17 +2260,24 @@
   const floatSupplierReady = () => {
     if (mode !== "in") return false;
     const details = readFloatDetails();
-    return Boolean(
-      details.name &&
+    if (
+      stockReq.in.supplier &&
+      !(
+        details.name &&
         details.dial &&
         details.phone &&
-        details.phone.length === 9 &&
-        details.payment
-    );
+        details.phone.length === 9
+      )
+    ) {
+      return false;
+    }
+    if (stockReq.in.payment_status && !details.payment) return false;
+    return true;
   };
 
   const supplierCoreReady = () => {
     if (mode !== "in") return false;
+    if (!stockReq.in.supplier) return true;
     const details = readFloatDetails();
     return Boolean(
       details.name &&
@@ -2225,12 +2290,13 @@
   const floatOutReady = () => {
     if (mode !== "out") return false;
     const details = readFloatDetails();
-    if (!details.reason || (details.refund !== "yes" && details.refund !== "no")) {
-      return false;
-    }
-    if (details.refund === "yes") {
-      const amount = Number(details.refundAmount);
-      return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+    if (stockReq.out.reason && !details.reason) return false;
+    if (stockReq.out.refund) {
+      if (details.refund !== "yes" && details.refund !== "no") return false;
+      if (details.refund === "yes") {
+        const amount = Number(details.refundAmount);
+        return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+      }
     }
     return true;
   };
@@ -2252,7 +2318,7 @@
     const ready = collectReady();
     if (!ready.length) return 0;
     if (mode === "in") {
-      if (!supplierCoreReady()) return 0;
+      if (stockReq.in.supplier && !supplierCoreReady()) return 0;
       const details = readFloatDetails();
       appliedDetails = details.payment ? details : appliedDetails;
       ready.forEach((item) => writeSupplierMeta(item.row, details));
@@ -2261,17 +2327,21 @@
           setApplyStatus(
             `Supplier details applied to ${ready.length} item(s).`
           );
-        } else {
+        } else if (stockReq.in.payment_status && !details.payment) {
           setApplyStatus(
-            "Supplier name and phone applied. Select payment status to submit.",
+            "Details applied. Select payment status to submit.",
             true
           );
+        } else {
+          setApplyStatus(`Details applied to ${ready.length} item(s).`);
         }
       }
       return ready.length;
     }
     if (mode === "out") {
-      if (!floatOutReady()) return 0;
+      if ((stockReq.out.reason || stockReq.out.refund) && !floatOutReady()) {
+        return 0;
+      }
       const details = readFloatDetails();
       appliedDetails = details;
       ready.forEach((item) => writeOutMeta(item.row, details));

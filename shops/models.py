@@ -454,6 +454,47 @@ class CompanyPosSettings(models.Model):
         return {"type": "", "label": "", "lines": []}
 
 
+class CompanyStockSettings(models.Model):
+    """Company-wide compulsory fields for stock in/out/request (singleton row)."""
+
+    # Stock in
+    require_buying_price_on_in = models.BooleanField(default=True)
+    require_supplier_on_in = models.BooleanField(default=True)
+    require_payment_status_on_in = models.BooleanField(default=True)
+
+    # Stock out
+    require_reason_on_out = models.BooleanField(default=True)
+    require_refund_on_out = models.BooleanField(default=True)
+
+    # Stock request
+    require_note_on_request = models.BooleanField(default=False)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company stock settings"
+        verbose_name_plural = "Company stock settings"
+
+    def __str__(self):
+        return "Company stock settings"
+
+    def as_requirements_dict(self) -> dict:
+        return {
+            "in": {
+                "buying_price": bool(self.require_buying_price_on_in),
+                "supplier": bool(self.require_supplier_on_in),
+                "payment_status": bool(self.require_payment_status_on_in),
+            },
+            "out": {
+                "reason": bool(self.require_reason_on_out),
+                "refund": bool(self.require_refund_on_out),
+            },
+            "request": {
+                "note": bool(self.require_note_on_request),
+            },
+        }
+
+
 class DarajaEnvironment(models.TextChoices):
     SANDBOX = "sandbox", "Sandbox"
     PRODUCTION = "production", "Production"

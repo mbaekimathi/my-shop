@@ -995,6 +995,10 @@ def _parse_movement_lines(data, movement_type: str):
         )
     }
 
+    from shops.services import get_company_stock_settings
+
+    stock_req = get_company_stock_settings()
+
     lines = []
     errors = []
     for index, item_id in enumerate(raw_ids):
@@ -1040,42 +1044,78 @@ def _parse_movement_lines(data, movement_type: str):
             payment_status = (
                 raw_payments[index] if index < len(raw_payments) else ""
             ).strip().lower()
-            if payment_status not in {choice.value for choice in StockPaymentStatus}:
-                errors.append(
-                    f"{line_label}: choose a payment status (unpaid, paid, or partial)."
-                )
-                continue
+            valid_payments = {choice.value for choice in StockPaymentStatus}
+            if stock_req.require_payment_status_on_in:
+                if payment_status not in valid_payments:
+                    errors.append(
+                        f"{line_label}: choose a payment status (unpaid, paid, or partial)."
+                    )
+                    continue
+            elif payment_status not in valid_payments:
+                payment_status = ""
 
             price_raw = raw_prices[index] if index < len(raw_prices) else ""
-            try:
-                buying_price = _parse_price(price_raw, "Buying price")
-            except ValidationError as exc:
-                message = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
-                errors.append(f"{line_label}: {message}")
-                continue
+            if stock_req.require_buying_price_on_in or str(price_raw).strip():
+                try:
+                    buying_price = _parse_price(price_raw, "Buying price")
+                except ValidationError as exc:
+                    if stock_req.require_buying_price_on_in or str(price_raw).strip():
+                        message = (
+                            exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+                        )
+                        errors.append(f"{line_label}: {message}")
+                        continue
+            else:
+                buying_price = None
 
-            supplier, supplier_error = _validate_supplier(
-                name=raw_supplier_names[index] if index < len(raw_supplier_names) else "",
-                dial=raw_supplier_dials[index] if index < len(raw_supplier_dials) else "",
-                phone=raw_supplier_phones[index] if index < len(raw_supplier_phones) else "",
-                line_label=line_label,
+            name_raw = raw_supplier_names[index] if index < len(raw_supplier_names) else ""
+            dial_raw = raw_supplier_dials[index] if index < len(raw_supplier_dials) else ""
+            phone_raw = (
+                raw_supplier_phones[index] if index < len(raw_supplier_phones) else ""
             )
-            if supplier_error:
-                errors.append(supplier_error)
-                continue
+            supplier_any = bool(
+                str(name_raw).strip() or str(dial_raw).strip() or str(phone_raw).strip()
+            )
+            if stock_req.require_supplier_on_in or supplier_any:
+                supplier, supplier_error = _validate_supplier(
+                    name=name_raw,
+                    dial=dial_raw,
+                    phone=phone_raw,
+                    line_label=line_label,
+                )
+                if supplier_error:
+                    errors.append(supplier_error)
+                    continue
+            else:
+                supplier = {
+                    "supplier_name": "",
+                    "supplier_phone_country_code": "",
+                    "supplier_phone_number": "",
+                }
 
         if movement_type == StockMovementType.OUT:
             reason = (raw_reasons[index] if index < len(raw_reasons) else "").strip().lower()
-            if reason not in {choice.value for choice in StockOutReason}:
-                errors.append(
-                    f"{line_label}: choose a reason (waste, transfer, display, or return)."
-                )
-                continue
+            valid_reasons = {choice.value for choice in StockOutReason}
+            if stock_req.require_reason_on_out:
+                if reason not in valid_reasons:
+                    errors.append(
+                        f"{line_label}: choose a reason (waste, transfer, display, or return)."
+                    )
+                    continue
+            elif reason not in valid_reasons:
+                reason = ""
+
             refund = (raw_refunds[index] if index < len(raw_refunds) else "").strip().lower()
-            if refund not in ("yes", "no"):
-                errors.append(f"{line_label}: choose whether a refund applies (yes or no).")
-                continue
             refund_amount = None
+            if stock_req.require_refund_on_out:
+                if refund not in ("yes", "no"):
+                    errors.append(
+                        f"{line_label}: choose whether a refund applies (yes or no)."
+                    )
+                    continue
+            elif refund not in ("yes", "no"):
+                refund = ""
+
             if refund == "yes":
                 amount_raw = (
                     raw_refund_amounts[index] if index < len(raw_refund_amounts) else ""
@@ -1083,12 +1123,19 @@ def _parse_movement_lines(data, movement_type: str):
                 try:
                     refund_amount = _parse_price(amount_raw, "Refund amount")
                 except ValidationError as exc:
-                    message = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+                    message = (
+                        exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+                    )
                     errors.append(f"{line_label}: {message}")
                     continue
                 if refund_amount <= 0:
                     errors.append(f"{line_label}: refund amount must be greater than zero.")
                     continue
+
+        if movement_type == StockMovementType.REQUEST and stock_req.require_note_on_request:
+            if not note:
+                errors.append(f"{line_label}: enter a note for this request.")
+                continue
 
         line = {
             "item_id": item_id,
