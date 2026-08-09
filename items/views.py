@@ -20,6 +20,7 @@ from .services import (
     build_stock_catalog_page,
     build_stock_print_document,
     build_stock_print_pdf,
+    check_serials_already_in_stock,
     create_item,
     delete_item,
     estimate_stock_print_a4_pages,
@@ -86,6 +87,37 @@ def serial_search_api(request):
         match=match,
     )
     return JsonResponse({"ok": True, "results": results, "match": match})
+
+
+@active_employee_required
+@require_GET
+def serial_in_stock_check_api(request):
+    """Live check: is this serial already available for stock-in?"""
+    item_id = (request.GET.get("item_id") or "").strip()
+    serials = request.GET.getlist("serial") or []
+    if not serials:
+        raw = (request.GET.get("q") or request.GET.get("serial") or "").strip()
+        if raw:
+            serials = [raw]
+    found = check_serials_already_in_stock(item_id=item_id, serials=serials)
+    ordered = []
+    seen = set()
+    for raw in serials:
+        serial = str(raw or "").strip().upper()
+        if not serial or serial in seen:
+            continue
+        seen.add(serial)
+        hit = found.get(serial)
+        ordered.append(
+            {
+                "serial": serial,
+                "in_stock": bool(hit),
+                "shop_name": (hit or {}).get("shop_name") or "",
+            }
+        )
+        if len(ordered) >= 12:
+            break
+    return JsonResponse({"ok": True, "results": ordered})
 
 
 def _active_pricing_shops():
@@ -1817,6 +1849,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "countries": COUNTRY_DIAL_CODES,
             "supplier_search_url": reverse("employees:supplier_search"),
             "serial_search_url": reverse("employees:serial_search"),
+            "serial_check_url": reverse("employees:serial_in_stock_check"),
             "stock_catalog_url": stock_catalog_url,
             "use_stock_catalog_api": use_stock_catalog_api,
             "catalog_shops_json": catalog_shops_json,

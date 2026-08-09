@@ -3017,6 +3017,8 @@
       serialSaleList.querySelectorAll("[data-serial-sale-input]").forEach((input) => {
         const value = String(input.value || "").trim().toUpperCase();
         if (!value || seen.has(value)) return;
+        // Last-4 typing is not a selected serial until a suggestion is chosen.
+        if (isSerialSaleLast4Mode() && input.dataset.serialResolved !== "1") return;
         seen.add(value);
         serials.push(value);
       });
@@ -3092,7 +3094,7 @@
         const empty = document.createElement("div");
         empty.className = "shop-serial-suggest-empty";
         empty.innerHTML = isSerialSaleLast4Mode()
-          ? "<strong>No matching serials</strong><small>Try the last 4 digits of an in-stock serial</small>"
+          ? "<strong>No matching serials</strong><small>Type more of the last 4 digits from an in-stock unit</small>"
           : "<strong>No matching serials</strong><small>Available at this shop only</small>";
         suggest.appendChild(empty);
         suggest.hidden = false;
@@ -3129,7 +3131,7 @@
         hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
         return;
       }
-      const q = String(input.value || "").trim();
+      const q = String(input.value || "").trim().toUpperCase();
       const seq = ++serialSaleSearchSeq;
       const params = new URLSearchParams({
         item_id: String(serialSaleItem.id),
@@ -3145,6 +3147,13 @@
         });
         const data = await response.json().catch(() => ({}));
         if (seq !== serialSaleSearchSeq) return;
+        if (!response.ok) {
+          hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
+          setSerialSaleStatus(data.error || "Could not search serials.", {
+            error: true,
+          });
+          return;
+        }
         const results = Array.isArray(data.results) ? data.results : [];
         renderSerialSaleSuggest(input, results);
       } catch (_error) {

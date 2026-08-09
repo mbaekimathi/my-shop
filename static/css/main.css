@@ -10116,6 +10116,34 @@ body.workspace-modal-open {
   align-items: start;
 }
 
+.stock-serial-row.is-already-in-stock {
+  background: #fee2e2;
+  border: 1px solid #f87171;
+  border-radius: 0.55rem;
+  padding: 0.35rem 0.45rem;
+}
+
+.stock-serial-row.is-already-in-stock input {
+  background: #fff5f5;
+  border-color: #ef4444;
+  color: #991b1b;
+  box-shadow: none;
+}
+
+.stock-serial-row.is-already-in-stock input:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+.stock-serial-in-stock-msg {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
 .stock-serial-row.has-serial-scan {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }

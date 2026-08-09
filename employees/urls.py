@@ -1,7 +1,11 @@
 from django.urls import path
 
 from . import api_views, views
-from items.views import serial_search_api, supplier_search_api
+from items.views import (
+    serial_in_stock_check_api,
+    serial_search_api,
+    supplier_search_api,
+)
 from shops.views import expense_supplier_search_api
 
 urlpatterns = [
@@ -22,6 +26,11 @@ urlpatterns = [
         name="expense_supplier_search",
     ),
     path("api/serials/", serial_search_api, name="serial_search"),
+    path(
+        "api/serials/in-stock/",
+        serial_in_stock_check_api,
+        name="serial_in_stock_check",
+    ),
     path(
         "register/submitted/<str:employee_id>/",
         views.registration_submitted,

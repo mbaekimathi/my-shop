@@ -498,6 +498,9 @@ def search_available_serials(
     limit: int = 10,
     match: str = "contains",
 ):
+    from django.db.models import Case, IntegerField, Value, When
+    from django.db.models.functions import Right, Upper
+
     try:
         item_pk = int(item_id)
         shop_pk = int(shop_id)
@@ -508,7 +511,7 @@ def search_available_serials(
         item_id=item_pk,
         shop_id=shop_pk,
         is_available=True,
-    ).order_by("serial_number")
+    )
 
     exclude = [str(value or "").strip().upper() for value in (exclude or []) if value]
     if exclude:
@@ -518,11 +521,68 @@ def search_available_serials(
     match_mode = (match or "contains").strip().lower()
     if query:
         if match_mode in ("last4", "endswith", "suffix"):
-            qs = qs.filter(serial_number__iendswith=query)
+            # Progressive last-4: match serials whose final 4 chars contain what was typed
+            # (not only exact endswith), closest matches first.
+            qs = qs.annotate(_suffix=Upper(Right("serial_number", 4))).filter(
+                _suffix__contains=query
+            ).annotate(
+                _rank=Case(
+                    When(_suffix=query, then=Value(0)),
+                    When(_suffix__startswith=query, then=Value(1)),
+                    When(serial_number__iendswith=query, then=Value(2)),
+                    default=Value(3),
+                    output_field=IntegerField(),
+                )
+            ).order_by("_rank", "serial_number")
         else:
-            qs = qs.filter(serial_number__icontains=query)
+            qs = qs.filter(serial_number__icontains=query).annotate(
+                _rank=Case(
+                    When(serial_number__iexact=query, then=Value(0)),
+                    When(serial_number__istartswith=query, then=Value(1)),
+                    When(serial_number__iendswith=query, then=Value(2)),
+                    default=Value(3),
+                    output_field=IntegerField(),
+                )
+            ).order_by("_rank", "serial_number")
+    else:
+        qs = qs.order_by("serial_number")
 
     return list(qs.values_list("serial_number", flat=True)[:limit])
+
+
+def check_serials_already_in_stock(*, item_id, serials) -> dict[str, dict]:
+    """Return map of SERIAL -> {shop_id, shop_name} for units already available."""
+    try:
+        item_pk = int(item_id)
+    except (TypeError, ValueError):
+        return {}
+
+    wanted = []
+    seen = set()
+    for raw in serials or []:
+        serial = str(raw or "").strip().upper()
+        if not serial or serial in seen:
+            continue
+        seen.add(serial)
+        wanted.append(serial)
+        # Keep the endpoint cheap for live typing / paste floods.
+        if len(wanted) >= 12:
+            break
+    if not wanted:
+        return {}
+
+    rows = ItemSerial.objects.filter(
+        item_id=item_pk,
+        serial_number__in=wanted,
+        is_available=True,
+    ).values("serial_number", "shop_id", "shop__name")
+    found = {}
+    for row in rows:
+        found[row["serial_number"]] = {
+            "shop_id": row["shop_id"],
+            "shop_name": (row["shop__name"] or "") if row["shop_id"] else "",
+        }
+    return found
 
 
 def search_suppliers(

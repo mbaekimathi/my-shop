@@ -984,6 +984,7 @@ def _buy_stock_items_context(shop):
         "stock_mode": "in",
         "countries": COUNTRY_DIAL_CODES,
         "supplier_search_url": reverse("employees:supplier_search"),
+        "serial_check_url": reverse("employees:serial_in_stock_check"),
         "verify_login_code_url": reverse(
             "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
         ),

@@ -81,6 +81,199 @@
 
   if (mode === "view") return;
 
+  const serialCheckUrl =
+    form.getAttribute("data-serial-check-url") ||
+    form.dataset.serialCheckUrl ||
+    "";
+  const SERIAL_CHECK_MIN_LEN = 3;
+  const SERIAL_CHECK_DEBOUNCE_MS = 400;
+  const SERIAL_CHECK_CACHE_TTL_MS = 5 * 60 * 1000;
+  const SERIAL_CHECK_CACHE_MAX = 200;
+  const serialCheckCache = new Map();
+  const serialCheckTimers = new WeakMap();
+  let serialCheckAbort = null;
+  let serialCheckSeq = 0;
+
+  const serialCheckCacheKey = (itemId, serial) => `${itemId}|${serial}`;
+
+  const readSerialCheckCache = (itemId, serial) => {
+    const key = serialCheckCacheKey(itemId, serial);
+    const hit = serialCheckCache.get(key);
+    if (!hit) return null;
+    if (Date.now() - hit.ts > SERIAL_CHECK_CACHE_TTL_MS) {
+      serialCheckCache.delete(key);
+      return null;
+    }
+    // Refresh LRU order.
+    serialCheckCache.delete(key);
+    serialCheckCache.set(key, hit);
+    return hit;
+  };
+
+  const writeSerialCheckCache = (itemId, serial, payload) => {
+    const key = serialCheckCacheKey(itemId, serial);
+    if (serialCheckCache.has(key)) serialCheckCache.delete(key);
+    serialCheckCache.set(key, { ...payload, ts: Date.now() });
+    while (serialCheckCache.size > SERIAL_CHECK_CACHE_MAX) {
+      const oldest = serialCheckCache.keys().next().value;
+      serialCheckCache.delete(oldest);
+    }
+  };
+
+  const ensureSerialRowMessage = (serialRow) => {
+    let msg = serialRow.querySelector("[data-serial-in-stock-msg]");
+    if (!msg) {
+      msg = document.createElement("p");
+      msg.className = "stock-serial-in-stock-msg";
+      msg.setAttribute("data-serial-in-stock-msg", "");
+      msg.hidden = true;
+      serialRow.appendChild(msg);
+    }
+    return msg;
+  };
+
+  const clearSerialInStockState = (serialRow) => {
+    if (!serialRow) return;
+    serialRow.classList.remove("is-already-in-stock", "is-serial-duplicate");
+    delete serialRow.dataset.serialBlocked;
+    delete serialRow.dataset.serverInStock;
+    const input = serialRow.querySelector("[data-stock-serial-input]");
+    if (input) delete input.dataset.serialBlocked;
+    const msg = serialRow.querySelector("[data-serial-in-stock-msg]");
+    if (msg) {
+      msg.hidden = true;
+      msg.textContent = "";
+    }
+  };
+
+  const setSerialInStockState = (serialRow, { blocked = false, message = "" } = {}) => {
+    if (!serialRow) return;
+    const input = serialRow.querySelector("[data-stock-serial-input]");
+    if (!blocked) {
+      clearSerialInStockState(serialRow);
+      return;
+    }
+    serialRow.classList.add("is-already-in-stock");
+    serialRow.dataset.serialBlocked = "1";
+    if (input) input.dataset.serialBlocked = "1";
+    const msg = ensureSerialRowMessage(serialRow);
+    msg.hidden = false;
+    msg.textContent = message || "Already in stock — remove";
+  };
+
+  const applySerialCheckResult = (serialRow, serial, hit) => {
+    if (hit?.in_stock) {
+      serialRow.dataset.serverInStock = "1";
+      const shopBit = hit.shop_name ? ` at ${hit.shop_name}` : "";
+      setSerialInStockState(serialRow, {
+        blocked: true,
+        message: `Already in stock${shopBit} — remove`,
+      });
+      return;
+    }
+    clearSerialInStockState(serialRow);
+  };
+
+  const runSerialInStockCheck = async (input, { itemId, container } = {}) => {
+    if (mode !== "in" || !(input instanceof HTMLInputElement)) return;
+    const serialRow = input.closest(".stock-serial-row");
+    if (!serialRow) return;
+    const serial = String(input.value || "").trim().toUpperCase();
+
+    if (!serial) {
+      clearSerialInStockState(serialRow);
+      return;
+    }
+
+    const peers = [
+      ...(container?.querySelectorAll("[data-stock-serial-input]") || []),
+    ];
+    const isDuplicate = peers.some(
+      (peer) =>
+        peer !== input &&
+        String(peer.value || "").trim().toUpperCase() === serial
+    );
+    if (isDuplicate) {
+      serialRow.dataset.serverInStock = "0";
+      setSerialInStockState(serialRow, {
+        blocked: true,
+        message: "Duplicate serial — remove",
+      });
+      serialRow.classList.add("is-serial-duplicate");
+      return;
+    }
+
+    // Wait for a meaningful value before hitting the network.
+    if (serial.length < SERIAL_CHECK_MIN_LEN) {
+      clearSerialInStockState(serialRow);
+      return;
+    }
+
+    if (!serialCheckUrl || !itemId) {
+      clearSerialInStockState(serialRow);
+      return;
+    }
+
+    const cached = readSerialCheckCache(itemId, serial);
+    if (cached) {
+      applySerialCheckResult(serialRow, serial, cached);
+      return;
+    }
+
+    if (serialCheckAbort) {
+      try {
+        serialCheckAbort.abort();
+      } catch (_err) {
+        /* ignore */
+      }
+    }
+    const controller = new AbortController();
+    serialCheckAbort = controller;
+    const seq = ++serialCheckSeq;
+
+    try {
+      const params = new URLSearchParams({
+        item_id: String(itemId),
+        serial,
+      });
+      const response = await fetch(`${serialCheckUrl}?${params.toString()}`, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const data = await response.json().catch(() => ({}));
+      if (seq !== serialCheckSeq) return;
+      if (String(input.value || "").trim().toUpperCase() !== serial) return;
+      const hit = (Array.isArray(data.results) ? data.results : []).find(
+        (row) => row.serial === serial
+      ) || { serial, in_stock: false, shop_name: "" };
+      writeSerialCheckCache(itemId, serial, {
+        in_stock: Boolean(hit.in_stock),
+        shop_name: hit.shop_name || "",
+      });
+      applySerialCheckResult(serialRow, serial, hit);
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      /* ignore network errors while typing */
+    } finally {
+      if (serialCheckAbort === controller) serialCheckAbort = null;
+    }
+  };
+
+  const queueSerialInStockCheck = (input, opts = {}) => {
+    if (!(input instanceof HTMLInputElement)) return;
+    const prev = serialCheckTimers.get(input);
+    if (prev) window.clearTimeout(prev);
+    const delay = opts.immediate ? 0 : SERIAL_CHECK_DEBOUNCE_MS;
+    const timer = window.setTimeout(() => {
+      serialCheckTimers.delete(input);
+      runSerialInStockCheck(input, opts);
+    }, delay);
+    serialCheckTimers.set(input, timer);
+  };
+
   const readStockRequirements = () => {
     const defaults = {
       in: { buying_price: true, supplier: true, payment_status: true },
@@ -742,6 +935,10 @@
 
     const modalSerials = () =>
       [...(serialModalList?.querySelectorAll("[data-stock-serial-input]") || [])]
+        .filter(
+          (input) =>
+            input.closest(".stock-serial-row")?.dataset.serialBlocked !== "1"
+        )
         .map((input) => String(input.value || "").trim().toUpperCase())
         .filter(Boolean);
 
@@ -759,14 +956,10 @@
       if (!serialModalList) return null;
       const row = document.createElement("div");
       row.className = "stock-serial-row";
-      let parent = row;
-      if (mode === "out") {
-        const wrap = document.createElement("div");
-        wrap.className = "stock-serial-input-wrap";
-        wrap.setAttribute("data-serial-search-root", "");
-        row.appendChild(wrap);
-        parent = wrap;
-      }
+      const wrap = document.createElement("div");
+      wrap.className = "stock-serial-input-wrap";
+      if (mode === "out") wrap.setAttribute("data-serial-search-root", "");
+      row.appendChild(wrap);
       const input = document.createElement("input");
       input.type = "text";
       input.placeholder =
@@ -776,13 +969,13 @@
       input.setAttribute("data-stock-serial-input", "");
       if (mode === "out") input.setAttribute("data-serial-search", "");
       input.value = serial;
-      parent.appendChild(input);
+      wrap.appendChild(input);
       if (mode === "out") {
         const suggest = document.createElement("div");
         suggest.className = "stock-supplier-suggest";
         suggest.setAttribute("data-serial-suggest", "");
         suggest.hidden = true;
-        parent.appendChild(suggest);
+        wrap.appendChild(suggest);
       }
       const remove = document.createElement("button");
       remove.type = "button";
@@ -794,6 +987,13 @@
       serialModalList.appendChild(row);
       refreshIcons();
       syncModalCount();
+      if (mode === "in" && serial) {
+        queueSerialInStockCheck(input, {
+          itemId: activeSerialCell?.dataset.itemId || "",
+          container: serialModalList,
+          immediate: true,
+        });
+      }
       return input;
     };
 
@@ -820,6 +1020,13 @@
     const closeSerialModal = ({ save = false } = {}) => {
       const cell = activeSerialCell;
       if (save && cell) {
+        const blocked = serialModalList?.querySelector(
+          ".stock-serial-row.is-already-in-stock"
+        );
+        if (blocked) {
+          blocked.querySelector("[data-stock-serial-input]")?.focus();
+          return;
+        }
         const serials = modalSerials();
         const unique = [...new Set(serials)];
         const serialHidden = cell.querySelector("[data-stock-serials]");
@@ -1033,6 +1240,37 @@
           220
         );
       }
+      if (mode === "in") {
+        queueSerialInStockCheck(event.target, {
+          itemId: activeSerialCell?.dataset.itemId || "",
+          container: serialModalList,
+        });
+      }
+    });
+
+    serialModal?.addEventListener("myshop:serial-applied", (event) => {
+      if (mode !== "in") return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches("[data-stock-serial-input]")) return;
+      syncModalCount();
+      queueSerialInStockCheck(target, {
+        itemId: activeSerialCell?.dataset.itemId || "",
+        container: serialModalList,
+        immediate: true,
+      });
+    });
+
+    serialModal?.addEventListener("focusout", (event) => {
+      if (mode !== "in") return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches("[data-stock-serial-input]")) return;
+      queueSerialInStockCheck(target, {
+        itemId: activeSerialCell?.dataset.itemId || "",
+        container: serialModalList,
+        immediate: true,
+      });
     });
 
     serialModal?.addEventListener("keydown", (event) => {
@@ -1712,6 +1950,7 @@
     const seen = new Set();
     const serials = [];
     getSerialRows(row).forEach((serialRow) => {
+      if (serialRow.dataset.serialBlocked === "1") return;
       const serial = normalizeSerial(
         serialRow.querySelector("[data-stock-serial-input]")?.value
       );
@@ -3063,6 +3302,14 @@
     if (mode !== "in") return;
     const row = findItemRowFromNode(target);
     if (!row || !tracksSerial(row)) return;
+    const list =
+      getInputsBag(row)?.querySelector("[data-stock-serial-list]") ||
+      row.querySelector("[data-stock-serial-list]");
+    queueSerialInStockCheck(target, {
+      itemId: row.dataset.itemId || "",
+      container: list,
+      immediate: true,
+    });
     refreshRowState(row);
     const hasEmpty = getSerialRows(row).some((serialRow) => {
       const value = normalizeSerial(
@@ -3141,6 +3388,21 @@
           target.setSelectionRange(start, end);
         }
         queueSerialSearch(target);
+      }
+      if (mode === "in" && target.matches("[data-stock-serial-input]")) {
+        const start = target.selectionStart;
+        const end = target.selectionEnd;
+        target.value = target.value.toUpperCase();
+        if (typeof start === "number" && typeof end === "number") {
+          target.setSelectionRange(start, end);
+        }
+        const list =
+          getInputsBag(itemRow)?.querySelector("[data-stock-serial-list]") ||
+          itemRow.querySelector("[data-stock-serial-list]");
+        queueSerialInStockCheck(target, {
+          itemId: itemRow.dataset.itemId || "",
+          container: list,
+        });
       }
       refreshRowState(itemRow);
       if (loginVerified) queueAutoStockInAndPrint();

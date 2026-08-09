@@ -3258,9 +3258,12 @@ def _receipt_list_item(receipt) -> dict:
     }
 
 
-def _receipt_line_payload(line) -> dict:
+def _receipt_line_payload(line, *, sold_serials_by_item=None) -> dict:
     remaining = line.remaining_quantity
     remaining_serials = line.remaining_serial_numbers
+    if sold_serials_by_item is not None and (line.serial_numbers or remaining_serials):
+        allowed = sold_serials_by_item.get(line.item_id) or set()
+        remaining_serials = [s for s in remaining_serials if s in allowed]
     return {
         "id": line.pk,
         "item_id": line.item_id,
@@ -3278,6 +3281,31 @@ def _receipt_line_payload(line) -> dict:
         "remaining_serial_numbers": remaining_serials,
         "track_serial": bool(remaining_serials or line.serial_numbers),
     }
+
+
+def _sold_serials_by_item_for_lines(lines) -> dict:
+    """item_id → serials that exist and are sold (eligible to return)."""
+    from items.models import ItemSerial
+
+    item_ids = set()
+    serials = set()
+    for line in lines:
+        if not line.item_id:
+            continue
+        for serial in line.remaining_serial_numbers:
+            item_ids.add(line.item_id)
+            serials.add(serial)
+    if not item_ids or not serials:
+        return {}
+    rows = ItemSerial.objects.filter(
+        item_id__in=item_ids,
+        serial_number__in=serials,
+        is_available=False,
+    ).values_list("item_id", "serial_number")
+    out = {}
+    for item_id, serial in rows:
+        out.setdefault(item_id, set()).add(serial)
+    return out
 
 
 def list_shop_receipts(
@@ -3362,10 +3390,27 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int) -> dict:
         raise ValidationError("Receipt not found for this shop.") from exc
 
     lines = list(receipt.lines.all())
+    sold_serials_by_item = _sold_serials_by_item_for_lines(lines)
     pos_settings = get_company_pos_settings()
     ticket = _build_receipt_ticket_data(receipt, lines)
     message = _render_receipt_text(ticket)
     item = _receipt_list_item(receipt)
+    line_payloads = [
+        _receipt_line_payload(line, sold_serials_by_item=sold_serials_by_item)
+        for line in lines
+    ]
+    returnable_lines = []
+    for line, payload in zip(lines, line_payloads):
+        if line.remaining_quantity <= 0:
+            continue
+        if receipt.kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
+            continue
+        if receipt.status == ShopReceiptStatus.CANCELLED:
+            continue
+        # Serial sale lines are only returnable when a sold serial still exists.
+        if line.serial_numbers and not payload["remaining_serial_numbers"]:
+            continue
+        returnable_lines.append(payload)
     return {
         "ok": True,
         "receipt": {
@@ -3375,15 +3420,8 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int) -> dict:
             "tax_amount": str(receipt.tax_amount),
             "cash_amount": str(receipt.cash_amount),
             "mpesa_amount": str(receipt.mpesa_amount),
-            "lines": [_receipt_line_payload(line) for line in lines],
-            "returnable_lines": [
-                _receipt_line_payload(line)
-                for line in lines
-                if line.remaining_quantity > 0
-                and receipt.kind
-                in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}
-                and receipt.status != ShopReceiptStatus.CANCELLED
-            ],
+            "lines": line_payloads,
+            "returnable_lines": returnable_lines,
         },
         "receipt_text": message,
         "receipt_ticket": ticket,
@@ -3500,9 +3538,48 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         elif serials:
             serials = []
 
+        serial_objects = {}
+        if serials:
+            if not line.item_id:
+                errors.append(
+                    f"“{line.item_name}”: cannot verify serial numbers for this line."
+                )
+                continue
+            found = {
+                row.serial_number: row
+                for row in ItemSerial.objects.select_for_update().filter(
+                    item_id=line.item_id,
+                    serial_number__in=serials,
+                )
+            }
+            not_in_system = [s for s in serials if s not in found]
+            if not_in_system:
+                errors.append(
+                    f"“{line.item_name}”: serial not in the system "
+                    f"({', '.join(not_in_system[:5])}"
+                    f"{'…' if len(not_in_system) > 5 else ''})."
+                )
+                continue
+            already_in_stock = [s for s in serials if found[s].is_available]
+            if already_in_stock:
+                errors.append(
+                    f"“{line.item_name}”: serial already in stock (not sold) "
+                    f"({', '.join(already_in_stock[:5])}"
+                    f"{'…' if len(already_in_stock) > 5 else ''}). Cannot return."
+                )
+                continue
+            serial_objects = found
+
         if line.item_id:
             item_ids.add(line.item_id)
-        prepared.append({"line": line, "qty": qty, "serial_numbers": serials})
+        prepared.append(
+            {
+                "line": line,
+                "qty": qty,
+                "serial_numbers": serials,
+                "serial_objects": serial_objects,
+            }
+        )
 
     if errors:
         raise ValidationError(errors)
@@ -3578,19 +3655,20 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         stock_updates.append({"id": item.pk, "quantity": int(stock.quantity)})
 
         if serials:
-            found = {
-                serial.serial_number: serial
-                for serial in ItemSerial.objects.select_for_update().filter(
-                    item=item,
-                    shop=shop,
-                    serial_number__in=serials,
-                )
-            }
+            found = row.get("serial_objects") or {}
             for serial_no in serials:
                 obj = found.get(serial_no)
                 if obj is None:
-                    continue
+                    raise ValidationError(
+                        f"“{line.item_name}”: serial not in the system ({serial_no})."
+                    )
+                if obj.is_available:
+                    raise ValidationError(
+                        f"“{line.item_name}”: serial already in stock ({serial_no}). "
+                        "Cannot return."
+                    )
                 obj.is_available = True
+                obj.shop = shop
                 obj.updated_at = now
                 serials_to_update.append(obj)
 
@@ -3606,7 +3684,7 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
     if serials_to_update:
         ItemSerial.objects.bulk_update(
-            serials_to_update, ["is_available", "updated_at"]
+            serials_to_update, ["is_available", "shop", "updated_at"]
         )
 
     # Refresh remaining totals from all lines on this receipt.
