@@ -1154,7 +1154,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             return _stock_redirect(
                 request.path,
                 action_mode,
-                shop_id=shop_id if action_mode == "request" else "",
+                shop_id=shop_id,
                 requested_from_shop_id=requested_from_post,
             )
 
@@ -1167,7 +1167,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         return _stock_redirect(
             request.path,
             action_mode,
-            shop_id=shop_id if action_mode == "request" else "",
+            shop_id=shop_id,
             requested_from_shop_id=requested_from_post,
         )
 
@@ -1194,9 +1194,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
     category_count = 0
     shop_total_units = 0
     display_shops = []
-    # Stock in/out/request always show all actionable shops as columns.
+    # View / stock in / stock out: optional shop filter. Request keeps all columns.
     show_all_shops = mode == "view" and selected_shop is None and bool(all_shops)
-    if mode in ("in", "out", "request") and shops:
+    if mode in ("in", "out") and shops:
+        show_all_shops = selected_shop is None and len(shops) > 1
+    elif mode == "request" and shops:
         show_all_shops = len(shops) > 1
 
     from django.db.models import Sum
@@ -1220,7 +1222,18 @@ def stock_management(request, profile, meta, module, page_sidebar):
         category_count = (
             Item.objects.order_by("category").values("category").distinct().count()
         )
-    elif mode in ("in", "out", "request") and shops:
+    elif mode in ("in", "out") and shops:
+        display_shops = [selected_shop] if selected_shop else list(shops)
+        shop_total_units = (
+            ShopStock.objects.filter(
+                shop_id__in=[shop.pk for shop in display_shops]
+            ).aggregate(total=Sum("quantity"))["total"]
+            or 0
+        )
+        category_count = (
+            Item.objects.order_by("category").values("category").distinct().count()
+        )
+    elif mode == "request" and shops:
         display_shops = list(shops)
         shop_total_units = (
             ShopStock.objects.filter(shop_id__in=[shop.pk for shop in shops]).aggregate(
@@ -1353,13 +1366,21 @@ def stock_management_catalog(request, role_segment):
         return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
 
     action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}
-    # Stock in/out/request: always all actionable shops as editable columns.
+    # Stock in/out: optional shop_id filter. Request always uses all actionable shops.
     if mode in ("in", "out", "request"):
         if not action_shops:
             return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
+        if mode in ("in", "out") and shop_id:
+            if shop_id not in action_shops:
+                return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
+            catalog_shop_ids = [shop_id]
+            prefer_shop_id = shop_id
+        else:
+            catalog_shop_ids = list(action_shops.keys())
+            prefer_shop_id = None
         payload = build_stock_catalog_page(
-            shop_id=None,
-            shop_ids=list(action_shops.keys()),
+            shop_id=prefer_shop_id,
+            shop_ids=catalog_shop_ids,
             mode=mode,
             q=request.GET.get("q") or "",
             page=request.GET.get("page") or 1,

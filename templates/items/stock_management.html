@@ -26,7 +26,7 @@
     data-stock-mode="{{ stock_mode }}"
     {% if use_stock_catalog_api %}
     data-stock-catalog-api="{{ stock_catalog_url }}"
-    {% if selected_shop and stock_mode != 'in' and stock_mode != 'out' and stock_mode != 'request' %}
+    {% if selected_shop and stock_mode != 'request' %}
     data-stock-catalog-shop="{{ selected_shop.pk }}"
     data-stock-catalog-shop-name="{{ selected_shop.name }}"
     {% endif %}
@@ -44,11 +44,11 @@
         <div>
           <p class="stock-kicker">
             {% if stock_mode == 'out' %}
-            Stock out · All shops
+            Stock out · {% if selected_shop %}{{ selected_shop.name }}{% else %}All shops{% endif %}
             {% elif stock_mode == 'request' %}
             Request stock · All shops
             {% elif stock_mode == 'in' %}
-            Stock in · All shops
+            Stock in · {% if selected_shop %}{{ selected_shop.name }}{% else %}All shops{% endif %}
             {% else %}
             Current stock · {% if selected_shop %}{{ selected_shop.name }}{% else %}All shops{% endif %}
             {% endif %}
@@ -66,11 +66,11 @@
           </h2>
           <p>
             {% if stock_mode == 'out' %}
-            Enter quantity per shop. Serial items open a popup. Set reason and refund in the submit panel.
+            Enter quantity{% if selected_shop %} for {{ selected_shop.name }}{% else %} per shop{% endif %}. Serial items open a popup. Set reason and refund in the submit panel.
             {% elif stock_mode == 'request' %}
             Click a shop header to set the requesting shop, then enter qty under the shops you are requesting from.
             {% elif stock_mode == 'in' %}
-            Enter quantity and buying price per shop. Serial items open a popup. Set supplier details in the submit panel.
+            Enter quantity and buying price{% if selected_shop %} for {{ selected_shop.name }}{% else %} per shop{% endif %}. Serial items open a popup. Set supplier details in the submit panel.
             {% else %}
             Browse current stock across shops. This screen is read-only.
             {% endif %}
@@ -90,7 +90,7 @@
           {% if shops %}
           <p class="stock-stat">
             <strong>{{ total_units }}</strong>
-            <span>units across all shops</span>
+            <span>{% if selected_shop and stock_mode != 'request' %}units at {{ selected_shop.name }}{% else %}units across all shops{% endif %}</span>
           </p>
           {% endif %}
           {% elif selected_shop %}
@@ -103,7 +103,7 @@
       </div>
 
       <div class="stock-shop-bar" data-stock-shop-bar>
-        {% if stock_mode == 'view' %}
+        {% if stock_mode == 'view' or stock_mode == 'in' or stock_mode == 'out' %}
         <label class="stock-shop-pick">
           <span>Shop</span>
           <select data-stock-shop-nav name="shop_id" data-stock-shop>
@@ -113,6 +113,7 @@
             {% endfor %}
           </select>
         </label>
+        {% if stock_mode == 'view' %}
         <button
           type="button"
           class="stock-print-trigger"
@@ -121,15 +122,21 @@
           <i data-lucide="printer" aria-hidden="true"></i>
           <span>Print stock</span>
         </button>
-        {% elif stock_mode == 'request' %}
+        {% elif selected_shop %}
         <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
-          <i data-lucide="columns-3" aria-hidden="true"></i>
-          <span>Click a shop column to set <strong>Requesting</strong>, then enter qty under other shops</span>
+          <i data-lucide="store" aria-hidden="true"></i>
+          <span>Filtered to {{ selected_shop.name }} — enter qty{% if stock_mode == 'in' %} and buying price{% endif %}</span>
         </p>
         {% else %}
         <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
           <i data-lucide="columns-3" aria-hidden="true"></i>
           <span>All shops — enter qty{% if stock_mode == 'in' %} and buying price{% endif %} under each shop</span>
+        </p>
+        {% endif %}
+        {% elif stock_mode == 'request' %}
+        <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
+          <i data-lucide="columns-3" aria-hidden="true"></i>
+          <span>Click a shop column to set <strong>Requesting</strong>, then enter qty under other shops</span>
         </p>
         {% endif %}
         {% if not shops %}
