@@ -62,11 +62,18 @@
           const haystack = `${row.dataset.searchText || ""} ${categoryLabel}`;
           const match = matchesQuery(haystack, tokens);
           row.hidden = !match;
-          const formRow = row.nextElementSibling?.matches?.("[data-stock-item-inputs]")
-            ? row.nextElementSibling
-            : null;
+          const formRow =
+            row.querySelector(":scope > [data-stock-item-inputs]") ||
+            (row.nextElementSibling?.matches?.("[data-stock-item-inputs]")
+              ? row.nextElementSibling
+              : null);
           if (formRow) {
-            formRow.hidden = !match || !row.classList.contains("is-open");
+            formRow.hidden =
+              !match ||
+              !(
+                row.classList.contains("is-open") ||
+                row.classList.contains("is-selected")
+              );
           }
           if (match) {
             groupVisible += 1;

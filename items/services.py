@@ -2026,14 +2026,14 @@ def build_stock_print_pdf(
         author=company_name or "MY-SHOP",
     )
 
-    ink = colors.HexColor("#122026")
-    muted = colors.HexColor("#5a6b72")
-    line = colors.HexColor("#1c2a30")
-    line_soft = colors.HexColor("#c5d1d4")
-    head_fill = colors.HexColor("#eef3f5")
-    category_fill = colors.HexColor("#dfe8eb")
-    row_alt = colors.HexColor("#f7fafb")
-    accent = colors.HexColor("#1f6f78")
+    ink = colors.HexColor("#000000")
+    muted = colors.HexColor("#1a1a1a")
+    line = colors.HexColor("#000000")
+    line_soft = colors.HexColor("#333333")
+    head_fill = colors.HexColor("#d0d0d0")
+    category_fill = colors.HexColor("#b8b8b8")
+    row_alt = colors.HexColor("#ececec")
+    accent = colors.HexColor("#000000")
 
     styles = getSampleStyleSheet()
     kicker = ParagraphStyle(

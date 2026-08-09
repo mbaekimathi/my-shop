@@ -2614,6 +2614,8 @@
     width: ${pageWidth}; margin: 0; padding: 2mm;
     font-family: "Courier New", monospace;
     font-size: ${fontSize}; font-weight: ${fontWeight};
+    color: #000;
+    background: #fff;
     white-space: pre-wrap;
   }
 </style></head><body><pre>${esc(text)}</pre>

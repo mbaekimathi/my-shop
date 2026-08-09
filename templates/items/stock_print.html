@@ -7,15 +7,15 @@
   <style>
     :root {
       color-scheme: light;
-      --ink: #122026;
-      --muted: #5a6b72;
-      --line: #1c2a30;
-      --line-soft: #c5d1d4;
-      --head-fill: #eef3f5;
-      --category-fill: #dfe8eb;
-      --row-alt: #f7fafb;
-      --accent: #1f6f78;
-      --accent-soft: #e6f2f3;
+      --ink: #000000;
+      --muted: #1a1a1a;
+      --line: #000000;
+      --line-soft: #333333;
+      --head-fill: #d0d0d0;
+      --category-fill: #b8b8b8;
+      --row-alt: #ececec;
+      --accent: #000000;
+      --accent-soft: #e8e8e8;
       --page-bg: #e8eef0;
       --sheet-bg: #ffffff;
     }
@@ -128,12 +128,12 @@
       display: inline-flex;
       align-items: center;
       padding: 0.08rem 0.32rem;
-      border: 1px solid #d0d8db;
+      border: 1px solid #333;
       border-radius: 4px;
       background: var(--head-fill);
-      color: var(--muted);
+      color: var(--ink);
       font-size: 0.62rem;
-      font-weight: 600;
+      font-weight: 700;
       letter-spacing: 0.01em;
     }
 
@@ -212,9 +212,10 @@
       gap: 0.3rem 0.75rem;
       margin-top: 0.2rem;
       padding-top: 0.35rem;
-      border-top: 1px solid var(--line-soft);
-      color: var(--muted);
+      border-top: 1px solid var(--line);
+      color: var(--ink);
       font-size: 0.68rem;
+      font-weight: 600;
     }
 
     /* ===== A4 (screen + print) ===== */
@@ -388,15 +389,15 @@
       table.sheet-grid,
       table.sheet-grid th,
       table.sheet-grid td {
-        border-color: #222 !important;
+        border-color: #000 !important;
       }
       table.sheet-grid th.col-item,
       table.sheet-grid td.col-item,
       .category-row th,
       .sheet-head {
-        border-color: #111 !important;
+        border-color: #000 !important;
       }
-      .sheet-head { border-bottom-color: #111; }
+      .sheet-head { border-bottom-color: #000; }
 
       {% if paper == "80" %}
       @page { size: 80mm auto; margin: 1.5mm; }

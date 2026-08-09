@@ -245,7 +245,7 @@
     margin: 0;
     padding: 0;
     background: #fff;
-    color: #111;
+    color: #000;
   }
   * { box-sizing: border-box; }
   body {
@@ -273,23 +273,26 @@
     font-weight: 800;
     letter-spacing: 0.18em;
     text-transform: uppercase;
+    color: #000;
   }
   .receipt-ticket-brand h4 {
     margin: 0;
     font-size: 1.15em;
     font-weight: 800;
     letter-spacing: 0.02em;
+    color: #000;
   }
   .receipt-ticket-brand p {
     margin: 0.12em 0 0;
     font-size: 0.92em;
+    color: #000;
   }
-  .receipt-ticket-branch { opacity: 0.8; font-size: 0.88em; }
+  .receipt-ticket-branch { color: #111; font-size: 0.88em; }
   .receipt-ticket-rule {
     height: 0;
     margin: 0.65em 0;
     border: 0;
-    border-top: 1px dashed rgba(26, 26, 26, 0.5);
+    border-top: 1px dashed #222;
   }
   .receipt-ticket-meta { display: grid; gap: 0.26em; }
   .receipt-ticket-meta > div {
@@ -298,8 +301,8 @@
     gap: 0.35em;
     align-items: baseline;
   }
-  .receipt-ticket-meta span { opacity: 0.72; font-size: 0.88em; }
-  .receipt-ticket-meta strong { font-weight: 800; word-break: break-word; }
+  .receipt-ticket-meta span { color: #111; font-size: 0.88em; font-weight: 700; }
+  .receipt-ticket-meta strong { font-weight: 800; color: #000; word-break: break-word; }
   .receipt-ticket-lines { display: grid; gap: 0.42em; }
   .receipt-ticket-line {
     display: grid;
@@ -321,17 +324,20 @@
   .receipt-ticket-line > span:nth-child(4) {
     text-align: left;
     font-variant-numeric: tabular-nums;
+    color: #000;
   }
   .receipt-ticket-line--head {
-    opacity: 0.65;
+    color: #000;
     font-size: 0.84em;
+    font-weight: 800;
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
-  .receipt-ticket-item { min-width: 0; overflow: hidden; }
+  .receipt-ticket-item { min-width: 0; overflow: hidden; color: #000; }
   .receipt-ticket-item strong {
     display: block;
     font-weight: 800;
+    color: #000;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -341,19 +347,20 @@
     margin-top: 0.08em;
     font-style: normal;
     font-size: 0.82em;
-    opacity: 0.72;
+    color: #111;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .receipt-ticket-price { white-space: nowrap; opacity: 0.85; font-size: 0.95em; }
+  .receipt-ticket-price { white-space: nowrap; color: #000; font-size: 0.95em; }
   .receipt-ticket-cancelled {
     margin: 0.3em 0;
     text-align: center;
     font-weight: 800;
     letter-spacing: 0.04em;
+    color: #000;
   }
-  .receipt-ticket-totals { display: grid; gap: 0.26em; }
+  .receipt-ticket-totals { display: grid; gap: 0.26em; color: #000; }
   .receipt-ticket-totals > div {
     display: flex;
     justify-content: space-between;
@@ -362,23 +369,26 @@
   .receipt-ticket-grand {
     margin-top: 0.12em;
     padding-top: 0.32em;
-    border-top: 1px solid rgba(26, 26, 26, 0.4);
+    border-top: 1.5px solid #000;
     font-size: 1.05em;
+    color: #000;
   }
-  .receipt-ticket-grand strong { font-weight: 800; }
-  .receipt-ticket-payment { text-align: center; }
+  .receipt-ticket-grand strong { font-weight: 800; color: #000; }
+  .receipt-ticket-payment { text-align: center; color: #000; }
   .receipt-ticket-payment-title {
     margin: 0 0 0.3em;
     font-weight: 800;
     font-size: 0.95em;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+    color: #000;
   }
-  .receipt-ticket-payment-lines p { margin: 0.08em 0; }
+  .receipt-ticket-payment-lines p { margin: 0.08em 0; color: #000; }
   .receipt-ticket-footer {
     margin: 0;
     text-align: center;
     font-size: 0.92em;
+    color: #111;
   }
   .receipt-ticket-qr {
     display: grid;
@@ -399,7 +409,8 @@
     font-size: 0.82em;
     letter-spacing: 0.02em;
     text-transform: uppercase;
-    opacity: 0.8;
+    color: #111;
+    font-weight: 700;
   }
   pre {
     margin: 0;

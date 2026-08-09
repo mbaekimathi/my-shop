@@ -1837,6 +1837,7 @@
   const readyUnitsEl = floatRoot?.querySelector("[data-stock-ready-units]");
   const usesCatalogApi = panel.hasAttribute("data-stock-catalog-api");
   let catalogBusy = usesCatalogApi && panel.hasAttribute("data-stock-catalog-busy");
+  const simpleCatalog = panel.hasAttribute("data-stock-catalog-simple");
   const applyPanel = floatRoot?.querySelector("[data-stock-float-apply]");
   const applyBtn = floatRoot?.querySelector("[data-stock-float-apply-btn]");
   const applyStatus = floatRoot?.querySelector("[data-stock-float-apply-status]");
@@ -1881,6 +1882,9 @@
   let autoStockInTimer = null;
 
   const getInputsRow = (row) => {
+    if (!row) return null;
+    const nested = row.querySelector(":scope > [data-stock-item-inputs]");
+    if (nested) return nested;
     const next = row.nextElementSibling;
     return next?.matches?.("[data-stock-item-inputs]") ? next : null;
   };
@@ -1888,6 +1892,8 @@
   const findItemRowFromNode = (node) => {
     const inputsRow = node?.closest?.("[data-stock-item-inputs]");
     if (!inputsRow) return null;
+    const parentRow = inputsRow.closest("[data-item-row][data-item-id]");
+    if (parentRow) return parentRow;
     const prev = inputsRow.previousElementSibling;
     return prev?.matches?.("[data-item-row][data-item-id]") ? prev : null;
   };
@@ -2282,42 +2288,59 @@
     setApplyStatus("Enter quantity or serial numbers before moving to another item.", true);
   };
 
+  const parkSelectedRow = (row) => {
+    const inputs = getInputsRow(row);
+    const parked = parkedRoot();
+    const wrap = parked?.closest?.(".buy-stock-simple-parked");
+    if (!row || !inputs || !parked) return;
+    if (wrap) wrap.hidden = false;
+    const nested = inputs.parentElement === row;
+    if (parked.contains(row)) {
+      if (!nested && row.nextElementSibling !== inputs) {
+        parked.insertBefore(inputs, row.nextSibling);
+      }
+    } else if (nested) {
+      parked.insertBefore(row, parked.firstElementChild);
+    } else {
+      parked.insertBefore(row, parked.firstElementChild);
+      parked.insertBefore(inputs, row.nextSibling);
+    }
+    row.classList.add("is-selected");
+    syncParkedVisibility();
+    syncItemRemoveControls(row);
+  };
+
   const moveItemPairToTop = (row) => {
     const inputs = getInputsRow(row);
     if (!row || !inputs) return;
     const parked = parkedRoot();
     const simpleParked = parked?.closest?.(".buy-stock-simple-parked");
-    // Simple buy-stock: filled items live in the selected stack above search results.
-    if (simpleParked && getQty(row) > 0) {
-      simpleParked.hidden = false;
-      if (parked.firstElementChild !== row) {
-        parked.insertBefore(row, parked.firstElementChild);
-        parked.insertBefore(inputs, row.nextSibling);
-      } else if (row.nextElementSibling !== inputs) {
-        parked.insertBefore(inputs, row.nextSibling);
-      }
-      syncParkedVisibility();
+    // Simple buy-stock: selected items live in the stack above search results.
+    if (simpleParked && (simpleCatalog || getQty(row) > 0)) {
+      parkSelectedRow(row);
       return;
     }
+    const nested = inputs.parentElement === row;
     const parent = row.parentElement;
     if (!parent) return;
     const anchor = parent.firstElementChild;
     if (!anchor || anchor === row) {
-      if (row.nextElementSibling !== inputs) {
+      if (!nested && row.nextElementSibling !== inputs) {
         parent.insertBefore(inputs, row.nextSibling);
       }
       return;
     }
     parent.insertBefore(row, anchor);
-    parent.insertBefore(inputs, row.nextSibling);
+    if (!nested) parent.insertBefore(inputs, row.nextSibling);
   };
 
   const moveItemPairToBottom = (row) => {
     const inputs = getInputsRow(row);
     const parent = row?.parentElement;
     if (!parent || !inputs) return;
+    const nested = inputs.parentElement === row;
     parent.appendChild(row);
-    parent.appendChild(inputs);
+    if (!nested) parent.appendChild(inputs);
   };
 
   const clearEmptyOpenRow = (row) => {
@@ -2349,9 +2372,16 @@
 
   const syncItemRemoveControls = (row) => {
     if (!row) return;
-    const show = row.classList.contains("is-open") || row.classList.contains("is-filled");
+    const show =
+      row.classList.contains("is-open") ||
+      row.classList.contains("is-filled") ||
+      row.classList.contains("is-selected") ||
+      isParkedRow(row);
     row.querySelectorAll("[data-stock-item-remove]").forEach((btn) => {
       btn.hidden = !show;
+    });
+    row.querySelectorAll(".buy-stock-pick-select").forEach((btn) => {
+      btn.hidden = show;
     });
   };
 
@@ -2368,12 +2398,16 @@
     });
     const countEl = inputs?.querySelector("[data-stock-serial-count]");
     if (countEl) countEl.textContent = "0";
+    row.classList.remove("is-selected");
+    const wasParked = isParkedRow(row);
     setRowOpen(row, false);
     syncFilled(row);
 
-    if (isParkedRow(row)) {
+    if (wasParked) {
       row.remove();
-      inputs?.remove();
+      if (inputs && inputs.parentElement !== null && !row.contains(inputs)) {
+        inputs.remove();
+      }
       syncParkedVisibility();
     } else {
       syncItemRemoveControls(row);
@@ -2385,6 +2419,12 @@
     const incomplete = rowIncompleteReason(row);
     if (incomplete) {
       // Allow dismissing a partial selection instead of trapping the user.
+      // Simple buy-stock keeps partial lines visible so the user can finish them.
+      if (simpleCatalog) {
+        parkSelectedRow(row);
+        setRowOpen(row, true);
+        return true;
+      }
       removeItemRow(row);
       return true;
     }
@@ -2420,8 +2460,13 @@
           writeOutMeta(row, appliedDetails);
         }
       }
-      setRowOpen(row, false);
-      moveItemPairToTop(row);
+      if (simpleCatalog) {
+        parkSelectedRow(row);
+        setRowOpen(row, true);
+      } else {
+        setRowOpen(row, false);
+        moveItemPairToTop(row);
+      }
       syncFilled(row);
       window.setTimeout(() => {
         const searchInput = panel.querySelector("[data-item-search]");
@@ -2430,6 +2475,12 @@
           searchInput.dispatchEvent(new Event("search", { bubbles: true }));
         }
       }, 0);
+      return true;
+    }
+    if (simpleCatalog) {
+      parkSelectedRow(row);
+      setRowOpen(row, true);
+      syncFilled(row);
       return true;
     }
     setRowOpen(row, false);
@@ -2452,18 +2503,22 @@
 
   const setRowOpen = (row, open) => {
     const inputs = getInputsRow(row);
-    row.classList.toggle("is-open", open);
-    row.setAttribute("aria-expanded", String(open));
-    if (inputs) inputs.hidden = !open;
-    setFieldsEnabled(row, open);
-    if (open) {
+    const keepVisible = simpleCatalog && (open || isParkedRow(row) || row.classList.contains("is-selected"));
+    const show = Boolean(open || keepVisible);
+    row.classList.toggle("is-open", show);
+    row.setAttribute("aria-expanded", String(show));
+    if (inputs) inputs.hidden = !show;
+    setFieldsEnabled(row, show);
+    if (show) {
       const refundSelect = inputs?.querySelector("[data-stock-refund]");
       if (refundSelect) syncRefundFromSelect(refundSelect);
-      const focusTarget =
-        inputs?.querySelector("[data-stock-buying-price]") ||
-        inputs?.querySelector("[data-stock-serial-input]") ||
-        inputs?.querySelector("[data-stock-qty]");
-      focusTarget?.focus();
+      if (open) {
+        const focusTarget =
+          inputs?.querySelector("[data-stock-qty]:not([type='hidden'])") ||
+          inputs?.querySelector("[data-stock-buying-price]") ||
+          inputs?.querySelector("[data-stock-serial-input]");
+        focusTarget?.focus();
+      }
       refreshRowState(row);
     }
     syncItemRemoveControls(row);
@@ -3249,6 +3304,36 @@
     const allRows = rows();
     if (!row || !allRows.includes(row)) return;
 
+    if (simpleCatalog) {
+      if (isParkedRow(row) || row.classList.contains("is-selected")) {
+        setRowOpen(row, true);
+        row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        renderSummary();
+        return;
+      }
+      const openOthers = allRows.filter(
+        (other) =>
+          other !== row &&
+          (other.classList.contains("is-open") || other.classList.contains("is-selected")) &&
+          !isParkedRow(other)
+      );
+      for (const other of openOthers) {
+        closeAndParkRow(other);
+      }
+      setRowOpen(row, true);
+      parkSelectedRow(row);
+      if (panel.hasAttribute("data-stock-catalog-search-first")) {
+        const searchInput = panel.querySelector("[data-item-search]");
+        if (searchInput && searchInput.value) {
+          searchInput.value = "";
+          searchInput.dispatchEvent(new Event("search", { bubbles: true }));
+        }
+      }
+      row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      renderSummary();
+      return;
+    }
+
     const willOpen = !row.classList.contains("is-open");
 
     if (willOpen) {
@@ -3738,6 +3823,11 @@
 
   const syncAllRows = () => {
     rows().forEach((row) => {
+      if (simpleCatalog && (isParkedRow(row) || row.classList.contains("is-selected"))) {
+        setRowOpen(row, true);
+        syncFilled(row);
+        return;
+      }
       setRowOpen(row, false);
       syncFilled(row);
     });
@@ -3746,7 +3836,17 @@
   document.addEventListener("stock-catalog:rendered", () => {
     // Keep open/filled state for parked rows; only close brand-new unloaded rows.
     rows().forEach((row) => {
-      if (row.classList.contains("is-open") || row.classList.contains("is-filled")) return;
+      if (
+        row.classList.contains("is-open") ||
+        row.classList.contains("is-filled") ||
+        row.classList.contains("is-selected") ||
+        (simpleCatalog && isParkedRow(row))
+      ) {
+        if (simpleCatalog && (isParkedRow(row) || row.classList.contains("is-selected"))) {
+          setRowOpen(row, true);
+        }
+        return;
+      }
       setRowOpen(row, false);
       syncFilled(row);
     });

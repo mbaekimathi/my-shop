@@ -8,6 +8,7 @@
   const moreWrap = panel.querySelector("[data-stock-catalog-more-wrap]");
   const moreBtn = panel.querySelector("[data-stock-catalog-more]");
   const searchInput = panel.querySelector("[data-item-search]");
+  const browseBtn = panel.querySelector("[data-stock-catalog-browse]");
   const noResults = panel.querySelector("[data-item-no-results]");
   const visibleCountEl = panel.querySelector("[data-item-visible-count]");
   if (!apiUrl || !listRoot) return;
@@ -88,6 +89,19 @@
   const simpleMode = panel.hasAttribute("data-stock-catalog-simple");
   const searchFirst = panel.hasAttribute("data-stock-catalog-search-first");
   const parkedWrap = panel.querySelector(".buy-stock-simple-parked");
+  let browseOpen = false;
+
+  const setBrowseOpen = (open) => {
+    browseOpen = Boolean(open);
+    if (!browseBtn) return;
+    browseBtn.classList.toggle("is-open", browseOpen);
+    browseBtn.setAttribute("aria-expanded", String(browseOpen));
+    browseBtn.setAttribute(
+      "aria-label",
+      browseOpen ? "Hide item list" : "Browse items"
+    );
+    browseBtn.title = browseOpen ? "Hide item list" : "Browse all items";
+  };
 
   const updateCount = (visible, query) => {
     if (!visibleCountEl) return;
@@ -119,8 +133,15 @@
         (cell) => Number(cell.querySelector("[data-stock-qty]")?.value || 0) > 0
       );
     }
-    if (headerRow.classList.contains("is-open")) return true;
-    const inputs = headerRow.nextElementSibling;
+    if (
+      headerRow.classList.contains("is-open") ||
+      headerRow.classList.contains("is-selected")
+    ) {
+      return true;
+    }
+    const inputs =
+      headerRow.querySelector(":scope > [data-stock-item-inputs]") ||
+      headerRow.nextElementSibling;
     if (!inputs?.matches?.("[data-stock-item-inputs]")) return false;
     const qty = Number(inputs.querySelector("[data-stock-qty]")?.value || 0);
     return qty > 0;
@@ -135,9 +156,14 @@
         parked.appendChild(row);
         return;
       }
-      const inputs = row.nextElementSibling;
-      parked.appendChild(row);
-      if (inputs?.matches?.("[data-stock-item-inputs]")) parked.appendChild(inputs);
+      const nestedInputs = row.querySelector(":scope > [data-stock-item-inputs]");
+      if (nestedInputs) {
+        parked.appendChild(row);
+      } else {
+        const inputs = row.nextElementSibling;
+        parked.appendChild(row);
+        if (inputs?.matches?.("[data-stock-item-inputs]")) parked.appendChild(inputs);
+      }
     });
     if (parkedWrap) {
       parkedWrap.hidden = !parked.querySelector("[data-item-row]");
@@ -797,7 +823,7 @@
                 type="button"
                 class="buy-stock-pick-name"
                 data-stock-item-toggle
-                aria-label="Toggle ${escapeHtml(name)}"
+                aria-label="Select ${escapeHtml(name)}"
               >
                 <strong>${escapeHtml(name)}</strong>
               </button>
@@ -812,44 +838,30 @@
                 <i data-lucide="x" aria-hidden="true"></i>
               </button>
             </div>
-            <button
-              type="button"
-              class="buy-stock-pick-meta-hit"
-              data-stock-item-toggle
-              tabindex="-1"
-            >
-              <span class="buy-stock-pick-meta">
-                ${escapeHtml(category || "Item")}
-                · in shop ${stock}
-                ${item.track_serial ? " · Serial" : ""}
-                ${item.is_suspended ? " · Suspended" : ""}
-              </span>
-            </button>
+            <p class="buy-stock-pick-meta">
+              ${escapeHtml(category || "Item")}
+              · in shop ${stock}
+              ${item.track_serial ? " · Serial" : ""}
+              ${item.is_suspended ? " · Suspended" : ""}
+            </p>
           </div>
           <button
             type="button"
-            class="buy-stock-pick-toggle"
+            class="buy-stock-pick-select"
             data-stock-item-toggle
-            aria-label="Expand or collapse ${escapeHtml(name)}"
+            aria-label="Select ${escapeHtml(name)}"
           >
-            <i data-lucide="chevron-down" aria-hidden="true"></i>
+            <span>Select</span>
+            <i data-lucide="plus" aria-hidden="true"></i>
           </button>
+        </div>
+        <div class="buy-stock-pick-inputs" data-stock-item-inputs hidden>
+          <div class="stock-item-inputs stock-item-inputs--matrix">
+            <input type="hidden" name="item_id" value="${item.id}" disabled data-stock-field>
+            ${mode === "in" ? buildInFields(item) : buildOutFields(item)}
+          </div>
         </div>`;
-
-      const formRow = document.createElement("div");
-      formRow.className = "buy-stock-pick-inputs";
-      formRow.setAttribute("data-stock-item-inputs", "");
-      formRow.hidden = true;
-      formRow.innerHTML = `
-        <div class="stock-item-inputs stock-item-inputs--matrix">
-          <input type="hidden" name="item_id" value="${item.id}" disabled data-stock-field>
-          ${mode === "in" ? buildInFields(item) : buildOutFields(item)}
-          <button type="button" class="buy-stock-pick-remove-btn" data-stock-item-remove>
-            <i data-lucide="trash-2" aria-hidden="true"></i>
-            Remove item
-          </button>
-        </div>`;
-      return [header, formRow];
+      return [header];
     }
 
     const header = document.createElement("tr");
@@ -990,7 +1002,7 @@
     const visible = listRoot.querySelectorAll("[data-item-row]").length;
     const parkedCount = parked?.querySelectorAll("[data-item-row]").length || 0;
     if (noResults) {
-      const idle = searchFirst && !activeQuery;
+      const idle = searchFirst && !activeQuery && !browseOpen;
       noResults.hidden =
         idle || visible + parkedCount > 0 || (!activeQuery && totalCount === 0);
     }
@@ -1112,11 +1124,12 @@
 
   const showIdleHint = () => {
     if (!simpleMode || !searchFirst) return;
+    setBrowseOpen(false);
     groupEls.clear();
     listRoot.innerHTML = `
       <div class="buy-stock-simple-empty" data-stock-catalog-idle>
         <i data-lucide="package-search" aria-hidden="true"></i>
-        <p>Search for an item to begin</p>
+        <p>Search or browse for an item to begin</p>
       </div>`;
     if (moreWrap) moreWrap.hidden = true;
     if (noResults) noResults.hidden = true;
@@ -1124,15 +1137,16 @@
     if (window.lucide?.createIcons) window.lucide.createIcons();
   };
 
-  const reload = (q = "") => {
+  const reload = (q = "", { forceBrowse = false } = {}) => {
     const query = String(q || "").trim();
-    if (searchFirst && !query) {
+    if (searchFirst && !query && !forceBrowse && !browseOpen) {
       abortController?.abort();
       parkFilled();
       showIdleHint();
       setBusy(false);
       return Promise.resolve();
     }
+    if (!query && (forceBrowse || browseOpen)) setBrowseOpen(true);
     return fetchPage({ page: 1, q: query, append: false });
   };
 
@@ -1141,16 +1155,38 @@
     fetchPage({ page: nextPage, q: activeQuery, append: true });
   });
 
+  browseBtn?.addEventListener("click", () => {
+    const query = String(searchInput?.value || "").trim();
+    if (browseOpen && !query) {
+      abortController?.abort();
+      parkFilled();
+      showIdleHint();
+      setBusy(false);
+      return;
+    }
+    if (searchInput && query) searchInput.value = "";
+    setBrowseOpen(true);
+    reload("", { forceBrowse: true }).then(() => {
+      listRoot.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      if (window.lucide?.createIcons) window.lucide.createIcons();
+    });
+  });
+
   searchInput?.addEventListener("input", () => {
     window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(
-      () => reload(String(searchInput.value || "").trim()),
-      220
-    );
+    const query = String(searchInput.value || "").trim();
+    if (query) setBrowseOpen(false);
+    searchTimer = window.setTimeout(() => reload(query), 220);
   });
   searchInput?.addEventListener("search", () => {
     window.clearTimeout(searchTimer);
-    reload(String(searchInput.value || "").trim());
+    const query = String(searchInput.value || "").trim();
+    if (!query && browseOpen) {
+      reload("", { forceBrowse: true });
+      return;
+    }
+    if (!query) setBrowseOpen(false);
+    reload(query);
   });
 
   const startCatalog = () => {

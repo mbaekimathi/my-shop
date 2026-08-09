@@ -56,18 +56,30 @@
         data-stock-catalog-simple
         data-stock-catalog-search-first
       >
-        <label class="buy-stock-simple-search">
-          <i data-lucide="search" aria-hidden="true"></i>
-          <input
-            type="search"
-            placeholder="Search item to stock in…"
-            autocomplete="off"
-            data-item-search
-            aria-label="Search items"
+        <div class="buy-stock-simple-search">
+          <label class="buy-stock-simple-search-field">
+            <i data-lucide="search" aria-hidden="true"></i>
+            <input
+              type="search"
+              placeholder="Search item to stock in…"
+              autocomplete="off"
+              data-item-search
+              aria-label="Search items"
+            >
+          </label>
+          <button
+            type="button"
+            class="buy-stock-simple-browse"
+            data-stock-catalog-browse
+            aria-label="Browse items"
+            aria-expanded="false"
+            title="Browse all items"
           >
-        </label>
+            <i data-lucide="chevron-down" aria-hidden="true"></i>
+          </button>
+        </div>
         <p class="buy-stock-simple-hint">
-          Search, open an item, enter qty and buying price. Supplier details below apply to all items.
+          Search or browse the list, select an item, then enter qty and buying price. Supplier details below apply to all items.
         </p>
         <p class="buy-stock-simple-count" data-item-visible-count hidden></p>
 
