@@ -149,8 +149,14 @@ class InboundReply(models.Model):
     class Meta:
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["phone", "-created_at"]),
-            models.Index(fields=["read_at", "-created_at"]),
+            models.Index(
+                fields=["phone", "-created_at"],
+                name="communicati_phone_4f0c8a_idx",
+            ),
+            models.Index(
+                fields=["read_at", "-created_at"],
+                name="communicati_read_at_7d2b1e_idx",
+            ),
         ]
 
     def __str__(self):
