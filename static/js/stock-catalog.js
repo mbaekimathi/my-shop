@@ -137,6 +137,70 @@
     }
   };
 
+  const ensureSelectedGroup = () => {
+    if (!editableMatrix || !multiShopMatrix) return null;
+    const key = "__selected__";
+    let section = groupEls.get(key);
+    if (section) {
+      if (listRoot.firstElementChild !== section) {
+        listRoot.insertBefore(section, listRoot.firstElementChild);
+      }
+      section.hidden = false;
+      return section;
+    }
+    section = ensureGroup("__selected__");
+    const title = section.querySelector(".stock-category-title");
+    if (title) title.textContent = "Items with quantity";
+    section.setAttribute("data-stock-filled-group", "");
+    if (listRoot.firstElementChild !== section) {
+      listRoot.insertBefore(section, listRoot.firstElementChild);
+    }
+    return section;
+  };
+
+  const restoreParkedToTop = () => {
+    if (!parked) return;
+    const parkedRows = [...parked.querySelectorAll("[data-item-row][data-item-id]")];
+    if (!parkedRows.length) {
+      if (parkedWrap) parkedWrap.hidden = true;
+      const parkedTable = parked.closest("table");
+      if (parkedTable) parkedTable.hidden = true;
+      return;
+    }
+
+    if (editableMatrix && multiShopMatrix) {
+      const section = ensureSelectedGroup();
+      const tbody = section?.querySelector("[data-stock-catalog-tbody]");
+      if (tbody) {
+        parkedRows.forEach((row) => {
+          row.classList.add("is-filled");
+          tbody.appendChild(row);
+        });
+      }
+      const parkedTable = parked.closest("table");
+      if (parkedTable) parkedTable.hidden = true;
+      return;
+    }
+
+    if (parkedWrap) {
+      parkedWrap.hidden = false;
+      const list = parkedWrap.parentElement;
+      if (list && listRoot && parkedWrap.nextElementSibling !== listRoot) {
+        list.insertBefore(parkedWrap, listRoot);
+      }
+    }
+  };
+
+  const sortFilledRowsInPlace = () => {
+    listRoot.querySelectorAll("[data-stock-catalog-tbody]").forEach((tbody) => {
+      const rows = [...tbody.querySelectorAll(":scope > [data-item-row]")];
+      if (rows.length < 2) return;
+      const filled = rows.filter((row) => isFilledPair(row) || row.classList.contains("is-filled"));
+      const blank = rows.filter((row) => !filled.includes(row));
+      [...filled, ...blank].forEach((row) => tbody.appendChild(row));
+    });
+  };
+
   const ensureGroup = (category) => {
     if (simpleMode) {
       let section = groupEls.get("__simple__");
@@ -814,6 +878,11 @@
         (row) => row.getAttribute("data-item-id")
       )
     );
+    // Also skip ids already restored into the selected group from a prior pass.
+    listRoot.querySelectorAll("[data-stock-filled-group] [data-item-row][data-item-id]").forEach((row) => {
+      parkedIds.add(row.getAttribute("data-item-id"));
+    });
+    if (replace) restoreParkedToTop();
     items.forEach((item) => {
       if (parkedIds.has(String(item.id))) return;
       const section = ensureGroup(item.category);
@@ -821,6 +890,7 @@
       const nodes = buildPair(item).filter(Boolean);
       tbody.append(...nodes);
     });
+    sortFilledRowsInPlace();
     refreshGroupCounts();
   };
 

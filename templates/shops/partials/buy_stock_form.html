@@ -37,7 +37,7 @@
           <p class="stock-kicker">Buy stock · {{ shop.name }}</p>
           <h2>Add purchased stock</h2>
           <p>
-            Enter qty and buying price in the list. Autofill supplier details in the panel, then confirm with a staff ID.
+            Enter qty and buying price in the list. Supplier details in the panel apply to all items; then confirm with a staff ID.
           </p>
         </div>
         <div class="stock-stats">
@@ -260,22 +260,8 @@
       <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
 
       <div class="stock-float-apply" data-stock-float-apply>
-        <p class="stock-float-apply-title">Autofill supplier details</p>
+        <p class="stock-float-apply-title">Supplier details (applies to all items)</p>
         <input type="hidden" value="" data-stock-float-supplier-id>
-        <label class="stock-float-field">
-          <span>Supplier name</span>
-          <div class="stock-supplier-name-wrap" data-supplier-search-root>
-            <input
-              type="text"
-              placeholder="Type name to search…"
-              autocomplete="organization"
-              data-uppercase
-              data-stock-float-supplier-name
-              data-supplier-search="name"
-            >
-            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
-          </div>
-        </label>
         <label class="stock-float-field">
           <span>Supplier phone</span>
           <div class="stock-phone-field" data-stock-phone-field data-stock-float-phone-wrap data-supplier-search-root>
@@ -312,6 +298,20 @@
           </div>
         </label>
         <label class="stock-float-field">
+          <span>Supplier name</span>
+          <div class="stock-supplier-name-wrap" data-supplier-search-root>
+            <input
+              type="text"
+              placeholder="Type to search names…"
+              autocomplete="organization"
+              data-uppercase
+              data-stock-float-supplier-name
+              data-supplier-search="name"
+            >
+            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+          </div>
+        </label>
+        <label class="stock-float-field">
           <span>Payment status</span>
           <select data-stock-float-payment>
             <option value="">Select</option>
@@ -321,7 +321,7 @@
           </select>
         </label>
         <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
-          Autofill to stock-in items
+          Apply to all stock-in items
         </button>
         <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
       </div>

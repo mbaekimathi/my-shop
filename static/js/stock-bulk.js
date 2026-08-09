@@ -165,15 +165,88 @@
 
     const tracksSerial = (cell) => cell.getAttribute("data-track-serial") === "1";
 
+    const updateFilledGroupMeta = (section) => {
+      if (!section) return;
+      const count = section.querySelectorAll("[data-item-row]").length;
+      const countEl = section.querySelector("[data-category-count]");
+      if (countEl) countEl.textContent = String(count);
+      section.hidden = count === 0;
+    };
+
+    const ensureLiveFilledTbody = () => {
+      const catalogRoot = panel.querySelector("[data-stock-catalog-root]");
+      if (!catalogRoot) return null;
+      let section = catalogRoot.querySelector("[data-stock-filled-group]");
+      if (section) {
+        if (catalogRoot.firstElementChild !== section) {
+          catalogRoot.insertBefore(section, catalogRoot.firstElementChild);
+        }
+        return section.querySelector("[data-stock-catalog-tbody]");
+      }
+      const sample = catalogRoot.querySelector(
+        ".stock-category:not([data-stock-filled-group])"
+      );
+      if (!sample) return null;
+      section = sample.cloneNode(true);
+      section.setAttribute("data-stock-filled-group", "");
+      const tbody = section.querySelector("[data-stock-catalog-tbody]");
+      if (tbody) tbody.innerHTML = "";
+      const title = section.querySelector(".stock-category-title");
+      if (title) title.textContent = "Items with quantity";
+      const countEl = section.querySelector("[data-category-count]");
+      if (countEl) countEl.textContent = "0";
+      catalogRoot.insertBefore(section, catalogRoot.firstElementChild);
+      return tbody;
+    };
+
     const markFilled = (cell) => {
       const filled = cellQty(cell) > 0;
       cell.classList.toggle("is-filled", filled);
-      cell.closest("[data-item-row]")?.classList.toggle(
-        "is-filled",
-        [...(cell.closest("[data-item-row]")?.querySelectorAll("[data-stock-shop-cell]") || [])].some(
-          (c) => cellQty(c) > 0
-        )
-      );
+      const row = cell.closest("[data-item-row]");
+      if (!row) return;
+      const rowFilled = [
+        ...row.querySelectorAll("[data-stock-shop-cell]"),
+      ].some((c) => cellQty(c) > 0);
+      row.classList.toggle("is-filled", rowFilled);
+      reorderFilledRow(row);
+    };
+
+    const reorderFilledRow = (row) => {
+      if (!row) return;
+      const fromSection = row.closest(".stock-category");
+      if (row.classList.contains("is-filled")) {
+        const tbody = ensureLiveFilledTbody();
+        if (tbody) {
+          if (tbody.firstElementChild !== row) {
+            tbody.insertBefore(row, tbody.firstElementChild);
+          }
+          updateFilledGroupMeta(tbody.closest(".stock-category"));
+          if (fromSection && fromSection !== tbody.closest(".stock-category")) {
+            updateFilledGroupMeta(fromSection);
+          }
+          return;
+        }
+        const fallback = row.closest("tbody");
+        if (fallback && fallback.firstElementChild !== row) {
+          fallback.insertBefore(row, fallback.firstElementChild);
+        }
+        return;
+      }
+
+      // Cleared: leave the selected group and sink under remaining filled rows.
+      const selected = row.closest("[data-stock-filled-group]");
+      const catalogRoot = panel.querySelector("[data-stock-catalog-root]");
+      const home =
+        catalogRoot?.querySelector(
+          ".stock-category:not([data-stock-filled-group]) [data-stock-catalog-tbody]"
+        ) || row.closest("tbody");
+      if (home && row.parentElement !== home) {
+        home.appendChild(row);
+      } else if (home) {
+        home.appendChild(row);
+      }
+      if (selected) updateFilledGroupMeta(selected);
+      updateFilledGroupMeta(home?.closest?.(".stock-category"));
     };
 
     const collectReady = () =>
@@ -204,6 +277,14 @@
       return Boolean(name && dial && phone.length === 9 && payment);
     };
 
+    const supplierCoreReady = () => {
+      if (mode !== "in") return false;
+      const name = (floatSupplierName?.value || "").trim();
+      const dial = (floatSupplierDial?.value || "").trim();
+      const phone = normalizePhone(floatSupplierPhone?.value);
+      return Boolean(name && dial && phone.length === 9);
+    };
+
     const floatOutReady = () => {
       if (mode !== "out") return false;
       const reason = (floatReason?.value || "").trim();
@@ -211,6 +292,28 @@
       if (!reason || !refund) return false;
       if (refund === "yes") {
         const amount = Number(floatRefundAmount?.value);
+        return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+      }
+      return true;
+    };
+
+    const cellHasSupplier = (cell) => {
+      const name = (cell.querySelector("[data-stock-supplier-name]")?.value || "").trim();
+      const phone = normalizePhone(
+        cell.querySelector("[data-stock-supplier-phone]")?.value
+      );
+      const payment = (cell.querySelector("[data-stock-payment]")?.value || "").trim();
+      return Boolean(name && phone.length === 9 && payment);
+    };
+
+    const cellHasOutDetails = (cell) => {
+      const reason = (cell.querySelector("[data-stock-reason]")?.value || "").trim();
+      const refund = (cell.querySelector("[data-stock-refund]")?.value || "").trim();
+      if (!reason || !refund) return false;
+      if (refund === "yes") {
+        const amount = Number(
+          cell.querySelector("[data-stock-refund-amount]")?.value
+        );
         return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
       }
       return true;
@@ -264,13 +367,15 @@
     const canSubmit = (ready) => {
       if (!ready.length) return false;
       if (mode === "in") {
+        if (!floatSupplierReady()) return false;
         if (!ready.every((item) => cellHasPrice(item.cell))) return false;
-        return floatSupplierReady();
+        return ready.every((item) => cellHasSupplier(item.cell));
       }
       if (mode === "request") {
         return Boolean(requestingShopId);
       }
-      return floatOutReady();
+      if (!floatOutReady()) return false;
+      return ready.every((item) => cellHasOutDetails(item.cell));
     };
 
     const stampMeta = (cell) => {
@@ -299,6 +404,159 @@
       }
     };
 
+    const autoApplyDetailsToReady = ({ silent = true } = {}) => {
+      if (mode === "request") return 0;
+      const ready = collectReady();
+      if (!ready.length) return 0;
+      if (mode === "in") {
+        if (!supplierCoreReady()) return 0;
+        ready.forEach((item) => stampMeta(item.cell));
+        if (!silent) {
+          if (floatSupplierReady()) {
+            setApplyStatus(
+              `Supplier details applied to ${ready.length} item(s).`
+            );
+          } else {
+            setApplyStatus(
+              "Supplier name and phone applied. Select payment status to submit.",
+              true
+            );
+          }
+        }
+        return ready.length;
+      }
+      if (mode === "out") {
+        if (!floatOutReady()) return 0;
+        ready.forEach((item) => stampMeta(item.cell));
+        if (!silent) {
+          setApplyStatus(
+            `Stock-out details applied to ${ready.length} item(s).`
+          );
+        }
+        return ready.length;
+      }
+      return 0;
+    };
+
+    const revealAndFocus = (el) => {
+      if (!el) return;
+      if (floatRoot) {
+        floatRoot.classList.remove("is-collapsed");
+        floatRoot
+          .querySelector("[data-stock-float-toggle]")
+          ?.setAttribute("aria-expanded", "true");
+      }
+      try {
+        el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      } catch (_err) {
+        /* ignore */
+      }
+      window.setTimeout(() => {
+        try {
+          el.focus({ preventScroll: true });
+        } catch (_err) {
+          el.focus?.();
+        }
+      }, 180);
+    };
+
+    const focusFirstIncomplete = (ready) => {
+      if (catalogBusy || panel.hasAttribute("data-stock-catalog-busy")) {
+        setApplyStatus("Still loading items — wait a moment, then submit.", true);
+        revealAndFocus(submitBtn || floatRoot);
+        return true;
+      }
+      if (!ready.length) {
+        setApplyStatus("Enter quantity on at least one shop cell.", true);
+        const firstQty =
+          panel.querySelector("[data-stock-shop-cell] [data-stock-qty]:not([disabled])") ||
+          panel.querySelector("[data-item-search]");
+        revealAndFocus(firstQty || panel);
+        return true;
+      }
+      if (mode === "request" && !requestingShopId) {
+        setApplyStatus("Click a shop column header to set the requesting shop.", true);
+        revealAndFocus(
+          document.querySelector("[data-stock-request-shop-header]") || requestingLabelEl
+        );
+        return true;
+      }
+      if (mode === "in") {
+        autoApplyDetailsToReady({ silent: true });
+        const phone = normalizePhone(floatSupplierPhone?.value);
+        const name = (floatSupplierName?.value || "").trim();
+        if (!phone || phone.length !== 9) {
+          setApplyStatus("Enter a valid supplier phone.", true);
+          revealAndFocus(floatSupplierPhone);
+          return true;
+        }
+        if (!name) {
+          setApplyStatus("Enter or select supplier name.", true);
+          revealAndFocus(floatSupplierName);
+          return true;
+        }
+        if (!(floatPayment?.value || "").trim()) {
+          setApplyStatus("Select payment status before submitting.", true);
+          revealAndFocus(floatPayment);
+          return true;
+        }
+        const missingPrice = ready.find((item) => !cellHasPrice(item.cell));
+        if (missingPrice) {
+          setApplyStatus(
+            `Enter buying price for ${missingPrice.name} · ${missingPrice.shopName}.`,
+            true
+          );
+          revealAndFocus(
+            missingPrice.cell.querySelector("[data-stock-buying-price]") ||
+              missingPrice.cell
+          );
+          return true;
+        }
+        const missingSupplier = ready.find((item) => !cellHasSupplier(item.cell));
+        if (missingSupplier) {
+          setApplyStatus(
+            "Supplier details are incomplete — check the submit panel.",
+            true
+          );
+          revealAndFocus(floatPayment || floatSupplierPhone);
+          return true;
+        }
+      }
+      if (mode === "out") {
+        autoApplyDetailsToReady({ silent: true });
+        const reason = (floatReason?.value || "").trim();
+        const refund = (floatRefund?.value || "").trim();
+        if (!reason) {
+          setApplyStatus("Choose a stock-out reason.", true);
+          revealAndFocus(floatReason);
+          return true;
+        }
+        if (refund !== "yes" && refund !== "no") {
+          setApplyStatus("Choose whether a refund applies.", true);
+          revealAndFocus(floatRefund);
+          return true;
+        }
+        if (refund === "yes") {
+          const amount = Number(floatRefundAmount?.value);
+          if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+            setApplyStatus("Enter a whole-number refund amount greater than zero.", true);
+            revealAndFocus(floatRefundAmount);
+            return true;
+          }
+        }
+        const missingOut = ready.find((item) => !cellHasOutDetails(item.cell));
+        if (missingOut) {
+          setApplyStatus(
+            "Stock-out details are incomplete — check the submit panel.",
+            true
+          );
+          revealAndFocus(floatReason);
+          return true;
+        }
+      }
+      return false;
+    };
+
     const enableReadyFields = (ready) => {
       // Disable all matrix fields first so empty cells are not posted.
       cells().forEach((cell) => {
@@ -319,6 +577,7 @@
     };
 
     const renderSummary = () => {
+      autoApplyDetailsToReady({ silent: true });
       const ready = collectReady();
       const units = ready.reduce((sum, item) => sum + item.quantity, 0);
       const shopIds = new Set(ready.map((item) => item.shopId).filter(Boolean));
@@ -366,7 +625,9 @@
       if (heldCountEl) heldCountEl.textContent = String(held);
       if (clearBtn) clearBtn.hidden = ready.length === 0;
       if (submitBtn) {
-        submitBtn.disabled = catalogBusy || !canSubmit(ready);
+        // Keep submit clickable whenever there are ready items so validation can
+        // jump the user to the first incomplete field.
+        submitBtn.disabled = catalogBusy || ready.length === 0;
       }
     };
 
@@ -691,20 +952,15 @@
         setApplyStatus("Add quantity on at least one shop cell first.", true);
         return;
       }
-      if (mode === "in" && !floatSupplierReady()) {
-        setApplyStatus("Enter supplier name, phone, and payment status.", true);
+      if (mode === "in" && !supplierCoreReady()) {
+        setApplyStatus("Enter supplier name and phone first.", true);
         return;
       }
       if (mode === "out" && !floatOutReady()) {
         setApplyStatus("Choose reason and refund details.", true);
         return;
       }
-      ready.forEach((item) => stampMeta(item.cell));
-      setApplyStatus(
-        mode === "in"
-          ? "Supplier details ready for submit."
-          : "Stock-out details ready for submit."
-      );
+      autoApplyDetailsToReady({ silent: false });
       renderSummary();
     });
 
@@ -818,6 +1074,7 @@
       fillingSupplier = false;
       hideSupplierSuggest(targets.scope);
       hideSupplierSuggest(floatRoot);
+      autoApplyDetailsToReady({ silent: false });
       renderSummary();
     };
 
@@ -830,15 +1087,20 @@
         suggest.hidden = true;
         return;
       }
+      const by = input.getAttribute("data-supplier-search") || "name";
       results.forEach((supplier) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "stock-supplier-suggest-option";
         btn.innerHTML = "<strong></strong><small></small>";
-        btn.querySelector("strong").textContent = supplier.name || "";
-        btn.querySelector("small").textContent = `${supplier.dial || ""}${
-          supplier.phone || ""
-        }`;
+        const phoneLabel = `${supplier.dial || ""}${supplier.phone || ""}`;
+        if (by === "name") {
+          btn.querySelector("strong").textContent = supplier.name || "";
+          btn.querySelector("small").textContent = phoneLabel;
+        } else {
+          btn.querySelector("strong").textContent = phoneLabel;
+          btn.querySelector("small").textContent = supplier.name || "";
+        }
         btn.addEventListener("mousedown", (event) => {
           event.preventDefault();
           applySupplierResult(input, supplier);
@@ -883,36 +1145,16 @@
         const results = Array.isArray(data.results) ? data.results : [];
         renderSupplierSuggest(input, results);
 
-        const upper = query.toUpperCase();
+        // Phone → autofill name. Name → suggest only; user must pick a row.
+        if (by !== "phone") return;
         const digits = (value) => String(value || "").replace(/\D+/g, "");
-        let match = null;
-        if (by === "name") {
-          match =
-            results.find(
-              (row) => String(row.name || "").toUpperCase() === upper
-            ) || null;
-          if (
-            !match &&
-            results.length === 1 &&
-            query.length >= 3 &&
-            String(results[0].name || "")
-              .toUpperCase()
-              .includes(upper)
-          ) {
-            match = results[0];
-          }
-        } else if (
-          by === "phone" &&
-          digits(query).length >= 7 &&
-          results.length
-        ) {
-          match =
-            results.find((row) => digits(row.phone) === digits(query)) ||
-            (results.length === 1 &&
-            digits(results[0].phone).includes(digits(query))
-              ? results[0]
-              : null);
-        }
+        if (digits(query).length < 7 || !results.length) return;
+        const match =
+          results.find((row) => digits(row.phone) === digits(query)) ||
+          (results.length === 1 &&
+          digits(results[0].phone).includes(digits(query))
+            ? results[0]
+            : null);
         if (match) applySupplierResult(input, match);
       } catch (_error) {
         /* ignore network errors while typing */
@@ -958,10 +1200,27 @@
           "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-refund], [data-stock-float-refund-amount]"
         )
       ) {
+        if (target.matches("[data-stock-float-refund]")) {
+          const show = target.value === "yes";
+          if (floatRefundAmountWrap) floatRefundAmountWrap.hidden = !show;
+          if (!show && floatRefundAmount) floatRefundAmount.value = "";
+        }
+        autoApplyDetailsToReady({ silent: true });
         renderSummary();
       }
     });
-    form.addEventListener("change", () => renderSummary());
+    form.addEventListener("change", (event) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.matches(
+          "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-refund], [data-stock-float-refund-amount]"
+        )
+      ) {
+        autoApplyDetailsToReady({ silent: false });
+      }
+      renderSummary();
+    });
     form.addEventListener("focusin", (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -1053,7 +1312,10 @@
       if (option && countryMenu && !countryMenu.hidden && countryMenu.contains(option)) {
         event.preventDefault();
         const { dial, iso } = option.dataset;
-        if (dial && iso) setFloatCountry(dial, iso);
+        if (dial && iso) {
+          setFloatCountry(dial, iso);
+          autoApplyDetailsToReady({ silent: true });
+        }
         closeCountryMenu();
         renderSummary();
         return;
@@ -1119,32 +1381,8 @@
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (submitInFlight) return;
-      if (catalogBusy || panel.hasAttribute("data-stock-catalog-busy")) {
-        setApplyStatus("Still loading items — wait a moment, then submit.", true);
-        return;
-      }
       const ready = collectReady();
-      if (!ready.length) {
-        setApplyStatus("Enter quantity on at least one shop cell.", true);
-        return;
-      }
-      if (mode === "request" && !requestingShopId) {
-        setApplyStatus("Click a shop column header to set the requesting shop.", true);
-        return;
-      }
-      if (mode === "in" && !ready.every((item) => cellHasPrice(item.cell))) {
-        setApplyStatus("Enter buying price for each ready shop cell.", true);
-        return;
-      }
-      if (mode === "in" && !floatSupplierReady()) {
-        setApplyStatus("Enter supplier name, phone, and payment status.", true);
-        floatSupplierName?.focus();
-        return;
-      }
-      if (mode === "out" && !floatOutReady()) {
-        setApplyStatus("Choose reason and refund details.", true);
-        return;
-      }
+      if (focusFirstIncomplete(ready)) return;
       if (mode === "request" && requestingShopInput) {
         requestingShopInput.value = requestingShopId;
       }
@@ -1662,12 +1900,40 @@
 
   const moveItemPairToTop = (row) => {
     const inputs = getInputsRow(row);
+    if (!row || !inputs) return;
+    const parked = parkedRoot();
+    const simpleParked = parked?.closest?.(".buy-stock-simple-parked");
+    // Simple buy-stock: filled items live in the selected stack above search results.
+    if (simpleParked && getQty(row) > 0) {
+      simpleParked.hidden = false;
+      if (parked.firstElementChild !== row) {
+        parked.insertBefore(row, parked.firstElementChild);
+        parked.insertBefore(inputs, row.nextSibling);
+      } else if (row.nextElementSibling !== inputs) {
+        parked.insertBefore(inputs, row.nextSibling);
+      }
+      syncParkedVisibility();
+      return;
+    }
     const parent = row.parentElement;
-    if (!parent || !inputs) return;
+    if (!parent) return;
     const anchor = parent.firstElementChild;
-    if (!anchor || anchor === row) return;
+    if (!anchor || anchor === row) {
+      if (row.nextElementSibling !== inputs) {
+        parent.insertBefore(inputs, row.nextSibling);
+      }
+      return;
+    }
     parent.insertBefore(row, anchor);
     parent.insertBefore(inputs, row.nextSibling);
+  };
+
+  const moveItemPairToBottom = (row) => {
+    const inputs = getInputsRow(row);
+    const parent = row?.parentElement;
+    if (!parent || !inputs) return;
+    parent.appendChild(row);
+    parent.appendChild(inputs);
   };
 
   const clearEmptyOpenRow = (row) => {
@@ -1811,8 +2077,32 @@
   const syncFilled = (row) => {
     const qty = getQty(row);
     const filled = qty > 0;
+    const wasFilled = row.classList.contains("is-filled");
     row.classList.toggle("is-filled", filled);
     syncItemRemoveControls(row);
+
+    if (filled && !wasFilled) {
+      moveItemPairToTop(row);
+    } else if (!filled && wasFilled) {
+      const parked = parkedRoot();
+      const simpleParked = parked?.closest?.(".buy-stock-simple-parked");
+      if (simpleParked && parked.contains(row)) {
+        const listParent =
+          panel.querySelector(
+            "[data-stock-catalog-root] .buy-stock-pick-stack, [data-stock-catalog-root]"
+          ) || row.parentElement;
+        if (listParent && listParent !== parked) {
+          listParent.appendChild(row);
+          const inputs = getInputsRow(row);
+          if (inputs) listParent.appendChild(inputs);
+        }
+        syncParkedVisibility();
+      } else {
+        moveItemPairToBottom(row);
+      }
+    } else if (filled) {
+      moveItemPairToTop(row);
+    }
 
     const current = Number(row.dataset.itemStock || 0);
     const qtyEl = row.querySelector("[data-stock-display-qty]");
@@ -1891,17 +2181,191 @@
     );
   };
 
+  const supplierCoreReady = () => {
+    if (mode !== "in") return false;
+    const details = readFloatDetails();
+    return Boolean(
+      details.name &&
+        details.dial &&
+        details.phone &&
+        details.phone.length === 9
+    );
+  };
+
+  const floatOutReady = () => {
+    if (mode !== "out") return false;
+    const details = readFloatDetails();
+    if (!details.reason || (details.refund !== "yes" && details.refund !== "no")) {
+      return false;
+    }
+    if (details.refund === "yes") {
+      const amount = Number(details.refundAmount);
+      return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+    }
+    return true;
+  };
+
   const canSubmitStockIn = (ready) => {
     if (!ready.length) return false;
-    const pricesOk = ready.every((item) => rowHasBuyingPrice(item.row));
-    if (!pricesOk) return false;
-    if (ready.every((item) => rowHasSupplierDetails(item.row))) return true;
-    return floatSupplierReady();
+    if (!floatSupplierReady()) return false;
+    if (!ready.every((item) => rowHasBuyingPrice(item.row))) return false;
+    return ready.every((item) => rowHasSupplierDetails(item.row));
   };
 
   const canSubmitStockOut = (ready) => {
     if (!ready.length) return false;
+    if (!floatOutReady()) return false;
     return ready.every((item) => rowHasOutDetails(item.row));
+  };
+
+  const autoApplyDetailsToReady = ({ silent = true } = {}) => {
+    const ready = collectReady();
+    if (!ready.length) return 0;
+    if (mode === "in") {
+      if (!supplierCoreReady()) return 0;
+      const details = readFloatDetails();
+      appliedDetails = details.payment ? details : appliedDetails;
+      ready.forEach((item) => writeSupplierMeta(item.row, details));
+      if (!silent) {
+        if (floatSupplierReady()) {
+          setApplyStatus(
+            `Supplier details applied to ${ready.length} item(s).`
+          );
+        } else {
+          setApplyStatus(
+            "Supplier name and phone applied. Select payment status to submit.",
+            true
+          );
+        }
+      }
+      return ready.length;
+    }
+    if (mode === "out") {
+      if (!floatOutReady()) return 0;
+      const details = readFloatDetails();
+      appliedDetails = details;
+      ready.forEach((item) => writeOutMeta(item.row, details));
+      if (!silent) {
+        setApplyStatus(
+          `Stock-out details applied to ${ready.length} item(s).`
+        );
+      }
+      return ready.length;
+    }
+    return 0;
+  };
+
+  const revealAndFocus = (el) => {
+    if (!el) return;
+    if (floatRoot) {
+      floatRoot.classList.remove("is-collapsed");
+      floatRoot
+        .querySelector("[data-stock-float-toggle]")
+        ?.setAttribute("aria-expanded", "true");
+    }
+    if (applyPanel) applyPanel.hidden = false;
+    try {
+      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    } catch (_err) {
+      /* ignore */
+    }
+    window.setTimeout(() => {
+      try {
+        el.focus({ preventScroll: true });
+      } catch (_err) {
+        el.focus?.();
+      }
+    }, 180);
+  };
+
+  const focusFirstIncomplete = (ready) => {
+    if (isCatalogBusy()) {
+      setApplyStatus("Still loading items — wait a moment, then submit.", true);
+      revealAndFocus(submitBtn || floatRoot);
+      return true;
+    }
+    if (!ready.length) {
+      setApplyStatus("Add at least one item with quantity before submitting.", true);
+      revealAndFocus(
+        panel.querySelector("[data-item-search]") ||
+          panel.querySelector("[data-stock-qty]") ||
+          panel
+      );
+      return true;
+    }
+    if (mode === "in") {
+      autoApplyDetailsToReady({ silent: true });
+      const details = readFloatDetails();
+      if (!details.phone || details.phone.length !== 9) {
+        setApplyStatus("Enter a valid supplier phone.", true);
+        revealAndFocus(floatSupplierPhone);
+        return true;
+      }
+      if (!details.name) {
+        setApplyStatus("Enter or select supplier name.", true);
+        revealAndFocus(floatSupplierName);
+        return true;
+      }
+      if (!details.payment) {
+        setApplyStatus("Select payment status before submitting.", true);
+        revealAndFocus(floatPayment);
+        return true;
+      }
+      const missingPrice = ready.find((item) => !rowHasBuyingPrice(item.row));
+      if (missingPrice) {
+        setRowOpen(missingPrice.row, true);
+        setApplyStatus(`Enter buying price for ${missingPrice.name}.`, true);
+        revealAndFocus(
+          getInputsRow(missingPrice.row)?.querySelector("[data-stock-buying-price]") ||
+            missingPrice.row
+        );
+        return true;
+      }
+      if (!ready.every((item) => rowHasSupplierDetails(item.row))) {
+        setApplyStatus(
+          "Supplier details are incomplete — check the submit panel.",
+          true
+        );
+        revealAndFocus(floatPayment || floatSupplierPhone);
+        return true;
+      }
+    }
+    if (mode === "out") {
+      autoApplyDetailsToReady({ silent: true });
+      const details = readFloatDetails();
+      if (!details.reason) {
+        setApplyStatus("Choose a stock-out reason.", true);
+        revealAndFocus(floatReason);
+        return true;
+      }
+      if (details.refund !== "yes" && details.refund !== "no") {
+        setApplyStatus("Choose whether a refund applies.", true);
+        revealAndFocus(floatRefund);
+        return true;
+      }
+      if (details.refund === "yes") {
+        const amount = Number(details.refundAmount);
+        if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+          setApplyStatus(
+            "Enter a whole-number refund amount greater than zero.",
+            true
+          );
+          revealAndFocus(floatRefundAmount);
+          return true;
+        }
+      }
+      const missingOut = ready.find((item) => !rowHasOutDetails(item.row));
+      if (missingOut) {
+        setRowOpen(missingOut.row, true);
+        setApplyStatus(
+          "Stock-out details are incomplete — check the submit panel.",
+          true
+        );
+        revealAndFocus(floatReason);
+        return true;
+      }
+    }
+    return false;
   };
 
   const getCsrf = () =>
@@ -1934,16 +2398,17 @@
       );
       if (submitBtn) {
         const ready = collectReady();
-        const detailsReady =
-          mode === "in" ? canSubmitStockIn(ready) : mode === "out" ? canSubmitStockOut(ready) : ready.length > 0;
-        submitBtn.disabled = !(detailsReady && loginVerified);
+        submitBtn.disabled = ready.length === 0 || isCatalogBusy();
       }
       return false;
     }
     if (!/^\d{6}$/.test(code)) {
       loginVerified = false;
       setLoginStatus("Staff ID must be exactly 6 digits.", { error: true });
-      if (submitBtn) submitBtn.disabled = true;
+      if (submitBtn) {
+        const ready = collectReady();
+        submitBtn.disabled = ready.length === 0 || isCatalogBusy();
+      }
       return false;
     }
     if (!verifyLoginUrl) {
@@ -1951,7 +2416,10 @@
       setLoginStatus("Verification is unavailable. Refresh and try again.", {
         error: true,
       });
-      if (submitBtn) submitBtn.disabled = true;
+      if (submitBtn) {
+        const ready = collectReady();
+        submitBtn.disabled = ready.length === 0 || isCatalogBusy();
+      }
       return false;
     }
 
@@ -1973,7 +2441,10 @@
         setLoginStatus(data.error || "Not a valid active staff ID.", {
           error: true,
         });
-        if (submitBtn) submitBtn.disabled = true;
+        if (submitBtn) {
+          const ready = collectReady();
+          submitBtn.disabled = ready.length === 0 || isCatalogBusy();
+        }
         return false;
       }
       loginVerified = true;
@@ -1987,25 +2458,21 @@
       if (current !== loginVerifySeq) return false;
       loginVerified = false;
       setLoginStatus("Could not verify staff ID. Try again.", { error: true });
-      if (submitBtn) submitBtn.disabled = true;
+      if (submitBtn) {
+        const ready = collectReady();
+        submitBtn.disabled = ready.length === 0 || isCatalogBusy();
+      }
       return false;
     }
   };
 
   const renderSummary = () => {
+    autoApplyDetailsToReady({ silent: true });
     const ready = collectReady();
     const units = ready.reduce((sum, item) => sum + item.quantity, 0);
     const heldCount = ready.filter((item) => item.held).length;
     const hasReady = ready.length > 0;
-    const detailsReady =
-      mode === "in"
-        ? canSubmitStockIn(ready)
-        : mode === "out"
-          ? canSubmitStockOut(ready)
-          : hasReady;
     const busy = isCatalogBusy();
-    const submitReady =
-      detailsReady && (!requiresLoginCode || loginVerified) && !busy;
 
     if (emptyEl) emptyEl.hidden = hasReady;
     if (heldEl) {
@@ -2017,7 +2484,8 @@
     if (clearBtn) clearBtn.hidden = !hasReady;
     if (applyPanel) applyPanel.hidden = !(mode === "in" || mode === "out");
     if (submitBtn) {
-      submitBtn.disabled = !submitReady;
+      // Keep clickable so incomplete fields can be focused on submit.
+      submitBtn.disabled = !hasReady || busy;
       submitBtn.classList.toggle("is-catalog-busy", busy);
     }
     if (readyCountEl) readyCountEl.textContent = String(ready.length);
@@ -2025,42 +2493,43 @@
 
     if (mode === "in") {
       if (!hasReady) {
-        setApplyStatus("Fill items first, then autofill supplier details here.");
+        setApplyStatus(
+          "Add item quantities, then enter supplier phone, name, and payment."
+        );
+      } else if (!supplierCoreReady()) {
+        setApplyStatus(
+          "Enter supplier phone and name — details apply to all ready items.",
+          true
+        );
+      } else if (!floatSupplierReady()) {
+        setApplyStatus(
+          "Supplier applied. Select payment status before submitting.",
+          true
+        );
+      } else if (!ready.every((item) => rowHasBuyingPrice(item.row))) {
+        setApplyStatus("Enter buying price on every stocked item.", true);
+      } else if (requiresLoginCode && !loginVerified) {
+        setApplyStatus(
+          "Item details complete. Enter a valid staff ID to stock in."
+        );
       } else {
-        const incomplete = ready.filter(
-          (item) =>
-            !(
-              rowHasBuyingPrice(item.row) &&
-              (rowHasSupplierDetails(item.row) || floatSupplierReady())
-            )
-        ).length;
-        if (incomplete) {
-          setApplyStatus(
-            floatSupplierReady()
-              ? `${incomplete} item(s) still need a buying price.`
-              : "Add supplier details below, and a buying price on each item.",
-            true
-          );
-        } else if (appliedDetails || floatSupplierReady()) {
-          setApplyStatus(`Ready to stock in ${ready.length} item(s).`);
-        } else if (requiresLoginCode && !loginVerified) {
-          setApplyStatus("Item details complete. Enter a valid staff ID to stock in.");
-        } else {
-          setApplyStatus("All item details complete. You can submit.");
-        }
+        setApplyStatus(`Ready to stock in ${ready.length} item(s).`);
       }
     } else if (mode === "out") {
       if (!hasReady) {
-        setApplyStatus("Fill items first, then autofill reason and refund here.");
+        setApplyStatus("Add item quantities, then choose reason and refund.");
+      } else if (!floatOutReady()) {
+        setApplyStatus(
+          "Choose reason and refund — details apply to all ready items.",
+          true
+        );
+      } else if (!ready.every((item) => rowHasOutDetails(item.row))) {
+        setApplyStatus(
+          "Stock-out details are incomplete on one or more items.",
+          true
+        );
       } else {
-        const incomplete = ready.filter((item) => !rowHasOutDetails(item.row)).length;
-        if (incomplete) {
-          setApplyStatus(`${incomplete} item(s) need reason and refund details.`, true);
-        } else if (appliedDetails) {
-          setApplyStatus(`Stock-out details applied to ${ready.length} item(s).`);
-        } else {
-          setApplyStatus("All item details complete. You can submit.");
-        }
+        setApplyStatus(`Ready to stock out ${ready.length} item(s).`);
       }
     } else if (!hasReady) {
       setApplyStatus("");
@@ -2071,8 +2540,7 @@
     ready.forEach((item) => {
       const complete =
         mode === "in"
-          ? rowHasBuyingPrice(item.row) &&
-            (rowHasSupplierDetails(item.row) || floatSupplierReady())
+          ? rowHasBuyingPrice(item.row) && rowHasSupplierDetails(item.row)
           : mode === "out"
             ? rowHasOutDetails(item.row)
             : true;
@@ -2206,81 +2674,53 @@
   };
 
   const applyDetailsToReady = () => {
-    const details = readFloatDetails();
-
+    const ready = collectReady();
+    if (!ready.length) {
+      setApplyStatus("Add item quantity/serials first.", true);
+      return false;
+    }
     if (mode === "out") {
-      if (floatReason) floatReason.value = details.reason;
-      if (floatRefund) floatRefund.value = details.refund;
-      if (floatRefundAmount && details.refund === "yes") {
-        floatRefundAmount.value = details.refundAmount;
-      }
-      if (!details.reason) {
-        setApplyStatus("Choose a stock-out reason.", true);
-        floatReason?.focus();
-        return false;
-      }
-      if (details.refund !== "yes" && details.refund !== "no") {
-        setApplyStatus("Choose whether a refund applies.", true);
-        floatRefund?.focus();
-        return false;
-      }
-      if (details.refund === "yes") {
-        const amount = Number(details.refundAmount);
-        if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
-          setApplyStatus("Enter a whole-number refund amount greater than zero.", true);
+      if (!floatOutReady()) {
+        const details = readFloatDetails();
+        if (!details.reason) {
+          setApplyStatus("Choose a stock-out reason.", true);
+          floatReason?.focus();
+        } else if (details.refund !== "yes" && details.refund !== "no") {
+          setApplyStatus("Choose whether a refund applies.", true);
+          floatRefund?.focus();
+        } else {
+          setApplyStatus(
+            "Enter a whole-number refund amount greater than zero.",
+            true
+          );
           floatRefundAmount?.focus();
-          return false;
         }
-      }
-      appliedDetails = details;
-      const ready = collectReady();
-      if (!ready.length) {
-        setApplyStatus("Add item quantity/serials first, then autofill again.", true);
         return false;
       }
-      ready.forEach((item) => writeOutMeta(item.row, details));
-      setApplyStatus(`Autofilled stock-out details on ${ready.length} item(s).`);
+      autoApplyDetailsToReady({ silent: false });
       renderSummary();
       return true;
     }
 
-    if (floatSupplierName) floatSupplierName.value = details.name;
-    if (floatSupplierPhone) floatSupplierPhone.value = details.phone;
-
-    if (!details.name) {
-      setApplyStatus("Enter supplier name.", true);
-      floatSupplierName?.focus();
+    if (!supplierCoreReady()) {
+      const details = readFloatDetails();
+      if (!details.phone) {
+        setApplyStatus("Enter supplier phone.", true);
+        floatSupplierPhone?.focus();
+      } else if (!details.name) {
+        setApplyStatus("Enter supplier name.", true);
+        floatSupplierName?.focus();
+      } else {
+        setApplyStatus("Select a country.", true);
+        floatRoot
+          ?.querySelector(
+            "[data-stock-float-phone-wrap] [data-stock-country-trigger]"
+          )
+          ?.focus();
+      }
       return false;
     }
-    if (!details.dial) {
-      setApplyStatus("Select a country.", true);
-      floatRoot
-        ?.querySelector("[data-stock-float-phone-wrap] [data-stock-country-trigger]")
-        ?.focus();
-      return false;
-    }
-    if (!details.phone) {
-      setApplyStatus("Enter supplier phone.", true);
-      floatSupplierPhone?.focus();
-      return false;
-    }
-    if (!details.payment) {
-      setApplyStatus("Choose payment status.", true);
-      floatPayment?.focus();
-      return false;
-    }
-
-    appliedDetails = details;
-    const ready = collectReady();
-    if (!ready.length) {
-      setApplyStatus("Add item quantity/serials first, then autofill again.", true);
-      return false;
-    }
-
-    ready.forEach((item) => {
-      writeSupplierMeta(item.row, details);
-    });
-    setApplyStatus(`Autofilled supplier details on ${ready.length} item(s).`);
+    autoApplyDetailsToReady({ silent: false });
     renderSummary();
     return true;
   };
@@ -2621,6 +3061,7 @@
     hideSupplierSuggest(floatRoot);
     const itemRow = findItemRowFromNode(fromInput);
     if (itemRow) refreshRowState(itemRow);
+    autoApplyDetailsToReady({ silent: false });
     renderSummary();
   };
 
@@ -2633,13 +3074,20 @@
       suggest.hidden = true;
       return;
     }
+    const by = input.getAttribute("data-supplier-search") || "name";
     results.forEach((supplier) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "stock-supplier-suggest-option";
       btn.innerHTML = `<strong></strong><small></small>`;
-      btn.querySelector("strong").textContent = supplier.name;
-      btn.querySelector("small").textContent = `${supplier.dial}${supplier.phone}`;
+      const phoneLabel = `${supplier.dial || ""}${supplier.phone || ""}`;
+      if (by === "name") {
+        btn.querySelector("strong").textContent = supplier.name || "";
+        btn.querySelector("small").textContent = phoneLabel;
+      } else {
+        btn.querySelector("strong").textContent = phoneLabel;
+        btn.querySelector("small").textContent = supplier.name || "";
+      }
       btn.addEventListener("mousedown", (event) => {
         event.preventDefault();
         applySupplierResult(input, supplier, { fillAll: true });
@@ -2677,31 +3125,16 @@
       if (seq !== supplierSearchSeq) return;
       const results = Array.isArray(data.results) ? data.results : [];
       renderSupplierSuggest(input, results);
-      if (!results.length) return;
-      const upper = query.toUpperCase();
+
+      // Phone → autofill name. Name → suggest only; user must pick a row.
+      if (by !== "phone" || !results.length) return;
       const digits = (value) => String(value || "").replace(/\D+/g, "");
-      let match = null;
-      if (by === "name") {
-        match =
-          results.find((row) => String(row.name || "").toUpperCase() === upper) ||
-          null;
-        if (
-          !match &&
-          results.length === 1 &&
-          query.length >= 3 &&
-          String(results[0].name || "")
-            .toUpperCase()
-            .includes(upper)
-        ) {
-          match = results[0];
-        }
-      } else if (by === "phone" && digits(query).length >= 7) {
-        match =
-          results.find((row) => digits(row.phone) === digits(query)) ||
-          (results.length === 1 && digits(results[0].phone).includes(digits(query))
-            ? results[0]
-            : null);
-      }
+      if (digits(query).length < 7) return;
+      const match =
+        results.find((row) => digits(row.phone) === digits(query)) ||
+        (results.length === 1 && digits(results[0].phone).includes(digits(query))
+          ? results[0]
+          : null);
       if (match) applySupplierResult(input, match, { fillAll: true });
     } catch (_error) {
       /* ignore network errors during typing */
@@ -2900,111 +3333,24 @@
     });
 
     const ready = collectReady();
-    if (!ready.length) {
+    if (focusFirstIncomplete(ready)) {
       event.preventDefault();
-      setApplyStatus("Add at least one item with quantity before stocking in.", true);
       return;
     }
-
-    if (printSupplier) {
-      event.preventDefault();
-      if (requiresLoginCode && !loginVerified) {
-        const ok = await verifyLoginCode();
-        if (!ok) {
-          loginCodeInput?.focus();
-          return;
-        }
-      }
-      const details = readFloatDetails();
-      if (details.name && details.dial && details.phone && details.payment) {
-        appliedDetails = details;
-        ready.forEach((item) => writeSupplierMeta(item.row, details));
-      }
-      if (!canSubmitStockIn(ready)) {
-        if (!ready.every((item) => rowHasBuyingPrice(item.row))) {
-          const missingPrice = ready.find((item) => !rowHasBuyingPrice(item.row));
-          if (missingPrice) {
-            setRowOpen(missingPrice.row, true);
-            getInputsRow(missingPrice.row)
-              ?.querySelector("[data-stock-buying-price]")
-              ?.focus();
-          }
-          setApplyStatus("Enter buying price for each ready item.", true);
-          return;
-        }
-        applyPanel.hidden = false;
-        setApplyStatus("Enter supplier name, phone, and payment status.", true);
-        floatSupplierPhone?.focus();
-        return;
-      }
-      await submitStockInWithPrint();
-      return;
-    }
-
     if (requiresLoginCode && !loginVerified) {
       event.preventDefault();
       const ok = await verifyLoginCode();
       if (!ok) {
-        loginCodeInput?.focus();
+        setApplyStatus("Enter a valid staff ID to stock in.", true);
+        revealAndFocus(loginCodeInput);
         return;
       }
-      if (typeof form.requestSubmit === "function") {
-        form.requestSubmit(submitBtn || undefined);
-      } else {
-        form.submit();
-      }
+    }
+
+    if (printSupplier) {
+      event.preventDefault();
+      await submitStockInWithPrint();
       return;
-    }
-
-    if (mode === "in") {
-      const details = readFloatDetails();
-      if (details.name && details.dial && details.phone && details.payment) {
-        appliedDetails = details;
-        ready.forEach((item) => writeSupplierMeta(item.row, details));
-      }
-      if (!canSubmitStockIn(ready)) {
-        event.preventDefault();
-        if (!ready.every((item) => rowHasBuyingPrice(item.row))) {
-          const missingPrice = ready.find((item) => !rowHasBuyingPrice(item.row));
-          if (missingPrice) {
-            setRowOpen(missingPrice.row, true);
-            getInputsRow(missingPrice.row)
-              ?.querySelector("[data-stock-buying-price]")
-              ?.focus();
-          }
-          setApplyStatus("Enter buying price for each ready item.", true);
-          return;
-        }
-        applyPanel.hidden = false;
-        setApplyStatus("Enter supplier name, phone, and payment status.", true);
-        floatSupplierPhone?.focus();
-        return;
-      }
-    }
-
-    if (mode === "out") {
-      if (!canSubmitStockOut(ready)) {
-        event.preventDefault();
-        applyPanel.hidden = false;
-        setApplyStatus("Apply reason and refund details first.", true);
-        floatReason?.focus();
-        return;
-      }
-      const details = readFloatDetails();
-      const refundOk =
-        details.refund !== "yes" ||
-        (Number.isInteger(Number(details.refundAmount)) &&
-          Number(details.refundAmount) > 0 &&
-          Number.isFinite(Number(details.refundAmount)));
-      const fallback =
-        details.reason && (details.refund === "yes" || details.refund === "no") && refundOk
-          ? details
-          : appliedDetails;
-      if (fallback) {
-        ready.forEach((item) => {
-          if (!rowHasOutDetails(item.row)) writeOutMeta(item.row, fallback);
-        });
-      }
     }
 
     event.preventDefault();

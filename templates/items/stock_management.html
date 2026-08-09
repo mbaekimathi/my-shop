@@ -781,22 +781,8 @@
 
         {% if stock_mode == 'in' %}
         <div class="stock-float-apply" data-stock-float-apply>
-          <p class="stock-float-apply-title">Autofill supplier details</p>
+          <p class="stock-float-apply-title">Supplier details (applies to all items)</p>
           <input type="hidden" value="" data-stock-float-supplier-id>
-          <label class="stock-float-field">
-            <span>Supplier name</span>
-            <div class="stock-supplier-name-wrap" data-supplier-search-root>
-              <input
-                type="text"
-                placeholder="Type name to search…"
-                autocomplete="organization"
-                data-uppercase
-                data-stock-float-supplier-name
-                data-supplier-search="name"
-              >
-              <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
-            </div>
-          </label>
           <label class="stock-float-field">
             <span>Supplier phone</span>
             <div class="stock-phone-field" data-stock-phone-field data-stock-float-phone-wrap data-supplier-search-root>
@@ -833,6 +819,20 @@
             </div>
           </label>
           <label class="stock-float-field">
+            <span>Supplier name</span>
+            <div class="stock-supplier-name-wrap" data-supplier-search-root>
+              <input
+                type="text"
+                placeholder="Type to search names…"
+                autocomplete="organization"
+                data-uppercase
+                data-stock-float-supplier-name
+                data-supplier-search="name"
+              >
+              <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+            </div>
+          </label>
+          <label class="stock-float-field">
             <span>Payment status</span>
             <select data-stock-float-payment>
               <option value="">Select</option>
@@ -842,13 +842,13 @@
             </select>
           </label>
           <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
-            Autofill to stock-in items
+            Apply to all stock-in items
           </button>
           <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
         </div>
         {% elif stock_mode == 'out' %}
         <div class="stock-float-apply" data-stock-float-apply>
-          <p class="stock-float-apply-title">Autofill stock-out details</p>
+          <p class="stock-float-apply-title">Stock-out details (applies to all items)</p>
           <label class="stock-float-field">
             <span>Reason</span>
             <select data-stock-float-reason>
@@ -879,7 +879,7 @@
             >
           </label>
           <button type="button" class="stock-float-apply-btn" data-stock-float-apply-btn>
-            Autofill to stock-out items
+            Apply to all stock-out items
           </button>
           <p class="stock-float-apply-status" data-stock-float-apply-status hidden></p>
         </div>
@@ -1107,10 +1107,10 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=13"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=14"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix10"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix14"></script>
 <script
   src="{% static 'js/serial-scan.js' %}?v=2"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
