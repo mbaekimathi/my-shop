@@ -32,6 +32,11 @@ urlpatterns = [
         name="my_shop_buy_stock_catalog",
     ),
     path(
+        "my-shop/<int:shop_id>/buy-stock/suppliers/",
+        shop_views.my_shop_supplier_search,
+        name="my_shop_supplier_search",
+    ),
+    path(
         "my-shop/<int:shop_id>/stock-requests/",
         shop_views.my_shop_stock_requests,
         name="my_shop_stock_requests",

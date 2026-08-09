@@ -2613,10 +2613,12 @@
   body {
     width: ${pageWidth}; margin: 0; padding: 2mm;
     font-family: "Courier New", monospace;
-    font-size: ${fontSize}; font-weight: ${fontWeight};
-    color: #000;
+    font-size: ${fontSize}; font-weight: 900;
+    color: #000 !important;
     background: #fff;
     white-space: pre-wrap;
+    -webkit-font-smoothing: none;
+    text-shadow: 0.35px 0 0 #000, -0.35px 0 0 #000;
   }
 </style></head><body><pre>${esc(text)}</pre>
 <script>window.onload = () => { window.focus(); window.print(); };<\/script>
@@ -3153,20 +3155,15 @@
         copy.append(name, priceField);
         if (priceHint.textContent) copy.append(priceHint);
         if (line.trackSerial || (line.serials && line.serials.length)) {
-          const serialWrap = document.createElement("div");
-          serialWrap.className = "shop-cart-line-serials";
-          (line.serials || []).forEach((serial) => {
-            const chip = document.createElement("span");
-            chip.className = "shop-cart-line-serial";
-            chip.textContent = serial;
-            serialWrap.appendChild(chip);
-          });
-          copy.appendChild(serialWrap);
           const editSerials = document.createElement("button");
           editSerials.type = "button";
           editSerials.className = "shop-cart-line-serial-edit";
           editSerials.dataset.cartEditSerials = "";
-          editSerials.textContent = "Edit serials";
+          const serialCount = (line.serials || []).length;
+          editSerials.textContent =
+            serialCount > 0
+              ? `Edit serials (${serialCount})`
+              : "Add serials";
           copy.appendChild(editSerials);
         }
 

@@ -56,7 +56,7 @@
         data-stock-catalog-simple
         data-stock-catalog-search-first
       >
-        <div class="buy-stock-simple-search">
+        <div class="buy-stock-simple-search" data-stock-picker-tools>
           <label class="buy-stock-simple-search-field">
             <i data-lucide="search" aria-hidden="true"></i>
             <input
@@ -78,7 +78,7 @@
             <i data-lucide="chevron-down" aria-hidden="true"></i>
           </button>
         </div>
-        <p class="buy-stock-simple-hint">
+        <p class="buy-stock-simple-hint" data-stock-picker-tools>
           Search or browse the list, select an item, then enter qty and buying price. Supplier details below apply to all items.
         </p>
         <p class="buy-stock-simple-count" data-item-visible-count hidden></p>
@@ -87,19 +87,28 @@
           <div class="buy-stock-simple-parked" hidden>
             <p class="buy-stock-simple-parked-label">Selected for stock-in</p>
             <div data-stock-parked></div>
+            <button
+              type="button"
+              class="buy-stock-simple-add-another"
+              data-stock-add-another
+              hidden
+            >
+              <i data-lucide="plus" aria-hidden="true"></i>
+              Add another item
+            </button>
           </div>
-          <div data-stock-catalog-root>
+          <div data-stock-catalog-root data-stock-picker-tools>
             <div class="buy-stock-simple-empty" data-stock-catalog-idle>
               <i data-lucide="package-search" aria-hidden="true"></i>
-              <p>Search for an item to begin</p>
+              <p>Search or browse for an item to begin</p>
             </div>
           </div>
         </div>
 
-        <div class="shop-floor-catalog-more" data-stock-catalog-more-wrap hidden>
+        <div class="shop-floor-catalog-more" data-stock-catalog-more-wrap data-stock-picker-tools hidden>
           <button type="button" class="btn btn--ghost btn--sm" data-stock-catalog-more>Load more</button>
         </div>
-        <div class="item-search-empty buy-stock-simple-no-results" data-item-no-results hidden>
+        <div class="item-search-empty buy-stock-simple-no-results" data-item-no-results data-stock-picker-tools hidden>
           <i data-lucide="search-x" aria-hidden="true"></i>
           <p>No items match your search.</p>
         </div>

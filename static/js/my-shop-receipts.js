@@ -622,7 +622,7 @@
     doc.write(`<!doctype html><html><head><title>Receipt</title>
 <style>
 @page { size: ${pageWidth} auto; margin: 2mm; }
-body { margin: 0; padding: 2mm; font-family: "Courier New", monospace; font-size: ${fontSize}; font-weight: ${fontWeight}; color: #000; background: #fff; }
+body { margin: 0; padding: 2mm; font-family: "Courier New", monospace; font-size: ${fontSize}; font-weight: 900; color: #000 !important; background: #fff; -webkit-font-smoothing: none; text-shadow: 0.35px 0 0 #000, -0.35px 0 0 #000; }
 pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 </style></head><body><pre>${escapeHtml(text)}</pre></body></html>`);
     doc.close();

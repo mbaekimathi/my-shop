@@ -1883,6 +1883,9 @@
 
   const getInputsRow = (row) => {
     if (!row) return null;
+    if (typeof panel.ensurePickInputs === "function") {
+      panel.ensurePickInputs(row);
+    }
     const nested = row.querySelector(":scope > [data-stock-item-inputs]");
     if (nested) return nested;
     const next = row.nextElementSibling;
@@ -2368,6 +2371,19 @@
     const root = parkedRoot();
     const wrap = root?.closest(".buy-stock-simple-parked");
     if (wrap) wrap.hidden = !root?.querySelector("[data-item-row]");
+    const addAnother = panel.querySelector("[data-stock-add-another]");
+    if (addAnother) {
+      const hasSelected = Boolean(root?.querySelector("[data-item-row]"));
+      const collapsed = panel.classList.contains("is-picker-collapsed");
+      addAnother.hidden = !hasSelected || !collapsed;
+    }
+    if (
+      simpleCatalog &&
+      panel.classList.contains("is-picker-collapsed") &&
+      !root?.querySelector("[data-item-row]")
+    ) {
+      panel.dispatchEvent(new CustomEvent("stock-catalog:expand-picker"));
+    }
   };
 
   const syncItemRemoveControls = (row) => {
@@ -3326,9 +3342,9 @@
         const searchInput = panel.querySelector("[data-item-search]");
         if (searchInput && searchInput.value) {
           searchInput.value = "";
-          searchInput.dispatchEvent(new Event("search", { bubbles: true }));
         }
       }
+      panel.dispatchEvent(new CustomEvent("stock-catalog:collapse-picker"));
       row.scrollIntoView({ behavior: "smooth", block: "nearest" });
       renderSummary();
       return;
@@ -3536,7 +3552,10 @@
     applyDetailsToReady();
   });
 
-  const supplierSearchUrl = form.dataset.supplierSearchUrl || "";
+  const supplierSearchUrl =
+    form.dataset.supplierSearchUrl ||
+    form.getAttribute("data-supplier-search-url") ||
+    "";
   let supplierSearchTimer = null;
   let supplierSearchSeq = 0;
   let fillingSupplier = false;
@@ -3547,8 +3566,24 @@
       : document.querySelectorAll("[data-supplier-suggest]");
     nodes.forEach((el) => {
       el.hidden = true;
+      el.classList.remove("is-open-up");
       el.innerHTML = "";
     });
+  };
+
+  const positionSupplierSuggest = (input, suggest) => {
+    if (!input || !suggest) return;
+    const root = input.closest("[data-supplier-search-root]");
+    const host =
+      root?.closest(".buy-stock-simple-confirm-card") ||
+      root?.closest("[data-stock-float]") ||
+      null;
+    suggest.classList.remove("is-open-up");
+    if (!host) return;
+    const inputRect = input.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    const spaceBelow = hostRect.bottom - inputRect.bottom;
+    if (spaceBelow < 160) suggest.classList.add("is-open-up");
   };
 
   const resolveSupplierTargets = (fromInput) => {
@@ -3642,7 +3677,15 @@
     if (!suggest) return;
     suggest.innerHTML = "";
     if (!results.length) {
-      suggest.hidden = true;
+      const empty = document.createElement("button");
+      empty.type = "button";
+      empty.className = "stock-supplier-suggest-option is-empty";
+      empty.disabled = true;
+      empty.innerHTML =
+        `<strong>No registered supplier</strong><small>Keep typing or enter a new supplier</small>`;
+      suggest.appendChild(empty);
+      positionSupplierSuggest(input, suggest);
+      suggest.hidden = false;
       return;
     }
     const by = input.getAttribute("data-supplier-search") || "name";
@@ -3665,6 +3708,7 @@
       });
       suggest.appendChild(btn);
     });
+    positionSupplierSuggest(input, suggest);
     suggest.hidden = false;
   };
 
@@ -3674,7 +3718,7 @@
     if (!by) return;
     const query = (input.value || "").trim();
     const root = input.closest("[data-supplier-search-root]");
-    const minLen = by === "phone" ? 2 : 2;
+    const minLen = by === "phone" ? 3 : 2;
     if (query.length < minLen) {
       hideSupplierSuggest(root);
       return;
@@ -3682,6 +3726,7 @@
 
     const dial =
       root?.querySelector("[data-stock-float-supplier-dial], [data-stock-supplier-dial]")?.value ||
+      floatSupplierDial?.value ||
       "";
     const seq = ++supplierSearchSeq;
     const params = new URLSearchParams({ q: query, by });
@@ -3695,6 +3740,7 @@
       if (!response.ok) return;
       const data = await response.json();
       if (seq !== supplierSearchSeq) return;
+      if (!data || data.ok === false) return;
       const results = Array.isArray(data.results) ? data.results : [];
       renderSupplierSuggest(input, results);
 
@@ -3715,9 +3761,36 @@
   };
 
   const queueSupplierSearch = (input) => {
+    if (!(input instanceof Element)) return;
     window.clearTimeout(supplierSearchTimer);
-    supplierSearchTimer = window.setTimeout(() => runSupplierSearch(input), 280);
+    supplierSearchTimer = window.setTimeout(() => runSupplierSearch(input), 180);
   };
+
+  floatRoot?.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.matches("[data-supplier-search]")) return;
+    if ((target.value || "").trim()) queueSupplierSearch(target);
+  });
+
+  // Form-level backup so float fields always search even if a parent listener misses.
+  form.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.matches("[data-supplier-search]")) return;
+    if (target.matches("[data-stock-float-supplier-phone]")) {
+      delete target.dataset.supplierResolved;
+      normalizePhoneInput(target);
+    } else if (target.matches("[data-stock-float-supplier-name], [data-stock-supplier-name]")) {
+      const start = target.selectionStart;
+      const end = target.selectionEnd;
+      target.value = String(target.value || "").toUpperCase();
+      if (typeof start === "number" && typeof end === "number") {
+        target.setSelectionRange(start, end);
+      }
+    }
+    queueSupplierSearch(target);
+  });
 
   const serialSearchUrl = form.dataset.serialSearchUrl || "";
   let serialSearchTimer = null;

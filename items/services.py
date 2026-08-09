@@ -143,9 +143,8 @@ def resolve_sale_unit_cost(shop_stock: ShopStock | None, *, fallback=None) -> De
 
 def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
     """
-    Latest stock-in buying price per item (one subquery each), avoiding full
-    history scans. Prefer prices from prefer_shop_id when provided, then fall
-    back to any shop.
+    Latest stock-in buying price per item via subqueries (one Item query).
+    Prefer prices from prefer_shop_id when provided, then fall back to any shop.
     """
     ids = [int(pk) for pk in item_ids if pk]
     if not ids:
@@ -161,28 +160,27 @@ def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
             qs = qs.filter(movement__shop_id=shop_id)
         return qs.order_by("-movement__created_at", "-id").values("buying_price")[:1]
 
-    result = {}
-    remaining = set(ids)
-
+    annotations = {"any_last_buy": Subquery(_latest_subquery())}
     if prefer_shop_id is not None:
-        for item_id, price in (
-            Item.objects.filter(pk__in=remaining)
-            .annotate(last_buy=Subquery(_latest_subquery(shop_id=prefer_shop_id)))
-            .filter(last_buy__isnull=False)
-            .values_list("pk", "last_buy")
-        ):
-            result[item_id] = price
-            remaining.discard(item_id)
+        annotations["shop_last_buy"] = Subquery(
+            _latest_subquery(shop_id=prefer_shop_id)
+        )
 
-    if remaining:
-        for item_id, price in (
-            Item.objects.filter(pk__in=remaining)
-            .annotate(last_buy=Subquery(_latest_subquery()))
-            .filter(last_buy__isnull=False)
-            .values_list("pk", "last_buy")
-        ):
+    result = {}
+    value_fields = ("pk", "shop_last_buy", "any_last_buy") if prefer_shop_id is not None else (
+        "pk",
+        "any_last_buy",
+    )
+    for row in Item.objects.filter(pk__in=ids).annotate(**annotations).values_list(
+        *value_fields
+    ):
+        if prefer_shop_id is not None:
+            item_id, shop_price, any_price = row
+            price = shop_price if shop_price is not None else any_price
+        else:
+            item_id, price = row
+        if price is not None:
             result[item_id] = price
-
     return result
 
 
@@ -196,6 +194,7 @@ def build_stock_catalog_page(
     page=1,
     page_size=48,
     include_suspended: bool = True,
+    include_totals: bool = True,
 ):
     """
     Paginated stock matrix rows for buy-stock / stock-management action modes
@@ -329,20 +328,21 @@ def build_stock_catalog_page(
         rows.append(row)
 
     total_units = 0
-    if shop_id and not use_multi_shop:
-        total_units = (
-            ShopStock.objects.filter(shop_id=shop_id).aggregate(total=Sum("quantity"))[
-                "total"
-            ]
-            or 0
-        )
-    elif view_shop_ids:
-        total_units = (
-            ShopStock.objects.filter(shop_id__in=view_shop_ids).aggregate(
-                total=Sum("quantity")
-            )["total"]
-            or 0
-        )
+    if include_totals:
+        if shop_id and not use_multi_shop:
+            total_units = (
+                ShopStock.objects.filter(shop_id=shop_id).aggregate(
+                    total=Sum("quantity")
+                )["total"]
+                or 0
+            )
+        elif view_shop_ids:
+            total_units = (
+                ShopStock.objects.filter(shop_id__in=view_shop_ids).aggregate(
+                    total=Sum("quantity")
+                )["total"]
+                or 0
+            )
 
     return {
         "ok": True,
@@ -2057,9 +2057,9 @@ def build_stock_print_pdf(
     subtitle_style = ParagraphStyle(
         "StockSubtitle",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName="Helvetica-Bold",
         fontSize=9,
-        textColor=muted,
+        textColor=ink,
         leading=11,
     )
     meta_style = ParagraphStyle(
@@ -2074,16 +2074,16 @@ def build_stock_print_pdf(
     meta_sub = ParagraphStyle(
         "StockMetaSub",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName="Helvetica-Bold",
         fontSize=7.5,
-        textColor=muted,
+        textColor=ink,
         leading=10,
         alignment=TA_RIGHT,
     )
     cell_style = ParagraphStyle(
         "StockCell",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName="Helvetica-Bold",
         fontSize=9,
         textColor=ink,
         leading=11,
@@ -2099,9 +2099,9 @@ def build_stock_print_pdf(
     foot_style = ParagraphStyle(
         "StockFoot",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName="Helvetica-Bold",
         fontSize=7,
-        textColor=muted,
+        textColor=ink,
         leading=9,
     )
 

@@ -11,6 +11,8 @@
   const browseBtn = panel.querySelector("[data-stock-catalog-browse]");
   const noResults = panel.querySelector("[data-item-no-results]");
   const visibleCountEl = panel.querySelector("[data-item-visible-count]");
+  const addAnotherBtn = panel.querySelector("[data-stock-add-another]");
+  const pickerTools = () => panel.querySelectorAll("[data-stock-picker-tools]");
   if (!apiUrl || !listRoot) return;
 
   const mode = panel.dataset.stockMode || "in";
@@ -90,6 +92,94 @@
   const searchFirst = panel.hasAttribute("data-stock-catalog-search-first");
   const parkedWrap = panel.querySelector(".buy-stock-simple-parked");
   let browseOpen = false;
+  let pickerCollapsed = false;
+  const itemCache = new Map();
+  const memoryCache = new Map();
+  let offlineStorePromise = null;
+
+  const getOfflineStore = () => {
+    if (!offlineStorePromise) {
+      offlineStorePromise = import("./offline/store.js").catch(() => null);
+    }
+    return offlineStorePromise;
+  };
+
+  const cacheKeyFor = (page, q) =>
+    `stock-catalog:${catalogShopIds.join("-") || shopId || "all"}:${fromShopId || "0"}:${mode}:p${page}:s${pageSize}:q${String(
+      q || ""
+    ).toLowerCase()}`;
+
+  const refreshIcons = (root = panel) => {
+    if (!window.lucide?.createIcons) return;
+    if (root && root !== panel && root instanceof Element) {
+      window.lucide.createIcons({ root });
+      return;
+    }
+    window.lucide.createIcons();
+  };
+
+  const showCatalogLoading = () => {
+    if (pickerCollapsed || !listRoot) return;
+    listRoot.innerHTML = `
+      <div class="buy-stock-catalog-loading" data-stock-catalog-loading aria-live="polite">
+        <span class="buy-stock-catalog-loading-bar" aria-hidden="true"></span>
+        <p>Loading items…</p>
+      </div>`;
+  };
+
+  const buildSimplePickInputsHtml = (item) => {
+    const fields = mode === "in" ? buildInFields(item) : buildOutFields(item);
+    return `
+      <div class="buy-stock-pick-inputs" data-stock-item-inputs hidden>
+        <div class="stock-item-inputs stock-item-inputs--matrix">
+          <input type="hidden" name="item_id" value="${item.id}" disabled data-stock-field>
+          ${fields}
+        </div>
+      </div>`;
+  };
+
+  const ensurePickInputs = (row) => {
+    if (!row || !simpleMode) return Boolean(getInputsRowFromRow(row));
+    if (row.querySelector(":scope > [data-stock-item-inputs]")) return true;
+    const item = itemCache.get(String(row.getAttribute("data-item-id") || ""));
+    if (!item) return false;
+    row.insertAdjacentHTML("beforeend", buildSimplePickInputsHtml(item));
+    refreshIcons(row);
+    return true;
+  };
+
+  const getInputsRowFromRow = (row) => {
+    if (!row) return null;
+    const nested = row.querySelector(":scope > [data-stock-item-inputs]");
+    if (nested) return nested;
+    const next = row.nextElementSibling;
+    return next?.matches?.("[data-stock-item-inputs]") ? next : null;
+  };
+
+  panel.ensurePickInputs = ensurePickInputs;
+
+  const syncAddAnother = () => {
+    if (!addAnotherBtn) return;
+    const hasSelected = Boolean(parked?.querySelector("[data-item-row]"));
+    addAnotherBtn.hidden = !hasSelected || !pickerCollapsed;
+    if (window.lucide?.createIcons) window.lucide.createIcons();
+  };
+
+  const setPickerCollapsed = (collapsed) => {
+    if (!simpleMode) return;
+    pickerCollapsed = Boolean(collapsed);
+    panel.classList.toggle("is-picker-collapsed", pickerCollapsed);
+    pickerTools().forEach((el) => {
+      el.hidden = pickerCollapsed;
+    });
+    if (pickerCollapsed) {
+      setBrowseOpen(false);
+      if (moreWrap) moreWrap.hidden = true;
+      if (noResults) noResults.hidden = true;
+      if (visibleCountEl) visibleCountEl.hidden = true;
+    }
+    syncAddAnother();
+  };
 
   const setBrowseOpen = (open) => {
     browseOpen = Boolean(open);
@@ -168,6 +258,7 @@
     if (parkedWrap) {
       parkedWrap.hidden = !parked.querySelector("[data-item-row]");
     }
+    syncAddAnother();
   };
 
   const ensureSelectedGroup = () => {
@@ -448,7 +539,7 @@
     return `
       <div class="stock-inline-field stock-inline-field--serial">
         <div class="stock-serial-head">
-          <span>Serial number</span>
+          <span>${simpleMode ? "Serial" : "Serial number"}</span>
           <span class="visually-hidden">Remove</span>
         </div>
         <div class="stock-serial-list" data-stock-serial-list>
@@ -457,12 +548,14 @@
         <div class="stock-serial-actions">
           <button type="button" class="stock-serial-add" data-stock-serial-add>
             <i data-lucide="plus" aria-hidden="true"></i>
-            Add serial
+            ${simpleMode ? "Add" : "Add serial"}
           </button>
           <small class="stock-serial-hint">${
             mode === "out"
               ? "Type to search available serials at this shop"
-              : "Quantity updates as you add serials"
+              : simpleMode
+                ? "Qty follows serials"
+                : "Quantity updates as you add serials"
           }</small>
         </div>
         <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
@@ -515,10 +608,44 @@
       <input type="hidden" name="payment_status" value="" data-stock-payment data-stock-field disabled>
     `;
     if (simpleMode) {
+      const qtyBlockSimple = item.track_serial
+        ? `<div class="stock-inline-field">
+          <span>Qty</span>
+          <strong class="stock-serial-qty-live stock-serial-qty-live--field">
+            <span data-stock-serial-count>0</span>
+          </strong>
+          <input type="hidden" name="quantity" value="" data-stock-qty data-stock-field disabled>
+        </div>`
+        : `<label class="stock-inline-field">
+          <span>Qty</span>
+          <input type="number" name="quantity" min="1" step="1" placeholder="0" inputmode="numeric" data-stock-qty data-stock-field disabled>
+        </label>`;
+      const priceBlockSimple = `<label class="stock-inline-field">
+          <span class="stock-inline-label-row">
+            <span>Price</span>
+            ${
+              prev
+                ? `<em class="stock-prev-price">Prev ${prev}</em>`
+                : `<em class="stock-prev-price is-empty">No prev</em>`
+            }
+          </span>
+          <input
+            type="number"
+            name="buying_price"
+            min="0"
+            step="1"
+            placeholder="${prev || "0"}"
+            inputmode="numeric"
+            data-stock-buying-price
+            data-stock-field
+            ${prev ? `data-stock-prev-buying="${prev}"` : ""}
+            disabled
+          >
+        </label>`;
       return `
       <div class="stock-in-field-row buy-stock-pick-fields">
-        ${qtyBlock}
-        ${priceBlock}
+        ${qtyBlockSimple}
+        ${priceBlockSimple}
       </div>
       ${supplierHidden}
       ${buildSerialBlock(item)}`;
@@ -854,12 +981,6 @@
             <span>Select</span>
             <i data-lucide="plus" aria-hidden="true"></i>
           </button>
-        </div>
-        <div class="buy-stock-pick-inputs" data-stock-item-inputs hidden>
-          <div class="stock-item-inputs stock-item-inputs--matrix">
-            <input type="hidden" name="item_id" value="${item.id}" disabled data-stock-field>
-            ${mode === "in" ? buildInFields(item) : buildOutFields(item)}
-          </div>
         </div>`;
       return [header];
     }
@@ -953,6 +1074,7 @@
     });
     if (replace) restoreParkedToTop();
     items.forEach((item) => {
+      itemCache.set(String(item.id), item);
       if (parkedIds.has(String(item.id))) return;
       const section = ensureGroup(item.category);
       const tbody = section.querySelector("[data-stock-catalog-tbody]");
@@ -965,7 +1087,7 @@
 
   const notify = () => {
     document.dispatchEvent(new CustomEvent("stock-catalog:rendered"));
-    if (window.lucide?.createIcons) window.lucide.createIcons();
+    refreshIcons(listRoot);
   };
 
   const showLoadError = ({ append, q }) => {
@@ -983,10 +1105,42 @@
       ?.addEventListener("click", () => reload(q || activeQuery));
   };
 
-  const cacheKeyFor = (page, q) =>
-    `stock-catalog:${catalogShopIds.join("-") || shopId || "all"}:${fromShopId || "0"}:${mode}:p${page}:s${pageSize}:q${String(
-      q || ""
-    ).toLowerCase()}`;
+  const buildFetchParams = (page, q) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+      mode,
+    });
+    if (catalogShopIds.length) {
+      catalogShopIds.forEach((id) => params.append("shop_id", id));
+    } else if (shopId) {
+      params.set("shop_id", shopId);
+    }
+    if (mode === "request" && fromShopId) {
+      params.set("requested_from_shop_id", fromShopId);
+    }
+    if (q) params.set("q", q);
+    return params;
+  };
+
+  const warmCatalogPage = async ({ page = 1, q = "" } = {}) => {
+    const cacheKey = cacheKeyFor(page, q);
+    if (memoryCache.has(cacheKey)) return;
+    try {
+      const response = await fetch(`${apiUrl}?${buildFetchParams(page, q).toString()}`, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.ok) return;
+      memoryCache.set(cacheKey, data);
+      getOfflineStore().then((store) => {
+        if (store?.cacheSet) store.cacheSet(cacheKey, data, 60 * 60 * 12);
+      });
+    } catch (_err) {
+      /* optional warm-up */
+    }
+  };
 
   const applyCatalogData = (data, { q, append }) => {
     totalCount = Number(data.total || 0);
@@ -1021,44 +1175,41 @@
     if (moreBtn) moreBtn.disabled = true;
     setBusy(true);
 
-    const params = new URLSearchParams({
-      page: String(page),
-      page_size: String(pageSize),
-      mode,
-    });
-    if (catalogShopIds.length) {
-      catalogShopIds.forEach((id) => params.append("shop_id", id));
-    } else if (shopId) {
-      params.set("shop_id", shopId);
-    }
-    if (mode === "request" && fromShopId) {
-      params.set("requested_from_shop_id", fromShopId);
-    }
-    if (q) params.set("q", q);
     const cacheKey = cacheKeyFor(page, q);
     const online = typeof navigator === "undefined" || navigator.onLine;
+    const memHit = memoryCache.get(cacheKey);
+
+    if (memHit?.ok) {
+      if (seq !== inFlight) return;
+      applyCatalogData(memHit, { q, append });
+      panel.removeAttribute("data-catalog-from-cache");
+      setBusy(false);
+      if (moreBtn) moreBtn.disabled = false;
+      if (online && !append && memHit.has_more && memHit.next_page) {
+        warmCatalogPage({ page: memHit.next_page, q: memHit.q || q || "" });
+      }
+      return;
+    }
 
     try {
       let data = null;
       let fromCache = false;
 
       if (online) {
-        const response = await fetch(`${apiUrl}?${params.toString()}`, {
+        const response = await fetch(`${apiUrl}?${buildFetchParams(page, q).toString()}`, {
           headers: { Accept: "application/json" },
           credentials: "same-origin",
           signal,
         });
         data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) throw new Error(data.error || "failed");
-        try {
-          const store = await import("./offline/store.js");
-          await store.cacheSet(cacheKey, data, 60 * 60 * 12);
-        } catch (_cacheErr) {
-          /* optional */
-        }
+        memoryCache.set(cacheKey, data);
+        getOfflineStore().then((store) => {
+          if (store?.cacheSet) store.cacheSet(cacheKey, data, 60 * 60 * 12);
+        });
       } else {
-        const store = await import("./offline/store.js");
-        data = await store.cacheGet(cacheKey);
+        const store = await getOfflineStore();
+        data = store ? await store.cacheGet(cacheKey) : null;
         fromCache = Boolean(data?.ok);
         if (!fromCache) throw new Error("offline_catalog_miss");
       }
@@ -1068,44 +1219,24 @@
       if (fromCache) panel.setAttribute("data-catalog-from-cache", "1");
       else panel.removeAttribute("data-catalog-from-cache");
 
-      if (
-        online &&
-        !append &&
-        !fromCache &&
-        hasMore &&
-        nextPage &&
-        typeof navigator !== "undefined" &&
-        navigator.onLine
-      ) {
-        const warmPage = nextPage;
-        const warmQ = activeQuery;
-        const warmKey = cacheKeyFor(warmPage, warmQ);
-        const warmParams = new URLSearchParams(params);
-        warmParams.set("page", String(warmPage));
-        fetch(`${apiUrl}?${warmParams.toString()}`, {
-          headers: { Accept: "application/json" },
-          credentials: "same-origin",
-        })
-          .then((res) => res.json().catch(() => ({})))
-          .then(async (warmData) => {
-            if (!warmData?.ok) return;
-            try {
-              const store = await import("./offline/store.js");
-              await store.cacheSet(warmKey, warmData, 60 * 60 * 12);
-            } catch (_err) {
-              /* optional */
-            }
-          })
-          .catch(() => {});
+      if (online && !append && !fromCache && hasMore && nextPage) {
+        warmCatalogPage({ page: nextPage, q: activeQuery });
       }
     } catch (err) {
       if (err?.name === "AbortError") return;
       if (seq !== inFlight) return;
+      const cached = memoryCache.get(cacheKey);
+      if (cached?.ok) {
+        applyCatalogData(cached, { q, append });
+        panel.setAttribute("data-catalog-from-cache", "1");
+        return;
+      }
       try {
-        const store = await import("./offline/store.js");
-        const cached = await store.cacheGet(cacheKey);
-        if (seq === inFlight && cached?.ok) {
-          applyCatalogData(cached, { q, append });
+        const store = await getOfflineStore();
+        const idbCached = store ? await store.cacheGet(cacheKey) : null;
+        if (seq === inFlight && idbCached?.ok) {
+          memoryCache.set(cacheKey, idbCached);
+          applyCatalogData(idbCached, { q, append });
           panel.setAttribute("data-catalog-from-cache", "1");
           return;
         }
@@ -1137,8 +1268,28 @@
     if (window.lucide?.createIcons) window.lucide.createIcons();
   };
 
+  const openPicker = ({ browse = false } = {}) => {
+    setPickerCollapsed(false);
+    if (browse) {
+      if (searchInput) searchInput.value = "";
+      setBrowseOpen(true);
+      showCatalogLoading();
+      reload("", { forceBrowse: true }).then(() => {
+        searchInput?.focus();
+        if (window.lucide?.createIcons) window.lucide.createIcons();
+      });
+      return;
+    }
+    showIdleHint();
+    searchInput?.focus();
+  };
+
   const reload = (q = "", { forceBrowse = false } = {}) => {
     const query = String(q || "").trim();
+    if (pickerCollapsed && !forceBrowse && !query) {
+      return Promise.resolve();
+    }
+    if (query || forceBrowse) setPickerCollapsed(false);
     if (searchFirst && !query && !forceBrowse && !browseOpen) {
       abortController?.abort();
       parkFilled();
@@ -1147,6 +1298,7 @@
       return Promise.resolve();
     }
     if (!query && (forceBrowse || browseOpen)) setBrowseOpen(true);
+    if (simpleMode) showCatalogLoading();
     return fetchPage({ page: 1, q: query, append: false });
   };
 
@@ -1156,6 +1308,7 @@
   });
 
   browseBtn?.addEventListener("click", () => {
+    setPickerCollapsed(false);
     const query = String(searchInput?.value || "").trim();
     if (browseOpen && !query) {
       abortController?.abort();
@@ -1166,21 +1319,31 @@
     }
     if (searchInput && query) searchInput.value = "";
     setBrowseOpen(true);
+    showCatalogLoading();
     reload("", { forceBrowse: true }).then(() => {
       listRoot.scrollIntoView({ behavior: "smooth", block: "nearest" });
       if (window.lucide?.createIcons) window.lucide.createIcons();
     });
   });
 
+  addAnotherBtn?.addEventListener("click", () => {
+    openPicker({ browse: false });
+  });
+
   searchInput?.addEventListener("input", () => {
     window.clearTimeout(searchTimer);
     const query = String(searchInput.value || "").trim();
-    if (query) setBrowseOpen(false);
-    searchTimer = window.setTimeout(() => reload(query), 220);
+    if (query) {
+      setPickerCollapsed(false);
+      setBrowseOpen(false);
+      showCatalogLoading();
+    }
+    searchTimer = window.setTimeout(() => reload(query), 150);
   });
   searchInput?.addEventListener("search", () => {
     window.clearTimeout(searchTimer);
     const query = String(searchInput.value || "").trim();
+    if (query) setPickerCollapsed(false);
     if (!query && browseOpen) {
       reload("", { forceBrowse: true });
       return;
@@ -1189,11 +1352,31 @@
     reload(query);
   });
 
+  panel.addEventListener("stock-catalog:collapse-picker", () => {
+    if (!simpleMode) return;
+    if (searchInput) searchInput.value = "";
+    abortController?.abort();
+    parkFilled();
+    showIdleHint();
+    setBusy(false);
+    setPickerCollapsed(true);
+  });
+
+  panel.addEventListener("stock-catalog:expand-picker", () => {
+    openPicker({ browse: false });
+  });
+
+  document.addEventListener("stock-catalog:rendered", () => {
+    if (pickerCollapsed) setPickerCollapsed(true);
+    else syncAddAnother();
+  });
+
   const startCatalog = () => {
     if (panel.dataset.stockCatalogStarted === "1") return;
     panel.dataset.stockCatalogStarted = "1";
     if (searchFirst) {
       showIdleHint();
+      warmCatalogPage({ page: 1, q: "" });
       return;
     }
     reload("");
@@ -1204,6 +1387,7 @@
     document.addEventListener(
       "buy-stock-modal:open",
       () => {
+        warmCatalogPage({ page: 1, q: "" });
         panel.dispatchEvent(new CustomEvent("stock-catalog:load"));
       },
       { once: true }

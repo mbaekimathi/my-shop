@@ -189,9 +189,9 @@
     chunks.push(new Uint8Array([0x1b, 0x40])); // init
     // Character size from receipt font setting
     chunks.push(new Uint8Array([0x1d, 0x21, style.escPosMagnification]));
-    // Bold / double-strike from receipt weight
-    chunks.push(new Uint8Array([0x1b, 0x45, style.bold ? 0x01 : 0x00]));
-    chunks.push(new Uint8Array([0x1b, 0x47, style.doubleStrike ? 0x01 : 0x00]));
+    // Always bold + double-strike on hardware so thermal ink stays readable.
+    chunks.push(new Uint8Array([0x1b, 0x45, 0x01]));
+    chunks.push(new Uint8Array([0x1b, 0x47, 0x01]));
     chunks.push(new Uint8Array([0x1b, 0x61, 0x00])); // left
     const body = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     chunks.push(textEncoder.encode(`${body}\n`));
@@ -244,20 +244,27 @@
     width: ${style.paperWidth};
     margin: 0;
     padding: 0;
-    background: #fff;
-    color: #000;
+    background: #fff !important;
+    color: #000 !important;
   }
-  * { box-sizing: border-box; }
+  * {
+    box-sizing: border-box;
+    color: #000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
   body {
     font-family: "Courier New", ui-monospace, Menlo, Consolas, monospace;
     font-size: ${style.fontSize};
-    font-weight: ${style.fontWeight};
-    line-height: 1.35;
+    font-weight: 900 !important;
+    line-height: 1.4;
     padding: ${style.paperMm === "58" ? "2.5mm 2mm 3mm" : "3.5mm 3mm 4mm"};
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
+    -webkit-font-smoothing: none;
+    -moz-osx-font-smoothing: unset;
+    text-rendering: geometricPrecision;
+    text-shadow: 0.35px 0 0 #000, -0.35px 0 0 #000, 0 0.35px 0 #000, 0 -0.35px 0 #000;
   }
-  .receipt-ticket-inner { width: 100%; }
+  .receipt-ticket-inner { width: 100%; font-weight: 900 !important; }
   .receipt-ticket-brand { text-align: center; }
   .receipt-ticket-logo {
     display: block;
@@ -269,41 +276,48 @@
   }
   .receipt-ticket-mark {
     margin: 0 0 0.3em;
-    font-size: 0.72em;
-    font-weight: 800;
-    letter-spacing: 0.18em;
+    font-size: 0.78em;
+    font-weight: 900 !important;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: #000;
   }
   .receipt-ticket-brand h4 {
     margin: 0;
-    font-size: 1.15em;
-    font-weight: 800;
+    font-size: 1.22em;
+    font-weight: 900 !important;
     letter-spacing: 0.02em;
-    color: #000;
   }
   .receipt-ticket-brand p {
     margin: 0.12em 0 0;
-    font-size: 0.92em;
-    color: #000;
+    font-size: 0.98em;
+    font-weight: 900 !important;
   }
-  .receipt-ticket-branch { color: #111; font-size: 0.88em; }
+  .receipt-ticket-branch {
+    font-size: 0.92em;
+    font-weight: 900 !important;
+  }
   .receipt-ticket-rule {
     height: 0;
     margin: 0.65em 0;
     border: 0;
-    border-top: 1px dashed #222;
+    border-top: 2px solid #000 !important;
   }
-  .receipt-ticket-meta { display: grid; gap: 0.26em; }
+  .receipt-ticket-meta { display: grid; gap: 0.28em; }
   .receipt-ticket-meta > div {
     display: grid;
     grid-template-columns: ${style.paperMm === "58" ? "3.6em" : "4.2em"} 1fr;
     gap: 0.35em;
     align-items: baseline;
   }
-  .receipt-ticket-meta span { color: #111; font-size: 0.88em; font-weight: 700; }
-  .receipt-ticket-meta strong { font-weight: 800; color: #000; word-break: break-word; }
-  .receipt-ticket-lines { display: grid; gap: 0.42em; }
+  .receipt-ticket-meta span {
+    font-size: 0.9em;
+    font-weight: 900 !important;
+  }
+  .receipt-ticket-meta strong {
+    font-weight: 900 !important;
+    word-break: break-word;
+  }
+  .receipt-ticket-lines { display: grid; gap: 0.45em; }
   .receipt-ticket-line {
     display: grid;
     grid-template-columns: ${
@@ -313,6 +327,7 @@
     };
     gap: 0.28em;
     align-items: baseline;
+    font-weight: 900 !important;
   }
   .receipt-ticket-line--qty {
     grid-template-columns: minmax(0, 1fr) ${
@@ -324,20 +339,21 @@
   .receipt-ticket-line > span:nth-child(4) {
     text-align: left;
     font-variant-numeric: tabular-nums;
-    color: #000;
+    font-weight: 900 !important;
   }
   .receipt-ticket-line--head {
-    color: #000;
-    font-size: 0.84em;
-    font-weight: 800;
+    font-size: 0.88em;
+    font-weight: 900 !important;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    border-bottom: 1.5px solid #000;
+    padding-bottom: 0.15em;
+    margin-bottom: 0.1em;
   }
-  .receipt-ticket-item { min-width: 0; overflow: hidden; color: #000; }
+  .receipt-ticket-item { min-width: 0; overflow: hidden; }
   .receipt-ticket-item strong {
     display: block;
-    font-weight: 800;
-    color: #000;
+    font-weight: 900 !important;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -346,49 +362,63 @@
     display: block;
     margin-top: 0.08em;
     font-style: normal;
-    font-size: 0.82em;
-    color: #111;
+    font-size: 0.86em;
+    font-weight: 900 !important;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .receipt-ticket-price { white-space: nowrap; color: #000; font-size: 0.95em; }
+  .receipt-ticket-price {
+    white-space: nowrap;
+    font-size: 0.98em;
+    font-weight: 900 !important;
+  }
   .receipt-ticket-cancelled {
     margin: 0.3em 0;
     text-align: center;
-    font-weight: 800;
+    font-weight: 900 !important;
     letter-spacing: 0.04em;
-    color: #000;
   }
-  .receipt-ticket-totals { display: grid; gap: 0.26em; color: #000; }
+  .receipt-ticket-totals {
+    display: grid;
+    gap: 0.28em;
+    font-weight: 900 !important;
+  }
   .receipt-ticket-totals > div {
     display: flex;
     justify-content: space-between;
     gap: 0.7em;
+    font-weight: 900 !important;
+  }
+  .receipt-ticket-totals span,
+  .receipt-ticket-totals strong {
+    font-weight: 900 !important;
   }
   .receipt-ticket-grand {
     margin-top: 0.12em;
-    padding-top: 0.32em;
-    border-top: 1.5px solid #000;
-    font-size: 1.05em;
-    color: #000;
+    padding-top: 0.35em;
+    border-top: 2.5px solid #000 !important;
+    font-size: 1.12em;
+    font-weight: 900 !important;
   }
-  .receipt-ticket-grand strong { font-weight: 800; color: #000; }
-  .receipt-ticket-payment { text-align: center; color: #000; }
+  .receipt-ticket-grand strong { font-weight: 900 !important; }
+  .receipt-ticket-payment { text-align: center; font-weight: 900 !important; }
   .receipt-ticket-payment-title {
     margin: 0 0 0.3em;
-    font-weight: 800;
-    font-size: 0.95em;
+    font-weight: 900 !important;
+    font-size: 1em;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #000;
   }
-  .receipt-ticket-payment-lines p { margin: 0.08em 0; color: #000; }
+  .receipt-ticket-payment-lines p {
+    margin: 0.08em 0;
+    font-weight: 900 !important;
+  }
   .receipt-ticket-footer {
     margin: 0;
     text-align: center;
-    font-size: 0.92em;
-    color: #111;
+    font-size: 0.95em;
+    font-weight: 900 !important;
   }
   .receipt-ticket-qr {
     display: grid;
@@ -406,22 +436,27 @@
   .receipt-ticket-qr p {
     margin: 0;
     text-align: center;
-    font-size: 0.82em;
+    font-size: 0.88em;
     letter-spacing: 0.02em;
     text-transform: uppercase;
-    color: #111;
-    font-weight: 700;
+    font-weight: 900 !important;
   }
   pre {
     margin: 0;
     font: inherit;
+    font-weight: 900 !important;
     white-space: pre-wrap;
     word-break: break-word;
   }
   .qr { margin-top: 8px; text-align: center; white-space: normal; }
   .qr img { width: ${style.qrSize}; height: ${style.qrSize}; image-rendering: pixelated; }
-  .qr p { margin: 4px 0 0; font-size: 0.85em; text-transform: uppercase; }
-  .qr-text { margin-top: 6px; font-size: 0.9em; }
+  .qr p {
+    margin: 4px 0 0;
+    font-size: 0.9em;
+    text-transform: uppercase;
+    font-weight: 900 !important;
+  }
+  .qr-text { margin-top: 6px; font-size: 0.95em; font-weight: 900 !important; }
 `;
 
   const renderTicketHtml = (ticket, qr = null) => {

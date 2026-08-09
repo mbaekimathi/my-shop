@@ -32,6 +32,7 @@ from items.services import (
     build_stock_catalog_page,
     last_buying_prices_for_items,
     respond_to_stock_request,
+    search_suppliers,
 )
 
 from .models import ExpenseCategory, ExpensePaymentStatus, Shop
@@ -1070,7 +1071,9 @@ def _buy_stock_items_context(shop):
         "selected_shop": shop,
         "stock_mode": "in",
         "countries": COUNTRY_DIAL_CODES,
-        "supplier_search_url": reverse("employees:supplier_search"),
+        "supplier_search_url": reverse(
+            "employees:my_shop_supplier_search", kwargs={"shop_id": shop.pk}
+        ),
         "serial_check_url": reverse("employees:serial_in_stock_check"),
         "verify_login_code_url": reverse(
             "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
@@ -1106,6 +1109,7 @@ def my_shop_buy_stock_catalog(request, shop_id):
         page=request.GET.get("page") or 1,
         page_size=request.GET.get("page_size") or 48,
         include_suspended=True,
+        include_totals=False,
     )
     return JsonResponse(payload)
 
@@ -1553,6 +1557,42 @@ def my_shop_register_expense(request, shop_id):
             }
         )
     return redirect(next_url)
+
+
+@shop_floor_required
+@require_http_methods(["GET"])
+def my_shop_supplier_search(request, shop_id):
+    """Live stock-supplier suggestions for Buy stock on the shop floor."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "buy_stock", as_json=True, portal_ok=True
+    )
+    if denied:
+        return denied
+
+    query = (request.GET.get("q") or "").strip()
+    by = (request.GET.get("by") or "name").strip().lower()
+    dial = (request.GET.get("dial") or "").strip()
+    match = (request.GET.get("match") or "contains").strip().lower()
+    results = search_suppliers(query=query, by=by, dial=dial, limit=8, match=match)
+    return JsonResponse(
+        {
+            "ok": True,
+            "match": match,
+            "results": [
+                {
+                    "id": supplier.pk,
+                    "name": supplier.name,
+                    "dial": supplier.phone_country_code,
+                    "iso": supplier.phone_country_iso or "KE",
+                    "phone": supplier.phone_number,
+                }
+                for supplier in results
+            ],
+        }
+    )
 
 
 @shop_floor_required
