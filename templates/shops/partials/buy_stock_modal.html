@@ -122,6 +122,20 @@
           <div class="buy-stock-simple-supplier" data-stock-float-apply>
             <input type="hidden" value="" data-stock-float-supplier-id>
             <label class="stock-float-field">
+              <span>Supplier name</span>
+              <div class="stock-supplier-name-wrap" data-supplier-search-root>
+                <input
+                  type="text"
+                  placeholder="Type name to search…"
+                  autocomplete="organization"
+                  data-uppercase
+                  data-stock-float-supplier-name
+                  data-supplier-search="name"
+                >
+                <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+              </div>
+            </label>
+            <label class="stock-float-field">
               <span>Supplier phone</span>
               <div class="stock-phone-field" data-stock-phone-field data-stock-float-phone-wrap data-supplier-search-root>
                 <input type="hidden" value="+254" data-stock-float-supplier-dial>
@@ -152,20 +166,6 @@
                   autocomplete="tel-national"
                   data-stock-float-supplier-phone
                   data-supplier-search="phone"
-                >
-                <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
-              </div>
-            </label>
-            <label class="stock-float-field">
-              <span>Supplier name</span>
-              <div class="stock-supplier-name-wrap" data-supplier-search-root>
-                <input
-                  type="text"
-                  placeholder="SUPPLIER NAME"
-                  autocomplete="organization"
-                  data-uppercase
-                  data-stock-float-supplier-name
-                  data-supplier-search="name"
                 >
                 <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
               </div>

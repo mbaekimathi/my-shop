@@ -298,15 +298,74 @@ def item_management_catalog(request, role_segment):
     return JsonResponse(payload)
 
 
-def _stock_redirect(path, mode, *, shop_id="", requested_from_shop_id=""):
+def _parse_request_shop_ids(request, *, allow_csv=True):
+    """Collect shop ids from repeated shop_id params and optional shop_ids CSV."""
+    raw_values = []
+    if hasattr(request, "GET"):
+        raw_values.extend(request.GET.getlist("shop_id"))
+        if allow_csv and request.GET.get("shop_ids"):
+            raw_values.append(request.GET.get("shop_ids"))
+    if request.method == "POST":
+        raw_values.extend(request.POST.getlist("shop_id"))
+        filter_csv = (request.POST.get("filter_shop_ids") or "").strip()
+        if filter_csv:
+            raw_values.append(filter_csv)
+        if allow_csv and request.POST.get("shop_ids"):
+            raw_values.append(request.POST.get("shop_ids"))
+
+    ids = []
+    seen = set()
+    for raw in raw_values:
+        parts = [raw] if isinstance(raw, int) else str(raw or "").replace(";", ",").split(",")
+        for part in parts:
+            value = str(part).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            ids.append(value)
+    return ids
+
+
+def _stock_redirect(path, mode, *, shop_id="", shop_ids=None, requested_from_shop_id=""):
     from urllib.parse import urlencode
 
-    params = {"mode": mode}
-    if shop_id:
-        params["shop_id"] = shop_id
+    params = [("mode", mode)]
+    ids = []
+    if shop_ids:
+        ids = [str(sid).strip() for sid in shop_ids if str(sid).strip()]
+    elif shop_id:
+        ids = [str(shop_id).strip()]
+    for sid in ids:
+        params.append(("shop_id", sid))
     if mode == "request" and requested_from_shop_id:
-        params["requested_from_shop_id"] = requested_from_shop_id
+        params.append(("requested_from_shop_id", str(requested_from_shop_id)))
     return redirect(f"{path}?{urlencode(params)}")
+
+
+def _stock_next_url(path, mode, *, shop_id="", shop_ids=None, requested_from_shop_id=""):
+    from urllib.parse import urlencode
+
+    params = [("mode", mode)]
+    ids = []
+    if shop_ids:
+        ids = [str(sid).strip() for sid in shop_ids if str(sid).strip()]
+    elif shop_id:
+        ids = [str(shop_id).strip()]
+    for sid in ids:
+        params.append(("shop_id", sid))
+    if mode == "request" and requested_from_shop_id:
+        params.append(("requested_from_shop_id", str(requested_from_shop_id)))
+    return f"{path}?{urlencode(params)}"
+
+
+def _wants_json_response(request) -> bool:
+    accept = (request.headers.get("Accept") or "").lower()
+    requested_with = (request.headers.get("X-Requested-With") or "").lower()
+    return (
+        "application/json" in accept
+        or requested_with == "xmlhttprequest"
+        or (request.POST.get("ajax") or request.GET.get("ajax") or "") == "1"
+    )
 
 
 def _parse_report_date(raw, *, fallback=None):
@@ -1115,46 +1174,105 @@ def stock_management(request, profile, meta, module, page_sidebar):
         raw = (raw or "").strip()
         return shops_by_id.get(raw)
 
-    selected_shop_id = (request.GET.get("shop_id") or request.POST.get("shop_id") or "").strip()
+    requested_shop_ids = _parse_request_shop_ids(request)
+    selected_shops = []
+    for raw_id in requested_shop_ids:
+        shop = _resolve_shop(raw_id)
+        if shop is not None:
+            selected_shops.append(shop)
+    # View mode keeps a single shop filter.
+    if mode == "view":
+        selected_shops = selected_shops[:1]
+    # Drop unknown / unallocated ids; empty selected_shops means all shops.
+    if mode in ("in", "out") and selected_shops and len(selected_shops) >= len(shops):
+        # Selecting every allocated shop is the same as "all shops".
+        selected_shops = []
+
+    selected_shop = selected_shops[0] if len(selected_shops) == 1 else None
+    selected_shop_id = str(selected_shop.pk) if selected_shop else ""
+    selected_shop_ids = [shop.pk for shop in selected_shops]
+    selected_shop_id_set = set(selected_shop_ids)
+    shop_filter_active = mode in ("in", "out") and bool(selected_shops)
     requested_from_id = (
         request.GET.get("requested_from_shop_id")
         or request.POST.get("requested_from_shop_id")
         or ""
     ).strip()
 
-    # Drop shop_id from the URL when switching into an action mode where it is not allocated.
-    if mode != "view" and selected_shop_id and selected_shop_id not in shops_by_id:
-        selected_shop_id = ""
-
     page_sidebar = sidebar_for_stock_management(
         profile.role,
         active_mode=mode,
-        shop_id=selected_shop_id,
+        shop_ids=selected_shop_ids,
         requested_from_shop_id=requested_from_id if mode == "request" else "",
         profile=profile,
     )
 
     if request.method == "POST":
+        wants_json = _wants_json_response(request)
         action_mode = (request.POST.get("mode") or mode).strip().lower()
         if action_mode not in ("in", "out", "request"):
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "Choose Stock In, Stock Out, or Request Stock first.",
+                    },
+                    status=400,
+                )
             messages.error(request, "Choose Stock In, Stock Out, or Request Stock first.")
-            return _stock_redirect(request.path, "view", shop_id=selected_shop_id)
+            return _stock_redirect(
+                request.path, "view", shop_ids=selected_shop_ids[:1]
+            )
         denied = require_module_permission(
-            request, profile, "stock-management", action_mode
+            request, profile, "stock-management", action_mode, as_json=wants_json
         )
         if denied is not None:
             return denied
         shop_id = (request.POST.get("shop_id") or "").strip()
         requested_from_post = (request.POST.get("requested_from_shop_id") or "").strip()
+        redirect_shop_ids = []
+        if action_mode == "request":
+            if shop_id:
+                redirect_shop_ids = [shop_id]
+        else:
+            filter_csv = (request.POST.get("filter_shop_ids") or "").strip()
+            if filter_csv:
+                redirect_shop_ids = [
+                    part.strip()
+                    for part in filter_csv.replace(";", ",").split(",")
+                    if part.strip() and part.strip() in shops_by_id
+                ]
+            elif selected_shop_ids:
+                redirect_shop_ids = [str(sid) for sid in selected_shop_ids]
+        next_url = _stock_next_url(
+            request.path,
+            action_mode,
+            shop_ids=redirect_shop_ids,
+            requested_from_shop_id=requested_from_post,
+        )
         try:
             apply_stock_movement(profile, action_mode, request.POST)
         except ValidationError as exc:
-            for message in (exc.messages if hasattr(exc, "messages") else [str(exc)]):
+            errors = (
+                list(exc.messages)
+                if hasattr(exc, "messages")
+                else [str(exc)]
+            )
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": errors[0] if errors else "Could not submit stock.",
+                        "errors": errors,
+                    },
+                    status=400,
+                )
+            for message in errors:
                 messages.error(request, message)
             return _stock_redirect(
                 request.path,
                 action_mode,
-                shop_id=shop_id,
+                shop_ids=redirect_shop_ids,
                 requested_from_shop_id=requested_from_post,
             )
 
@@ -1163,15 +1281,34 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "out": "Stock out submitted successfully.",
             "request": "Stock request submitted successfully.",
         }
-        messages.success(request, labels[action_mode])
+        success_message = labels[action_mode]
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "message": success_message,
+                    "next": next_url,
+                }
+            )
+        messages.success(request, success_message)
         return _stock_redirect(
             request.path,
             action_mode,
-            shop_id=shop_id,
+            shop_ids=redirect_shop_ids,
             requested_from_shop_id=requested_from_post,
         )
 
-    selected_shop = _resolve_shop(selected_shop_id)
+    if mode == "request":
+        # Request mode uses shop_id as the requesting shop (single).
+        selected_shop = _resolve_shop(
+            requested_shop_ids[0] if requested_shop_ids else ""
+        )
+        selected_shop_id = str(selected_shop.pk) if selected_shop else ""
+        selected_shops = [selected_shop] if selected_shop else []
+        selected_shop_ids = [selected_shop.pk] if selected_shop else []
+        selected_shop_id_set = set(selected_shop_ids)
+        shop_filter_active = False
+
     requested_from_shop = None
     if mode == "request":
         requested_from_shop = _resolve_shop(requested_from_id)
@@ -1194,10 +1331,10 @@ def stock_management(request, profile, meta, module, page_sidebar):
     category_count = 0
     shop_total_units = 0
     display_shops = []
-    # View / stock in / stock out: optional shop filter. Request keeps all columns.
+    # View: optional single shop. Stock in/out: optional multi-shop filter.
     show_all_shops = mode == "view" and selected_shop is None and bool(all_shops)
     if mode in ("in", "out") and shops:
-        show_all_shops = selected_shop is None and len(shops) > 1
+        show_all_shops = (not selected_shops and len(shops) > 1) or len(selected_shops) > 1
     elif mode == "request" and shops:
         show_all_shops = len(shops) > 1
 
@@ -1223,7 +1360,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             Item.objects.order_by("category").values("category").distinct().count()
         )
     elif mode in ("in", "out") and shops:
-        display_shops = [selected_shop] if selected_shop else list(shops)
+        display_shops = list(selected_shops) if selected_shops else list(shops)
         shop_total_units = (
             ShopStock.objects.filter(
                 shop_id__in=[shop.pk for shop in display_shops]
@@ -1254,7 +1391,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
         )
     else:
         # Action mode without required shop selection — empty shell.
-        display_shops = [selected_shop] if selected_shop else []
+        display_shops = list(selected_shops) if selected_shops else (
+            [selected_shop] if selected_shop else []
+        )
 
     from employees.access import role_url_segment
 
@@ -1270,6 +1409,18 @@ def stock_management(request, profile, meta, module, page_sidebar):
     catalog_shops_json = _json.dumps(
         [{"id": shop.pk, "name": shop.name} for shop in display_shops]
     )
+    selected_shop_ids_json = _json.dumps(selected_shop_ids)
+    selected_shop_ids_csv = ",".join(str(sid) for sid in selected_shop_ids)
+
+    if shop_filter_active:
+        if len(selected_shops) == 1:
+            shop_filter_label = selected_shops[0].name
+        elif len(selected_shops) <= 3:
+            shop_filter_label = ", ".join(shop.name for shop in selected_shops)
+        else:
+            shop_filter_label = f"{len(selected_shops)} shops"
+    else:
+        shop_filter_label = "All shops"
 
     return render(
         request,
@@ -1287,6 +1438,13 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "display_shops": display_shops,
             "show_all_shops": show_all_shops,
             "selected_shop": selected_shop,
+            "selected_shops": selected_shops,
+            "selected_shop_ids": selected_shop_ids,
+            "selected_shop_id_set": selected_shop_id_set,
+            "selected_shop_ids_csv": selected_shop_ids_csv,
+            "selected_shop_ids_json": selected_shop_ids_json,
+            "shop_filter_active": shop_filter_active,
+            "shop_filter_label": shop_filter_label,
             "requested_from_shop": requested_from_shop,
             "item_count": item_count,
             "category_count": category_count,
@@ -1341,16 +1499,26 @@ def stock_management_catalog(request, role_segment):
     except (TypeError, ValueError):
         from_id = 0
 
+    requested_shop_ids = []
+    for raw in _parse_request_shop_ids(request):
+        try:
+            requested_shop_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if not requested_shop_ids and shop_id:
+        requested_shop_ids = [shop_id]
+
     if mode == "view":
         all_shops = list(
             Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
         )
         shops_by_id = {shop.pk: shop for shop in all_shops}
-        if shop_id and shop_id not in shops_by_id:
+        view_shop_id = requested_shop_ids[0] if requested_shop_ids else 0
+        if view_shop_id and view_shop_id not in shops_by_id:
             return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
         payload = build_stock_catalog_page(
-            shop_id=shop_id or None,
-            shop_ids=None if shop_id else [shop.pk for shop in all_shops],
+            shop_id=view_shop_id or None,
+            shop_ids=None if view_shop_id else [shop.pk for shop in all_shops],
             mode="view",
             q=request.GET.get("q") or "",
             page=request.GET.get("page") or 1,
@@ -1366,15 +1534,24 @@ def stock_management_catalog(request, role_segment):
         return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
 
     action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}
-    # Stock in/out: optional shop_id filter. Request always uses all actionable shops.
+    # Stock in/out: optional multi shop_id filter. Request always uses all actionable shops.
     if mode in ("in", "out", "request"):
         if not action_shops:
             return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
-        if mode in ("in", "out") and shop_id:
-            if shop_id not in action_shops:
+        if mode in ("in", "out") and requested_shop_ids:
+            catalog_shop_ids = [
+                sid for sid in requested_shop_ids if sid in action_shops
+            ]
+            if not catalog_shop_ids:
                 return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
-            catalog_shop_ids = [shop_id]
-            prefer_shop_id = shop_id
+            # Selecting every allocated shop is the same as all shops.
+            if len(catalog_shop_ids) >= len(action_shops):
+                catalog_shop_ids = list(action_shops.keys())
+                prefer_shop_id = None
+            else:
+                prefer_shop_id = (
+                    catalog_shop_ids[0] if len(catalog_shop_ids) == 1 else None
+                )
         else:
             catalog_shop_ids = list(action_shops.keys())
             prefer_shop_id = None

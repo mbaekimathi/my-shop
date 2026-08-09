@@ -10327,6 +10327,88 @@ body.workspace-modal-open {
   box-shadow: 0 0 0 3px rgba(217, 149, 31, 0.12);
 }
 
+.stock-shop-filter {
+  display: grid;
+  gap: 0.55rem;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.stock-shop-filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+}
+
+.stock-shop-filter-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.stock-shop-filter-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.86rem;
+  color: var(--text-strong);
+  cursor: pointer;
+}
+
+.stock-shop-filter-apply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.1rem;
+  padding: 0.3rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.stock-shop-filter-apply:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: var(--panel-muted);
+}
+
+.stock-shop-filter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.55rem;
+  max-height: 7.5rem;
+  overflow: auto;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.stock-shop-filter-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-muted);
+  color: var(--text-strong);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.stock-shop-filter-item:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
 .stock-shop-bar-hint {
   margin: 0;
   align-self: end;
@@ -11931,7 +12013,7 @@ body.workspace-modal-open {
   top: calc(100% + 0.25rem);
   left: 0;
   right: 0;
-  z-index: 30;
+  z-index: 60;
   display: grid;
   gap: 0;
   margin: 0;

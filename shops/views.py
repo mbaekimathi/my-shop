@@ -1068,7 +1068,11 @@ def my_shop_buy_stock(request, shop_id):
                 errors = _validation_errors(exc)
                 if wants_json:
                     return JsonResponse(
-                        {"ok": False, "error": errors[0] if errors else "Could not stock in."},
+                        {
+                            "ok": False,
+                            "error": errors[0] if errors else "Could not stock in.",
+                            "errors": errors,
+                        },
                         status=400,
                     )
                 for message in errors:

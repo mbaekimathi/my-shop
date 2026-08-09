@@ -515,6 +515,7 @@ def stock_management_url(
     mode="view",
     *,
     shop_id="",
+    shop_ids=None,
     requested_from_shop_id="",
     report_params=None,
 ):
@@ -525,13 +526,20 @@ def stock_management_url(
         "employees:workspace_module",
         kwargs={"role_segment": segment, "module_slug": "stock-management"},
     )
-    params = {"mode": mode or "view"}
-    if shop_id:
-        params["shop_id"] = shop_id
+    params = [("mode", mode or "view")]
+    ids = []
+    if shop_ids:
+        ids = [str(sid).strip() for sid in shop_ids if str(sid).strip()]
+    elif shop_id:
+        ids = [str(shop_id).strip()]
+    for sid in ids:
+        params.append(("shop_id", sid))
     if mode == "request" and requested_from_shop_id:
-        params["requested_from_shop_id"] = requested_from_shop_id
+        params.append(("requested_from_shop_id", str(requested_from_shop_id)))
     if mode in ("report", "movements") and report_params:
-        params.update({key: value for key, value in report_params.items() if value})
+        for key, value in report_params.items():
+            if value:
+                params.append((key, value))
     return f"{base}?{urlencode(params)}"
 
 
@@ -540,6 +548,7 @@ def sidebar_for_stock_management(
     *,
     active_mode="view",
     shop_id="",
+    shop_ids=None,
     requested_from_shop_id="",
     report_params=None,
     profile=None,
@@ -548,8 +557,13 @@ def sidebar_for_stock_management(
     from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
+    resolved_shop_ids = []
+    if shop_ids:
+        resolved_shop_ids = [str(sid).strip() for sid in shop_ids if str(sid).strip()]
+    elif shop_id:
+        resolved_shop_ids = [str(shop_id).strip()]
     shop_kwargs = {
-        "shop_id": shop_id or "",
+        "shop_ids": resolved_shop_ids,
         "requested_from_shop_id": requested_from_shop_id or "",
     }
     default_report_params = {"range": "day", "item_mode": "all"}
@@ -590,13 +604,16 @@ def sidebar_for_stock_management(
                     ]
                 )
         else:
+            view_shop_id = (
+                resolved_shop_ids[0] if len(resolved_shop_ids) == 1 else ""
+            )
             candidates = [
                 (
                     "view",
                     _link(
                         "Current Stock",
                         "boxes",
-                        href=stock_management_url(role, "view", shop_id=shop_id),
+                        href=stock_management_url(role, "view", shop_id=view_shop_id),
                         active=active_mode == "view",
                     ),
                 ),
@@ -605,7 +622,9 @@ def sidebar_for_stock_management(
                     _link(
                         "Stock In",
                         "package-plus",
-                        href=stock_management_url(role, "in", shop_id=shop_id),
+                        href=stock_management_url(
+                            role, "in", shop_ids=resolved_shop_ids
+                        ),
                         active=active_mode == "in",
                     ),
                 ),
@@ -614,7 +633,9 @@ def sidebar_for_stock_management(
                     _link(
                         "Stock Out",
                         "package-minus",
-                        href=stock_management_url(role, "out", shop_id=shop_id),
+                        href=stock_management_url(
+                            role, "out", shop_ids=resolved_shop_ids
+                        ),
                         active=active_mode == "out",
                     ),
                 ),

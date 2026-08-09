@@ -21,11 +21,71 @@
     select.addEventListener("change", navigateWithShops);
   });
 
+  const filterRoot = form.querySelector("[data-stock-shop-filter]");
+  if (filterRoot && (mode === "in" || mode === "out")) {
+    const allBox = filterRoot.querySelector("[data-stock-shop-filter-all]");
+    const applyBtn = filterRoot.querySelector("[data-stock-shop-filter-apply]");
+    const hidden = filterRoot.querySelector("[data-stock-filter-shop-ids]");
+    const boxes = () => [
+      ...filterRoot.querySelectorAll("[data-stock-shop-filter-id]"),
+    ];
+
+    const syncHidden = () => {
+      const selected = boxes()
+        .filter((box) => box.checked)
+        .map((box) => box.value);
+      const allSelected =
+        selected.length > 0 && selected.length === boxes().length;
+      if (hidden) {
+        hidden.value = allSelected || !selected.length ? "" : selected.join(",");
+      }
+      if (allBox) allBox.checked = allSelected || selected.length === 0;
+    };
+
+    allBox?.addEventListener("change", () => {
+      if (allBox.checked) {
+        boxes().forEach((box) => {
+          box.checked = true;
+        });
+      }
+      syncHidden();
+    });
+
+    boxes().forEach((box) => {
+      box.addEventListener("change", () => {
+        const selected = boxes().filter((item) => item.checked);
+        if (!selected.length) {
+          box.checked = true;
+        }
+        if (allBox) {
+          allBox.checked = boxes().every((item) => item.checked);
+        }
+        syncHidden();
+      });
+    });
+
+    applyBtn?.addEventListener("click", () => {
+      syncHidden();
+      const params = new URLSearchParams();
+      params.set("mode", mode);
+      const ids = String(hidden?.value || "")
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      ids.forEach((id) => params.append("shop_id", id));
+      window.location.assign(`${window.location.pathname}?${params.toString()}`);
+    });
+
+    syncHidden();
+  }
+
   if (mode === "view") return;
 
   /* ── Multi-shop matrix (stock in/out/request management) ─────────────── */
   if (form.hasAttribute("data-stock-multi-shop") && (mode === "in" || mode === "out" || mode === "request")) {
-    const floatRoot = document.querySelector("[data-stock-float]");
+    const floatRoot =
+      form.querySelector("[data-stock-float]") ||
+      document.querySelector("[data-stock-float]");
     const emptyEl = floatRoot?.querySelector("[data-stock-float-empty]");
     const heldEl = floatRoot?.querySelector("[data-stock-float-held]");
     const heldCountEl = floatRoot?.querySelector("[data-stock-float-held-count]");
@@ -648,8 +708,374 @@
       renderSummary();
     });
 
-    ["input", "change"].forEach((evt) => {
-      floatRoot?.addEventListener(evt, () => renderSummary());
+    /* ── Supplier live search (submit panel + any in-form fields) ───────── */
+    const supplierSearchUrl =
+      form.dataset.supplierSearchUrl ||
+      form.getAttribute("data-supplier-search-url") ||
+      "";
+    const floatPhoneWrap = floatRoot?.querySelector("[data-stock-float-phone-wrap]");
+    const floatSupplierIso = floatRoot?.querySelector("[data-stock-float-supplier-iso]");
+    let supplierSearchTimer = 0;
+    let supplierSearchSeq = 0;
+    let fillingSupplier = false;
+
+    const setFloatCountry = (dial, iso) => {
+      if (floatSupplierDial && dial) floatSupplierDial.value = dial;
+      if (floatSupplierIso && iso) floatSupplierIso.value = iso;
+      const dialDisplay = floatPhoneWrap?.querySelector("[data-stock-dial-display]");
+      const flagImg = floatPhoneWrap?.querySelector("[data-stock-flag-img]");
+      if (dialDisplay && dial) dialDisplay.textContent = dial;
+      if (flagImg && iso) {
+        flagImg.src = `https://flagcdn.com/w40/${String(iso).toLowerCase()}.png`;
+      }
+      if (floatSupplierPhone?.value) {
+        floatSupplierPhone.value = normalizePhone(floatSupplierPhone.value);
+      }
+    };
+
+    const hideSupplierSuggest = (root) => {
+      const nodes = root
+        ? root.querySelectorAll("[data-supplier-suggest]")
+        : form.querySelectorAll("[data-supplier-suggest]");
+      nodes?.forEach((el) => {
+        el.hidden = true;
+        el.innerHTML = "";
+      });
+    };
+
+    const resolveSupplierFields = (fromInput) => {
+      const floatScope = fromInput?.closest?.("[data-stock-float-apply]");
+      if (floatScope || fromInput?.matches?.("[data-stock-float-supplier-name], [data-stock-float-supplier-phone]")) {
+        return {
+          nameInput: floatSupplierName,
+          phoneInput: floatSupplierPhone,
+          dialRoot: floatPhoneWrap || floatRoot,
+          idInput: floatSupplierId,
+          scope: floatRoot || form,
+        };
+      }
+      const cell = fromInput?.closest?.("[data-stock-shop-cell], [data-stock-item-inputs], .buy-stock-pick-inputs");
+      if (cell) {
+        return {
+          nameInput: cell.querySelector("[data-stock-supplier-name], [data-stock-float-supplier-name]"),
+          phoneInput: cell.querySelector("[data-stock-supplier-phone], [data-stock-float-supplier-phone]"),
+          dialRoot: cell.querySelector("[data-stock-phone-field]") || cell,
+          idInput: cell.querySelector("[data-stock-supplier-id], [data-stock-float-supplier-id]"),
+          scope: cell,
+        };
+      }
+      return {
+        nameInput: floatSupplierName,
+        phoneInput: floatSupplierPhone,
+        dialRoot: floatPhoneWrap || floatRoot,
+        idInput: floatSupplierId,
+        scope: floatRoot || form,
+      };
+    };
+
+    const applySupplierResult = (fromInput, supplier) => {
+      if (!supplier) return;
+      fillingSupplier = true;
+      const targets = resolveSupplierFields(fromInput);
+      if (targets.nameInput) {
+        targets.nameInput.value = String(supplier.name || "").toUpperCase();
+      }
+      setFloatCountry(supplier.dial || "+254", supplier.iso || "KE");
+      if (targets.dialRoot && targets.dialRoot !== floatPhoneWrap) {
+        const dialInput =
+          targets.dialRoot.querySelector?.(
+            "[data-stock-supplier-dial], [data-stock-float-supplier-dial]"
+          ) || null;
+        const isoInput =
+          targets.dialRoot.querySelector?.(
+            "[data-stock-supplier-iso], [data-stock-float-supplier-iso]"
+          ) || null;
+        const dialDisplay = targets.dialRoot.querySelector?.("[data-stock-dial-display]");
+        const flagImg = targets.dialRoot.querySelector?.("[data-stock-flag-img]");
+        if (dialInput) dialInput.value = supplier.dial || "+254";
+        if (isoInput) isoInput.value = supplier.iso || "KE";
+        if (dialDisplay) dialDisplay.textContent = supplier.dial || "+254";
+        if (flagImg && supplier.iso) {
+          flagImg.src = `https://flagcdn.com/w40/${String(supplier.iso).toLowerCase()}.png`;
+        }
+      }
+      if (targets.phoneInput) {
+        targets.phoneInput.value = normalizePhone(supplier.phone || "");
+      }
+      // Keep float fields in sync when picking from a row/cell field.
+      if (targets.nameInput !== floatSupplierName && floatSupplierName) {
+        floatSupplierName.value = String(supplier.name || "").toUpperCase();
+      }
+      if (targets.phoneInput !== floatSupplierPhone && floatSupplierPhone) {
+        floatSupplierPhone.value = normalizePhone(supplier.phone || "");
+      }
+      if (targets.idInput) {
+        targets.idInput.value = supplier.id != null ? String(supplier.id) : "";
+      }
+      if (floatSupplierId && targets.idInput !== floatSupplierId) {
+        floatSupplierId.value = supplier.id != null ? String(supplier.id) : "";
+      }
+      fillingSupplier = false;
+      hideSupplierSuggest(targets.scope);
+      hideSupplierSuggest(floatRoot);
+      renderSummary();
+    };
+
+    const renderSupplierSuggest = (input, results) => {
+      const root = input.closest("[data-supplier-search-root]");
+      const suggest = root?.querySelector("[data-supplier-suggest]");
+      if (!suggest) return;
+      suggest.innerHTML = "";
+      if (!results.length) {
+        suggest.hidden = true;
+        return;
+      }
+      results.forEach((supplier) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "stock-supplier-suggest-option";
+        btn.innerHTML = "<strong></strong><small></small>";
+        btn.querySelector("strong").textContent = supplier.name || "";
+        btn.querySelector("small").textContent = `${supplier.dial || ""}${
+          supplier.phone || ""
+        }`;
+        btn.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          applySupplierResult(input, supplier);
+        });
+        suggest.appendChild(btn);
+      });
+      suggest.hidden = false;
+    };
+
+    const runSupplierSearch = async (input) => {
+      if (!supplierSearchUrl || fillingSupplier || mode !== "in") return;
+      const by = input.getAttribute("data-supplier-search");
+      if (!by) return;
+      const query = (input.value || "").trim();
+      const root = input.closest("[data-supplier-search-root]");
+      if (query.length < 2) {
+        hideSupplierSuggest(root);
+        return;
+      }
+
+      const dial =
+        (floatSupplierDial?.value || "").trim() ||
+        (
+          input
+            .closest("[data-stock-phone-field]")
+            ?.querySelector(
+              "[data-stock-float-supplier-dial], [data-stock-supplier-dial]"
+            )?.value || ""
+        ).trim();
+      const seq = ++supplierSearchSeq;
+      const params = new URLSearchParams({ q: query, by });
+      if (by === "phone" && dial) params.set("dial", dial);
+
+      try {
+        const response = await fetch(`${supplierSearchUrl}?${params.toString()}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (seq !== supplierSearchSeq) return;
+        const results = Array.isArray(data.results) ? data.results : [];
+        renderSupplierSuggest(input, results);
+
+        const upper = query.toUpperCase();
+        const digits = (value) => String(value || "").replace(/\D+/g, "");
+        let match = null;
+        if (by === "name") {
+          match =
+            results.find(
+              (row) => String(row.name || "").toUpperCase() === upper
+            ) || null;
+          if (
+            !match &&
+            results.length === 1 &&
+            query.length >= 3 &&
+            String(results[0].name || "")
+              .toUpperCase()
+              .includes(upper)
+          ) {
+            match = results[0];
+          }
+        } else if (
+          by === "phone" &&
+          digits(query).length >= 7 &&
+          results.length
+        ) {
+          match =
+            results.find((row) => digits(row.phone) === digits(query)) ||
+            (results.length === 1 &&
+            digits(results[0].phone).includes(digits(query))
+              ? results[0]
+              : null);
+        }
+        if (match) applySupplierResult(input, match);
+      } catch (_error) {
+        /* ignore network errors while typing */
+      }
+    };
+
+    const queueSupplierSearch = (input) => {
+      window.clearTimeout(supplierSearchTimer);
+      supplierSearchTimer = window.setTimeout(() => runSupplierSearch(input), 200);
+    };
+
+    const onSupplierFieldInput = (target) => {
+      if (!(target instanceof Element)) return;
+      if (!target.matches("[data-supplier-search]")) return;
+      if (target.matches("[data-stock-float-supplier-name], [data-stock-supplier-name]")) {
+        const start = target.selectionStart;
+        const end = target.selectionEnd;
+        target.value = String(target.value || "").toUpperCase();
+        if (typeof start === "number" && typeof end === "number") {
+          target.setSelectionRange(start, end);
+        }
+      } else if (
+        target.matches("[data-stock-float-supplier-phone], [data-stock-supplier-phone]")
+      ) {
+        target.value = normalizePhone(target.value);
+      }
+      if (floatSupplierId) floatSupplierId.value = "";
+      const idInScope = resolveSupplierFields(target).idInput;
+      if (idInScope) idInScope.value = "";
+      queueSupplierSearch(target);
+      renderSummary();
+    };
+
+    form.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.matches("[data-supplier-search]")) {
+        onSupplierFieldInput(target);
+        return;
+      }
+      if (
+        target.matches(
+          "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-refund], [data-stock-float-refund-amount]"
+        )
+      ) {
+        renderSummary();
+      }
+    });
+    form.addEventListener("change", () => renderSummary());
+    form.addEventListener("focusin", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches("[data-supplier-search]")) return;
+      if ((target.value || "").trim().length >= 2) queueSupplierSearch(target);
+    });
+    form.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches("[data-supplier-search]")) return;
+      const root = target.closest("[data-supplier-search-root]");
+      const first = root?.querySelector(
+        ".stock-supplier-suggest-option:not([disabled])"
+      );
+      if (!first) return;
+      event.preventDefault();
+      first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+
+    document.addEventListener("mousedown", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-supplier-search-root]")) return;
+      hideSupplierSuggest(form);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") hideSupplierSuggest(form);
+    });
+
+    const countryMenu = document.querySelector("[data-stock-country-menu]");
+    const countrySearch = countryMenu?.querySelector("[data-stock-country-search]");
+    const countryOptions = [
+      ...(countryMenu?.querySelectorAll(".stock-country-option") || []),
+    ];
+    let activePhoneField = null;
+
+    const closeCountryMenu = () => {
+      if (!countryMenu) return;
+      countryMenu.hidden = true;
+      floatRoot
+        ?.querySelectorAll("[data-stock-country-trigger][aria-expanded='true']")
+        .forEach((btn) => btn.setAttribute("aria-expanded", "false"));
+      activePhoneField = null;
+      if (countrySearch) countrySearch.value = "";
+      countryOptions.forEach((option) => {
+        if (option.parentElement) option.parentElement.hidden = false;
+      });
+    };
+
+    const openCountryMenu = (trigger) => {
+      if (!countryMenu || !trigger || trigger.disabled) return;
+      const phoneField = trigger.closest("[data-stock-phone-field]");
+      if (!phoneField) return;
+      activePhoneField = phoneField;
+      const rect = trigger.getBoundingClientRect();
+      const menuWidth = Math.min(264, window.innerWidth - 24);
+      let left = rect.left;
+      if (left + menuWidth > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - menuWidth - 12);
+      }
+      let top = rect.bottom + 6;
+      countryMenu.hidden = false;
+      const menuHeight = countryMenu.offsetHeight || 240;
+      if (top + menuHeight > window.innerHeight - 12) {
+        top = Math.max(12, rect.top - menuHeight - 6);
+      }
+      countryMenu.style.left = `${left}px`;
+      countryMenu.style.top = `${top}px`;
+      trigger.setAttribute("aria-expanded", "true");
+      const currentDial = floatSupplierDial?.value || "";
+      countryOptions.forEach((option) => {
+        option.classList.toggle("is-selected", option.dataset.dial === currentDial);
+      });
+      countrySearch?.focus();
+    };
+
+    floatRoot?.addEventListener("click", (event) => {
+      const trigger = event.target.closest("[data-stock-country-trigger]");
+      if (trigger && floatRoot.contains(trigger)) {
+        event.preventDefault();
+        if (trigger.getAttribute("aria-expanded") === "true") closeCountryMenu();
+        else openCountryMenu(trigger);
+      }
+    });
+
+    document.addEventListener("click", (event) => {
+      const option = event.target.closest?.(".stock-country-option");
+      if (option && countryMenu && !countryMenu.hidden && countryMenu.contains(option)) {
+        event.preventDefault();
+        const { dial, iso } = option.dataset;
+        if (dial && iso) setFloatCountry(dial, iso);
+        closeCountryMenu();
+        renderSummary();
+        return;
+      }
+      if (
+        countryMenu &&
+        !countryMenu.hidden &&
+        !countryMenu.contains(event.target) &&
+        !event.target.closest?.("[data-stock-country-trigger]")
+      ) {
+        closeCountryMenu();
+      }
+    });
+
+    countrySearch?.addEventListener("input", () => {
+      const q = countrySearch.value.trim().toLowerCase();
+      countryOptions.forEach((option) => {
+        const hay = `${option.dataset.name} ${option.dataset.dial} ${option.dataset.iso}`.toLowerCase();
+        if (option.parentElement) {
+          option.parentElement.hidden = Boolean(q) && !hay.includes(q);
+        }
+      });
     });
 
     panel.addEventListener("click", (event) => {
@@ -669,43 +1095,110 @@
       setRequestingShop(header.dataset.shopId, header.dataset.shopName);
     });
 
-    form.addEventListener("submit", (event) => {
+    const restoreMatrixFields = () => {
+      cells().forEach((cell) => {
+        const isRequesting =
+          mode === "request" &&
+          requestingShopId &&
+          cell.dataset.shopId === requestingShopId;
+        cell
+          .querySelectorAll("[data-stock-qty], [data-stock-buying-price]")
+          .forEach((field) => {
+            field.disabled = Boolean(isRequesting);
+          });
+        // Keep hidden line meta enabled only when the cell still has qty.
+        const filled = cellQty(cell) > 0 && !isRequesting;
+        cell.querySelectorAll("[data-stock-field]").forEach((field) => {
+          field.disabled = !filled;
+        });
+      });
+    };
+
+    let submitInFlight = false;
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (submitInFlight) return;
       if (catalogBusy || panel.hasAttribute("data-stock-catalog-busy")) {
-        event.preventDefault();
         setApplyStatus("Still loading items — wait a moment, then submit.", true);
         return;
       }
       const ready = collectReady();
       if (!ready.length) {
-        event.preventDefault();
         setApplyStatus("Enter quantity on at least one shop cell.", true);
         return;
       }
       if (mode === "request" && !requestingShopId) {
-        event.preventDefault();
         setApplyStatus("Click a shop column header to set the requesting shop.", true);
         return;
       }
       if (mode === "in" && !ready.every((item) => cellHasPrice(item.cell))) {
-        event.preventDefault();
         setApplyStatus("Enter buying price for each ready shop cell.", true);
         return;
       }
       if (mode === "in" && !floatSupplierReady()) {
-        event.preventDefault();
         setApplyStatus("Enter supplier name, phone, and payment status.", true);
-        floatSupplierPhone?.focus();
+        floatSupplierName?.focus();
         return;
       }
       if (mode === "out" && !floatOutReady()) {
-        event.preventDefault();
         setApplyStatus("Choose reason and refund details.", true);
         return;
       }
       if (mode === "request" && requestingShopInput) {
         requestingShopInput.value = requestingShopId;
       }
+
+      submitInFlight = true;
+      if (submitBtn) submitBtn.disabled = true;
+      const pendingLabel =
+        mode === "in"
+          ? "Submitting stock in…"
+          : mode === "out"
+            ? "Submitting stock out…"
+            : "Submitting request…";
+      setApplyStatus(pendingLabel);
       enableReadyFields(ready);
+
+      try {
+        const body = new FormData(form);
+        body.set("ajax", "1");
+        const response = await fetch(
+          form.getAttribute("action") || window.location.href,
+          {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            credentials: "same-origin",
+            body,
+          }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          const errors = Array.isArray(data.errors) ? data.errors.filter(Boolean) : [];
+          const error =
+            data.error ||
+            errors[0] ||
+            "Could not submit. Your entries were kept — fix the issue and try again.";
+          setApplyStatus(error, true);
+          restoreMatrixFields();
+          submitInFlight = false;
+          renderSummary();
+          return;
+        }
+        setApplyStatus(data.message || "Submitted successfully.");
+        window.location.assign(data.next || window.location.href);
+      } catch (_error) {
+        setApplyStatus(
+          "Network error. Your entries were kept — try again.",
+          true
+        );
+        restoreMatrixFields();
+        submitInFlight = false;
+        renderSummary();
+      }
     });
 
     document.addEventListener("stock-catalog:rendered", () => {
@@ -724,7 +1217,9 @@
   }
   /* ── End multi-shop matrix ───────────────────────────────────────────── */
 
-  const floatRoot = document.querySelector("[data-stock-float]");
+  const floatRoot =
+    form.querySelector("[data-stock-float]") ||
+    document.querySelector("[data-stock-float]");
   const emptyEl = floatRoot?.querySelector("[data-stock-float-empty]");
   const heldEl = floatRoot?.querySelector("[data-stock-float-held]");
   const heldCountEl = floatRoot?.querySelector("[data-stock-float-held-count]");
@@ -2074,36 +2569,59 @@
     const targets = resolveSupplierTargets(fromInput);
     if (!targets || !supplier) return;
     fillingSupplier = true;
-    const by = sourceBy || fromInput.getAttribute("data-supplier-search") || "";
     const supplierId = supplier.id != null ? String(supplier.id) : "";
 
-    if (fillAll || by === "phone") {
-      if (targets.nameInput) targets.nameInput.value = supplier.name || "";
+    // Always fill both name and phone (and dial) so the other input is autofilled.
+    if (targets.nameInput) {
+      targets.nameInput.value = String(supplier.name || "").toUpperCase();
     }
-    if (fillAll || by === "name") {
-      setCountryOnField(targets.dialRoot, supplier.dial || "+254", supplier.iso || "KE");
-      if (targets.phoneInput) {
-        targets.phoneInput.value = normalizeNationalPhone(
-          supplier.phone || "",
-          supplier.dial || "+254"
-        );
-      }
-    }
-    if (fillAll && targets.nameInput && !targets.nameInput.value) {
-      targets.nameInput.value = supplier.name || "";
+    setCountryOnField(targets.dialRoot, supplier.dial || "+254", supplier.iso || "KE");
+    if (targets.phoneInput) {
+      targets.phoneInput.value = normalizeNationalPhone(
+        supplier.phone || "",
+        supplier.dial || "+254"
+      );
     }
 
     if (targets.scope === floatRoot || fromInput.closest("[data-stock-float-apply]")) {
       if (floatSupplierId) floatSupplierId.value = supplierId;
+      if (floatSupplierName && targets.nameInput !== floatSupplierName) {
+        floatSupplierName.value = String(supplier.name || "").toUpperCase();
+      }
+      if (floatSupplierPhone && targets.phoneInput !== floatSupplierPhone) {
+        floatSupplierPhone.value = normalizeNationalPhone(
+          supplier.phone || "",
+          supplier.dial || "+254"
+        );
+      }
     } else {
       const idInput = targets.scope?.querySelector("[data-stock-supplier-id]");
       if (idInput) idInput.value = supplierId;
+      if (floatSupplierId) floatSupplierId.value = supplierId;
+      if (floatSupplierName) {
+        floatSupplierName.value = String(supplier.name || "").toUpperCase();
+      }
+      if (floatSupplierPhone) {
+        floatSupplierPhone.value = normalizeNationalPhone(
+          supplier.phone || "",
+          supplier.dial || "+254"
+        );
+      }
+      if (floatRoot) {
+        setCountryOnField(
+          floatRoot.querySelector("[data-stock-float-phone-wrap]") || floatRoot,
+          supplier.dial || "+254",
+          supplier.iso || "KE"
+        );
+      }
     }
 
     fillingSupplier = false;
     hideSupplierSuggest(targets.scope);
+    hideSupplierSuggest(floatRoot);
     const itemRow = findItemRowFromNode(fromInput);
     if (itemRow) refreshRowState(itemRow);
+    renderSummary();
   };
 
   const renderSupplierSuggest = (input, results) => {
@@ -2159,15 +2677,32 @@
       if (seq !== supplierSearchSeq) return;
       const results = Array.isArray(data.results) ? data.results : [];
       renderSupplierSuggest(input, results);
-      if (results.length === 1) {
-        const only = results[0];
-        const digits = (value) => String(value || "").replace(/\D+/g, "");
-        if (by === "phone" && digits(query).length >= 7 && digits(only.phone).includes(digits(query))) {
-          applySupplierResult(input, only, { sourceBy: "phone" });
-        } else if (by === "name" && query.length >= 3 && only.name.includes(query.toUpperCase())) {
-          applySupplierResult(input, only, { sourceBy: "name" });
+      if (!results.length) return;
+      const upper = query.toUpperCase();
+      const digits = (value) => String(value || "").replace(/\D+/g, "");
+      let match = null;
+      if (by === "name") {
+        match =
+          results.find((row) => String(row.name || "").toUpperCase() === upper) ||
+          null;
+        if (
+          !match &&
+          results.length === 1 &&
+          query.length >= 3 &&
+          String(results[0].name || "")
+            .toUpperCase()
+            .includes(upper)
+        ) {
+          match = results[0];
         }
+      } else if (by === "phone" && digits(query).length >= 7) {
+        match =
+          results.find((row) => digits(row.phone) === digits(query)) ||
+          (results.length === 1 && digits(results[0].phone).includes(digits(query))
+            ? results[0]
+            : null);
       }
+      if (match) applySupplierResult(input, match, { fillAll: true });
     } catch (_error) {
       /* ignore network errors during typing */
     }
@@ -2472,6 +3007,7 @@
       }
     }
 
+    event.preventDefault();
     rows().forEach((row) => {
       const active = getQty(row) > 0;
       if (active) {
@@ -2480,6 +3016,48 @@
       }
       setFieldsEnabled(row, active);
     });
+
+    if (autoStockInFlight) return;
+    autoStockInFlight = true;
+    if (submitBtn) submitBtn.disabled = true;
+    setApplyStatus(
+      mode === "out" ? "Submitting stock out…" : "Submitting stock in…"
+    );
+    try {
+      const body = new FormData(form);
+      body.set("ajax", "1");
+      const response = await fetch(
+        form.getAttribute("action") || window.location.href,
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "same-origin",
+          body,
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) {
+        const errors = Array.isArray(data.errors) ? data.errors.filter(Boolean) : [];
+        setApplyStatus(
+          data.error ||
+            errors[0] ||
+            "Could not submit. Your entries were kept — try again.",
+          true
+        );
+        autoStockInFlight = false;
+        renderSummary();
+        return;
+      }
+      setApplyStatus(data.message || "Submitted successfully.");
+      window.location.assign(data.next || window.location.href);
+    } catch (_error) {
+      setApplyStatus("Network error. Your entries were kept — try again.", true);
+      autoStockInFlight = false;
+      renderSummary();
+    }
   });
 
   if (window.initUppercaseInputs) window.initUppercaseInputs(floatRoot || document);

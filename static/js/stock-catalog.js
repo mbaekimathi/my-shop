@@ -17,6 +17,18 @@
   const fromShopId = panel.dataset.stockCatalogFromShop || "";
   const shopName = panel.dataset.stockCatalogShopName || "Shop";
   const fromShopName = panel.dataset.stockCatalogFromShopName || "From shop";
+  let catalogShopIds = [];
+  try {
+    const parsedIds = JSON.parse(panel.dataset.stockCatalogShopIds || "[]");
+    if (Array.isArray(parsedIds)) {
+      catalogShopIds = parsedIds
+        .map((id) => String(id || "").trim())
+        .filter(Boolean);
+    }
+  } catch (_err) {
+    catalogShopIds = [];
+  }
+  if (!catalogShopIds.length && shopId) catalogShopIds = [String(shopId)];
   let viewShops = [];
   try {
     viewShops = JSON.parse(panel.dataset.stockCatalogShops || "[]");
@@ -410,7 +422,7 @@
         <label class="stock-inline-field">
           <span>Supplier name</span>
           <div class="stock-supplier-name-wrap" data-supplier-search-root>
-            <input type="text" name="supplier_name" placeholder="SUPPLIER NAME" autocomplete="organization" data-uppercase data-stock-supplier-name data-supplier-search="name" data-stock-field disabled>
+            <input type="text" name="supplier_name" placeholder="Type name to search…" autocomplete="organization" data-uppercase data-stock-supplier-name data-supplier-search="name" data-stock-field disabled>
             <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
           </div>
         </label>
@@ -833,7 +845,7 @@
   };
 
   const cacheKeyFor = (page, q) =>
-    `stock-catalog:${shopId || "all"}:${fromShopId || "0"}:${mode}:p${page}:s${pageSize}:q${String(
+    `stock-catalog:${catalogShopIds.join("-") || shopId || "all"}:${fromShopId || "0"}:${mode}:p${page}:s${pageSize}:q${String(
       q || ""
     ).toLowerCase()}`;
 
@@ -875,7 +887,11 @@
       page_size: String(pageSize),
       mode,
     });
-    if (shopId) params.set("shop_id", shopId);
+    if (catalogShopIds.length) {
+      catalogShopIds.forEach((id) => params.append("shop_id", id));
+    } else if (shopId) {
+      params.set("shop_id", shopId);
+    }
     if (mode === "request" && fromShopId) {
       params.set("requested_from_shop_id", fromShopId);
     }
