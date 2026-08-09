@@ -1117,6 +1117,31 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     )
 
 
+def stock_settings(request, profile, meta, module):
+    """Reference page: compulsory inputs for stock in, out, and request."""
+    from employees.workspace import sidebar_for_stock_management, stock_management_url
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="settings",
+        profile=profile,
+    )
+    role = profile.role
+    return render(
+        request,
+        "items/stock_settings.html",
+        {
+            "page_meta": meta,
+            "page_module": module,
+            "page_sidebar": page_sidebar,
+            "stock_mode": "settings",
+            "stock_in_url": stock_management_url(role, "in"),
+            "stock_out_url": stock_management_url(role, "out"),
+            "stock_request_url": stock_management_url(role, "request"),
+        },
+    )
+
+
 @require_http_methods(["GET", "POST"])
 def stock_management(request, profile, meta, module, page_sidebar):
     from employees.models import EmployeeRole
@@ -1135,11 +1160,19 @@ def stock_management(request, profile, meta, module, page_sidebar):
         "movements",
         "serials",
         "return-clients",
+        "settings",
     ):
         mode = "view"
 
     # Return-clients shares the serials permission key.
-    permission_mode = "serials" if mode == "return-clients" else mode
+    # Settings is a reference page — anyone who can view stock may open it.
+    permission_mode = (
+        "serials"
+        if mode == "return-clients"
+        else "view"
+        if mode == "settings"
+        else mode
+    )
     denied = require_module_permission(
         request, profile, "stock-management", permission_mode
     )
@@ -1147,11 +1180,14 @@ def stock_management(request, profile, meta, module, page_sidebar):
         return denied
 
     # Stock In / Out / Request / Report / Movements / Serials: shop-manager and IT support.
-    if mode != "view" and profile.role not in (
+    if mode not in ("view", "settings") and profile.role not in (
         EmployeeRole.SHOP_MANAGER,
         EmployeeRole.IT_SUPPORT,
     ):
         return _stock_redirect(request.path, "view")
+
+    if mode == "settings":
+        return stock_settings(request, profile, meta, module)
 
     if mode in ("report", "movements"):
         return stock_report(request, profile, meta, module, page_mode=mode)

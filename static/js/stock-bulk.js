@@ -210,6 +210,14 @@
       row.classList.toggle("is-filled", rowFilled);
     };
 
+    const clearLiveSearchIfUsed = () => {
+      const searchInput = panel.querySelector("[data-item-search]");
+      if (!searchInput) return;
+      if (!String(searchInput.value || "").trim()) return;
+      searchInput.value = "";
+      searchInput.dispatchEvent(new Event("search", { bubbles: true }));
+    };
+
     const promoteRowAfterLeave = (row) => {
       if (!row) return;
       // Refresh filled state from current inputs, then move only after the user left.
@@ -221,6 +229,10 @@
       ].some((c) => cellQty(c) > 0);
       row.classList.toggle("is-filled", rowFilled);
       reorderFilledRow(row);
+      if (rowFilled) {
+        // Defer so focus can land on the next field before catalog reload parks rows.
+        window.setTimeout(() => clearLiveSearchIfUsed(), 0);
+      }
     };
 
     const reorderFilledRow = (row) => {
@@ -2070,6 +2082,13 @@
       setRowOpen(row, false);
       moveItemPairToTop(row);
       syncFilled(row);
+      window.setTimeout(() => {
+        const searchInput = panel.querySelector("[data-item-search]");
+        if (searchInput && String(searchInput.value || "").trim()) {
+          searchInput.value = "";
+          searchInput.dispatchEvent(new Event("search", { bubbles: true }));
+        }
+      }, 0);
       return true;
     }
     setRowOpen(row, false);

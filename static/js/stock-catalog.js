@@ -107,6 +107,13 @@
 
   const isFilledPair = (headerRow) => {
     if (!headerRow) return false;
+    // Keep the row the user just moved into when search clears after a promote.
+    if (
+      document.activeElement instanceof Element &&
+      headerRow.contains(document.activeElement)
+    ) {
+      return true;
+    }
     if (editableMatrix) {
       return [...headerRow.querySelectorAll("[data-stock-shop-cell]")].some(
         (cell) => Number(cell.querySelector("[data-stock-qty]")?.value || 0) > 0

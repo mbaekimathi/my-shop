@@ -1,0 +1,152 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Stock Settings — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="stock-panel stock-panel--settings" data-animate="rise" data-stock-mode="settings">
+  <header class="stock-panel-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">Stock settings</p>
+        <h2>Compulsory inputs</h2>
+        <p>
+          Fields that must be filled before Stock In, Stock Out, or Request Stock can be submitted.
+          Serial-tracked items also require serial numbers that match the quantity.
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <div class="stock-settings-grid">
+    <article class="stock-settings-card stock-settings-card--in">
+      <header class="stock-settings-card-head">
+        <span class="stock-settings-card-icon" aria-hidden="true">
+          <i data-lucide="package-plus"></i>
+        </span>
+        <div>
+          <h3>Stock In</h3>
+          <p>Buying stock into a shop</p>
+        </div>
+        <a class="stock-settings-card-link" href="{{ stock_in_url }}">Open Stock In</a>
+      </header>
+      <ul class="stock-settings-list">
+        <li>
+          <strong>Shop</strong>
+          <span>Which shop receives the stock (per line or shop filter)</span>
+        </li>
+        <li>
+          <strong>Quantity</strong>
+          <span>Units to add (or serial count for serial items)</span>
+        </li>
+        <li>
+          <strong>Buying price</strong>
+          <span>Whole-number cost per unit for every stocked line</span>
+        </li>
+        <li>
+          <strong>Supplier phone</strong>
+          <span>Country dial code + 9-digit national number</span>
+        </li>
+        <li>
+          <strong>Supplier name</strong>
+          <span>Must match or be selected from live search after phone</span>
+        </li>
+        <li>
+          <strong>Payment status</strong>
+          <span>Unpaid, paid, or partial</span>
+        </li>
+        <li>
+          <strong>Serial numbers</strong>
+          <span>Required only when the item tracks serials (count = qty)</span>
+        </li>
+        <li class="stock-settings-list-note">
+          <strong>Buy stock (shop floor)</strong>
+          <span>Also requires a verified 6-digit staff ID</span>
+        </li>
+      </ul>
+    </article>
+
+    <article class="stock-settings-card stock-settings-card--out">
+      <header class="stock-settings-card-head">
+        <span class="stock-settings-card-icon" aria-hidden="true">
+          <i data-lucide="package-minus"></i>
+        </span>
+        <div>
+          <h3>Stock Out</h3>
+          <p>Removing stock from a shop</p>
+        </div>
+        <a class="stock-settings-card-link" href="{{ stock_out_url }}">Open Stock Out</a>
+      </header>
+      <ul class="stock-settings-list">
+        <li>
+          <strong>Shop</strong>
+          <span>Which shop the stock leaves from</span>
+        </li>
+        <li>
+          <strong>Quantity</strong>
+          <span>Units to remove (must not exceed available stock)</span>
+        </li>
+        <li>
+          <strong>Reason</strong>
+          <span>Waste, transfer, display, or return</span>
+        </li>
+        <li>
+          <strong>Refund</strong>
+          <span>Yes or no</span>
+        </li>
+        <li>
+          <strong>Refund amount</strong>
+          <span>Required when refund is yes — whole number greater than zero</span>
+        </li>
+        <li>
+          <strong>Serial numbers</strong>
+          <span>Required only when the item tracks serials (must exist in that shop)</span>
+        </li>
+      </ul>
+    </article>
+
+    <article class="stock-settings-card stock-settings-card--request">
+      <header class="stock-settings-card-head">
+        <span class="stock-settings-card-icon" aria-hidden="true">
+          <i data-lucide="clipboard-list"></i>
+        </span>
+        <div>
+          <h3>Request Stock</h3>
+          <p>Asking another shop for stock</p>
+        </div>
+        <a class="stock-settings-card-link" href="{{ stock_request_url }}">Open Request</a>
+      </header>
+      <ul class="stock-settings-list">
+        <li>
+          <strong>Requesting shop</strong>
+          <span>Click a shop column header to mark who is requesting</span>
+        </li>
+        <li>
+          <strong>From shop</strong>
+          <span>Enter quantity under the shop(s) you are requesting from</span>
+        </li>
+        <li>
+          <strong>Quantity</strong>
+          <span>At least one line with quantity greater than zero</span>
+        </li>
+        <li>
+          <strong>Different shops</strong>
+          <span>Requesting shop and from-shop cannot be the same</span>
+        </li>
+        <li class="stock-settings-list-note">
+          <strong>Not required</strong>
+          <span>Supplier, payment, reason, refund, or serials at request time</span>
+        </li>
+        <li class="stock-settings-list-note">
+          <strong>Shop floor create</strong>
+          <span>May also require a verified 6-digit staff ID</span>
+        </li>
+      </ul>
+    </article>
+  </div>
+
+  <p class="stock-settings-footnote">
+    Submit stays blocked until every ready line has these details. The submit panel jumps to the first incomplete field if you try early.
+  </p>
+</section>
+{% endblock %}

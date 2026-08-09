@@ -675,6 +675,15 @@ def sidebar_for_stock_management(
                         active=active_mode == "report",
                     ),
                 ),
+                (
+                    "view",
+                    _link(
+                        "Stock Settings",
+                        "sliders-horizontal",
+                        href=stock_management_url(role, "settings"),
+                        active=active_mode == "settings",
+                    ),
+                ),
             ]
             primary.extend(link for mode, link in candidates if _allowed(mode))
             if active_mode == "view" and _allowed("view"):
@@ -690,6 +699,14 @@ def sidebar_for_stock_management(
                     "boxes",
                     href=stock_management_url(role, "view", shop_id=shop_id),
                     active=active_mode == "view",
+                )
+            )
+            primary.append(
+                _link(
+                    "Stock Settings",
+                    "sliders-horizontal",
+                    href=stock_management_url(role, "settings"),
+                    active=active_mode == "settings",
                 )
             )
             primary.append(
