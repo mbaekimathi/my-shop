@@ -170,9 +170,11 @@
     input.value = serial;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
-    // Keyboard-style burst helps listeners that key off keyup.
     input.dispatchEvent(
-      new KeyboardEvent("keyup", { bubbles: true, key: "Enter" })
+      new CustomEvent("myshop:serial-applied", {
+        bubbles: true,
+        detail: { serial, source: "scan" },
+      })
     );
 
     try {
@@ -555,6 +557,9 @@
     activeTarget = input;
     scanLocked = false;
     ensureModal();
+    // Keep above any open workspace / buy-stock modal stacking context.
+    document.body.appendChild(modal);
+    modal.style.zIndex = "220";
     modal.classList.add("is-open");
     modal.setAttribute("aria-hidden", "false");
     document.body.classList.add("serial-scan-open");

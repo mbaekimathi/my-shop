@@ -1169,6 +1169,7 @@
       }
       if (targets.phoneInput) {
         targets.phoneInput.value = normalizePhone(supplier.phone || "");
+        targets.phoneInput.dataset.supplierResolved = "1";
       }
       // Keep float fields in sync when picking from a row/cell field.
       if (targets.nameInput !== floatSupplierName && floatSupplierName) {
@@ -1176,6 +1177,7 @@
       }
       if (targets.phoneInput !== floatSupplierPhone && floatSupplierPhone) {
         floatSupplierPhone.value = normalizePhone(supplier.phone || "");
+        floatSupplierPhone.dataset.supplierResolved = "1";
       }
       if (targets.idInput) {
         targets.idInput.value = supplier.id != null ? String(supplier.id) : "";
@@ -1228,7 +1230,8 @@
       if (!by) return;
       const query = (input.value || "").trim();
       const root = input.closest("[data-supplier-search-root]");
-      if (query.length < 2) {
+      const minLen = by === "phone" ? 2 : 2;
+      if (query.length < minLen) {
         hideSupplierSuggest(root);
         return;
       }
@@ -1260,11 +1263,12 @@
         // Phone → autofill name. Name → suggest only; user must pick a row.
         if (by !== "phone") return;
         const digits = (value) => String(value || "").replace(/\D+/g, "");
-        if (digits(query).length < 7 || !results.length) return;
+        const qDigits = digits(query);
+        if (qDigits.length < 7 || !results.length) return;
         const match =
-          results.find((row) => digits(row.phone) === digits(query)) ||
+          results.find((row) => digits(row.phone) === qDigits) ||
           (results.length === 1 &&
-          digits(results[0].phone).includes(digits(query))
+          digits(results[0].phone).includes(qDigits)
             ? results[0]
             : null);
         if (match) applySupplierResult(input, match);
@@ -1291,6 +1295,7 @@
       } else if (
         target.matches("[data-stock-float-supplier-phone], [data-stock-supplier-phone]")
       ) {
+        delete target.dataset.supplierResolved;
         target.value = normalizePhone(target.value);
       }
       if (floatSupplierId) floatSupplierId.value = "";
@@ -1875,14 +1880,10 @@
     const serialRow = document.createElement("div");
     serialRow.className = "stock-serial-row";
 
-    let inputParent = serialRow;
-    if (mode === "out") {
-      const wrap = document.createElement("div");
-      wrap.className = "stock-serial-input-wrap";
-      wrap.setAttribute("data-serial-search-root", "");
-      serialRow.appendChild(wrap);
-      inputParent = wrap;
-    }
+    const wrap = document.createElement("div");
+    wrap.className = "stock-serial-input-wrap";
+    if (mode === "out") wrap.setAttribute("data-serial-search-root", "");
+    serialRow.appendChild(wrap);
 
     const input = document.createElement("input");
     input.type = "text";
@@ -1895,14 +1896,14 @@
     if (mode === "out") input.setAttribute("data-serial-search", "");
     input.value = serial;
     input.disabled = !enabled;
-    inputParent.appendChild(input);
+    wrap.appendChild(input);
 
     if (mode === "out") {
       const suggest = document.createElement("div");
       suggest.className = "stock-supplier-suggest";
       suggest.setAttribute("data-serial-suggest", "");
       suggest.hidden = true;
-      inputParent.appendChild(suggest);
+      wrap.appendChild(suggest);
     }
 
     const removeBtn = document.createElement("button");
@@ -1915,6 +1916,7 @@
     serialRow.appendChild(removeBtn);
 
     list.appendChild(serialRow);
+    window.MyShopSerialScan?.enhance?.(serialRow);
     refreshIcons();
     updateSerialRemoveButtons(row);
     return input;
@@ -2744,20 +2746,36 @@
   };
 
   const prepareStockInRows = () => {
+    // Disable everything first so empty/closed items are not posted.
+    rows().forEach((row) => setFieldsEnabled(row, false));
     rows().forEach((row) => {
       if (tracksSerial(row)) syncSerialQuantity(row);
     });
     const ready = collectReady();
     if (mode === "in") {
       const details = readFloatDetails();
-      if (details.name && details.dial && details.phone && details.payment) {
+      const supplierOk =
+        !stockReq.in.supplier ||
+        Boolean(details.name && details.dial && details.phone);
+      const paymentOk = !stockReq.in.payment_status || Boolean(details.payment);
+      if (supplierOk && paymentOk) {
         appliedDetails = details;
         ready.forEach((item) => writeSupplierMeta(item.row, details));
+      } else if (
+        details.name ||
+        details.phone ||
+        details.payment ||
+        appliedDetails
+      ) {
+        const payload = paymentOk && supplierOk ? details : appliedDetails;
+        if (payload) {
+          ready.forEach((item) => writeSupplierMeta(item.row, payload));
+        }
       }
     }
     ready.forEach((item) => {
       setRowOpen(item.row, true);
-      syncSerialQuantity(item.row);
+      if (tracksSerial(item.row)) syncSerialQuantity(item.row);
       setFieldsEnabled(item.row, true);
     });
     return ready;
@@ -3028,7 +3046,33 @@
     }
 
     refreshRowState(row);
-    addSerialRow(row);
+    const currentValue = normalizeSerial(target.value);
+    if (!currentValue) return;
+    const hasEmpty = getSerialRows(row).some((serialRow) => {
+      const input = serialRow.querySelector("[data-stock-serial-input]");
+      if (input === target) return false;
+      return !normalizeSerial(input?.value);
+    });
+    if (!hasEmpty) addSerialRow(row);
+  });
+
+  panel.addEventListener("myshop:serial-applied", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.matches("[data-stock-serial-input]")) return;
+    if (mode !== "in") return;
+    const row = findItemRowFromNode(target);
+    if (!row || !tracksSerial(row)) return;
+    refreshRowState(row);
+    const hasEmpty = getSerialRows(row).some((serialRow) => {
+      const value = normalizeSerial(
+        serialRow.querySelector("[data-stock-serial-input]")?.value
+      );
+      return !value;
+    });
+    if (!hasEmpty) {
+      window.setTimeout(() => addSerialRow(row), 40);
+    }
   });
 
   panel.addEventListener("focusin", (event) => {
@@ -3052,6 +3096,7 @@
       }
       if (target.matches("[data-stock-float-supplier-name], [data-stock-float-supplier-phone]")) {
         if (target.matches("[data-stock-float-supplier-phone]")) {
+          delete target.dataset.supplierResolved;
           normalizePhoneInput(target);
         } else {
           const start = target.selectionStart;
@@ -3077,6 +3122,7 @@
         syncRefundFromSelect(target);
       }
       if (target.matches("[data-stock-supplier-phone]")) {
+        delete target.dataset.supplierResolved;
         normalizePhoneInput(target);
       } else if (target.matches("[data-stock-supplier-name]")) {
         const start = target.selectionStart;
@@ -3183,6 +3229,7 @@
         supplier.phone || "",
         supplier.dial || "+254"
       );
+      targets.phoneInput.dataset.supplierResolved = "1";
     }
 
     if (targets.scope === floatRoot || fromInput.closest("[data-stock-float-apply]")) {
@@ -3195,6 +3242,7 @@
           supplier.phone || "",
           supplier.dial || "+254"
         );
+        floatSupplierPhone.dataset.supplierResolved = "1";
       }
     } else {
       const idInput = targets.scope?.querySelector("[data-stock-supplier-id]");
@@ -3208,6 +3256,7 @@
           supplier.phone || "",
           supplier.dial || "+254"
         );
+        floatSupplierPhone.dataset.supplierResolved = "1";
       }
       if (floatRoot) {
         setCountryOnField(
@@ -3265,7 +3314,8 @@
     if (!by) return;
     const query = (input.value || "").trim();
     const root = input.closest("[data-supplier-search-root]");
-    if (query.length < 2) {
+    const minLen = by === "phone" ? 2 : 2;
+    if (query.length < minLen) {
       hideSupplierSuggest(root);
       return;
     }
@@ -3291,10 +3341,11 @@
       // Phone → autofill name. Name → suggest only; user must pick a row.
       if (by !== "phone" || !results.length) return;
       const digits = (value) => String(value || "").replace(/\D+/g, "");
-      if (digits(query).length < 7) return;
+      const qDigits = digits(query);
+      if (qDigits.length < 7) return;
       const match =
-        results.find((row) => digits(row.phone) === digits(query)) ||
-        (results.length === 1 && digits(results[0].phone).includes(digits(query))
+        results.find((row) => digits(row.phone) === qDigits) ||
+        (results.length === 1 && digits(results[0].phone).includes(qDigits)
           ? results[0]
           : null);
       if (match) applySupplierResult(input, match, { fillAll: true });
@@ -3523,6 +3574,15 @@
         syncSerialQuantity(row);
       }
       setFieldsEnabled(row, active);
+    });
+
+    // Mirror print path: only post ready lines, with serials synced.
+    rows().forEach((row) => setFieldsEnabled(row, false));
+    const readyActive = collectReady();
+    readyActive.forEach((item) => {
+      setRowOpen(item.row, true);
+      if (tracksSerial(item.row)) syncSerialQuantity(item.row);
+      setFieldsEnabled(item.row, true);
     });
 
     if (autoStockInFlight) return;

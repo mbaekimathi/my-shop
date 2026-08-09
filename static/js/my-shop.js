@@ -997,6 +997,20 @@
     let serialSaleItem = null;
     let serialSaleSearchTimer = null;
     let serialSaleSearchSeq = 0;
+    const serialSaleMatchModeRoot = serialSaleModal?.querySelector(
+      "[data-serial-sale-match-mode]"
+    );
+    const serialSaleHint = serialSaleModal?.querySelector("[data-serial-sale-hint]");
+    const SERIAL_SALE_MATCH_KEY = "myShopSerialSaleMatchMode";
+    let serialSaleMatchMode = "full";
+    try {
+      const saved = String(
+        window.sessionStorage?.getItem(SERIAL_SALE_MATCH_KEY) || ""
+      ).toLowerCase();
+      if (saved === "last4" || saved === "full") serialSaleMatchMode = saved;
+    } catch (_err) {
+      /* ignore */
+    }
     let stkConfirmed = null;
     let stkPollToken = 0;
     let stkSending = false;
@@ -2899,6 +2913,96 @@
       serialSaleStatus.classList.toggle("is-error", error);
     };
 
+    const isSerialSaleLast4Mode = () => serialSaleMatchMode === "last4";
+
+    const serialSalePlaceholder = () =>
+      isSerialSaleLast4Mode()
+        ? "Type last 4 digits…"
+        : "Search serial number";
+
+    const syncSerialSaleMatchModeUi = () => {
+      serialSaleMatchModeRoot
+        ?.querySelectorAll("[data-serial-sale-match]")
+        .forEach((btn) => {
+          const mode = btn.getAttribute("data-serial-sale-match");
+          const active = mode === serialSaleMatchMode;
+          btn.classList.toggle("is-active", active);
+          btn.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+      if (serialSaleHint) {
+        serialSaleHint.textContent = isSerialSaleLast4Mode()
+          ? "Type the last 4 digits, then select a match to fill the whole serial. Link the client in the cart."
+          : "Search the full serial and pick available stock at this shop. Link the client in the cart.";
+      }
+      serialSaleList
+        ?.querySelectorAll("[data-serial-sale-input]")
+        .forEach((input) => syncSerialSaleInputMode(input));
+    };
+
+    const syncSerialSaleInputMode = (input) => {
+      if (!input) return;
+      const resolved = input.dataset.serialResolved === "1";
+      if (isSerialSaleLast4Mode() && !resolved) {
+        input.maxLength = 4;
+        input.placeholder = serialSalePlaceholder();
+        input.setAttribute("aria-label", "Last 4 digits of serial number");
+      } else {
+        input.removeAttribute("maxLength");
+        input.placeholder = resolved && isSerialSaleLast4Mode()
+          ? "Full serial selected"
+          : serialSalePlaceholder();
+        input.setAttribute("aria-label", "Serial number");
+      }
+    };
+
+    const setSerialSaleMatchMode = (mode, { refocus = true } = {}) => {
+      const next = mode === "last4" ? "last4" : "full";
+      if (next === serialSaleMatchMode) {
+        syncSerialSaleMatchModeUi();
+        return;
+      }
+      serialSaleMatchMode = next;
+      try {
+        window.sessionStorage?.setItem(SERIAL_SALE_MATCH_KEY, serialSaleMatchMode);
+      } catch (_err) {
+        /* ignore */
+      }
+      serialSaleList?.querySelectorAll("[data-serial-sale-input]").forEach((input) => {
+        hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
+        if (isSerialSaleLast4Mode()) {
+          if (input.dataset.serialResolved === "1") {
+            // Keep already-chosen full serials.
+            syncSerialSaleInputMode(input);
+            return;
+          }
+          const raw = String(input.value || "")
+            .trim()
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, "");
+          input.value = raw.slice(-4);
+          delete input.dataset.serialResolved;
+        } else {
+          delete input.dataset.serialResolved;
+        }
+        syncSerialSaleInputMode(input);
+      });
+      syncSerialSaleMatchModeUi();
+      syncSerialSaleCount();
+      setSerialSaleStatus(
+        isSerialSaleLast4Mode()
+          ? "Last 4 mode — select a suggestion to fill the full serial."
+          : "Full serial search mode."
+      );
+      if (refocus) {
+        const focusInput =
+          [...(serialSaleList?.querySelectorAll("[data-serial-sale-input]") || [])].find(
+            (el) => el.dataset.serialResolved !== "1"
+          ) || serialSaleList?.querySelector("[data-serial-sale-input]");
+        focusInput?.focus();
+        if (focusInput) queueSerialSaleSearch(focusInput);
+      }
+    };
+
     const hideSerialSaleSuggest = (root) => {
       const suggest = root?.querySelector?.("[data-serial-sale-suggest]");
       if (!suggest) return;
@@ -2951,13 +3055,32 @@
         return;
       }
       input.value = value;
+      input.dataset.serialResolved = "1";
+      syncSerialSaleInputMode(input);
       hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
-      setSerialSaleStatus("");
+      setSerialSaleStatus(
+        isSerialSaleLast4Mode() ? `Filled full serial ${value}.` : ""
+      );
       syncSerialSaleCount();
       const next = [...(serialSaleList?.querySelectorAll("[data-serial-sale-input]") || [])].find(
         (el) => el !== input && !String(el.value || "").trim()
       );
       if (next) next.focus();
+    };
+
+    const formatSerialSaleSuggestLabel = (serial) => {
+      const value = String(serial || "");
+      if (!isSerialSaleLast4Mode() || value.length <= 4) {
+        return { main: value, meta: "In stock" };
+      }
+      const head = value.slice(0, -4);
+      const tail = value.slice(-4);
+      return {
+        mainHtml: true,
+        head,
+        tail,
+        meta: `Ends with ${tail} · In stock`,
+      };
     };
 
     const renderSerialSaleSuggest = (input, results) => {
@@ -2968,8 +3091,9 @@
       if (!results.length) {
         const empty = document.createElement("div");
         empty.className = "shop-serial-suggest-empty";
-        empty.innerHTML =
-          "<strong>No matching serials</strong><small>Available at this shop only</small>";
+        empty.innerHTML = isSerialSaleLast4Mode()
+          ? "<strong>No matching serials</strong><small>Try the last 4 digits of an in-stock serial</small>"
+          : "<strong>No matching serials</strong><small>Available at this shop only</small>";
         suggest.appendChild(empty);
         suggest.hidden = false;
         return;
@@ -2978,8 +3102,18 @@
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "shop-serial-suggest-option";
-        btn.innerHTML = "<strong></strong><small>In stock</small>";
-        btn.querySelector("strong").textContent = serial;
+        const label = formatSerialSaleSuggestLabel(serial);
+        if (label.mainHtml) {
+          btn.innerHTML =
+            '<strong><span class="shop-serial-suggest-head"></span><span class="shop-serial-suggest-tail"></span></strong><small></small>';
+          btn.querySelector(".shop-serial-suggest-head").textContent = label.head;
+          btn.querySelector(".shop-serial-suggest-tail").textContent = label.tail;
+          btn.querySelector("small").textContent = label.meta;
+        } else {
+          btn.innerHTML = "<strong></strong><small></small>";
+          btn.querySelector("strong").textContent = label.main;
+          btn.querySelector("small").textContent = label.meta;
+        }
         btn.addEventListener("mousedown", (event) => {
           event.preventDefault();
           applySerialSaleChoice(input, serial);
@@ -2991,12 +3125,17 @@
 
     const runSerialSaleSearch = async (input) => {
       if (!serialSearchUrl || !serialSaleItem?.id || !shopId) return;
+      if (isSerialSaleLast4Mode() && input.dataset.serialResolved === "1") {
+        hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
+        return;
+      }
       const q = String(input.value || "").trim();
       const seq = ++serialSaleSearchSeq;
       const params = new URLSearchParams({
         item_id: String(serialSaleItem.id),
         shop_id: String(shopId),
         q,
+        match: isSerialSaleLast4Mode() ? "last4" : "contains",
       });
       otherSerialSaleValues(input).forEach((serial) => params.append("exclude", serial));
       try {
@@ -3032,10 +3171,11 @@
       input.type = "text";
       input.autocomplete = "off";
       input.spellcheck = false;
-      input.placeholder = "Search serial number";
       input.setAttribute("data-serial-sale-input", "");
-      input.value = serial || "";
-      input.setAttribute("aria-label", "Serial number");
+      const seed = String(serial || "").trim().toUpperCase();
+      input.value = seed;
+      if (seed) input.dataset.serialResolved = "1";
+      syncSerialSaleInputMode(input);
 
       const suggest = document.createElement("div");
       suggest.className = "shop-serial-suggest";
@@ -3063,6 +3203,7 @@
       serialSaleList.innerHTML = "";
       const values = serials.length ? serials : [""];
       values.forEach((serial) => createSerialSaleRow(serial));
+      syncSerialSaleMatchModeUi();
       syncSerialSaleCount();
     };
 
@@ -3148,12 +3289,77 @@
       }, 40);
     };
 
-    const confirmSerialSale = () => {
+    const confirmSerialSale = async () => {
       if (!serialSaleItem?.id) return false;
+
+      if (isSerialSaleLast4Mode()) {
+        const inputs = [...(serialSaleList?.querySelectorAll("[data-serial-sale-input]") || [])];
+        for (const input of inputs) {
+          const value = String(input.value || "").trim().toUpperCase();
+          if (!value) continue;
+          if (input.dataset.serialResolved === "1" && value.length > 4) continue;
+          if (!serialSearchUrl) {
+            setSerialSaleStatus("Select a full serial from the suggestions.", {
+              error: true,
+            });
+            input.focus();
+            return false;
+          }
+          try {
+            const params = new URLSearchParams({
+              item_id: String(serialSaleItem.id),
+              shop_id: String(shopId),
+              q: value.slice(-4),
+              match: "last4",
+            });
+            otherSerialSaleValues(input).forEach((serial) =>
+              params.append("exclude", serial)
+            );
+            const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
+              headers: { Accept: "application/json" },
+              credentials: "same-origin",
+            });
+            const data = await response.json().catch(() => ({}));
+            const results = Array.isArray(data.results) ? data.results : [];
+            if (results.length === 1) {
+              applySerialSaleChoice(input, results[0]);
+              continue;
+            }
+            if (results.length > 1) {
+              renderSerialSaleSuggest(input, results);
+              setSerialSaleStatus(
+                "Several serials end with those digits — select one.",
+                { error: true }
+              );
+              input.focus();
+              return false;
+            }
+            setSerialSaleStatus(
+              "No in-stock serial ends with those digits. Check and try again.",
+              { error: true }
+            );
+            input.focus();
+            return false;
+          } catch (_err) {
+            setSerialSaleStatus("Could not resolve serial. Select from the list.", {
+              error: true,
+            });
+            input.focus();
+            return false;
+          }
+        }
+      }
+
       const serials = collectSerialSaleValues();
       if (!serials.length) {
         setSerialSaleStatus("Enter at least one serial number.", { error: true });
         serialSaleList?.querySelector("[data-serial-sale-input]")?.focus();
+        return false;
+      }
+      if (serials.some((serial) => serial.length <= 4) && isSerialSaleLast4Mode()) {
+        setSerialSaleStatus("Select a full serial from the suggestions.", {
+          error: true,
+        });
         return false;
       }
       if (serialSaleItem.stock > 0 && serials.length > serialSaleItem.stock) {
@@ -3503,6 +3709,12 @@
     serialSaleModal?.querySelectorAll("[data-serial-sale-close]").forEach((el) => {
       el.addEventListener("click", () => setSerialSaleOpen(false));
     });
+    serialSaleMatchModeRoot?.addEventListener("click", (event) => {
+      const btn = event.target.closest?.("[data-serial-sale-match]");
+      if (!btn) return;
+      setSerialSaleMatchMode(btn.getAttribute("data-serial-sale-match") || "full");
+    });
+    syncSerialSaleMatchModeUi();
     serialSaleModal?.querySelector("[data-serial-sale-add-row]")?.addEventListener(
       "click",
       () => {
@@ -3533,7 +3745,11 @@
       const rows = serialSaleList.querySelectorAll(".shop-serial-row");
       if (rows.length <= 1) {
         const input = row?.querySelector("[data-serial-sale-input]");
-        if (input) input.value = "";
+        if (input) {
+          input.value = "";
+          delete input.dataset.serialResolved;
+          syncSerialSaleInputMode(input);
+        }
         syncSerialSaleCount();
         return;
       }
@@ -3543,7 +3759,26 @@
     serialSaleList?.addEventListener("input", (event) => {
       const input = event.target.closest?.("[data-serial-sale-input]");
       if (!input) return;
-      input.value = String(input.value || "").toUpperCase();
+      if (isSerialSaleLast4Mode()) {
+        const raw = String(input.value || "")
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "");
+        // Scan/paste of a full serial should keep the whole value.
+        if (raw.length > 4) {
+          input.value = raw;
+          input.dataset.serialResolved = "1";
+          syncSerialSaleInputMode(input);
+          hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
+          syncSerialSaleCount();
+          return;
+        }
+        delete input.dataset.serialResolved;
+        input.value = raw.slice(0, 4);
+        syncSerialSaleInputMode(input);
+      } else {
+        input.value = String(input.value || "").toUpperCase();
+        delete input.dataset.serialResolved;
+      }
       syncSerialSaleCount();
       queueSerialSaleSearch(input);
     });

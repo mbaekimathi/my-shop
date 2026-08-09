@@ -12,7 +12,7 @@
   {% if stock_mode == 'in' %}data-supplier-search-url="{{ supplier_search_url }}"{% endif %}
   {% if stock_mode == 'out' %}data-serial-search-url="{{ serial_search_url }}"{% endif %}
   {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}data-stock-multi-shop="1"{% endif %}
-  {% if stock_requirements_json %}data-stock-requirements="{{ stock_requirements_json|escape }}"{% endif %}
+  {% if stock_requirements_json %}data-stock-requirements='{{ stock_requirements_json|escape }}'{% endif %}
 >
   {% csrf_token %}
   <input type="hidden" name="mode" value="{{ stock_mode }}" data-stock-float-mode-input>
@@ -1108,12 +1108,12 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=15"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=16"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix19"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix22"></script>
 <script
-  src="{% static 'js/serial-scan.js' %}?v=2"
+  src="{% static 'js/serial-scan.js' %}?v=3"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% if stock_mode == 'view' %}

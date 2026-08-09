@@ -49,10 +49,12 @@ def supplier_search_api(request):
     query = (request.GET.get("q") or "").strip()
     by = (request.GET.get("by") or "name").strip().lower()
     dial = (request.GET.get("dial") or "").strip()
-    results = search_suppliers(query=query, by=by, dial=dial, limit=8)
+    match = (request.GET.get("match") or "contains").strip().lower()
+    results = search_suppliers(query=query, by=by, dial=dial, limit=8, match=match)
     return JsonResponse(
         {
             "ok": True,
+            "match": match,
             "results": [
                 {
                     "id": supplier.pk,
@@ -73,6 +75,7 @@ def serial_search_api(request):
     item_id = (request.GET.get("item_id") or "").strip()
     shop_id = (request.GET.get("shop_id") or "").strip()
     query = (request.GET.get("q") or "").strip()
+    match = (request.GET.get("match") or "contains").strip().lower()
     exclude = request.GET.getlist("exclude") or []
     results = search_available_serials(
         item_id=item_id,
@@ -80,8 +83,9 @@ def serial_search_api(request):
         query=query,
         exclude=exclude,
         limit=12,
+        match=match,
     )
-    return JsonResponse({"ok": True, "results": results})
+    return JsonResponse({"ok": True, "results": results, "match": match})
 
 
 def _active_pricing_shops():

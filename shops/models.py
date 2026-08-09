@@ -469,6 +469,9 @@ class CompanyStockSettings(models.Model):
     # Stock request
     require_note_on_request = models.BooleanField(default=False)
 
+    # Legacy unused column (was phone last-4; last-4 applies to sell serials only).
+    enable_supplier_last4_search = models.BooleanField(default=False)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

@@ -17188,6 +17188,55 @@ html[data-theme="dark"] .shop-serial-modal-media img {
   font-weight: 650;
 }
 
+.shop-serial-match-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin: 0 0 0.75rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--mist-dim));
+}
+
+.shop-serial-match-btn {
+  min-height: 2.2rem;
+  padding: 0.4rem 0.65rem;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--mist-dim);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.shop-serial-match-btn:hover {
+  color: var(--text-strong);
+}
+
+.shop-serial-match-btn.is-active {
+  background: var(--surface);
+  color: var(--text-strong);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.stock-supplier-match-mode {
+  margin: 0 0 0.65rem;
+}
+
+.shop-cart-input--phone .stock-supplier-match-mode {
+  margin-top: 0.35rem;
+}
+
+.shop-serial-suggest-tail {
+  color: rgba(var(--teal-rgb), 0.95);
+  font-weight: 800;
+}
+
 .shop-serial-list {
   display: grid;
   gap: 0.5rem;
@@ -17550,10 +17599,12 @@ html[data-theme="dark"] .shop-serial-modal-media img {
 .buy-stock-modal {
   place-items: stretch center;
   padding: 0.75rem;
+  z-index: 120;
 }
 
 .buy-stock-modal-dialog {
   width: min(720px, 100%);
+  max-height: calc(100dvh - 1.5rem);
   max-height: calc(100vh - 1.5rem);
   display: flex;
   flex-direction: column;
@@ -17587,6 +17638,7 @@ html[data-theme="dark"] .shop-serial-modal-media img {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 0.85rem 1.1rem 0.5rem;
   display: grid;
   gap: 0.65rem;
@@ -17865,14 +17917,16 @@ html[data-theme="dark"] .shop-serial-modal-media img {
   flex: 0 0 auto;
   border-top: 1px solid var(--line);
   background: var(--surface);
+  box-shadow: 0 -8px 24px rgba(8, 28, 34, 0.06);
 }
 
 .buy-stock-simple-confirm-card {
   display: grid;
   gap: 0.7rem;
-  padding: 0.9rem 1.1rem 1.05rem;
-  max-height: min(42vh, 22rem);
+  padding: 0.9rem 1.1rem calc(1.05rem + env(safe-area-inset-bottom, 0px));
+  max-height: min(46vh, 28rem);
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .buy-stock-simple-confirm-head {
@@ -17924,11 +17978,44 @@ body.workspace-modal-open .stock-country-menu {
   z-index: 140;
 }
 
+.buy-stock-pick-inputs .stock-inline-field--serial {
+  margin-top: 0.35rem;
+}
+
+.buy-stock-pick-inputs .stock-serial-list {
+  max-height: min(40vh, 16rem);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 0.15rem;
+}
+
+.buy-stock-pick-inputs .stock-serial-row input {
+  min-height: 2.6rem;
+}
+
 @media (max-width: 640px) {
+  .buy-stock-modal {
+    padding: 0;
+    place-items: stretch;
+  }
+
   .buy-stock-modal-dialog {
     width: 100%;
-    max-height: calc(100vh - 0.75rem);
-    border-radius: 16px;
+    max-width: 100%;
+    height: 100dvh;
+    height: 100vh;
+    max-height: 100dvh;
+    max-height: 100vh;
+    border-radius: 0;
+    margin: 0;
+  }
+
+  .buy-stock-modal-head {
+    padding: 0.85rem 0.9rem;
+  }
+
+  .buy-stock-simple-main {
+    padding: 0.75rem 0.9rem 0.55rem;
   }
 
   .buy-stock-pick-fields,
@@ -17937,7 +18024,39 @@ body.workspace-modal-open .stock-country-menu {
   }
 
   .buy-stock-simple-confirm-card {
-    max-height: min(48vh, 26rem);
+    max-height: min(52vh, 30rem);
+    padding: 0.8rem 0.9rem calc(0.95rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .buy-stock-pick-inputs {
+    padding: 0 0.75rem 0.85rem;
+  }
+
+  .buy-stock-pick-toggle {
+    padding: 0.75rem 0.8rem;
+  }
+
+  .stock-serial-row.has-serial-scan {
+    grid-template-columns: minmax(0, 1fr) 2.5rem 2.5rem;
+  }
+
+  .serial-scan-modal {
+    place-items: stretch center;
+    padding: 0;
+  }
+
+  .serial-scan-dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: min(96dvh, 100%);
+    border-radius: 16px 16px 0 0;
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (min-width: 641px) and (max-height: 720px) {
+  .buy-stock-simple-confirm-card {
+    max-height: min(38vh, 18rem);
   }
 }
 
@@ -19673,7 +19792,7 @@ body.serial-scan-open {
 .serial-scan-modal {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: 220;
   display: grid;
   place-items: end center;
   pointer-events: none;

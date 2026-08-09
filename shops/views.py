@@ -56,6 +56,7 @@ from .services import (
     find_client_by_phone,
     format_kenya_phone,
     get_company_pos_settings,
+    get_company_stock_settings,
     get_last_closed_shop_day,
     get_open_shop_day,
     get_shop_receipt_detail,
@@ -881,6 +882,7 @@ def my_shop_workspace(request, shop_id):
             "items_by_category": buy_stock_ctx["items_by_category"],
             "countries": buy_stock_ctx["countries"],
             "supplier_search_url": buy_stock_ctx["supplier_search_url"],
+            "stock_requirements_json": buy_stock_ctx["stock_requirements_json"],
             "stock_catalog_url": buy_stock_ctx["stock_catalog_url"],
             "use_stock_catalog_api": buy_stock_ctx["use_stock_catalog_api"],
             "register_expense_modal": True,
@@ -1359,10 +1361,14 @@ def expense_supplier_search_api(request):
     query = (request.GET.get("q") or "").strip()
     by = (request.GET.get("by") or "name").strip().lower()
     dial = (request.GET.get("dial") or "").strip()
-    results = search_expense_suppliers(query=query, by=by, dial=dial, limit=8)
+    match = (request.GET.get("match") or "contains").strip().lower()
+    results = search_expense_suppliers(
+        query=query, by=by, dial=dial, limit=8, match=match
+    )
     return JsonResponse(
         {
             "ok": True,
+            "match": match,
             "results": [
                 {
                     "id": supplier.pk,

@@ -57,12 +57,15 @@
           <h3>{{ group.title }}</h3>
           <p>{{ group.summary }}</p>
         </div>
+        {% if group.open_url %}
         <a class="stock-settings-card-link" href="{{ group.open_url }}">
           <span>{{ group.open_label }}</span>
           <i data-lucide="arrow-up-right" aria-hidden="true"></i>
         </a>
+        {% endif %}
       </header>
 
+      {% if group.always_required %}
       <div class="stock-settings-section">
         <p class="stock-settings-section-label">Always required</p>
         <ul class="stock-settings-list">
@@ -80,6 +83,7 @@
           {% endfor %}
         </ul>
       </div>
+      {% endif %}
 
       <div class="stock-settings-section">
         <p class="stock-settings-section-label">Optional rules</p>

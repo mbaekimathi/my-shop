@@ -496,6 +496,7 @@ def search_available_serials(
     query: str = "",
     exclude=None,
     limit: int = 10,
+    match: str = "contains",
 ):
     try:
         item_pk = int(item_id)
@@ -514,34 +515,54 @@ def search_available_serials(
         qs = qs.exclude(serial_number__in=exclude)
 
     query = (query or "").strip().upper()
+    match_mode = (match or "contains").strip().lower()
     if query:
-        qs = qs.filter(serial_number__icontains=query)
+        if match_mode in ("last4", "endswith", "suffix"):
+            qs = qs.filter(serial_number__iendswith=query)
+        else:
+            qs = qs.filter(serial_number__icontains=query)
 
     return list(qs.values_list("serial_number", flat=True)[:limit])
 
 
-def search_suppliers(*, query: str, by: str = "name", dial: str = "", limit: int = 8):
+def search_suppliers(
+    *,
+    query: str,
+    by: str = "name",
+    dial: str = "",
+    limit: int = 8,
+    match: str = "contains",
+):
     query = (query or "").strip().upper()
-    if len(query) < 2:
-        return []
+    by = (by or "name").strip().lower()
+    match_mode = (match or "contains").strip().lower()
 
     qs = Supplier.objects.all()
-    by = (by or "name").strip().lower()
     if by == "phone":
         digits = _normalize_national_phone(query, dial)
-        if len(digits) < 3:
+        last4_mode = match_mode in ("last4", "endswith", "suffix")
+        min_digits = 1 if last4_mode else 3
+        if len(digits) < min_digits:
             return []
+        if last4_mode:
+            digits = digits[-4:]
         dial = (dial or "").strip()
         if dial:
             qs = qs.filter(phone_country_code=dial)
         matches = []
-        for supplier in qs.order_by("name", "phone_number")[:80]:
-            if digits in _normalize_phone_digits(supplier.phone_number):
+        for supplier in qs.order_by("name", "phone_number")[:120]:
+            phone_digits = _normalize_phone_digits(supplier.phone_number)
+            if last4_mode:
+                if phone_digits.endswith(digits):
+                    matches.append(supplier)
+            elif digits in phone_digits:
                 matches.append(supplier)
             if len(matches) >= limit:
                 break
         return matches
 
+    if len(query) < 2:
+        return []
     return list(qs.filter(name__icontains=query).order_by("name", "phone_number")[:limit])
 
 

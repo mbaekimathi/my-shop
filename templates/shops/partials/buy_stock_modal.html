@@ -36,6 +36,7 @@
       data-supplier-print
       data-supplier-search-url="{{ supplier_search_url }}"
       data-verify-login-url="{{ verify_login_code_url }}"
+      {% if stock_requirements_json %}data-stock-requirements='{{ stock_requirements_json|escape }}'{% endif %}
     >
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ buy_stock_next }}">

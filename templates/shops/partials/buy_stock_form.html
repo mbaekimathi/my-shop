@@ -7,7 +7,7 @@
   data-stock-multi-shop="1"
   data-supplier-search-url="{{ supplier_search_url }}"
   data-verify-login-url="{{ verify_login_code_url }}"
-  {% if stock_requirements_json %}data-stock-requirements="{{ stock_requirements_json|escape }}"{% endif %}
+  {% if stock_requirements_json %}data-stock-requirements='{{ stock_requirements_json|escape }}'{% endif %}
   {% if buy_stock_compact %}data-supplier-print{% endif %}
 >
   {% csrf_token %}

@@ -146,7 +146,7 @@ def get_company_pos_settings() -> CompanyPosSettings:
     return settings_row
 
 
-STOCK_SETTINGS_CACHE_KEY = "company_stock_settings:v1"
+STOCK_SETTINGS_CACHE_KEY = "company_stock_settings:v2"
 STOCK_SETTING_FIELDS = frozenset(
     {
         "require_buying_price_on_in",
@@ -2954,28 +2954,44 @@ def _expense_normalize_national_phone(phone: str, dial: str = "") -> str:
     return digits[:9]
 
 
-def search_expense_suppliers(*, query: str, by: str = "name", dial: str = "", limit: int = 8):
+def search_expense_suppliers(
+    *,
+    query: str,
+    by: str = "name",
+    dial: str = "",
+    limit: int = 8,
+    match: str = "contains",
+):
     query = (query or "").strip().upper()
-    if len(query) < 2:
-        return []
+    by = (by or "name").strip().lower()
+    match_mode = (match or "contains").strip().lower()
 
     qs = ExpenseSupplier.objects.all()
-    by = (by or "name").strip().lower()
     if by == "phone":
         digits = _expense_normalize_national_phone(query, dial)
-        if len(digits) < 3:
+        last4_mode = match_mode in ("last4", "endswith", "suffix")
+        min_digits = 1 if last4_mode else 3
+        if len(digits) < min_digits:
             return []
+        if last4_mode:
+            digits = digits[-4:]
         dial = (dial or "").strip()
         if dial:
             qs = qs.filter(phone_country_code=dial)
         matches = []
-        for supplier in qs.order_by("name", "phone_number")[:80]:
-            if digits in _expense_phone_digits(supplier.phone_number):
+        for supplier in qs.order_by("name", "phone_number")[:120]:
+            phone_digits = _expense_phone_digits(supplier.phone_number)
+            if last4_mode:
+                if phone_digits.endswith(digits):
+                    matches.append(supplier)
+            elif digits in phone_digits:
                 matches.append(supplier)
             if len(matches) >= limit:
                 break
         return matches
 
+    if len(query) < 2:
+        return []
     return list(
         qs.filter(name__icontains=query).order_by("name", "phone_number")[:limit]
     )

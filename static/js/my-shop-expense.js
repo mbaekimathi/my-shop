@@ -6,7 +6,6 @@
   const verifyUrl = root.getAttribute("data-verify-login-url") || "";
   const supplierSearchUrl =
     root.getAttribute("data-expense-supplier-search-url") || "";
-
   const codeInput = form.querySelector("[data-expense-login-code]");
   const statusEl = form.querySelector("[data-expense-status]");
   const submitBtn = form.querySelector("[data-expense-submit]");
@@ -173,6 +172,7 @@
         supplier.phone || "",
         supplier.dial || "+254"
       );
+      supplierPhoneInput.dataset.supplierResolved = "1";
     }
     const phoneRoot = form.querySelector("[data-stock-phone-field]");
     if (phoneRoot && supplier.dial) {
@@ -187,7 +187,7 @@
     syncSubmit();
   };
 
-  const renderSuggest = (wrap, results) => {
+  const renderSuggest = (wrap, results, { by = "name" } = {}) => {
     const suggest = wrap?.querySelector("[data-supplier-suggest]");
     if (!suggest) return;
     suggest.innerHTML = "";
@@ -201,7 +201,8 @@
       btn.className = "stock-supplier-suggest-item";
       btn.innerHTML = `<strong></strong><span></span>`;
       btn.querySelector("strong").textContent = row.name || "";
-      btn.querySelector("span").textContent = `${row.dial || ""} ${row.phone || ""}`.trim();
+      btn.querySelector("span").textContent =
+        `${row.dial || ""} ${row.phone || ""}`.trim();
       btn.addEventListener("click", () => applySupplier(row));
       suggest.appendChild(btn);
     });
@@ -214,9 +215,13 @@
     const by = input.getAttribute("data-supplier-search") || "name";
     const dial = (supplierDialInput?.value || "").trim();
     let query = (input.value || "").trim();
+
     if (by === "phone") {
       query = normalizeNationalPhone(query, dial);
-      if (supplierPhoneInput) supplierPhoneInput.value = query;
+      if (supplierPhoneInput) {
+        supplierPhoneInput.value = query;
+        delete supplierPhoneInput.dataset.supplierResolved;
+      }
     } else {
       query = query.toUpperCase();
       if (supplierNameInput) supplierNameInput.value = query;
@@ -224,7 +229,10 @@
     if (supplierIdInput) supplierIdInput.value = "";
     syncSubmit();
 
-    if ((by === "name" && query.length < 2) || (by === "phone" && query.length < 3)) {
+    if (
+      (by === "name" && query.length < 2) ||
+      (by === "phone" && query.length < 3)
+    ) {
       hideSuggest(wrap);
       return;
     }
@@ -239,7 +247,8 @@
       if (!response.ok) return;
       const data = await response.json();
       if (current !== searchSeq) return;
-      renderSuggest(wrap, Array.isArray(data.results) ? data.results : []);
+      const results = Array.isArray(data.results) ? data.results : [];
+      renderSuggest(wrap, results, { by });
     } catch (_) {
       /* ignore network errors while typing */
     }

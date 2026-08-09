@@ -379,15 +379,17 @@
             </button>
           </div>`
         : `<div class="stock-serial-row">
-            <input
-              type="text"
-              placeholder="Enter serial number"
-              autocomplete="off"
-              spellcheck="false"
-              data-stock-serial-input
-              data-stock-field
-              disabled
-            >
+            <div class="stock-serial-input-wrap">
+              <input
+                type="text"
+                placeholder="Enter serial number"
+                autocomplete="off"
+                spellcheck="false"
+                data-stock-serial-input
+                data-stock-field
+                disabled
+              >
+            </div>
             <button type="button" class="stock-serial-remove" data-stock-serial-remove aria-label="Remove serial" hidden>
               <i data-lucide="x" aria-hidden="true"></i>
             </button>
