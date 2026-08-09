@@ -1073,9 +1073,8 @@ def _parse_movement_lines(data, movement_type: str):
             phone_raw = (
                 raw_supplier_phones[index] if index < len(raw_supplier_phones) else ""
             )
-            supplier_any = bool(
-                str(name_raw).strip() or str(dial_raw).strip() or str(phone_raw).strip()
-            )
+            # Dial defaults to +254 in the UI; only treat name/phone as "provided".
+            supplier_any = bool(str(name_raw).strip() or str(phone_raw).strip())
             if stock_req.require_supplier_on_in or supplier_any:
                 supplier, supplier_error = _validate_supplier(
                     name=name_raw,

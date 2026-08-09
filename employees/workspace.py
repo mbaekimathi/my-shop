@@ -684,6 +684,15 @@ def sidebar_for_stock_management(
                         active=active_mode == "settings",
                     ),
                 ),
+                (
+                    "view",
+                    _link(
+                        "Low Stock Alerts",
+                        "bell-ring",
+                        href=stock_management_url(role, "low-stock"),
+                        active=active_mode == "low-stock",
+                    ),
+                ),
             ]
             primary.extend(link for mode, link in candidates if _allowed(mode))
             if active_mode == "view" and _allowed("view"):
@@ -707,6 +716,14 @@ def sidebar_for_stock_management(
                     "sliders-horizontal",
                     href=stock_management_url(role, "settings"),
                     active=active_mode == "settings",
+                )
+            )
+            primary.append(
+                _link(
+                    "Low Stock Alerts",
+                    "bell-ring",
+                    href=stock_management_url(role, "low-stock"),
+                    active=active_mode == "low-stock",
                 )
             )
             primary.append(

@@ -17,6 +17,11 @@ class Item(models.Model):
     shop_price = models.DecimalField(max_digits=12, decimal_places=2)
     use_individual_shop_prices = models.BooleanField(default=False, db_index=True)
     stock = models.PositiveIntegerField(default=0)
+    low_stock_notify = models.BooleanField(default=False, db_index=True)
+    low_stock_threshold = models.PositiveIntegerField(
+        default=0,
+        help_text="Alert when total stock across shops is at or below this quantity.",
+    )
     image = models.ImageField(upload_to=item_image_path, blank=True, null=True)
     track_serial_number = models.BooleanField(default=False, db_index=True)
     is_suspended = models.BooleanField(default=False, db_index=True)

@@ -22,12 +22,19 @@
           Core fields stay locked so movements always stay valid.
         </p>
       </div>
-      <div class="stock-settings-meter" aria-label="Optional rules enabled">
-        <p class="stock-settings-meter-value">
-          <strong data-stock-settings-enabled-count>{{ stock_settings_enabled_count }}</strong>
-          <span>/ {{ stock_settings_toggle_count }}</span>
-        </p>
-        <p class="stock-settings-meter-label">optional rules on</p>
+      <div class="stock-settings-head-actions">
+        <a class="stock-settings-jump" href="{{ low_stock_settings_url }}">
+          <i data-lucide="bell-ring" aria-hidden="true"></i>
+          <span>Low stock alerts</span>
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+        </a>
+        <div class="stock-settings-meter" aria-label="Optional rules enabled">
+          <p class="stock-settings-meter-value">
+            <strong data-stock-settings-enabled-count>{{ stock_settings_enabled_count }}</strong>
+            <span>/ {{ stock_settings_toggle_count }}</span>
+          </p>
+          <p class="stock-settings-meter-label">optional rules on</p>
+        </div>
       </div>
     </div>
   </header>

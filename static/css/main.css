@@ -7116,6 +7116,190 @@ body.workspace-modal-open {
   text-align: right;
 }
 
+.stock-settings-head-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.stock-settings-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  align-self: center;
+  padding: 0.62rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-deep) 28%, var(--line));
+  background: color-mix(in srgb, var(--accent-deep) 10%, #fff);
+  color: var(--text-strong);
+  font-size: 0.84rem;
+  font-weight: 650;
+  text-decoration: none;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.stock-settings-jump:hover {
+  background: color-mix(in srgb, var(--accent-deep) 16%, #fff);
+  border-color: color-mix(in srgb, var(--accent-deep) 42%, var(--line));
+  transform: translateY(-1px);
+}
+
+.stock-settings-jump--ghost {
+  background: color-mix(in srgb, var(--surface) 90%, #fff);
+  border-color: var(--line);
+}
+
+.stock-settings-jump i,
+.stock-settings-jump svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  flex: 0 0 auto;
+}
+
+.low-stock-toolbar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.85rem;
+}
+
+.low-stock-search {
+  flex: 1 1 16rem;
+  min-width: min(100%, 16rem);
+}
+
+.low-stock-visible {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--mist);
+}
+
+.low-stock-table-wrap {
+  position: relative;
+  z-index: 1;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 1px 0 rgba(16, 40, 44, 0.03), 0 14px 28px rgba(8, 28, 34, 0.04);
+}
+
+.low-stock-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 42rem;
+}
+
+.low-stock-table th,
+.low-stock-table td {
+  padding: 0.75rem 0.9rem;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+}
+
+.low-stock-table th {
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  background: color-mix(in srgb, var(--surface) 82%, #eef3f2);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.low-stock-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.low-stock-row.is-saving {
+  opacity: 0.68;
+}
+
+.low-stock-row.is-low {
+  background: color-mix(in srgb, #c45c26 7%, #fff);
+}
+
+.low-stock-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 12rem;
+}
+
+.low-stock-item strong {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.low-stock-item span,
+.low-stock-units span {
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.low-stock-units strong {
+  font-size: 1rem;
+  font-weight: 750;
+  margin-right: 0.25rem;
+}
+
+.low-stock-threshold-field input {
+  width: 5.5rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  font: inherit;
+  font-weight: 650;
+}
+
+.low-stock-threshold-field input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent-deep) 35%, transparent);
+  outline-offset: 1px;
+}
+
+.low-stock-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.low-stock-badge.is-off {
+  color: var(--mist);
+  background: rgba(16, 40, 44, 0.07);
+}
+
+.low-stock-badge.is-ok {
+  color: #1f6b45;
+  background: color-mix(in srgb, #2f7d4a 14%, #fff);
+}
+
+.low-stock-badge.is-low {
+  color: #8a3a12;
+  background: color-mix(in srgb, #c45c26 16%, #fff);
+}
+
+.low-stock-empty {
+  position: relative;
+  z-index: 1;
+  margin-top: 0.85rem;
+}
+
 .stock-settings-meter-value {
   margin: 0;
   display: flex;
@@ -7450,6 +7634,16 @@ body.workspace-modal-open {
 
   .stock-settings-meter-value {
     justify-content: flex-start;
+  }
+
+  .stock-settings-head-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .stock-settings-jump {
+    width: 100%;
+    justify-content: center;
   }
 
   .stock-settings-card-head {
@@ -12682,6 +12876,13 @@ body.workspace-modal-open {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--mist-dim);
+}
+
+.stock-float-field.is-optional-rule > span {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--mist);
 }
 
 .stock-float-field input,

@@ -1117,6 +1117,159 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     )
 
 
+def stock_low_stock_settings(request, profile, meta, module):
+    """Per-item low stock notification thresholds."""
+    from django.db.models import Sum
+
+    from employees.models import EmployeeRole
+    from employees.workspace import sidebar_for_stock_management, stock_management_url
+
+    from .models import Item, ShopStock
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="low-stock",
+        profile=profile,
+    )
+    can_edit = profile.role in (
+        EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.IT_SUPPORT,
+    )
+    wants_json = (
+        "application/json" in (request.headers.get("Accept") or "").lower()
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or (request.POST.get("ajax") or "") == "1"
+    )
+
+    if request.method == "POST":
+        if not can_edit:
+            if wants_json:
+                return JsonResponse(
+                    {"ok": False, "error": "You cannot change low stock settings."},
+                    status=403,
+                )
+            messages.error(request, "You cannot change low stock settings.")
+            return redirect(stock_management_url(profile.role, "low-stock"))
+
+        action = (request.POST.get("action") or "").strip()
+        if action == "save_low_stock":
+            try:
+                item_id = int((request.POST.get("item_id") or "").strip())
+            except (TypeError, ValueError):
+                item_id = 0
+            item = Item.objects.filter(pk=item_id).first()
+            if item is None:
+                if wants_json:
+                    return JsonResponse(
+                        {"ok": False, "error": "Item not found."}, status=404
+                    )
+                messages.error(request, "Item not found.")
+                return redirect(stock_management_url(profile.role, "low-stock"))
+
+            notify = (request.POST.get("notify") or "").strip() in (
+                "1",
+                "true",
+                "True",
+                "on",
+                "yes",
+            )
+            raw_threshold = (request.POST.get("threshold") or "").strip()
+            try:
+                threshold = int(raw_threshold or 0)
+            except (TypeError, ValueError):
+                if wants_json:
+                    return JsonResponse(
+                        {"ok": False, "error": "Threshold must be a whole number."},
+                        status=400,
+                    )
+                messages.error(request, "Threshold must be a whole number.")
+                return redirect(stock_management_url(profile.role, "low-stock"))
+            if threshold < 0:
+                threshold = 0
+            if notify and threshold < 1:
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": "Set a threshold of at least 1 to enable alerts.",
+                        },
+                        status=400,
+                    )
+                messages.error(
+                    request, "Set a threshold of at least 1 to enable alerts."
+                )
+                return redirect(stock_management_url(profile.role, "low-stock"))
+
+            item.low_stock_notify = notify
+            item.low_stock_threshold = threshold
+            item.save(
+                update_fields=["low_stock_notify", "low_stock_threshold", "updated_at"]
+            )
+            total_units = (
+                ShopStock.objects.filter(item=item).aggregate(total=Sum("quantity"))[
+                    "total"
+                ]
+                or 0
+            )
+            is_low = bool(notify and total_units <= threshold)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "item_id": item.pk,
+                        "notify": item.low_stock_notify,
+                        "threshold": item.low_stock_threshold,
+                        "total_units": int(total_units),
+                        "is_low": is_low,
+                    }
+                )
+            messages.success(request, f"Low stock settings saved for {item.name}.")
+            return redirect(stock_management_url(profile.role, "low-stock"))
+
+        if wants_json:
+            return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
+        messages.error(request, "Unknown action.")
+        return redirect(stock_management_url(profile.role, "low-stock"))
+
+    stock_totals = {
+        row["item_id"]: int(row["total"] or 0)
+        for row in ShopStock.objects.values("item_id").annotate(total=Sum("quantity"))
+    }
+    low_stock_items = []
+    notify_count = 0
+    for item in Item.objects.order_by("category", "name"):
+        total_units = stock_totals.get(item.pk, 0)
+        notify = bool(item.low_stock_notify)
+        threshold = int(item.low_stock_threshold or 0)
+        if notify:
+            notify_count += 1
+        low_stock_items.append(
+            {
+                "item": item,
+                "total_units": total_units,
+                "notify": notify,
+                "threshold": threshold,
+                "is_low": bool(notify and total_units <= threshold),
+            }
+        )
+
+    return render(
+        request,
+        "items/stock_low_stock_settings.html",
+        {
+            "page_meta": meta,
+            "page_module": module,
+            "page_sidebar": page_sidebar,
+            "stock_mode": "low-stock",
+            "can_edit_low_stock": can_edit,
+            "low_stock_items": low_stock_items,
+            "low_stock_item_count": len(low_stock_items),
+            "low_stock_notify_count": notify_count,
+            "stock_settings_url": stock_management_url(profile.role, "settings"),
+        },
+    )
+
+
 def stock_settings(request, profile, meta, module):
     """Configure which stock in/out/request fields are compulsory."""
     from employees.models import EmployeeRole
@@ -1297,6 +1450,7 @@ def stock_settings(request, profile, meta, module):
             "stock_settings_enabled_count": enabled_count,
             "stock_settings_toggle_count": toggle_count,
             "stock_requirements_json": json.dumps(settings_row.as_requirements_dict()),
+            "low_stock_settings_url": stock_management_url(profile.role, "low-stock"),
         },
     )
 
@@ -1320,16 +1474,17 @@ def stock_management(request, profile, meta, module, page_sidebar):
         "serials",
         "return-clients",
         "settings",
+        "low-stock",
     ):
         mode = "view"
 
     # Return-clients shares the serials permission key.
-    # Settings is a reference page — anyone who can view stock may open it.
+    # Settings / low-stock are reference pages — anyone who can view stock may open them.
     permission_mode = (
         "serials"
         if mode == "return-clients"
         else "view"
-        if mode == "settings"
+        if mode in ("settings", "low-stock")
         else mode
     )
     denied = require_module_permission(
@@ -1339,7 +1494,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         return denied
 
     # Stock In / Out / Request / Report / Movements / Serials: shop-manager and IT support.
-    if mode not in ("view", "settings") and profile.role not in (
+    if mode not in ("view", "settings", "low-stock") and profile.role not in (
         EmployeeRole.SHOP_MANAGER,
         EmployeeRole.IT_SUPPORT,
     ):
@@ -1347,6 +1502,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if mode == "settings":
         return stock_settings(request, profile, meta, module)
+
+    if mode == "low-stock":
+        return stock_low_stock_settings(request, profile, meta, module)
 
     if mode in ("report", "movements"):
         return stock_report(request, profile, meta, module, page_mode=mode)

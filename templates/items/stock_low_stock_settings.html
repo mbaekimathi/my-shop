@@ -1,0 +1,158 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Low Stock Alerts — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section
+  class="stock-panel stock-panel--settings stock-panel--low-stock"
+  data-animate="rise"
+  data-stock-mode="low-stock"
+  data-low-stock-settings
+  data-can-edit="{% if can_edit_low_stock %}1{% else %}0{% endif %}"
+>
+  <header class="stock-panel-head stock-settings-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">Stock settings</p>
+        <h2>Low stock alerts</h2>
+        <p>
+          Turn on alerts per item and set the quantity that counts as low.
+          Alerts use total units across all shops.
+        </p>
+      </div>
+      <div class="stock-settings-head-actions">
+        <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ stock_settings_url }}">
+          <i data-lucide="sliders-horizontal" aria-hidden="true"></i>
+          <span>Compulsory inputs</span>
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+        </a>
+        <div class="stock-settings-meter" aria-label="Items with alerts enabled">
+          <p class="stock-settings-meter-value">
+            <strong data-low-stock-notify-count>{{ low_stock_notify_count }}</strong>
+            <span>/ {{ low_stock_item_count }}</span>
+          </p>
+          <p class="stock-settings-meter-label">alerts on</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  {% if not can_edit_low_stock %}
+  <p class="stock-settings-readonly">
+    <i data-lucide="lock" aria-hidden="true"></i>
+    <span>View only — shop managers and IT support can change alert settings.</span>
+  </p>
+  {% endif %}
+
+  {% if low_stock_item_count %}
+  <div class="low-stock-toolbar">
+    <label class="item-search-field low-stock-search">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input
+        type="search"
+        placeholder="Search by name or category…"
+        autocomplete="off"
+        data-low-stock-search
+        aria-label="Search items"
+      >
+    </label>
+    <p class="low-stock-visible" data-low-stock-visible-count hidden></p>
+  </div>
+
+  <div class="low-stock-table-wrap">
+    <table class="low-stock-table">
+      <thead>
+        <tr>
+          <th scope="col">Item</th>
+          <th scope="col">On hand</th>
+          <th scope="col">Alert at</th>
+          <th scope="col">Notify</th>
+          <th scope="col">Status</th>
+        </tr>
+      </thead>
+      <tbody data-low-stock-list>
+        {% for row in low_stock_items %}
+        <tr
+          class="low-stock-row{% if row.is_low %} is-low{% endif %}"
+          data-low-stock-row
+          data-item-id="{{ row.item.pk }}"
+          data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }}"
+          data-notify="{% if row.notify %}1{% else %}0{% endif %}"
+        >
+          <td class="low-stock-item">
+            <strong>{{ row.item.name }}</strong>
+            <span>{{ row.item.category }}</span>
+          </td>
+          <td class="low-stock-units">
+            <strong data-low-stock-units>{{ row.total_units }}</strong>
+            <span>units</span>
+          </td>
+          <td class="low-stock-threshold">
+            <label class="low-stock-threshold-field">
+              <span class="visually-hidden">Low stock threshold for {{ row.item.name }}</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                inputmode="numeric"
+                value="{{ row.threshold }}"
+                {% if not can_edit_low_stock %}disabled{% endif %}
+                data-low-stock-threshold
+                aria-label="Alert when stock is at or below"
+              >
+            </label>
+          </td>
+          <td class="low-stock-notify">
+            <label class="perm-switch{% if not can_edit_low_stock %} is-disabled{% endif %}{% if not row.notify %} is-denied{% endif %}">
+              <input
+                type="checkbox"
+                class="perm-switch-input"
+                {% if row.notify %}checked{% endif %}
+                {% if not can_edit_low_stock %}disabled{% endif %}
+                data-low-stock-notify
+                aria-label="Notify when {{ row.item.name }} is low"
+              >
+              <span class="perm-switch-ui" aria-hidden="true"></span>
+              <span class="perm-switch-state">{% if row.notify %}On{% else %}Off{% endif %}</span>
+            </label>
+          </td>
+          <td class="low-stock-status">
+            <span class="low-stock-badge{% if row.is_low %} is-low{% elif row.notify %} is-ok{% else %} is-off{% endif %}" data-low-stock-badge>
+              {% if row.is_low %}
+              Low now
+              {% elif row.notify %}
+              Watching
+              {% else %}
+              Off
+              {% endif %}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="item-search-empty low-stock-empty" data-low-stock-no-results hidden>
+    <i data-lucide="search-x" aria-hidden="true"></i>
+    <span>No items match your search.</span>
+  </p>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="package" aria-hidden="true"></i>
+    <p>No items registered yet. Add items first, then set low stock alerts here.</p>
+  </div>
+  {% endif %}
+
+  <p class="stock-settings-footnote">
+    <i data-lucide="bell" aria-hidden="true"></i>
+    <span>Changes save as you edit. An item is low when on-hand units are at or below its alert quantity.</span>
+  </p>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/stock-low-stock.js' %}?v=1"></script>
+{% endblock %}

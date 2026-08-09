@@ -102,6 +102,17 @@
   };
   const stockReq = readStockRequirements();
 
+  const markOptionalLabel = (el, required) => {
+    if (!el) return;
+    const label = el.closest("label")?.querySelector(":scope > span");
+    if (!label) return;
+    const base = (label.dataset.baseLabel || label.textContent || "").trim();
+    if (!label.dataset.baseLabel) label.dataset.baseLabel = base.replace(/\s*\(optional\)\s*$/i, "");
+    const text = label.dataset.baseLabel;
+    label.textContent = required ? text : `${text} (optional)`;
+    el.closest("label")?.classList.toggle("is-optional-rule", !required);
+  };
+
   /* ── Multi-shop matrix (stock in/out/request management) ─────────────── */
   if (form.hasAttribute("data-stock-multi-shop") && (mode === "in" || mode === "out" || mode === "request")) {
     const floatRoot =
@@ -131,6 +142,11 @@
     const floatRefundAmountWrap = floatRoot?.querySelector(
       "[data-stock-float-refund-amount-wrap]"
     );
+    markOptionalLabel(floatSupplierPhone, stockReq.in.supplier);
+    markOptionalLabel(floatSupplierName, stockReq.in.supplier);
+    markOptionalLabel(floatPayment, stockReq.in.payment_status);
+    markOptionalLabel(floatReason, stockReq.out.reason);
+    markOptionalLabel(floatRefund, stockReq.out.refund);
     const serialModal = document.querySelector("[data-stock-serial-modal]");
     const serialModalList = serialModal?.querySelector("[data-stock-serial-modal-list]");
     const serialModalCount = serialModal?.querySelector("[data-stock-serial-modal-count]");
@@ -552,19 +568,21 @@
       }
       if (mode === "in") {
         autoApplyDetailsToReady({ silent: true });
-        const phone = normalizePhone(floatSupplierPhone?.value);
-        const name = (floatSupplierName?.value || "").trim();
-        if (!phone || phone.length !== 9) {
-          setApplyStatus("Enter a valid supplier phone.", true);
-          revealAndFocus(floatSupplierPhone);
-          return true;
+        if (stockReq.in.supplier) {
+          const phone = normalizePhone(floatSupplierPhone?.value);
+          const name = (floatSupplierName?.value || "").trim();
+          if (!phone || phone.length !== 9) {
+            setApplyStatus("Enter a valid supplier phone.", true);
+            revealAndFocus(floatSupplierPhone);
+            return true;
+          }
+          if (!name) {
+            setApplyStatus("Enter or select supplier name.", true);
+            revealAndFocus(floatSupplierName);
+            return true;
+          }
         }
-        if (!name) {
-          setApplyStatus("Enter or select supplier name.", true);
-          revealAndFocus(floatSupplierName);
-          return true;
-        }
-        if (!(floatPayment?.value || "").trim()) {
+        if (stockReq.in.payment_status && !(floatPayment?.value || "").trim()) {
           setApplyStatus("Select payment status before submitting.", true);
           revealAndFocus(floatPayment);
           return true;
@@ -595,22 +613,24 @@
         autoApplyDetailsToReady({ silent: true });
         const reason = (floatReason?.value || "").trim();
         const refund = (floatRefund?.value || "").trim();
-        if (!reason) {
+        if (stockReq.out.reason && !reason) {
           setApplyStatus("Choose a stock-out reason.", true);
           revealAndFocus(floatReason);
           return true;
         }
-        if (refund !== "yes" && refund !== "no") {
-          setApplyStatus("Choose whether a refund applies.", true);
-          revealAndFocus(floatRefund);
-          return true;
-        }
-        if (refund === "yes") {
-          const amount = Number(floatRefundAmount?.value);
-          if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
-            setApplyStatus("Enter a whole-number refund amount greater than zero.", true);
-            revealAndFocus(floatRefundAmount);
+        if (stockReq.out.refund) {
+          if (refund !== "yes" && refund !== "no") {
+            setApplyStatus("Choose whether a refund applies.", true);
+            revealAndFocus(floatRefund);
             return true;
+          }
+          if (refund === "yes") {
+            const amount = Number(floatRefundAmount?.value);
+            if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+              setApplyStatus("Enter a whole-number refund amount greater than zero.", true);
+              revealAndFocus(floatRefundAmount);
+              return true;
+            }
           }
         }
         const missingOut = ready.find((item) => !cellHasOutDetails(item.cell));
@@ -1044,7 +1064,7 @@
         setApplyStatus("Add quantity on at least one shop cell first.", true);
         return;
       }
-      if (mode === "in" && !supplierCoreReady()) {
+      if (mode === "in" && stockReq.in.supplier && !supplierCoreReady()) {
         setApplyStatus("Enter supplier name and phone first.", true);
         return;
       }
@@ -1573,6 +1593,11 @@
   const floatRefund = floatRoot?.querySelector("[data-stock-float-refund]");
   const floatRefundAmount = floatRoot?.querySelector("[data-stock-float-refund-amount]");
   const floatRefundAmountWrap = floatRoot?.querySelector("[data-stock-float-refund-amount-wrap]");
+  markOptionalLabel(floatSupplierPhone, stockReq.in.supplier);
+  markOptionalLabel(floatSupplierName, stockReq.in.supplier);
+  markOptionalLabel(floatPayment, stockReq.in.payment_status);
+  markOptionalLabel(floatReason, stockReq.out.reason);
+  markOptionalLabel(floatRefund, stockReq.out.refund);
   const loginCodeInput = floatRoot?.querySelector("[data-stock-float-login-code]");
   const loginStatusEl = floatRoot?.querySelector("[data-stock-float-login-status]");
   const verifyLoginUrl = form.getAttribute("data-verify-login-url") || "";
@@ -2113,9 +2138,11 @@
       // Fill meta from float only when this item still needs details.
       if (mode === "in" && !rowHasSupplierDetails(row)) {
         const details = readFloatDetails();
-        const floatReady =
-          details.name && details.dial && details.phone && details.payment;
-        if (floatReady) {
+        const supplierOk =
+          !stockReq.in.supplier ||
+          Boolean(details.name && details.dial && details.phone);
+        const paymentOk = !stockReq.in.payment_status || Boolean(details.payment);
+        if (supplierOk && paymentOk) {
           appliedDetails = details;
           writeSupplierMeta(row, details);
         } else if (appliedDetails) {
@@ -2124,13 +2151,15 @@
       }
       if (mode === "out" && !rowHasOutDetails(row)) {
         const details = readFloatDetails();
-        const floatReady = details.reason && (details.refund === "yes" || details.refund === "no");
+        const reasonOk = !stockReq.out.reason || Boolean(details.reason);
         const refundOk =
-          details.refund !== "yes" ||
-          (Number.isInteger(Number(details.refundAmount)) &&
-            Number(details.refundAmount) > 0 &&
-            Number.isFinite(Number(details.refundAmount)));
-        if (floatReady && refundOk) {
+          !stockReq.out.refund ||
+          ((details.refund === "yes" || details.refund === "no") &&
+            (details.refund !== "yes" ||
+              (Number.isInteger(Number(details.refundAmount)) &&
+                Number(details.refundAmount) > 0 &&
+                Number.isFinite(Number(details.refundAmount)))));
+        if (reasonOk && refundOk) {
           appliedDetails = details;
           writeOutMeta(row, details);
         } else if (appliedDetails) {
@@ -2396,17 +2425,19 @@
     if (mode === "in") {
       autoApplyDetailsToReady({ silent: true });
       const details = readFloatDetails();
-      if (!details.phone || details.phone.length !== 9) {
-        setApplyStatus("Enter a valid supplier phone.", true);
-        revealAndFocus(floatSupplierPhone);
-        return true;
+      if (stockReq.in.supplier) {
+        if (!details.phone || details.phone.length !== 9) {
+          setApplyStatus("Enter a valid supplier phone.", true);
+          revealAndFocus(floatSupplierPhone);
+          return true;
+        }
+        if (!details.name) {
+          setApplyStatus("Enter or select supplier name.", true);
+          revealAndFocus(floatSupplierName);
+          return true;
+        }
       }
-      if (!details.name) {
-        setApplyStatus("Enter or select supplier name.", true);
-        revealAndFocus(floatSupplierName);
-        return true;
-      }
-      if (!details.payment) {
+      if (stockReq.in.payment_status && !details.payment) {
         setApplyStatus("Select payment status before submitting.", true);
         revealAndFocus(floatPayment);
         return true;
@@ -2433,25 +2464,27 @@
     if (mode === "out") {
       autoApplyDetailsToReady({ silent: true });
       const details = readFloatDetails();
-      if (!details.reason) {
+      if (stockReq.out.reason && !details.reason) {
         setApplyStatus("Choose a stock-out reason.", true);
         revealAndFocus(floatReason);
         return true;
       }
-      if (details.refund !== "yes" && details.refund !== "no") {
-        setApplyStatus("Choose whether a refund applies.", true);
-        revealAndFocus(floatRefund);
-        return true;
-      }
-      if (details.refund === "yes") {
-        const amount = Number(details.refundAmount);
-        if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
-          setApplyStatus(
-            "Enter a whole-number refund amount greater than zero.",
-            true
-          );
-          revealAndFocus(floatRefundAmount);
+      if (stockReq.out.refund) {
+        if (details.refund !== "yes" && details.refund !== "no") {
+          setApplyStatus("Choose whether a refund applies.", true);
+          revealAndFocus(floatRefund);
           return true;
+        }
+        if (details.refund === "yes") {
+          const amount = Number(details.refundAmount);
+          if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+            setApplyStatus(
+              "Enter a whole-number refund amount greater than zero.",
+              true
+            );
+            revealAndFocus(floatRefundAmount);
+            return true;
+          }
         }
       }
       const missingOut = ready.find((item) => !rowHasOutDetails(item.row));
@@ -2593,17 +2626,27 @@
 
     if (mode === "in") {
       if (!hasReady) {
+        const needs =
+          [
+            stockReq.in.supplier ? "supplier" : "",
+            stockReq.in.payment_status ? "payment" : "",
+            stockReq.in.buying_price ? "buying price" : "",
+          ].filter(Boolean);
         setApplyStatus(
-          "Add item quantities, then enter supplier phone, name, and payment."
+          needs.length
+            ? `Add item quantities, then enter ${needs.join(", ")}.`
+            : "Add item quantities to stock in."
         );
-      } else if (!supplierCoreReady()) {
+      } else if (stockReq.in.supplier && !supplierCoreReady()) {
         setApplyStatus(
           "Enter supplier phone and name — details apply to all ready items.",
           true
         );
       } else if (!floatSupplierReady()) {
         setApplyStatus(
-          "Supplier applied. Select payment status before submitting.",
+          stockReq.in.payment_status
+            ? "Select payment status before submitting."
+            : "Complete supplier details before submitting.",
           true
         );
       } else if (!ready.every((item) => rowHasBuyingPrice(item.row))) {
@@ -2617,7 +2660,15 @@
       }
     } else if (mode === "out") {
       if (!hasReady) {
-        setApplyStatus("Add item quantities, then choose reason and refund.");
+        const needs = [
+          stockReq.out.reason ? "reason" : "",
+          stockReq.out.refund ? "refund" : "",
+        ].filter(Boolean);
+        setApplyStatus(
+          needs.length
+            ? `Add item quantities, then choose ${needs.join(" and ")}.`
+            : "Add item quantities to stock out."
+        );
       } else if (!floatOutReady()) {
         setApplyStatus(
           "Choose reason and refund — details apply to all ready items.",
@@ -2782,18 +2833,24 @@
     if (mode === "out") {
       if (!floatOutReady()) {
         const details = readFloatDetails();
-        if (!details.reason) {
+        if (stockReq.out.reason && !details.reason) {
           setApplyStatus("Choose a stock-out reason.", true);
           floatReason?.focus();
-        } else if (details.refund !== "yes" && details.refund !== "no") {
+        } else if (
+          stockReq.out.refund &&
+          details.refund !== "yes" &&
+          details.refund !== "no"
+        ) {
           setApplyStatus("Choose whether a refund applies.", true);
           floatRefund?.focus();
-        } else {
+        } else if (stockReq.out.refund && details.refund === "yes") {
           setApplyStatus(
             "Enter a whole-number refund amount greater than zero.",
             true
           );
           floatRefundAmount?.focus();
+        } else {
+          setApplyStatus("Complete stock-out details first.", true);
         }
         return false;
       }
@@ -2802,7 +2859,7 @@
       return true;
     }
 
-    if (!supplierCoreReady()) {
+    if (stockReq.in.supplier && !supplierCoreReady()) {
       const details = readFloatDetails();
       if (!details.phone) {
         setApplyStatus("Enter supplier phone.", true);
@@ -2818,6 +2875,11 @@
           )
           ?.focus();
       }
+      return false;
+    }
+    if (stockReq.in.payment_status && !floatSupplierReady()) {
+      setApplyStatus("Select payment status before applying.", true);
+      floatPayment?.focus();
       return false;
     }
     autoApplyDetailsToReady({ silent: false });
