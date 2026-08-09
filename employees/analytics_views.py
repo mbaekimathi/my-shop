@@ -496,3 +496,151 @@ def analytics_account_pay_stk_status(request, role_segment, payment_id):
     if payment is None:
         return JsonResponse({"ok": False, "error": "STK payment not found."}, status=404)
     return JsonResponse({"ok": True, **stk_payment_payload(payment)})
+
+
+def _analytics_receipt_shop_access(profile, shop_id):
+    """Resolve a shop the analytics viewer may open receipts for."""
+    from items.services import actionable_shops_for_profile
+    from shops.models import Shop
+
+    shop_ids = {shop.pk for shop in actionable_shops_for_profile(profile)}
+    if int(shop_id) not in shop_ids:
+        return None
+    return Shop.objects.filter(
+        pk=shop_id, is_hidden=False, is_suspended=False
+    ).first()
+
+
+def _analytics_role_or_error(request, role_segment, *, as_json=False):
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        if as_json:
+            return profile, JsonResponse(
+                {"ok": False, "error": "Wrong portal."}, status=403
+            )
+        return profile, redirect(
+            request.path.replace(f"/{role_segment}/", f"/{expected}/", 1)
+        )
+    return profile, None
+
+
+@active_employee_required
+@require_GET
+def analytics_receipt_detail(request, role_segment, shop_id, receipt_id):
+    """JSON receipt detail for analytics return/reprint modal."""
+    from .module_permissions import require_module_permission
+    from shops.services import get_shop_receipt_detail
+
+    profile, err = _analytics_role_or_error(request, role_segment, as_json=True)
+    if err is not None:
+        return err
+
+    denied = require_module_permission(
+        request, profile, "analytics", "receipts", as_json=True
+    )
+    if denied is not None:
+        return denied
+
+    shop = _analytics_receipt_shop_access(profile, shop_id)
+    if shop is None:
+        return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
+
+    try:
+        payload = get_shop_receipt_detail(shop=shop, receipt_id=receipt_id)
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        return JsonResponse({"ok": False, "error": message}, status=404)
+    return JsonResponse(payload)
+
+
+@active_employee_required
+@require_POST
+def analytics_receipt_return(request, role_segment, shop_id, receipt_id):
+    """Return items from a receipt opened in analytics (staff ID required)."""
+    import json
+
+    from employees.module_permissions import require_module_permission
+    from employees.services import verify_active_employee_code
+    from shops.services import return_shop_receipt_items
+
+    profile, err = _analytics_role_or_error(request, role_segment, as_json=True)
+    if err is not None:
+        return err
+
+    denied = require_module_permission(
+        request, profile, "analytics", "receipts", as_json=True
+    )
+    if denied is not None:
+        return denied
+
+    shop = _analytics_receipt_shop_access(profile, shop_id)
+    if shop is None:
+        return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
+
+    try:
+        if request.content_type and "application/json" in request.content_type:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        else:
+            payload = {
+                "login_code": request.POST.get("login_code"),
+                "lines": json.loads(request.POST.get("lines") or "[]"),
+            }
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return JsonResponse({"ok": False, "error": "Invalid return payload."}, status=400)
+
+    actor = verify_active_employee_code(payload.get("login_code"))
+    if actor is None:
+        return JsonResponse(
+            {"ok": False, "error": "Enter a valid active staff 6-digit ID."},
+            status=403,
+        )
+    denied = require_module_permission(
+        request, actor, "my-shop", "return_receipt", as_json=True
+    )
+    if denied is not None:
+        return denied
+
+    try:
+        result = return_shop_receipt_items(
+            shop=shop, receipt_id=receipt_id, payload=payload
+        )
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        return JsonResponse({"ok": False, "error": message}, status=400)
+    return JsonResponse(result)
+
+
+@active_employee_required
+@require_POST
+def analytics_receipt_verify_login(request, role_segment):
+    """Validate staff 6-digit ID before confirming an analytics receipt return."""
+    from employees.module_permissions import my_shop_capabilities
+    from employees.services import verify_active_employee_code
+
+    profile, err = _analytics_role_or_error(request, role_segment, as_json=True)
+    if err is not None:
+        return err
+
+    code = (
+        request.POST.get("login_code") or request.POST.get("employee_code") or ""
+    ).strip()
+    authorising = verify_active_employee_code(code)
+    if authorising is None:
+        return JsonResponse(
+            {"ok": False, "error": "Not a valid active staff ID."},
+            status=400,
+        )
+    name = authorising.user.get_full_name() or authorising.user.username
+    return JsonResponse(
+        {
+            "ok": True,
+            "employee_id": authorising.employee_id,
+            "name": name,
+            "capabilities": my_shop_capabilities(authorising),
+        }
+    )

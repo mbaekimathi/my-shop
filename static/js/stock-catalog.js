@@ -242,6 +242,31 @@
                 </th>`;
               }
               if (mode === "request") {
+                const pairLocked = panel.hasAttribute("data-stock-request-pair");
+                const requestingId = String(
+                  panel.dataset.stockCatalogShop || ""
+                ).trim();
+                const isRequesting =
+                  requestingId && String(shop.id) === requestingId;
+                const roleLabel = isRequesting ? "Requesting" : "From";
+                if (pairLocked) {
+                  return `<th
+                  scope="col"
+                  class="stock-matrix-shop-col stock-th--pair stock-th--request${
+                    isRequesting ? " is-requesting" : ""
+                  }"
+                  title="${name} · ${roleLabel}"
+                  data-stock-request-shop-header
+                  data-shop-id="${shopIdAttr}"
+                  data-shop-name="${name}"
+                >
+                  <span class="stock-th-pair">
+                    <span class="stock-th-pair-name">${name}</span>
+                    <span class="stock-th-pair-role" data-stock-request-role>${roleLabel}</span>
+                    <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span></span>
+                  </span>
+                </th>`;
+                }
                 return `<th
                   scope="col"
                   class="stock-matrix-shop-col stock-th--pair stock-th--request"
@@ -765,28 +790,51 @@
         `${name} ${category} ${desc}`.toLowerCase()
       );
       header.innerHTML = `
-        <button type="button" class="buy-stock-pick-toggle" data-stock-item-toggle>
+        <div class="buy-stock-pick-head">
           <div class="buy-stock-pick-copy">
-            <strong>${escapeHtml(name)}</strong>
-            <span class="buy-stock-pick-meta">
-              ${escapeHtml(category || "Item")}
-              · in shop ${stock}
-              ${item.track_serial ? " · Serial" : ""}
-              ${item.is_suspended ? " · Suspended" : ""}
-            </span>
+            <div class="buy-stock-pick-title">
+              <button
+                type="button"
+                class="buy-stock-pick-name"
+                data-stock-item-toggle
+                aria-label="Toggle ${escapeHtml(name)}"
+              >
+                <strong>${escapeHtml(name)}</strong>
+              </button>
+              <button
+                type="button"
+                class="buy-stock-pick-remove"
+                data-stock-item-remove
+                aria-label="Remove ${escapeHtml(name)}"
+                title="Remove item"
+                hidden
+              >
+                <i data-lucide="x" aria-hidden="true"></i>
+              </button>
+            </div>
+            <button
+              type="button"
+              class="buy-stock-pick-meta-hit"
+              data-stock-item-toggle
+              tabindex="-1"
+            >
+              <span class="buy-stock-pick-meta">
+                ${escapeHtml(category || "Item")}
+                · in shop ${stock}
+                ${item.track_serial ? " · Serial" : ""}
+                ${item.is_suspended ? " · Suspended" : ""}
+              </span>
+            </button>
           </div>
-          <i data-lucide="chevron-down" aria-hidden="true"></i>
-        </button>
-        <button
-          type="button"
-          class="buy-stock-pick-remove"
-          data-stock-item-remove
-          aria-label="Remove ${escapeHtml(name)}"
-          title="Remove item"
-          hidden
-        >
-          <i data-lucide="x" aria-hidden="true"></i>
-        </button>`;
+          <button
+            type="button"
+            class="buy-stock-pick-toggle"
+            data-stock-item-toggle
+            aria-label="Expand or collapse ${escapeHtml(name)}"
+          >
+            <i data-lucide="chevron-down" aria-hidden="true"></i>
+          </button>
+        </div>`;
 
       const formRow = document.createElement("div");
       formRow.className = "buy-stock-pick-inputs";

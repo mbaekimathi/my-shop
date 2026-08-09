@@ -4,12 +4,24 @@
 {% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="ax" data-animate="rise" data-analytics data-ax-section="{{ section_slug }}">
+<section
+  class="ax{% if page.ledger_layout or page.hide_date_filters %} ax--ledger{% endif %}"
+  data-animate="rise"
+  data-analytics
+  data-ax-section="{{ section_slug }}"
+  {% if page.receipt_modal %}
+  data-ax-receipts
+  data-receipt-detail-url="{{ page.receipt_detail_url_template }}"
+  data-receipt-return-url="{{ page.receipt_return_url_template }}"
+  data-verify-login-url="{{ page.receipt_verify_login_url }}"
+  {% endif %}
+>
+  {% if page.receipt_modal %}{% csrf_token %}{% endif %}
   <header class="ax-top">
     <div class="ax-top-main">
       <div class="ax-title">
         <h2>{{ page.headline }}</h2>
-        <span class="ax-period">{{ report_period_label }}</span>
+        <span class="ax-period">{% if page.period_label %}{{ page.period_label }}{% else %}{{ report_period_label }}{% endif %}</span>
       </div>
       <form class="ax-filters" method="get" data-analytics-filters>
         <select name="shop_id" aria-label="Shop">
@@ -18,6 +30,7 @@
           <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
           {% endfor %}
         </select>
+        {% if not page.hide_date_filters %}
         <select name="range" data-analytics-range aria-label="Time range">
           <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
           <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
@@ -40,6 +53,7 @@
           required
           aria-label="Year"
         >
+        {% endif %}
         <button type="submit" class="ax-apply">Apply</button>
       </form>
     </div>
@@ -310,10 +324,27 @@
   {% if page.tables %}
   <div class="ax-grid ax-grid--tables">
     {% for table in page.tables %}
-    <section class="ax-card{% if page.tables|length == 1 or table.shop_grid %} ax-card--wide{% endif %}{% if table.shop_grid %} ax-card--matrix{% endif %}">
+    <section class="ax-card{% if page.tables|length == 1 or table.shop_grid or table.searchable %} ax-card--wide{% endif %}{% if table.shop_grid %} ax-card--matrix{% endif %}">
       <header class="ax-card-head">
-        <h3>{{ table.title }}</h3>
-        {% if table.shop_grid %}
+        <div class="ax-card-head-main">
+          <h3>{{ table.title }}</h3>
+          {% if table.shop_grid and not table.searchable %}
+          <span class="ax-card-hint">Hover amounts for full KSh</span>
+          {% endif %}
+        </div>
+        {% if page.show_search and table.searchable %}
+        <label class="ax-table-search">
+          <span class="visually-hidden">{{ page.search_placeholder|default:"Search" }}</span>
+          <input
+            type="search"
+            value=""
+            placeholder="{{ page.search_placeholder|default:'Search…' }}"
+            aria-label="{{ page.search_placeholder|default:'Search' }}"
+            data-ax-table-search
+            autocomplete="off"
+          >
+        </label>
+        {% elif table.shop_grid %}
         <span class="ax-card-hint">Hover amounts for full KSh</span>
         {% endif %}
       </header>
@@ -352,8 +383,18 @@
           </thead>
           <tbody>
             {% for row in table.rows %}
-            <tr{% if table.shop_grid and forloop.last %} class="ax-row--total"{% endif %}>
-              {% for cell in row %}
+            {% with cells=row.cells|default:row %}
+            <tr
+              {% if row.receipt_id %}
+              class="ax-receipt-row"
+              data-receipt-id="{{ row.receipt_id }}"
+              data-shop-id="{{ row.shop_id }}"
+              tabindex="0"
+              {% elif table.shop_grid and forloop.last %}
+              class="ax-row--total"
+              {% endif %}
+            >
+              {% for cell in cells %}
               {% for col in table.columns %}
               {% if forloop.parentloop.counter0 == forloop.counter0 %}
               <td
@@ -363,7 +404,7 @@
                 {% if cell.href %}
                 <a class="ax-link" href="{{ cell.href }}">{{ cell.label }}</a>
                 {% elif cell.kind == "qty_amount" %}
-                <span class="ax-pair" title="{{ cell.title }}">
+                <span class="ax-pair{% if cell.tone and cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}" title="{{ cell.title }}">
                   <span class="ax-pair-qty">{{ cell.qty }}</span>
                   <span class="ax-pair-amt">{{ cell.amount }}</span>
                 </span>
@@ -381,6 +422,7 @@
               {% endfor %}
               {% endfor %}
             </tr>
+            {% endwith %}
             {% endfor %}
           </tbody>
         </table>
@@ -391,6 +433,9 @@
       {% if table.footnote %}
       <p class="ax-footnote">{{ table.footnote }}</p>
       {% endif %}
+      {% if page.show_search and table.searchable %}
+      <p class="ax-empty ax-empty-search" hidden>{{ page.search_empty|default:"No rows match that search." }}</p>
+      {% endif %}
     </section>
     {% endfor %}
   </div>
@@ -398,14 +443,60 @@
 </section>
 {% endblock %}
 
+{% block workspace_overlays %}
+{{ block.super }}
+{% if page.receipt_modal %}
+<div class="workspace-modal shop-receipt-modal" data-receipt-modal hidden>
+  <div class="workspace-modal-backdrop" data-receipt-modal-close></div>
+  <div
+    class="workspace-modal-dialog shop-receipt-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-analytics-receipt-title"
+  >
+    <div class="workspace-modal-head shop-receipt-modal-head">
+      <div>
+        <p class="shop-receipt-modal-kicker">Analytics · Receipt</p>
+        <h2 id="ax-analytics-receipt-title" data-receipt-modal-title>Receipt</h2>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-receipt-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="shop-receipt-modal-body" data-receipt-modal-body>
+      <p class="shop-receipts-status">Loading receipt…</p>
+    </div>
+
+    <div class="workspace-modal-actions shop-receipt-modal-actions" data-receipt-modal-actions hidden>
+      <button type="button" class="btn btn--ghost" data-receipt-start-return hidden>
+        <i data-lucide="undo-2" aria-hidden="true"></i>
+        Return items
+      </button>
+      <button type="button" class="btn btn--ghost" data-receipt-cancel-return hidden>
+        Cancel
+      </button>
+      <button type="button" class="btn btn--primary" data-receipt-confirm-return hidden disabled>
+        Confirm return
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
 {% block extra_js %}
 {{ block.super }}
+{% if page.receipt_modal %}
+<script src="{% static 'js/analytics-receipts-return.js' %}?v=1"></script>
+{% endif %}
 <script>
   (() => {
-    const form = document.querySelector("[data-analytics-filters]");
-    if (!form) return;
-    const rangeSelect = form.querySelector("[data-analytics-range]");
-    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const root = document.querySelector("[data-analytics]");
+    if (!root) return;
+    const form = root.querySelector("[data-analytics-filters]");
+    const rangeSelect = form?.querySelector("[data-analytics-range]");
+    const rangeFields = [...(form?.querySelectorAll("[data-range-field]") || [])];
     const syncRange = () => {
       const range = rangeSelect?.value || "day";
       rangeFields.forEach((field) => {
@@ -417,6 +508,27 @@
     };
     rangeSelect?.addEventListener("change", syncRange);
     syncRange();
+
+    const search = root.querySelector("[data-ax-table-search]");
+    if (!search) return;
+    const scope = search.closest(".ax-card") || root;
+    const rows = [...scope.querySelectorAll(".ax-table tbody tr")];
+    const emptyNote = scope.querySelector(".ax-empty-search");
+    const filterRows = () => {
+      const q = (search.value || "").trim().toLowerCase();
+      let visible = 0;
+      rows.forEach((row) => {
+        const label = (row.textContent || "").toLowerCase();
+        const match = !q || label.includes(q);
+        row.hidden = !match;
+        if (match) visible += 1;
+      });
+      if (emptyNote) emptyNote.hidden = visible > 0 || !q;
+    };
+    search.addEventListener("input", filterRows);
+    search.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") event.preventDefault();
+    });
   })();
 </script>
 {% endblock %}

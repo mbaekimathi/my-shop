@@ -31,6 +31,9 @@
       >
         <i data-lucide="{{ item.icon }}" aria-hidden="true"></i>
         <span>{{ item.label }}</span>
+        {% if item.badge %}
+        <span class="workspace-nav-badge" aria-label="{{ item.badge }} pending">{{ item.badge }}</span>
+        {% endif %}
       </a>
       {% endif %}
     {% endfor %}

@@ -18,7 +18,8 @@
   {% csrf_token %}
   <input type="hidden" name="mode" value="{{ stock_mode }}" data-stock-float-mode-input>
   {% if stock_mode == 'request' %}
-  <input type="hidden" name="shop_id" value="" data-stock-requesting-shop>
+  <input type="hidden" name="shop_id" value="{{ selected_shop.pk|default:'' }}" data-stock-requesting-shop>
+  <input type="hidden" name="requested_from_shop_id" value="{{ requested_from_shop.pk|default:'' }}" data-stock-from-shop-input>
   {% endif %}
 
   <section
@@ -31,6 +32,12 @@
     {% if stock_mode == 'view' and selected_shop %}
     data-stock-catalog-shop="{{ selected_shop.pk }}"
     data-stock-catalog-shop-name="{{ selected_shop.name }}"
+    {% elif stock_mode == 'request' and request_pair_ready %}
+    data-stock-catalog-shop="{{ selected_shop.pk }}"
+    data-stock-catalog-shop-name="{{ selected_shop.name }}"
+    data-stock-catalog-from-shop="{{ requested_from_shop.pk }}"
+    data-stock-catalog-from-shop-name="{{ requested_from_shop.name }}"
+    data-stock-request-pair="1"
     {% elif shop_filter_active %}
     data-stock-catalog-shop-ids="{{ selected_shop_ids_json }}"
     {% if selected_shops|length == 1 %}
@@ -54,7 +61,7 @@
             {% if stock_mode == 'out' %}
             Stock out · {{ shop_filter_label }}
             {% elif stock_mode == 'request' %}
-            Request stock · All shops
+            Request stock · {{ shop_filter_label }}
             {% elif stock_mode == 'in' %}
             Stock in · {{ shop_filter_label }}
             {% else %}
@@ -76,7 +83,7 @@
             {% if stock_mode == 'out' %}
             Enter quantity{% if shop_filter_active %} for {{ shop_filter_label }}{% else %} per shop{% endif %}. Serial items open a popup. Set reason and refund in the submit panel.
             {% elif stock_mode == 'request' %}
-            Click a shop header to set the requesting shop, then enter qty under the shops you are requesting from.
+            Choose the shop that needs stock and the shop you are requesting from. Enter quantities under the supplying shop.
             {% elif stock_mode == 'in' %}
             Enter quantity and buying price{% if shop_filter_active %} for {{ shop_filter_label }}{% else %} per shop{% endif %}. Serial items open a popup. Set supplier details in the submit panel.
             {% else %}
@@ -98,7 +105,15 @@
           {% if shops %}
           <p class="stock-stat">
             <strong>{{ total_units }}</strong>
-            <span>{% if shop_filter_active %}units at {{ shop_filter_label }}{% else %}units across all shops{% endif %}</span>
+            <span>
+              {% if stock_mode == 'request' and request_pair_ready %}
+              units for selected shops
+              {% elif shop_filter_active %}
+              units at {{ shop_filter_label }}
+              {% else %}
+              units across all shops
+              {% endif %}
+            </span>
           </p>
           {% endif %}
           {% elif selected_shop %}
@@ -177,10 +192,50 @@
           {% endif %}
         </div>
         {% elif stock_mode == 'request' %}
+        <div class="stock-request-pair" data-stock-request-pair-bar>
+          <label class="stock-shop-pick">
+            <span>Requesting shop</span>
+            <select data-stock-shop-nav aria-label="Shop that needs stock">
+              <option value="">Choose shop…</option>
+              {% for shop in shops %}
+              <option
+                value="{{ shop.pk }}"
+                {% if selected_shop and selected_shop.pk == shop.pk %}selected{% endif %}
+              >{{ shop.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="stock-request-pair-arrow" aria-hidden="true">
+            <i data-lucide="arrow-left"></i>
+          </div>
+          <label class="stock-shop-pick">
+            <span>From shop</span>
+            <select data-stock-from-nav aria-label="Shop to request stock from">
+              <option value="">Choose shop…</option>
+              {% for shop in shops %}
+              <option
+                value="{{ shop.pk }}"
+                {% if requested_from_shop and requested_from_shop.pk == shop.pk %}selected{% endif %}
+                {% if selected_shop and selected_shop.pk == shop.pk %}disabled{% endif %}
+              >{{ shop.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        {% if request_pair_ready %}
         <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
-          <i data-lucide="columns-3" aria-hidden="true"></i>
-          <span>Click a shop column to set <strong>Requesting</strong>, then enter qty under other shops</span>
+          <i data-lucide="package" aria-hidden="true"></i>
+          <span>
+            <strong>{{ selected_shop.name }}</strong> is requesting from
+            <strong>{{ requested_from_shop.name }}</strong> — enter qty under From.
+          </span>
         </p>
+        {% else %}
+        <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
+          <i data-lucide="store" aria-hidden="true"></i>
+          <span>Select both shops to load items and stock levels.</span>
+        </p>
+        {% endif %}
         {% endif %}
         {% if not shops %}
         <p class="stock-shop-bar-hint">
@@ -212,6 +267,11 @@
     <div class="dashboard-placeholder">
       <i data-lucide="store" aria-hidden="true"></i>
       <p>No shops are allocated to your account.</p>
+    </div>
+    {% elif stock_mode == 'request' and not request_pair_ready %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="arrow-left-right" aria-hidden="true"></i>
+      <p>Choose the requesting shop and the shop to request from to continue.</p>
     </div>
     {% elif use_stock_catalog_api and item_count %}
     <div class="stock-matrix-wrap" data-item-list>
@@ -748,11 +808,11 @@
           {% if stock_mode == 'request' %}
           <p class="stock-float-shop-readout">
             <span>Requesting</span>
-            <strong data-stock-float-requesting-label>Select a shop column</strong>
+            <strong data-stock-float-requesting-label>{% if selected_shop %}{{ selected_shop.name }}{% else %}Choose requesting shop{% endif %}</strong>
           </p>
           <p class="stock-float-shop-readout">
             <span>From</span>
-            <strong data-stock-float-shop-label>—</strong>
+            <strong data-stock-float-shop-label">{% if requested_from_shop %}{{ requested_from_shop.name }}{% else %}Choose from shop{% endif %}</strong>
           </p>
           {% else %}
           <p class="stock-float-shop-readout">
@@ -769,7 +829,7 @@
             {% elif stock_mode == 'out' %}
             Enter qty per shop. Use autofill below for reason and refund.
             {% else %}
-            Click a shop header to set Requesting, then enter qty under shops you are requesting from.
+            Enter qty under the From shop column, then submit the request.
             {% endif %}
           </p>
         </div>
@@ -1109,10 +1169,10 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=16"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=18"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix24"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix26"></script>
 <script
   src="{% static 'js/serial-scan.js' %}?v=3"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"

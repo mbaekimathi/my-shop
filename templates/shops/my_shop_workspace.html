@@ -19,6 +19,8 @@
   data-verify-login-url="{{ verify_login_code_url }}"
   data-client-lookup-url="{{ client_lookup_url }}"
   data-serial-search-url="{{ serial_search_url }}"
+  {% if stock_request_status_url %}data-stock-request-status-url="{{ stock_request_status_url }}"{% endif %}
+  {% if stock_request_supplier_ack_url %}data-stock-request-supplier-ack-url="{{ stock_request_supplier_ack_url }}"{% endif %}
   data-default-kind="{{ default_kind }}"
   data-default-payment="{{ default_payment }}"
   data-default-print-via="{{ default_print_via }}"
@@ -581,10 +583,10 @@
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script src="{% static 'js/shop-printer.js' %}?v=18"></script>
-<script src="{% static 'js/my-shop.js' %}?v=45"></script>
-<script src="{% static 'js/stock-catalog.js' %}?v=16"></script>
+<script src="{% static 'js/my-shop.js' %}?v=46"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=17"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix24"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix25"></script>
 <script src="{% static 'js/my-shop-expense.js' %}?v=6"></script>
 <script
   src="{% static 'js/serial-scan.js' %}?v=3"

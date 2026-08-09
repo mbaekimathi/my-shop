@@ -1464,6 +1464,9 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
                     if movement_type == StockMovementType.REQUEST
                     else ""
                 ),
+                supplier_notified=(
+                    False if movement_type == StockMovementType.REQUEST else True
+                ),
                 created_by=profile,
             )
             last_movement = movement
@@ -1646,12 +1649,14 @@ def respond_to_stock_request(
     if decision == "decline":
         movement.request_status = StockRequestStatus.DECLINED
         movement.requester_notified = False
+        movement.supplier_notified = True
         movement.responded_by = profile
         movement.responded_at = timezone.now()
         movement.save(
             update_fields=[
                 "request_status",
                 "requester_notified",
+                "supplier_notified",
                 "responded_by",
                 "responded_at",
             ]
@@ -1811,12 +1816,14 @@ def respond_to_stock_request(
 
     movement.request_status = StockRequestStatus.FULFILLED
     movement.requester_notified = False
+    movement.supplier_notified = True
     movement.responded_by = profile
     movement.responded_at = timezone.now()
     movement.save(
         update_fields=[
             "request_status",
             "requester_notified",
+            "supplier_notified",
             "responded_by",
             "responded_at",
         ]

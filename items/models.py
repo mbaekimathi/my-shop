@@ -218,6 +218,10 @@ class StockMovement(models.Model):
         default=True,
         help_text="False after a decision until the requesting shop acknowledges it.",
     )
+    supplier_notified = models.BooleanField(
+        default=True,
+        help_text="False after a new request until the supplying shop acknowledges it.",
+    )
     responded_by = models.ForeignKey(
         "employees.EmployeeProfile",
         on_delete=models.SET_NULL,

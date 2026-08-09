@@ -1,5 +1,5 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v6";
+const CACHE_VERSION = "myshop-v7";
 
 const PRECACHE = [
   "/static/css/main.css",
@@ -30,8 +30,25 @@ const isNavigation = (request) =>
 
 const isSameOrigin = (url) => url.origin === self.location.origin;
 
+/** Auth HTML embeds CSRF tokens — never cache (stale token → 403 on POST). */
+const isAuthPath = (url) => {
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  return (
+    path === "/employees/login" ||
+    path === "/employees/register" ||
+    path === "/employees/logout" ||
+    path === "/shops/login" ||
+    path === "/shop/login" ||
+    path.endsWith("/login") ||
+    path.endsWith("/register") ||
+    path.endsWith("/logout")
+  );
+};
+
 const cacheResponse = async (request, response) => {
   if (!response?.ok || !isSameOrigin(new URL(request.url))) return;
+  const url = new URL(request.url);
+  if (isAuthPath(url) || isNavigation(request)) return;
   const cache = await caches.open(CACHE_VERSION);
   await cache.put(request, response.clone());
 };
@@ -43,6 +60,14 @@ const networkFirst = (request, fallbackUrl) =>
       return response;
     })
     .catch(async () => {
+      const url = new URL(request.url);
+      if (isAuthPath(url)) {
+        return new Response("Offline — refresh when back online to sign in.", {
+          status: 503,
+          statusText: "Offline",
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      }
       const cached = await caches.match(request);
       if (cached) return cached;
       if (fallbackUrl) {
@@ -97,8 +122,32 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Never serve cached login/register HTML (CSRF tokens must be fresh).
+  if (isAuthPath(url)) {
+    event.respondWith(
+      fetch(request).catch(
+        () =>
+          new Response("Offline — refresh when back online to sign in.", {
+            status: 503,
+            statusText: "Offline",
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          })
+      )
+    );
+    return;
+  }
+
   if (isNavigation(request)) {
-    event.respondWith(networkFirst(request, "/"));
+    // Network-first for HTML, but do not write navigations into Cache Storage.
+    event.respondWith(
+      fetch(request).catch(async () => {
+        const cached = await caches.match(request);
+        if (cached) return cached;
+        const fallback = await caches.match("/");
+        if (fallback) return fallback;
+        return new Response("Offline", { status: 503, statusText: "Offline" });
+      })
+    );
     return;
   }
 

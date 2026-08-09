@@ -2,6 +2,7 @@
   class="workspace-modal stock-request-modal stock-create-modal"
   data-stock-create-modal
   data-modal="request-stock"
+  {% if stock_request_from_stock_url %}data-stock-create-from-stock-url="{{ stock_request_from_stock_url }}"{% endif %}
   hidden
   role="dialog"
   aria-modal="true"
@@ -11,10 +12,11 @@
   <div class="workspace-modal-dialog stock-request-dialog stock-transfer-dialog stock-create-request-dialog">
     <div class="workspace-modal-head stock-create-head">
       <div class="stock-create-head-copy">
-        <p class="stock-transfer-kicker">{{ shop.name }} · Stock request</p>
+        <p class="stock-transfer-kicker">{{ shop.name }}</p>
         <h2 id="stock-create-modal-title">Request stock</h2>
         <p class="stock-create-head-summary">
-          Ask another shop to send items into <strong>{{ shop.name }}</strong>.
+          Choose a shop, pick what you need, then send. Stock arrives at
+          <strong>{{ shop.name }}</strong> after they accept.
         </p>
       </div>
       <button
@@ -37,33 +39,47 @@
       {% csrf_token %}
       <div class="stock-request-modal-body stock-create-body">
         {% if request_from_shops %}
-        <div class="stock-create-route" aria-label="Request route">
-          <label class="stock-create-route-party stock-create-route-party--from">
-            <span class="stock-create-route-label">From shop</span>
-            <select name="requested_from_shop_id" required data-stock-create-from>
-              <option value="">Select a shop…</option>
-              {% for other in request_from_shops %}
-              <option value="{{ other.id }}">{{ other.name }}{% if other.location %} · {{ other.location }}{% endif %}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <div class="stock-create-route-arrow" aria-hidden="true">
-            <i data-lucide="arrow-right"></i>
-          </div>
-          <div class="stock-create-route-party">
-            <span class="stock-create-route-label">To</span>
-            <strong>{{ shop.name }}</strong>
-            {% if shop.location %}
-            <span class="stock-create-route-meta">{{ shop.location }}</span>
-            {% endif %}
-          </div>
-        </div>
-
-        <section class="stock-create-panel" aria-labelledby="stock-create-items-title">
-          <div class="stock-create-panel-head">
+        <section class="stock-create-step" aria-labelledby="stock-create-step1-title">
+          <div class="stock-create-step-head">
+            <span class="stock-create-step-num" aria-hidden="true">1</span>
             <div>
-              <h3 id="stock-create-items-title">Items</h3>
-              <p>Enter a quantity on each line you need.</p>
+              <h3 id="stock-create-step1-title">Where should the stock come from?</h3>
+              <p>Pick the shop that currently has the items.</p>
+            </div>
+          </div>
+
+          <div class="stock-create-source">
+            <label class="stock-create-source-field">
+              <span class="field-label">Supplying shop</span>
+              <select name="requested_from_shop_id" required data-stock-create-from>
+                <option value="">Choose a shop…</option>
+                {% for other in request_from_shops %}
+                <option value="{{ other.id }}">{{ other.name }}{% if other.location %} · {{ other.location }}{% endif %}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <div class="stock-create-destination" aria-label="Destination shop">
+              <span class="stock-create-destination-label">Delivering to</span>
+              <strong>{{ shop.name }}</strong>
+              {% if shop.location %}
+              <span class="stock-create-destination-meta">{{ shop.location }}</span>
+              {% endif %}
+            </div>
+          </div>
+        </section>
+
+        <section
+          class="stock-create-step stock-create-step--items"
+          aria-labelledby="stock-create-step2-title"
+          data-stock-create-items-step
+        >
+          <div class="stock-create-step-head">
+            <span class="stock-create-step-num" aria-hidden="true">2</span>
+            <div>
+              <h3 id="stock-create-step2-title">What do you need?</h3>
+              <p data-stock-create-items-hint>
+                Choose a shop first to see what they have in stock.
+              </p>
             </div>
             <p class="stock-create-selected" data-stock-create-selected hidden>
               <strong data-stock-create-selected-count>0</strong>
@@ -71,75 +87,105 @@
             </p>
           </div>
 
-          <label class="stock-create-search">
-            <i data-lucide="search" aria-hidden="true"></i>
-            <input
-              type="search"
-              placeholder="Search items…"
-              autocomplete="off"
-              data-stock-create-search
-              aria-label="Search items"
-            >
-          </label>
-
-          <div class="stock-create-items-head" aria-hidden="true">
-            <span>Item</span>
-            <span>Qty</span>
-          </div>
-
-          <div class="stock-create-items" data-stock-create-items>
-            {% for item in request_items %}
-            <label
-              class="stock-create-item-row"
-              data-stock-create-row
-              data-item-name="{{ item.name|lower }}"
-            >
-              <span class="stock-create-item-name">{{ item.name }}</span>
-              <input type="hidden" name="item_id" value="{{ item.id }}" disabled data-stock-create-id>
+          <div class="stock-create-toolbar">
+            <label class="stock-create-search">
+              <i data-lucide="search" aria-hidden="true"></i>
               <input
-                type="number"
-                name="quantity"
-                min="1"
-                step="1"
-                inputmode="numeric"
-                placeholder="0"
-                data-stock-create-qty
-                aria-label="Quantity for {{ item.name }}"
+                type="search"
+                placeholder="Search by item name…"
+                autocomplete="off"
+                data-stock-create-search
+                aria-label="Search items"
               >
             </label>
-            {% empty %}
-            <p class="stock-create-empty">No items available to request.</p>
-            {% endfor %}
+            <label class="stock-create-filter" data-stock-create-filter-wrap hidden>
+              <input type="checkbox" data-stock-create-show-empty>
+              <span>Show out-of-stock</span>
+            </label>
           </div>
-          <p class="stock-create-empty stock-create-empty--search" data-stock-create-no-results hidden>
-            No items match your search.
-          </p>
+
+          <div class="stock-create-items-shell">
+            <div class="stock-create-items-head" aria-hidden="true">
+              <span>Item</span>
+              <span>They have</span>
+              <span>You need</span>
+            </div>
+
+            <div class="stock-create-items" data-stock-create-items>
+              {% for item in request_items %}
+              <label
+                class="stock-create-item-row"
+                data-stock-create-row
+                data-item-id="{{ item.id }}"
+                data-item-name="{{ item.name|lower }}"
+                data-avail=""
+              >
+                <span class="stock-create-item-main">
+                  <span class="stock-create-item-name">{{ item.name }}</span>
+                  <span class="stock-create-item-avail-text" data-stock-create-avail-text>
+                    Pick a shop to check stock
+                  </span>
+                  <input type="hidden" name="item_id" value="{{ item.id }}" disabled data-stock-create-id>
+                </span>
+                <span
+                  class="stock-create-item-stock"
+                  data-stock-create-avail
+                  title="On-hand at the selected shop"
+                >—</span>
+                <input
+                  type="number"
+                  name="quantity"
+                  min="1"
+                  step="1"
+                  inputmode="numeric"
+                  placeholder="0"
+                  data-stock-create-qty
+                  aria-label="Quantity needed for {{ item.name }}"
+                >
+              </label>
+              {% empty %}
+              <p class="stock-create-empty">No items available to request.</p>
+              {% endfor %}
+            </div>
+            <p class="stock-create-empty stock-create-empty--search" data-stock-create-no-results hidden>
+              No items match your search.
+            </p>
+            <p class="stock-create-empty stock-create-empty--stock" data-stock-create-no-stock hidden>
+              That shop has no stock for these items. Turn on
+              <em>Show out-of-stock</em> to browse the full list anyway.
+            </p>
+          </div>
         </section>
 
-        <section class="stock-create-confirm" aria-labelledby="stock-create-confirm-title">
-          <div class="stock-create-confirm-head">
-            <h3 id="stock-create-confirm-title">Confirm</h3>
-            <p>Optional note and active staff ID.</p>
+        <section class="stock-create-step stock-create-step--confirm" aria-labelledby="stock-create-step3-title">
+          <div class="stock-create-step-head">
+            <span class="stock-create-step-num" aria-hidden="true">3</span>
+            <div>
+              <h3 id="stock-create-step3-title">Confirm and send</h3>
+              <p>Add an optional note, then authorise with your staff ID.</p>
+            </div>
           </div>
 
-          <label class="field stock-create-field">
-            <span class="field-label">Note <em>(optional)</em></span>
-            <input type="text" name="notes" maxlength="500" placeholder="e.g. Needed for weekend sales">
-          </label>
+          <div class="stock-create-confirm-grid">
+            <label class="field stock-create-field">
+              <span class="field-label">Note <em>(optional)</em></span>
+              <input type="text" name="notes" maxlength="500" placeholder="e.g. Needed for weekend sales">
+            </label>
 
-          <label class="field stock-create-field stock-create-field--code">
-            <span class="field-label">Active staff ID</span>
-            <input
-              type="text"
-              name="login_code"
-              inputmode="numeric"
-              maxlength="6"
-              autocomplete="one-time-code"
-              placeholder="6-digit ID"
-              required
-              data-stock-create-code
-            >
-          </label>
+            <label class="field stock-create-field stock-create-field--code">
+              <span class="field-label">Your staff ID</span>
+              <input
+                type="text"
+                name="login_code"
+                inputmode="numeric"
+                maxlength="6"
+                autocomplete="one-time-code"
+                placeholder="6-digit ID"
+                required
+                data-stock-create-code
+              >
+            </label>
+          </div>
         </section>
         {% else %}
         <div class="stock-create-empty stock-create-empty--block">

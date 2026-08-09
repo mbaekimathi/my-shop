@@ -195,7 +195,7 @@ def workspace_back_url(request, role):
     return reverse(role_home_url_name(role))
 
 
-def _link(label, icon, *, url_name=None, href=None, active=False, danger=False, muted=False):
+def _link(label, icon, *, url_name=None, href=None, active=False, danger=False, muted=False, badge=None):
     item = {
         "type": "link",
         "label": label,
@@ -209,6 +209,8 @@ def _link(label, icon, *, url_name=None, href=None, active=False, danger=False, 
         item["href"] = reverse(url_name)
     elif href:
         item["href"] = href
+    if badge is not None and int(badge) > 0:
+        item["badge"] = int(badge)
     return item
 
 
@@ -315,6 +317,7 @@ def sidebar_for_my_shop(
     print_channels=None,
     portal=False,
     profile=None,
+    pending_request_count=0,
 ):
     """Sidebar for MY-SHOP entry picker and shop floor workspace."""
     from .module_permissions import employee_may
@@ -393,6 +396,7 @@ def sidebar_for_my_shop(
                             "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
                         ),
                         active=active == "stock_requests",
+                        badge=pending_request_count,
                     )
                 )
             if _allowed("register_expense"):

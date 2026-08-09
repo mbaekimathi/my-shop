@@ -242,6 +242,17 @@ def _shops_for_floor(profile, shop):
 
 def _shop_floor_chrome(shop, profile, shops, *, active, print_channels=None):
     portal = profile is None
+    pending_request_count = 0
+    stock_request_status_url = ""
+    if shop is not None:
+        pending_request_count = StockMovement.objects.filter(
+            movement_type=StockMovementType.REQUEST,
+            requested_from_shop=shop,
+            request_status=StockRequestStatus.PENDING,
+        ).count()
+        stock_request_status_url = reverse(
+            "employees:my_shop_stock_request_status", kwargs={"shop_id": shop.pk}
+        )
     return {
         "profile": profile,
         "role_label": "Shop portal" if portal else profile.get_role_display(),
@@ -255,10 +266,13 @@ def _shop_floor_chrome(shop, profile, shops, *, active, print_channels=None):
             print_channels=print_channels,
             portal=portal,
             profile=profile,
+            pending_request_count=pending_request_count,
         ),
         "shop": shop,
         "shops": shops,
         "shop_portal": portal,
+        "stock_request_status_url": stock_request_status_url,
+        "sidebar_pending_request_count": pending_request_count,
     }
 
 
@@ -637,6 +651,73 @@ def _pending_stock_requests_for_shop(shop):
     return requests
 
 
+def _outgoing_pending_stock_requests_for_shop(shop):
+    """Pending requests this shop sent to other shops (awaiting their response)."""
+    rows = list(
+        StockMovement.objects.filter(
+            movement_type=StockMovementType.REQUEST,
+            shop=shop,
+            request_status=StockRequestStatus.PENDING,
+        )
+        .select_related(
+            "requested_from_shop",
+            "created_by",
+            "created_by__user",
+        )
+        .prefetch_related("lines__item")
+        .order_by("-created_at")
+    )
+    for movement in rows:
+        movement.units_total = sum(
+            int(line.quantity or 0) for line in movement.lines.all()
+        )
+    return rows
+
+
+def _stock_request_status_payload(shop):
+    """Lean JSON for floor polling: incoming alerts + decision updates."""
+    pending = list(
+        StockMovement.objects.filter(
+            movement_type=StockMovementType.REQUEST,
+            requested_from_shop=shop,
+            request_status=StockRequestStatus.PENDING,
+        )
+        .select_related("shop")
+        .prefetch_related("lines")
+        .order_by("-created_at")
+    )
+    alerts = []
+    for movement in pending:
+        units = sum(int(line.quantity or 0) for line in movement.lines.all())
+        entry = {
+            "id": movement.pk,
+            "from_shop": movement.shop.name if movement.shop_id else "Another shop",
+            "units": units,
+            "created_at": movement.created_at.isoformat() if movement.created_at else "",
+            "unseen": not movement.supplier_notified,
+        }
+        alerts.append(entry)
+    decision_count = (
+        StockMovement.objects.filter(
+            movement_type=StockMovementType.REQUEST,
+            shop=shop,
+            request_status__in=(
+                StockRequestStatus.FULFILLED,
+                StockRequestStatus.DECLINED,
+            ),
+            requester_notified=False,
+        ).count()
+    )
+    unseen_count = sum(1 for row in alerts if row["unseen"])
+    return {
+        "ok": True,
+        "pending_count": len(alerts),
+        "unseen_count": unseen_count,
+        "pending": alerts,
+        "decision_count": decision_count,
+    }
+
+
 def _stock_request_decisions_for_shop(shop):
     """Accepted/declined requests waiting for the requesting shop to acknowledge."""
     return list(
@@ -845,6 +926,10 @@ def my_shop_workspace(request, shop_id):
             ),
             "verify_login_code_url": reverse(
                 "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
+            ),
+            "stock_request_supplier_ack_url": reverse(
+                "employees:my_shop_stock_request_supplier_ack",
+                kwargs={"shop_id": shop.pk},
             ),
             "checkout_url": reverse(
                 "employees:my_shop_checkout", kwargs={"shop_id": shop.pk}
@@ -1148,6 +1233,7 @@ def my_shop_stock_requests(request, shop_id):
 
     shops = _shops_for_floor(profile, shop)
     pending_requests = _pending_stock_requests_for_shop(shop)
+    outgoing_pending = _outgoing_pending_stock_requests_for_shop(shop)
     request_decisions = _stock_request_decisions_for_shop(shop)
     previous_requests = _previous_stock_requests_for_shop(shop)
     return _render_my_shop_tool_page(
@@ -1167,6 +1253,8 @@ def my_shop_stock_requests(request, shop_id):
         extra_context={
             "pending_stock_requests": pending_requests,
             "pending_request_count": len(pending_requests),
+            "outgoing_pending_requests": outgoing_pending,
+            "outgoing_pending_count": len(outgoing_pending),
             "stock_request_decisions": request_decisions,
             "stock_request_decision_count": len(request_decisions),
             "previous_stock_requests": previous_requests,
@@ -1179,6 +1267,14 @@ def my_shop_stock_requests(request, shop_id):
             ),
             "create_stock_request_url": reverse(
                 "employees:my_shop_stock_request_create", kwargs={"shop_id": shop.pk}
+            ),
+            "stock_request_from_stock_url": reverse(
+                "employees:my_shop_stock_request_from_stock",
+                kwargs={"shop_id": shop.pk},
+            ),
+            "stock_request_supplier_ack_url": reverse(
+                "employees:my_shop_stock_request_supplier_ack",
+                kwargs={"shop_id": shop.pk},
             ),
             "request_from_shops": list(
                 Shop.objects.filter(is_hidden=False, is_suspended=False)
@@ -1262,12 +1358,112 @@ def my_shop_stock_request_create(request, shop_id):
     )
     success = (
         f"Requested {line_count} item{'' if line_count == 1 else 's'} "
-        f"from {from_name}."
+        f"from {from_name}. They will be notified."
     )
     messages.success(request, success)
     if wants_json:
         return JsonResponse({"ok": True, "message": success, "request_id": movement.pk})
     return redirect("employees:my_shop_stock_requests", shop_id=shop.pk)
+
+
+@shop_floor_required
+@require_http_methods(["GET"])
+def my_shop_stock_request_from_stock(request, shop_id):
+    """Return on-hand quantities at the shop being requested from."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(
+        request, profile, "stock_requests", as_json=True, portal_ok=True
+    )
+    if denied:
+        return denied
+
+    from_shop_id = (request.GET.get("from_shop_id") or "").strip()
+    if not from_shop_id:
+        return JsonResponse(
+            {"ok": False, "error": "Select a shop to request from."}, status=400
+        )
+    if str(from_shop_id) == str(shop.pk):
+        return JsonResponse(
+            {"ok": False, "error": "Choose a different shop to request from."},
+            status=400,
+        )
+
+    from_shop = (
+        Shop.objects.filter(
+            pk=from_shop_id, is_hidden=False, is_suspended=False
+        )
+        .only("id", "name")
+        .first()
+    )
+    if from_shop is None:
+        return JsonResponse(
+            {"ok": False, "error": "That shop is not available."}, status=404
+        )
+
+    stocks = {
+        str(item_id): int(qty or 0)
+        for item_id, qty in ShopStock.objects.filter(shop=from_shop).values_list(
+            "item_id", "quantity"
+        )
+    }
+    return JsonResponse(
+        {
+            "ok": True,
+            "from_shop_id": from_shop.pk,
+            "from_shop_name": from_shop.name,
+            "stocks": stocks,
+        }
+    )
+
+
+@shop_floor_required
+@require_http_methods(["GET"])
+def my_shop_stock_request_status(request, shop_id):
+    """Poll endpoint: incoming stock-request alerts for the active shop."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(
+        request, profile, "stock_requests", as_json=True, portal_ok=True
+    )
+    if denied:
+        return denied
+    return JsonResponse(_stock_request_status_payload(shop))
+
+
+@shop_floor_required
+@require_POST
+def my_shop_stock_request_supplier_ack(request, shop_id):
+    """Mark unseen incoming requests as seen by the supplying shop."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        if _wants_json_response(request):
+            return JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
+        return denied
+    denied = _require_my_shop_permission(
+        request,
+        profile,
+        "stock_requests",
+        as_json=_wants_json_response(request),
+        portal_ok=True,
+    )
+    if denied:
+        return denied
+
+    updated = StockMovement.objects.filter(
+        movement_type=StockMovementType.REQUEST,
+        requested_from_shop=shop,
+        request_status=StockRequestStatus.PENDING,
+        supplier_notified=False,
+    ).update(supplier_notified=True)
+
+    if _wants_json_response(request):
+        return JsonResponse({"ok": True, "acked": updated})
+    return redirect("employees:my_shop_workspace", shop_id=shop.pk)
 
 
 @shop_floor_required

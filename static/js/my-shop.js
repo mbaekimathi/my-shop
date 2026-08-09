@@ -211,12 +211,44 @@
   const requestModal = document.querySelector("[data-stock-request-modal]");
   let requestSnoozeTimer = null;
 
+  const csrfToken = () => {
+    const input = document.querySelector("[name=csrfmiddlewaretoken]");
+    if (input?.value) return input.value;
+    const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  };
+
+  const ackSupplierSeen = () => {
+    const ackUrl =
+      requestModal?.getAttribute("data-stock-request-supplier-ack-url") ||
+      document
+        .querySelector("[data-stock-request-supplier-ack-url]")
+        ?.getAttribute("data-stock-request-supplier-ack-url") ||
+      "";
+    if (!ackUrl) return;
+    const token = csrfToken();
+    const body = new URLSearchParams();
+    if (token) body.set("csrfmiddlewaretoken", token);
+    fetch(ackUrl, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        ...(token ? { "X-CSRFToken": token } : {}),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+      credentials: "same-origin",
+    }).catch(() => {});
+  };
+
   const requestControls = bindModal({
     modal: requestModal,
     openSelectors: "[data-stock-request-open]",
     closeSelectors: "[data-stock-request-close]",
     autoOpen: requestModal?.getAttribute("data-auto-open") === "1",
     onClose: () => {
+      ackSupplierSeen();
       window.clearTimeout(requestSnoozeTimer);
       requestSnoozeTimer = window.setTimeout(() => {
         if (requestModal && document.querySelector("[data-stock-request-open]")) {
@@ -225,6 +257,11 @@
       }, SNOOZE_MS);
     },
   });
+
+  // If the incoming modal auto-opened, mark supplier alerts as seen.
+  if (requestModal && requestModal.hidden === false) {
+    ackSupplierSeen();
+  }
 
   const decisionModal = document.querySelector("[data-stock-decision-modal]");
   const decisionControls = bindModal({
@@ -252,6 +289,15 @@
     const searchInput = createModal.querySelector("[data-stock-create-search]");
     const rows = [...createModal.querySelectorAll("[data-stock-create-row]")];
     const form = createModal.querySelector("[data-stock-create-form]");
+    const fromSelect = createModal.querySelector("[data-stock-create-from]");
+    const itemsHint = createModal.querySelector("[data-stock-create-items-hint]");
+    const showEmptyToggle = createModal.querySelector("[data-stock-create-show-empty]");
+    const filterWrap = createModal.querySelector("[data-stock-create-filter-wrap]");
+    const noStockMsg = createModal.querySelector("[data-stock-create-no-stock]");
+    const fromStockUrl =
+      createModal.getAttribute("data-stock-create-from-stock-url") || "";
+    let fromStockSeq = 0;
+    let stockLoaded = false;
 
     document.querySelectorAll('[data-modal-open="request-stock"]').forEach((btn) => {
       btn.addEventListener("click", (event) => {
@@ -279,7 +325,6 @@
       const idInput = row.querySelector("[data-stock-create-id]");
       const hasQty = Number(qty?.value || 0) > 0;
       if (idInput) idInput.disabled = !hasQty;
-      // Qty stays editable; empty values are stripped on submit.
       if (qty) qty.disabled = false;
       row.classList.toggle("is-active", hasQty);
     };
@@ -297,17 +342,164 @@
       if (selectedBadge) selectedBadge.hidden = count < 1;
     };
 
-    const syncSearch = () => {
+    const showEmptyStock = () => Boolean(showEmptyToggle?.checked);
+
+    const syncRowVisibility = () => {
       const q = String(searchInput?.value || "").trim().toLowerCase();
+      const allowEmpty = showEmptyStock();
+      let matchedSearch = 0;
       let visible = 0;
+      let inStockCount = 0;
+
       rows.forEach((row) => {
         const name = row.getAttribute("data-item-name") || "";
-        const match = !q || name.includes(q);
-        row.hidden = !match;
-        if (match) visible += 1;
+        const nameMatch = !q || name.includes(q);
+        const availRaw = row.getAttribute("data-avail");
+        const hasAvail = availRaw !== "" && availRaw != null;
+        const avail = hasAvail ? Number(availRaw) || 0 : null;
+        if (avail != null && avail > 0) inStockCount += 1;
+        const stockOk = !stockLoaded || allowEmpty || (avail != null && avail > 0);
+        const show = nameMatch && stockOk;
+        row.hidden = !show;
+        if (nameMatch) matchedSearch += 1;
+        if (show) visible += 1;
       });
-      if (noResults) noResults.hidden = !q || visible > 0;
+
+      if (noResults) noResults.hidden = !q || matchedSearch > 0;
+      if (noStockMsg) {
+        const searchingMiss = Boolean(q) && matchedSearch < 1;
+        noStockMsg.hidden =
+          !stockLoaded || allowEmpty || searchingMiss || inStockCount > 0 || visible > 0;
+        if (stockLoaded && !allowEmpty && !searchingMiss && inStockCount < 1) {
+          noStockMsg.hidden = false;
+        }
+      }
     };
+
+    const setAvailDisplay = (row, value, { loading = false } = {}) => {
+      const el = row.querySelector("[data-stock-create-avail]");
+      const text = row.querySelector("[data-stock-create-avail-text]");
+      if (!el) return;
+      el.classList.remove("is-empty", "is-low", "is-ok", "is-loading");
+      if (loading) {
+        row.setAttribute("data-avail", "");
+        el.textContent = "…";
+        el.classList.add("is-loading");
+        if (text) text.textContent = "Checking stock…";
+        return;
+      }
+      if (value == null) {
+        row.setAttribute("data-avail", "");
+        el.textContent = "—";
+        el.classList.add("is-empty");
+        if (text) text.textContent = "Pick a shop to check stock";
+        return;
+      }
+      const qty = Number(value) || 0;
+      row.setAttribute("data-avail", String(qty));
+      el.textContent = String(qty);
+      if (qty <= 0) {
+        el.classList.add("is-empty");
+        if (text) text.textContent = "Out of stock at this shop";
+      } else if (qty <= 3) {
+        el.classList.add("is-low");
+        if (text) text.textContent = `Only ${qty} left at this shop`;
+      } else {
+        el.classList.add("is-ok");
+        if (text) text.textContent = `${qty} available at this shop`;
+      }
+    };
+
+    const clearFromStock = () => {
+      stockLoaded = false;
+      if (filterWrap) filterWrap.hidden = true;
+      if (showEmptyToggle) showEmptyToggle.checked = false;
+      rows.forEach((row) => {
+        setAvailDisplay(row, null);
+        row.classList.remove("is-out");
+        const qty = row.querySelector("[data-stock-create-qty]");
+        if (qty) qty.removeAttribute("max");
+      });
+      if (itemsHint) {
+        itemsHint.textContent =
+          "Choose a shop first to see what they have in stock.";
+      }
+      syncRowVisibility();
+    };
+
+    const applyFromStock = (stocks, shopName) => {
+      const map = stocks && typeof stocks === "object" ? stocks : {};
+      stockLoaded = true;
+      if (filterWrap) filterWrap.hidden = false;
+      let withStock = 0;
+      rows.forEach((row) => {
+        const itemId = row.getAttribute("data-item-id") || "";
+        const avail = Number(map[itemId] ?? map[String(itemId)] ?? 0) || 0;
+        if (avail > 0) withStock += 1;
+        setAvailDisplay(row, avail);
+        row.classList.toggle("is-out", avail <= 0);
+        const qty = row.querySelector("[data-stock-create-qty]");
+        if (qty) {
+          if (avail > 0) qty.setAttribute("max", String(avail));
+          else qty.removeAttribute("max");
+        }
+      });
+      if (itemsHint) {
+        itemsHint.textContent = shopName
+          ? withStock
+            ? `Showing items in stock at ${shopName}. Enter how many you need.`
+            : `${shopName} has no stock on these items right now.`
+          : "Enter how many you need for each item.";
+      }
+      syncRowVisibility();
+    };
+
+    const loadFromStock = async () => {
+      const fromId = String(fromSelect?.value || "").trim();
+      if (!fromId || !fromStockUrl) {
+        clearFromStock();
+        return;
+      }
+      const seq = ++fromStockSeq;
+      stockLoaded = false;
+      rows.forEach((row) => {
+        setAvailDisplay(row, null, { loading: true });
+      });
+      if (itemsHint) itemsHint.textContent = "Loading stock levels…";
+      try {
+        const url = `${fromStockUrl}?from_shop_id=${encodeURIComponent(fromId)}`;
+        const response = await fetch(url, {
+          headers: {
+            Accept: "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "same-origin",
+        });
+        if (seq !== fromStockSeq) return;
+        if (!response.ok) {
+          clearFromStock();
+          return;
+        }
+        const data = await response.json();
+        if (seq !== fromStockSeq) return;
+        if (!data?.ok) {
+          clearFromStock();
+          return;
+        }
+        applyFromStock(data.stocks || {}, data.from_shop_name || "");
+      } catch {
+        if (seq !== fromStockSeq) return;
+        clearFromStock();
+      }
+    };
+
+    fromSelect?.addEventListener("change", () => {
+      loadFromStock();
+    });
+
+    showEmptyToggle?.addEventListener("change", () => {
+      syncRowVisibility();
+    });
 
     rows.forEach((row) => {
       const qty = row.querySelector("[data-stock-create-qty]");
@@ -324,8 +516,9 @@
       syncRowEnabled(row);
     });
     syncSelectedCount();
+    clearFromStock();
 
-    searchInput?.addEventListener("input", syncSearch);
+    searchInput?.addEventListener("input", syncRowVisibility);
 
     form?.addEventListener("submit", (event) => {
       const fromShop = form.querySelector("[data-stock-create-from]");
@@ -344,23 +537,25 @@
       if (!fromShop?.value) {
         event.preventDefault();
         rows.forEach((row) => syncRowEnabled(row));
-        window.alert("Select a shop to request from.");
+        window.alert("Choose which shop the stock should come from.");
         fromShop?.focus();
         return;
       }
       if (!activeRows.length) {
         event.preventDefault();
         rows.forEach((row) => syncRowEnabled(row));
-        window.alert("Enter a quantity for at least one item.");
+        window.alert("Enter how many you need for at least one item.");
         return;
       }
       if (!String(code?.value || "").trim()) {
         event.preventDefault();
         rows.forEach((row) => syncRowEnabled(row));
-        window.alert("Enter an active staff 6-digit ID.");
+        window.alert("Enter your 6-digit staff ID to send the request.");
         code?.focus();
       }
     });
+
+    if (fromSelect?.value) loadFromStock();
   }
 
   window.addEventListener("keydown", (event) => {
@@ -377,6 +572,129 @@
       decisionControls?.close();
     }
   });
+
+  const statusRoot =
+    document.querySelector("[data-stock-request-status-url]") ||
+    document.querySelector("[data-shop-id]");
+  const statusUrl =
+    statusRoot?.getAttribute("data-stock-request-status-url") || "";
+  const shopIdForAlerts = statusRoot?.getAttribute("data-shop-id") || "";
+
+  const pushStockRequestToast = (text) => {
+    let host = document.querySelector("[data-workspace-toast]");
+    if (!host) {
+      host = document.createElement("div");
+      host.className = "workspace-toast";
+      host.setAttribute("role", "status");
+      host.setAttribute("aria-live", "polite");
+      host.setAttribute("data-workspace-toast", "");
+      host.innerHTML = '<ul class="message-list workspace-messages"></ul>';
+      document.querySelector(".workspace-frame")?.appendChild(host) ||
+        document.body.appendChild(host);
+    }
+    const list = host.querySelector(".workspace-messages") || host;
+    const item = document.createElement("li");
+    item.className = "workspace-toast__item workspace-toast__item--warning";
+    item.innerHTML = `<span class="workspace-toast__text"></span>`;
+    item.querySelector(".workspace-toast__text").textContent = text;
+    list.appendChild(item);
+    window.setTimeout(() => {
+      host.classList.add("is-hiding");
+      window.setTimeout(() => host.remove(), 220);
+    }, 4200);
+  };
+
+  if (statusUrl && shopIdForAlerts) {
+    const storageKey = `myshop:stock-req:${shopIdForAlerts}`;
+    let knownIds = [];
+    try {
+      knownIds = JSON.parse(sessionStorage.getItem(storageKey) || "[]");
+      if (!Array.isArray(knownIds)) knownIds = [];
+    } catch {
+      knownIds = [];
+    }
+    knownIds = knownIds.map(String);
+
+    const seedKnown = (pending) => {
+      knownIds = pending.map((row) => String(row.id));
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify(knownIds));
+      } catch {
+        /* ignore quota */
+      }
+    };
+
+    const notifyBrowser = (title, body) => {
+      if (!("Notification" in window)) return;
+      if (Notification.permission === "granted") {
+        try {
+          new Notification(title, { body, tag: `stock-req-${shopIdForAlerts}` });
+        } catch {
+          /* ignore */
+        }
+      } else if (Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
+    };
+
+    const pollStockRequests = async () => {
+      if (document.hidden) return;
+      try {
+        const response = await fetch(statusUrl, {
+          headers: {
+            Accept: "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "same-origin",
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!data?.ok) return;
+        const pending = Array.isArray(data.pending) ? data.pending : [];
+        const newRows = pending.filter((row) => !knownIds.includes(String(row.id)));
+
+        if (!knownIds.length) {
+          seedKnown(pending);
+          return;
+        }
+
+        if (newRows.length) {
+          const sample = newRows[0];
+          const fromName = sample?.from_shop || "another shop";
+          const count = newRows.length;
+          const message =
+            count === 1
+              ? `New stock request from ${fromName}.`
+              : `${count} new stock requests, including from ${fromName}.`;
+          pushStockRequestToast(message);
+          notifyBrowser("Stock request", message);
+          seedKnown(pending);
+          // Reload so incoming modal + badge HTML stay in sync.
+          window.setTimeout(() => {
+            window.location.reload();
+          }, 900);
+          return;
+        }
+
+        seedKnown(pending);
+
+        const badge = document.querySelector(".workspace-nav-badge");
+        if (badge && typeof data.pending_count === "number") {
+          if (data.pending_count > 0) {
+            badge.hidden = false;
+            badge.textContent = String(data.pending_count);
+          } else {
+            badge.hidden = true;
+          }
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    };
+
+    window.setInterval(pollStockRequests, 12000);
+    window.setTimeout(pollStockRequests, 2500);
+  }
 
   const normalizeSerial = (value) => String(value || "").trim().toUpperCase();
   const serialSearchUrl = requestModal?.dataset.serialSearchUrl || "";

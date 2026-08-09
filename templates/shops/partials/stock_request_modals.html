@@ -2,10 +2,11 @@
 <div
   class="workspace-modal stock-request-modal"
   data-stock-request-modal
-  data-auto-open="1"
+  data-auto-open="{% if pending_stock_requests %}1{% else %}0{% endif %}"
   data-serial-search-url="{{ serial_search_url }}"
   data-verify-login-url="{{ verify_login_code_url }}"
   data-supply-shop-id="{{ shop.id }}"
+  {% if stock_request_supplier_ack_url %}data-stock-request-supplier-ack-url="{{ stock_request_supplier_ack_url }}"{% endif %}
   role="dialog"
   aria-modal="true"
   aria-labelledby="stock-request-modal-title"

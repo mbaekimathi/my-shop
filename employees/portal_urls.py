@@ -42,6 +42,21 @@ urlpatterns = [
         name="my_shop_stock_request_create",
     ),
     path(
+        "my-shop/<int:shop_id>/stock-requests/from-stock/",
+        shop_views.my_shop_stock_request_from_stock,
+        name="my_shop_stock_request_from_stock",
+    ),
+    path(
+        "my-shop/<int:shop_id>/stock-requests/status/",
+        shop_views.my_shop_stock_request_status,
+        name="my_shop_stock_request_status",
+    ),
+    path(
+        "my-shop/<int:shop_id>/stock-requests/supplier-ack/",
+        shop_views.my_shop_stock_request_supplier_ack,
+        name="my_shop_stock_request_supplier_ack",
+    ),
+    path(
         "my-shop/<int:shop_id>/register-expense/",
         shop_views.my_shop_register_expense,
         name="my_shop_register_expense",
@@ -245,6 +260,21 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/receipts/<slug:kind>/",
         analytics_views.analytics_receipts_list,
         name="analytics_receipts_list",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/api/receipts/verify-login/",
+        analytics_views.analytics_receipt_verify_login,
+        name="analytics_receipt_verify_login",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/",
+        analytics_views.analytics_receipt_detail,
+        name="analytics_receipt_detail",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/return/",
+        analytics_views.analytics_receipt_return,
+        name="analytics_receipt_return",
     ),
     path(
         "<role_segment:role_segment>/analytics/<slug:section>/",

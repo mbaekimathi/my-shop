@@ -1708,11 +1708,17 @@ def stock_management(request, profile, meta, module, page_sidebar):
         ):
             requested_from_shop = None
 
+    request_pair_ready = bool(
+        mode == "request" and selected_shop and requested_from_shop
+    )
+
     # Current stock, stock in/out/request (all shops) use the catalog API.
     use_stock_catalog_api = False
     if mode == "view" and all_shops:
         use_stock_catalog_api = True
-    elif mode in ("in", "out", "request") and shops:
+    elif mode in ("in", "out") and shops:
+        use_stock_catalog_api = True
+    elif mode == "request" and request_pair_ready:
         use_stock_catalog_api = True
 
     items_by_category = []
@@ -1724,8 +1730,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
     show_all_shops = mode == "view" and selected_shop is None and bool(all_shops)
     if mode in ("in", "out") and shops:
         show_all_shops = (not selected_shops and len(shops) > 1) or len(selected_shops) > 1
-    elif mode == "request" and shops:
-        show_all_shops = len(shops) > 1
+    elif mode == "request":
+        show_all_shops = False
 
     from django.db.models import Sum
 
@@ -1759,12 +1765,13 @@ def stock_management(request, profile, meta, module, page_sidebar):
         category_count = (
             Item.objects.order_by("category").values("category").distinct().count()
         )
-    elif mode == "request" and shops:
-        display_shops = list(shops)
+    elif mode == "request" and request_pair_ready:
+        # Only the requesting shop and the shop being asked to supply.
+        display_shops = [selected_shop, requested_from_shop]
         shop_total_units = (
-            ShopStock.objects.filter(shop_id__in=[shop.pk for shop in shops]).aggregate(
-                total=Sum("quantity")
-            )["total"]
+            ShopStock.objects.filter(
+                shop_id__in=[selected_shop.pk, requested_from_shop.pk]
+            ).aggregate(total=Sum("quantity"))["total"]
             or 0
         )
         category_count = (
@@ -1814,6 +1821,10 @@ def stock_management(request, profile, meta, module, page_sidebar):
             shop_filter_label = ", ".join(shop.name for shop in selected_shops)
         else:
             shop_filter_label = f"{len(selected_shops)} shops"
+    elif mode == "request" and request_pair_ready:
+        shop_filter_label = f"{selected_shop.name} ← {requested_from_shop.name}"
+    elif mode == "request":
+        shop_filter_label = "Choose shops"
     else:
         shop_filter_label = "All shops"
 
@@ -1841,6 +1852,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "shop_filter_active": shop_filter_active,
             "shop_filter_label": shop_filter_label,
             "requested_from_shop": requested_from_shop,
+            "request_pair_ready": request_pair_ready,
             "item_count": item_count,
             "category_count": category_count,
             "total_units": shop_total_units,
@@ -1931,11 +1943,24 @@ def stock_management_catalog(request, role_segment):
         return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
 
     action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}
-    # Stock in/out: optional multi shop_id filter. Request always uses all actionable shops.
+    # Stock in/out: optional multi shop_id filter.
+    # Request: only the requesting shop + the shop being asked to supply.
     if mode in ("in", "out", "request"):
         if not action_shops:
             return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
-        if mode in ("in", "out") and requested_shop_ids:
+        if mode == "request":
+            requesting_id = requested_shop_ids[0] if requested_shop_ids else shop_id
+            if not requesting_id or requesting_id not in action_shops:
+                return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
+            if not from_id or from_id not in action_shops:
+                return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
+            if from_id == requesting_id:
+                return JsonResponse(
+                    {"ok": False, "error": "from_shop_must_differ"}, status=400
+                )
+            catalog_shop_ids = [requesting_id, from_id]
+            prefer_shop_id = None
+        elif requested_shop_ids:
             catalog_shop_ids = [
                 sid for sid in requested_shop_ids if sid in action_shops
             ]

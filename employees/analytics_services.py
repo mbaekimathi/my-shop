@@ -168,16 +168,28 @@ def _shop_col(
     return col
 
 
-def _qty_amount_cell(qty, amount, *, title: str = "") -> dict:
+def _qty_amount_cell(qty, amount, *, title: str = "", tone: str = "neutral") -> dict:
     """Quantity and amount side by side, styled as distinct values."""
     qty_label = str(int(qty or 0))
     amount_label = _money_dense(amount)
     full = _money_ksh(amount)
+    tone_map = {
+        "success": "good",
+        "ok": "good",
+        "danger": "bad",
+        "error": "bad",
+        "warning": "warn",
+        "warn": "warn",
+        "good": "good",
+        "bad": "bad",
+        "neutral": "neutral",
+    }
     return {
         "kind": "qty_amount",
         "qty": qty_label,
         "amount": amount_label,
         "title": title or f"{qty_label} · {full}",
+        "tone": tone_map.get(tone, "neutral"),
     }
 
 
@@ -975,7 +987,16 @@ def _metric(label, value, hint="", tone="neutral"):
     }
 
 
-def _table(title, columns, rows, empty="No data for this period.", footnote="", shop_grid=None):
+def _table(
+    title,
+    columns,
+    rows,
+    empty="No data for this period.",
+    footnote="",
+    shop_grid=None,
+    *,
+    searchable=False,
+):
     if shop_grid is None:
         shop_grid = any(
             isinstance(col, dict) and (col.get("compact") or col.get("pair"))
@@ -988,6 +1009,7 @@ def _table(title, columns, rows, empty="No data for this period.", footnote="", 
         "empty": empty,
         "footnote": footnote,
         "shop_grid": bool(shop_grid),
+        "searchable": bool(searchable),
     }
 
 
@@ -3616,6 +3638,63 @@ def _supplier_match_key(name, country_code, phone_number) -> tuple[str, str, str
     )
 
 
+def _supplier_ledger_stats(suppliers, by_supplier_shop: dict) -> dict:
+    """Aggregate supplier counts / entries / outstanding for KPI strip."""
+    on_file = len(suppliers)
+    active = 0
+    with_balance = 0
+    total_entries = 0
+    total_balance = _zero()
+    for supplier in suppliers:
+        by_shop = by_supplier_shop.get(supplier.pk) or {}
+        entries = 0
+        balance = _zero()
+        for shop_entries, shop_balance in by_shop.values():
+            entries += int(shop_entries or 0)
+            balance += Decimal(shop_balance or 0)
+        total_entries += entries
+        total_balance += balance
+        if entries > 0 or balance > 0:
+            active += 1
+        if balance > 0:
+            with_balance += 1
+    return {
+        "on_file": on_file,
+        "active": active,
+        "with_balance": with_balance,
+        "entries": total_entries,
+        "balance": total_balance,
+    }
+
+
+def _supplier_balance_metrics(stats: dict, *, entity_label: str) -> list:
+    balance = Decimal(stats["balance"] or 0)
+    return [
+        _metric(
+            entity_label,
+            str(stats["on_file"]),
+            hint=f"{stats['active']} with activity",
+        ),
+        _metric(
+            "With balance",
+            str(stats["with_balance"]),
+            hint="Still owed",
+            tone="warn" if stats["with_balance"] else "good",
+        ),
+        _metric(
+            "Entries",
+            f"{stats['entries']:,}",
+            hint="Linked receipts",
+        ),
+        _metric(
+            "Outstanding",
+            _money_ksh(balance),
+            hint="Unpaid total",
+            tone="bad" if balance > 0 else "good",
+        ),
+    ]
+
+
 def _supplier_shop_rows(
     *,
     suppliers,
@@ -3668,6 +3747,7 @@ def _supplier_shop_rows(
                     shop_entries,
                     shop_balance,
                     title=f"{shop_entries} entries · {_money_ksh(shop_balance)}",
+                    tone="bad" if Decimal(shop_balance or 0) > 0 else "neutral",
                 )
             )
         cells.append(
@@ -3675,6 +3755,7 @@ def _supplier_shop_rows(
                 total_entries,
                 total_balance,
                 title=f"{total_entries} entries · {_money_ksh(total_balance)}",
+                tone="bad" if Decimal(total_balance or 0) > 0 else "neutral",
             )
         )
         rows.append(cells)
@@ -3768,19 +3849,28 @@ def _build_suppliers(filters):
         role=role,
         query=query,
     )
+    stats = _supplier_ledger_stats(stock_suppliers, stock_by_supplier_shop)
 
     return {
         "headline": "Stock suppliers",
-        "lead": "",
+        "lead": "Outstanding purchase balances by shop. Open a supplier to review receipts and pay.",
+        "period_label": "Outstanding",
+        "ledger_layout": True,
+        "hide_date_filters": True,
+        "show_search": True,
+        "search_placeholder": "Search suppliers…",
+        "search_empty": "No suppliers match that search.",
         "alerts": [],
-        "metrics": [],
+        "metrics": _supplier_balance_metrics(stats, entity_label="Suppliers"),
         "insights": [],
         "tables": [
             _table(
-                "Stock suppliers",
+                "Balances by shop",
                 _supplier_pair_columns(shops),
                 stock_rows,
                 empty="No stock suppliers on file.",
+                footnote="En = stock receipts · Bal = unpaid balance. Sorted by highest outstanding.",
+                searchable=True,
             )
         ],
     }
@@ -3827,19 +3917,28 @@ def _build_expenses(filters):
         role=role,
         query=expense_query,
     )
+    stats = _supplier_ledger_stats(expense_suppliers, exp_by_supplier_shop)
 
     return {
         "headline": "Expense suppliers",
-        "lead": "",
+        "lead": "Outstanding expense balances by shop. Open a supplier to review receipts and pay.",
+        "period_label": "Outstanding",
+        "ledger_layout": True,
+        "hide_date_filters": True,
+        "show_search": True,
+        "search_placeholder": "Search suppliers…",
+        "search_empty": "No suppliers match that search.",
         "alerts": [],
-        "metrics": [],
+        "metrics": _supplier_balance_metrics(stats, entity_label="Suppliers"),
         "insights": [],
         "tables": [
             _table(
-                "Expense suppliers",
+                "Balances by shop",
                 _supplier_pair_columns(shops),
                 expense_rows,
                 empty="No expense suppliers on file.",
+                footnote="En = expense entries · Bal = unpaid balance. Sorted by highest outstanding.",
+                searchable=True,
             )
         ],
     }
@@ -3872,6 +3971,9 @@ def _build_receipts(filters):
     columns.append(_pair_total_col(pair_qty="Docs", pair_amt="Amt"))
 
     table_rows = []
+    grand_docs = 0
+    grand_amount = _zero()
+    active_kinds = 0
     for kind_slug, label in kind_specs:
         kind_filter = _analytics_receipt_kind_filter(kind_slug)
         by_shop: dict[int, tuple[int, Decimal]] = {}
@@ -3914,12 +4016,119 @@ def _build_receipts(filters):
             )
         )
         table_rows.append(cells)
+        grand_docs += total_docs
+        grand_amount += total_amount
+        if total_docs > 0:
+            active_kinds += 1
+
+    receipt_qs = (
+        ShopReceipt.objects.filter(
+            shop_id__in=shop_ids,
+            created_at__gte=start,
+            created_at__lt=end,
+        )
+        .select_related("shop", "created_by", "created_by__user")
+        .order_by("-created_at", "-id")
+    )
+    receipt_total = receipt_qs.count()
+    receipt_limit = 500
+    receipt_rows = []
+    for row in receipt_qs[:receipt_limit]:
+        cashier = ""
+        if row.created_by and row.created_by.user:
+            cashier = (
+                row.created_by.user.get_full_name()
+                or row.created_by.employee_id
+                or row.created_by.user.username
+            )
+        client = row.client_name or "Walk-in"
+        if row.client_phone:
+            client = f"{client} · {row.client_phone}"
+        receipt_rows.append(
+            {
+                "receipt_id": row.pk,
+                "shop_id": row.shop_id,
+                "cells": [
+                    row.receipt_number,
+                    row.get_kind_display(),
+                    row.shop.name if row.shop else "—",
+                    client,
+                    _money_ksh(row.total),
+                    row.get_status_display(),
+                    row.created_at.strftime("%d %b %Y · %H:%M"),
+                    cashier or "—",
+                ],
+            }
+        )
+
+    list_footnote = (
+        f"Showing {len(receipt_rows)} of {receipt_total} receipt"
+        f"{'' if receipt_total == 1 else 's'} for this period"
+        + (" (capped at 500)." if receipt_total > receipt_limit else ".")
+        + " Select a receipt to open return."
+    )
+
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    segment = role_url_segment(role)
+    detail_template = reverse(
+        "employees:analytics_receipt_detail",
+        kwargs={
+            "role_segment": segment,
+            "shop_id": 0,
+            "receipt_id": 0,
+        },
+    )
+    return_template = reverse(
+        "employees:analytics_receipt_return",
+        kwargs={
+            "role_segment": segment,
+            "shop_id": 0,
+            "receipt_id": 0,
+        },
+    )
+    verify_url = reverse(
+        "employees:analytics_receipt_verify_login",
+        kwargs={"role_segment": segment},
+    )
 
     return {
         "headline": "Receipts",
-        "lead": "",
+        "lead": "Document counts by shop, plus every receipt in the selected period.",
+        "ledger_layout": True,
+        "show_search": True,
+        "search_placeholder": "Search receipts…",
+        "search_empty": "No receipts match that search.",
+        "receipt_modal": True,
+        "receipt_detail_url_template": detail_template,
+        "receipt_return_url_template": return_template,
+        "receipt_verify_login_url": verify_url,
         "alerts": [],
-        "metrics": [],
+        "metrics": [
+            _metric(
+                "Types",
+                str(len(kind_specs)),
+                hint=f"{active_kinds} with activity",
+            ),
+            _metric(
+                "Documents",
+                f"{grand_docs:,}",
+                hint="In selected period",
+            ),
+            _metric(
+                "Shops",
+                str(len(shops)),
+                hint="In this view",
+            ),
+            _metric(
+                "Total value",
+                _money_ksh(grand_amount),
+                hint="All document types",
+                tone="good" if grand_amount > 0 else "neutral",
+            ),
+        ],
         "insights": [],
         "tables": [
             _table(
@@ -3927,6 +4136,25 @@ def _build_receipts(filters):
                 columns,
                 table_rows,
                 empty="No receipts for selected shops and period.",
-            )
+                footnote="Docs = receipt count · Amt = document total. Open a type for a filtered list.",
+            ),
+            _table(
+                "All receipts",
+                [
+                    "Receipt",
+                    "Type",
+                    "Shop",
+                    "Client",
+                    "Total",
+                    "Status",
+                    "When",
+                    "Cashier",
+                ],
+                receipt_rows,
+                empty="No receipts for selected shops and period.",
+                footnote=list_footnote,
+                shop_grid=False,
+                searchable=True,
+            ),
         ],
     }

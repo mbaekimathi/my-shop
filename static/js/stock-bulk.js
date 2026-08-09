@@ -12,7 +12,10 @@
     const fromSelect = form.querySelector("[data-stock-from-nav]");
     if (shopSelect?.value) params.set("shop_id", shopSelect.value);
     if (mode === "request" && fromSelect?.value) {
-      params.set("requested_from_shop_id", fromSelect.value);
+      // Keep from shop only when it differs from requesting.
+      if (!shopSelect?.value || fromSelect.value !== shopSelect.value) {
+        params.set("requested_from_shop_id", fromSelect.value);
+      }
     }
     window.location.assign(`${window.location.pathname}?${params.toString()}`);
   };
@@ -352,10 +355,17 @@
     let serialSearchTimer = 0;
     let serialSearchSeq = 0;
     let requestingShopId = (requestingShopInput?.value || "").trim();
-    let requestingShopName = "";
+    let requestingShopName = panel.dataset.stockCatalogShopName || "";
+    const requestPairLocked = panel.hasAttribute("data-stock-request-pair");
+    const fromShopFixedName = panel.dataset.stockCatalogFromShopName || "";
     if (mode === "request" && !requestingShopId) {
       requestingShopId =
-        new URLSearchParams(window.location.search).get("shop_id") || "";
+        new URLSearchParams(window.location.search).get("shop_id") ||
+        panel.dataset.stockCatalogShop ||
+        "";
+    }
+    if (mode === "request" && requestingShopId && !requestingShopName) {
+      requestingShopName = panel.dataset.stockCatalogShopName || "";
     }
 
     const cells = () => [
@@ -599,7 +609,8 @@
         if (isRequesting) requestingShopName = header.dataset.shopName || requestingShopName;
       });
       if (requestingLabelEl) {
-        requestingLabelEl.textContent = requestingShopName || "Select a shop column";
+        requestingLabelEl.textContent =
+          requestingShopName || "Choose requesting shop";
       }
       cells().forEach((cell) => {
         const isRequesting =
@@ -621,6 +632,7 @@
 
     const setRequestingShop = (shopId, shopName) => {
       if (mode !== "request") return;
+      if (requestPairLocked) return;
       const nextId = String(shopId || "").trim();
       if (requestingShopId === nextId) {
         requestingShopId = "";
@@ -866,11 +878,12 @@
       if (shopLabelEl) {
         if (mode === "request") {
           shopLabelEl.textContent =
-            shopIds.size === 0
-              ? "—"
+            fromShopFixedName ||
+            (shopIds.size === 0
+              ? "Choose from shop"
               : shopIds.size === 1
                 ? ready.find((item) => item.shopId)?.shopName || "1 shop"
-                : `${shopIds.size} shops`;
+                : `${shopIds.size} shops`);
         } else {
           const singleShopName = panel.dataset.stockCatalogShopName || "";
           shopLabelEl.textContent =
@@ -2337,7 +2350,7 @@
   const syncItemRemoveControls = (row) => {
     if (!row) return;
     const show = row.classList.contains("is-open") || row.classList.contains("is-filled");
-    row.querySelectorAll(":scope > [data-stock-item-remove]").forEach((btn) => {
+    row.querySelectorAll("[data-stock-item-remove]").forEach((btn) => {
       btn.hidden = !show;
     });
   };
