@@ -837,7 +837,9 @@ def my_shop_workspace(request, shop_id):
             "pending_request_count": len(pending_requests),
             "stock_request_decisions": request_decisions,
             "stock_request_decision_count": len(request_decisions),
-            "serial_search_url": reverse("employees:serial_search"),
+            "serial_search_url": reverse(
+                "employees:my_shop_serial_search", kwargs={"shop_id": shop.pk}
+            ),
             "catalog_url": reverse(
                 "employees:my_shop_catalog", kwargs={"shop_id": shop.pk}
             ),
@@ -1169,7 +1171,9 @@ def my_shop_stock_requests(request, shop_id):
             "stock_request_decision_count": len(request_decisions),
             "previous_stock_requests": previous_requests,
             "previous_request_count": len(previous_requests),
-            "serial_search_url": reverse("employees:serial_search"),
+            "serial_search_url": reverse(
+                "employees:my_shop_serial_search", kwargs={"shop_id": shop.pk}
+            ),
             "verify_login_code_url": reverse(
                 "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
             ),
@@ -2028,6 +2032,42 @@ def my_shop_wifi_printer_scan(request, shop_id):
     if not result.get("ok"):
         return JsonResponse(result, status=400)
     return JsonResponse(result)
+
+
+@shop_floor_required
+@require_http_methods(["GET"])
+def my_shop_serial_search(request, shop_id):
+    """Live search available serials for sell / stock-request on the shop floor.
+
+    Uses shop session (portal or unlocked employee shop), not employee portal
+    login — ``employees:serial_search`` is unavailable under shop portal auth.
+    """
+    from items.services import search_available_serials
+
+    profile, shop, denied = _require_shop_read_access(request, shop_id)
+    if denied:
+        return denied
+
+    item_id = (request.GET.get("item_id") or "").strip()
+    query = (request.GET.get("q") or "").strip()
+    match = (request.GET.get("match") or "contains").strip().lower()
+    exclude = request.GET.getlist("exclude") or []
+    results = search_available_serials(
+        item_id=item_id,
+        shop_id=shop.pk,
+        query=query,
+        exclude=exclude,
+        limit=12,
+        match=match,
+    )
+    return JsonResponse(
+        {
+            "ok": True,
+            "match": match,
+            "shop_id": shop.pk,
+            "results": results,
+        }
+    )
 
 
 @shop_floor_required

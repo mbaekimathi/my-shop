@@ -117,6 +117,11 @@ urlpatterns = [
         name="my_shop_client_lookup",
     ),
     path(
+        "my-shop/<int:shop_id>/serials/search/",
+        shop_views.my_shop_serial_search,
+        name="my_shop_serial_search",
+    ),
+    path(
         "my-shop/<int:shop_id>/stock-requests/<int:request_id>/respond/",
         shop_views.my_shop_stock_request_respond,
         name="my_shop_stock_request_respond",

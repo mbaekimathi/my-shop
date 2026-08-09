@@ -3132,6 +3132,17 @@
         return;
       }
       const q = String(input.value || "").trim().toUpperCase();
+      const others = otherSerialSaleValues(input);
+      if (q && others.has(q)) {
+        const root = input.closest("[data-serial-sale-search-root]");
+        const suggest = root?.querySelector?.("[data-serial-sale-suggest]");
+        if (suggest) {
+          suggest.innerHTML =
+            "<div class=\"shop-serial-suggest-empty\"><strong>Already selected</strong><small>That serial is in another row</small></div>";
+          suggest.hidden = false;
+        }
+        return;
+      }
       const seq = ++serialSaleSearchSeq;
       const params = new URLSearchParams({
         item_id: String(serialSaleItem.id),
@@ -3139,7 +3150,7 @@
         q,
         match: isSerialSaleLast4Mode() ? "last4" : "contains",
       });
-      otherSerialSaleValues(input).forEach((serial) => params.append("exclude", serial));
+      others.forEach((serial) => params.append("exclude", serial));
       try {
         const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
           headers: { Accept: "application/json" },
