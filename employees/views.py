@@ -27,6 +27,7 @@ from shops.services import (
     get_communications_settings,
     get_company_pos_settings,
     get_company_profile,
+    get_company_working_hours_settings,
     get_daraja_settings,
     pos_settings_as_dict,
     preview_receipt_number,
@@ -41,6 +42,7 @@ from shops.services import (
     set_receipt_paper_width,
     set_receipt_qr_settings,
     update_company_profile,
+    save_working_hours_settings,
     update_daraja_settings,
     update_message_channel_settings,
     update_sms_settings,
@@ -809,6 +811,9 @@ def employee_settings_section(request, section):
     if settings_section["slug"] == "whatsapp":
         return _company_communications_settings(request, context)
 
+    if settings_section["slug"] == "working-hours":
+        return _company_working_hours_settings(request, context)
+
     return render(request, "employees/settings_section.html", context)
 
 
@@ -1077,6 +1082,70 @@ def _company_profile_settings(request, context):
         }
     )
     return render(request, "employees/settings_company_profile.html", context)
+
+
+def _working_hours_form_context(settings_row, post=None):
+    from shops.models import WORKING_DAY_FIELDS
+    from shops.services import active_shop_count, list_working_hours_shop_rows
+
+    if post is None:
+        day_rows = [
+            {
+                "field": field,
+                "label": label,
+                "short": short,
+                "checked": bool(getattr(settings_row, field, False)),
+            }
+            for field, label, short in WORKING_DAY_FIELDS
+        ]
+        enabled = bool(settings_row.enabled)
+    else:
+        day_rows = [
+            {
+                "field": field,
+                "label": label,
+                "short": short,
+                "checked": (post.get(field) or "").strip().lower()
+                in ("1", "on", "true", "yes"),
+            }
+            for field, label, short in WORKING_DAY_FIELDS
+        ]
+        enabled = (post.get("enabled") or "").strip().lower() in (
+            "1",
+            "on",
+            "true",
+            "yes",
+        )
+
+    return {
+        "working_hours": settings_row,
+        "working_day_rows": day_rows,
+        "working_day_count": sum(1 for day in day_rows if day["checked"]),
+        "active_shop_count": active_shop_count(),
+        "working_hours_shops": list_working_hours_shop_rows(post=post),
+        "form_data": {
+            "enabled": enabled,
+        },
+    }
+
+
+def _company_working_hours_settings(request, context):
+    settings_row = get_company_working_hours_settings()
+
+    if request.method == "POST":
+        try:
+            settings_row = save_working_hours_settings(request.POST)
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            messages.error(request, message)
+            context.update(_working_hours_form_context(settings_row, post=request.POST))
+            return render(request, "employees/settings_working_hours.html", context)
+
+        messages.success(request, "Working hours saved.")
+        return redirect(request.path)
+
+    context.update(_working_hours_form_context(settings_row))
+    return render(request, "employees/settings_working_hours.html", context)
 
 
 POS_SETTING_GROUPS = (

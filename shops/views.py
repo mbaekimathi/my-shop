@@ -49,7 +49,10 @@ from .services import (
     build_expense_supplier_receipt,
     build_stock_in_supplier_receipt,
     build_stock_request_delivery_note,
+    build_shop_day_prompt,
     close_shop_day,
+    list_shop_day_prompts,
+    shop_working_hours_status_map,
     complete_shop_checkout,
     create_shop,
     day_session_balance_summary,
@@ -58,6 +61,7 @@ from .services import (
     format_kenya_phone,
     get_company_pos_settings,
     get_company_stock_settings,
+    get_company_working_hours_settings,
     get_last_closed_shop_day,
     get_open_shop_day,
     get_shop_receipt_detail,
@@ -241,6 +245,54 @@ def _shops_for_floor(profile, shop):
     return shops_for_profile(profile)
 
 
+def _shop_day_prompt_context(shop, profile):
+    if shop is None:
+        return {}
+    from employees.module_permissions import employee_may
+
+    if profile is not None and not employee_may(profile, "my-shop", "workspace"):
+        return {}
+
+    prompt = build_shop_day_prompt(shop=shop)
+    if not prompt.get("show"):
+        return {}
+
+    return {
+        "shop_day_modal": True,
+        "shop_day_prompt": prompt,
+        "shop_day_toggle_url": reverse(
+            "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+        ),
+        "shop_day_verify_url": reverse(
+            "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
+        ),
+    }
+
+
+def _shop_day_all_shops_context(shops, profile):
+    from employees.module_permissions import employee_may
+
+    settings_row = get_company_working_hours_settings()
+    if not settings_row.enabled:
+        return {"working_hours_enabled": False}
+
+    can_open_close = profile is None or employee_may(profile, "my-shop", "open_close")
+    prompts = list_shop_day_prompts(shops=shops) if can_open_close else []
+    status_map = shop_working_hours_status_map(shops=shops) if can_open_close else {}
+
+    return {
+        "working_hours_enabled": True,
+        "shop_day_prompts": prompts,
+        "shop_day_status_map": status_map,
+        "shop_day_needs_open": sum(
+            1 for row in prompts if row.get("mode") == "open"
+        ),
+        "shop_day_needs_close": sum(
+            1 for row in prompts if row.get("mode") == "close"
+        ),
+    }
+
+
 def _shop_floor_chrome(shop, profile, shops, *, active, print_channels=None):
     portal = profile is None
     pending_request_count = 0
@@ -274,6 +326,7 @@ def _shop_floor_chrome(shop, profile, shops, *, active, print_channels=None):
         "shop_portal": portal,
         "stock_request_status_url": stock_request_status_url,
         "sidebar_pending_request_count": pending_request_count,
+        **_shop_day_prompt_context(shop, profile),
     }
 
 
@@ -376,6 +429,8 @@ def _render_shop_login(
         "summary": "Enter the shop password to open the floor workspace.",
         "icon": "store",
     }
+    shop_day_ctx = _shop_day_all_shops_context(shops, profile)
+    status_map = shop_day_ctx.get("shop_day_status_map") or {}
     return render(
         request,
         "shops/my_shop_select.html",
@@ -386,12 +441,23 @@ def _render_shop_login(
             "status_label": profile.get_status_display(),
             "page_sidebar": sidebar_for_my_shop(profile.role, shop=None, shops=shops),
             "shops": shops,
+            "shop_login_rows": [
+                {
+                    "shop": shop,
+                    "hours_status": status_map.get(str(shop.pk), ""),
+                }
+                for shop in shops
+            ],
             "shop_count": len(shops),
             "multi_shop": len(shops) > 1,
             "selected_shop": selected_shop,
             "selected_shop_id": str(selected_shop.pk) if selected_shop else "",
+            "selected_shop_hours_status": (
+                status_map.get(str(selected_shop.pk), "") if selected_shop else ""
+            ),
             "form_error": form_error,
             "dashboard_url": reverse(role_home_url_name(profile.role)),
+            **shop_day_ctx,
         },
     )
 
@@ -1808,6 +1874,10 @@ def my_shop_day_toggle(request, shop_id):
     }
 
     if request.method == "POST":
+        wants_json = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or "application/json" in (request.headers.get("Accept") or "")
+        )
         form_data = {
             "cash_amount": (request.POST.get("cash_amount") or "").strip(),
             "mpesa_amount": (request.POST.get("mpesa_amount") or "").strip(),
@@ -1831,7 +1901,20 @@ def my_shop_day_toggle(request, shop_id):
             )
         except ValidationError as exc:
             form_errors = _validation_errors(exc)
+            if wants_json:
+                return JsonResponse(
+                    {"ok": False, "errors": form_errors},
+                    status=400,
+                )
         else:
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "message": result["message"],
+                        "action": result["action"],
+                    }
+                )
             messages.success(request, result["message"])
             return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
 

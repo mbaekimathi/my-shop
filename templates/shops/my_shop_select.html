@@ -45,6 +45,25 @@
     </div>
     {% endif %}
 
+    {% if working_hours_enabled and shop_day_prompts %}
+    <div class="shop-select-hours-alert" role="status">
+      <i data-lucide="clock" aria-hidden="true"></i>
+      <div>
+        <strong>Working hours</strong>
+        <p>
+          {% if shop_day_needs_open and shop_day_needs_close %}
+          {{ shop_day_needs_open }} shop{{ shop_day_needs_open|pluralize }} need opening and {{ shop_day_needs_close }} need closing.
+          {% elif shop_day_needs_open %}
+          {{ shop_day_needs_open }} shop{{ shop_day_needs_open|pluralize }} need opening balances.
+          {% elif shop_day_needs_close %}
+          {{ shop_day_needs_close }} shop{{ shop_day_needs_close|pluralize }} need closing balances.
+          {% endif %}
+          Sign in to each shop to complete the popup.
+        </p>
+      </div>
+    </div>
+    {% endif %}
+
     <form
       class="shop-select-form workspace-modal-form"
       method="post"
@@ -58,8 +77,9 @@
       <fieldset class="shop-select-fieldset">
         <legend class="field-label">Authorised shops</legend>
         <div class="shop-select-grid" data-shop-picker>
-          {% for shop in shops %}
-          <label class="shop-select-card{% if selected_shop_id == shop.pk|stringformat:'s' %} is-selected{% elif not selected_shop_id and forloop.first %} is-selected{% endif %}">
+          {% for row in shop_login_rows %}
+          {% with shop=row.shop shop_hours_status=row.hours_status %}
+          <label class="shop-select-card{% if selected_shop_id == shop.pk|stringformat:'s' %} is-selected{% elif not selected_shop_id and forloop.first %} is-selected{% endif %}{% if shop_hours_status == 'open' %} needs-open{% elif shop_hours_status == 'close' %} needs-close{% endif %}">
             <input
               type="radio"
               name="shop_id"
@@ -77,6 +97,13 @@
             </span>
             <span class="shop-select-card-body">
               <span class="shop-select-card-name">{{ shop.name }}</span>
+              {% if working_hours_enabled and shop_hours_status == 'open' %}
+              <span class="shop-select-hours-pill is-open">Needs opening</span>
+              {% elif working_hours_enabled and shop_hours_status == 'close' %}
+              <span class="shop-select-hours-pill is-close">Needs closing</span>
+              {% elif working_hours_enabled and shop_hours_status == 'trading' %}
+              <span class="shop-select-hours-pill is-trading">Open</span>
+              {% endif %}
               <span class="shop-select-card-meta">
                 <span class="shop-select-loc">
                   <i data-lucide="map-pin" aria-hidden="true"></i>
@@ -93,6 +120,7 @@
               <i data-lucide="check" class="shop-select-mark shop-select-mark--on"></i>
             </span>
           </label>
+          {% endwith %}
           {% endfor %}
         </div>
       </fieldset>
@@ -108,6 +136,13 @@
         </span>
         <span class="shop-select-card-body">
           <span class="shop-select-card-name">{{ selected_shop.name }}</span>
+          {% if working_hours_enabled and selected_shop_hours_status == 'open' %}
+          <span class="shop-select-hours-pill is-open">Needs opening</span>
+          {% elif working_hours_enabled and selected_shop_hours_status == 'close' %}
+          <span class="shop-select-hours-pill is-close">Needs closing</span>
+          {% elif working_hours_enabled and selected_shop_hours_status == 'trading' %}
+          <span class="shop-select-hours-pill is-trading">Open</span>
+          {% endif %}
           <span class="shop-select-card-meta">
             <span class="shop-select-loc">
               <i data-lucide="map-pin" aria-hidden="true"></i>

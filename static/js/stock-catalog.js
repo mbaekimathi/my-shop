@@ -404,7 +404,7 @@
               return `<th scope="col" class="stock-matrix-shop-col stock-th--pair" title="${name}">
                 <span class="stock-th-pair">
                   <span class="stock-th-pair-name">${name}</span>
-                  <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span></span>
+                  <span class="stock-th-pair-cols stock-th-pair-cols--out" aria-hidden="true"><span>Stock</span><span>Qty</span><span>Balance</span></span>
                 </span>
               </th>`;
             })
@@ -458,7 +458,7 @@
       return section;
     }
 
-    const colCount = mode === "request" ? 4 : 3;
+    const colCount = mode === "request" ? 4 : mode === "out" ? 4 : 3;
     section.innerHTML = `
       <header class="stock-category-head">
         <div class="stock-category-title-wrap">
@@ -480,6 +480,11 @@
                   ? `<th scope="col" class="stock-matrix-shop-col">${escapeHtml(
                       fromShopName
                     )}</th>`
+                  : ""
+              }
+              ${
+                mode === "out"
+                  ? `<th scope="col" class="stock-matrix-shop-col stock-matrix-balance-col">Balance</th>`
                   : ""
               }
               <th scope="col" class="stock-matrix-action-col"><span class="visually-hidden">Action</span></th>
@@ -813,6 +818,10 @@
       mode === "in"
         ? "stock-list-pair stock-list-pair--in"
         : "stock-list-pair stock-list-pair--out";
+    const balanceBlock =
+      mode === "out"
+        ? `<span class="stock-list-balance" data-stock-display-balance hidden aria-hidden="true">—</span>`
+        : "";
     return `<td class="stock-matrix-shop-col stock-matrix-shop-col--edit">
       <div
         class="stock-shop-cell ${pairClass}"
@@ -828,6 +837,7 @@
         <input type="hidden" name="item_id" value="${item.id}" disabled data-stock-field>
         <input type="hidden" name="line_shop_id" value="${shop.id}" disabled data-stock-field>
         ${qtyControl}
+        ${balanceBlock}
         ${priceBlock}
         <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
         ${supplierHidden}
@@ -843,7 +853,7 @@
     const name = String(item.name || "");
     const category = String(item.category || "");
     const desc = String(item.description || "");
-    const colCount = mode === "request" ? 4 : 3;
+    const colCount = mode === "request" ? 4 : mode === "out" ? 4 : 3;
 
     if (editableMatrix) {
       const quantities = Array.isArray(item.shop_quantities)
@@ -1020,6 +1030,11 @@
           ? `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
               fromQty === 0 ? " is-empty" : ""
             }">${fromQty}</span></td>`
+          : ""
+      }
+      ${
+        mode === "out"
+          ? `<td class="stock-matrix-shop-col stock-matrix-balance-col"><span class="stock-matrix-qty stock-matrix-balance" data-stock-display-balance hidden aria-hidden="true">—</span></td>`
           : ""
       }
       <td class="stock-matrix-action-col">

@@ -5,7 +5,7 @@
 
 {% block workspace_content %}
 <section
-  class="ax{% if page.ledger_layout or page.hide_date_filters %} ax--ledger{% endif %}"
+  class="ax{% if page.ledger_layout or page.hide_date_filters %} ax--ledger{% endif %}{% if page.list_table_layout %} ax--list-table{% endif %}"
   data-animate="rise"
   data-analytics
   data-ax-section="{{ section_slug }}"
@@ -355,7 +355,10 @@
         <span class="is-pl">Result</span>
       </div>
       {% endif %}
-      <div class="ax-table-wrap ax-table-wrap--scroll">
+      <div class="ax-table-wrap ax-table-wrap--scroll{% if page.list_table_layout %} ax-table-wrap--list{% endif %}">
+        {% if page.list_table_layout %}
+        <p class="ax-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
+        {% endif %}
         {% if table.rows %}
         <table class="ax-table{% if table.shop_grid %} ax-table--shops{% endif %}{% if section_slug == 'revenue' %} ax-table--pl{% endif %}">
           <thead>

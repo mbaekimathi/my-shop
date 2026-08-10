@@ -443,12 +443,33 @@
     const markFilled = (cell) => {
       const filled = cellQty(cell) > 0;
       cell.classList.toggle("is-filled", filled);
+      syncCellBalance(cell);
       const row = cell.closest("[data-item-row]");
       if (!row) return;
       const rowFilled = [
         ...row.querySelectorAll("[data-stock-shop-cell]"),
       ].some((c) => cellQty(c) > 0);
       row.classList.toggle("is-filled", rowFilled);
+    };
+
+    const syncCellBalance = (cell) => {
+      const balanceEl = cell?.querySelector("[data-stock-display-balance]");
+      if (!balanceEl) return;
+      const current = Number(cell.dataset.itemStock || 0);
+      const qty = cellQty(cell);
+      if (mode === "out" && qty > 0) {
+        const balance = Math.max(0, current - qty);
+        balanceEl.textContent = String(balance);
+        balanceEl.hidden = false;
+        balanceEl.removeAttribute("aria-hidden");
+        balanceEl.classList.toggle("is-empty", balance === 0);
+        balanceEl.classList.add("is-projected-out");
+        return;
+      }
+      balanceEl.textContent = "—";
+      balanceEl.hidden = true;
+      balanceEl.setAttribute("aria-hidden", "true");
+      balanceEl.classList.remove("is-projected-out", "is-empty");
     };
 
     const clearLiveSearchIfUsed = () => {
@@ -2548,29 +2569,42 @@
 
     const current = Number(row.dataset.itemStock || 0);
     const qtyEl = row.querySelector("[data-stock-display-qty]");
-    if (!qtyEl) return;
+    const balanceEl = row.querySelector("[data-stock-display-balance]");
 
-    qtyEl.classList.remove("is-projected", "is-projected-out", "is-empty");
+    if (qtyEl) {
+      qtyEl.classList.remove("is-projected", "is-projected-out", "is-empty");
+      qtyEl.textContent = String(current);
+      if (current === 0) qtyEl.classList.add("is-empty");
+    }
+
+    if (balanceEl) {
+      balanceEl.classList.remove("is-projected-out", "is-empty");
+      if (filled && mode === "out") {
+        const balance = Math.max(0, current - qty);
+        balanceEl.textContent = String(balance);
+        balanceEl.hidden = false;
+        balanceEl.removeAttribute("aria-hidden");
+        balanceEl.title = `After removing ${qty}`;
+        if (balance === 0) balanceEl.classList.add("is-empty");
+        balanceEl.classList.add("is-projected-out");
+      } else {
+        balanceEl.textContent = "—";
+        balanceEl.hidden = true;
+        balanceEl.setAttribute("aria-hidden", "true");
+        balanceEl.removeAttribute("title");
+      }
+    }
+
+    if (!qtyEl) return;
 
     if (filled && mode === "in") {
       const total = current + qty;
       qtyEl.textContent = `${current} + ${qty} = ${total}`;
       qtyEl.title = `Was ${current}, adding ${qty}`;
       qtyEl.classList.add("is-projected");
-      return;
+    } else if (!balanceEl) {
+      qtyEl.removeAttribute("title");
     }
-
-    if (filled && mode === "out") {
-      const total = Math.max(0, current - qty);
-      qtyEl.textContent = `${current} − ${qty} = ${total}`;
-      qtyEl.title = `Was ${current}, removing ${qty}`;
-      qtyEl.classList.add("is-projected", "is-projected-out");
-      return;
-    }
-
-    qtyEl.textContent = String(current);
-    qtyEl.removeAttribute("title");
-    if (current === 0) qtyEl.classList.add("is-empty");
   };
 
   const parkedRoot = () => document.querySelector("[data-stock-parked]");

@@ -570,7 +570,7 @@ def sidebar_for_stock_management(
         "shop_ids": resolved_shop_ids,
         "requested_from_shop_id": requested_from_shop_id or "",
     }
-    default_report_params = {"range": "day", "item_mode": "all"}
+    default_report_params = {"range": "day", "item_mode": "all", "view_by": "item"}
     report_href = stock_management_url(
         role, "report", report_params=report_params or default_report_params
     )
@@ -1079,6 +1079,12 @@ SETTINGS_SECTIONS = (
         "label": "WhatsApp settings",
         "icon": "messages-square",
         "summary": "API credentials for WhatsApp, Message, and Text channels.",
+    },
+    {
+        "slug": "working-hours",
+        "label": "Working hours",
+        "icon": "clock",
+        "summary": "Company working days, hours, and shop open/close prompts.",
     },
 )
 

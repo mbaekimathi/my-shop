@@ -58,11 +58,19 @@
     {% include "employees/partials/workspace_footer.html" %}
   </div>
 </div>
-{% block workspace_overlays %}{% endblock %}
+{% block workspace_overlays %}
+{% if shop_day_modal %}
+{% include "shops/partials/shop_day_modal.html" %}
+{% endif %}
+{% endblock %}
 {% endblock %}
 
 {% block extra_js %}
+{% load static %}
 {{ block.super }}
+{% if shop_day_modal %}
+<script src="{% static 'js/my-shop-day-prompt.js' %}?v=3"></script>
+{% endif %}
 <script>
   (() => {
     const root = document.querySelector("[data-workspace]");
@@ -115,7 +123,7 @@
       return true;
     };
 
-    ["buy-stock", "register-expense"].forEach((name) => {
+    ["buy-stock", "register-expense", "shop-day"].forEach((name) => {
       document.querySelectorAll(`[data-modal-open="${name}"]`).forEach((trigger) => {
         trigger.addEventListener("click", (event) => {
           const focusSelector =
@@ -160,7 +168,7 @@
         '.workspace-modal[data-modal]:not([hidden])'
       );
       const name = openModal?.getAttribute("data-modal");
-      if (name === "buy-stock" || name === "register-expense") {
+      if (name === "buy-stock" || name === "register-expense" || name === "shop-day") {
         closeWorkspaceActionModal(name);
       }
     });

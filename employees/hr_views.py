@@ -200,18 +200,51 @@ def _handle_authorizations_post(request, profile, page_number):
             "open_register_modal": open_register_modal,
         }
 
-    if action == "assign_shop":
-        target = get_object_or_404(
-            _shop_assignable_employees_queryset(),
-            employee_id=(request.POST.get("employee_id") or "").strip(),
-        )
-        ok, message = _assign_employee_shops(target, request.POST.getlist("shop_ids"))
-        if not ok:
-            messages.error(request, message)
-        elif message:
-            messages.success(request, message)
-        else:
-            messages.info(request, f"No changes for employee {target.employee_id}.")
+    if action == "assign_shops":
+        employee_ids = [
+            employee_id.strip()
+            for employee_id in request.POST.getlist("employee_ids")
+            if (employee_id or "").strip()
+        ]
+        if not employee_ids:
+            messages.error(request, "No employees to update.")
+            return _authorizations_redirect(profile, page_number), None
+
+        targets = {
+            employee.employee_id: employee
+            for employee in _shop_assignable_employees_queryset().filter(
+                employee_id__in=employee_ids
+            )
+        }
+
+        updated_count = 0
+        errors = []
+        for employee_id in employee_ids:
+            target = targets.get(employee_id)
+            if target is None:
+                errors.append(f"Employee {employee_id} was not found.")
+                continue
+            ok, message = _assign_employee_shops(
+                target,
+                request.POST.getlist(f"shop_ids__{employee_id}"),
+            )
+            if not ok:
+                errors.append(message)
+            elif message:
+                updated_count += 1
+
+        for error in errors:
+            messages.error(request, error)
+        if updated_count:
+            if updated_count == 1:
+                messages.success(request, "Updated shop assignments for 1 employee.")
+            else:
+                messages.success(
+                    request,
+                    f"Updated shop assignments for {updated_count} employees.",
+                )
+        elif not errors:
+            messages.info(request, "No changes to save.")
         return _authorizations_redirect(profile, page_number), None
 
     messages.error(request, "Unknown action.")

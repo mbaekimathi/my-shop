@@ -21,8 +21,8 @@
       <div class="stock-stats">
         {% if is_movements_page %}
         <p class="stock-stat">
-          <strong>{{ movement_count }}</strong>
-          <span>event{{ movement_count|pluralize }}</span>
+          <strong>{% if is_item_movement_summary %}{{ movement_item_count }}{% else %}{{ movement_count }}{% endif %}</strong>
+          <span>{% if is_item_movement_summary %}item{{ movement_item_count|pluralize }}{% else %}event{{ movement_count|pluralize }}{% endif %}</span>
         </p>
         <p class="stock-stat">
           <strong>{{ units_in }}</strong>
@@ -119,6 +119,26 @@
         >
       </label>
 
+      {% if is_movements_page %}
+      <label class="stock-report-field">
+        <span>View by</span>
+        <select name="view_by" aria-label="View movements by">
+          <option value="timeline"{% if view_by == 'timeline' %} selected{% endif %}>Timeline</option>
+          <option value="item"{% if view_by == 'item' %} selected{% endif %}>Item</option>
+        </select>
+      </label>
+      <label class="stock-report-field">
+        <span>Type</span>
+        <select name="event_type" aria-label="Movement type">
+          <option value="all"{% if event_filter == 'all' %} selected{% endif %}>All</option>
+          <option value="in"{% if event_filter == 'in' %} selected{% endif %}>Stock in</option>
+          <option value="out"{% if event_filter == 'out' %} selected{% endif %}>Stock out</option>
+          <option value="sale"{% if event_filter == 'sale' %} selected{% endif %}>Sale</option>
+          <option value="transfer"{% if event_filter == 'transfer' %} selected{% endif %}>Transfer</option>
+        </select>
+      </label>
+      {% endif %}
+
       <label class="stock-report-field">
         <span>Items</span>
         <select name="item_mode" data-stock-item-mode aria-label="Item filter">
@@ -183,28 +203,104 @@
 
   <div id="stock-movements" class="stock-report-movements">
     <header class="stock-report-movements-head">
-      <h3>{% if is_movements_page %}Stock movement{% else %}Item stock report{% endif %}</h3>
-      <p>{{ report_period_label }}</p>
+      <div>
+        <h3>{% if is_item_movement_detail %}Item movement{% elif is_item_movement_summary %}Items with movement{% else %}{% if is_movements_page %}Stock movement{% else %}Item stock report{% endif %}{% endif %}</h3>
+        <p>{{ report_period_label }}</p>
+      </div>
+      {% if is_item_movement_detail and detail_item %}
+      <a class="stock-report-back-link" href="{{ movements_back_url }}">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+        All items
+      </a>
+      {% endif %}
     </header>
 
+    {% if is_item_movement_detail and detail_item %}
+    <div class="stock-report-item-focus">
+      <strong>{{ detail_item.name }}</strong>
+      {% if detail_item.category %}
+      <span>{{ detail_item.category }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
     {% if is_movements_page %}
-      {% if movement_events %}
+      {% if is_item_movement_summary %}
+        {% if movement_item_rows %}
+        <div class="staff-table-wrap stock-report-table-wrap">
+          <table class="staff-table stock-report-table stock-report-table--items-summary">
+            <thead>
+              <tr>
+                <th scope="col">Item</th>
+                <th scope="col">Events</th>
+                <th scope="col">In</th>
+                <th scope="col">Out</th>
+                <th scope="col">Transfer</th>
+                <th scope="col">Sold</th>
+                <th scope="col">Last activity</th>
+                <th scope="col"><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in movement_item_rows %}
+              <tr data-stock-live-row data-search-text="{{ row.item_name|lower }} {{ row.item_category|lower }}">
+                <td data-label="Item">
+                  <strong>{{ row.item_name }}</strong>
+                  {% if row.item_category %}
+                  <span class="stock-report-from">{{ row.item_category }}</span>
+                  {% endif %}
+                </td>
+                <td data-label="Events">{{ row.event_count }}</td>
+                <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in{% if row.units_in == 0 %} is-empty{% endif %}">{{ row.units_in }}</span></td>
+                <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out{% if row.units_out == 0 %} is-empty{% endif %}">{{ row.units_out }}</span></td>
+                <td data-label="Transfer"><span class="stock-matrix-qty stock-report-qty--request{% if row.units_request == 0 %} is-empty{% endif %}">{{ row.units_request }}</span></td>
+                <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if row.units_sale == 0 %} is-empty{% endif %}">{{ row.units_sale }}</span></td>
+                <td data-label="Last activity">
+                  {% if report_range == 'day' %}
+                  {{ row.last_at|time:"H:i" }}
+                  {% else %}
+                  {{ row.last_at|date:"d M Y" }} · {{ row.last_at|time:"H:i" }}
+                  {% endif %}
+                </td>
+                <td data-label="Actions">
+                  {% if row.detail_url %}
+                  <a class="stock-report-item-link" href="{{ row.detail_url }}">View details</a>
+                  {% else %}
+                  —
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="dashboard-placeholder">
+          <i data-lucide="package" aria-hidden="true"></i>
+          <p>No items had stock movement in {{ report_period_label }} for these filters.</p>
+        </div>
+        {% endif %}
+      {% elif movement_events %}
       <div class="staff-table-wrap stock-report-table-wrap">
         <table class="staff-table stock-report-table stock-report-table--timeline">
           <thead>
             <tr>
               <th scope="col">When</th>
               <th scope="col">Type</th>
-              <th scope="col">Shop</th>
+              {% if not is_item_movement_detail %}
               <th scope="col">Item</th>
-              <th scope="col">Units</th>
-              <th scope="col">Details</th>
-              <th scope="col">By</th>
+              {% endif %}
+              <th scope="col">From</th>
+              <th scope="col">To</th>
+              <th scope="col">Qty</th>
+              <th scope="col">Serial</th>
+              <th scope="col">Pay</th>
+              <th scope="col">Seller</th>
             </tr>
           </thead>
           <tbody>
             {% for event in movement_events %}
-            <tr data-stock-live-row data-search-text="{{ event.item_name|lower }} {{ event.item_category|lower }} {{ event.event_label|lower }} {{ event.shop_name|lower }}">
+            <tr data-stock-live-row data-search-text="{{ event.item_name|lower }} {{ event.item_category|lower }} {{ event.event_label|lower }} {{ event.from_label|lower }} {{ event.to_label|lower }} {{ event.by|lower }}{% for serial in event.serial_numbers %} {{ serial|lower }}{% endfor %}">
               <td data-label="When">
                 {% if report_range == 'day' %}
                 {{ event.happened_at|time:"H:i" }}
@@ -217,38 +313,33 @@
                   {{ event.event_label }}
                 </span>
               </td>
-              <td data-label="Shop">
-                {{ event.shop_name }}
-                {% if event.from_shop_name %}
-                <span class="stock-report-from">from {{ event.from_shop_name }}</span>
-                {% endif %}
-              </td>
+              {% if not is_item_movement_detail %}
               <td data-label="Item">
                 <strong>{{ event.item_name }}</strong>
                 {% if event.item_category %}
                 <span class="stock-report-from">{{ event.item_category }}</span>
                 {% endif %}
               </td>
-              <td data-label="Units">
+              {% endif %}
+              <td data-label="From">{{ event.from_label }}</td>
+              <td data-label="To">
+                {{ event.to_label }}
+                {% if event.note %}
+                <span class="stock-report-from">{{ event.note }}</span>
+                {% endif %}
+              </td>
+              <td data-label="Qty">
                 <span class="stock-matrix-qty stock-report-qty--{{ event.event_type }}{% if event.quantity == 0 %} is-empty{% endif %}">
                   {{ event.quantity }}
                 </span>
               </td>
-              <td data-label="Details">
-                {% if event.reason %}
-                <span class="stock-report-meta">{{ event.reason }}</span>
-                {% endif %}
-                {% if event.payment_status %}
-                <span class="stock-report-meta">{{ event.payment_status }}</span>
-                {% endif %}
-                {% if event.note %}
-                <span class="stock-report-meta">{{ event.note }}</span>
-                {% endif %}
-                {% if not event.reason and not event.payment_status and not event.note %}
-                —
+              <td data-label="Serial">
+                {% if event.serial_numbers %}
+                {% for serial in event.serial_numbers %}<span class="stock-serial-number">{{ serial }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}
                 {% endif %}
               </td>
-              <td data-label="By">{{ event.by }}</td>
+              <td data-label="Pay">{{ event.pay }}</td>
+              <td data-label="Seller">{{ event.by }}</td>
             </tr>
             {% endfor %}
           </tbody>

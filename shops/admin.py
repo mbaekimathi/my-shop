@@ -6,10 +6,12 @@ from .models import (
     CompanyPosSettings,
     CompanyProfile,
     CompanyStockSettings,
+    CompanyWorkingHoursSettings,
     Expense,
     ExpenseSupplier,
     Shop,
     ShopDaySession,
+    ShopWorkingHoursSettings,
     ShopReceipt,
     ShopReceiptLine,
 )
@@ -85,6 +87,32 @@ class CompanyStockSettingsAdmin(admin.ModelAdmin):
         "require_note_on_request",
         "updated_at",
     )
+    readonly_fields = ("updated_at",)
+
+
+@admin.register(CompanyWorkingHoursSettings)
+class CompanyWorkingHoursSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "enabled",
+        "work_monday",
+        "work_tuesday",
+        "work_wednesday",
+        "work_thursday",
+        "work_friday",
+        "work_saturday",
+        "work_sunday",
+        "start_time",
+        "end_time",
+        "updated_at",
+    )
+    readonly_fields = ("updated_at",)
+
+
+@admin.register(ShopWorkingHoursSettings)
+class ShopWorkingHoursSettingsAdmin(admin.ModelAdmin):
+    list_display = ("shop", "start_time", "end_time", "updated_at")
+    search_fields = ("shop__name", "shop__login_code")
     readonly_fields = ("updated_at",)
 
 

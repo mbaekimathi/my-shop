@@ -818,6 +818,7 @@ def _build_movement_timeline(
 
     for movement in movements:
         for line in movement.lines.all():
+            parties = _movement_parties_for_line(movement=movement, line=line)
             events.append(
                 {
                     "happened_at": movement.created_at,
@@ -834,16 +835,17 @@ def _build_movement_timeline(
                     ),
                     "item_name": line.item.name,
                     "item_category": line.item.category,
+                    "item_id": line.item_id,
                     "quantity": line.quantity,
                     "reason": line.get_reason_display() if line.reason else "",
                     "payment_status": (
                         line.get_payment_status_display() if line.payment_status else ""
                     ),
                     "note": line.note or "",
-                    "by": (
-                        movement.created_by.employee_id if movement.created_by else "—"
-                    ),
+                    "by": _employee_display_name(movement.created_by),
+                    "serial_numbers": _movement_serial_numbers(line.serial_numbers),
                     "movement_id": movement.pk,
+                    **parties,
                 }
             )
             if movement.movement_type == StockMovementType.IN:
@@ -870,7 +872,13 @@ def _build_movement_timeline(
             receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
             receipt__shop_id__in=shop_ids,
         )
-        .select_related("receipt", "receipt__shop", "receipt__created_by", "item")
+        .select_related(
+            "receipt",
+            "receipt__shop",
+            "receipt__created_by__user",
+            "receipt__client",
+            "item",
+        )
         .order_by("receipt__created_at", "id")
     )
     if item_mode == "category" and selected_categories:
@@ -882,6 +890,7 @@ def _build_movement_timeline(
         matched = item_by_id.get(line.item_id) or item_by_name.get(
             (line.item_name or "").strip().lower()
         )
+        parties = _movement_parties_for_receipt(receipt=line.receipt)
         events.append(
             {
                 "happened_at": line.receipt.created_at,
@@ -897,16 +906,15 @@ def _build_movement_timeline(
                     if matched
                     else (line.item.category if line.item_id and line.item else "")
                 ),
+                "item_id": line.item_id or (matched.pk if matched else None),
                 "quantity": line.quantity,
                 "reason": "",
-                "payment_status": "",
+                "payment_status": parties["pay"] if parties["pay"] != "—" else "",
                 "note": "",
-                "by": (
-                    line.receipt.created_by.employee_id
-                    if line.receipt.created_by_id
-                    else "—"
-                ),
+                "by": _employee_display_name(line.receipt.created_by),
+                "serial_numbers": _movement_serial_numbers(line.serial_numbers),
                 "movement_id": None,
+                **parties,
             }
         )
         units_sale += line.quantity
@@ -932,7 +940,7 @@ def _build_movement_timeline(
             sale__sold_at__gte=day_start,
             sale__sold_at__lt=day_end,
         )
-        .select_related("sale", "sale__employee")
+        .select_related("sale", "sale__employee__user")
         .order_by("sale__sold_at", "id")
     )
     if shop_ids:
@@ -953,6 +961,7 @@ def _build_movement_timeline(
         if allowed_names and key not in allowed_names:
             continue
         matched = item_by_name.get(key)
+        parties = _movement_parties_for_pos_sale(sale=line.sale)
         events.append(
             {
                 "happened_at": line.sale.sold_at,
@@ -962,20 +971,251 @@ def _build_movement_timeline(
                 "from_shop_name": "",
                 "item_name": line.product_name or (matched.name if matched else "—"),
                 "item_category": matched.category if matched else "",
+                "item_id": matched.pk if matched else None,
                 "quantity": line.quantity,
                 "reason": "",
                 "payment_status": "",
                 "note": "",
-                "by": (
-                    line.sale.employee.employee_id if line.sale.employee else "—"
-                ),
+                "by": _employee_display_name(line.sale.employee),
+                "serial_numbers": [],
                 "movement_id": None,
+                **parties,
             }
         )
         units_sale += line.quantity
 
     events.sort(key=lambda row: (row["happened_at"], row.get("movement_id") or 0))
     return events, units_in, units_out, units_request, units_sale
+
+
+def _movement_serial_numbers(raw) -> list[str]:
+    seen = set()
+    serials = []
+    for value in raw or []:
+        serial = str(value or "").strip().upper()
+        if not serial or serial in seen:
+            continue
+        seen.add(serial)
+        serials.append(serial)
+    return serials
+
+
+def _movement_supplier_label(line):
+    name = (getattr(line, "supplier_name", None) or "").strip()
+    return name or "—"
+
+
+def _movement_pay_label(*, line=None, movement=None, receipt=None):
+    if receipt is not None:
+        method = (getattr(receipt, "payment_method", None) or "").strip()
+        if method:
+            return receipt.get_payment_method_display()
+        return "—"
+    if line is not None:
+        payment = (getattr(line, "payment_status", None) or "").strip()
+        if payment:
+            return line.get_payment_status_display()
+        refund = (getattr(line, "refund", None) or "").strip().lower()
+        if refund == "yes":
+            amount = getattr(line, "refund_amount", None)
+            if amount is not None:
+                return f"Refund {amount}"
+            return "Refund"
+        if refund == "no":
+            return "No refund"
+    if movement is not None:
+        payment = (getattr(movement, "payment_status", None) or "").strip()
+        if payment:
+            return movement.get_payment_status_display()
+    return "—"
+
+
+def _movement_parties_for_line(*, movement, line):
+    from .models import StockMovementType
+
+    shop_name = movement.shop.name if movement.shop else "—"
+    supplier = _movement_supplier_label(line)
+
+    if movement.movement_type == StockMovementType.IN:
+        return {
+            "from_label": supplier,
+            "to_label": shop_name,
+            "seller": supplier,
+            "pay": _movement_pay_label(line=line, movement=movement),
+        }
+    if movement.movement_type == StockMovementType.OUT:
+        reason = line.get_reason_display() if line.reason else "—"
+        return {
+            "from_label": shop_name,
+            "to_label": reason,
+            "seller": "—",
+            "pay": _movement_pay_label(line=line),
+        }
+    from_shop = (
+        movement.requested_from_shop.name if movement.requested_from_shop else "—"
+    )
+    return {
+        "from_label": from_shop,
+        "to_label": shop_name,
+        "seller": "—",
+        "pay": "—",
+    }
+
+
+def _movement_parties_for_receipt(*, receipt):
+    shop_name = receipt.shop.name if receipt.shop_id else "—"
+    client_name = (receipt.client_name or "").strip()
+    if not client_name and receipt.client_id and receipt.client:
+        client_name = (receipt.client.full_name or "").strip()
+    return {
+        "from_label": shop_name,
+        "to_label": client_name or "—",
+        "seller": _employee_display_name(receipt.created_by),
+        "pay": _movement_pay_label(receipt=receipt),
+    }
+
+
+def _movement_parties_for_pos_sale(*, sale):
+    return {
+        "from_label": "—",
+        "to_label": "—",
+        "seller": _employee_display_name(sale.employee),
+        "pay": "—",
+    }
+
+
+MOVEMENT_EVENT_FILTERS = frozenset({"all", "in", "out", "sale", "transfer"})
+
+MOVEMENT_EVENT_FILTER_TYPES = {
+    "in": frozenset({"in"}),
+    "out": frozenset({"out"}),
+    "sale": frozenset({"sale"}),
+    "transfer": frozenset({"request"}),
+}
+
+
+def _parse_movement_event_filter(raw):
+    event_filter = (raw or "all").strip().lower()
+    if event_filter not in MOVEMENT_EVENT_FILTERS:
+        return "all"
+    return event_filter
+
+
+def _filter_movement_events(events, event_filter):
+    allowed = MOVEMENT_EVENT_FILTER_TYPES.get(event_filter)
+    if not allowed:
+        return events
+    return [event for event in events if event.get("event_type") in allowed]
+
+
+def _summarize_movement_events(events):
+    units_in = sum(
+        event["quantity"] for event in events if event.get("event_type") == "in"
+    )
+    units_out = sum(
+        event["quantity"] for event in events if event.get("event_type") == "out"
+    )
+    units_request = sum(
+        event["quantity"] for event in events if event.get("event_type") == "request"
+    )
+    units_sale = sum(
+        event["quantity"] for event in events if event.get("event_type") == "sale"
+    )
+    return units_in, units_out, units_request, units_sale
+
+
+MOVEMENT_VIEW_BY = frozenset({"timeline", "item"})
+
+
+def _parse_movement_view_by(raw):
+    view_by = (raw or "item").strip().lower()
+    if view_by not in MOVEMENT_VIEW_BY:
+        return "item"
+    return view_by
+
+
+def _group_movement_events_by_item(events):
+    groups = {}
+    for event in events:
+        item_id = event.get("item_id")
+        item_name = event.get("item_name") or "—"
+        item_category = event.get("item_category") or ""
+        key = item_id if item_id is not None else f"name:{item_name.strip().lower()}"
+
+        row = groups.get(key)
+        if row is None:
+            row = {
+                "item_id": item_id,
+                "item_name": item_name,
+                "item_category": item_category,
+                "event_count": 0,
+                "units_in": 0,
+                "units_out": 0,
+                "units_request": 0,
+                "units_sale": 0,
+                "last_at": event["happened_at"],
+            }
+            groups[key] = row
+
+        row["event_count"] += 1
+        event_type = event.get("event_type")
+        quantity = int(event.get("quantity") or 0)
+        if event_type == "in":
+            row["units_in"] += quantity
+        elif event_type == "out":
+            row["units_out"] += quantity
+        elif event_type == "request":
+            row["units_request"] += quantity
+        elif event_type == "sale":
+            row["units_sale"] += quantity
+        if event["happened_at"] > row["last_at"]:
+            row["last_at"] = event["happened_at"]
+
+    return sorted(
+        groups.values(),
+        key=lambda row: (row["item_name"].lower(), row.get("item_id") or 0),
+    )
+
+
+def _movements_report_params(
+    *,
+    range_type,
+    filter_context,
+    item_mode,
+    event_filter,
+    view_by,
+    selected_shop_ids,
+    selected_categories=None,
+    selected_item_ids=None,
+    **overrides,
+):
+    params = {
+        "range": range_type,
+        "item_mode": item_mode or "all",
+        "event_type": event_filter,
+        "view_by": view_by,
+    }
+    if selected_shop_ids:
+        params["shop_id"] = selected_shop_ids[0]
+    if range_type == "day":
+        params["date"] = filter_context["report_date_value"]
+    elif range_type == "period":
+        params["date_from"] = filter_context["report_date_from"]
+        params["date_to"] = filter_context["report_date_to"]
+    elif range_type == "month":
+        params["month"] = filter_context["report_month_value"]
+    elif range_type == "year":
+        params["year"] = filter_context["report_year_value"][:4]
+    if item_mode == "category" and selected_categories:
+        params["category"] = selected_categories[0]
+    if item_mode == "items" and selected_item_ids:
+        params["item_id"] = selected_item_ids[0]
+    params.update(overrides)
+    return {
+        key: value
+        for key, value in params.items()
+        if value not in (None, "")
+    }
 
 
 def stock_report(request, profile, meta, module, *, page_mode="report"):
@@ -1058,6 +1298,22 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     }
 
     is_movements = page_mode == "movements"
+    event_filter = _parse_movement_event_filter(
+        request.GET.get("event_type") if is_movements else "all"
+    )
+    view_by = _parse_movement_view_by(
+        request.GET.get("view_by") if is_movements else "timeline"
+    )
+    is_item_movement_detail = (
+        is_movements
+        and view_by == "timeline"
+        and item_mode == "items"
+        and len(selected_item_ids) == 1
+    )
+    is_item_movement_summary = (
+        is_movements and view_by == "item" and not is_item_movement_detail
+    )
+    movement_item_rows = []
 
     if is_movements:
         (
@@ -1075,6 +1331,13 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             selected_item_ids=selected_item_ids,
             report_items=report_items if item_mode != "all" else all_items,
         )
+        if event_filter != "all":
+            movement_events = _filter_movement_events(movement_events, event_filter)
+            units_in, units_out, units_request, units_sale = _summarize_movement_events(
+                movement_events
+            )
+        if is_item_movement_summary:
+            movement_item_rows = _group_movement_events_by_item(movement_events)
     else:
         item_report_rows = _build_item_report_rows(
             report_items, shop_ids_for_query, day_start, day_end
@@ -1091,18 +1354,52 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         units_request = totals["stock_request"]
         units_sale = totals["stock_sale"]
 
-    report_params = {"range": range_type, "item_mode": item_mode or "all"}
-    if selected_shop_ids:
-        report_params["shop_id"] = selected_shop_ids[0]
-    if range_type == "day":
-        report_params["date"] = filter_context["report_date_value"]
-    elif range_type == "period":
-        report_params["date_from"] = filter_context["report_date_from"]
-        report_params["date_to"] = filter_context["report_date_to"]
-    elif range_type == "month":
-        report_params["month"] = filter_context["report_month_value"]
-    elif range_type == "year":
-        report_params["year"] = filter_context["report_year_value"][:4]
+    from employees.workspace import sidebar_for_stock_management, stock_management_url
+
+    report_params = _movements_report_params(
+        range_type=range_type,
+        filter_context=filter_context,
+        item_mode=item_mode,
+        event_filter=event_filter,
+        view_by=view_by if is_movements else "timeline",
+        selected_shop_ids=selected_shop_ids,
+        selected_categories=selected_categories,
+        selected_item_ids=selected_item_ids,
+    )
+    movements_back_url = ""
+    if is_item_movement_detail:
+        back_params = _movements_report_params(
+            range_type=range_type,
+            filter_context=filter_context,
+            item_mode="all",
+            event_filter=event_filter,
+            view_by="item",
+            selected_shop_ids=selected_shop_ids,
+            selected_categories=selected_categories,
+            selected_item_ids=[],
+        )
+        movements_back_url = stock_management_url(
+            profile.role, "movements", report_params=back_params
+        )
+    elif is_item_movement_summary:
+        for row in movement_item_rows:
+            if not row.get("item_id"):
+                row["detail_url"] = ""
+                continue
+            detail_params = _movements_report_params(
+                range_type=range_type,
+                filter_context=filter_context,
+                item_mode="items",
+                event_filter=event_filter,
+                view_by="timeline",
+                selected_shop_ids=selected_shop_ids,
+                selected_categories=selected_categories,
+                selected_item_ids=[row["item_id"]],
+                item_id=row["item_id"],
+            )
+            row["detail_url"] = stock_management_url(
+                profile.role, "movements", report_params=detail_params
+            )
 
     page_sidebar = sidebar_for_stock_management(
         profile.role,
@@ -1148,6 +1445,18 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "filter_items_json": filter_items_json,
             "selected_filter_items": selected_filter_items,
             "selected_item_ids": set(selected_item_ids),
+            "event_filter": event_filter,
+            "view_by": view_by,
+            "is_item_movement_summary": is_item_movement_summary,
+            "is_item_movement_detail": is_item_movement_detail,
+            "movement_item_rows": movement_item_rows,
+            "movement_item_count": len(movement_item_rows),
+            "detail_item": (
+                items_by_id.get(selected_item_ids[0])
+                if is_item_movement_detail
+                else None
+            ),
+            "movements_back_url": movements_back_url,
             **filter_context,
         },
     )

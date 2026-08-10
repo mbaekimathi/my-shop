@@ -17,7 +17,10 @@ from .models import (
     CompanyPosSettings,
     CompanyProfile,
     CompanyStockSettings,
+    CompanyWorkingHoursSettings,
     DarajaEnvironment,
+    WORKING_DAY_FIELDS,
+    ShopWorkingHoursSettings,
     Expense,
     ExpenseCategory,
     ExpensePaymentStatus,
@@ -193,6 +196,315 @@ def stock_settings_as_dict(settings_row: CompanyStockSettings | None = None) -> 
         "require_note_on_request": bool(row.require_note_on_request),
         "requirements": row.as_requirements_dict(),
     }
+
+
+WORKING_HOURS_DAY_FIELDS = frozenset(field for field, _label, _short in WORKING_DAY_FIELDS)
+WEEKDAY_WORK_FIELDS = tuple(field for field, _label, _short in WORKING_DAY_FIELDS)
+
+
+def _parse_working_time(raw: str):
+    from datetime import datetime
+
+    value = (raw or "").strip()
+    if not value:
+        raise ValidationError("Enter working start and end times.")
+    for fmt in ("%H:%M", "%H:%M:%S"):
+        try:
+            return datetime.strptime(value, fmt).time()
+        except ValueError:
+            continue
+    raise ValidationError("Use a valid time (HH:MM).")
+
+
+def get_company_working_hours_settings() -> CompanyWorkingHoursSettings:
+    settings_row, _ = CompanyWorkingHoursSettings.objects.get_or_create(pk=1)
+    return settings_row
+
+
+def working_hours_as_dict(
+    settings_row: CompanyWorkingHoursSettings | None = None,
+) -> dict:
+    row = settings_row or get_company_working_hours_settings()
+    days = {
+        field: bool(getattr(row, field, False)) for field, _label, _short in WORKING_DAY_FIELDS
+    }
+    return {
+        **days,
+        "enabled": bool(row.enabled),
+        "start_time": row.start_time.strftime("%H:%M"),
+        "end_time": row.end_time.strftime("%H:%M"),
+        "working_day_labels": row.working_day_labels(),
+    }
+
+
+def validate_working_hours_payload(data) -> dict:
+    cleaned = {}
+    for field, _label, _short in WORKING_DAY_FIELDS:
+        cleaned[field] = (data.get(field) or "").strip().lower() in (
+            "1",
+            "on",
+            "true",
+            "yes",
+        )
+
+    if not any(cleaned.values()):
+        raise ValidationError("Select at least one working day.")
+
+    cleaned["enabled"] = (data.get("enabled") or "").strip().lower() in (
+        "1",
+        "on",
+        "true",
+        "yes",
+    )
+    return cleaned
+
+
+def get_shop_working_hours_settings(shop: Shop) -> ShopWorkingHoursSettings:
+    company = get_company_working_hours_settings()
+    row, _ = ShopWorkingHoursSettings.objects.get_or_create(
+        shop=shop,
+        defaults={
+            "start_time": company.start_time,
+            "end_time": company.end_time,
+        },
+    )
+    return row
+
+
+def get_shop_working_hours_map(shops) -> dict[int, ShopWorkingHoursSettings]:
+    company = get_company_working_hours_settings()
+    shop_ids = [shop.pk for shop in shops]
+    rows = ShopWorkingHoursSettings.objects.filter(shop_id__in=shop_ids)
+    existing = {row.shop_id: row for row in rows}
+    missing = [shop for shop in shops if shop.pk not in existing]
+    if missing:
+        ShopWorkingHoursSettings.objects.bulk_create(
+            [
+                ShopWorkingHoursSettings(
+                    shop=shop,
+                    start_time=company.start_time,
+                    end_time=company.end_time,
+                )
+                for shop in missing
+            ]
+        )
+        for row in ShopWorkingHoursSettings.objects.filter(shop_id__in=shop_ids):
+            existing[row.shop_id] = row
+    return existing
+
+
+def _shop_hours_from_post(post, shop: Shop, fallback: ShopWorkingHoursSettings) -> tuple[str, str]:
+    start_time = (post.get(f"shop_{shop.pk}_start_time") or "").strip()
+    end_time = (post.get(f"shop_{shop.pk}_end_time") or "").strip()
+    if not start_time:
+        start_time = fallback.start_time.strftime("%H:%M")
+    if not end_time:
+        end_time = fallback.end_time.strftime("%H:%M")
+    return start_time, end_time
+
+
+def update_shop_working_hours_from_post(data, shops) -> None:
+    company = get_company_working_hours_settings()
+    hours_map = get_shop_working_hours_map(shops)
+    for shop in shops:
+        hours_row = hours_map[shop.pk]
+        start_raw = (data.get(f"shop_{shop.pk}_start_time") or "").strip()
+        end_raw = (data.get(f"shop_{shop.pk}_end_time") or "").strip()
+        if not start_raw:
+            start_raw = hours_row.start_time.strftime("%H:%M")
+        if not end_raw:
+            end_raw = hours_row.end_time.strftime("%H:%M")
+        start_time = _parse_working_time(start_raw)
+        end_time = _parse_working_time(end_raw)
+        if start_time >= end_time:
+            raise ValidationError(
+                f"{shop.name}: closing time must be after opening time."
+            )
+        hours_row.start_time = start_time
+        hours_row.end_time = end_time
+        hours_row.save(update_fields=["start_time", "end_time", "updated_at"])
+
+
+def update_company_working_hours(data) -> CompanyWorkingHoursSettings:
+    settings_row = get_company_working_hours_settings()
+    cleaned = validate_working_hours_payload(data)
+    for field in WORKING_HOURS_DAY_FIELDS:
+        setattr(settings_row, field, cleaned[field])
+    settings_row.enabled = cleaned["enabled"]
+    settings_row.save(
+        update_fields=[
+            *WORKING_HOURS_DAY_FIELDS,
+            "enabled",
+            "updated_at",
+        ]
+    )
+    return settings_row
+
+
+def save_working_hours_settings(data) -> CompanyWorkingHoursSettings:
+    with transaction.atomic():
+        settings_row = update_company_working_hours(data)
+        update_shop_working_hours_from_post(data, list_active_shops())
+    return settings_row
+
+
+def build_shop_day_prompt(*, shop: Shop) -> dict:
+    """Whether the shop floor should show an open/close balances popup."""
+    settings_row = get_company_working_hours_settings()
+    if not settings_row.enabled:
+        return {"show": False}
+
+    now = timezone.localtime()
+    weekday_index = now.weekday()
+    if weekday_index < 0 or weekday_index >= len(WEEKDAY_WORK_FIELDS):
+        return {"show": False}
+
+    if not getattr(settings_row, WEEKDAY_WORK_FIELDS[weekday_index], False):
+        return {"show": False}
+
+    open_session = get_open_shop_day(shop)
+    is_open = open_session is not None
+    now_time = now.time()
+    shop_hours = get_shop_working_hours_settings(shop)
+    start_time = shop_hours.start_time
+    end_time = shop_hours.end_time
+    mode = None
+
+    if (
+        not is_open
+        and start_time <= now_time < end_time
+    ):
+        mode = "open"
+    elif is_open and now_time >= end_time:
+        mode = "close"
+
+    if mode is None:
+        return {"show": False}
+
+    form_data = {
+        "cash_amount": "",
+        "mpesa_amount": "",
+        "credit_amount": "",
+        "stock_confirmed": False,
+        "login_code": "",
+    }
+
+    return {
+        "show": True,
+        "mode": mode,
+        "auto_open": True,
+        "form_data": form_data,
+        "start_time": start_time.strftime("%H:%M"),
+        "end_time": end_time.strftime("%H:%M"),
+    }
+
+
+def list_shop_day_prompts(*, shops) -> list[dict]:
+    """Shops that currently need an open or close balance popup."""
+    settings_row = get_company_working_hours_settings()
+    if not settings_row.enabled:
+        return []
+
+    rows = []
+    for shop in shops:
+        prompt = build_shop_day_prompt(shop=shop)
+        if not prompt.get("show"):
+            continue
+        rows.append(
+            {
+                "shop": shop,
+                "shop_id": shop.pk,
+                "shop_name": shop.name,
+                **prompt,
+            }
+        )
+    return rows
+
+
+def shop_working_hours_status_map(*, shops) -> dict[str, str]:
+    """Map shop id → floor status for working-hours UI badges."""
+    settings_row = get_company_working_hours_settings()
+    if not settings_row.enabled:
+        return {}
+
+    statuses = {}
+    for shop in shops:
+        prompt = build_shop_day_prompt(shop=shop)
+        shop_key = str(shop.pk)
+        if prompt.get("show"):
+            statuses[shop_key] = prompt["mode"]
+            continue
+        if get_open_shop_day(shop) is not None:
+            statuses[shop_key] = "trading"
+        else:
+            statuses[shop_key] = "idle"
+    return statuses
+
+
+def active_shop_count() -> int:
+    return Shop.objects.filter(is_hidden=False, is_suspended=False).count()
+
+
+def list_active_shops():
+    return list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+
+
+def list_working_hours_shop_rows(*, shops=None, post=None) -> list[dict]:
+    """Shops covered by company working hours with live floor status."""
+    shops = shops if shops is not None else list_active_shops()
+    settings_row = get_company_working_hours_settings()
+    hours_map = get_shop_working_hours_map(shops)
+    status_map = (
+        shop_working_hours_status_map(shops=shops) if settings_row.enabled else {}
+    )
+
+    rows = []
+    for shop in shops:
+        hours_row = hours_map[shop.pk]
+        if post is not None:
+            start_time, end_time = _shop_hours_from_post(post, shop, hours_row)
+        else:
+            start_time = hours_row.start_time.strftime("%H:%M")
+            end_time = hours_row.end_time.strftime("%H:%M")
+
+        status = status_map.get(str(shop.pk), "")
+        if not settings_row.enabled:
+            label = "Prompts off"
+            tone = "muted"
+        elif status == "open":
+            label = "Needs opening"
+            tone = "open"
+        elif status == "close":
+            label = "Needs closing"
+            tone = "close"
+        elif status == "trading":
+            label = "Open"
+            tone = "trading"
+        elif status == "idle":
+            label = "Closed"
+            tone = "idle"
+        else:
+            label = "Off hours"
+            tone = "muted"
+
+        rows.append(
+            {
+                "shop": shop,
+                "shop_id": shop.pk,
+                "shop_name": shop.name,
+                "shop_location": shop.location,
+                "login_code": shop.login_code,
+                "start_time": start_time,
+                "end_time": end_time,
+                "status": status,
+                "status_label": label,
+                "status_tone": tone,
+                "is_open": get_open_shop_day(shop) is not None,
+            }
+        )
+    return rows
 
 
 def get_daraja_settings() -> CompanyDarajaSettings:
@@ -1354,7 +1666,8 @@ def validate_shop_payload(data, files, *, existing_shop=None) -> dict:
 
 def create_shop(profile, data, files) -> Shop:
     cleaned = validate_shop_payload(data, files)
-    return Shop.objects.create(
+    company_hours = get_company_working_hours_settings()
+    shop = Shop.objects.create(
         name=cleaned["name"],
         location=cleaned["location"],
         email=cleaned["email"],
@@ -1364,6 +1677,12 @@ def create_shop(profile, data, files) -> Shop:
         image=cleaned.get("image"),
         created_by=profile,
     )
+    ShopWorkingHoursSettings.objects.create(
+        shop=shop,
+        start_time=company_hours.start_time,
+        end_time=company_hours.end_time,
+    )
+    return shop
 
 
 def update_shop(shop: Shop, data, files) -> Shop:

@@ -359,6 +359,9 @@
                 <th scope="col" class="stock-matrix-total-col">Total</th>
                 {% else %}
                 <th scope="col" class="stock-matrix-shop-col">{{ selected_shop.name }}</th>
+                {% if stock_mode == 'out' %}
+                <th scope="col" class="stock-matrix-shop-col stock-matrix-balance-col">Balance</th>
+                {% endif %}
                 {% endif %}
                 {% if stock_mode != 'view' %}
                 <th scope="col" class="stock-matrix-action-col"><span class="visually-hidden">Action</span></th>
@@ -426,6 +429,11 @@
                     data-stock-display-qty
                   >{{ row.shop_qty }}</span>
                 </td>
+                {% if stock_mode == 'out' %}
+                <td class="stock-matrix-shop-col stock-matrix-balance-col">
+                  <span class="stock-matrix-qty stock-matrix-balance" data-stock-display-balance hidden aria-hidden="true">—</span>
+                </td>
+                {% endif %}
                 {% if stock_mode == 'request' %}
                 <td class="stock-matrix-shop-col">
                   <span class="stock-matrix-qty{% if row.requested_from_qty == 0 %} is-empty{% endif %}">{{ row.requested_from_qty }}</span>
@@ -438,7 +446,7 @@
                 </td>
               </tr>
               <tr class="stock-matrix-form-row" data-stock-item-inputs hidden>
-                <td colspan="{% if stock_mode == 'request' %}4{% else %}3{% endif %}">
+                <td colspan="{% if stock_mode == 'request' %}4{% elif stock_mode == 'out' %}4{% else %}3{% endif %}">
                   <div class="stock-item-inputs stock-item-inputs--matrix">
                     <input type="hidden" name="item_id" value="{{ item.pk }}" disabled data-stock-field>
 

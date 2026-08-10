@@ -153,6 +153,7 @@
 {% endblock %}
 
 {% block workspace_overlays %}
+{{ block.super }}
 {% if checkout_enabled %}
 <button
   type="button"

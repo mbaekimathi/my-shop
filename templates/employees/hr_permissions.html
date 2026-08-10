@@ -5,7 +5,7 @@
 
 {% block workspace_content %}
 {% csrf_token %}
-<section class="staff-panel staff-panel--dense" data-animate="rise">
+<section class="staff-panel staff-panel--dense hr--list-table" data-animate="rise">
   <div class="staff-panel-head">
     <div>
       <h2>{{ meta.headline }}</h2>
@@ -34,6 +34,7 @@
 
       {% if module.rows %}
       <div class="staff-table-wrap perm-table-scroll">
+        <p class="hr-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
         <table class="staff-table staff-table--dense perm-table">
           <thead>
             <tr>

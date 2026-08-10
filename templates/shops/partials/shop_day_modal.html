@@ -1,0 +1,140 @@
+{% if shop_day_prompt %}
+<div
+  class="workspace-modal shop-day-modal"
+  data-modal="shop-day"
+  data-shop-day-modal
+  data-mode="{{ shop_day_prompt.mode }}"
+  data-auto-open="{% if shop_day_prompt.auto_open %}1{% else %}0{% endif %}"
+  data-day-toggle-url="{{ shop_day_toggle_url }}"
+  data-verify-login-url="{{ shop_day_verify_url }}"
+  data-shop-id="{{ shop.id }}"
+  {% if not shop_day_prompt.auto_open %}hidden{% endif %}
+  aria-hidden="{% if shop_day_prompt.auto_open %}false{% else %}true{% endif %}"
+>
+  <div class="workspace-modal-backdrop" data-modal-close="shop-day"></div>
+  <div
+    class="workspace-modal-dialog shop-day-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shop-day-modal-title"
+  >
+    <div class="workspace-modal-head shop-day-modal-head">
+      <div>
+        <p class="shop-day-modal-kicker">{{ shop.name }} · Working hours</p>
+        <h2 id="shop-day-modal-title">
+          {% if shop_day_prompt.mode == 'close' %}Close shop{% else %}Open shop{% endif %}
+        </h2>
+        <p class="shop-day-modal-summary">
+          {% if shop_day_prompt.mode == 'close' %}
+          Working hours end at {{ shop_day_prompt.end_time }}. Enter closing balances to finish the day. You can dismiss for 30 minutes.
+          {% else %}
+          Working hours start at {{ shop_day_prompt.start_time }}. Enter opening balances to start trading. You can dismiss for 30 minutes.
+          {% endif %}
+        </p>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-modal-close="shop-day"
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="shop-day-modal-body">
+      <div class="form-alert shop-day-modal-errors" data-shop-day-errors hidden role="alert"></div>
+
+      <form class="shop-day-form shop-day-form--modal" data-shop-day-modal-form novalidate>
+        {% csrf_token %}
+
+        <div class="pos-settings-group-head shop-day-form-head">
+          <h3>{% if shop_day_prompt.mode == 'close' %}Closing balances{% else %}Opening balances{% endif %}</h3>
+          <p>Whole shillings · confirm stock · staff ID</p>
+        </div>
+
+        <div class="shop-day-balances">
+          <label class="shop-cart-input">
+            <span>{% if shop_day_prompt.mode == 'close' %}Closing{% else %}Opening{% endif %} cash</span>
+            <input
+              type="number"
+              name="cash_amount"
+              min="0"
+              step="1"
+              inputmode="numeric"
+              required
+              value=""
+              placeholder="0"
+            >
+          </label>
+          <label class="shop-cart-input">
+            <span>{% if shop_day_prompt.mode == 'close' %}Closing{% else %}Opening{% endif %} M-Pesa</span>
+            <input
+              type="number"
+              name="mpesa_amount"
+              min="0"
+              step="1"
+              inputmode="numeric"
+              required
+              value=""
+              placeholder="0"
+            >
+          </label>
+          <label class="shop-cart-input">
+            <span>{% if shop_day_prompt.mode == 'close' %}Closing{% else %}Opening{% endif %} credit</span>
+            <input
+              type="number"
+              name="credit_amount"
+              min="0"
+              step="1"
+              inputmode="numeric"
+              required
+              value=""
+              placeholder="0"
+            >
+          </label>
+        </div>
+
+        <label class="shop-cart-check shop-day-confirm">
+          <input
+            type="checkbox"
+            name="stock_confirmed"
+            value="1"
+            data-stock-confirmed
+            required
+          >
+          <span>I confirm stock is up to date</span>
+        </label>
+
+        <label class="shop-cart-input">
+          <span>Staff ID (6 digits)</span>
+          <input
+            type="text"
+            name="login_code"
+            inputmode="numeric"
+            maxlength="6"
+            autocomplete="one-time-code"
+            placeholder="Enter 6-digit staff ID"
+            data-day-login-code
+            value=""
+            required
+          >
+        </label>
+        <p class="shop-cart-status" data-day-status>
+          Enter an active staff member’s 6-digit ID to
+          {% if shop_day_prompt.mode == 'close' %}close{% else %}open{% endif %} the shop.
+        </p>
+
+        <div class="workspace-modal-actions shop-day-modal-actions">
+          <button type="button" class="btn btn--ghost" data-modal-close="shop-day">
+            Dismiss
+          </button>
+          <button type="submit" class="btn btn--primary" data-day-submit disabled>
+            {% if shop_day_prompt.mode == 'close' %}Close shop{% else %}Open shop{% endif %}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}

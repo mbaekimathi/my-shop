@@ -498,6 +498,70 @@ class CompanyStockSettings(models.Model):
         }
 
 
+WORKING_DAY_FIELDS = (
+    ("work_monday", "Monday", "Mon"),
+    ("work_tuesday", "Tuesday", "Tue"),
+    ("work_wednesday", "Wednesday", "Wed"),
+    ("work_thursday", "Thursday", "Thu"),
+    ("work_friday", "Friday", "Fri"),
+    ("work_saturday", "Saturday", "Sat"),
+    ("work_sunday", "Sunday", "Sun"),
+)
+
+
+class CompanyWorkingHoursSettings(models.Model):
+    """Company-wide working days and hours (singleton row)."""
+
+    enabled = models.BooleanField(
+        default=False,
+        help_text="Prompt shop staff to open/close the till during working hours.",
+    )
+    work_monday = models.BooleanField(default=True)
+    work_tuesday = models.BooleanField(default=True)
+    work_wednesday = models.BooleanField(default=True)
+    work_thursday = models.BooleanField(default=True)
+    work_friday = models.BooleanField(default=True)
+    work_saturday = models.BooleanField(default=False)
+    work_sunday = models.BooleanField(default=False)
+    start_time = models.TimeField(default="08:00")
+    end_time = models.TimeField(default="17:00")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company working hours"
+        verbose_name_plural = "Company working hours"
+
+    def __str__(self):
+        return "Company working hours"
+
+    def working_day_labels(self) -> list[str]:
+        return [
+            short
+            for field, _label, short in WORKING_DAY_FIELDS
+            if getattr(self, field, False)
+        ]
+
+
+class ShopWorkingHoursSettings(models.Model):
+    """Per-shop opening and closing times for working-hours prompts."""
+
+    shop = models.OneToOneField(
+        Shop,
+        on_delete=models.CASCADE,
+        related_name="working_hours_settings",
+    )
+    start_time = models.TimeField(default="08:00")
+    end_time = models.TimeField(default="17:00")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Shop working hours"
+        verbose_name_plural = "Shop working hours"
+
+    def __str__(self):
+        return f"{self.shop.name} ({self.start_time:%H:%M}–{self.end_time:%H:%M})"
+
+
 class DarajaEnvironment(models.TextChoices):
     SANDBOX = "sandbox", "Sandbox"
     PRODUCTION = "production", "Production"
