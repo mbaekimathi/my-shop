@@ -986,7 +986,7 @@
         });
     };
 
-    const createModalSerialRow = (serial = "") => {
+    const createModalSerialRow = (serial = "", { prepend = true } = {}) => {
       if (!serialModalList) return null;
       const row = document.createElement("div");
       row.className = "stock-serial-row";
@@ -1018,7 +1018,11 @@
       remove.setAttribute("aria-label", "Remove serial");
       remove.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
       row.appendChild(remove);
-      serialModalList.appendChild(row);
+      if (prepend) {
+        serialModalList.insertBefore(row, serialModalList.firstChild);
+      } else {
+        serialModalList.appendChild(row);
+      }
       refreshIcons();
       syncModalCount();
       if (mode === "in" && serial) {
@@ -1042,8 +1046,11 @@
         .split(/[\n,]+/)
         .map((s) => s.trim())
         .filter(Boolean);
-      if (existing.length) existing.forEach((s) => createModalSerialRow(s));
-      else createModalSerialRow("");
+      if (existing.length) {
+        existing.forEach((s) => createModalSerialRow(s, { prepend: false }));
+      } else {
+        createModalSerialRow("");
+      }
       syncModalCount();
       serialModal.hidden = false;
       serialModal.setAttribute("aria-hidden", "false");
@@ -1293,6 +1300,12 @@
         container: serialModalList,
         immediate: true,
       });
+      const hasEmpty = [
+        ...(serialModalList?.querySelectorAll("[data-stock-serial-input]") || []),
+      ].some((input) => !String(input.value || "").trim());
+      if (!hasEmpty) {
+        window.setTimeout(() => createModalSerialRow("")?.focus(), 40);
+      }
     });
 
     serialModal?.addEventListener("focusout", (event) => {
@@ -2197,7 +2210,7 @@
     removeBtn.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
     serialRow.appendChild(removeBtn);
 
-    list.appendChild(serialRow);
+    list.insertBefore(serialRow, list.firstChild);
     window.MyShopSerialScan?.enhance?.(serialRow);
     refreshIcons();
     updateSerialRemoveButtons(row);
@@ -3342,7 +3355,7 @@
       }
       refreshRowState(row);
       getSerialRows(row)
-        .at(-1)
+        .at(0)
         ?.querySelector("[data-stock-serial-input]")
         ?.focus();
       return;

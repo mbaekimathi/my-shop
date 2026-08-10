@@ -32,6 +32,7 @@ PERMISSION_MODULES = (
         "submodules": (
             {"slug": "view", "label": "View analytics"},
             {"slug": "revenue", "label": "Revenue"},
+            {"slug": "balances", "label": "Balances"},
             {"slug": "sales", "label": "Sales"},
             {"slug": "items", "label": "Items"},
             {"slug": "stock", "label": "Stock"},

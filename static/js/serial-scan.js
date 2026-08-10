@@ -2,6 +2,15 @@
  * Serial barcode / QR / image scanner for MY-SHOP serial inputs.
  * Enhances matching inputs with a Scan button; fills value + fires input/change
  * so existing type/search/submit behaviour stays unchanged.
+ *
+ * Optional extraction (only keep the serial portion of a scan):
+ *   - Script tag: data-serial-scan-extract="…"
+ *   - Form/container: data-serial-scan-extract="…"
+ *   - Input: data-serial-scan-extract="…"
+ *   - JS hook: MyShopSerialScan.setExtractor(fn)
+ *
+ * Rule can be a regex (use capture group 1 for the serial) or a preset:
+ *   alnum, url-path, after-colon, gs1-21, gpon-sn
  */
 (function () {
   "use strict";
@@ -46,12 +55,106 @@
   let fileInput = null;
   let cameraInput = null;
   let barcodeDetector = null;
+  let customExtractor = null;
 
   const normalizeSerial = (value) =>
     String(value || "")
       .trim()
       .toUpperCase()
       .replace(/\s+/g, "");
+
+  const EXTRACT_PRESETS = {
+    /** Keep only letters, digits, and hyphens. */
+    alnum(raw) {
+      return String(raw || "").replace(/[^A-Za-z0-9-]/g, "");
+    },
+    /** Last path segment when the scan is a URL. */
+    "url-path"(raw) {
+      try {
+        const parts = new URL(String(raw || "").trim()).pathname.split("/").filter(Boolean);
+        return parts.at(-1) || "";
+      } catch (_) {
+        return "";
+      }
+    },
+    /** Text after the last colon (e.g. SN:ABC123 → ABC123). */
+    "after-colon"(raw) {
+      const text = String(raw || "").trim();
+      const idx = text.lastIndexOf(":");
+      return idx >= 0 ? text.slice(idx + 1) : text;
+    },
+    /** GS1 application identifier 21 (serial number). */
+    "gs1-21"(raw) {
+      const text = String(raw || "");
+      const match =
+        text.match(/\(21\)([^(\s]+)/i) ||
+        text.match(/(?:^|[^0-9])21([A-Z0-9-]{1,20})(?:[^A-Z0-9-]|$)/i);
+      return match ? match[1] : "";
+    },
+    /**
+     * GPON/XPON device labels with PROD ID, MAC, and SN barcodes — SN only.
+     * Accepts SN:48575443A9F07783 or bare 13–24 hex chars; rejects MAC/PROD ID.
+     */
+    "gpon-sn"(raw) {
+      const source = String(raw || "").trim();
+      const text = normalizeSerial(raw);
+      if (!text) return "";
+
+      if (/^MAC[:=\s]/i.test(source)) return "";
+      if (/PROD\s*ID|\(1P\)|P\/N:/i.test(source)) return "";
+
+      const prefixed = text.match(/^SN[:=]?([A-F0-9]{8,24})$/);
+      if (prefixed) return prefixed[1];
+
+      // Bare SN barcode (13+ hex — excludes typical 12-char MAC).
+      if (/^[A-F0-9]{13,24}$/.test(text)) return text;
+
+      return "";
+    },
+  };
+
+  const getExtractRule = (input) => {
+    if (input instanceof HTMLInputElement) {
+      const own = input.dataset.serialScanExtract?.trim();
+      if (own) return own;
+    }
+    const scoped =
+      input?.closest?.("[data-serial-scan-extract]")?.dataset?.serialScanExtract?.trim() ||
+      "";
+    if (scoped) return scoped;
+    return (
+      document.currentScript?.dataset?.serialScanExtract?.trim() ||
+      document
+        .querySelector("script[src*='serial-scan.js'][data-serial-scan-extract]")
+        ?.dataset?.serialScanExtract?.trim() ||
+      ""
+    );
+  };
+
+  const extractSerial = (raw, input) => {
+    const rule = getExtractRule(input);
+    const normalized = normalizeSerial(raw);
+
+    if (typeof customExtractor === "function") {
+      const custom = customExtractor(raw, normalized, input, rule);
+      if (custom != null) return normalizeSerial(custom);
+    }
+
+    if (!rule) return normalized;
+
+    const preset = EXTRACT_PRESETS[rule.toLowerCase()];
+    if (preset) return normalizeSerial(preset(raw));
+
+    try {
+      const match =
+        new RegExp(rule, "i").exec(String(raw || "")) ||
+        new RegExp(rule, "i").exec(normalized);
+      if (!match) return "";
+      return normalizeSerial(match[1] ?? match[0]);
+    } catch (_) {
+      return normalized;
+    }
+  };
 
   const loadScript = (src) =>
     new Promise((resolve, reject) => {
@@ -162,9 +265,22 @@
   };
 
   const applySerial = (raw, target) => {
-    const serial = normalizeSerial(raw);
     const input = target || activeTarget;
-    if (!serial || !input || scanLocked) return false;
+    if (!input || scanLocked) return false;
+
+    const rule = getExtractRule(input);
+    const serial = extractSerial(raw, input);
+    if (!serial) {
+      setStatus(
+        rule === "gpon-sn"
+          ? "Scan the SN barcode — not MAC or PROD ID"
+          : rule
+            ? "No serial number found in that scan"
+            : "Empty scan — try again",
+        { error: true }
+      );
+      return false;
+    }
 
     scanLocked = true;
     input.value = serial;
@@ -198,7 +314,7 @@
     try {
       const codes = await detector.detect(source);
       const raw = codes?.[0]?.rawValue;
-      return raw ? normalizeSerial(raw) : null;
+      return raw ? extractSerial(raw, activeTarget) : null;
     } catch (_) {
       return null;
     }
@@ -234,7 +350,7 @@
       } catch (_) {
         /* ignore */
       }
-      return normalizeSerial(decoded);
+      return extractSerial(decoded, activeTarget);
     } finally {
       host.remove();
     }
@@ -677,6 +793,10 @@
     open: openModal,
     close: closeModal,
     normalize: normalizeSerial,
+    extract: extractSerial,
+    setExtractor(fn) {
+      customExtractor = typeof fn === "function" ? fn : null;
+    },
     apply: applySerial,
     decodeImageFile,
   };

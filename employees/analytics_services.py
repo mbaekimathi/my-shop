@@ -3046,11 +3046,45 @@ def _build_sales(filters):
             )
         table_rows.append(total_cells)
 
+    total_docs = 0
+    total_amount = _zero()
+    cash_amount = _zero()
+    mpesa_amount = _zero()
+    for shop in shops_sorted:
+        qty, amount = total_by_shop.get(shop.pk, (0, _zero()))
+        total_docs += int(qty or 0)
+        total_amount += Decimal(amount or 0)
+        cash_amount += cash_by_shop.get(shop.pk, (0, _zero()))[1]
+        mpesa_amount += mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
+
+    active_shops = sum(
+        1 for shop in shops_sorted if total_by_shop.get(shop.pk, (0, _zero()))[0] > 0
+    )
+
     return {
         "headline": "Sales",
         "lead": "",
         "alerts": [],
-        "metrics": [],
+        "metrics": [
+            {
+                "label": "Total sales",
+                "value": _money_ksh(total_amount),
+                "hint": f"{total_docs} receipts",
+            },
+            {
+                "label": "Cash",
+                "value": _money_ksh(cash_amount),
+            },
+            {
+                "label": "M-Pesa",
+                "value": _money_ksh(mpesa_amount),
+            },
+            {
+                "label": "Shops",
+                "value": str(active_shops or len(shops_sorted)),
+                "hint": "with sales" if active_shops else "selected",
+            },
+        ],
         "insights": [],
         "tables": [
             _table(

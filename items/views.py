@@ -757,6 +757,54 @@ def _build_item_report_rows(items, shop_ids, day_start, day_end):
     return rows
 
 
+def _request_transfer_counts_toward_units(movement) -> bool:
+    """Fulfilled requests are counted when stock moves (responded_at), not when submitted."""
+    from .models import StockRequestStatus
+
+    return movement.request_status != StockRequestStatus.FULFILLED
+
+
+def _timeline_event_from_movement_line(
+    *,
+    movement,
+    line,
+    happened_at,
+    event_type,
+    event_label,
+    actor,
+    counts_toward_transfer=True,
+):
+    parties = _movement_parties_for_line(movement=movement, line=line)
+    from .models import StockMovementType
+
+    return {
+        "happened_at": happened_at,
+        "event_type": event_type,
+        "event_label": event_label,
+        "shop_name": movement.shop.name if movement.shop else "—",
+        "from_shop_name": (
+            movement.requested_from_shop.name
+            if movement.movement_type == StockMovementType.REQUEST
+            and movement.requested_from_shop
+            else ""
+        ),
+        "item_name": line.item.name,
+        "item_category": line.item.category,
+        "item_id": line.item_id,
+        "quantity": line.quantity,
+        "reason": line.get_reason_display() if line.reason else "",
+        "payment_status": (
+            line.get_payment_status_display() if line.payment_status else ""
+        ),
+        "note": line.note or "",
+        "by": _employee_display_name(actor),
+        "serial_numbers": _movement_serial_numbers(line.serial_numbers),
+        "movement_id": movement.pk,
+        "counts_toward_transfer": counts_toward_transfer,
+        **parties,
+    }
+
+
 def _build_movement_timeline(
     *,
     shop_ids,
@@ -770,10 +818,16 @@ def _build_movement_timeline(
     """
     Chronological stock events for the filtered period (oldest first).
     Stock in, stock out, and request come from movements; sales are separate events.
+    Accepted stock requests also appear when stock moves (responded_at), not only when submitted.
     """
     from django.db.models import Prefetch, Q
 
-    from .models import StockMovement, StockMovementLine, StockMovementType
+    from .models import (
+        StockMovement,
+        StockMovementLine,
+        StockMovementType,
+        StockRequestStatus,
+    )
 
     events = []
     units_in = 0
@@ -818,42 +872,78 @@ def _build_movement_timeline(
 
     for movement in movements:
         for line in movement.lines.all():
-            parties = _movement_parties_for_line(movement=movement, line=line)
+            counts_toward_transfer = False
+            if movement.movement_type == StockMovementType.REQUEST:
+                counts_toward_transfer = _request_transfer_counts_toward_units(
+                    movement
+                )
             events.append(
-                {
-                    "happened_at": movement.created_at,
-                    "event_type": movement.movement_type,
-                    "event_label": type_labels.get(
+                _timeline_event_from_movement_line(
+                    movement=movement,
+                    line=line,
+                    happened_at=movement.created_at,
+                    event_type=movement.movement_type,
+                    event_label=type_labels.get(
                         movement.movement_type, movement.get_movement_type_display()
                     ),
-                    "shop_name": movement.shop.name if movement.shop else "—",
-                    "from_shop_name": (
-                        movement.requested_from_shop.name
-                        if movement.movement_type == StockMovementType.REQUEST
-                        and movement.requested_from_shop
-                        else ""
-                    ),
-                    "item_name": line.item.name,
-                    "item_category": line.item.category,
-                    "item_id": line.item_id,
-                    "quantity": line.quantity,
-                    "reason": line.get_reason_display() if line.reason else "",
-                    "payment_status": (
-                        line.get_payment_status_display() if line.payment_status else ""
-                    ),
-                    "note": line.note or "",
-                    "by": _employee_display_name(movement.created_by),
-                    "serial_numbers": _movement_serial_numbers(line.serial_numbers),
-                    "movement_id": movement.pk,
-                    **parties,
-                }
+                    actor=movement.created_by,
+                    counts_toward_transfer=counts_toward_transfer,
+                )
             )
             if movement.movement_type == StockMovementType.IN:
                 units_in += line.quantity
             elif movement.movement_type == StockMovementType.OUT:
                 units_out += line.quantity
-            elif movement.movement_type == StockMovementType.REQUEST:
+            elif (
+                movement.movement_type == StockMovementType.REQUEST
+                and _request_transfer_counts_toward_units(movement)
+            ):
                 units_request += line.quantity
+
+    fulfilled_line_qs = StockMovementLine.objects.select_related("item").order_by("id")
+    fulfilled_filter = Q(
+        movement_type=StockMovementType.REQUEST,
+        request_status=StockRequestStatus.FULFILLED,
+        responded_at__gte=day_start,
+        responded_at__lt=day_end,
+    ) & (Q(shop_id__in=shop_ids) | Q(requested_from_shop_id__in=shop_ids))
+
+    if item_mode == "category" and selected_categories:
+        fulfilled_filter &= Q(lines__item__category__in=selected_categories)
+        fulfilled_line_qs = fulfilled_line_qs.filter(
+            item__category__in=selected_categories
+        )
+    elif item_mode == "items" and selected_item_ids:
+        fulfilled_filter &= Q(lines__item_id__in=selected_item_ids)
+        fulfilled_line_qs = fulfilled_line_qs.filter(item_id__in=selected_item_ids)
+
+    fulfilled_movements = (
+        StockMovement.objects.filter(fulfilled_filter)
+        .distinct()
+        .select_related(
+            "shop",
+            "requested_from_shop",
+            "responded_by__user",
+        )
+        .prefetch_related(Prefetch("lines", queryset=fulfilled_line_qs))
+        .order_by("responded_at", "pk")
+    )
+
+    for movement in fulfilled_movements:
+        for line in movement.lines.all():
+            if line.quantity <= 0:
+                continue
+            events.append(
+                _timeline_event_from_movement_line(
+                    movement=movement,
+                    line=line,
+                    happened_at=movement.responded_at,
+                    event_type="transfer_fulfilled",
+                    event_label="Transfer fulfilled",
+                    actor=movement.responded_by,
+                )
+            )
+            units_request += line.quantity
 
     # Sales as separate timeline events (never mixed into stock out).
     from pos.models import SaleLine
@@ -1090,7 +1180,7 @@ MOVEMENT_EVENT_FILTER_TYPES = {
     "in": frozenset({"in"}),
     "out": frozenset({"out"}),
     "sale": frozenset({"sale"}),
-    "transfer": frozenset({"request"}),
+    "transfer": frozenset({"request", "transfer_fulfilled"}),
 }
 
 
@@ -1116,7 +1206,7 @@ def _summarize_movement_events(events):
         event["quantity"] for event in events if event.get("event_type") == "out"
     )
     units_request = sum(
-        event["quantity"] for event in events if event.get("event_type") == "request"
+        event["quantity"] for event in events if event.get("counts_toward_transfer")
     )
     units_sale = sum(
         event["quantity"] for event in events if event.get("event_type") == "sale"
@@ -1164,7 +1254,7 @@ def _group_movement_events_by_item(events):
             row["units_in"] += quantity
         elif event_type == "out":
             row["units_out"] += quantity
-        elif event_type == "request":
+        elif event.get("counts_toward_transfer"):
             row["units_request"] += quantity
         elif event_type == "sale":
             row["units_sale"] += quantity
