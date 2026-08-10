@@ -33,8 +33,12 @@
           <span>units out</span>
         </p>
         <p class="stock-stat">
-          <strong>{{ units_request }}</strong>
-          <span>units requested</span>
+          <strong>{{ units_transfer_in }}</strong>
+          <span>transfer in</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ units_transfer_out }}</strong>
+          <span>transfer out</span>
         </p>
         <p class="stock-stat">
           <strong>{{ units_sale }}</strong>
@@ -232,10 +236,12 @@
             <thead>
               <tr>
                 <th scope="col">Item</th>
+                <th scope="col">Current stock</th>
                 <th scope="col">Events</th>
                 <th scope="col">In</th>
                 <th scope="col">Out</th>
-                <th scope="col">Transfer</th>
+                <th scope="col">Transfer in</th>
+                <th scope="col">Transfer out</th>
                 <th scope="col">Sold</th>
                 <th scope="col">Last activity</th>
                 <th scope="col"><span class="visually-hidden">Actions</span></th>
@@ -250,10 +256,14 @@
                   <span class="stock-report-from">{{ row.item_category }}</span>
                   {% endif %}
                 </td>
+                <td data-label="Current stock">
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if row.current_stock == 0 %} is-empty{% endif %}">{{ row.current_stock }}</span>
+                </td>
                 <td data-label="Events">{{ row.event_count }}</td>
                 <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in{% if row.units_in == 0 %} is-empty{% endif %}">{{ row.units_in }}</span></td>
                 <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out{% if row.units_out == 0 %} is-empty{% endif %}">{{ row.units_out }}</span></td>
-                <td data-label="Transfer"><span class="stock-matrix-qty stock-report-qty--request{% if row.units_request == 0 %} is-empty{% endif %}">{{ row.units_request }}</span></td>
+                <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--in{% if row.units_transfer_in == 0 %} is-empty{% endif %}">{{ row.units_transfer_in }}</span></td>
+                <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--out{% if row.units_transfer_out == 0 %} is-empty{% endif %}">{{ row.units_transfer_out }}</span></td>
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if row.units_sale == 0 %} is-empty{% endif %}">{{ row.units_sale }}</span></td>
                 <td data-label="Last activity">
                   {% if report_range == 'day' %}
@@ -309,7 +319,7 @@
                 {% endif %}
               </td>
               <td data-label="Type">
-                <span class="stock-report-type stock-report-type--{{ event.event_type }}">
+                <span class="stock-report-type stock-report-type--{% if event.transfer_direction == 'in' or event.transfer_direction == 'both' %}transfer-in{% else %}{{ event.event_type }}{% endif %}">
                   {{ event.event_label }}
                 </span>
               </td>
@@ -329,7 +339,7 @@
                 {% endif %}
               </td>
               <td data-label="Qty">
-                <span class="stock-matrix-qty stock-report-qty--{{ event.event_type }}{% if event.quantity == 0 %} is-empty{% endif %}">
+                <span class="stock-matrix-qty stock-report-qty--{% if event.transfer_direction == 'in' or event.transfer_direction == 'both' %}transfer-in{% else %}{{ event.event_type }}{% endif %}{% if event.quantity == 0 %} is-empty{% endif %}">
                   {{ event.quantity }}
                 </span>
               </td>

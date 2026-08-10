@@ -757,6 +757,40 @@ def _build_item_report_rows(items, shop_ids, day_start, day_end):
     return rows
 
 
+def _transfer_direction(movement, shop_ids):
+    """In/out relative to the shops in the current filter."""
+    from .models import StockMovementType
+
+    if movement.movement_type != StockMovementType.REQUEST or not shop_ids:
+        return ""
+    shop_set = set(shop_ids)
+    dest_match = movement.shop_id in shop_set
+    source_match = (
+        movement.requested_from_shop_id in shop_set
+        if movement.requested_from_shop_id
+        else False
+    )
+    if dest_match and source_match:
+        return "both"
+    if dest_match:
+        return "in"
+    if source_match:
+        return "out"
+    return ""
+
+
+def _transfer_event_label(*, event_type, direction):
+    if direction == "in":
+        base = "Transfer in"
+    elif direction == "out":
+        base = "Transfer out"
+    else:
+        base = "Transfer"
+    if event_type == "request":
+        return f"{base} (requested)"
+    return base
+
+
 def _request_transfer_counts_toward_units(movement) -> bool:
     """Fulfilled requests are counted when stock moves (responded_at), not when submitted."""
     from .models import StockRequestStatus
@@ -773,6 +807,7 @@ def _timeline_event_from_movement_line(
     event_label,
     actor,
     counts_toward_transfer=True,
+    transfer_direction="",
 ):
     parties = _movement_parties_for_line(movement=movement, line=line)
     from .models import StockMovementType
@@ -801,6 +836,7 @@ def _timeline_event_from_movement_line(
         "serial_numbers": _movement_serial_numbers(line.serial_numbers),
         "movement_id": movement.pk,
         "counts_toward_transfer": counts_toward_transfer,
+        "transfer_direction": transfer_direction,
         **parties,
     }
 
@@ -873,21 +909,31 @@ def _build_movement_timeline(
     for movement in movements:
         for line in movement.lines.all():
             counts_toward_transfer = False
+            transfer_direction = ""
             if movement.movement_type == StockMovementType.REQUEST:
                 counts_toward_transfer = _request_transfer_counts_toward_units(
                     movement
+                )
+                transfer_direction = _transfer_direction(movement, shop_ids)
+            event_type = movement.movement_type
+            event_label = type_labels.get(
+                movement.movement_type, movement.get_movement_type_display()
+            )
+            if transfer_direction:
+                event_label = _transfer_event_label(
+                    event_type=event_type,
+                    direction=transfer_direction,
                 )
             events.append(
                 _timeline_event_from_movement_line(
                     movement=movement,
                     line=line,
                     happened_at=movement.created_at,
-                    event_type=movement.movement_type,
-                    event_label=type_labels.get(
-                        movement.movement_type, movement.get_movement_type_display()
-                    ),
+                    event_type=event_type,
+                    event_label=event_label,
                     actor=movement.created_by,
                     counts_toward_transfer=counts_toward_transfer,
+                    transfer_direction=transfer_direction,
                 )
             )
             if movement.movement_type == StockMovementType.IN:
@@ -933,14 +979,20 @@ def _build_movement_timeline(
         for line in movement.lines.all():
             if line.quantity <= 0:
                 continue
+            transfer_direction = _transfer_direction(movement, shop_ids)
+            event_label = _transfer_event_label(
+                event_type="transfer_fulfilled",
+                direction=transfer_direction,
+            )
             events.append(
                 _timeline_event_from_movement_line(
                     movement=movement,
                     line=line,
                     happened_at=movement.responded_at,
                     event_type="transfer_fulfilled",
-                    event_label="Transfer fulfilled",
+                    event_label=event_label,
                     actor=movement.responded_by,
+                    transfer_direction=transfer_direction,
                 )
             )
             units_request += line.quantity
@@ -1198,6 +1250,21 @@ def _filter_movement_events(events, event_filter):
     return [event for event in events if event.get("event_type") in allowed]
 
 
+def _filter_timeline_display_events(events):
+    """Timeline rows: show fulfilled transfer-in only (no pending requests or transfer-out)."""
+    kept = []
+    for event in events:
+        event_type = event.get("event_type")
+        if event_type == "request":
+            continue
+        if event_type == "transfer_fulfilled" and event.get(
+            "transfer_direction"
+        ) not in ("in", "both"):
+            continue
+        kept.append(event)
+    return kept
+
+
 def _summarize_movement_events(events):
     units_in = sum(
         event["quantity"] for event in events if event.get("event_type") == "in"
@@ -1205,13 +1272,23 @@ def _summarize_movement_events(events):
     units_out = sum(
         event["quantity"] for event in events if event.get("event_type") == "out"
     )
-    units_request = sum(
-        event["quantity"] for event in events if event.get("counts_toward_transfer")
+    units_transfer_in = sum(
+        event["quantity"]
+        for event in events
+        if event.get("event_type") in ("request", "transfer_fulfilled")
+        and event.get("transfer_direction") in ("in", "both")
     )
+    units_transfer_out = sum(
+        event["quantity"]
+        for event in events
+        if event.get("event_type") in ("request", "transfer_fulfilled")
+        and event.get("transfer_direction") in ("out", "both")
+    )
+    units_request = units_transfer_in + units_transfer_out
     units_sale = sum(
         event["quantity"] for event in events if event.get("event_type") == "sale"
     )
-    return units_in, units_out, units_request, units_sale
+    return units_in, units_out, units_request, units_sale, units_transfer_in, units_transfer_out
 
 
 MOVEMENT_VIEW_BY = frozenset({"timeline", "item"})
@@ -1224,7 +1301,7 @@ def _parse_movement_view_by(raw):
     return view_by
 
 
-def _group_movement_events_by_item(events):
+def _group_movement_events_by_item(events, shop_ids):
     groups = {}
     for event in events:
         item_id = event.get("item_id")
@@ -1241,8 +1318,10 @@ def _group_movement_events_by_item(events):
                 "event_count": 0,
                 "units_in": 0,
                 "units_out": 0,
-                "units_request": 0,
+                "units_transfer_in": 0,
+                "units_transfer_out": 0,
                 "units_sale": 0,
+                "current_stock": 0,
                 "last_at": event["happened_at"],
             }
             groups[key] = row
@@ -1254,12 +1333,23 @@ def _group_movement_events_by_item(events):
             row["units_in"] += quantity
         elif event_type == "out":
             row["units_out"] += quantity
-        elif event.get("counts_toward_transfer"):
-            row["units_request"] += quantity
+        elif event_type in ("request", "transfer_fulfilled"):
+            direction = event.get("transfer_direction")
+            if direction in ("in", "both"):
+                row["units_transfer_in"] += quantity
+            if direction in ("out", "both"):
+                row["units_transfer_out"] += quantity
         elif event_type == "sale":
             row["units_sale"] += quantity
         if event["happened_at"] > row["last_at"]:
             row["last_at"] = event["happened_at"]
+
+    item_ids = [row["item_id"] for row in groups.values() if row.get("item_id")]
+    stock_by_item = _current_stock_by_item(item_ids, shop_ids)
+    for row in groups.values():
+        item_id = row.get("item_id")
+        if item_id:
+            row["current_stock"] = stock_by_item.get(item_id, 0)
 
     return sorted(
         groups.values(),
@@ -1376,6 +1466,8 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     units_in = 0
     units_out = 0
     units_request = 0
+    units_transfer_in = 0
+    units_transfer_out = 0
     units_sale = 0
     item_report_rows = []
     totals = {
@@ -1423,11 +1515,20 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         )
         if event_filter != "all":
             movement_events = _filter_movement_events(movement_events, event_filter)
-            units_in, units_out, units_request, units_sale = _summarize_movement_events(
-                movement_events
-            )
+        if view_by == "timeline":
+            movement_events = _filter_timeline_display_events(movement_events)
+        (
+            units_in,
+            units_out,
+            units_request,
+            units_sale,
+            units_transfer_in,
+            units_transfer_out,
+        ) = _summarize_movement_events(movement_events)
         if is_item_movement_summary:
-            movement_item_rows = _group_movement_events_by_item(movement_events)
+            movement_item_rows = _group_movement_events_by_item(
+                movement_events, shop_ids_for_query
+            )
     else:
         item_report_rows = _build_item_report_rows(
             report_items, shop_ids_for_query, day_start, day_end
@@ -1525,6 +1626,8 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "units_in": units_in,
             "units_out": units_out,
             "units_request": units_request,
+            "units_transfer_in": units_transfer_in,
+            "units_transfer_out": units_transfer_out,
             "units_sale": units_sale,
             "report_range_label": range_labels[range_type],
             "filter_shops": filter_shops,

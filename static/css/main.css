@@ -13853,13 +13853,22 @@ body.workspace-modal-open {
   color: #9a6a12;
 }
 
+.stock-report-type--transfer-in {
+  background: rgba(217, 149, 31, 0.16);
+  color: #9a6a12;
+}
+
+.stock-report-qty--transfer-in {
+  color: #c4760a;
+}
+
 .stock-report-type--transfer_fulfilled {
-  background: rgba(34, 160, 107, 0.14);
-  color: #157a4f;
+  background: rgba(217, 149, 31, 0.16);
+  color: #9a6a12;
 }
 
 .stock-report-qty--transfer_fulfilled {
-  color: #157a4f;
+  color: #c4760a;
 }
 
 .stock-report-type--sale {
