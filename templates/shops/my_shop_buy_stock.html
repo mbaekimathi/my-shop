@@ -28,18 +28,28 @@
         <i data-lucide="x" aria-hidden="true"></i>
       </button>
     </header>
-    <div class="stock-serial-modal-body">
+    <div class="stock-serial-modal-body" data-serial-scan-continuous>
       <p class="stock-serial-qty-live">
         Qty <span data-stock-serial-modal-count>0</span>
       </p>
-      <div class="stock-serial-list" data-stock-serial-modal-list></div>
-      <div class="stock-serial-actions">
-        <button type="button" class="stock-serial-add" data-stock-serial-modal-add>
-          <i data-lucide="plus" aria-hidden="true"></i>
-          Add serial
-        </button>
-        <small class="stock-serial-hint">Quantity updates as you add serials</small>
+      <div class="stock-serial-modal-entry-wrap">
+        <div class="stock-serial-row">
+          <div class="stock-serial-input-wrap">
+            <input
+              type="text"
+              placeholder="Enter serial number"
+              autocomplete="off"
+              spellcheck="false"
+              data-stock-serial-modal-entry
+              data-stock-serial-input
+            >
+          </div>
+        </div>
       </div>
+      <ul class="stock-serial-modal-scanned" data-stock-serial-modal-scanned aria-live="polite"></ul>
+      <small class="stock-serial-hint">
+        Scan continuously — press Enter after each serial. Click Done when finished.
+      </small>
     </div>
     <div class="workspace-modal-actions">
       <button type="button" class="btn btn--ghost" data-stock-serial-modal-close>Cancel</button>
@@ -51,12 +61,12 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=20"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=21"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix28"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix30"></script>
 <script
-  src="{% static 'js/serial-scan.js' %}?v=3"
+  src="{% static 'js/serial-scan.js' %}?v=7"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% endblock %}

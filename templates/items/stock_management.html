@@ -1,5 +1,5 @@
 {% extends "employees/workspace_base.html" %}
-{% load static %}
+{% load static humanize %}
 
 {% block title %}Stock Management — MY-SHOP{% endblock %}
 
@@ -24,7 +24,7 @@
   {% endif %}
 
   <section
-    class="stock-panel{% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %} stock-panel--action{% endif %}"
+    class="stock-panel{% if stock_mode == 'view' %} stock-panel--view{% endif %}{% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %} stock-panel--action{% endif %}"
     data-animate="rise"
     data-item-total="{{ item_count }}"
     data-stock-mode="{{ stock_mode }}"
@@ -88,10 +88,11 @@
             {% elif stock_mode == 'in' %}
             Enter quantity and buying price{% if shop_filter_active %} for {{ shop_filter_label }}{% else %} per shop{% endif %}. Serial items open a popup. Set supplier details in the submit panel.
             {% else %}
-            Browse current stock across shops. This screen is read-only.
+            Live quantities across your shops. Search or filter by shop, then print if needed.
             {% endif %}
           </p>
         </div>
+        {% if stock_mode != 'view' %}
         <div class="stock-stats">
           <p class="stock-stat">
             <strong data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</strong>
@@ -124,11 +125,50 @@
           </p>
           {% endif %}
         </div>
+        {% endif %}
       </div>
 
-      <div class="stock-shop-bar" data-stock-shop-bar>
-        {% if stock_mode == 'view' %}
-        <label class="stock-shop-pick">
+      {% if stock_mode == 'view' %}
+      <section class="stock-summary-board" aria-label="Stock summary">
+        <article class="stock-summary-hero">
+          <span class="stock-summary-hero-label">Units on hand</span>
+          <strong class="stock-summary-hero-value">{{ total_units|intcomma }}</strong>
+          <em class="stock-summary-hero-hint">
+            {% if selected_shop %}{{ selected_shop.name }}{% else %}Across all shops{% endif %}
+          </em>
+        </article>
+        <div class="stock-summary-tiles">
+          <article class="stock-summary-tile">
+            <i data-lucide="package" aria-hidden="true"></i>
+            <div class="stock-summary-tile-body">
+              <span class="stock-summary-tile-label">Items</span>
+              <strong class="stock-summary-tile-value">{{ item_count|intcomma }}</strong>
+              <em class="stock-summary-tile-hint">In catalog</em>
+            </div>
+          </article>
+          <article class="stock-summary-tile">
+            <i data-lucide="layers" aria-hidden="true"></i>
+            <div class="stock-summary-tile-body">
+              <span class="stock-summary-tile-label">Categories</span>
+              <strong class="stock-summary-tile-value">{{ category_count }}</strong>
+              <em class="stock-summary-tile-hint">Grouped below</em>
+            </div>
+          </article>
+          <article class="stock-summary-tile">
+            <i data-lucide="store" aria-hidden="true"></i>
+            <div class="stock-summary-tile-body">
+              <span class="stock-summary-tile-label">Shops</span>
+              <strong class="stock-summary-tile-value">{% if selected_shop %}1{% else %}{{ all_shops|length }}{% endif %}</strong>
+              <em class="stock-summary-tile-hint">{% if selected_shop %}Filtered{% else %}In matrix{% endif %}</em>
+            </div>
+          </article>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if stock_mode == 'view' %}
+      <div class="stock-view-toolbar" data-stock-shop-bar>
+        <label class="stock-shop-pick stock-view-shop">
           <span>Shop</span>
           <select data-stock-shop-nav name="shop_id" data-stock-shop>
             <option value="">All shops</option>
@@ -137,15 +177,31 @@
             {% endfor %}
           </select>
         </label>
+        <label class="item-search-field stock-view-search">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input
+            type="search"
+            placeholder="Search items…"
+            autocomplete="off"
+            data-item-search
+            aria-label="Search items"
+          >
+        </label>
         <button
           type="button"
-          class="stock-print-trigger"
+          class="stock-print-trigger stock-view-print"
           data-modal-open="print-stock"
         >
           <i data-lucide="printer" aria-hidden="true"></i>
-          <span>Print stock</span>
+          <span>Print</span>
         </button>
-        {% elif stock_mode == 'in' or stock_mode == 'out' %}
+        {% if not shops %}
+        <p class="stock-shop-bar-hint">Register a shop first.</p>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="stock-shop-bar" data-stock-shop-bar>
+        {% if stock_mode == 'in' or stock_mode == 'out' %}
         <div class="stock-shop-filter" data-stock-shop-filter>
           <input
             type="hidden"
@@ -239,16 +295,11 @@
         {% endif %}
         {% endif %}
         {% if not shops %}
-        <p class="stock-shop-bar-hint">
-          {% if stock_mode == 'view' %}
-          Register a shop first.
-          {% else %}
-          No shops are allocated to your account.
-          {% endif %}
-        </p>
+        <p class="stock-shop-bar-hint">No shops are allocated to your account.</p>
         {% endif %}
       </div>
 
+      {% if stock_mode != 'view' %}
       <div class="item-search">
         <label class="item-search-field">
           <i data-lucide="search" aria-hidden="true"></i>
@@ -261,6 +312,8 @@
           >
         </label>
       </div>
+      {% endif %}
+      {% endif %}
     </header>
 
     {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
@@ -316,26 +369,46 @@
       <p>Register a shop first to view stock.</p>
     </div>
     {% elif use_stock_catalog_api and item_count %}
-    <div class="stock-matrix-wrap" data-item-list>
-      <div data-stock-catalog-root>
-        <div class="dashboard-placeholder" data-stock-catalog-loading>
-          <i data-lucide="loader-circle" aria-hidden="true"></i>
-          <p>Loading items…</p>
+    <section class="stock-view-catalog">
+      <header class="stock-view-catalog-head">
+        <div class="stock-view-catalog-title">
+          <h3>Stock by category</h3>
+          <p><strong data-item-visible-count>{{ item_count|intcomma }}</strong> item{{ item_count|pluralize }} listed</p>
         </div>
+        {% if show_all_shops %}
+        <div class="stock-band-legend stock-band-legend--inline" aria-label="Column groups">
+          <span class="is-flow">By shop</span>
+          <span class="is-total">Total</span>
+        </div>
+        {% endif %}
+      </header>
+      {% if show_all_shops %}
+      <p class="stock-scroll-hint" aria-hidden="true">Scroll sideways for all shop columns</p>
+      {% endif %}
+      <div class="stock-matrix-wrap stock-matrix-wrap--view" data-item-list>
+        <div data-stock-catalog-root>
+          <div class="dashboard-placeholder" data-stock-catalog-loading>
+            <i data-lucide="loader-circle" aria-hidden="true"></i>
+            <p>Loading items…</p>
+          </div>
+        </div>
+        <table class="stock-matrix" hidden>
+          <tbody data-stock-parked></tbody>
+        </table>
       </div>
-      <table class="stock-matrix" hidden>
-        <tbody data-stock-parked></tbody>
-      </table>
-    </div>
-    <div class="shop-floor-catalog-more" data-stock-catalog-more-wrap hidden>
-      <button type="button" class="btn btn--ghost" data-stock-catalog-more>Load more items</button>
-    </div>
-    <div class="item-search-empty" data-item-no-results hidden>
-      <i data-lucide="search-x" aria-hidden="true"></i>
-      <p>No items match your search.</p>
-    </div>
+      <div class="shop-floor-catalog-more" data-stock-catalog-more-wrap hidden>
+        <button type="button" class="btn btn--ghost" data-stock-catalog-more>Load more items</button>
+      </div>
+      <div class="item-search-empty" data-item-no-results hidden>
+        <i data-lucide="search-x" aria-hidden="true"></i>
+        <p>No items match your search.</p>
+      </div>
+    </section>
     {% elif items_by_category %}
     <div class="stock-matrix-wrap" data-item-list>
+      {% if stock_mode == 'view' and show_all_shops %}
+      <p class="stock-scroll-hint" aria-hidden="true">Scroll sideways for all shop columns</p>
+      {% endif %}
       {% for group in items_by_category %}
       <section class="stock-category" data-item-category-group>
         <header class="stock-category-head">
@@ -589,37 +662,26 @@
                         <span>Serial number</span>
                         <span class="visually-hidden">Remove</span>
                       </div>
-                      <div class="stock-serial-list" data-stock-serial-list>
+                      <div class="stock-serial-entry-wrap" data-serial-scan-continuous>
                         <div class="stock-serial-row">
-                          <input
-                            type="text"
-                            placeholder="Enter serial number"
-                            autocomplete="off"
-                            spellcheck="false"
-                            data-stock-serial-input
-                            data-stock-field
-                            disabled
-                          >
-                          <button
-                            type="button"
-                            class="stock-serial-remove"
-                            data-stock-serial-remove
-                            aria-label="Remove serial"
-                            hidden
-                          >
-                            <i data-lucide="x" aria-hidden="true"></i>
-                          </button>
+                          <div class="stock-serial-input-wrap">
+                            <input
+                              type="text"
+                              placeholder="Enter serial number"
+                              autocomplete="off"
+                              spellcheck="false"
+                              data-stock-serial-entry
+                              data-stock-serial-input
+                              data-stock-field
+                              disabled
+                            >
+                          </div>
                         </div>
                       </div>
-                      <div class="stock-serial-actions">
-                        <button type="button" class="stock-serial-add" data-stock-serial-add>
-                          <i data-lucide="plus" aria-hidden="true"></i>
-                          Add serial
-                        </button>
-                        <small class="stock-serial-hint">
-                          Quantity updates as you add serials
-                        </small>
-                      </div>
+                      <ul class="stock-serial-scanned" data-stock-serial-scanned aria-live="polite"></ul>
+                      <small class="stock-serial-hint">
+                        Scan continuously — press Enter after each serial.
+                      </small>
                       <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
                     </div>
                     {% else %}
@@ -696,41 +758,28 @@
                         <span>Serial number</span>
                         <span class="visually-hidden">Remove</span>
                       </div>
-                      <div class="stock-serial-list" data-stock-serial-list>
+                      <div class="stock-serial-entry-wrap" data-serial-search-root data-serial-scan-continuous>
                         <div class="stock-serial-row">
-                          <div class="stock-serial-input-wrap" data-serial-search-root>
+                          <div class="stock-serial-input-wrap">
                             <input
                               type="text"
                               placeholder="Search serial to stock out"
                               autocomplete="off"
                               spellcheck="false"
+                              data-stock-serial-entry
                               data-stock-serial-input
                               data-serial-search
                               data-stock-field
                               disabled
                             >
-                            <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
                           </div>
-                          <button
-                            type="button"
-                            class="stock-serial-remove"
-                            data-stock-serial-remove
-                            aria-label="Remove serial"
-                            hidden
-                          >
-                            <i data-lucide="x" aria-hidden="true"></i>
-                          </button>
                         </div>
+                        <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
                       </div>
-                      <div class="stock-serial-actions">
-                        <button type="button" class="stock-serial-add" data-stock-serial-add>
-                          <i data-lucide="plus" aria-hidden="true"></i>
-                          Add serial
-                        </button>
-                        <small class="stock-serial-hint">
-                          Type to search available serials at this shop
-                        </small>
-                      </div>
+                      <ul class="stock-serial-scanned" data-stock-serial-scanned aria-live="polite"></ul>
+                      <small class="stock-serial-hint">
+                        Scan or search serials — press Enter after each.
+                      </small>
                       <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
                     </div>
                     {% else %}
@@ -1148,24 +1197,39 @@
         <i data-lucide="x" aria-hidden="true"></i>
       </button>
     </header>
-    <div class="stock-serial-modal-body">
+    <div class="stock-serial-modal-body" data-serial-scan-continuous>
       <p class="stock-serial-qty-live">
         Qty <span data-stock-serial-modal-count>0</span>
       </p>
-      <div class="stock-serial-list" data-stock-serial-modal-list></div>
-      <div class="stock-serial-actions">
-        <button type="button" class="stock-serial-add" data-stock-serial-modal-add>
-          <i data-lucide="plus" aria-hidden="true"></i>
-          Add serial
-        </button>
-        <small class="stock-serial-hint">
-          {% if stock_mode == 'out' %}
-          Type to search available serials at this shop
-          {% else %}
-          Quantity updates as you add serials
-          {% endif %}
-        </small>
+      <div
+        class="stock-serial-modal-entry-wrap"
+        {% if stock_mode == 'out' %}data-serial-search-root{% endif %}
+      >
+        <div class="stock-serial-row">
+          <div class="stock-serial-input-wrap">
+            <input
+              type="text"
+              placeholder="{% if stock_mode == 'out' %}Search serial to stock out{% else %}Enter serial number{% endif %}"
+              autocomplete="off"
+              spellcheck="false"
+              data-stock-serial-modal-entry
+              data-stock-serial-input
+              {% if stock_mode == 'out' %}data-serial-search{% endif %}
+            >
+          </div>
+        </div>
+        {% if stock_mode == 'out' %}
+        <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
+        {% endif %}
       </div>
+      <ul class="stock-serial-modal-scanned" data-stock-serial-modal-scanned aria-live="polite"></ul>
+      <small class="stock-serial-hint">
+        {% if stock_mode == 'out' %}
+        Scan or search serials — press Enter after each. Click Done when finished.
+        {% else %}
+        Scan continuously — press Enter after each serial. Click Done when finished.
+        {% endif %}
+      </small>
     </div>
     <div class="workspace-modal-actions">
       <button type="button" class="btn btn--ghost" data-stock-serial-modal-close>Cancel</button>
@@ -1178,12 +1242,12 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=18"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=24"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix27"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix30"></script>
 <script
-  src="{% static 'js/serial-scan.js' %}?v=5"
+  src="{% static 'js/serial-scan.js' %}?v=7"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% if stock_mode == 'view' %}

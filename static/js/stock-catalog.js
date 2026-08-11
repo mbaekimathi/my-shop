@@ -82,6 +82,21 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
 
+  const compactShopName = (full, maxLen = 10) => {
+    const name = String(full || "Shop").trim() || "Shop";
+    if (name.length <= maxLen) return name;
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2 && parts[0].length <= maxLen) return parts[0];
+    if (parts.length >= 2) {
+      return parts
+        .slice(0, 4)
+        .map((part) => part[0] || "")
+        .join("")
+        .toUpperCase();
+    }
+    return `${name.slice(0, Math.max(maxLen - 1, 1)).trim()}…`;
+  };
+
   const money = (value) => {
     if (value == null || value === "") return null;
     const n = Number(value);
@@ -341,7 +356,9 @@
     let section = groupEls.get(key);
     if (section) return section;
     section = document.createElement("section");
-    section.className = "stock-category";
+    section.className = readOnlyMatrix
+      ? "stock-category stock-category--view"
+      : "stock-category";
     section.setAttribute("data-item-category-group", "");
 
     if (multiShopMatrix) {
@@ -410,22 +427,33 @@
             })
             .join("")
         : viewShops
-            .map(
-              (shop) =>
-                `<th scope="col" class="stock-matrix-shop-col">${escapeHtml(
-                  shop.name || "Shop"
-                )}</th>`
-            )
+            .map((shop, index) => {
+              const full = escapeHtml(shop.name || "Shop");
+              const label = escapeHtml(compactShopName(shop.name));
+              const bandStart = index === 0 ? " stock-th--band-start" : "";
+              return `<th scope="col" class="stock-matrix-shop-col stock-th--pair stock-th--band-flow${bandStart}" title="${full}">
+                <span class="stock-th-pair">
+                  <span class="stock-th-pair-name">${label}</span>
+                  <span class="stock-th-pair-cols" aria-hidden="true"><span>Qty</span></span>
+                </span>
+              </th>`;
+            })
             .join("");
       const totalHeader = editableMatrix
         ? ""
         : showAllShops
-          ? `<th scope="col" class="stock-matrix-total-col">Total</th>`
+          ? `<th scope="col" class="stock-matrix-total-col stock-th--pair stock-th--band-total stock-th--band-start">
+              <span class="stock-th-pair">
+                <span class="stock-th-pair-name">Total</span>
+                <span class="stock-th-pair-cols" aria-hidden="true"><span>Qty</span></span>
+              </span>
+            </th>`
           : "";
       const matrixClass = [
         "stock-matrix",
         showAllShops || editableMatrix ? "stock-matrix--all" : "stock-matrix--single",
         editableMatrix ? "stock-matrix--editable stock-matrix--list" : "",
+        readOnlyMatrix ? "stock-matrix--view stock-matrix--list" : "",
       ]
         .filter(Boolean)
         .join(" ");
@@ -437,7 +465,9 @@
         </div>
         <span class="stock-category-count" data-category-count>0</span>
       </header>
-      <div class="stock-matrix-scroll${editableMatrix ? " stock-matrix-scroll--list" : ""}">
+      <div class="stock-matrix-scroll${
+        editableMatrix || readOnlyMatrix ? " stock-matrix-scroll--list" : ""
+      }">
         <table class="${matrixClass}">
           <thead>
             <tr>
@@ -447,6 +477,15 @@
             </tr>
           </thead>
           <tbody data-stock-catalog-tbody></tbody>
+          ${
+            readOnlyMatrix
+              ? `<tfoot data-category-subtotals hidden>
+            <tr class="stock-matrix-row stock-matrix-row--subtotal">
+              <th scope="row" class="stock-matrix-item-col">Category total</th>
+            </tr>
+          </tfoot>`
+              : ""
+          }
         </table>
       </div>`;
       section.querySelector(".stock-category-title").textContent = key;
@@ -505,41 +544,41 @@
     if (!item.track_serial || mode === "request") {
       return `<input type="hidden" name="serial_numbers" value="" data-stock-field disabled>`;
     }
-    const serialInput =
+    const entryWrap =
       mode === "out"
-        ? `<div class="stock-serial-row">
-            <div class="stock-serial-input-wrap" data-serial-search-root>
-              <input
-                type="text"
-                placeholder="Search serial to stock out"
-                autocomplete="off"
-                spellcheck="false"
-                data-stock-serial-input
-                data-serial-search
-                data-stock-field
-                disabled
-              >
-              <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
+        ? `<div class="stock-serial-entry-wrap" data-serial-search-root data-serial-scan-continuous>
+            <div class="stock-serial-row">
+              <div class="stock-serial-input-wrap">
+                <input
+                  type="text"
+                  placeholder="Search serial to stock out"
+                  autocomplete="off"
+                  spellcheck="false"
+                  data-stock-serial-entry
+                  data-stock-serial-input
+                  data-serial-search
+                  data-stock-field
+                  disabled
+                >
+              </div>
             </div>
-            <button type="button" class="stock-serial-remove" data-stock-serial-remove aria-label="Remove serial" hidden>
-              <i data-lucide="x" aria-hidden="true"></i>
-            </button>
+            <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
           </div>`
-        : `<div class="stock-serial-row">
-            <div class="stock-serial-input-wrap">
-              <input
-                type="text"
-                placeholder="Enter serial number"
-                autocomplete="off"
-                spellcheck="false"
-                data-stock-serial-input
-                data-stock-field
-                disabled
-              >
+        : `<div class="stock-serial-entry-wrap" data-serial-scan-continuous>
+            <div class="stock-serial-row has-serial-scan">
+              <div class="stock-serial-input-wrap">
+                <input
+                  type="text"
+                  placeholder="Scan or type serial number"
+                  autocomplete="off"
+                  spellcheck="false"
+                  data-stock-serial-entry
+                  data-stock-serial-input
+                  data-stock-field
+                  disabled
+                >
+              </div>
             </div>
-            <button type="button" class="stock-serial-remove" data-stock-serial-remove aria-label="Remove serial" hidden>
-              <i data-lucide="x" aria-hidden="true"></i>
-            </button>
           </div>`;
     return `
       <div class="stock-inline-field stock-inline-field--serial">
@@ -547,22 +586,13 @@
           <span>${simpleMode ? "Serial" : "Serial number"}</span>
           <span class="visually-hidden">Remove</span>
         </div>
-        <div class="stock-serial-list" data-stock-serial-list>
-          ${serialInput}
-        </div>
-        <div class="stock-serial-actions">
-          <button type="button" class="stock-serial-add" data-stock-serial-add>
-            <i data-lucide="plus" aria-hidden="true"></i>
-            ${simpleMode ? "Add" : "Add serial"}
-          </button>
-          <small class="stock-serial-hint">${
-            mode === "out"
-              ? "Type to search available serials at this shop"
-              : simpleMode
-                ? "Qty follows serials"
-                : "Quantity updates as you add serials"
-          }</small>
-        </div>
+        ${entryWrap}
+        <ul class="stock-serial-scanned" data-stock-serial-scanned aria-live="polite"></ul>
+        <small class="stock-serial-hint">${
+          mode === "out"
+            ? "Scan or search serials — press Enter after each."
+            : "Scan continuously — press Enter after each serial."
+        }</small>
         <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
       </div>`;
   };
@@ -905,15 +935,15 @@
               (qty) =>
                 `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
                   qty === 0 ? " is-empty" : ""
-                }">${qty}</span></td>`
+                }">${qty === 0 ? "—" : qty}</span></td>`
             )
             .join("") +
           `<td class="stock-matrix-total-col"><span class="stock-matrix-qty stock-matrix-qty--total${
             rowTotal === 0 ? " is-empty" : ""
-          }">${rowTotal}</span></td>`
+          }">${rowTotal === 0 ? "—" : rowTotal}</span></td>`
         : `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
             (quantities[0] || 0) === 0 ? " is-empty" : ""
-          }">${quantities[0] || 0}</span></td>`;
+          }">${(quantities[0] || 0) === 0 ? "—" : quantities[0] || 0}</span></td>`;
       const header = document.createElement("tr");
       header.className = `stock-matrix-row${
         item.is_suspended ? " is-suspended" : ""
@@ -1069,6 +1099,65 @@
       const el = section.querySelector("[data-category-count]");
       if (el) el.textContent = String(count);
       section.hidden = count === 0;
+    });
+    refreshCategorySubtotals();
+  };
+
+  const parseQtyCell = (cell) => {
+    const text = cell?.querySelector(".stock-matrix-qty")?.textContent?.trim() || "";
+    if (!text || text === "—") return 0;
+    const value = Number(String(text).replace(/,/g, ""));
+    return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  };
+
+  const formatQty = (value) => (value === 0 ? "—" : value.toLocaleString());
+
+  const refreshCategorySubtotals = () => {
+    if (!readOnlyMatrix) return;
+    const shopCount = showAllShops ? viewShops.length : 1;
+    groupEls.forEach((section) => {
+      const tfoot = section.querySelector("[data-category-subtotals]");
+      const row = tfoot?.querySelector("tr");
+      if (!tfoot || !row) return;
+
+      const rows = [...section.querySelectorAll("tbody [data-item-row]")].filter(
+        (itemRow) => !itemRow.hidden
+      );
+      if (!rows.length) {
+        tfoot.hidden = true;
+        return;
+      }
+
+      const sums = Array.from({ length: shopCount }, () => 0);
+      let grandTotal = 0;
+
+      rows.forEach((itemRow) => {
+        const shopCells = itemRow.querySelectorAll(".stock-matrix-shop-col");
+        shopCells.forEach((cell, index) => {
+          sums[index] = (sums[index] || 0) + parseQtyCell(cell);
+        });
+        const totalCell = itemRow.querySelector(".stock-matrix-total-col");
+        if (totalCell) {
+          grandTotal += parseQtyCell(totalCell);
+        } else if (shopCells.length === 1) {
+          grandTotal += parseQtyCell(shopCells[0]);
+        }
+      });
+
+      let cellsHtml = `<th scope="row" class="stock-matrix-item-col">Category total</th>`;
+      sums.forEach((sum) => {
+        cellsHtml += `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty stock-matrix-qty--subtotal${
+          sum === 0 ? " is-empty" : ""
+        }">${formatQty(sum)}</span></td>`;
+      });
+      if (showAllShops) {
+        cellsHtml += `<td class="stock-matrix-total-col"><span class="stock-matrix-qty stock-matrix-qty--subtotal stock-matrix-qty--total${
+          grandTotal === 0 ? " is-empty" : ""
+        }">${formatQty(grandTotal)}</span></td>`;
+      }
+
+      row.innerHTML = cellsHtml;
+      tfoot.hidden = false;
     });
   };
 

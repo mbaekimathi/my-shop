@@ -1003,6 +1003,232 @@ def _metric(label, value, hint="", tone="neutral"):
     }
 
 
+def _till_metric_row(row_label: str, expected: dict, actual: dict, variance: dict) -> dict:
+    """Opening/closing row for till summary cards."""
+    return {
+        "label": row_label,
+        "metrics": [
+            {**expected, "label": "Expected"},
+            {**actual, "label": "Actual"},
+            {**variance, "label": "Variance", "kind": "variance"},
+        ],
+    }
+
+
+def _till_metric_group(*, label: str, icon: str, tone: str, metrics: list[dict]) -> dict:
+    return {
+        "label": label,
+        "icon": icon,
+        "tone": tone,
+        "rows": [
+            _till_metric_row("Opening", metrics[0], metrics[1], metrics[2]),
+            _till_metric_row("Closing", metrics[3], metrics[4], metrics[5]),
+        ],
+    }
+
+
+def _sales_summary_board(
+    *,
+    total_amount,
+    total_docs: int,
+    cash_amount,
+    mpesa_amount,
+    active_shops: int,
+    shop_count: int,
+) -> dict:
+    total = Decimal(total_amount or 0)
+    cash = Decimal(cash_amount or 0)
+    mpesa = Decimal(mpesa_amount or 0)
+    cash_share = (
+        f"{((cash / total) * Decimal('100')).quantize(Decimal('0.1'))}% of total"
+        if total > 0
+        else "No sales yet"
+    )
+    mpesa_share = (
+        f"{((mpesa / total) * Decimal('100')).quantize(Decimal('0.1'))}% of total"
+        if total > 0
+        else "No sales yet"
+    )
+    shops = active_shops or shop_count
+    return {
+        "hero": {
+            "label": "Total sales",
+            "value": _money_ksh(total),
+            "hint": f"{int(total_docs or 0)} receipts · {shops} shop{'s' if shops != 1 else ''}",
+        },
+        "tiles": [
+            {
+                "label": "Cash",
+                "value": _money_ksh(cash),
+                "hint": cash_share,
+                "icon": "banknote",
+                "tone": "cash",
+            },
+            {
+                "label": "M-Pesa",
+                "value": _money_ksh(mpesa),
+                "hint": mpesa_share,
+                "icon": "smartphone",
+                "tone": "mpesa",
+            },
+            {
+                "label": "Shops",
+                "value": str(shops),
+                "hint": "with sales" if active_shops else "selected",
+                "icon": "store",
+                "tone": "shops",
+            },
+        ],
+    }
+
+
+def _items_summary_board(
+    *,
+    total_sales,
+    total_cogs,
+    total_gross,
+    overall_margin,
+    loss_makers: int,
+    item_count: int,
+) -> dict:
+    gross = Decimal(total_gross or 0)
+    sales = Decimal(total_sales or 0)
+    cogs = Decimal(total_cogs or 0)
+    margin = Decimal(overall_margin or 0)
+    return {
+        "hero": {
+            "label": "Gross profit",
+            "value": _money_ksh(gross),
+            "hint": (
+                f"Margin {margin}% · {item_count} item{'s' if item_count != 1 else ''} sold"
+            ),
+            "tone": "good" if gross >= 0 else "bad",
+        },
+        "tiles": [
+            {
+                "label": "Sales value",
+                "value": _money_ksh(sales),
+                "hint": "Ex-tax line totals",
+                "icon": "tags",
+                "tone": "sales",
+            },
+            {
+                "label": "COGS",
+                "value": _money_ksh(cogs),
+                "hint": "Stamped cost at sale",
+                "icon": "package",
+                "tone": "cost",
+            },
+            {
+                "label": "Loss-makers",
+                "value": str(loss_makers),
+                "hint": "Items sold below cost",
+                "icon": "alert-triangle",
+                "tone": "warn" if loss_makers else "good",
+            },
+        ],
+    }
+
+
+def _credits_summary_board(
+    *,
+    total_balance,
+    total_credits: int,
+    client_count: int,
+    shops_with_credit: int,
+    shop_count: int,
+) -> dict:
+    balance = Decimal(total_balance or 0)
+    docs = int(total_credits or 0)
+    clients = int(client_count or 0)
+    active_shops = int(shops_with_credit or 0)
+    shops = int(shop_count or 0)
+    avg_balance = (balance / clients).quantize(Decimal("0.01")) if clients else _zero()
+    return {
+        "hero": {
+            "label": "Outstanding balance",
+            "value": _money_ksh(balance),
+            "hint": (
+                f"{docs} open credit{'s' if docs != 1 else ''} · "
+                f"{clients} client{'s' if clients != 1 else ''}"
+            ),
+            "tone": "warn" if balance > 0 else "good",
+        },
+        "tiles": [
+            {
+                "label": "Credit docs",
+                "value": str(docs),
+                "hint": "Unpaid or partially paid",
+                "icon": "credit-card",
+                "tone": "sales",
+            },
+            {
+                "label": "Clients",
+                "value": str(clients),
+                "hint": f"Avg {_money_dense(avg_balance)} each" if clients else "None on credit",
+                "icon": "users",
+                "tone": "warn" if clients else "good",
+            },
+            {
+                "label": "Shops",
+                "value": str(active_shops),
+                "hint": f"of {shops} with exposure" if shops else "selected",
+                "icon": "store",
+                "tone": "shops",
+            },
+        ],
+    }
+
+
+def _stock_summary_board(
+    *,
+    total_value,
+    total_units: int,
+    item_count: int,
+    purchases,
+    cogs_total,
+    shrinkage_total,
+    net_inventory_move,
+) -> dict:
+    closing = Decimal(total_value or 0)
+    shrinkage = Decimal(shrinkage_total or 0)
+    net_move = Decimal(net_inventory_move or 0)
+    return {
+        "hero": {
+            "label": "Inventory value",
+            "value": _money_ksh(closing),
+            "hint": (
+                f"{int(total_units or 0)} units · {item_count} item"
+                f"{'s' if item_count != 1 else ''} · net move {_money_dense(net_move)}"
+            ),
+            "tone": "good",
+        },
+        "tiles": [
+            {
+                "label": "Purchases",
+                "value": _money_ksh(purchases),
+                "hint": "Stock-in this period",
+                "icon": "package-plus",
+                "tone": "sales",
+            },
+            {
+                "label": "COGS",
+                "value": _money_ksh(cogs_total),
+                "hint": "Sold this period",
+                "icon": "shopping-bag",
+                "tone": "cost",
+            },
+            {
+                "label": "Shrinkage",
+                "value": _money_ksh(shrinkage),
+                "hint": "Waste and display at cost",
+                "icon": "alert-triangle",
+                "tone": "warn" if shrinkage > 0 else "good",
+            },
+        ],
+    }
+
+
 def _table(
     title,
     columns,
@@ -1012,6 +1238,7 @@ def _table(
     shop_grid=None,
     *,
     searchable=False,
+    table_class="",
 ):
     if shop_grid is None:
         shop_grid = any(
@@ -1026,6 +1253,7 @@ def _table(
         "footnote": footnote,
         "shop_grid": bool(shop_grid),
         "searchable": bool(searchable),
+        "table_class": (table_class or "").strip(),
     }
 
 
@@ -2693,7 +2921,7 @@ def _build_balances(filters):
     by_shop = day_balances["by_shop"]
     totals = day_balances["totals"]
 
-    metrics = [
+    cash_metrics = [
         _metric(
             "Expected opening cash",
             _money_ksh(totals["expected_opening_cash"]),
@@ -2726,6 +2954,8 @@ def _build_balances(filters):
             hint="Actual − expected",
             tone=_variance_tone(totals["cash_variance"]),
         ),
+    ]
+    mpesa_metrics = [
         _metric(
             "Expected opening M-Pesa",
             _money_ksh(totals["expected_opening_mpesa"]),
@@ -2757,6 +2987,7 @@ def _build_balances(filters):
             tone=_variance_tone(totals["mpesa_variance"]),
         ),
     ]
+    metrics = cash_metrics + mpesa_metrics
 
     shops_sorted = sorted(
         shops,
@@ -2768,25 +2999,77 @@ def _build_balances(filters):
 
     summary_columns = [
         "Shop",
-        {"label": "Exp. open cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Open cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Open var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Exp. close cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Close cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Close var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Exp. open M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Open M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Open M-Pesa var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Exp. close M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Close M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
-        {"label": "Close M-Pesa var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt"},
+        {
+            "label": "Exp. open cash",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "cash-open",
+            "band_start": True,
+        },
+        {"label": "Open cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "cash-open"},
+        {"label": "Open var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "cash-open"},
+        {
+            "label": "Exp. close cash",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "cash-close",
+            "band_start": True,
+        },
+        {"label": "Close cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "cash-close"},
+        {"label": "Close var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "cash-close"},
+        {
+            "label": "Exp. open M-Pesa",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "mpesa-open",
+            "band_start": True,
+        },
+        {"label": "Open M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "mpesa-open"},
+        {
+            "label": "Open M-Pesa var",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "mpesa-open",
+        },
+        {
+            "label": "Exp. close M-Pesa",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "mpesa-close",
+            "band_start": True,
+        },
+        {"label": "Close M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "mpesa-close"},
+        {
+            "label": "Close M-Pesa var",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "mpesa-close",
+        },
     ]
 
-    def _pair(shop_id: int, sessions_key: str, amount_key: str):
+    def _pair(
+        shop_id: int,
+        sessions_key: str,
+        amount_key: str,
+        *,
+        variance: bool = False,
+    ):
         entry = by_shop.get(shop_id, {})
         qty = int(entry.get(sessions_key) or 0)
         amount = Decimal(entry.get(amount_key) or 0)
-        return _qty_amount_cell(qty, amount, title=f"{qty} · {_money_ksh(amount)}")
+        tone = _variance_tone(amount) if variance else "neutral"
+        return _qty_amount_cell(
+            qty,
+            amount,
+            title=f"{qty} · {_money_ksh(amount)}",
+            tone=tone,
+        )
 
     summary_rows = []
     for shop in shops_sorted:
@@ -2811,16 +3094,32 @@ def _build_balances(filters):
                     shop.pk,
                     "open_sessions",
                     "opening_cash_variance",
+                    variance=True,
                 ),
                 _pair(shop.pk, "close_sessions", "expected_cash"),
                 _pair(shop.pk, "close_sessions", "closing_cash"),
-                _pair(shop.pk, "close_sessions", "cash_variance"),
+                _pair(
+                    shop.pk,
+                    "close_sessions",
+                    "cash_variance",
+                    variance=True,
+                ),
                 _pair(shop.pk, "open_sessions", "expected_opening_mpesa"),
                 _pair(shop.pk, "open_sessions", "opening_mpesa"),
-                _pair(shop.pk, "open_sessions", "opening_mpesa_variance"),
+                _pair(
+                    shop.pk,
+                    "open_sessions",
+                    "opening_mpesa_variance",
+                    variance=True,
+                ),
                 _pair(shop.pk, "close_sessions", "expected_mpesa"),
                 _pair(shop.pk, "close_sessions", "closing_mpesa"),
-                _pair(shop.pk, "close_sessions", "mpesa_variance"),
+                _pair(
+                    shop.pk,
+                    "close_sessions",
+                    "mpesa_variance",
+                    variance=True,
+                ),
             ]
         )
 
@@ -2835,7 +3134,9 @@ def _build_balances(filters):
                     totals["open_sessions"], totals["opening_cash"]
                 ),
                 _qty_amount_cell(
-                    totals["open_sessions"], totals["opening_cash_variance"]
+                    totals["open_sessions"],
+                    totals["opening_cash_variance"],
+                    tone=_variance_tone(totals["opening_cash_variance"]),
                 ),
                 _qty_amount_cell(
                     totals["close_sessions"], totals["expected_cash"]
@@ -2844,7 +3145,9 @@ def _build_balances(filters):
                     totals["close_sessions"], totals["closing_cash"]
                 ),
                 _qty_amount_cell(
-                    totals["close_sessions"], totals["cash_variance"]
+                    totals["close_sessions"],
+                    totals["cash_variance"],
+                    tone=_variance_tone(totals["cash_variance"]),
                 ),
                 _qty_amount_cell(
                     totals["open_sessions"], totals["expected_opening_mpesa"]
@@ -2853,7 +3156,9 @@ def _build_balances(filters):
                     totals["open_sessions"], totals["opening_mpesa"]
                 ),
                 _qty_amount_cell(
-                    totals["open_sessions"], totals["opening_mpesa_variance"]
+                    totals["open_sessions"],
+                    totals["opening_mpesa_variance"],
+                    tone=_variance_tone(totals["opening_mpesa_variance"]),
                 ),
                 _qty_amount_cell(
                     totals["close_sessions"], totals["expected_mpesa"]
@@ -2862,7 +3167,9 @@ def _build_balances(filters):
                     totals["close_sessions"], totals["closing_mpesa"]
                 ),
                 _qty_amount_cell(
-                    totals["close_sessions"], totals["mpesa_variance"]
+                    totals["close_sessions"],
+                    totals["mpesa_variance"],
+                    tone=_variance_tone(totals["mpesa_variance"]),
                 ),
             ]
         )
@@ -2945,6 +3252,20 @@ def _build_balances(filters):
         ),
         "alerts": [],
         "metrics": metrics,
+        "metric_groups": [
+            _till_metric_group(
+                label="Cash till",
+                icon="banknote",
+                tone="cash",
+                metrics=cash_metrics,
+            ),
+            _till_metric_group(
+                label="M-Pesa till",
+                icon="smartphone",
+                tone="mpesa",
+                metrics=mpesa_metrics,
+            ),
+        ],
         "insights": [],
         "tables": [
             _table(
@@ -2958,12 +3279,14 @@ def _build_balances(filters):
                     "Expected closing M-Pesa = opening + M-Pesa sales. "
                     "Variance = actual − expected."
                 ),
+                shop_grid=True,
             ),
             _table(
                 "Closed day sessions",
                 session_columns,
                 session_rows,
                 empty="No closed shop days in this period.",
+                table_class="ax-table--sessions",
             ),
         ],
     }
@@ -2989,9 +3312,9 @@ def _build_sales(filters):
         mpesa_by_shop[shop_id] = (0, Decimal(row["mpesa"] or 0))
 
     metric_maps = [
-        ("M-Pesa", mpesa_by_shop),
-        ("Cash", cash_by_shop),
-        ("Total", total_by_shop),
+        ("Cash", cash_by_shop, "cash"),
+        ("M-Pesa", mpesa_by_shop, "mpesa"),
+        ("Total", total_by_shop, "total"),
     ]
 
     shops_sorted = sorted(
@@ -3003,7 +3326,7 @@ def _build_sales(filters):
     )
 
     columns = ["Shop"]
-    for label, _by_shop in metric_maps:
+    for label, _by_shop, band in metric_maps:
         columns.append(
             {
                 "label": label,
@@ -3011,13 +3334,15 @@ def _build_sales(filters):
                 "pair_qty": "Docs",
                 "pair_amt": "Amt",
                 "total": label == "Total",
+                "band": band,
+                "band_start": True,
             }
         )
 
     table_rows = []
     for shop in shops_sorted:
         cells = [shop.name]
-        for _label, by_shop in metric_maps:
+        for _label, by_shop, _band in metric_maps:
             qty, amount = by_shop.get(shop.pk, (0, _zero()))
             cells.append(
                 _qty_amount_cell(
@@ -3030,7 +3355,7 @@ def _build_sales(filters):
 
     if shops_sorted:
         total_cells = ["Total"]
-        for _label, by_shop in metric_maps:
+        for _label, by_shop, _band in metric_maps:
             total_qty = 0
             total_amount = _zero()
             for shop in shops_sorted:
@@ -3063,28 +3388,16 @@ def _build_sales(filters):
 
     return {
         "headline": "Sales",
-        "lead": "",
+        "lead": "Sale receipts by shop — document count and value, split by cash and M-Pesa.",
         "alerts": [],
-        "metrics": [
-            {
-                "label": "Total sales",
-                "value": _money_ksh(total_amount),
-                "hint": f"{total_docs} receipts",
-            },
-            {
-                "label": "Cash",
-                "value": _money_ksh(cash_amount),
-            },
-            {
-                "label": "M-Pesa",
-                "value": _money_ksh(mpesa_amount),
-            },
-            {
-                "label": "Shops",
-                "value": str(active_shops or len(shops_sorted)),
-                "hint": "with sales" if active_shops else "selected",
-            },
-        ],
+        "summary_board": _sales_summary_board(
+            total_amount=total_amount,
+            total_docs=total_docs,
+            cash_amount=cash_amount,
+            mpesa_amount=mpesa_amount,
+            active_shops=active_shops,
+            shop_count=len(shops_sorted),
+        ),
         "insights": [],
         "tables": [
             _table(
@@ -3092,6 +3405,7 @@ def _build_sales(filters):
                 columns,
                 table_rows,
                 empty="No sales for selected shops and period.",
+                shop_grid=True,
             )
         ],
     }
@@ -3218,15 +3532,30 @@ def _build_items(filters):
             )
             cells.append(_qty_amount_cell(shop_units, shop_value))
         cells.append(_qty_amount_cell(entry["total_units"], entry["total_value"]))
-        cells.append(_money_ksh(entry["total_cogs"]))
-        cells.append(_money_ksh(gross))
-        cells.append(f"{margin}%")
+        cells.append(_money_cell(entry["total_cogs"]))
+        cells.append(
+            _money_cell(gross, tone="good" if gross >= 0 else "bad")
+        )
+        cells.append(
+            _pct_cell(margin, tone="good" if margin >= 0 else "bad")
+        )
         sold_rows.append(cells)
 
     columns = ["Item"]
-    for shop in shops:
-        columns.append(_shop_col(shop, pair=True))
-    columns.extend([_pair_total_col(), "COGS", "Gross", "Margin"])
+    for index, shop in enumerate(shops):
+        col = _shop_col(shop, pair=True)
+        col["band"] = "flow"
+        if index == 0:
+            col["band_start"] = True
+        columns.append(col)
+    columns.extend(
+        [
+            {**_pair_total_col(), "band": "total", "band_start": True},
+            {"label": "COGS", "band": "result", "band_start": True},
+            {"label": "Gross", "band": "result"},
+            {"label": "Margin", "band": "result"},
+        ]
+    )
 
     total_sales = sum((e["total_value"] for e in by_item.values()), _zero())
     total_cogs = sum((e["total_cogs"] for e in by_item.values()), _zero())
@@ -3253,22 +3582,17 @@ def _build_items(filters):
         "headline": "Items sold",
         "lead": "Ranked by gross profit. Margin uses stamped cost (or last buy fallback).",
         "alerts": alerts,
-        "metrics": [
-            _metric("Sales value", _money_ksh(total_sales), hint="Ex-tax line totals"),
-            _metric("COGS", _money_ksh(total_cogs)),
-            _metric(
-                "Gross profit",
-                _money_ksh(total_gross),
-                hint=f"Margin {overall_margin}%",
-                tone="success" if total_gross >= 0 else "danger",
-            ),
-            _metric(
-                "Loss-makers",
-                str(loss_makers),
-                hint="Items with negative GP",
-                tone="warning" if loss_makers else "neutral",
-            ),
-        ],
+        "show_search": True,
+        "search_placeholder": "Search items…",
+        "search_empty": "No items match that search.",
+        "summary_board": _items_summary_board(
+            total_sales=total_sales,
+            total_cogs=total_cogs,
+            total_gross=total_gross,
+            overall_margin=overall_margin,
+            loss_makers=loss_makers,
+            item_count=len(by_item),
+        ),
         "insights": [],
         "tables": [
             _table(
@@ -3277,6 +3601,9 @@ def _build_items(filters):
                 sold_rows,
                 empty="No items sold in this period.",
                 footnote="Includes sales and credits. Qty/Amt are net of returns.",
+                shop_grid=True,
+                searchable=True,
+                table_class="ax-table--items",
             )
         ],
     }
@@ -3334,9 +3661,16 @@ def _build_stock(filters):
         table_rows.append(cells)
 
     columns = ["Item"]
-    for shop in shops:
-        columns.append(_shop_col(shop, pair=True))
-    columns.append(_pair_total_col())
+    for index, shop in enumerate(shops):
+        col = _shop_col(shop, pair=True)
+        col["band"] = "flow"
+        if index == 0:
+            col["band_start"] = True
+        columns.append(col)
+    columns.append({**_pair_total_col(), "band": "total", "band_start": True})
+
+    total_units = sum((e["total_qty"] for e in by_item.values()), 0)
+    item_count = len(by_item)
 
     purchases = _zero()
     for row in (
@@ -3374,9 +3708,6 @@ def _build_stock(filters):
         ),
         _zero(),
     )
-    # Period bridge (no stored opening snapshot):
-    # implied opening ≈ closing + COGS + shrinkage − purchases
-    implied_opening = total_value + cogs_total + shrinkage_total - purchases
     net_inventory_move = purchases - cogs_total - shrinkage_total
 
     alerts = []
@@ -3394,39 +3725,22 @@ def _build_stock(filters):
     return {
         "headline": "Stock on hand",
         "lead": (
-            "Value = qty × shop average cost. "
-            "Period check: purchases − COGS − shrinkage should explain inventory movement."
+            "Value = qty x shop average cost. "
+            "Period check: purchases - COGS - shrinkage should explain inventory movement."
         ),
         "alerts": alerts,
-        "metrics": [
-            _metric(
-                "Inventory value",
-                _money_ksh(total_value),
-                hint=f"{sum(e['total_qty'] for e in by_item.values())} units on hand",
-            ),
-            _metric(
-                "Purchases",
-                _money_ksh(purchases),
-                hint="Stock-in this period",
-            ),
-            _metric("COGS", _money_ksh(cogs_total), hint="Sold this period"),
-            _metric(
-                "Shrinkage",
-                _money_ksh(shrinkage_total),
-                hint="Waste/display at cost",
-                tone="warning" if shrinkage_total > 0 else "neutral",
-            ),
-            _metric(
-                "Implied opening",
-                _money_ksh(implied_opening),
-                hint="Closing + COGS + shrinkage − purchases",
-            ),
-            _metric(
-                "Net inventory move",
-                _money_ksh(net_inventory_move),
-                hint="Purchases − COGS − shrinkage",
-            ),
-        ],
+        "show_search": True,
+        "search_placeholder": "Search stock items…",
+        "search_empty": "No items match that search.",
+        "summary_board": _stock_summary_board(
+            total_value=total_value,
+            total_units=total_units,
+            item_count=item_count,
+            purchases=purchases,
+            cogs_total=cogs_total,
+            shrinkage_total=shrinkage_total,
+            net_inventory_move=net_inventory_move,
+        ),
         "insights": [],
         "tables": [
             _table(
@@ -3435,10 +3749,13 @@ def _build_stock(filters):
                 table_rows,
                 empty="No stock for selected shops.",
                 footnote=(
-                    "Docs/Amt cells show quantity · stock value. "
+                    "Qty/Amt cells show quantity and stock value. "
                     "Implied opening is derived (no day-open stock snapshot yet). "
                     "Inter-shop transfers can skew the period bridge."
                 ),
+                shop_grid=True,
+                searchable=True,
+                table_class="ax-table--stock",
             )
         ],
     }
@@ -3584,11 +3901,25 @@ def _build_credits(filters):
         entry["total_credits"] += credits_n
         entry["total_balance"] += balance
 
-    client_rows = []
-    for entry in sorted(
+    client_entries = sorted(
         by_client.values(),
         key=lambda row: (-row["total_balance"], row["label"].lower()),
-    ):
+    )
+
+    shop_totals: dict[int, tuple[int, Decimal]] = {
+        shop.pk: (0, _zero()) for shop in shops
+    }
+    grand_credits = 0
+    grand_balance = _zero()
+    for entry in client_entries:
+        grand_credits += entry["total_credits"]
+        grand_balance += entry["total_balance"]
+        for shop_id, (credits_n, balance) in entry["by_shop"].items():
+            prev_credits, prev_balance = shop_totals.get(shop_id, (0, _zero()))
+            shop_totals[shop_id] = (prev_credits + credits_n, prev_balance + balance)
+
+    client_rows = []
+    for entry in client_entries:
         if entry["client_id"] is not None:
             client_cell = {
                 "href": client_credit_account_url(
@@ -3606,29 +3937,75 @@ def _build_credits(filters):
                     shop_credits,
                     shop_balance,
                     title=f"{shop_credits} credits · {_money_ksh(shop_balance)}",
+                    tone="warn" if shop_balance > 0 else "neutral",
                 )
+                if shop_credits or shop_balance
+                else "—"
             )
         cells.append(
             _qty_amount_cell(
                 entry["total_credits"],
                 entry["total_balance"],
                 title=f"{entry['total_credits']} credits · {_money_ksh(entry['total_balance'])}",
+                tone="warn" if entry["total_balance"] > 0 else "neutral",
             )
         )
         client_rows.append(cells)
 
-    columns = ["Client"]
-    for shop in shops:
-        columns.append(
-            _shop_col(shop, pair=True, pair_qty="Cr", pair_amt="Bal")
+    if client_entries:
+        total_cells = ["Total"]
+        for shop in shops:
+            shop_credits, shop_balance = shop_totals.get(shop.pk, (0, _zero()))
+            total_cells.append(
+                _qty_amount_cell(
+                    shop_credits,
+                    shop_balance,
+                    title=f"{shop_credits} credits · {_money_ksh(shop_balance)}",
+                    tone="warn" if shop_balance > 0 else "neutral",
+                )
+            )
+        total_cells.append(
+            _qty_amount_cell(
+                grand_credits,
+                grand_balance,
+                title=f"{grand_credits} credits · {_money_ksh(grand_balance)}",
+                tone="warn" if grand_balance > 0 else "neutral",
+            )
         )
-    columns.append(_pair_total_col(pair_qty="Cr", pair_amt="Bal"))
+        client_rows.append(total_cells)
+
+    columns = ["Client"]
+    for index, shop in enumerate(shops):
+        col = _shop_col(shop, pair=True, pair_qty="Cr", pair_amt="Bal")
+        col["band"] = "flow"
+        if index == 0:
+            col["band_start"] = True
+        columns.append(col)
+    columns.append(
+        {**_pair_total_col(pair_qty="Cr", pair_amt="Bal"), "band": "total", "band_start": True}
+    )
+
+    shops_with_credit = sum(
+        1 for shop in shops if shop_totals.get(shop.pk, (0, _zero()))[1] > 0
+    )
 
     return {
         "headline": "Client credits",
-        "lead": "",
+        "lead": (
+            "Open credit balances by client and shop. "
+            "Cr = unpaid credit receipts; Bal = amount still owed."
+        ),
         "alerts": [],
-        "metrics": [],
+        "show_search": True,
+        "search_placeholder": "Search clients…",
+        "search_empty": "No clients match that search.",
+        "summary_board": _credits_summary_board(
+            total_balance=grand_balance,
+            total_credits=grand_credits,
+            client_count=len(client_entries),
+            shops_with_credit=shops_with_credit,
+            shop_count=len(shops),
+        ),
         "insights": [],
         "tables": [
             _table(
@@ -3636,6 +4013,10 @@ def _build_credits(filters):
                 columns,
                 client_rows,
                 empty="No clients with credit balances.",
+                footnote="Click a client to open their credit account. Balances are live, not period-filtered.",
+                shop_grid=True,
+                searchable=True,
+                table_class="ax-table--credits",
             )
         ],
     }
@@ -3851,6 +4232,18 @@ def _build_employees(filters):
     }
 
 
+def _supplier_entity_cell(role, kind, supplier, query: str) -> dict:
+    phone = f"{supplier.phone_country_code} {supplier.phone_number}".strip()
+    name = getattr(supplier, "name", None) or "Supplier"
+    cell = {
+        "href": supplier_account_url(role, kind, supplier.pk, query=query),
+        "label": name,
+    }
+    if phone:
+        cell["sub"] = phone
+    return cell
+
+
 def _supplier_label(supplier) -> str:
     phone = f"{supplier.phone_country_code} {supplier.phone_number}".strip()
     name = getattr(supplier, "name", None) or "Supplier"
@@ -3894,34 +4287,6 @@ def _supplier_ledger_stats(suppliers, by_supplier_shop: dict) -> dict:
     }
 
 
-def _supplier_balance_metrics(stats: dict, *, entity_label: str) -> list:
-    balance = Decimal(stats["balance"] or 0)
-    return [
-        _metric(
-            entity_label,
-            str(stats["on_file"]),
-            hint=f"{stats['active']} with activity",
-        ),
-        _metric(
-            "With balance",
-            str(stats["with_balance"]),
-            hint="Still owed",
-            tone="warn" if stats["with_balance"] else "good",
-        ),
-        _metric(
-            "Entries",
-            f"{stats['entries']:,}",
-            hint="Linked receipts",
-        ),
-        _metric(
-            "Outstanding",
-            _money_ksh(balance),
-            hint="Unpaid total",
-            tone="bad" if balance > 0 else "good",
-        ),
-    ]
-
-
 def _supplier_shop_rows(
     *,
     suppliers,
@@ -3930,8 +4295,11 @@ def _supplier_shop_rows(
     kind: str,
     role,
     query: str,
-) -> list:
+) -> tuple[list, dict[int, tuple[int, Decimal]]]:
     """Build matrix rows: supplier link + En/Bal per shop + total. Balance first."""
+    shop_totals: dict[int, tuple[int, Decimal]] = {
+        shop.pk: (0, _zero()) for shop in shops
+    }
     ranked = []
     for supplier in suppliers:
         by_shop = by_supplier_shop.get(supplier.pk) or {}
@@ -3953,6 +4321,8 @@ def _supplier_shop_rows(
     ranked.sort(key=lambda row: (-row[0], row[1]))
 
     rows = []
+    grand_entries = 0
+    grand_balance = _zero()
     for (
         _balance,
         _sort_label,
@@ -3961,41 +4331,123 @@ def _supplier_shop_rows(
         total_entries,
         total_balance,
     ) in ranked:
-        cells = [
-            {
-                "href": supplier_account_url(role, kind, supplier.pk, query=query),
-                "label": _supplier_label(supplier),
-            }
-        ]
+        grand_entries += total_entries
+        grand_balance += total_balance
+        cells = [_supplier_entity_cell(role, kind, supplier, query)]
         for shop in shops:
             shop_entries, shop_balance = by_shop.get(shop.pk, (0, _zero()))
+            prev_entries, prev_balance = shop_totals.get(shop.pk, (0, _zero()))
+            shop_totals[shop.pk] = (
+                prev_entries + int(shop_entries or 0),
+                prev_balance + Decimal(shop_balance or 0),
+            )
             cells.append(
                 _qty_amount_cell(
                     shop_entries,
                     shop_balance,
                     title=f"{shop_entries} entries · {_money_ksh(shop_balance)}",
-                    tone="bad" if Decimal(shop_balance or 0) > 0 else "neutral",
+                    tone="warn" if Decimal(shop_balance or 0) > 0 else "neutral",
                 )
+                if shop_entries or shop_balance
+                else "—"
             )
         cells.append(
             _qty_amount_cell(
                 total_entries,
                 total_balance,
                 title=f"{total_entries} entries · {_money_ksh(total_balance)}",
-                tone="bad" if Decimal(total_balance or 0) > 0 else "neutral",
+                tone="warn" if Decimal(total_balance or 0) > 0 else "neutral",
             )
         )
         rows.append(cells)
-    return rows
+
+    if ranked:
+        total_cells = ["Total"]
+        for shop in shops:
+            shop_entries, shop_balance = shop_totals.get(shop.pk, (0, _zero()))
+            total_cells.append(
+                _qty_amount_cell(
+                    shop_entries,
+                    shop_balance,
+                    title=f"{shop_entries} entries · {_money_ksh(shop_balance)}",
+                    tone="warn" if Decimal(shop_balance or 0) > 0 else "neutral",
+                )
+            )
+        total_cells.append(
+            _qty_amount_cell(
+                grand_entries,
+                grand_balance,
+                title=f"{grand_entries} entries · {_money_ksh(grand_balance)}",
+                tone="warn" if Decimal(grand_balance or 0) > 0 else "neutral",
+            )
+        )
+        rows.append(total_cells)
+
+    return rows, shop_totals
+
+
+def _supplier_summary_board(
+    stats: dict,
+    *,
+    shop_count: int,
+    shops_with_balance: int,
+    entity_label: str = "Suppliers",
+    icon: str = "truck",
+) -> dict:
+    balance = Decimal(stats["balance"] or 0)
+    on_file = int(stats["on_file"] or 0)
+    active = int(stats["active"] or 0)
+    with_balance = int(stats["with_balance"] or 0)
+    entries = int(stats["entries"] or 0)
+    shops = int(shop_count or 0)
+    exposed = int(shops_with_balance or 0)
+    return {
+        "hero": {
+            "label": "Outstanding balance",
+            "value": _money_ksh(balance),
+            "hint": (
+                f"{entries:,} entries · {with_balance} supplier"
+                f"{'s' if with_balance != 1 else ''} with balance"
+            ),
+            "tone": "warn" if balance > 0 else "good",
+        },
+        "tiles": [
+            {
+                "label": entity_label,
+                "value": str(on_file),
+                "hint": f"{active} with activity",
+                "icon": icon,
+                "tone": "shops",
+            },
+            {
+                "label": "Entries",
+                "value": f"{entries:,}",
+                "hint": "Linked receipts",
+                "icon": "file-text",
+                "tone": "sales",
+            },
+            {
+                "label": "Shops",
+                "value": str(exposed),
+                "hint": f"of {shops} with balance" if shops else "selected",
+                "icon": "store",
+                "tone": "warn" if exposed else "good",
+            },
+        ],
+    }
 
 
 def _supplier_pair_columns(shops) -> list:
     columns = ["Supplier"]
-    for shop in shops:
-        columns.append(
-            _shop_col(shop, pair=True, pair_qty="En", pair_amt="Bal")
-        )
-    columns.append(_pair_total_col(pair_qty="En", pair_amt="Bal"))
+    for index, shop in enumerate(shops):
+        col = _shop_col(shop, pair=True, pair_qty="En", pair_amt="Bal")
+        col["band"] = "flow"
+        if index == 0:
+            col["band_start"] = True
+        columns.append(col)
+    columns.append(
+        {**_pair_total_col(pair_qty="En", pair_amt="Bal"), "band": "total", "band_start": True}
+    )
     return columns
 
 
@@ -4068,7 +4520,7 @@ def _build_suppliers(filters):
         prev_entries, prev_balance = shop_map.get(shop_id, (0, _zero()))
         shop_map[shop_id] = (prev_entries + 1, prev_balance + due)
 
-    stock_rows = _supplier_shop_rows(
+    stock_rows, shop_totals = _supplier_shop_rows(
         suppliers=stock_suppliers,
         shops=shops,
         by_supplier_shop=stock_by_supplier_shop,
@@ -4077,18 +4529,28 @@ def _build_suppliers(filters):
         query=query,
     )
     stats = _supplier_ledger_stats(stock_suppliers, stock_by_supplier_shop)
+    shops_with_balance = sum(
+        1 for shop in shops if shop_totals.get(shop.pk, (0, _zero()))[1] > 0
+    )
 
     return {
         "headline": "Stock suppliers",
-        "lead": "Outstanding purchase balances by shop. Open a supplier to review receipts and pay.",
-        "period_label": "Outstanding",
-        "ledger_layout": True,
+        "lead": (
+            "Live outstanding purchase balances by shop. "
+            "En = stock receipts; Bal = unpaid amount still owed."
+        ),
         "hide_date_filters": True,
         "show_search": True,
         "search_placeholder": "Search suppliers…",
         "search_empty": "No suppliers match that search.",
         "alerts": [],
-        "metrics": _supplier_balance_metrics(stats, entity_label="Suppliers"),
+        "summary_board": _supplier_summary_board(
+            stats,
+            shop_count=len(shops),
+            shops_with_balance=shops_with_balance,
+            entity_label="Suppliers",
+            icon="truck",
+        ),
         "insights": [],
         "tables": [
             _table(
@@ -4096,8 +4558,13 @@ def _build_suppliers(filters):
                 _supplier_pair_columns(shops),
                 stock_rows,
                 empty="No stock suppliers on file.",
-                footnote="En = stock receipts · Bal = unpaid balance. Sorted by highest outstanding.",
+                footnote=(
+                    "Click a supplier to review receipts and pay. "
+                    "Sorted by highest outstanding balance."
+                ),
+                shop_grid=True,
                 searchable=True,
+                table_class="ax-table--suppliers",
             )
         ],
     }
@@ -4136,7 +4603,7 @@ def _build_expenses(filters):
         shop_map[row["shop_id"]] = (prev_entries + entries, prev_balance + balance)
 
     expense_suppliers = list(ExpenseSupplier.objects.order_by("name", "id"))
-    expense_rows = _supplier_shop_rows(
+    expense_rows, shop_totals = _supplier_shop_rows(
         suppliers=expense_suppliers,
         shops=shops,
         by_supplier_shop=exp_by_supplier_shop,
@@ -4145,18 +4612,28 @@ def _build_expenses(filters):
         query=expense_query,
     )
     stats = _supplier_ledger_stats(expense_suppliers, exp_by_supplier_shop)
+    shops_with_balance = sum(
+        1 for shop in shops if shop_totals.get(shop.pk, (0, _zero()))[1] > 0
+    )
 
     return {
         "headline": "Expense suppliers",
-        "lead": "Outstanding expense balances by shop. Open a supplier to review receipts and pay.",
-        "period_label": "Outstanding",
-        "ledger_layout": True,
+        "lead": (
+            "Live outstanding expense balances by shop. "
+            "En = expense entries; Bal = unpaid amount still owed."
+        ),
         "hide_date_filters": True,
         "show_search": True,
         "search_placeholder": "Search suppliers…",
         "search_empty": "No suppliers match that search.",
         "alerts": [],
-        "metrics": _supplier_balance_metrics(stats, entity_label="Suppliers"),
+        "summary_board": _supplier_summary_board(
+            stats,
+            shop_count=len(shops),
+            shops_with_balance=shops_with_balance,
+            entity_label="Suppliers",
+            icon="wallet",
+        ),
         "insights": [],
         "tables": [
             _table(
@@ -4164,8 +4641,13 @@ def _build_expenses(filters):
                 _supplier_pair_columns(shops),
                 expense_rows,
                 empty="No expense suppliers on file.",
-                footnote="En = expense entries · Bal = unpaid balance. Sorted by highest outstanding.",
+                footnote=(
+                    "Click a supplier to review receipts and pay. "
+                    "Sorted by highest outstanding balance."
+                ),
+                shop_grid=True,
                 searchable=True,
+                table_class="ax-table--expenses",
             )
         ],
     }

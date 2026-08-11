@@ -523,9 +523,9 @@
       </div>
 
       <form class="shop-serial-modal-form" data-serial-sale-form novalidate>
-        <div class="shop-serial-section">
+        <div class="shop-serial-section shop-serial-section-card" data-serial-scan-continuous>
           <div class="shop-serial-section-head">
-            <label class="shop-serial-field-label">
+            <label class="shop-serial-field-label" for="shop-serial-sale-entry">
               Serial numbers
             </label>
             <span class="shop-serial-count" data-serial-sale-count>0 selected</span>
@@ -553,13 +553,37 @@
               Last 4 digits
             </button>
           </div>
-          <div class="shop-serial-list" data-serial-sale-list></div>
-          <button type="button" class="shop-serial-add-row" data-serial-sale-add-row>
-            <i data-lucide="plus" aria-hidden="true"></i>
-            <span>Add another serial</span>
-          </button>
+          <div class="shop-serial-entry-panel">
+            <div
+              class="shop-serial-entry-wrap"
+              data-serial-sale-search-root
+            >
+              <div class="shop-serial-row has-serial-scan">
+                <div class="shop-serial-input-wrap">
+                  <input
+                    id="shop-serial-sale-entry"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    data-serial-sale-entry
+                    data-serial-sale-input
+                    placeholder="Scan or type serial number"
+                  >
+                </div>
+              </div>
+              <div class="shop-serial-suggest" data-serial-sale-suggest hidden></div>
+            </div>
+          </div>
+          <div class="shop-serial-scanned-panel">
+            <p class="shop-serial-scanned-empty" data-serial-sale-scanned-empty>
+              <i data-lucide="scan-line" aria-hidden="true"></i>
+              <span>No serials yet — scan or search above</span>
+            </p>
+            <ul class="shop-serial-scanned" data-serial-sale-scanned hidden aria-live="polite"></ul>
+          </div>
           <p class="shop-serial-hint" data-serial-sale-hint>
-            Search the full serial, or switch to last 4 digits and pick a match to fill the whole serial.
+            <i data-lucide="info" aria-hidden="true"></i>
+            <span>Scan continuously — press Enter after each serial. Add to cart when finished.</span>
           </p>
         </div>
 
@@ -584,13 +608,13 @@
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script src="{% static 'js/shop-printer.js' %}?v=19"></script>
-<script src="{% static 'js/my-shop.js' %}?v=50"></script>
-<script src="{% static 'js/stock-catalog.js' %}?v=20"></script>
+<script src="{% static 'js/my-shop.js' %}?v=54"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=22"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix28"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix33"></script>
 <script src="{% static 'js/my-shop-expense.js' %}?v=6"></script>
 <script
-  src="{% static 'js/serial-scan.js' %}?v=3"
+  src="{% static 'js/serial-scan.js' %}?v=8"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% endblock %}

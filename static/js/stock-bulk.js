@@ -123,103 +123,127 @@
     }
   };
 
-  const ensureSerialRowMessage = (serialRow) => {
-    let msg = serialRow.querySelector("[data-serial-in-stock-msg]");
+  const getSerialCheckHost = (input) => {
+    if (!(input instanceof HTMLInputElement)) return null;
+    return (
+      input.closest(".stock-serial-row") ||
+      input.closest(".stock-serial-entry-wrap")
+    );
+  };
+
+  const ensureSerialCheckMessage = (host) => {
+    if (!host) return null;
+    let msg = host.querySelector("[data-serial-in-stock-msg]");
     if (!msg) {
       msg = document.createElement("p");
       msg.className = "stock-serial-in-stock-msg";
       msg.setAttribute("data-serial-in-stock-msg", "");
       msg.hidden = true;
-      serialRow.appendChild(msg);
+      host.appendChild(msg);
     }
     return msg;
   };
 
-  const clearSerialInStockState = (serialRow) => {
-    if (!serialRow) return;
-    serialRow.classList.remove("is-already-in-stock", "is-serial-duplicate");
-    delete serialRow.dataset.serialBlocked;
-    delete serialRow.dataset.serverInStock;
-    const input = serialRow.querySelector("[data-stock-serial-input]");
+  const clearSerialInStockState = (host) => {
+    if (!host) return;
+    host.classList.remove("is-already-in-stock", "is-serial-duplicate");
+    delete host.dataset.serialBlocked;
+    delete host.dataset.serverInStock;
+    const input = host.querySelector(
+      "[data-stock-serial-entry], [data-stock-serial-input]"
+    );
     if (input) delete input.dataset.serialBlocked;
-    const msg = serialRow.querySelector("[data-serial-in-stock-msg]");
+    const msg = host.querySelector("[data-serial-in-stock-msg]");
     if (msg) {
       msg.hidden = true;
       msg.textContent = "";
     }
   };
 
-  const setSerialInStockState = (serialRow, { blocked = false, message = "" } = {}) => {
-    if (!serialRow) return;
-    const input = serialRow.querySelector("[data-stock-serial-input]");
+  const setSerialInStockState = (host, { blocked = false, message = "" } = {}) => {
+    if (!host) return;
+    const input = host.querySelector(
+      "[data-stock-serial-entry], [data-stock-serial-input]"
+    );
     if (!blocked) {
-      clearSerialInStockState(serialRow);
+      clearSerialInStockState(host);
       return;
     }
-    serialRow.classList.add("is-already-in-stock");
-    serialRow.dataset.serialBlocked = "1";
+    host.classList.add("is-already-in-stock");
+    host.dataset.serialBlocked = "1";
     if (input) input.dataset.serialBlocked = "1";
-    const msg = ensureSerialRowMessage(serialRow);
-    msg.hidden = false;
-    msg.textContent = message || "Already in stock — remove";
+    const msg = ensureSerialCheckMessage(host);
+    if (msg) {
+      msg.hidden = false;
+      msg.textContent = message || "Already in stock — remove";
+    }
   };
 
-  const applySerialCheckResult = (serialRow, serial, hit) => {
+  const applySerialCheckResult = (host, serial, hit) => {
     if (hit?.in_stock) {
-      serialRow.dataset.serverInStock = "1";
+      host.dataset.serverInStock = "1";
       const shopBit = hit.shop_name ? ` at ${hit.shop_name}` : "";
-      setSerialInStockState(serialRow, {
+      setSerialInStockState(host, {
         blocked: true,
-        message: `Already in stock${shopBit} — remove`,
+        message: `Already in stock${shopBit} — cannot stock in again`,
       });
       return;
     }
-    clearSerialInStockState(serialRow);
+    clearSerialInStockState(host);
   };
 
   const runSerialInStockCheck = async (input, { itemId, container } = {}) => {
     if (mode !== "in" || !(input instanceof HTMLInputElement)) return;
-    const serialRow = input.closest(".stock-serial-row");
-    if (!serialRow) return;
+    const host = getSerialCheckHost(input);
+    if (!host) return;
     const serial = String(input.value || "").trim().toUpperCase();
 
     if (!serial) {
-      clearSerialInStockState(serialRow);
+      clearSerialInStockState(host);
       return;
     }
 
     const peers = [
-      ...(container?.querySelectorAll("[data-stock-serial-input]") || []),
+      ...(container?.querySelectorAll(
+        "[data-stock-serial-input], [data-stock-serial-entry]"
+      ) || []),
     ];
-    const isDuplicate = peers.some(
-      (peer) =>
-        peer !== input &&
-        String(peer.value || "").trim().toUpperCase() === serial
-    );
+    const scannedPeers = [
+      ...(container?.querySelectorAll("[data-stock-serial-scanned-value]") || []),
+    ];
+    const isDuplicate =
+      peers.some(
+        (peer) =>
+          peer !== input &&
+          String(peer.value || "").trim().toUpperCase() === serial
+      ) ||
+      scannedPeers.some(
+        (peer) => String(peer.textContent || "").trim().toUpperCase() === serial
+      );
     if (isDuplicate) {
-      serialRow.dataset.serverInStock = "0";
-      setSerialInStockState(serialRow, {
+      host.dataset.serverInStock = "0";
+      setSerialInStockState(host, {
         blocked: true,
-        message: "Duplicate serial — remove",
+        message: "Duplicate serial — already in this list",
       });
-      serialRow.classList.add("is-serial-duplicate");
+      host.classList.add("is-serial-duplicate");
       return;
     }
 
     // Wait for a meaningful value before hitting the network.
     if (serial.length < SERIAL_CHECK_MIN_LEN) {
-      clearSerialInStockState(serialRow);
+      clearSerialInStockState(host);
       return;
     }
 
     if (!serialCheckUrl || !itemId) {
-      clearSerialInStockState(serialRow);
+      clearSerialInStockState(host);
       return;
     }
 
     const cached = readSerialCheckCache(itemId, serial);
     if (cached) {
-      applySerialCheckResult(serialRow, serial, cached);
+      applySerialCheckResult(host, serial, cached);
       return;
     }
 
@@ -256,7 +280,7 @@
         in_stock: Boolean(hit.in_stock),
         shop_name: hit.shop_name || "",
       });
-      applySerialCheckResult(serialRow, serial, hit);
+      applySerialCheckResult(host, serial, hit);
     } catch (err) {
       if (err?.name === "AbortError") return;
       /* ignore network errors while typing */
@@ -297,6 +321,35 @@
     }
   };
   const stockReq = readStockRequirements();
+
+  let submitToastTimer = null;
+  const pushStockSubmitToast = (text) => {
+    if (!text) return;
+    let host = document.querySelector("[data-stock-submit-toast]");
+    if (!host) {
+      host = document.createElement("div");
+      host.className = "workspace-toast";
+      host.setAttribute("role", "alert");
+      host.setAttribute("aria-live", "assertive");
+      host.setAttribute("data-stock-submit-toast", "");
+      document.querySelector(".workspace-frame")?.appendChild(host) ||
+        document.body.appendChild(host);
+    }
+    host.classList.remove("is-hiding");
+    host.innerHTML = "";
+    const item = document.createElement("div");
+    item.className = "workspace-toast__item workspace-toast__item--warning";
+    item.innerHTML = `<span class="workspace-toast__text"></span>`;
+    item.querySelector(".workspace-toast__text").textContent = text;
+    host.appendChild(item);
+    window.clearTimeout(submitToastTimer);
+    submitToastTimer = window.setTimeout(() => {
+      host.classList.add("is-hiding");
+      window.setTimeout(() => {
+        if (host.classList.contains("is-hiding")) host.remove();
+      }, 240);
+    }, 5200);
+  };
 
   const markOptionalLabel = (el, required) => {
     if (!el) return;
@@ -344,7 +397,8 @@
     markOptionalLabel(floatReason, stockReq.out.reason);
     markOptionalLabel(floatRefund, stockReq.out.refund);
     const serialModal = document.querySelector("[data-stock-serial-modal]");
-    const serialModalList = serialModal?.querySelector("[data-stock-serial-modal-list]");
+    const serialModalEntry = serialModal?.querySelector("[data-stock-serial-modal-entry]");
+    const serialModalScanned = serialModal?.querySelector("[data-stock-serial-modal-scanned]");
     const serialModalCount = serialModal?.querySelector("[data-stock-serial-modal-count]");
     const serialModalTitle = serialModal?.querySelector("[data-stock-serial-modal-title]");
     const serialModalShop = serialModal?.querySelector("[data-stock-serial-modal-shop]");
@@ -381,12 +435,16 @@
       if (!message) {
         applyStatus.hidden = true;
         applyStatus.textContent = "";
-        applyStatus.classList.remove("is-error");
+        applyStatus.classList.remove("is-error", "is-ready");
         return;
       }
       applyStatus.hidden = false;
       applyStatus.textContent = message;
       applyStatus.classList.toggle("is-error", isError);
+      applyStatus.classList.toggle(
+        "is-ready",
+        !isError && /^Ready to /i.test(String(message))
+      );
     };
 
     const cellQty = (cell) => {
@@ -771,26 +829,50 @@
       }, 180);
     };
 
+    const blockSubmit = (message, focusEl) => {
+      setApplyStatus(message, true);
+      pushStockSubmitToast(message);
+      revealAndFocus(focusEl);
+      return true;
+    };
+
+    const cellSerialCount = (cell) =>
+      String(cell.querySelector("[data-stock-serials]")?.value || "")
+        .split(/[\n,]+/)
+        .map((part) => part.trim())
+        .filter(Boolean).length;
+
     const focusFirstIncomplete = (ready) => {
       if (catalogBusy || panel.hasAttribute("data-stock-catalog-busy")) {
-        setApplyStatus("Still loading items — wait a moment, then submit.", true);
-        revealAndFocus(submitBtn || floatRoot);
-        return true;
+        return blockSubmit(
+          "Wait — items are still loading. Try again in a moment.",
+          submitBtn || floatRoot
+        );
       }
       if (!ready.length) {
-        setApplyStatus("Enter quantity on at least one shop cell.", true);
         const firstQty =
           panel.querySelector("[data-stock-shop-cell] [data-stock-qty]:not([disabled])") ||
           panel.querySelector("[data-item-search]");
-        revealAndFocus(firstQty || panel);
-        return true;
+        return blockSubmit(
+          "Add items first — enter quantity on at least one shop cell.",
+          firstQty || panel
+        );
       }
       if (mode === "request" && !requestingShopId) {
-        setApplyStatus("Click a shop column header to set the requesting shop.", true);
-        revealAndFocus(
+        return blockSubmit(
+          "Choose requesting shop first — click a shop column header.",
           document.querySelector("[data-stock-request-shop-header]") || requestingLabelEl
         );
-        return true;
+      }
+      const missingSerial = ready.find((item) => {
+        if (item.cell.getAttribute("data-track-serial") !== "1") return false;
+        return cellSerialCount(item.cell) < item.quantity;
+      });
+      if (missingSerial) {
+        return blockSubmit(
+          `Scan serial numbers first — for ${missingSerial.name} · ${missingSerial.shopName}.`,
+          missingSerial.cell.querySelector("[data-stock-qty]") || missingSerial.cell
+        );
       }
       if (mode === "in") {
         autoApplyDetailsToReady({ silent: true });
@@ -798,41 +880,38 @@
           const phone = normalizePhone(floatSupplierPhone?.value);
           const name = (floatSupplierName?.value || "").trim();
           if (!phone || phone.length !== 9) {
-            setApplyStatus("Enter a valid supplier phone.", true);
-            revealAndFocus(floatSupplierPhone);
-            return true;
+            return blockSubmit(
+              "Enter supplier phone first — in Supplier details (submit panel).",
+              floatSupplierPhone
+            );
           }
           if (!name) {
-            setApplyStatus("Enter or select supplier name.", true);
-            revealAndFocus(floatSupplierName);
-            return true;
+            return blockSubmit(
+              "Enter supplier name first — in Supplier details (submit panel).",
+              floatSupplierName
+            );
           }
         }
         if (stockReq.in.payment_status && !(floatPayment?.value || "").trim()) {
-          setApplyStatus("Select payment status before submitting.", true);
-          revealAndFocus(floatPayment);
-          return true;
+          return blockSubmit(
+            "Select payment status first — in Supplier details (submit panel).",
+            floatPayment
+          );
         }
         const missingPrice = ready.find((item) => !cellHasPrice(item.cell));
         if (missingPrice) {
-          setApplyStatus(
-            `Enter buying price for ${missingPrice.name} · ${missingPrice.shopName}.`,
-            true
-          );
-          revealAndFocus(
+          return blockSubmit(
+            `Enter buying price first — for ${missingPrice.name} · ${missingPrice.shopName}.`,
             missingPrice.cell.querySelector("[data-stock-buying-price]") ||
               missingPrice.cell
           );
-          return true;
         }
         const missingSupplier = ready.find((item) => !cellHasSupplier(item.cell));
         if (missingSupplier) {
-          setApplyStatus(
-            "Supplier details are incomplete — check the submit panel.",
-            true
+          return blockSubmit(
+            "Apply supplier details first — use Supplier details in the submit panel.",
+            floatPayment || floatSupplierPhone
           );
-          revealAndFocus(floatPayment || floatSupplierPhone);
-          return true;
         }
       }
       if (mode === "out") {
@@ -840,33 +919,34 @@
         const reason = (floatReason?.value || "").trim();
         const refund = (floatRefund?.value || "").trim();
         if (stockReq.out.reason && !reason) {
-          setApplyStatus("Choose a stock-out reason.", true);
-          revealAndFocus(floatReason);
-          return true;
+          return blockSubmit(
+            "Choose stock-out reason first — in Stock-out details (submit panel).",
+            floatReason
+          );
         }
         if (stockReq.out.refund) {
           if (refund !== "yes" && refund !== "no") {
-            setApplyStatus("Choose whether a refund applies.", true);
-            revealAndFocus(floatRefund);
-            return true;
+            return blockSubmit(
+              "Choose refund option first — in Stock-out details (submit panel).",
+              floatRefund
+            );
           }
           if (refund === "yes") {
             const amount = Number(floatRefundAmount?.value);
             if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
-              setApplyStatus("Enter a whole-number refund amount greater than zero.", true);
-              revealAndFocus(floatRefundAmount);
-              return true;
+              return blockSubmit(
+                "Enter refund amount first — whole number greater than zero.",
+                floatRefundAmount
+              );
             }
           }
         }
         const missingOut = ready.find((item) => !cellHasOutDetails(item.cell));
         if (missingOut) {
-          setApplyStatus(
-            "Stock-out details are incomplete — check the submit panel.",
-            true
+          return blockSubmit(
+            "Complete stock-out details first — in Stock-out details (submit panel).",
+            floatReason
           );
-          revealAndFocus(floatReason);
-          return true;
         }
       }
       return false;
@@ -968,71 +1048,162 @@
     };
 
     const modalSerials = () =>
-      [...(serialModalList?.querySelectorAll("[data-stock-serial-input]") || [])]
-        .filter(
-          (input) =>
-            input.closest(".stock-serial-row")?.dataset.serialBlocked !== "1"
-        )
-        .map((input) => String(input.value || "").trim().toUpperCase())
+      [...(serialModalScanned?.querySelectorAll("[data-stock-serial-scanned-value]") || [])]
+        .filter((el) => el.closest("li")?.dataset.serialBlocked !== "1")
+        .map((el) => String(el.textContent || "").trim().toUpperCase())
         .filter(Boolean);
 
     const syncModalCount = () => {
       const serials = modalSerials();
       if (serialModalCount) serialModalCount.textContent = String(serials.length);
-      serialModalList
-        ?.querySelectorAll("[data-stock-serial-remove]")
-        .forEach((btn) => {
-          btn.hidden = (serialModalList?.querySelectorAll(".stock-serial-row").length || 0) <= 1;
-        });
+      if (serialModalScanned) {
+        serialModalScanned.hidden = serials.length === 0;
+      }
     };
 
-    const createModalSerialRow = (serial = "", { prepend = true } = {}) => {
-      if (!serialModalList) return null;
-      const row = document.createElement("div");
-      row.className = "stock-serial-row";
-      const wrap = document.createElement("div");
-      wrap.className = "stock-serial-input-wrap";
-      if (mode === "out") wrap.setAttribute("data-serial-search-root", "");
-      row.appendChild(wrap);
-      const input = document.createElement("input");
-      input.type = "text";
-      input.placeholder =
-        mode === "out" ? "Search serial to stock out" : "Enter serial number";
-      input.autocomplete = "off";
-      input.spellcheck = false;
-      input.setAttribute("data-stock-serial-input", "");
-      if (mode === "out") input.setAttribute("data-serial-search", "");
-      input.value = serial;
-      wrap.appendChild(input);
-      if (mode === "out") {
-        const suggest = document.createElement("div");
-        suggest.className = "stock-supplier-suggest";
-        suggest.setAttribute("data-serial-suggest", "");
-        suggest.hidden = true;
-        wrap.appendChild(suggest);
-      }
+    const clearModalEntryState = () => {
+      if (!serialModalEntry) return;
+      serialModalEntry.classList.remove("is-duplicate");
+      delete serialModalEntry.dataset.serialBlocked;
+      const entryRow = serialModalEntry.closest(".stock-serial-row");
+      if (entryRow) clearSerialInStockState(entryRow);
+    };
+
+    const focusModalEntry = () => {
+      serialModalEntry?.focus({ preventScroll: true });
+    };
+
+    const createModalScannedItem = (serial) => {
+      if (!serialModalScanned || !serial) return null;
+      const li = document.createElement("li");
+      li.className = "stock-serial-modal-scanned-item";
+      li.dataset.serialValue = serial;
+
+      const value = document.createElement("span");
+      value.className = "stock-serial-modal-scanned-value";
+      value.setAttribute("data-stock-serial-scanned-value", "");
+      value.textContent = serial;
+      li.appendChild(value);
+
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.className = "stock-serial-remove";
-      remove.setAttribute("data-stock-serial-remove", "");
-      remove.setAttribute("aria-label", "Remove serial");
+      remove.className = "stock-serial-modal-scanned-remove";
+      remove.setAttribute("data-stock-serial-scanned-remove", "");
+      remove.setAttribute("aria-label", `Remove ${serial}`);
       remove.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
-      row.appendChild(remove);
-      if (prepend) {
-        serialModalList.insertBefore(row, serialModalList.firstChild);
-      } else {
-        serialModalList.appendChild(row);
-      }
+      li.appendChild(remove);
+
+      serialModalScanned.prepend(li);
       refreshIcons();
       syncModalCount();
-      if (mode === "in" && serial) {
-        queueSerialInStockCheck(input, {
-          itemId: activeSerialCell?.dataset.itemId || "",
-          container: serialModalList,
-          immediate: true,
-        });
+      return li;
+    };
+
+    let modalCommitBusy = false;
+    let lastModalCommitSerial = "";
+    let lastModalCommitAt = 0;
+    const MODAL_COMMIT_DEDUPE_MS = 1000;
+
+    const dispatchModalCommitSettled = (detail = {}) => {
+      serialModalEntry?.dispatchEvent(
+        new CustomEvent("myshop:serial-commit-settled", { bubbles: true, detail })
+      );
+    };
+
+    const commitModalEntry = async ({ serial: serialOverride } = {}) => {
+      if (modalCommitBusy || !serialModalEntry) {
+        dispatchModalCommitSettled({ ok: false, reason: "busy" });
+        return false;
       }
-      return input;
+
+      let serial = String(serialOverride || serialModalEntry.value || "")
+        .trim()
+        .toUpperCase();
+      if (!serial) {
+        dispatchModalCommitSettled({ ok: false, reason: "empty" });
+        return false;
+      }
+
+      const now = Date.now();
+      if (
+        serial === lastModalCommitSerial &&
+        now - lastModalCommitAt < MODAL_COMMIT_DEDUPE_MS
+      ) {
+        serialModalEntry.value = "";
+        clearModalEntryState();
+        focusModalEntry();
+        dispatchModalCommitSettled({ ok: false, reason: "dedupe", serial });
+        return false;
+      }
+
+      if (modalSerials().includes(serial)) {
+        serialModalEntry.value = "";
+        clearModalEntryState();
+        serialModalEntry.classList.add("is-duplicate");
+        window.setTimeout(() => serialModalEntry.classList.remove("is-duplicate"), 700);
+        focusModalEntry();
+        dispatchModalCommitSettled({ ok: false, reason: "duplicate", serial });
+        return false;
+      }
+
+      if (mode === "out") {
+        const root = serialModalEntry.closest("[data-serial-search-root]");
+        const firstOption = root?.querySelector(
+          ".stock-supplier-suggest button:not([disabled])"
+        );
+        if (firstOption) {
+          const picked = String(firstOption.textContent || "").trim().toUpperCase();
+          if (picked) serial = picked;
+        }
+      }
+
+      // Clear immediately so the next scan never appends to the same field.
+      serialModalEntry.value = "";
+      clearModalEntryState();
+
+      modalCommitBusy = true;
+      let ok = false;
+      try {
+        if (mode === "in") {
+          serialModalEntry.value = serial;
+          await runSerialInStockCheck(serialModalEntry, {
+            itemId: activeSerialCell?.dataset.itemId || "",
+            container: serialModalScanned,
+            immediate: true,
+          });
+          serialModalEntry.value = "";
+          if (
+            serialModalEntry.dataset.serialBlocked === "1" ||
+            serialModalEntry.closest(".stock-serial-row")?.classList.contains(
+              "is-already-in-stock"
+            )
+          ) {
+            focusModalEntry();
+            return false;
+          }
+        }
+
+        createModalScannedItem(serial);
+        lastModalCommitSerial = serial;
+        lastModalCommitAt = Date.now();
+        ok = true;
+        return true;
+      } finally {
+        modalCommitBusy = false;
+        serialModalEntry.value = "";
+        clearModalEntryState();
+        focusModalEntry();
+        dispatchModalCommitSettled({ ok, serial });
+      }
+    };
+
+    const resetSerialModal = () => {
+      if (serialModalScanned) serialModalScanned.innerHTML = "";
+      if (serialModalEntry) {
+        serialModalEntry.value = "";
+        clearModalEntryState();
+      }
+      syncModalCount();
     };
 
     const openSerialModal = (cell) => {
@@ -1041,31 +1212,38 @@
       const shopName = cell.dataset.shopName || "Shop";
       if (serialModalTitle) serialModalTitle.textContent = itemName;
       if (serialModalShop) serialModalShop.textContent = shopName;
-      if (serialModalList) serialModalList.innerHTML = "";
+      resetSerialModal();
+      lastModalCommitSerial = "";
+      lastModalCommitAt = 0;
       const existing = String(cell.querySelector("[data-stock-serials]")?.value || "")
         .split(/[\n,]+/)
-        .map((s) => s.trim())
+        .map((s) => s.trim().toUpperCase())
         .filter(Boolean);
-      if (existing.length) {
-        existing.forEach((s) => createModalSerialRow(s, { prepend: false }));
-      } else {
-        createModalSerialRow("");
-      }
+      existing.forEach((s) => createModalScannedItem(s));
       syncModalCount();
+      window.MyShopSerialScan?.enhance?.(serialModal);
       serialModal.hidden = false;
       serialModal.setAttribute("aria-hidden", "false");
       document.body.classList.add("workspace-modal-open");
-      serialModalList?.querySelector("[data-stock-serial-input]")?.focus();
+      focusModalEntry();
     };
 
     const closeSerialModal = ({ save = false } = {}) => {
       const cell = activeSerialCell;
       if (save && cell) {
-        const blocked = serialModalList?.querySelector(
-          ".stock-serial-row.is-already-in-stock"
+        const blocked = serialModalScanned?.querySelector(
+          "li.is-already-in-stock, li[data-serial-blocked='1']"
         );
         if (blocked) {
-          blocked.querySelector("[data-stock-serial-input]")?.focus();
+          blocked.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          focusModalEntry();
+          return;
+        }
+        const pending = String(serialModalEntry?.value || "").trim();
+        if (pending) {
+          commitModalEntry().then((ok) => {
+            if (ok) closeSerialModal({ save: true });
+          });
           return;
         }
         const serials = modalSerials();
@@ -1083,7 +1261,6 @@
         serialModal.setAttribute("aria-hidden", "true");
       }
       document.body.classList.remove("workspace-modal-open");
-      // Keep row in place until the user moves on; only refresh filled styling.
       if (cell) markFilled(cell);
     };
 
@@ -1122,13 +1299,13 @@
         results.slice(0, 8).forEach((serial) => {
           const btn = document.createElement("button");
           btn.type = "button";
+          btn.className = "stock-supplier-suggest-option";
           btn.textContent = serial;
           btn.addEventListener("mousedown", (event) => {
             event.preventDefault();
             input.value = serial;
             suggest.hidden = true;
-            syncModalCount();
-            createModalSerialRow("")?.focus();
+            commitModalEntry({ serial });
           });
           suggest.appendChild(btn);
         });
@@ -1254,26 +1431,25 @@
         closeSerialModal({ save: true });
         return;
       }
-      if (event.target.closest("[data-stock-serial-modal-add]")) {
-        event.preventDefault();
-        createModalSerialRow("")?.focus();
-        return;
-      }
-      const remove = event.target.closest("[data-stock-serial-remove]");
+      const remove = event.target.closest("[data-stock-serial-scanned-remove]");
       if (remove) {
         event.preventDefault();
-        remove.closest(".stock-serial-row")?.remove();
-        if (!serialModalList?.querySelector(".stock-serial-row")) {
-          createModalSerialRow("");
-        }
+        remove.closest("li")?.remove();
         syncModalCount();
+        focusModalEntry();
       }
     });
 
     serialModal?.addEventListener("input", (event) => {
-      if (!event.target.matches("[data-stock-serial-input]")) return;
-      event.target.value = String(event.target.value || "").toUpperCase();
-      syncModalCount();
+      if (!event.target.matches("[data-stock-serial-modal-entry]")) return;
+      const raw = String(event.target.value || "");
+      if (/[\r\n]/.test(raw)) {
+        event.target.value = raw.replace(/[\r\n]+/g, "").trim().toUpperCase();
+        commitModalEntry();
+        return;
+      }
+      event.target.value = raw.toUpperCase();
+      event.target.classList.remove("is-duplicate");
       if (mode === "out" && event.target.matches("[data-serial-search]")) {
         window.clearTimeout(serialSearchTimer);
         serialSearchTimer = window.setTimeout(
@@ -1284,38 +1460,29 @@
       if (mode === "in") {
         queueSerialInStockCheck(event.target, {
           itemId: activeSerialCell?.dataset.itemId || "",
-          container: serialModalList,
+          container: serialModalScanned,
         });
       }
     });
 
     serialModal?.addEventListener("myshop:serial-applied", (event) => {
-      if (mode !== "in") return;
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (!target.matches("[data-stock-serial-input]")) return;
-      syncModalCount();
-      queueSerialInStockCheck(target, {
-        itemId: activeSerialCell?.dataset.itemId || "",
-        container: serialModalList,
-        immediate: true,
-      });
-      const hasEmpty = [
-        ...(serialModalList?.querySelectorAll("[data-stock-serial-input]") || []),
-      ].some((input) => !String(input.value || "").trim());
-      if (!hasEmpty) {
-        window.setTimeout(() => createModalSerialRow("")?.focus(), 40);
-      }
+      if (!target.matches("[data-stock-serial-modal-entry]")) return;
+      const serial = String(event.detail?.serial || target.value || "")
+        .trim()
+        .toUpperCase();
+      commitModalEntry(serial ? { serial } : {});
     });
 
     serialModal?.addEventListener("focusout", (event) => {
       if (mode !== "in") return;
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (!target.matches("[data-stock-serial-input]")) return;
+      if (!target.matches("[data-stock-serial-modal-entry]")) return;
       queueSerialInStockCheck(target, {
         itemId: activeSerialCell?.dataset.itemId || "",
-        container: serialModalList,
+        container: serialModalScanned,
         immediate: true,
       });
     });
@@ -1324,7 +1491,12 @@
       if (event.key === "Escape") {
         event.preventDefault();
         closeSerialModal({ save: false });
+        return;
       }
+      if (event.key !== "Enter") return;
+      if (!event.target.matches("[data-stock-serial-modal-entry]")) return;
+      event.preventDefault();
+      commitModalEntry();
     });
 
     floatRoot?.addEventListener("click", (event) => {
@@ -1997,12 +2169,34 @@
   const tracksSerial = (row) =>
     mode !== "request" && row.dataset.trackSerial === "1";
 
-  const getSerialRows = (row) =>
-    [...(getInputsRow(row)?.querySelectorAll(".stock-serial-row") || [])];
+  const getInlineSerialBag = (row) => getInputsRow(row);
+
+  const getInlineSerialEntry = (row) =>
+    getInlineSerialBag(row)?.querySelector("[data-stock-serial-entry]");
+
+  const getInlineSerialScanned = (row) =>
+    getInlineSerialBag(row)?.querySelector("[data-stock-serial-scanned]");
+
+  const usesInlineSerialScanned = (row) => Boolean(getInlineSerialScanned(row));
+
+  const getSerialRows = (row) => {
+    if (usesInlineSerialScanned(row)) return [];
+    return [...(getInlineSerialBag(row)?.querySelectorAll(".stock-serial-row") || [])];
+  };
 
   const normalizeSerial = (value) => String(value || "").trim().toUpperCase();
 
   const collectSerials = (row) => {
+    const scanned = getInlineSerialScanned(row);
+    if (scanned) {
+      return [
+        ...new Set(
+          [...scanned.querySelectorAll("[data-stock-serial-scanned-value]")]
+            .map((el) => normalizeSerial(el.textContent))
+            .filter(Boolean)
+        ),
+      ];
+    }
     const seen = new Set();
     const serials = [];
     getSerialRows(row).forEach((serialRow) => {
@@ -2017,7 +2211,137 @@
     return serials;
   };
 
+  const inlineCommitState = new WeakMap();
+
+  const getInlineCommitState = (row) =>
+    inlineCommitState.get(row) || { busy: false, lastSerial: "", lastAt: 0 };
+
+  const dispatchInlineCommitSettled = (entry, detail = {}) => {
+    entry?.dispatchEvent(
+      new CustomEvent("myshop:serial-commit-settled", { bubbles: true, detail })
+    );
+  };
+
+  const createInlineScannedItem = (row, serial) => {
+    const scanned = getInlineSerialScanned(row);
+    if (!scanned || !serial) return null;
+    const li = document.createElement("li");
+    li.className = "stock-serial-scanned-item";
+    li.dataset.serialValue = serial;
+
+    const mark = document.createElement("span");
+    mark.className = "stock-serial-scanned-mark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.innerHTML = '<i data-lucide="check"></i>';
+    li.appendChild(mark);
+
+    const value = document.createElement("span");
+    value.className = "stock-serial-scanned-value";
+    value.setAttribute("data-stock-serial-scanned-value", "");
+    value.textContent = serial;
+    li.appendChild(value);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "stock-serial-scanned-remove";
+    remove.setAttribute("data-stock-serial-scanned-remove", "");
+    remove.setAttribute("aria-label", `Remove ${serial}`);
+    remove.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
+    li.appendChild(remove);
+
+    scanned.prepend(li);
+    if (scanned.hidden) scanned.hidden = false;
+    refreshIcons();
+    return li;
+  };
+
+  const commitInlineSerialEntry = async (row, { serial: serialOverride } = {}) => {
+    const entry = getInlineSerialEntry(row);
+    const scanned = getInlineSerialScanned(row);
+    if (!entry || !scanned) return false;
+
+    const state = getInlineCommitState(row);
+    if (state.busy) {
+      dispatchInlineCommitSettled(entry, { ok: false, reason: "busy" });
+      return false;
+    }
+
+    let serial = normalizeSerial(serialOverride || entry.value);
+    if (!serial) {
+      dispatchInlineCommitSettled(entry, { ok: false, reason: "empty" });
+      return false;
+    }
+
+    const now = Date.now();
+    if (serial === state.lastSerial && now - state.lastAt < 1000) {
+      entry.value = "";
+      entry.focus?.();
+      dispatchInlineCommitSettled(entry, { ok: false, reason: "dedupe", serial });
+      return false;
+    }
+
+    if (collectSerials(row).includes(serial)) {
+      entry.value = "";
+      entry.classList.add("is-duplicate");
+      window.setTimeout(() => entry.classList.remove("is-duplicate"), 700);
+      entry.focus?.();
+      dispatchInlineCommitSettled(entry, { ok: false, reason: "duplicate", serial });
+      return false;
+    }
+
+    if (mode === "out") {
+      const root = entry.closest("[data-serial-search-root]");
+      const firstOption = root?.querySelector(
+        ".stock-supplier-suggest-option:not([disabled])"
+      );
+      if (firstOption) {
+        const picked = normalizeSerial(firstOption.textContent);
+        if (picked) serial = picked;
+      }
+    }
+
+    entry.value = "";
+    entry.classList.remove("is-duplicate");
+    delete entry.dataset.serialBlocked;
+
+    state.busy = true;
+    inlineCommitState.set(row, state);
+    let ok = false;
+    try {
+      if (mode === "in") {
+        entry.value = serial;
+        await runSerialInStockCheck(entry, {
+          itemId: row.dataset.itemId || "",
+          container: scanned,
+          immediate: true,
+        });
+        entry.value = "";
+        if (
+          entry.dataset.serialBlocked === "1" ||
+          getSerialCheckHost(entry)?.classList.contains("is-already-in-stock")
+        ) {
+          entry.focus?.();
+          return false;
+        }
+      }
+
+      createInlineScannedItem(row, serial);
+      state.lastSerial = serial;
+      state.lastAt = Date.now();
+      ok = true;
+      refreshRowState(row);
+      return true;
+    } finally {
+      state.busy = false;
+      inlineCommitState.set(row, state);
+      entry.value = "";
+      entry.focus?.();
+      dispatchInlineCommitSettled(entry, { ok, serial });
+    }
+  };
+
   const updateSerialRemoveButtons = (row) => {
+    if (usesInlineSerialScanned(row)) return;
     const serialRows = getSerialRows(row);
     serialRows.forEach((serialRow) => {
       const removeBtn = serialRow.querySelector("[data-stock-serial-remove]");
@@ -2219,10 +2543,24 @@
 
   const resetSerialList = (row) => {
     const inputs = getInputsRow(row);
-    const list = inputs?.querySelector("[data-stock-serial-list]");
-    if (!list) return;
-    list.innerHTML = "";
-    createSerialRow(row, { enabled: row.classList.contains("is-open") });
+    const scanned = getInlineSerialScanned(row);
+    const entry = getInlineSerialEntry(row);
+    if (scanned) {
+      scanned.innerHTML = "";
+      scanned.hidden = true;
+      if (entry) {
+        entry.value = "";
+        entry.classList.remove("is-duplicate");
+        delete entry.dataset.serialBlocked;
+      }
+      inlineCommitState.set(row, { busy: false, lastSerial: "", lastAt: 0 });
+    } else {
+      const list = inputs?.querySelector("[data-stock-serial-list]");
+      if (list) {
+        list.innerHTML = "";
+        createSerialRow(row, { enabled: row.classList.contains("is-open") });
+      }
+    }
     const countEl = inputs?.querySelector("[data-stock-serial-count]");
     if (countEl) countEl.textContent = "0";
     const serialHidden = inputs?.querySelector("[data-stock-serials]");
@@ -2237,7 +2575,15 @@
     renderSummary();
   };
 
+  const focusInlineSerialEntry = (row) => {
+    getInlineSerialEntry(row)?.focus?.();
+  };
+
   const addSerialRow = (row) => {
+    if (usesInlineSerialScanned(row)) {
+      focusInlineSerialEntry(row);
+      return getInlineSerialEntry(row);
+    }
     const input = createSerialRow(row, { enabled: row.classList.contains("is-open") });
     refreshRowState(row);
     input?.focus();
@@ -2650,12 +2996,16 @@
     if (!message) {
       applyStatus.hidden = true;
       applyStatus.textContent = "";
-      applyStatus.classList.remove("is-error");
+      applyStatus.classList.remove("is-error", "is-ready");
       return;
     }
     applyStatus.hidden = false;
     applyStatus.textContent = message;
     applyStatus.classList.toggle("is-error", isError);
+    applyStatus.classList.toggle(
+      "is-ready",
+      !isError && /^Ready to /i.test(String(message))
+    );
   };
 
   const floatSupplierReady = () => {
@@ -2779,95 +3129,150 @@
     }, 180);
   };
 
+  const detailsPanelLabel = simpleCatalog ? "Finish stock-in panel" : "submit panel";
+
+  const blockSubmit = (message, focusEl) => {
+    setApplyStatus(message, true);
+    pushStockSubmitToast(message);
+    revealAndFocus(focusEl);
+    return true;
+  };
+
+  const getSerialBlockIssue = (ready) => {
+    for (const item of ready) {
+      if (!tracksSerial(item.row)) continue;
+      const blocked = getInlineSerialScanned(item.row)?.querySelector(
+        "li.is-already-in-stock, li[data-serial-blocked='1']"
+      );
+      if (blocked) {
+        return {
+          message: `Remove blocked serial first — for ${item.name}.`,
+          el: blocked,
+          row: item.row,
+        };
+      }
+      const pending = String(getInlineSerialEntry(item.row)?.value || "").trim();
+      if (pending) {
+        return {
+          message: `Press Enter to add the pending serial first — for ${item.name}.`,
+          el: getInlineSerialEntry(item.row),
+          row: item.row,
+        };
+      }
+      if (!collectSerials(item.row).length) {
+        return {
+          message: `Scan serial numbers first — for ${item.name}.`,
+          el:
+            getInlineSerialEntry(item.row) ||
+            getInputsRow(item.row)?.querySelector("[data-stock-serial-input]") ||
+            item.row,
+          row: item.row,
+        };
+      }
+    }
+    return null;
+  };
+
   const focusFirstIncomplete = (ready) => {
     if (isCatalogBusy()) {
-      setApplyStatus("Still loading items — wait a moment, then submit.", true);
-      revealAndFocus(submitBtn || floatRoot);
-      return true;
+      return blockSubmit(
+        "Wait — items are still loading. Try again in a moment.",
+        submitBtn || floatRoot
+      );
     }
     if (!ready.length) {
-      setApplyStatus("Add at least one item with quantity before submitting.", true);
-      revealAndFocus(
+      return blockSubmit(
+        simpleCatalog
+          ? "Add items first — search and select an item above."
+          : "Add items first — enter quantity on at least one item.",
         panel.querySelector("[data-item-search]") ||
           panel.querySelector("[data-stock-qty]") ||
           panel
       );
-      return true;
+    }
+    const serialIssue = getSerialBlockIssue(ready);
+    if (serialIssue) {
+      setRowOpen(serialIssue.row, true);
+      return blockSubmit(serialIssue.message, serialIssue.el);
     }
     if (mode === "in") {
       autoApplyDetailsToReady({ silent: true });
       const details = readFloatDetails();
       if (stockReq.in.supplier) {
         if (!details.phone || details.phone.length !== 9) {
-          setApplyStatus("Enter a valid supplier phone.", true);
-          revealAndFocus(floatSupplierPhone);
-          return true;
+          return blockSubmit(
+            `Enter supplier phone first — in ${detailsPanelLabel}.`,
+            floatSupplierPhone
+          );
         }
         if (!details.name) {
-          setApplyStatus("Enter or select supplier name.", true);
-          revealAndFocus(floatSupplierName);
-          return true;
+          return blockSubmit(
+            `Enter supplier name first — in ${detailsPanelLabel}.`,
+            floatSupplierName
+          );
         }
       }
       if (stockReq.in.payment_status && !details.payment) {
-        setApplyStatus("Select payment status before submitting.", true);
-        revealAndFocus(floatPayment);
-        return true;
+        return blockSubmit(
+          `Select payment status first — in ${detailsPanelLabel}.`,
+          floatPayment
+        );
       }
       const missingPrice = ready.find((item) => !rowHasBuyingPrice(item.row));
       if (missingPrice) {
         setRowOpen(missingPrice.row, true);
-        setApplyStatus(`Enter buying price for ${missingPrice.name}.`, true);
-        revealAndFocus(
+        return blockSubmit(
+          `Enter buying price first — for ${missingPrice.name}.`,
           getInputsRow(missingPrice.row)?.querySelector("[data-stock-buying-price]") ||
             missingPrice.row
         );
-        return true;
       }
       if (!ready.every((item) => rowHasSupplierDetails(item.row))) {
-        setApplyStatus(
-          "Supplier details are incomplete — check the submit panel.",
-          true
+        return blockSubmit(
+          `Apply supplier details first — use ${detailsPanelLabel}.`,
+          floatPayment || floatSupplierPhone
         );
-        revealAndFocus(floatPayment || floatSupplierPhone);
-        return true;
+      }
+      if (requiresLoginCode && !loginVerified) {
+        return blockSubmit(
+          "Enter staff ID first — 6-digit verification below.",
+          loginCodeInput
+        );
       }
     }
     if (mode === "out") {
       autoApplyDetailsToReady({ silent: true });
       const details = readFloatDetails();
       if (stockReq.out.reason && !details.reason) {
-        setApplyStatus("Choose a stock-out reason.", true);
-        revealAndFocus(floatReason);
-        return true;
+        return blockSubmit(
+          `Choose stock-out reason first — in ${detailsPanelLabel}.`,
+          floatReason
+        );
       }
       if (stockReq.out.refund) {
         if (details.refund !== "yes" && details.refund !== "no") {
-          setApplyStatus("Choose whether a refund applies.", true);
-          revealAndFocus(floatRefund);
-          return true;
+          return blockSubmit(
+            `Choose refund option first — in ${detailsPanelLabel}.`,
+            floatRefund
+          );
         }
         if (details.refund === "yes") {
           const amount = Number(details.refundAmount);
           if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
-            setApplyStatus(
-              "Enter a whole-number refund amount greater than zero.",
-              true
+            return blockSubmit(
+              "Enter refund amount first — whole number greater than zero.",
+              floatRefundAmount
             );
-            revealAndFocus(floatRefundAmount);
-            return true;
           }
         }
       }
       const missingOut = ready.find((item) => !rowHasOutDetails(item.row));
       if (missingOut) {
         setRowOpen(missingOut.row, true);
-        setApplyStatus(
-          "Stock-out details are incomplete — check the submit panel.",
-          true
+        return blockSubmit(
+          `Complete stock-out details first — in ${detailsPanelLabel}.`,
+          floatReason
         );
-        revealAndFocus(floatReason);
-        return true;
       }
     }
     return false;
@@ -3336,7 +3741,19 @@
     if (addBtn) {
       event.preventDefault();
       const row = findItemRowFromNode(addBtn);
-      if (row) addSerialRow(row);
+      if (row) focusInlineSerialEntry(row) || addSerialRow(row);
+      return;
+    }
+
+    const scannedRemove = event.target.closest("[data-stock-serial-scanned-remove]");
+    if (scannedRemove) {
+      event.preventDefault();
+      const row = findItemRowFromNode(scannedRemove);
+      scannedRemove.closest("li")?.remove();
+      const scanned = row ? getInlineSerialScanned(row) : null;
+      if (scanned && !scanned.querySelector("li")) scanned.hidden = true;
+      if (row) refreshRowState(row);
+      if (row) focusInlineSerialEntry(row);
       return;
     }
 
@@ -3428,11 +3845,19 @@
     if (event.key !== "Enter") return;
     const target = event.target;
     if (!(target instanceof Element)) return;
+    const row = findItemRowFromNode(target);
+    if (!row) return;
+
+    if (target.matches("[data-stock-serial-entry]")) {
+      event.preventDefault();
+      event.stopPropagation();
+      commitInlineSerialEntry(row);
+      return;
+    }
+
     if (!target.matches("[data-stock-serial-input]")) return;
     event.preventDefault();
     event.stopPropagation();
-    const row = findItemRowFromNode(target);
-    if (!row) return;
 
     if (mode === "out") {
       const root = target.closest("[data-serial-search-root]");
@@ -3459,11 +3884,19 @@
   panel.addEventListener("myshop:serial-applied", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (!target.matches("[data-stock-serial-input]")) return;
-    if (mode !== "in") return;
+    if (!target.matches("[data-stock-serial-entry], [data-stock-serial-input]")) return;
     const row = findItemRowFromNode(target);
     if (!row || !tracksSerial(row)) return;
+
+    if (target.matches("[data-stock-serial-entry]")) {
+      const serial = normalizeSerial(event.detail?.serial || target.value);
+      commitInlineSerialEntry(row, serial ? { serial } : {});
+      return;
+    }
+
+    if (mode !== "in") return;
     const list =
+      getInputsBag(row)?.querySelector("[data-stock-serial-scanned]") ||
       getInputsBag(row)?.querySelector("[data-stock-serial-list]") ||
       row.querySelector("[data-stock-serial-list]");
     queueSerialInStockCheck(target, {
@@ -3541,7 +3974,7 @@
         }
       }
       if (target.matches("[data-supplier-search]")) queueSupplierSearch(target);
-      if (mode === "out" && target.matches("[data-serial-search]")) {
+      if (mode === "out" && target.matches("[data-serial-search], [data-stock-serial-entry]")) {
         const start = target.selectionStart;
         const end = target.selectionEnd;
         target.value = target.value.toUpperCase();
@@ -3550,7 +3983,34 @@
         }
         queueSerialSearch(target);
       }
-      if (mode === "in" && target.matches("[data-stock-serial-input]")) {
+      if (mode === "in" && target.matches("[data-stock-serial-entry]")) {
+        if (target.dataset.serialScanApply === "1") {
+          delete target.dataset.serialScanApply;
+          return;
+        }
+        const raw = String(target.value || "");
+        if (/[\r\n]/.test(raw)) {
+          target.value = raw.replace(/[\r\n]+/g, "").trim().toUpperCase();
+          commitInlineSerialEntry(itemRow);
+          if (loginVerified) queueAutoStockInAndPrint();
+          return;
+        }
+        const start = target.selectionStart;
+        const end = target.selectionEnd;
+        target.value = raw.toUpperCase();
+        if (typeof start === "number" && typeof end === "number") {
+          target.setSelectionRange(start, end);
+        }
+        target.classList.remove("is-duplicate");
+        const scanned =
+          getInputsBag(itemRow)?.querySelector("[data-stock-serial-scanned]") ||
+          itemRow.querySelector("[data-stock-serial-scanned]");
+        queueSerialInStockCheck(target, {
+          itemId: itemRow.dataset.itemId || "",
+          container: scanned,
+        });
+      }
+      if (mode === "in" && target.matches("[data-stock-serial-input]:not([data-stock-serial-entry])")) {
         const start = target.selectionStart;
         const end = target.selectionEnd;
         target.value = target.value.toUpperCase();
@@ -3854,13 +4314,11 @@
   };
 
   const otherSelectedSerials = (row, exceptInput) => {
-    const selected = [];
-    getSerialRows(row).forEach((serialRow) => {
-      const input = serialRow.querySelector("[data-stock-serial-input]");
-      if (!input || input === exceptInput) return;
-      const value = normalizeSerial(input.value);
-      if (value) selected.push(value);
-    });
+    const selected = collectSerials(row);
+    const pending = normalizeSerial(exceptInput?.value);
+    if (pending) {
+      return selected.filter((serial) => serial !== pending);
+    }
     return selected;
   };
 
@@ -3887,13 +4345,17 @@
       btn.querySelector("strong").textContent = serial;
       btn.addEventListener("mousedown", (event) => {
         event.preventDefault();
-        input.value = serial;
         hideSerialSuggest(root);
         const row = findItemRowFromNode(input);
         if (!row) return;
+        if (input.matches("[data-stock-serial-entry]")) {
+          input.value = serial;
+          commitInlineSerialEntry(row, { serial });
+          return;
+        }
+        input.value = serial;
         refreshRowState(row);
-        const next = addSerialRow(row);
-        next?.focus();
+        addSerialRow(row);
       });
       suggest.appendChild(btn);
     });
@@ -4009,7 +4471,10 @@
   form.addEventListener("submit", async (event) => {
     if (isCatalogBusy()) {
       event.preventDefault();
-      setApplyStatus("Still loading items — wait a moment, then submit.", true);
+      blockSubmit(
+        "Wait — items are still loading. Try again in a moment.",
+        submitBtn || floatRoot
+      );
       return;
     }
 
@@ -4049,8 +4514,7 @@
       event.preventDefault();
       const ok = await verifyLoginCode();
       if (!ok) {
-        setApplyStatus("Enter a valid staff ID to stock in.", true);
-        revealAndFocus(loginCodeInput);
+        blockSubmit("Enter staff ID first — 6-digit verification below.", loginCodeInput);
         return;
       }
     }

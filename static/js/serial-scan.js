@@ -17,8 +17,11 @@
 
   const INPUT_SELECTOR = [
     "[data-stock-serial-input]",
+    "[data-stock-serial-entry]",
     "[data-serial-sale-input]",
+    "[data-serial-sale-entry]",
     "[data-serial-input]",
+    "[data-serial-entry]",
     "[data-serial-scan]",
   ].join(",");
 
@@ -264,6 +267,9 @@
     if (readerEl) readerEl.innerHTML = "";
   };
 
+  const isContinuousTarget = (input) =>
+    Boolean(input?.closest?.("[data-serial-scan-continuous]"));
+
   const applySerial = (raw, target) => {
     const input = target || activeTarget;
     if (!input || scanLocked) return false;
@@ -282,16 +288,40 @@
       return false;
     }
 
+    const continuous = isContinuousTarget(input);
     scanLocked = true;
+    input.dataset.serialScanApply = "1";
     input.value = serial;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     input.dispatchEvent(
       new CustomEvent("myshop:serial-applied", {
         bubbles: true,
-        detail: { serial, source: "scan" },
+        detail: { serial, source: "scan", continuous },
       })
     );
+
+    if (continuous) {
+      setStatus(`Scanned: ${serial}`);
+      const unlock = () => {
+        scanLocked = false;
+        try {
+          input.focus({ preventScroll: true });
+        } catch (_) {
+          input.focus?.();
+        }
+      };
+      const fallbackTimer = window.setTimeout(unlock, 2500);
+      input.addEventListener(
+        "myshop:serial-commit-settled",
+        () => {
+          window.clearTimeout(fallbackTimer);
+          unlock();
+        },
+        { once: true }
+      );
+      return true;
+    }
 
     try {
       input.focus({ preventScroll: true });

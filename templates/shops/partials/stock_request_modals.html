@@ -138,13 +138,14 @@
                 <span>Serial numbers to transfer</span>
               </div>
               <p class="stock-request-code-hint">
-                Search and select each serial unit to send. Transfer quantity is set from the serials you enter.
+                Scan or search each serial — press Enter after each. Transfer quantity follows the serials you add.
               </p>
               {% for line in req.lines.all %}
               {% if line.item.track_serial_number %}
               <div
                 class="stock-request-serial-block"
                 data-serial-block
+                data-serial-scan-continuous
                 data-line-id="{{ line.pk }}"
                 data-item-id="{{ line.item_id }}"
                 data-qty="{{ line.transfer_max }}"
@@ -154,7 +155,22 @@
                   {{ line.item.name }}
                   <span data-serial-need>0 / {{ line.transfer_max }} selected</span>
                 </p>
-                <div class="stock-request-serial-list" data-serial-list></div>
+                <div class="stock-request-serial-entry-wrap" data-serial-search-root>
+                  <div class="stock-serial-row">
+                    <div class="stock-serial-input-wrap stock-request-serial-wrap">
+                      <input
+                        type="text"
+                        placeholder="Search serial to transfer"
+                        autocomplete="off"
+                        spellcheck="false"
+                        data-serial-entry
+                        data-serial-input
+                      >
+                    </div>
+                  </div>
+                  <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
+                </div>
+                <ul class="stock-request-serial-scanned" data-serial-scanned aria-live="polite"></ul>
               </div>
               {% endif %}
               {% endfor %}

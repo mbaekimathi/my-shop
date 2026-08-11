@@ -124,6 +124,7 @@
     const stock = Math.max(0, Math.floor(Number(item.stock) || 0));
     const price = money(item.price);
     const minPrice = money(item.min_price);
+    const maxPrice = money(item.max_price || item.min_price);
     const desc = String(item.description || "");
     const descShort = desc.length > 90 ? `${desc.slice(0, 87).trimEnd()}...` : desc;
     const name = String(item.name || "");
@@ -142,6 +143,7 @@
     article.setAttribute("data-item-description", desc);
     article.setAttribute("data-item-price", price);
     article.setAttribute("data-item-min-price", minPrice);
+    article.setAttribute("data-item-max-price", maxPrice);
     article.setAttribute("data-item-list-price", price);
     article.setAttribute("data-item-stock", String(stock));
     article.setAttribute("data-item-track-serial", trackSerial);

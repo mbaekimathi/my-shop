@@ -713,11 +713,10 @@
     suggest.innerHTML = "";
   };
 
-  const filledSerialsInBlock = (block, exceptInput = null) => {
+  const filledSerialsInBlock = (block) => {
     const values = [];
-    block.querySelectorAll("[data-serial-input]").forEach((input) => {
-      if (input === exceptInput) return;
-      const value = normalizeSerial(input.value);
+    block?.querySelectorAll("[data-serial-scanned-value]").forEach((el) => {
+      const value = normalizeSerial(el.textContent);
       if (value) values.push(value);
     });
     return values;
@@ -725,6 +724,12 @@
 
   const getQtyInput = (form, lineId) =>
     form.querySelector(`[data-transfer-qty][data-line-id="${lineId}"]`);
+
+  const getTransferSerialEntry = (block) =>
+    block?.querySelector("[data-serial-entry]");
+
+  const getTransferSerialScanned = (block) =>
+    block?.querySelector("[data-serial-scanned]");
 
   const syncSerialBlockQty = (form, block) => {
     const lineId = block.dataset.lineId;
@@ -737,53 +742,142 @@
     block.dataset.qty = String(filled.length);
     const need = block.querySelector("[data-serial-need]");
     if (need) need.textContent = `${filled.length} / ${max} selected`;
+    const scanned = getTransferSerialScanned(block);
+    if (scanned) scanned.hidden = filled.length === 0;
     return filled.length;
   };
 
-  const createSerialInput = (block, value = "") => {
-    const list = block.querySelector("[data-serial-list]");
-    if (!list) return null;
+  const createTransferScannedItem = (block, serial) => {
+    const scanned = getTransferSerialScanned(block);
+    if (!scanned || !serial) return null;
+    const li = document.createElement("li");
+    li.className = "stock-request-serial-scanned-item";
+    li.dataset.serialValue = serial;
 
-    const wrap = document.createElement("div");
-    wrap.className = "stock-serial-input-wrap stock-request-serial-wrap";
-    wrap.setAttribute("data-serial-search-root", "");
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = `serials_${block.dataset.lineId}`;
+    hidden.value = serial;
+    li.appendChild(hidden);
 
-    const input = document.createElement("input");
-    input.type = "text";
-    input.name = `serials_${block.dataset.lineId}`;
-    input.placeholder = "Search serial to transfer";
-    input.autocomplete = "off";
-    input.spellcheck = false;
-    input.value = value;
-    input.setAttribute("data-serial-input", "");
-    wrap.appendChild(input);
+    const value = document.createElement("span");
+    value.className = "stock-serial-scanned-value";
+    value.setAttribute("data-serial-scanned-value", "");
+    value.textContent = serial;
+    li.appendChild(value);
 
-    const suggest = document.createElement("div");
-    suggest.className = "stock-supplier-suggest";
-    suggest.setAttribute("data-serial-suggest", "");
-    suggest.hidden = true;
-    wrap.appendChild(suggest);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "stock-serial-scanned-remove";
+    remove.setAttribute("data-serial-scanned-remove", "");
+    remove.setAttribute("aria-label", `Remove ${serial}`);
+    remove.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
+    li.appendChild(remove);
 
-    list.appendChild(wrap);
-    return input;
+    scanned.prepend(li);
+    refreshIcons();
+    return li;
   };
 
-  const rebuildSerialSlots = (form, block, { preserve = true } = {}) => {
-    const list = block.querySelector("[data-serial-list]");
-    if (!list) return;
+  const transferCommitState = new WeakMap();
+
+  const commitTransferSerialEntry = async (block, form, { serial: override } = {}) => {
+    const entry = getTransferSerialEntry(block);
+    if (!entry || !form) return false;
+
+    const state = transferCommitState.get(block) || {
+      busy: false,
+      lastSerial: "",
+      lastAt: 0,
+    };
+    if (state.busy) return false;
+
+    let serial = normalizeSerial(override || entry.value);
+    if (!serial) return false;
+
     const max = Number(block.dataset.maxQty || 0);
-    const previous = preserve ? filledSerialsInBlock(block) : [];
-    const kept = previous.slice(0, max);
-    list.innerHTML = "";
-    if (max <= 0) {
-      block.hidden = true;
-      syncSerialBlockQty(form, block);
-      return;
+    const filled = filledSerialsInBlock(block);
+    const now = Date.now();
+    if (serial === state.lastSerial && now - state.lastAt < 1000) {
+      entry.value = "";
+      entry.focus?.();
+      return false;
     }
-    block.hidden = false;
-    kept.forEach((serial) => createSerialInput(block, serial));
-    if (kept.length < max) createSerialInput(block, "");
-    syncSerialBlockQty(form, block);
+    if (filled.includes(serial)) {
+      entry.value = "";
+      entry.classList.add("is-duplicate");
+      window.setTimeout(() => entry.classList.remove("is-duplicate"), 700);
+      entry.focus?.();
+      return false;
+    }
+    if (max > 0 && filled.length >= max) {
+      entry.value = "";
+      entry.focus?.();
+      return false;
+    }
+
+    const root = entry.closest("[data-serial-search-root]");
+    const firstOption = root?.querySelector(
+      ".stock-supplier-suggest-option:not([disabled])"
+    );
+    if (firstOption) {
+      const picked = normalizeSerial(firstOption.textContent);
+      if (picked) serial = picked;
+    }
+
+    entry.value = "";
+    hideSerialSuggest(root);
+
+    state.busy = true;
+    transferCommitState.set(block, state);
+    let ok = false;
+    try {
+      if (!serialSearchUrl) {
+        createTransferScannedItem(block, serial);
+        ok = true;
+      } else {
+        const params = new URLSearchParams({
+          item_id: block.dataset.itemId || "",
+          shop_id: supplyShopId,
+          q: serial,
+        });
+        filled.forEach((s) => params.append("exclude", s));
+        const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        const data = await response.json().catch(() => ({}));
+        const results = Array.isArray(data.results) ? data.results : [];
+        const exact = results.find((row) => normalizeSerial(row) === serial);
+        const picked = exact || (results.length === 1 ? results[0] : "");
+        if (!picked) {
+          if (results.length > 1) {
+            entry.value = serial;
+            renderSerialSuggest(entry, results);
+          }
+          return false;
+        }
+        createTransferScannedItem(block, normalizeSerial(picked));
+        ok = true;
+      }
+      if (ok) {
+        state.lastSerial = serial;
+        state.lastAt = Date.now();
+        syncSerialBlockQty(form, block);
+      }
+      return ok;
+    } finally {
+      state.busy = false;
+      transferCommitState.set(block, state);
+      entry.value = "";
+      entry.focus?.();
+      entry.dispatchEvent(
+        new CustomEvent("myshop:serial-commit-settled", {
+          bubbles: true,
+          detail: { ok, serial },
+        })
+      );
+    }
   };
 
   const initSerialPanels = (form) => {
@@ -795,7 +889,15 @@
       return;
     }
     panel.removeAttribute("hidden");
-    blocks.forEach((block) => rebuildSerialSlots(form, block, { preserve: false }));
+    blocks.forEach((block) => {
+      const scanned = getTransferSerialScanned(block);
+      if (scanned) scanned.innerHTML = "";
+      const entry = getTransferSerialEntry(block);
+      if (entry) entry.value = "";
+      transferCommitState.set(block, { busy: false, lastSerial: "", lastAt: 0 });
+      syncSerialBlockQty(form, block);
+    });
+    window.MyShopSerialScan?.enhance?.(panel);
     refreshIcons();
   };
 
@@ -814,20 +916,10 @@
   };
 
   const applySerialChoice = (input, serial) => {
-    const block = input.closest("[data-serial-block]");
-    const form = input.closest("[data-request-form]");
+    const block = input?.closest?.("[data-serial-block]");
+    const form = block?.closest?.("[data-request-form]");
     if (!block || !form) return;
-    const max = Number(block.dataset.maxQty || 0);
-    const others = filledSerialsInBlock(block, input);
-    if (others.includes(serial)) return;
-    if (others.length >= max) return;
-    input.value = serial;
-    hideSerialSuggest(input.closest("[data-serial-search-root]"));
-    rebuildSerialSlots(form, block, { preserve: true });
-    const next = [...block.querySelectorAll("[data-serial-input]")].find(
-      (el) => !normalizeSerial(el.value)
-    );
-    next?.focus();
+    commitTransferSerialEntry(block, form, { serial });
   };
 
   const renderSerialSuggest = (input, results) => {
@@ -875,7 +967,7 @@
       shop_id: supplyShopId,
       q: query,
     });
-    filledSerialsInBlock(block, input).forEach((serial) =>
+    filledSerialsInBlock(block).forEach((serial) =>
       params.append("exclude", serial)
     );
 
@@ -1039,7 +1131,7 @@
             ? "Select at least one serial number to transfer."
             : "Enter at least one quantity to transfer."
         );
-        form.querySelector("[data-serial-input]")?.focus();
+        form.querySelector("[data-serial-entry]")?.focus();
         return false;
       }
 
@@ -1053,12 +1145,12 @@
           window.alert(
             `Select ${qty} serial number${qty === 1 ? "" : "s"} for this item before accepting.`
           );
-          block.querySelector("[data-serial-input]")?.focus();
+          block.querySelector("[data-serial-entry]")?.focus();
           return false;
         }
         if (qty > 0 && filled.length === 0) {
           window.alert("Serial-tracked items require serial numbers to transfer.");
-          block.querySelector("[data-serial-input]")?.focus();
+          block.querySelector("[data-serial-entry]")?.focus();
           return false;
         }
       }
@@ -1174,21 +1266,54 @@
   });
 
   if (requestModal) {
+    requestModal.addEventListener("click", (event) => {
+      const remove = event.target.closest?.("[data-serial-scanned-remove]");
+      if (!remove) return;
+      const block = remove.closest("[data-serial-block]");
+      const form = block?.closest("[data-request-form]");
+      remove.closest("li")?.remove();
+      if (block && form) syncSerialBlockQty(form, block);
+      getTransferSerialEntry(block)?.focus?.();
+    });
     requestModal.addEventListener("input", (event) => {
       const input = event.target;
-      if (!input.matches?.("[data-serial-input]")) return;
+      if (!input.matches?.("[data-serial-entry], [data-serial-input]")) return;
       const block = input.closest("[data-serial-block]");
       const form = input.closest("[data-request-form]");
-      if (block && form && !normalizeSerial(input.value)) {
-        rebuildSerialSlots(form, block, { preserve: true });
-      } else if (block && form) {
-        syncSerialBlockQty(form, block);
+      if (!block || !form) return;
+      const raw = String(input.value || "");
+      if (/[\r\n]/.test(raw)) {
+        const serial = normalizeSerial(raw.replace(/[\r\n]+/g, ""));
+        input.value = serial;
+        commitTransferSerialEntry(block, form, serial ? { serial } : {});
+        return;
       }
+      input.value = raw.toUpperCase();
+      input.classList.remove("is-duplicate");
       queueSerialSearch(input);
+    });
+    requestModal.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const input = event.target;
+      if (!input.matches?.("[data-serial-entry], [data-serial-input]")) return;
+      event.preventDefault();
+      const block = input.closest("[data-serial-block]");
+      const form = input.closest("[data-request-form]");
+      if (block && form) commitTransferSerialEntry(block, form);
+    });
+    requestModal.addEventListener("myshop:serial-applied", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches("[data-serial-entry], [data-serial-input]")) return;
+      const block = target.closest("[data-serial-block]");
+      const form = block?.closest("[data-request-form]");
+      if (!block || !form) return;
+      const serial = normalizeSerial(event.detail?.serial || target.value);
+      commitTransferSerialEntry(block, form, serial ? { serial } : {});
     });
     requestModal.addEventListener("focusin", (event) => {
       const input = event.target;
-      if (!input.matches?.("[data-serial-input]")) return;
+      if (!input.matches?.("[data-serial-entry], [data-serial-input]")) return;
       queueSerialSearch(input);
     });
     requestModal.addEventListener("focusout", (event) => {
@@ -1237,7 +1362,9 @@
     );
     const serialSaleStock = serialSaleModal?.querySelector("[data-serial-sale-stock]");
     const serialSaleForm = serialSaleModal?.querySelector("[data-serial-sale-form]");
-    const serialSaleList = serialSaleModal?.querySelector("[data-serial-sale-list]");
+    const serialSaleEntry = serialSaleModal?.querySelector("[data-serial-sale-entry]");
+    const serialSaleEntryWrap = serialSaleModal?.querySelector("[data-serial-sale-search-root]");
+    const serialSaleScanned = serialSaleModal?.querySelector("[data-serial-sale-scanned]");
     const serialSaleCount = serialSaleModal?.querySelector("[data-serial-sale-count]");
     const serialSaleStatus = serialSaleModal?.querySelector("[data-serial-sale-status]");
     const serialSaleConfirm = serialSaleModal?.querySelector("[data-serial-sale-confirm]");
@@ -1340,7 +1467,7 @@
       }
     });
 
-    /** @type {Map<string, {id:string, name:string, category:string, description:string, price:number, listPrice:number, minPrice:number, stock:number, image:string, qty:number, trackSerial?:boolean, serials?:string[]}>} */
+    /** @type {Map<string, {id:string, name:string, category:string, description:string, price:number, listPrice:number, minPrice:number, maxPrice:number, stock:number, image:string, qty:number, trackSerial?:boolean, serials?:string[]}>} */
     const cart = new Map();
     let activeProductId = "";
 
@@ -2648,6 +2775,12 @@
       const minPrice = roundMoney(
         el?.getAttribute?.("data-item-min-price") || el?.dataset?.itemMinPrice || 0
       );
+      const maxPrice = roundMoney(
+        el?.getAttribute?.("data-item-max-price") ||
+          el?.dataset?.itemMaxPrice ||
+          listPrice ||
+          minPrice
+      );
       const price = roundMoney(
         el?.getAttribute?.("data-item-price") || el?.dataset?.itemPrice || listPrice
       );
@@ -2668,6 +2801,7 @@
         price,
         listPrice,
         minPrice,
+        maxPrice,
         stock: Math.max(
           0,
           Math.floor(
@@ -2685,13 +2819,16 @@
       };
     };
 
-    const clampPrice = (price, minPrice, listPrice) => {
+    const clampPrice = (price, minPrice, maxPrice, listPrice = maxPrice) => {
       let next = roundMoney(price);
-      if (!Number.isFinite(next)) next = listPrice;
+      if (!Number.isFinite(next)) next = listPrice > 0 ? listPrice : maxPrice;
       if (!discountEnabled) {
         return listPrice > 0 ? listPrice : Math.max(0, next);
       }
-      if (minPrice > 0 && next < minPrice) next = minPrice;
+      const min = roundMoney(minPrice);
+      const max = roundMoney(maxPrice);
+      if (min > 0 && next < min) next = min;
+      if (max > 0 && next > max) next = max;
       if (next < 0) next = 0;
       return next;
     };
@@ -2707,6 +2844,7 @@
           const qty = Math.max(1, Math.floor(Number(line.qty) || 1));
           const listPrice = Number(line.listPrice || line.price) || 0;
           const minPrice = Number(line.minPrice) || 0;
+          const maxPrice = Number(line.maxPrice || line.listPrice || line.minPrice) || 0;
           const storedPrice = Number(line.price) || 0;
           const serials = Array.isArray(line.serials)
             ? line.serials
@@ -2720,10 +2858,11 @@
             category: String(line.category || ""),
             description: String(line.description || ""),
             price: discountEnabled
-              ? clampPrice(storedPrice, minPrice, listPrice)
+              ? clampPrice(storedPrice, minPrice, maxPrice, listPrice)
               : listPrice,
             listPrice,
             minPrice,
+            maxPrice,
             stock: Math.max(0, Math.floor(Number(line.stock) || 0)),
             image: String(line.image || ""),
             qty: trackSerial && serials.length ? serials.length : qty,
@@ -2773,11 +2912,13 @@
           price: 0,
           listPrice: 0,
           minPrice: 0,
+          maxPrice: 0,
           image: "",
         };
       const listPrice = roundMoney(base.listPrice ?? base.price ?? 0);
       const minPrice = roundMoney(base.minPrice ?? 0);
-      const price = clampPrice(base.price ?? listPrice, minPrice, listPrice);
+      const maxPrice = roundMoney(base.maxPrice ?? listPrice ?? minPrice);
+      const price = clampPrice(base.price ?? listPrice, minPrice, maxPrice, listPrice);
       const trackSerial = Boolean(base.trackSerial || meta?.trackSerial);
       let serials = Array.isArray(meta?.serials)
         ? meta.serials
@@ -2806,6 +2947,7 @@
         price,
         listPrice,
         minPrice,
+        maxPrice,
         stock,
         image: base.image || "",
         qty: trackSerial && serials.length ? serials.length : nextQty,
@@ -2832,17 +2974,21 @@
       if (!base) return null;
       const listPrice = roundMoney(base.listPrice ?? meta?.listPrice ?? base.price ?? 0);
       const minPrice = roundMoney(base.minPrice ?? meta?.minPrice ?? 0);
-      const nextPrice = clampPrice(price, minPrice, listPrice);
+      const maxPrice = roundMoney(
+        base.maxPrice ?? meta?.maxPrice ?? listPrice ?? minPrice
+      );
+      const nextPrice = clampPrice(price, minPrice, maxPrice, listPrice);
       if (existing) {
         existing.price = nextPrice;
         existing.listPrice = listPrice;
         existing.minPrice = minPrice;
+        existing.maxPrice = maxPrice;
         cart.set(id, existing);
       }
       return nextPrice;
     };
 
-    const syncPriceHint = (minPrice, listPrice, salePrice) => {
+    const syncPriceHint = (minPrice, maxPrice, salePrice, listPrice = maxPrice) => {
       if (!productPriceHint) return;
       if (!discountEnabled) {
         productPriceHint.textContent =
@@ -2852,6 +2998,7 @@
       }
       const parts = [];
       if (minPrice > 0) parts.push(`Min ${money(minPrice)}`);
+      if (maxPrice > 0) parts.push(`Max ${money(maxPrice)}`);
       if (listPrice > 0) parts.push(`List ${money(listPrice)}`);
       if (salePrice + 0.0001 < listPrice) parts.push("Discount applied");
       productPriceHint.textContent = parts.join(" · ");
@@ -2919,6 +3066,12 @@
       const minPrice = roundMoney(
         productModal.dataset.itemMinPrice || line?.minPrice || 0
       );
+      const maxPrice = roundMoney(
+        productModal.dataset.itemMaxPrice ||
+          line?.maxPrice ||
+          listPrice ||
+          minPrice
+      );
       const salePrice = roundMoney(
         discountEnabled
           ? line?.price ?? productModal.dataset.itemPrice ?? listPrice
@@ -2928,6 +3081,9 @@
         productPriceInput.min = String(
           discountEnabled ? minPrice || 0 : listPrice || 0
         );
+        productPriceInput.max = String(
+          discountEnabled ? maxPrice || 0 : listPrice || 0
+        );
         productPriceInput.value = salePrice.toFixed(2);
         productPriceInput.readOnly = !discountEnabled;
         productPriceInput.tabIndex = discountEnabled ? 0 : -1;
@@ -2935,7 +3091,7 @@
       productPriceInput
         ?.closest(".shop-product-price-field")
         ?.classList.toggle("is-locked", !discountEnabled);
-      syncPriceHint(minPrice, listPrice, salePrice);
+      syncPriceHint(minPrice, maxPrice, salePrice, listPrice);
     };
 
     const syncFab = () => {
@@ -2986,7 +3142,8 @@
       const existing = cart.get(item.id);
       const salePrice = roundMoney(
         discountEnabled
-          ? existing?.price ?? item.listPrice
+          ? existing?.price ??
+              clampPrice(item.listPrice, item.minPrice, item.maxPrice, item.listPrice)
           : item.listPrice
       );
       activeProductId = item.id;
@@ -2998,6 +3155,7 @@
       productModal.dataset.itemPrice = String(salePrice);
       productModal.dataset.itemListPrice = String(item.listPrice);
       productModal.dataset.itemMinPrice = String(item.minPrice);
+      productModal.dataset.itemMaxPrice = String(item.maxPrice);
       productModal.dataset.itemImage = item.image;
       productModal.dataset.itemTrackSerial = item.trackSerial ? "1" : "0";
 
@@ -3008,6 +3166,9 @@
         productPriceInput.min = String(
           discountEnabled ? item.minPrice || 0 : item.listPrice || 0
         );
+        productPriceInput.max = String(
+          discountEnabled ? item.maxPrice || 0 : item.listPrice || 0
+        );
         productPriceInput.value = salePrice.toFixed(2);
         productPriceInput.readOnly = !discountEnabled;
         productPriceInput.tabIndex = discountEnabled ? 0 : -1;
@@ -3015,7 +3176,7 @@
       productPriceInput
         ?.closest(".shop-product-price-field")
         ?.classList.toggle("is-locked", !discountEnabled);
-      syncPriceHint(item.minPrice, item.listPrice, salePrice);
+      syncPriceHint(item.minPrice, item.maxPrice, salePrice, item.listPrice);
       if (productStock) {
         productStock.textContent =
           item.stock > 0 ? `${item.stock} in stock` : "Out of stock";
@@ -3043,6 +3204,7 @@
       proxy.setAttribute("data-item-price", String(line.listPrice || line.price || 0));
       proxy.setAttribute("data-item-list-price", String(line.listPrice || line.price || 0));
       proxy.setAttribute("data-item-min-price", String(line.minPrice || 0));
+      proxy.setAttribute("data-item-max-price", String(line.maxPrice || line.listPrice || 0));
       proxy.setAttribute("data-item-stock", String(line.stock || 0));
       proxy.setAttribute(
         "data-item-track-serial",
@@ -3117,6 +3279,9 @@
         priceInput.type = "number";
         priceInput.className = "shop-cart-price-input";
         priceInput.min = String(discountEnabled ? line.minPrice || 0 : line.listPrice || 0);
+        priceInput.max = String(
+          discountEnabled ? line.maxPrice || line.listPrice || 0 : line.listPrice || 0
+        );
         priceInput.step = "0.01";
         priceInput.inputMode = "decimal";
         priceInput.value = roundMoney(
@@ -3133,23 +3298,18 @@
 
         const priceHint = document.createElement("span");
         priceHint.className = "shop-cart-price-hint";
-        if (
-          discountEnabled &&
-          line.minPrice > 0 &&
-          line.listPrice > 0 &&
-          line.price + 0.0001 < line.listPrice
-        ) {
-          priceHint.classList.add("is-discount");
-          priceHint.textContent = `Min ${money(line.minPrice)} · List ${money(line.listPrice)}`;
+        if (discountEnabled && line.minPrice > 0 && line.maxPrice > 0) {
+          priceHint.textContent = `Min ${money(line.minPrice)} · Max ${money(line.maxPrice)}`;
+          if (
+            line.listPrice > 0 &&
+            line.price + 0.0001 < line.listPrice
+          ) {
+            priceHint.classList.add("is-discount");
+          }
         } else if (discountEnabled && line.minPrice > 0) {
           priceHint.textContent = `Min ${money(line.minPrice)}`;
-        } else if (
-          discountEnabled &&
-          line.listPrice > 0 &&
-          line.price + 0.0001 < line.listPrice
-        ) {
-          priceHint.classList.add("is-discount");
-          priceHint.textContent = `List ${money(line.listPrice)}`;
+        } else if (discountEnabled && line.maxPrice > 0) {
+          priceHint.textContent = `Max ${money(line.maxPrice)}`;
         }
 
         copy.append(name, priceField);
@@ -3248,12 +3408,10 @@
         });
       if (serialSaleHint) {
         serialSaleHint.textContent = isSerialSaleLast4Mode()
-          ? "Type the last 4 digits, then select a match to fill the whole serial. Link the client in the cart."
-          : "Search the full serial and pick available stock at this shop. Link the client in the cart.";
+          ? "Type last 4 digits or scan full serial — press Enter after each. Add to cart when finished."
+          : "Scan continuously — press Enter after each serial. Add to cart when finished.";
       }
-      serialSaleList
-        ?.querySelectorAll("[data-serial-sale-input]")
-        .forEach((input) => syncSerialSaleInputMode(input));
+      syncSerialSaleInputMode(serialSaleEntry);
     };
 
     const syncSerialSaleInputMode = (input) => {
@@ -3284,25 +3442,22 @@
       } catch (_err) {
         /* ignore */
       }
-      serialSaleList?.querySelectorAll("[data-serial-sale-input]").forEach((input) => {
-        hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
+      if (serialSaleEntry) {
+        hideSerialSaleSuggest(serialSaleEntryWrap);
         if (isSerialSaleLast4Mode()) {
-          if (input.dataset.serialResolved === "1") {
-            // Keep already-chosen full serials.
-            syncSerialSaleInputMode(input);
-            return;
+          if (serialSaleEntry.dataset.serialResolved !== "1") {
+            const raw = String(serialSaleEntry.value || "")
+              .trim()
+              .toUpperCase()
+              .replace(/[^A-Z0-9]/g, "");
+            serialSaleEntry.value = raw.slice(-4);
+            delete serialSaleEntry.dataset.serialResolved;
           }
-          const raw = String(input.value || "")
-            .trim()
-            .toUpperCase()
-            .replace(/[^A-Z0-9]/g, "");
-          input.value = raw.slice(-4);
-          delete input.dataset.serialResolved;
         } else {
-          delete input.dataset.serialResolved;
+          delete serialSaleEntry.dataset.serialResolved;
         }
-        syncSerialSaleInputMode(input);
-      });
+        syncSerialSaleInputMode(serialSaleEntry);
+      }
       syncSerialSaleMatchModeUi();
       syncSerialSaleCount();
       setSerialSaleStatus(
@@ -3311,12 +3466,7 @@
           : "Full serial search mode."
       );
       if (refocus) {
-        const focusInput =
-          [...(serialSaleList?.querySelectorAll("[data-serial-sale-input]") || [])].find(
-            (el) => el.dataset.serialResolved !== "1"
-          ) || serialSaleList?.querySelector("[data-serial-sale-input]");
-        focusInput?.focus();
-        if (focusInput) queueSerialSaleSearch(focusInput);
+        focusSerialSaleEntry();
       }
     };
 
@@ -3328,63 +3478,267 @@
     };
 
     const collectSerialSaleValues = () => {
-      if (!serialSaleList) return [];
-      const seen = new Set();
-      const serials = [];
-      serialSaleList.querySelectorAll("[data-serial-sale-input]").forEach((input) => {
-        const value = String(input.value || "").trim().toUpperCase();
-        if (!value || seen.has(value)) return;
-        // Last-4 typing is not a selected serial until a suggestion is chosen.
-        if (isSerialSaleLast4Mode() && input.dataset.serialResolved !== "1") return;
-        seen.add(value);
-        serials.push(value);
-      });
-      return serials;
+      if (!serialSaleScanned) return [];
+      return [...serialSaleScanned.querySelectorAll("[data-serial-sale-scanned-value]")]
+        .map((el) => String(el.textContent || "").trim().toUpperCase())
+        .filter(Boolean);
     };
+
+    const serialSaleScannedEmpty = serialSaleModal?.querySelector(
+      "[data-serial-sale-scanned-empty]"
+    );
 
     const syncSerialSaleCount = () => {
       const count = collectSerialSaleValues().length;
       if (serialSaleCount) {
-        serialSaleCount.textContent = `${count} selected`;
+        serialSaleCount.textContent =
+          count === 1 ? "1 selected" : `${count} selected`;
+        serialSaleCount.classList.toggle("is-active", count > 0);
       }
-      const rows = [...(serialSaleList?.querySelectorAll(".shop-serial-row") || [])];
-      rows.forEach((row) => {
-        const remove = row.querySelector("[data-serial-sale-remove]");
-        if (remove) remove.hidden = rows.length <= 1;
-      });
+      if (serialSaleScanned) {
+        serialSaleScanned.hidden = count === 0;
+      }
+      if (serialSaleScannedEmpty) {
+        serialSaleScannedEmpty.hidden = count > 0;
+      }
       return count;
     };
 
-    const otherSerialSaleValues = (exceptInput) => {
-      const values = new Set();
-      serialSaleList?.querySelectorAll("[data-serial-sale-input]").forEach((input) => {
-        if (input === exceptInput) return;
-        const value = String(input.value || "").trim().toUpperCase();
-        if (value) values.add(value);
-      });
-      return values;
+    const clearSerialSaleEntry = () => {
+      if (!serialSaleEntry) return;
+      serialSaleEntry.value = "";
+      serialSaleEntry.classList.remove("is-duplicate");
+      delete serialSaleEntry.dataset.serialResolved;
+      syncSerialSaleInputMode(serialSaleEntry);
+      hideSerialSaleSuggest(serialSaleEntryWrap);
     };
 
-    const applySerialSaleChoice = (input, serial) => {
-      if (!input) return;
-      const value = String(serial || "").trim().toUpperCase();
-      if (!value) return;
-      if (otherSerialSaleValues(input).has(value)) {
-        setSerialSaleStatus("That serial is already selected.", { error: true });
-        return;
-      }
-      input.value = value;
-      input.dataset.serialResolved = "1";
-      syncSerialSaleInputMode(input);
-      hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
-      setSerialSaleStatus(
-        isSerialSaleLast4Mode() ? `Filled full serial ${value}.` : ""
-      );
+    const focusSerialSaleEntry = () => {
+      serialSaleEntry?.focus({ preventScroll: true });
+    };
+
+    const createSerialSaleScannedItem = (serial) => {
+      if (!serialSaleScanned || !serial) return null;
+      const li = document.createElement("li");
+      li.className = "shop-serial-scanned-item";
+      li.dataset.serialValue = serial;
+
+      const mark = document.createElement("span");
+      mark.className = "shop-serial-scanned-mark";
+      mark.setAttribute("aria-hidden", "true");
+      mark.innerHTML = '<i data-lucide="check"></i>';
+      li.appendChild(mark);
+
+      const value = document.createElement("span");
+      value.className = "shop-serial-scanned-value";
+      value.setAttribute("data-serial-sale-scanned-value", "");
+      value.textContent = serial;
+      li.appendChild(value);
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "shop-serial-scanned-remove";
+      remove.setAttribute("data-serial-sale-scanned-remove", "");
+      remove.setAttribute("aria-label", `Remove ${serial}`);
+      remove.innerHTML = '<i data-lucide="trash-2" aria-hidden="true"></i>';
+      li.appendChild(remove);
+
+      serialSaleScanned.prepend(li);
       syncSerialSaleCount();
-      const next = [...(serialSaleList?.querySelectorAll("[data-serial-sale-input]") || [])].find(
-        (el) => el !== input && !String(el.value || "").trim()
+      refreshIcons();
+      return li;
+    };
+
+    const applySerialSaleChoice = (serial, { fromSuggest = false } = {}) => {
+      const value = String(serial || "").trim().toUpperCase();
+      if (!value) return false;
+      if (collectSerialSaleValues().includes(value)) {
+        setSerialSaleStatus("That serial is already selected.", { error: true });
+        return false;
+      }
+      if (
+        serialSaleItem?.stock > 0 &&
+        collectSerialSaleValues().length >= serialSaleItem.stock
+      ) {
+        setSerialSaleStatus("No more stock available for another serial.", {
+          error: true,
+        });
+        return false;
+      }
+      createSerialSaleScannedItem(value);
+      clearSerialSaleEntry();
+      setSerialSaleStatus(
+        fromSuggest && isSerialSaleLast4Mode() ? `Added ${value}.` : ""
       );
-      if (next) next.focus();
+      focusSerialSaleEntry();
+      return true;
+    };
+
+    let serialSaleCommitBusy = false;
+    let lastSerialSaleCommitSerial = "";
+    let lastSerialSaleCommitAt = 0;
+    const SERIAL_SALE_COMMIT_DEDUPE_MS = 1000;
+
+    const dispatchSerialSaleCommitSettled = (detail = {}) => {
+      serialSaleEntry?.dispatchEvent(
+        new CustomEvent("myshop:serial-commit-settled", { bubbles: true, detail })
+      );
+    };
+
+    const commitSerialSaleEntry = async ({ serial: serialOverride } = {}) => {
+      if (serialSaleCommitBusy || !serialSaleEntry || !serialSaleItem?.id) {
+        dispatchSerialSaleCommitSettled({ ok: false, reason: "busy" });
+        return false;
+      }
+
+      let serial = String(serialOverride || serialSaleEntry.value || "")
+        .trim()
+        .toUpperCase();
+      if (!serial) {
+        dispatchSerialSaleCommitSettled({ ok: false, reason: "empty" });
+        return false;
+      }
+
+      const now = Date.now();
+      if (
+        serial === lastSerialSaleCommitSerial &&
+        now - lastSerialSaleCommitAt < SERIAL_SALE_COMMIT_DEDUPE_MS
+      ) {
+        clearSerialSaleEntry();
+        focusSerialSaleEntry();
+        dispatchSerialSaleCommitSettled({ ok: false, reason: "dedupe", serial });
+        return false;
+      }
+
+      if (collectSerialSaleValues().includes(serial)) {
+        clearSerialSaleEntry();
+        serialSaleEntry.classList.add("is-duplicate");
+        window.setTimeout(() => serialSaleEntry.classList.remove("is-duplicate"), 700);
+        setSerialSaleStatus("That serial is already selected.", { error: true });
+        focusSerialSaleEntry();
+        dispatchSerialSaleCommitSettled({ ok: false, reason: "duplicate", serial });
+        return false;
+      }
+
+      if (
+        serialSaleItem.stock > 0 &&
+        collectSerialSaleValues().length >= serialSaleItem.stock
+      ) {
+        setSerialSaleStatus("No more stock available for another serial.", {
+          error: true,
+        });
+        dispatchSerialSaleCommitSettled({ ok: false, reason: "stock", serial });
+        return false;
+      }
+
+      const resolved = serialSaleEntry.dataset.serialResolved === "1";
+      // Clear immediately so the next scan never appends to the same field.
+      clearSerialSaleEntry();
+
+      serialSaleCommitBusy = true;
+      let ok = false;
+      try {
+        if (isSerialSaleLast4Mode() && !resolved && serial.length <= 4) {
+          if (!serialSearchUrl) {
+            setSerialSaleStatus("Select a full serial from the suggestions.", {
+              error: true,
+            });
+            return false;
+          }
+          const params = new URLSearchParams({
+            item_id: String(serialSaleItem.id),
+            shop_id: String(shopId),
+            q: serial.slice(-4),
+            match: "last4",
+          });
+          collectSerialSaleValues().forEach((s) => params.append("exclude", s));
+          const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+          });
+          const data = await response.json().catch(() => ({}));
+          const results = Array.isArray(data.results) ? data.results : [];
+          if (results.length === 1) {
+            ok = applySerialSaleChoice(results[0], { fromSuggest: true });
+            if (ok) {
+              lastSerialSaleCommitSerial = String(results[0]).trim().toUpperCase();
+              lastSerialSaleCommitAt = Date.now();
+            }
+            return ok;
+          }
+          if (results.length > 1) {
+            serialSaleEntry.value = serial;
+            syncSerialSaleInputMode(serialSaleEntry);
+            renderSerialSaleSuggest(serialSaleEntry, results);
+            setSerialSaleStatus(
+              "Several serials end with those digits — select one.",
+              { error: true }
+            );
+            return false;
+          }
+          setSerialSaleStatus(
+            "No in-stock serial ends with those digits. Check and try again.",
+            { error: true }
+          );
+          return false;
+        }
+
+        if (!serialSearchUrl) {
+          ok = applySerialSaleChoice(serial);
+          if (ok) {
+            lastSerialSaleCommitSerial = serial;
+            lastSerialSaleCommitAt = Date.now();
+          }
+          return ok;
+        }
+
+        const params = new URLSearchParams({
+          item_id: String(serialSaleItem.id),
+          shop_id: String(shopId),
+          q: serial,
+          match: isSerialSaleLast4Mode() ? "last4" : "contains",
+        });
+        collectSerialSaleValues().forEach((s) => params.append("exclude", s));
+        const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          setSerialSaleStatus(data.error || "Could not search serials.", {
+            error: true,
+          });
+          return false;
+        }
+        const results = Array.isArray(data.results) ? data.results : [];
+        const exact = results.find((row) => String(row || "").toUpperCase() === serial);
+        const picked = exact || (results.length === 1 ? results[0] : "");
+        if (picked) {
+          ok = applySerialSaleChoice(picked);
+          if (ok) {
+            lastSerialSaleCommitSerial = String(picked).trim().toUpperCase();
+            lastSerialSaleCommitAt = Date.now();
+          }
+          return ok;
+        }
+        if (results.length > 1) {
+          serialSaleEntry.value = serial;
+          if (resolved) serialSaleEntry.dataset.serialResolved = "1";
+          syncSerialSaleInputMode(serialSaleEntry);
+          renderSerialSaleSuggest(serialSaleEntry, results);
+          setSerialSaleStatus("Select a serial from the list.", { error: true });
+          return false;
+        }
+        setSerialSaleStatus("Serial not available at this shop.", { error: true });
+        return false;
+      } catch (_err) {
+        setSerialSaleStatus("Could not verify serial. Try again.", { error: true });
+        return false;
+      } finally {
+        serialSaleCommitBusy = false;
+        focusSerialSaleEntry();
+        dispatchSerialSaleCommitSettled({ ok, serial });
+      }
     };
 
     const formatSerialSaleSuggestLabel = (serial) => {
@@ -3435,7 +3789,7 @@
         }
         btn.addEventListener("mousedown", (event) => {
           event.preventDefault();
-          applySerialSaleChoice(input, serial);
+          applySerialSaleChoice(serial, { fromSuggest: true });
         });
         suggest.appendChild(btn);
       });
@@ -3445,17 +3799,20 @@
     const runSerialSaleSearch = async (input) => {
       if (!serialSearchUrl || !serialSaleItem?.id || !shopId) return;
       if (isSerialSaleLast4Mode() && input.dataset.serialResolved === "1") {
-        hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
+        hideSerialSaleSuggest(serialSaleEntryWrap);
         return;
       }
       const q = String(input.value || "").trim().toUpperCase();
-      const others = otherSerialSaleValues(input);
+      if (!q) {
+        hideSerialSaleSuggest(serialSaleEntryWrap);
+        return;
+      }
+      const others = new Set(collectSerialSaleValues());
       if (q && others.has(q)) {
-        const root = input.closest("[data-serial-sale-search-root]");
-        const suggest = root?.querySelector?.("[data-serial-sale-suggest]");
+        const suggest = serialSaleEntryWrap?.querySelector?.("[data-serial-sale-suggest]");
         if (suggest) {
           suggest.innerHTML =
-            "<div class=\"shop-serial-suggest-empty\"><strong>Already selected</strong><small>That serial is in another row</small></div>";
+            "<div class=\"shop-serial-suggest-empty\"><strong>Already selected</strong><small>That serial is already in the list</small></div>";
           suggest.hidden = false;
         }
         return;
@@ -3476,7 +3833,7 @@
         const data = await response.json().catch(() => ({}));
         if (seq !== serialSaleSearchSeq) return;
         if (!response.ok) {
-          hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
+          hideSerialSaleSuggest(serialSaleEntryWrap);
           setSerialSaleStatus(data.error || "Could not search serials.", {
             error: true,
           });
@@ -3486,7 +3843,7 @@
         renderSerialSaleSuggest(input, results);
       } catch (_error) {
         if (seq !== serialSaleSearchSeq) return;
-        hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
+        hideSerialSaleSuggest(serialSaleEntryWrap);
       }
     };
 
@@ -3495,51 +3852,13 @@
       serialSaleSearchTimer = window.setTimeout(() => runSerialSaleSearch(input), 220);
     };
 
-    const createSerialSaleRow = (serial = "") => {
-      if (!serialSaleList) return null;
-      const row = document.createElement("div");
-      row.className = "shop-serial-row";
-
-      const wrap = document.createElement("div");
-      wrap.className = "shop-serial-input-wrap";
-      wrap.setAttribute("data-serial-sale-search-root", "");
-
-      const input = document.createElement("input");
-      input.type = "text";
-      input.autocomplete = "off";
-      input.spellcheck = false;
-      input.setAttribute("data-serial-sale-input", "");
-      const seed = String(serial || "").trim().toUpperCase();
-      input.value = seed;
-      if (seed) input.dataset.serialResolved = "1";
-      syncSerialSaleInputMode(input);
-
-      const suggest = document.createElement("div");
-      suggest.className = "shop-serial-suggest";
-      suggest.setAttribute("data-serial-sale-suggest", "");
-      suggest.hidden = true;
-
-      wrap.append(input, suggest);
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "shop-serial-row-remove";
-      remove.setAttribute("data-serial-sale-remove", "");
-      remove.setAttribute("aria-label", "Remove serial");
-      remove.innerHTML = '<i data-lucide="trash-2" aria-hidden="true"></i>';
-
-      row.append(wrap, remove);
-      serialSaleList.appendChild(row);
-      syncSerialSaleCount();
-      refreshIcons();
-      return row;
-    };
-
-    const resetSerialSaleRows = (serials = [""]) => {
-      if (!serialSaleList) return;
-      serialSaleList.innerHTML = "";
-      const values = serials.length ? serials : [""];
-      values.forEach((serial) => createSerialSaleRow(serial));
+    const resetSerialSaleModal = (serials = []) => {
+      if (serialSaleScanned) serialSaleScanned.innerHTML = "";
+      clearSerialSaleEntry();
+      serials
+        .map((serial) => String(serial || "").trim().toUpperCase())
+        .filter(Boolean)
+        .forEach((serial) => createSerialSaleScannedItem(serial));
       syncSerialSaleMatchModeUi();
       syncSerialSaleCount();
     };
@@ -3564,6 +3883,7 @@
       const salePrice = clampPrice(
         item.price ?? existing?.price ?? item.listPrice,
         item.minPrice ?? existing?.minPrice ?? 0,
+        item.maxPrice ?? existing?.maxPrice ?? item.listPrice ?? 0,
         item.listPrice ?? existing?.listPrice ?? 0
       );
       serialSaleItem = {
@@ -3572,6 +3892,9 @@
         price: salePrice,
         listPrice: roundMoney(item.listPrice ?? existing?.listPrice ?? salePrice),
         minPrice: roundMoney(item.minPrice ?? existing?.minPrice ?? 0),
+        maxPrice: roundMoney(
+          item.maxPrice ?? existing?.maxPrice ?? item.listPrice ?? salePrice
+        ),
         trackSerial: true,
         serials: Array.isArray(item.serials)
           ? item.serials
@@ -3603,11 +3926,13 @@
       }
 
       const seed = append
-        ? [...(serialSaleItem.serials || []), ""]
+        ? [...(serialSaleItem.serials || [])]
         : serialSaleItem.serials?.length
           ? [...serialSaleItem.serials]
-          : [""];
-      resetSerialSaleRows(seed);
+          : [];
+      resetSerialSaleModal(seed);
+      lastSerialSaleCommitSerial = "";
+      lastSerialSaleCommitAt = 0;
       setSerialSaleStatus("");
       if (serialSaleConfirm) {
         const label = serialSaleConfirm.querySelector("span");
@@ -3617,86 +3942,23 @@
       }
       setProductOpen(false);
       setSerialSaleOpen(true);
-      window.setTimeout(() => {
-        const focusInput =
-          [...(serialSaleList?.querySelectorAll("[data-serial-sale-input]") || [])].find(
-            (el) => !String(el.value || "").trim()
-          ) || serialSaleList?.querySelector("[data-serial-sale-input]");
-        focusInput?.focus();
-      }, 40);
+      window.MyShopSerialScan?.enhance?.(serialSaleModal);
+      window.setTimeout(() => focusSerialSaleEntry(), 40);
     };
 
     const confirmSerialSale = async () => {
       if (!serialSaleItem?.id) return false;
 
-      if (isSerialSaleLast4Mode()) {
-        const inputs = [...(serialSaleList?.querySelectorAll("[data-serial-sale-input]") || [])];
-        for (const input of inputs) {
-          const value = String(input.value || "").trim().toUpperCase();
-          if (!value) continue;
-          if (input.dataset.serialResolved === "1" && value.length > 4) continue;
-          if (!serialSearchUrl) {
-            setSerialSaleStatus("Select a full serial from the suggestions.", {
-              error: true,
-            });
-            input.focus();
-            return false;
-          }
-          try {
-            const params = new URLSearchParams({
-              item_id: String(serialSaleItem.id),
-              shop_id: String(shopId),
-              q: value.slice(-4),
-              match: "last4",
-            });
-            otherSerialSaleValues(input).forEach((serial) =>
-              params.append("exclude", serial)
-            );
-            const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
-              headers: { Accept: "application/json" },
-              credentials: "same-origin",
-            });
-            const data = await response.json().catch(() => ({}));
-            const results = Array.isArray(data.results) ? data.results : [];
-            if (results.length === 1) {
-              applySerialSaleChoice(input, results[0]);
-              continue;
-            }
-            if (results.length > 1) {
-              renderSerialSaleSuggest(input, results);
-              setSerialSaleStatus(
-                "Several serials end with those digits — select one.",
-                { error: true }
-              );
-              input.focus();
-              return false;
-            }
-            setSerialSaleStatus(
-              "No in-stock serial ends with those digits. Check and try again.",
-              { error: true }
-            );
-            input.focus();
-            return false;
-          } catch (_err) {
-            setSerialSaleStatus("Could not resolve serial. Select from the list.", {
-              error: true,
-            });
-            input.focus();
-            return false;
-          }
-        }
+      const pending = String(serialSaleEntry?.value || "").trim();
+      if (pending) {
+        const ok = await commitSerialSaleEntry();
+        if (!ok) return false;
       }
 
       const serials = collectSerialSaleValues();
       if (!serials.length) {
         setSerialSaleStatus("Enter at least one serial number.", { error: true });
-        serialSaleList?.querySelector("[data-serial-sale-input]")?.focus();
-        return false;
-      }
-      if (serials.some((serial) => serial.length <= 4) && isSerialSaleLast4Mode()) {
-        setSerialSaleStatus("Select a full serial from the suggestions.", {
-          error: true,
-        });
+        focusSerialSaleEntry();
         return false;
       }
       if (serialSaleItem.stock > 0 && serials.length > serialSaleItem.stock) {
@@ -3742,6 +4004,7 @@
             ? productPriceInput?.value ?? item.price
             : existing?.price ?? item.listPrice,
           item.minPrice,
+          item.maxPrice,
           item.listPrice
         );
         if (productModal && sourceEl === productModal) {
@@ -3761,6 +4024,7 @@
           ? productPriceInput?.value ?? item.price
           : existing?.price ?? item.listPrice,
         item.minPrice,
+        item.maxPrice,
         item.listPrice
       );
       if (productModal && sourceEl === productModal) {
@@ -3772,6 +4036,7 @@
         price: existing ? existing.price : salePrice,
         listPrice: item.listPrice,
         minPrice: item.minPrice,
+        maxPrice: item.maxPrice,
       });
       // If newly added from popup with discount, ensure price sticks.
       if (!existing) {
@@ -4052,82 +4317,71 @@
       setSerialSaleMatchMode(btn.getAttribute("data-serial-sale-match") || "full");
     });
     syncSerialSaleMatchModeUi();
-    serialSaleModal?.querySelector("[data-serial-sale-add-row]")?.addEventListener(
-      "click",
-      () => {
-        if (!serialSaleItem) return;
-        if (
-          serialSaleItem.stock > 0 &&
-          collectSerialSaleValues().length >= serialSaleItem.stock
-        ) {
-          setSerialSaleStatus("No more stock available for another serial.", {
-            error: true,
-          });
-          return;
-        }
-        createSerialSaleRow("");
-        serialSaleList
-          ?.querySelector(".shop-serial-row:last-child [data-serial-sale-input]")
-          ?.focus();
-      }
-    );
     serialSaleForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       confirmSerialSale();
     });
-    serialSaleList?.addEventListener("click", (event) => {
-      const remove = event.target.closest?.("[data-serial-sale-remove]");
+    serialSaleScanned?.addEventListener("click", (event) => {
+      const remove = event.target.closest?.("[data-serial-sale-scanned-remove]");
       if (!remove) return;
-      const row = remove.closest(".shop-serial-row");
-      const rows = serialSaleList.querySelectorAll(".shop-serial-row");
-      if (rows.length <= 1) {
-        const input = row?.querySelector("[data-serial-sale-input]");
-        if (input) {
-          input.value = "";
-          delete input.dataset.serialResolved;
-          syncSerialSaleInputMode(input);
-        }
-        syncSerialSaleCount();
+      remove.closest("li")?.remove();
+      syncSerialSaleCount();
+      focusSerialSaleEntry();
+    });
+    serialSaleEntry?.addEventListener("input", (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement)) return;
+      if (input.dataset.serialScanApply === "1") {
+        delete input.dataset.serialScanApply;
         return;
       }
-      row?.remove();
-      syncSerialSaleCount();
-    });
-    serialSaleList?.addEventListener("input", (event) => {
-      const input = event.target.closest?.("[data-serial-sale-input]");
-      if (!input) return;
+      const raw = String(input.value || "");
+      if (/[\r\n]/.test(raw)) {
+        const serial = raw.replace(/[\r\n]+/g, "").trim().toUpperCase();
+        input.value = serial;
+        commitSerialSaleEntry(serial ? { serial } : {});
+        return;
+      }
       if (isSerialSaleLast4Mode()) {
-        const raw = String(input.value || "")
+        const cleaned = raw
           .toUpperCase()
           .replace(/[^A-Z0-9]/g, "");
-        // Scan/paste of a full serial should keep the whole value.
-        if (raw.length > 4) {
-          input.value = raw;
+        if (cleaned.length > 4) {
+          input.value = cleaned;
           input.dataset.serialResolved = "1";
           syncSerialSaleInputMode(input);
-          hideSerialSaleSuggest(input.closest("[data-serial-sale-search-root]"));
-          syncSerialSaleCount();
+          hideSerialSaleSuggest(serialSaleEntryWrap);
           return;
         }
         delete input.dataset.serialResolved;
-        input.value = raw.slice(0, 4);
+        input.value = cleaned.slice(0, 4);
         syncSerialSaleInputMode(input);
       } else {
-        input.value = String(input.value || "").toUpperCase();
+        input.value = raw.toUpperCase();
         delete input.dataset.serialResolved;
       }
-      syncSerialSaleCount();
+      input.classList.remove("is-duplicate");
       queueSerialSaleSearch(input);
     });
-    serialSaleList?.addEventListener("focusin", (event) => {
-      const input = event.target.closest?.("[data-serial-sale-input]");
-      if (!input) return;
-      queueSerialSaleSearch(input);
+    serialSaleEntry?.addEventListener("focusout", () => {
+      window.setTimeout(() => hideSerialSaleSuggest(serialSaleEntryWrap), 160);
     });
-    serialSaleList?.addEventListener("focusout", (event) => {
-      const root = event.target.closest?.("[data-serial-sale-search-root]");
-      if (!root) return;
-      window.setTimeout(() => hideSerialSaleSuggest(root), 160);
+    serialSaleEntry?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      commitSerialSaleEntry();
+    });
+    serialSaleModal?.addEventListener("myshop:serial-applied", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches("[data-serial-sale-entry]")) return;
+      window.clearTimeout(serialSaleSearchTimer);
+      serialSaleSearchSeq += 1;
+      hideSerialSaleSuggest(serialSaleEntryWrap);
+      const serial = String(event.detail?.serial || target.value || "")
+        .trim()
+        .toUpperCase();
+      commitSerialSaleEntry(serial ? { serial } : {});
     });
 
     productModal?.querySelectorAll("[data-product-close]").forEach((el) => {
@@ -4142,29 +4396,39 @@
     const applySalePriceFromInput = () => {
       if (!activeProductId || !productModal || !productPriceInput) return;
       const minPrice = roundMoney(productModal.dataset.itemMinPrice || 0);
+      const maxPrice = roundMoney(
+        productModal.dataset.itemMaxPrice || productModal.dataset.itemListPrice || 0
+      );
       const listPrice = roundMoney(productModal.dataset.itemListPrice || 0);
       if (!discountEnabled) {
         productPriceInput.value = listPrice.toFixed(2);
         productModal.dataset.itemPrice = String(listPrice);
-        syncPriceHint(minPrice, listPrice, listPrice);
+        syncPriceHint(minPrice, maxPrice, listPrice, listPrice);
         if (cart.has(activeProductId)) {
           setLinePrice(activeProductId, listPrice, {
             listPrice,
             minPrice,
+            maxPrice,
           });
           renderCart();
         }
         return;
       }
-      const nextPrice = clampPrice(productPriceInput.value, minPrice, listPrice);
+      const nextPrice = clampPrice(
+        productPriceInput.value,
+        minPrice,
+        maxPrice,
+        listPrice
+      );
       productPriceInput.value = nextPrice.toFixed(2);
       productModal.dataset.itemPrice = String(nextPrice);
-      syncPriceHint(minPrice, listPrice, nextPrice);
+      syncPriceHint(minPrice, maxPrice, nextPrice, listPrice);
 
       if (cart.has(activeProductId)) {
         setLinePrice(activeProductId, nextPrice, {
           listPrice,
           minPrice,
+          maxPrice,
         });
         renderCart();
       }

@@ -5,7 +5,7 @@
 
 {% block workspace_content %}
 <section
-  class="ax{% if page.ledger_layout or page.hide_date_filters %} ax--ledger{% endif %}{% if page.list_table_layout %} ax--list-table{% endif %}"
+  class="ax{% if page.ledger_layout %} ax--ledger{% endif %}{% if page.list_table_layout %} ax--list-table{% endif %}"
   data-animate="rise"
   data-analytics
   data-ax-section="{{ section_slug }}"
@@ -94,7 +94,52 @@
   </div>
   {% endif %}
 
-  {% if page.metrics %}
+  {% if page.metric_groups %}
+  <div class="ax-till-board" aria-label="Key metrics">
+    {% for group in page.metric_groups %}
+    <section class="ax-till-card is-{{ group.tone|default:'neutral' }}">
+      <header class="ax-till-card-head">
+        {% if group.icon %}<i data-lucide="{{ group.icon }}" aria-hidden="true"></i>{% endif %}
+        <h3>{{ group.label }}</h3>
+      </header>
+      {% for row in group.rows %}
+      <div class="ax-till-row">
+        <span class="ax-till-row-label">{{ row.label }}</span>
+        <div class="ax-till-metrics" aria-label="{{ group.label }} · {{ row.label }}">
+          {% for metric in row.metrics %}
+          <article class="ax-till-metric{% if metric.kind == 'variance' %} is-variance{% endif %}{% if metric.tone and metric.tone != 'neutral' %} is-{{ metric.tone }}{% endif %}">
+            <span class="ax-till-metric-label">{{ metric.label }}</span>
+            <strong class="ax-till-metric-value">{{ metric.value }}</strong>
+            {% if metric.hint %}<em class="ax-till-metric-hint">{{ metric.hint }}</em>{% endif %}
+          </article>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+    {% endfor %}
+  </div>
+  {% elif page.summary_board %}
+  <section class="ax-summary-board" aria-label="{{ page.headline|default:'Summary' }}">
+    <article class="ax-summary-hero{% if page.summary_board.hero.tone %} is-{{ page.summary_board.hero.tone }}{% endif %}">
+      <span class="ax-summary-hero-label">{{ page.summary_board.hero.label }}</span>
+      <strong class="ax-summary-hero-value">{{ page.summary_board.hero.value }}</strong>
+      {% if page.summary_board.hero.hint %}<em class="ax-summary-hero-hint">{{ page.summary_board.hero.hint }}</em>{% endif %}
+    </article>
+    <div class="ax-summary-tiles">
+      {% for tile in page.summary_board.tiles %}
+      <article class="ax-summary-tile is-{{ tile.tone|default:'neutral' }}">
+        {% if tile.icon %}<i data-lucide="{{ tile.icon }}" aria-hidden="true"></i>{% endif %}
+        <div class="ax-summary-tile-body">
+          <span class="ax-summary-tile-label">{{ tile.label }}</span>
+          <strong class="ax-summary-tile-value">{{ tile.value }}</strong>
+          {% if tile.hint %}<em class="ax-summary-tile-hint">{{ tile.hint }}</em>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% elif page.metrics %}
   <div class="ax-kpis ax-kpis--dynamic{% if page.metrics|length > 6 %} ax-kpis--wide{% endif %}" aria-label="Key metrics">
     {% for metric in page.metrics %}
     <article class="ax-kpi{% if metric.tone and metric.tone != 'neutral' %} is-{{ metric.tone }}{% endif %}">
@@ -344,8 +389,12 @@
             autocomplete="off"
           >
         </label>
+        {% elif table.shop_grid and section_slug == "suppliers" %}
+        <span class="ax-card-hint">En · entries · Bal · unpaid</span>
+        {% elif table.shop_grid and section_slug == "expenses" %}
+        <span class="ax-card-hint">En · entries · Bal · unpaid</span>
         {% elif table.shop_grid %}
-        <span class="ax-card-hint">Hover amounts for full KSh</span>
+        <span class="ax-card-hint">Search or hover for detail</span>
         {% endif %}
       </header>
       {% if table.shop_grid and section_slug == "revenue" %}
@@ -354,13 +403,52 @@
         <span class="is-till">Costs</span>
         <span class="is-pl">Result</span>
       </div>
+      {% elif table.shop_grid and section_slug == "balances" %}
+      <div class="ax-band-legend ax-band-legend--balances" aria-label="Column groups">
+        <span class="is-cash-open">Cash · opening</span>
+        <span class="is-cash-close">Cash · closing</span>
+        <span class="is-mpesa-open">M-Pesa · opening</span>
+        <span class="is-mpesa-close">M-Pesa · closing</span>
+      </div>
+      {% elif table.shop_grid and section_slug == "sales" %}
+      <div class="ax-band-legend ax-band-legend--sales" aria-label="Column groups">
+        <span class="is-cash">Cash</span>
+        <span class="is-mpesa">M-Pesa</span>
+        <span class="is-total">Total</span>
+      </div>
+      {% elif table.shop_grid and section_slug == "items" %}
+      <div class="ax-band-legend ax-band-legend--items" aria-label="Column groups">
+        <span class="is-flow">By shop</span>
+        <span class="is-total">Total</span>
+        <span class="is-result">Profit</span>
+      </div>
+      {% elif table.shop_grid and section_slug == "stock" %}
+      <div class="ax-band-legend ax-band-legend--stock" aria-label="Column groups">
+        <span class="is-flow">By shop</span>
+        <span class="is-total">Total</span>
+      </div>
+      {% elif table.shop_grid and section_slug == "credits" %}
+      <div class="ax-band-legend ax-band-legend--credits" aria-label="Column groups">
+        <span class="is-flow">By shop</span>
+        <span class="is-total">Total</span>
+      </div>
+      {% elif table.shop_grid and section_slug == "suppliers" %}
+      <div class="ax-band-legend ax-band-legend--suppliers" aria-label="Column groups">
+        <span class="is-flow">By shop</span>
+        <span class="is-total">Total</span>
+      </div>
+      {% elif table.shop_grid and section_slug == "expenses" %}
+      <div class="ax-band-legend ax-band-legend--expenses" aria-label="Column groups">
+        <span class="is-flow">By shop</span>
+        <span class="is-total">Total</span>
+      </div>
       {% endif %}
       <div class="ax-table-wrap ax-table-wrap--scroll{% if page.list_table_layout %} ax-table-wrap--list{% endif %}">
         {% if page.list_table_layout %}
         <p class="ax-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
         {% endif %}
         {% if table.rows %}
-        <table class="ax-table{% if table.shop_grid %} ax-table--shops{% endif %}{% if section_slug == 'revenue' %} ax-table--pl{% endif %}">
+        <table class="ax-table{% if table.shop_grid %} ax-table--shops{% endif %}{% if section_slug == 'revenue' %} ax-table--pl{% endif %}{% if table.table_class %} {{ table.table_class }}{% endif %}">
           <thead>
             <tr>
               {% for col in table.columns %}
@@ -405,7 +493,14 @@
                 data-label="{% if col.label %}{{ col.title|default:col.label }}{% else %}{{ col }}{% endif %}"
               >
                 {% if cell.href %}
-                <a class="ax-link" href="{{ cell.href }}">{{ cell.label }}</a>
+                <a class="ax-link{% if cell.sub %} ax-entity-link{% endif %}" href="{{ cell.href }}">
+                  {% if cell.sub %}
+                  <span class="ax-entity-name">{{ cell.label }}</span>
+                  <span class="ax-entity-meta">{{ cell.sub }}</span>
+                  {% else %}
+                  {{ cell.label }}
+                  {% endif %}
+                </a>
                 {% elif cell.kind == "qty_amount" %}
                 <span class="ax-pair{% if cell.tone and cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}" title="{{ cell.title }}">
                   <span class="ax-pair-qty">{{ cell.qty }}</span>

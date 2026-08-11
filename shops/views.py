@@ -610,6 +610,7 @@ def _catalog_rows_for_items(shop, items):
                 "description": description,
                 "price": str(price),
                 "min_price": str(item.minimum_selling_price),
+                "max_price": str(item.maximum_selling_price),
                 "stock": int(stock_by_item.get(item.pk, 0)),
                 "track_serial": bool(item.track_serial_number),
                 "image_url": image_url,

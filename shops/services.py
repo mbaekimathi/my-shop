@@ -2647,6 +2647,12 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
                     f"(KSh {item.minimum_selling_price})."
                 )
                 continue
+            elif unit_price > item.maximum_selling_price:
+                errors.append(
+                    f"“{item.name}” is above the maximum selling price "
+                    f"(KSh {item.maximum_selling_price})."
+                )
+                continue
 
             stock = stock_by_item.get(item_id)
             if stock is None:
