@@ -4,46 +4,63 @@
 {% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
 
 {% block workspace_content %}
-<section class="ax" data-animate="rise">
+<section
+  class="ax ax--account ax--list-table"
+  data-animate="rise"
+  data-ax-section="client-account"
+  data-ax-ledger
+>
   <header class="ax-top">
     <div class="ax-top-main">
-      <div class="ax-title">
+      <div class="ax-title ax-title--stack">
+        <span class="ax-account-kicker">Client account</span>
         <h2>{{ client.full_name }}</h2>
-        <span class="ax-period">Client account</span>
+        <span class="ax-period">{{ client.phone_number }}</span>
       </div>
       <div class="ax-top-actions">
+        {% if credit_note_url %}
+        <button type="button" class="ax-apply ax-apply--ghost" data-ax-share-open>
+          <i data-lucide="message-circle" aria-hidden="true"></i>
+          <span>Share link</span>
+        </button>
+        {% endif %}
         {% if can_pay %}
-        <button type="button" class="ax-apply" data-ax-pay-open>Pay</button>
+        <button type="button" class="ax-apply" data-ax-pay-open>
+          <i data-lucide="wallet" aria-hidden="true"></i>
+          <span>Pay balance</span>
+        </button>
         {% endif %}
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back" }}</a>
       </div>
     </div>
     <p class="ax-lead">
-      {{ client.phone_number }}
-      · {{ credit_count }} open credit{{ credit_count|pluralize }}
-      · balance <strong data-ax-account-balance>{{ balance }}</strong>
+      Open credit receipts and outstanding balance for this client across your shops.
     </p>
   </header>
 
-  <div class="ax-kpis ax-kpis--dynamic" aria-label="Account metrics">
-    <article class="ax-kpi">
-      <span>Client</span>
-      <strong>{{ client.full_name }}</strong>
-      <em>{{ client.phone_number }}</em>
+  {% if summary_board %}
+  <section class="ax-summary-board" aria-label="Account summary">
+    <article class="ax-summary-hero{% if summary_board.hero.tone %} is-{{ summary_board.hero.tone }}{% endif %}">
+      <span class="ax-summary-hero-label">{{ summary_board.hero.label }}</span>
+      <strong class="ax-summary-hero-value" data-ax-account-balance>{{ summary_board.hero.value }}</strong>
+      {% if summary_board.hero.hint %}<em class="ax-summary-hero-hint">{{ summary_board.hero.hint }}</em>{% endif %}
     </article>
-    <article class="ax-kpi">
-      <span>Open credits</span>
-      <strong>{{ credit_count }}</strong>
-      <em>Still owing</em>
-    </article>
-    <article class="ax-kpi is-bad">
-      <span>Total balance</span>
-      <strong data-ax-account-balance>{{ balance }}</strong>
-      <em>Outstanding</em>
-    </article>
-  </div>
+    <div class="ax-summary-tiles">
+      {% for tile in summary_board.tiles %}
+      <article class="ax-summary-tile is-{{ tile.tone|default:'neutral' }}">
+        {% if tile.icon %}<i data-lucide="{{ tile.icon }}" aria-hidden="true"></i>{% endif %}
+        <div class="ax-summary-tile-body">
+          <span class="ax-summary-tile-label">{{ tile.label }}</span>
+          <strong class="ax-summary-tile-value">{{ tile.value }}</strong>
+          {% if tile.hint %}<em class="ax-summary-tile-hint">{{ tile.hint }}</em>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
 
-  {% include "employees/partials/analytics_receipt_ledger.html" %}
+  {% include "employees/partials/analytics_receipt_ledger.html" with ledger_search=True table_class="ax-table--account" receipt_count=receipt_count %}
 </section>
 {% endblock %}
 
@@ -72,9 +89,10 @@
 {% if can_pay %}
 {% include "employees/partials/analytics_account_pay_modal.html" %}
 {% endif %}
+{% include "employees/partials/analytics_share_credit_note_modal.html" %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=5"></script>
+<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=9"></script>
 {% endblock %}

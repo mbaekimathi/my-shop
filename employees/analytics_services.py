@@ -280,6 +280,17 @@ def _payment_status_for_due(due: Decimal, paid: Decimal) -> str:
     return "Unpaid"
 
 
+def _status_tone(status: str) -> str:
+    label = (status or "").strip().lower()
+    if label == "paid":
+        return "good"
+    if label == "partial":
+        return "warn"
+    if label in {"unpaid", "open", "overdue"}:
+        return "bad"
+    return "neutral"
+
+
 def _parse_pay_amount(value) -> Decimal:
     from django.core.exceptions import ValidationError
 
@@ -1180,6 +1191,55 @@ def _credits_summary_board(
     }
 
 
+def _client_account_summary_board(
+    *,
+    balance,
+    open_count: int,
+    receipt_count: int,
+    total_paid,
+    shop_count: int,
+) -> dict:
+    due = Decimal(balance or 0) if not isinstance(balance, Decimal) else balance
+    paid_total = Decimal(total_paid or 0) if not isinstance(total_paid, Decimal) else total_paid
+    open_n = int(open_count or 0)
+    receipts = int(receipt_count or 0)
+    shops = int(shop_count or 0)
+    return {
+        "hero": {
+            "label": "Outstanding balance",
+            "value": _money_ksh(due) if isinstance(balance, Decimal) else str(balance),
+            "hint": (
+                f"{open_n} open credit{'s' if open_n != 1 else ''} · "
+                f"{receipts} receipt{'s' if receipts != 1 else ''}"
+            ),
+            "tone": "warn" if due > 0 else "good",
+        },
+        "tiles": [
+            {
+                "label": "Open credits",
+                "value": str(open_n),
+                "hint": "Still owing",
+                "icon": "credit-card",
+                "tone": "warn" if open_n else "good",
+            },
+            {
+                "label": "Paid so far",
+                "value": _money_ksh(paid_total),
+                "hint": "Across all receipts",
+                "icon": "wallet",
+                "tone": "cash",
+            },
+            {
+                "label": "Shops",
+                "value": str(shops),
+                "hint": "With credit activity",
+                "icon": "store",
+                "tone": "shops",
+            },
+        ],
+    }
+
+
 def _stock_summary_board(
     *,
     total_value,
@@ -1639,6 +1699,8 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
     )
     balance = _zero()
     open_count = 0
+    total_paid = _zero()
+    shop_ids_seen: set[int] = set()
     rows = []
     for row in receipts:
         cashier = ""
@@ -1666,8 +1728,12 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
         paid = Decimal(row.amount_paid or 0)
         due = _due_amount(total, paid)
         balance += due
+        total_paid += paid
+        if row.shop_id:
+            shop_ids_seen.add(row.shop_id)
         if due > 0:
             open_count += 1
+        status = _payment_status_for_due(due, paid)
         rows.append(
             {
                 "id": f"credit-{row.pk}",
@@ -1675,7 +1741,8 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
                 "pay_id": row.pk,
                 "number": row.receipt_number,
                 "shop": row.shop.name if row.shop else "—",
-                "status": _payment_status_for_due(due, paid),
+                "status": status,
+                "status_tone": _status_tone(status),
                 "total": _money_ksh(total),
                 "paid": _money_ksh(paid),
                 "due": _money_ksh(due),
@@ -1692,6 +1759,14 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
         "balance": _money_ksh(balance),
         "balance_raw": str(balance),
         "credit_count": open_count,
+        "receipt_count": len(rows),
+        "summary_board": _client_account_summary_board(
+            balance=balance,
+            open_count=open_count,
+            receipt_count=len(rows),
+            total_paid=total_paid,
+            shop_count=len(shop_ids_seen),
+        ),
         "rows": rows,
         "ledger_title": "Credit receipts",
         "empty_message": "No credit receipts for this client in your shops.",
@@ -1782,6 +1857,7 @@ def build_supplier_account(*, profile, kind: str, supplier_id: int) -> dict:
                     "number": format_simple_doc_number("E", row.pk),
                     "shop": row.shop.name if row.shop else "—",
                     "status": _payment_status_for_due(due, paid),
+                    "status_tone": _status_tone(_payment_status_for_due(due, paid)),
                     "total": _money_ksh(amount),
                     "paid": _money_ksh(paid),
                     "due": _money_ksh(due),
@@ -1884,6 +1960,7 @@ def build_supplier_account(*, profile, kind: str, supplier_id: int) -> dict:
                 "number": format_simple_doc_number("I", movement.pk),
                 "shop": movement.shop.name if movement.shop else "—",
                 "status": _payment_status_for_due(due, paid),
+                "status_tone": _status_tone(_payment_status_for_due(due, paid)),
                 "total": _money_ksh(receipt_total),
                 "paid": _money_ksh(paid),
                 "due": _money_ksh(due),

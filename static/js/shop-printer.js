@@ -254,7 +254,7 @@
     print-color-adjust: exact !important;
   }
   body {
-    font-family: "Courier New", ui-monospace, Menlo, Consolas, monospace;
+    font-family: "Manrope", system-ui, sans-serif;
     font-size: ${style.fontSize};
     font-weight: 900 !important;
     line-height: 1.4;
@@ -642,6 +642,7 @@
         const win = frame.contentWindow;
         doc.open();
         doc.write(`<!doctype html><html><head><title>Receipt · ${escapeHtml(label)}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
 <style>${ticketCss(style)}</style></head><body>
 ${bodyHtml}
 </body></html>`);

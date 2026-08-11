@@ -2735,11 +2735,12 @@
           .replace(/>/g, "&gt;");
       doc.open();
       doc.write(`<!doctype html><html><head><title>Receipt (${label})</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
 <style>
   @page { size: ${pageWidth} auto; margin: 2mm; }
   body {
     width: ${pageWidth}; margin: 0; padding: 2mm;
-    font-family: "Courier New", monospace;
+    font-family: "Manrope", system-ui, sans-serif;
     font-size: ${fontSize}; font-weight: 900;
     color: #000 !important;
     background: #fff;

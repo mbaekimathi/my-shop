@@ -1,0 +1,105 @@
+<div
+  class="workspace-modal ax-share-modal"
+  data-ax-share-modal
+  data-company-name="{{ company_name|default:'MY-SHOP' }}"
+  data-client-name="{{ client.full_name|default:'' }}"
+  data-balance="{{ balance|default:'' }}"
+  data-credit-note-url="{{ credit_note_url|default:'' }}"
+  hidden
+>
+  <div class="workspace-modal-backdrop" data-ax-share-close></div>
+  <div
+    class="workspace-modal-dialog ax-share-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-share-modal-title"
+  >
+    <header class="ax-share-head">
+      <div class="ax-share-head-copy">
+        <p class="ax-share-eyebrow">Credit note</p>
+        <h2 id="ax-share-modal-title">Share with client</h2>
+      </div>
+      <button type="button" class="workspace-icon-btn ax-share-close" data-ax-share-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+
+    <div class="ax-share-body">
+      <article class="ax-share-client">
+        <div class="ax-share-client-main">
+          <div class="ax-share-avatar" aria-hidden="true">{{ client.full_name|slice:":1"|upper }}</div>
+          <div class="ax-share-client-copy">
+            <strong>{{ client.full_name }}</strong>
+            <span class="ax-share-balance">
+              Balance due
+              <em data-ax-share-balance>{{ balance }}</em>
+            </span>
+          </div>
+        </div>
+        <div class="ax-share-org" aria-label="Sending from">
+          {% if company_logo_url %}
+          <img src="{{ company_logo_url }}" alt="" class="ax-share-org-logo" width="28" height="28">
+          {% else %}
+          <span class="ax-share-org-logo ax-share-org-logo--fallback" aria-hidden="true"></span>
+          {% endif %}
+          <div class="ax-share-org-copy">
+            <span>{{ company_name|default:"MY-SHOP" }}</span>
+            {% if site_domain %}<em>{{ site_domain }}</em>{% endif %}
+          </div>
+          <span class="ax-share-org-badge">
+            <i data-lucide="shield-check" aria-hidden="true"></i>
+            Secure
+          </span>
+        </div>
+      </article>
+
+      <section class="ax-share-compose" aria-label="WhatsApp message">
+        <label class="ax-share-sendto">
+          <span>Send to</span>
+          <div class="ax-share-phone-row">
+            <span class="ax-share-wa-mark" aria-hidden="true">
+              <i data-lucide="message-circle"></i>
+            </span>
+            <input
+              type="tel"
+              value="{{ client.phone_number|default:'' }}"
+              placeholder="07XX XXX XXX"
+              data-ax-share-phone
+              autocomplete="tel"
+              aria-label="WhatsApp number"
+            >
+          </div>
+        </label>
+
+        <div class="ax-share-chat" aria-label="Message preview">
+          <div class="ax-share-chat-label">
+            <span>Preview</span>
+            <button type="button" class="ax-share-text-action" data-ax-share-copy-message>Copy message</button>
+          </div>
+          <div class="ax-share-bubble">
+            <pre data-ax-share-message-preview>{{ credit_note_share_message|default:"" }}</pre>
+            <time aria-hidden="true">Now</time>
+          </div>
+        </div>
+      </section>
+
+      <div class="ax-share-toolbar">
+        <button type="button" class="ax-share-tool" data-ax-share-copy title="Copy link">
+          <i data-lucide="link-2" aria-hidden="true"></i>
+          <span>Link</span>
+        </button>
+        <a
+          class="ax-share-wa"
+          data-ax-share-open-wa
+          href="#"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <i data-lucide="send" aria-hidden="true"></i>
+          <span>Open WhatsApp</span>
+        </a>
+      </div>
+      <p class="ax-share-status" data-ax-share-status hidden></p>
+    </div>
+  </div>
+</div>

@@ -2014,6 +2014,10 @@ def build_stock_print_pdf(
         TableStyle,
     )
 
+    from core.pdf_fonts import MANROPE_PDF, MANROPE_PDF_BOLD, register_manrope_pdf_fonts
+
+    register_manrope_pdf_fonts()
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -2039,7 +2043,7 @@ def build_stock_print_pdf(
     kicker = ParagraphStyle(
         "StockKicker",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=MANROPE_PDF_BOLD,
         fontSize=7,
         textColor=accent,
         leading=9,
@@ -2048,7 +2052,7 @@ def build_stock_print_pdf(
     title_style = ParagraphStyle(
         "StockTitle",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=MANROPE_PDF_BOLD,
         fontSize=14,
         textColor=ink,
         leading=17,
@@ -2057,7 +2061,7 @@ def build_stock_print_pdf(
     subtitle_style = ParagraphStyle(
         "StockSubtitle",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=MANROPE_PDF_BOLD,
         fontSize=9,
         textColor=ink,
         leading=11,
@@ -2065,7 +2069,7 @@ def build_stock_print_pdf(
     meta_style = ParagraphStyle(
         "StockMeta",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=MANROPE_PDF_BOLD,
         fontSize=8.5,
         textColor=ink,
         leading=11,
@@ -2074,7 +2078,7 @@ def build_stock_print_pdf(
     meta_sub = ParagraphStyle(
         "StockMetaSub",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=MANROPE_PDF_BOLD,
         fontSize=7.5,
         textColor=ink,
         leading=10,
@@ -2083,7 +2087,7 @@ def build_stock_print_pdf(
     cell_style = ParagraphStyle(
         "StockCell",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=MANROPE_PDF_BOLD,
         fontSize=9,
         textColor=ink,
         leading=11,
@@ -2091,7 +2095,7 @@ def build_stock_print_pdf(
     head_cell = ParagraphStyle(
         "StockHeadCell",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=MANROPE_PDF_BOLD,
         fontSize=7.5,
         textColor=ink,
         leading=9,
@@ -2099,7 +2103,7 @@ def build_stock_print_pdf(
     foot_style = ParagraphStyle(
         "StockFoot",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=MANROPE_PDF_BOLD,
         fontSize=7,
         textColor=ink,
         leading=9,
@@ -2239,7 +2243,7 @@ def build_stock_print_pdf(
 
             table = Table(data, colWidths=col_widths[:ncols], repeatRows=2)
             style_cmds = [
-                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTNAME", (0, 0), (-1, -1), MANROPE_PDF),
                 ("FONTSIZE", (0, 0), (-1, -1), 9),
                 ("TEXTCOLOR", (0, 0), (-1, -1), ink),
                 ("GRID", (0, 0), (-1, -1), 0.4, line_soft),
@@ -2252,7 +2256,7 @@ def build_stock_print_pdf(
                 ("BACKGROUND", (0, 0), (-1, 0), category_fill),
                 ("SPAN", (0, 0), (-1, 0)),
                 ("BACKGROUND", (0, 1), (-1, 1), head_fill),
-                ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (-1, 1), MANROPE_PDF_BOLD),
                 ("FONTSIZE", (0, 1), (-1, 1), 7.5),
                 ("ALIGN", (1, 1), (-1, 1), "CENTER"),
                 ("ALIGN", (1, 2), (-1, -1), "RIGHT"),

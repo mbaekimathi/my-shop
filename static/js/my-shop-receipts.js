@@ -620,9 +620,10 @@
     }
     doc.open();
     doc.write(`<!doctype html><html><head><title>Receipt</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
 <style>
 @page { size: ${pageWidth} auto; margin: 2mm; }
-body { margin: 0; padding: 2mm; font-family: "Courier New", monospace; font-size: ${fontSize}; font-weight: 900; color: #000 !important; background: #fff; -webkit-font-smoothing: none; text-shadow: 0.35px 0 0 #000, -0.35px 0 0 #000; }
+body { margin: 0; padding: 2mm; font-family: "Manrope", system-ui, sans-serif; font-size: ${fontSize}; font-weight: 900; color: #000 !important; background: #fff; -webkit-font-smoothing: none; text-shadow: 0.35px 0 0 #000, -0.35px 0 0 #000; }
 pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 </style></head><body><pre>${escapeHtml(text)}</pre></body></html>`);
     doc.close();

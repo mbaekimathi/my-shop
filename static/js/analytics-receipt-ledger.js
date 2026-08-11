@@ -316,4 +316,145 @@
     }
     syncMethodUi();
   }
+
+  const ledgerCard = document.querySelector("[data-ax-ledger-card]");
+  const ledgerSearch = ledgerCard?.querySelector("[data-ax-ledger-search]");
+  if (ledgerSearch && ledgerCard) {
+    const rows = () => ledgerCard.querySelectorAll("[data-ax-receipt-row]");
+    const noResults = ledgerCard.querySelector("[data-ax-ledger-no-results]");
+    const table = ledgerCard.querySelector(".ax-table");
+
+    const filterRows = () => {
+      const query = ledgerSearch.value.trim().toLowerCase();
+      const tokens = query.split(/\s+/).filter(Boolean);
+      let visible = 0;
+      rows().forEach((row) => {
+        const haystack = (row.getAttribute("data-search-text") || row.textContent || "").toLowerCase();
+        const match = !tokens.length || tokens.every((token) => haystack.includes(token));
+        row.hidden = !match;
+        if (match) visible += 1;
+      });
+      if (noResults) noResults.hidden = visible > 0 || !query;
+      if (table) table.hidden = visible === 0 && Boolean(query);
+    };
+
+    let timer = 0;
+    ledgerSearch.addEventListener("input", () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(filterRows, 120);
+    });
+    ledgerSearch.addEventListener("search", filterRows);
+  }
+
+  const shareModal = document.querySelector("[data-ax-share-modal]");
+  if (shareModal) {
+    const sharePhone = shareModal.querySelector("[data-ax-share-phone]");
+    const shareMessagePreview = shareModal.querySelector("[data-ax-share-message-preview]");
+    const shareCopyMessage = shareModal.querySelector("[data-ax-share-copy-message]");
+    const shareOpenWa = shareModal.querySelector("[data-ax-share-open-wa]");
+    const shareCopy = shareModal.querySelector("[data-ax-share-copy]");
+    const shareStatus = shareModal.querySelector("[data-ax-share-status]");
+    const companyName = shareModal.getAttribute("data-company-name") || "MY-SHOP";
+    const clientName = shareModal.getAttribute("data-client-name") || "there";
+    const balance = shareModal.getAttribute("data-balance") || "";
+    const baseUrl = shareModal.getAttribute("data-credit-note-url") || "";
+
+    const normalizeWaPhone = (value) => {
+      let digits = String(value || "").replace(/\D/g, "");
+      if (digits.startsWith("0")) digits = `254${digits.slice(1)}`;
+      if (digits.startsWith("254")) return digits;
+      if (digits.length === 9) return `254${digits}`;
+      return digits;
+    };
+
+    const buildMessage = () => {
+      const url = baseUrl;
+      return (
+        `Hello ${clientName},\n\n` +
+        `Your credit balance at ${companyName} is ${balance}.\n` +
+        `View your credit notes and pay with M-Pesa here:\n${url}\n\n` +
+        `— ${companyName}`
+      );
+    };
+
+    const syncMessagePreview = () => {
+      const message = buildMessage();
+      if (shareMessagePreview) shareMessagePreview.textContent = message;
+      return message;
+    };
+
+    const syncWhatsAppHref = () => {
+      if (!shareOpenWa) return;
+      const phone = normalizeWaPhone(sharePhone?.value || "");
+      const text = encodeURIComponent(syncMessagePreview());
+      shareOpenWa.href = phone ? `https://wa.me/${phone}?text=${text}` : "#";
+      shareOpenWa.classList.toggle("is-disabled", !phone);
+      shareOpenWa.setAttribute("aria-disabled", phone ? "false" : "true");
+    };
+
+    const setShareStatus = (message) => {
+      if (!shareStatus) return;
+      shareStatus.hidden = !message;
+      shareStatus.textContent = message || "";
+    };
+
+    const copyText = async (text, successLabel) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        setShareStatus(successLabel);
+      } catch (_err) {
+        const area = document.createElement("textarea");
+        area.value = text;
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+        setShareStatus(successLabel);
+      }
+    };
+
+    const openShareModal = () => {
+      shareModal.hidden = false;
+      document.body.classList.add("workspace-modal-open");
+      syncMessagePreview();
+      syncWhatsAppHref();
+      window.lucide?.createIcons?.();
+      sharePhone?.focus();
+    };
+
+    const closeShareModal = () => {
+      shareModal.hidden = true;
+      document.body.classList.remove("workspace-modal-open");
+      setShareStatus("");
+    };
+
+    sharePhone?.addEventListener("input", syncWhatsAppHref);
+
+    shareCopy?.addEventListener("click", () => {
+      copyText(baseUrl, "Link copied.");
+    });
+
+    shareCopyMessage?.addEventListener("click", () => {
+      copyText(buildMessage(), "Message copied.");
+    });
+
+    document.addEventListener("click", (event) => {
+      if (event.target.closest("[data-ax-share-open]")) {
+        event.preventDefault();
+        openShareModal();
+        return;
+      }
+      if (event.target.closest("[data-ax-share-close]")) {
+        event.preventDefault();
+        closeShareModal();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !shareModal.hidden) closeShareModal();
+    });
+
+    syncMessagePreview();
+    syncWhatsAppHref();
+  }
 })();

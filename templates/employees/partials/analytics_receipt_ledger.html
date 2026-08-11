@@ -1,18 +1,43 @@
-<section class="ax-card ax-card--wide" data-ax-ledger>
+<section class="ax-card ax-card--wide ax-card--ledger" data-ax-ledger-card>
   <header class="ax-card-head">
-    <h3>{{ ledger_title|default:"Receipts" }}</h3>
+    <div class="ax-card-head-main">
+      <h3>{{ ledger_title|default:"Receipts" }}</h3>
+      {% if receipt_count %}
+      <span class="ax-card-meta">{{ receipt_count }} receipt{{ receipt_count|pluralize }}</span>
+      {% elif rows %}
+      <span class="ax-card-meta">{{ rows|length }} receipt{{ rows|length|pluralize }}</span>
+      {% endif %}
+    </div>
+    {% if ledger_search %}
+    <label class="ax-table-search">
+      <span class="visually-hidden">Search receipts</span>
+      <input
+        type="search"
+        placeholder="Search receipts…"
+        autocomplete="off"
+        data-ax-ledger-search
+        aria-label="Search receipts"
+      >
+    </label>
+    {% endif %}
   </header>
-  <div class="ax-table-wrap ax-table-wrap--scroll">
+
+  {% if ledger_search %}
+  <p class="ax-scroll-hint" data-ax-ledger-scroll-hint aria-hidden="true">Scroll sideways for all columns</p>
+  {% endif %}
+
+  <div class="ax-table-wrap ax-table-wrap--list ax-table-wrap--scroll">
     {% if rows %}
-    <table class="ax-table">
+    <table class="ax-table ax-table--list{% if table_class %} {{ table_class }}{% endif %}">
       <thead>
         <tr>
-          <th>Receipt</th>
+          <th class="ax-th--item">Receipt</th>
           <th>Shop</th>
           <th>Items</th>
           <th>Status</th>
-          <th>Due</th>
           <th>Total</th>
+          <th>Paid</th>
+          <th>Due</th>
           <th>When</th>
           <th class="ax-col-actions">View</th>
         </tr>
@@ -20,13 +45,21 @@
       <tbody>
         {% for row in rows %}
         {{ row.lines|json_script:row.id }}
-        <tr data-ax-receipt-row data-row-id="{{ row.id }}">
+        <tr
+          class="ax-receipt-row"
+          data-ax-receipt-row
+          data-row-id="{{ row.id }}"
+          data-search-text="{{ row.number }} {{ row.shop }} {{ row.status }} {{ row.cashier }}"
+        >
           <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
           <td data-label="Shop">{{ row.shop }}</td>
           <td data-label="Items">{{ row.item_count }}</td>
-          <td data-label="Status"><span class="ax-pill">{{ row.status }}</span></td>
-          <td data-label="Due">{{ row.due }}</td>
+          <td data-label="Status">
+            <span class="ax-status is-{{ row.status_tone|default:'neutral' }}">{{ row.status }}</span>
+          </td>
           <td data-label="Total">{{ row.total }}</td>
+          <td data-label="Paid">{{ row.paid|default:"—" }}</td>
+          <td data-label="Due">{{ row.due }}</td>
           <td data-label="When">{% if row.when %}{{ row.when|date:"d M Y · H:i" }}{% else %}—{% endif %}</td>
           <td class="ax-col-actions" data-label="View">
             <button
@@ -47,6 +80,7 @@
         {% endfor %}
       </tbody>
     </table>
+    <p class="ax-empty ax-empty--search" data-ax-ledger-no-results hidden>No receipts match that search.</p>
     {% else %}
     <p class="ax-empty">{{ empty_message|default:"No receipts found." }}</p>
     {% endif %}

@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ document.title|default:"Stock list" }} — {{ company_name }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light;
@@ -231,7 +234,7 @@
     body.paper-a4 {
       padding: 0.75rem 0.55rem 1.1rem;
       /* Standard body size for office print lists (~10pt) */
-      font: 10pt/1.25 "Segoe UI", Arial, Helvetica, sans-serif;
+      font: 10pt/1.25 "Manrope", system-ui, sans-serif;
       background: var(--page-bg);
     }
     body.paper-a4 .sheet {
@@ -303,7 +306,7 @@
       max-width: 100%;
       margin: 0 auto;
       padding: 2mm 1.5mm 2.5mm;
-      font: 10px/1.25 "Segoe UI", Arial, sans-serif;
+      font: 10px/1.25 "Manrope", system-ui, sans-serif;
       background: #fff;
     }
     body.paper-80 .sheet-head {
@@ -346,7 +349,7 @@
       max-width: 100%;
       margin: 0 auto;
       padding: 1.5mm 1mm 2mm;
-      font: 8.5px/1.2 "Segoe UI", Arial, sans-serif;
+      font: 8.5px/1.2 "Manrope", system-ui, sans-serif;
       background: #fff;
     }
     body.paper-50 .sheet-head {
@@ -432,7 +435,7 @@
         padding: 0;
         width: auto;
         background: #fff;
-        font: 10pt/1.25 "Segoe UI", Arial, Helvetica, sans-serif;
+        font: 10pt/1.25 "Manrope", system-ui, sans-serif;
       }
       body.paper-a4 .sheet {
         width: auto;

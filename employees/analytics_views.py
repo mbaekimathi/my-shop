@@ -233,6 +233,14 @@ def analytics_client_credit(request, role_segment, client_id):
         return denied
 
     account = build_client_credit_account(profile=profile, client_id=client_id)
+    from shops.credit_note import credit_note_share_context
+
+    share_context = credit_note_share_context(
+        request=request,
+        client_id=client_id,
+        client_name=account["client"].full_name,
+        balance=account["balance"],
+    )
     query = request.GET.urlencode()
     back_href = analytics_section_url(profile.role, back_section)
     if query:
@@ -263,6 +271,7 @@ def analytics_client_credit(request, role_segment, client_id):
                 get_daraja_settings().stk_not_ready_reason() or "STK off"
             ),
             "client_phone": account["client"].phone_number,
+            **share_context,
             **_stk_urls_for(profile),
             **account,
         },
