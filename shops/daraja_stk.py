@@ -297,6 +297,7 @@ def initiate_stk_push(
     profile=None,
     account_kind: str = "",
     account_id: int | None = None,
+    receipt=None,
     request=None,
 ) -> MpesaStkPayment:
     if request is not None:
@@ -370,6 +371,7 @@ def initiate_stk_push(
         description=desc,
         account_kind=account_kind or "",
         account_id=account_id,
+        receipt=receipt,
         created_by=profile,
         status=MpesaStkStatus.PENDING,
     )

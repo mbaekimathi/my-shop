@@ -2027,17 +2027,18 @@ def stock_management(request, profile, meta, module, page_sidebar):
         "report",
         "movements",
         "serials",
+        "serial-movements",
         "return-clients",
         "settings",
         "low-stock",
     ):
         mode = "view"
 
-    # Return-clients shares the serials permission key.
+    # Return-clients / serial-movements share the serials permission key.
     # Settings / low-stock are reference pages — anyone who can view stock may open them.
     permission_mode = (
         "serials"
-        if mode == "return-clients"
+        if mode in ("return-clients", "serial-movements")
         else "view"
         if mode in ("settings", "low-stock")
         else mode
@@ -2066,6 +2067,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if mode == "serials":
         return stock_serials(request, profile, meta, module)
+
+    if mode == "serial-movements":
+        return stock_serial_movements(request, profile, meta, module)
 
     if mode == "return-clients":
         return stock_serial_returns(request, profile, meta, module)
@@ -2811,6 +2815,92 @@ def _iter_returned_serial_rows(lines):
                 "returned_at": receipt.last_returned_at or receipt.created_at,
                 "received_by": _employee_display_name(receipt.last_returned_by),
             }
+
+
+def stock_serial_movements(request, profile, meta, module):
+    """Chronological stock events that include serial numbers, across all shops."""
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+    from shops.models import Shop
+
+    from .models import Item
+
+    search = (request.GET.get("q") or "").strip()
+    range_type, day_start, day_end, filter_context = _report_range_bounds(request)
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="serial-movements",
+        shop_id="",
+        profile=profile,
+    )
+
+    display_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+    shop_ids = [shop.pk for shop in display_shops]
+    no_shop_access = profile.role in SHOP_ASSIGNABLE_ROLES and not display_shops
+    shop_ids_for_query = [] if no_shop_access else shop_ids
+
+    serial_items = list(
+        Item.objects.filter(track_serial_number=True).order_by("category", "name")
+    )
+    movement_events = []
+    if serial_items:
+        movement_events, _, _, _, _ = _build_movement_timeline(
+            shop_ids=shop_ids_for_query,
+            day_start=day_start,
+            day_end=day_end,
+            item_mode="items",
+            selected_categories=[],
+            selected_item_ids=[item.pk for item in serial_items],
+            report_items=serial_items,
+        )
+    movement_events = [
+        event
+        for event in movement_events
+        if event.get("serial_numbers")
+    ]
+
+    search_key = search.upper()
+    rows = []
+    for event in movement_events:
+        for serial in event["serial_numbers"]:
+            if search_key and search_key not in serial:
+                continue
+            rows.append(
+                {
+                    "happened_at": event["happened_at"],
+                    "event_type": event["event_type"],
+                    "event_label": event["event_label"],
+                    "item_name": event["item_name"],
+                    "item_category": event["item_category"],
+                    "serial_number": serial,
+                    "from_label": event.get("from_label", "—"),
+                    "to_label": event.get("to_label", "—"),
+                    "by": event.get("by", "—"),
+                }
+            )
+
+    rows.sort(key=lambda row: row["happened_at"], reverse=True)
+
+    return render(
+        request,
+        "items/stock_serial_movements.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "rows": rows,
+            "row_count": len(rows),
+            "search": search,
+            "display_shops": display_shops,
+            "stock_mode": "serial-movements",
+            **filter_context,
+        },
+    )
 
 
 def stock_serial_returns(request, profile, meta, module):

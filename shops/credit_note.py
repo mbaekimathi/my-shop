@@ -297,6 +297,17 @@ def apply_client_credit_note_payment(
             receipt.save(update_fields=update_fields)
             remaining = (remaining - apply).quantize(Decimal("0.01"))
             cleared += 1
+            from shops.credit_audit import log_credit_payment
+
+            log_credit_payment(
+                client_id=client.pk,
+                receipt=receipt,
+                amount=apply,
+                payment_method="mpesa",
+                actor=None,
+                stk_payment=stk_payment,
+                mpesa_receipt_number=mpesa_receipt_number,
+            )
 
         stk_payment.applied = True
         stk_payment.save(update_fields=["applied", "updated_at"])

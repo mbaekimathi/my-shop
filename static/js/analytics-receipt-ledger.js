@@ -2,6 +2,29 @@
   const receiptModal = document.querySelector("[data-ax-receipt-modal]");
   const payModal = document.querySelector("[data-ax-pay-modal]");
 
+  function creditPaymentsUrl() {
+    const section = document.querySelector("[data-ax-section='client-account']");
+    return (
+      section?.getAttribute("data-client-credit-payments-url") ||
+      payModal?.getAttribute("data-client-credit-payments-url") ||
+      document
+        .querySelector("[data-ax-receipt-manage-modal]")
+        ?.getAttribute("data-client-credit-payments-url") ||
+      ""
+    );
+  }
+
+  function redirectAfterPayment(delayMs = 450) {
+    const url = creditPaymentsUrl();
+    window.setTimeout(() => {
+      if (url) {
+        window.location.assign(url);
+      } else {
+        window.location.reload();
+      }
+    }, delayMs);
+  }
+
   function syncModalOpen() {
     const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
     document.body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
@@ -78,9 +101,15 @@
       const shop = button.getAttribute("data-receipt-shop") || "";
       const total = button.getAttribute("data-receipt-total") || "";
       const due = button.getAttribute("data-receipt-due") || "";
+      const payBy = button.getAttribute("data-receipt-pay-by") || "";
       if (titleEl) titleEl.textContent = number;
       if (metaEl) {
-        metaEl.textContent = [shop, total ? `Total ${total}` : "", due ? `Due ${due}` : ""]
+        metaEl.textContent = [
+          shop,
+          total ? `Total ${total}` : "",
+          due ? `Due ${due}` : "",
+          payBy ? `Pay by ${payBy}` : "",
+        ]
           .filter(Boolean)
           .join(" · ");
       }
@@ -279,9 +308,7 @@
           return;
         }
         setPayStatus(data.message || "Payment recorded.");
-        window.setTimeout(() => {
-          window.location.reload();
-        }, 450);
+        redirectAfterPayment();
       } catch (err) {
         setPayStatus(err.message || "Payment failed.", { error: true });
       } finally {
@@ -315,6 +342,363 @@
       payForm.addEventListener("submit", submitPayment);
     }
     syncMethodUi();
+  }
+
+  const manageModal = document.querySelector("[data-ax-receipt-manage-modal]");
+  if (manageModal) {
+    const manageForm = manageModal.querySelector("[data-ax-receipt-manage-form]");
+    const manageTitle = manageModal.querySelector("[data-ax-receipt-manage-title]");
+    const manageMeta = manageModal.querySelector("[data-ax-receipt-manage-meta]");
+    const manageId = manageModal.querySelector("[data-ax-receipt-manage-id]");
+    const manageDueDate = manageModal.querySelector("[data-ax-receipt-manage-due-date]");
+    const manageDueLabel = manageModal.querySelector("[data-ax-receipt-manage-due-label]");
+    const managePayWrap = manageModal.querySelector("[data-ax-receipt-manage-pay-wrap]");
+    const manageAmount = manageModal.querySelector("[data-ax-receipt-manage-amount]");
+    const managePhoneRow = manageModal.querySelector("[data-ax-receipt-manage-phone-row]");
+    const managePhone = manageModal.querySelector("[data-ax-receipt-manage-phone]");
+    const manageStkId = manageModal.querySelector("[data-ax-receipt-manage-stk-id]");
+    const manageStatus = manageModal.querySelector("[data-ax-receipt-manage-status]");
+    const managePaySubmit = manageModal.querySelector("[data-ax-receipt-manage-pay-submit]");
+    const manageSaveDate = manageModal.querySelector("[data-ax-receipt-manage-save-date]");
+    const manageMethodInputs = manageModal.querySelectorAll("[data-ax-receipt-manage-method]");
+    const payUrl = manageModal.getAttribute("data-pay-url") || "";
+    const stkInitiateUrl = manageModal.getAttribute("data-stk-initiate-url") || "";
+    const stkStatusTemplate =
+      manageModal.getAttribute("data-stk-status-url-template") || "";
+    const receiptUpdateTemplate =
+      manageModal.getAttribute("data-receipt-update-url-template") || "";
+    const stkReady = manageModal.getAttribute("data-stk-ready") === "1";
+    const canPayAccount = manageModal.getAttribute("data-can-pay-account") === "1";
+    const defaultPhone = manageModal.getAttribute("data-client-phone") || "";
+
+    let activeManageButton = null;
+
+    function manageCsrf() {
+      return (
+        manageForm?.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+        document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+        document.cookie
+          .split("; ")
+          .find((row) => row.startsWith("csrftoken="))
+          ?.split("=")[1] ||
+        ""
+      );
+    }
+
+    function manageSelectedMethod() {
+      const checked = manageModal.querySelector("[data-ax-receipt-manage-method]:checked");
+      return checked?.value || "cash";
+    }
+
+    function syncManageMethodUi() {
+      const method = manageSelectedMethod();
+      manageModal.querySelectorAll(".ax-pay-method").forEach((label) => {
+        const input = label.querySelector("input");
+        label.classList.toggle("is-active", Boolean(input?.checked));
+      });
+      if (managePhoneRow) managePhoneRow.hidden = method !== "mpesa";
+    }
+
+    function setManageStatus(message, { error = false } = {}) {
+      if (!manageStatus) return;
+      manageStatus.hidden = !message;
+      manageStatus.textContent = message || "";
+      manageStatus.className = error
+        ? "ax-pay-status is-error"
+        : "ax-pay-status is-ok";
+    }
+
+    function updateLedgerRowFromManage(data) {
+      if (!activeManageButton) return;
+      const rowId = activeManageButton.getAttribute("data-receipt-id");
+      const row = document.querySelector(`[data-ax-receipt-row][data-row-id="credit-${rowId}"]`);
+      if (!row) return;
+
+      if (data.pay_by) {
+        const payByCell = row.querySelector("[data-label='Pay by']");
+        if (payByCell) {
+          const overdue = Boolean(data.pay_by_overdue);
+          payByCell.innerHTML = overdue
+            ? `<span class="ax-pay-by is-overdue">${data.pay_by}</span>`
+            : data.pay_by;
+        }
+        activeManageButton.setAttribute("data-receipt-pay-by", data.pay_by);
+        if (data.pay_by_raw) {
+          activeManageButton.setAttribute("data-receipt-pay-by-raw", data.pay_by_raw);
+        }
+        const viewBtn = row.querySelector("[data-ax-receipt-view]");
+        if (viewBtn) viewBtn.setAttribute("data-receipt-pay-by", data.pay_by);
+        const haystack = row.getAttribute("data-search-text") || "";
+        if (data.pay_by && !haystack.includes(data.pay_by)) {
+          row.setAttribute("data-search-text", `${haystack} ${data.pay_by}`.trim());
+        }
+      }
+
+      if (data.receipt_due !== undefined) {
+        const dueCell = row.querySelector("[data-label='Due']");
+        if (dueCell) dueCell.textContent = data.receipt_due;
+        activeManageButton.setAttribute("data-receipt-due", data.receipt_due);
+        if (data.receipt_due_raw) {
+          activeManageButton.setAttribute("data-receipt-due-raw", data.receipt_due_raw);
+        }
+        const viewBtn = row.querySelector("[data-ax-receipt-view]");
+        if (viewBtn) viewBtn.setAttribute("data-receipt-due", data.receipt_due);
+        if (manageDueLabel) manageDueLabel.textContent = data.receipt_due;
+        if (manageAmount && data.receipt_due_raw) {
+          manageAmount.max = data.receipt_due_raw;
+        }
+        const dueLeft = Number(data.receipt_due_raw || 0);
+        const canPayRow = dueLeft > 0;
+        activeManageButton.setAttribute(
+          "data-receipt-can-pay",
+          canPayRow ? "1" : "0"
+        );
+        if (managePayWrap) {
+          managePayWrap.hidden = !canPayAccount || !canPayRow;
+        }
+        if (!canPayRow && manageAmount) manageAmount.value = "";
+      }
+
+      if (data.receipt_status) {
+        const statusCell = row.querySelector("[data-label='Status'] .ax-status");
+        if (statusCell) {
+          statusCell.textContent = data.receipt_status;
+          statusCell.className = `ax-status is-${data.receipt_status_tone || "neutral"}`;
+        }
+      }
+
+      if (data.account_balance) {
+        const balanceEl = document.querySelector("[data-ax-account-balance]");
+        if (balanceEl) balanceEl.textContent = data.account_balance;
+      }
+    }
+
+    function closeManageModal() {
+      manageModal.hidden = true;
+      activeManageButton = null;
+      if (manageForm) manageForm.reset();
+      if (manageId) manageId.value = "";
+      if (manageStkId) manageStkId.value = "";
+      if (managePayWrap) managePayWrap.hidden = true;
+      setManageStatus("");
+      syncModalOpen();
+    }
+
+    function openManageModal(button) {
+      activeManageButton = button;
+      const number = button.getAttribute("data-receipt-number") || "Receipt";
+      const shop = button.getAttribute("data-receipt-shop") || "";
+      const total = button.getAttribute("data-receipt-total") || "";
+      const due = button.getAttribute("data-receipt-due") || "";
+      const payBy = button.getAttribute("data-receipt-pay-by") || "";
+      const payByRaw = button.getAttribute("data-receipt-pay-by-raw") || "";
+      const dueRaw = button.getAttribute("data-receipt-due-raw") || "";
+      const receiptId = button.getAttribute("data-receipt-id") || "";
+      const canPayRow = button.getAttribute("data-receipt-can-pay") === "1";
+
+      if (manageTitle) manageTitle.textContent = number;
+      if (manageMeta) {
+        manageMeta.textContent = [shop, total ? `Total ${total}` : "", due ? `Due ${due}` : ""]
+          .filter(Boolean)
+          .join(" · ");
+      }
+      if (manageId) manageId.value = receiptId;
+      if (manageDueDate) {
+        manageDueDate.value = payByRaw;
+      }
+      if (manageDueLabel) manageDueLabel.textContent = due || "—";
+      if (manageAmount) {
+        manageAmount.value = "";
+        manageAmount.max = dueRaw || "";
+        manageAmount.required = canPayRow;
+      }
+      if (managePhone) managePhone.value = defaultPhone;
+      if (manageStkId) manageStkId.value = "";
+      const cash = manageModal.querySelector('[data-ax-receipt-manage-method][value="cash"]');
+      if (cash) cash.checked = true;
+      syncManageMethodUi();
+      if (managePayWrap) {
+        managePayWrap.hidden = !canPayAccount || !canPayRow;
+      }
+      setManageStatus("");
+      manageModal.hidden = false;
+      syncModalOpen();
+      window.lucide?.createIcons?.();
+      manageDueDate?.focus();
+    }
+
+    async function pollManageStk(paymentId) {
+      const statusUrl = stkStatusTemplate.replace("__ID__", paymentId);
+      const deadline = Date.now() + 120000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        const response = await fetch(statusUrl, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "Could not check M-Pesa status.");
+        }
+        if (data.success) return data;
+        if (data.failed) {
+          throw new Error(data.result_desc || "Customer did not complete M-Pesa payment.");
+        }
+        setManageStatus(
+          data.result_desc || "Waiting for customer to confirm on their phone…"
+        );
+      }
+      throw new Error("Timed out waiting for M-Pesa confirmation.");
+    }
+
+    async function saveDueDate() {
+      if (!receiptUpdateTemplate || !manageId?.value) return;
+      const dueDate = (manageDueDate?.value || "").trim();
+      if (!dueDate) {
+        setManageStatus("Enter a payment due date.", { error: true });
+        return;
+      }
+      if (manageSaveDate) manageSaveDate.disabled = true;
+      try {
+        const url = receiptUpdateTemplate.replace("__ID__", manageId.value);
+        const body = new URLSearchParams({ credit_due_date: dueDate });
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "X-CSRFToken": manageCsrf(),
+            Accept: "application/json",
+          },
+          body,
+          credentials: "same-origin",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          setManageStatus(data.error || "Could not update due date.", { error: true });
+          return;
+        }
+        updateLedgerRowFromManage(data);
+        setManageStatus(data.message || "Due date updated.");
+      } catch (err) {
+        setManageStatus(err.message || "Could not update due date.", { error: true });
+      } finally {
+        if (manageSaveDate) manageSaveDate.disabled = false;
+      }
+    }
+
+    async function submitReceiptPayment(event) {
+      event.preventDefault();
+      if (!manageForm || !payUrl || !manageId?.value) return;
+      const amount = (manageAmount?.value || "").trim();
+      if (!amount) {
+        setManageStatus("Enter an amount to pay.", { error: true });
+        return;
+      }
+      const method = manageSelectedMethod();
+      if (managePaySubmit) managePaySubmit.disabled = true;
+      if (manageStkId) manageStkId.value = "";
+
+      try {
+        if (method === "mpesa") {
+          if (!stkReady || !stkInitiateUrl) {
+            throw new Error("STK Push is not enabled in Daraja settings.");
+          }
+          const phone = (managePhone?.value || "").trim();
+          if (!phone) {
+            throw new Error("Enter the client phone for M-Pesa STK Push.");
+          }
+          setManageStatus("Sending M-Pesa STK Push…");
+          const body = new URLSearchParams({
+            kind: manageForm.querySelector("[name=kind]")?.value || "",
+            account_id: manageForm.querySelector("[name=account_id]")?.value || "",
+            receipt_id: manageId.value,
+            amount,
+            phone,
+          });
+          const startRes = await fetch(stkInitiateUrl, {
+            method: "POST",
+            headers: {
+              "X-CSRFToken": manageCsrf(),
+              Accept: "application/json",
+            },
+            body,
+            credentials: "same-origin",
+          });
+          const startData = await startRes.json().catch(() => ({}));
+          if (!startRes.ok || !startData.ok || !startData.id) {
+            throw new Error(startData.error || "Could not start M-Pesa STK Push.");
+          }
+          setManageStatus("Waiting for customer to confirm on their phone…");
+          const confirmed = await pollManageStk(startData.id);
+          if (manageStkId) manageStkId.value = confirmed.id;
+          setManageStatus(
+            confirmed.mpesa_receipt_number
+              ? `M-Pesa confirmed (${confirmed.mpesa_receipt_number}). Applying…`
+              : "M-Pesa confirmed. Applying…"
+          );
+        } else {
+          setManageStatus("Recording payment…");
+        }
+
+        const body = new FormData(manageForm);
+        body.set("payment_method", method);
+        const response = await fetch(payUrl, {
+          method: "POST",
+          headers: {
+            "X-CSRFToken": manageCsrf(),
+            Accept: "application/json",
+          },
+          body,
+          credentials: "same-origin",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          setManageStatus(data.error || "Payment failed.", { error: true });
+          return;
+        }
+        setManageStatus(data.message || "Payment recorded.");
+        redirectAfterPayment();
+      } catch (err) {
+        setManageStatus(err.message || "Payment failed.", { error: true });
+      } finally {
+        if (managePaySubmit) managePaySubmit.disabled = false;
+      }
+    }
+
+    manageMethodInputs.forEach((input) => {
+      input.addEventListener("change", syncManageMethodUi);
+    });
+
+    if (manageSaveDate) {
+      manageSaveDate.addEventListener("click", (event) => {
+        event.preventDefault();
+        saveDueDate();
+      });
+    }
+
+    if (manageForm) {
+      manageForm.addEventListener("submit", submitReceiptPayment);
+    }
+
+    document.addEventListener("click", (event) => {
+      const manageBtn = event.target.closest("[data-ax-receipt-manage]");
+      if (manageBtn) {
+        event.preventDefault();
+        openManageModal(manageBtn);
+        return;
+      }
+      if (event.target.closest("[data-ax-receipt-manage-close]")) {
+        event.preventDefault();
+        closeManageModal();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !manageModal.hidden) {
+        closeManageModal();
+      }
+    });
+
+    syncManageMethodUi();
   }
 
   const ledgerCard = document.querySelector("[data-ax-ledger-card]");

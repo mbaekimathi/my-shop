@@ -1396,6 +1396,8 @@
     const clientNameLabel = checkoutForm?.querySelector("[data-cart-client-name-label]");
     const clientHint = checkoutForm?.querySelector("[data-cart-client-hint]");
     const clientSuggest = checkoutForm?.querySelector("[data-cart-client-suggest]");
+    const creditDueWrap = checkoutForm?.querySelector("[data-cart-credit-due-wrap]");
+    const creditDueInput = checkoutForm?.querySelector("[data-cart-credit-due]");
     const checkoutUrl = cartRoot.getAttribute("data-checkout-url") || "";
     const stkInitiateUrl = cartRoot.getAttribute("data-stk-initiate-url") || "";
     const stkStatusTemplate =
@@ -2187,6 +2189,9 @@
       const kind = selectedKind();
       const isSale = kind === "sale";
       const isQuote = kind === "quotation";
+      const isCredit = kind === "credit";
+      if (creditDueWrap) creditDueWrap.hidden = !isCredit;
+      if (creditDueInput) creditDueInput.required = isCredit;
       if (whatsappWrap) whatsappWrap.hidden = !isQuote;
       if (!isQuote && checkoutForm) {
         const wa = checkoutForm.querySelector("[data-cart-whatsapp]");
@@ -2283,6 +2288,7 @@
       if (payInput) payInput.checked = true;
       if (cashInput) cashInput.value = "";
       if (mpesaInput) mpesaInput.value = "";
+      if (creditDueInput) creditDueInput.value = "";
       clientNameAutofilled = false;
       clientPhoneAutofilled = false;
       setClientHint("");
@@ -2388,6 +2394,18 @@
           payload.cash_amount = cashInput?.value || "0";
           payload.mpesa_amount = mpesaInput?.value || "0";
         }
+      }
+
+      if (kind === "credit") {
+        const dueDate = (creditDueInput?.value || "").trim();
+        if (!dueDate) {
+          setCartStatus("Enter the payment due date for this credit.", {
+            error: true,
+          });
+          creditDueInput?.focus();
+          return;
+        }
+        payload.credit_due_date = dueDate;
       }
 
       const needsStk =
@@ -4048,6 +4066,9 @@
 
     loadCart();
     if (checkoutEnabled) {
+      if (creditDueInput) {
+        creditDueInput.min = new Date().toISOString().slice(0, 10);
+      }
       renderCart();
       syncCheckoutMode();
     }

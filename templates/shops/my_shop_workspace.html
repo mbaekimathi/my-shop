@@ -250,6 +250,21 @@
       </label>
       {% endif %}
 
+      {% if "credit" in cart_kinds %}
+      <div class="shop-cart-field" data-cart-credit-due-wrap{% if default_kind != "credit" %} hidden{% endif %}>
+        <label class="shop-cart-input">
+          <span>Payment due date <span class="shop-serial-required">*</span></span>
+          <input
+            type="date"
+            name="credit_due_date"
+            data-cart-credit-due
+            {% if default_kind == "credit" %}required{% endif %}
+          >
+        </label>
+        <p class="shop-cart-client-note">When the client should pay this credit.</p>
+      </div>
+      {% endif %}
+
       <div class="shop-cart-field" data-cart-payment-wrap{% if not show_payment_picker %} hidden{% endif %}>
         <span class="shop-cart-field-label">Payment</span>
         <div class="shop-cart-seg" role="group" aria-label="Payment method">

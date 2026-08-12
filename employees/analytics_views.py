@@ -13,17 +13,49 @@ from .access import (
 )
 from .analytics_services import (
     apply_account_payment,
+    apply_credit_receipt_payment,
     build_analytics_page,
     build_analytics_receipts_list,
     build_client_credit_account,
     build_supplier_account,
     get_analytics_receipt_kind,
     get_analytics_section,
+    update_credit_receipt_due_date,
 )
-from .workspace import get_dashboard_module, sidebar_for_analytics
+from shops.credit_audit import client_credit_audit_url
+from .workspace import (
+    get_dashboard_module,
+    sidebar_for_analytics,
+    sidebar_for_client_credit_account,
+)
 from shops.daraja_stk import stk_ready as daraja_stk_ready
 from shops.daraja_stk import sync_callback_base_from_request
 from shops.services import get_daraja_settings
+
+
+def _client_credit_nav(profile, client_id):
+    from django.urls import reverse
+
+    from shops.credit_audit import client_credit_audit_url
+
+    segment = role_url_segment(profile.role)
+    kwargs = {"role_segment": segment, "client_id": client_id}
+    return {
+        "account_href": reverse("employees:analytics_client_account", kwargs=kwargs),
+        "audit_href": client_credit_audit_url(profile.role, client_id),
+    }
+
+
+def _client_credit_sidebar(profile, *, client_name, client_id, active):
+    nav = _client_credit_nav(profile, client_id)
+    return sidebar_for_client_credit_account(
+        profile.role,
+        client_name=client_name,
+        account_href=nav["account_href"],
+        audit_href=nav["audit_href"],
+        profile=profile,
+        active=active,
+    )
 
 
 def _analytics_meta(section):
@@ -62,6 +94,17 @@ def _stk_urls_for(profile):
         ),
         "stk_status_url_template": status_template,
     }
+
+
+def _credit_receipt_update_url_template(profile):
+    from django.urls import reverse
+
+    segment = role_url_segment(profile.role)
+    template = reverse(
+        "employees:analytics_credit_receipt_update",
+        kwargs={"role_segment": segment, "receipt_id": 0},
+    )
+    return template.replace("/0/", "/__ID__/")
 
 
 def _render_analytics(request, profile, *, section_slug="overview"):
@@ -260,8 +303,11 @@ def analytics_client_credit(request, role_segment, client_id):
             "module": module,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_analytics(
-                profile.role, active_view=back_section, profile=profile
+            "page_sidebar": _client_credit_sidebar(
+                profile,
+                client_name=account["client"].full_name,
+                client_id=client_id,
+                active="account",
             ),
             "back_href": back_href,
             "back_label": "Back to credits" if from_credits else "Back to clients",
@@ -273,7 +319,81 @@ def analytics_client_credit(request, role_segment, client_id):
             "client_phone": account["client"].phone_number,
             **share_context,
             **_stk_urls_for(profile),
+            "receipt_update_url_template": _credit_receipt_update_url_template(profile),
+            "client_credit_payments_url": client_credit_audit_url(
+                profile.role, client_id, query=query
+            ),
             **account,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_client_credit_audit(request, role_segment, client_id):
+    """Client credit audit trail (/…/analytics/clients/<id>/payments/)."""
+    from .workspace import analytics_section_url
+    from shops.credit_audit import build_client_credit_audit_trail
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_client_credit_audit",
+            role_segment=expected,
+            client_id=client_id,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from_credits = "/analytics/credits/" in (request.path or "")
+    back_section = "credits" if from_credits else "clients"
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", back_section)
+    if denied is not None:
+        return denied
+
+    trail = build_client_credit_audit_trail(profile=profile, client_id=client_id)
+    query = request.GET.urlencode()
+    back_href = analytics_section_url(profile.role, back_section)
+    if query:
+        back_href = f"{back_href}?{query}"
+
+    return render(
+        request,
+        "employees/analytics_client_credit_audit.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": f"{trail['client'].full_name} · Credit payments",
+                "headline": "Credit payments",
+                "summary": "Audit trail of payments and credit-note changes for this client.",
+                "icon": "history",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": _client_credit_sidebar(
+                profile,
+                client_name=trail["client"].full_name,
+                client_id=client_id,
+                active="audit",
+            ),
+            "back_href": back_href,
+            "back_label": "Back to credits" if from_credits else "Back to clients",
+            **_client_credit_nav(profile, client_id),
+            **trail,
         },
     )
 
@@ -386,18 +506,31 @@ def analytics_account_pay(request, role_segment):
         account_id = int(request.POST.get("account_id") or 0)
     except (TypeError, ValueError):
         account_id = 0
+    try:
+        receipt_id = int(request.POST.get("receipt_id") or 0)
+    except (TypeError, ValueError):
+        receipt_id = 0
     payment_method = (request.POST.get("payment_method") or "cash").strip().lower()
     stk_payment_id = (request.POST.get("stk_payment_id") or "").strip()
 
     try:
-        result = apply_account_payment(
-            profile=profile,
-            kind=kind,
-            account_id=account_id,
-            amount=request.POST.get("amount"),
-            payment_method=payment_method,
-            stk_payment_id=stk_payment_id,
-        )
+        if receipt_id and kind == "credit":
+            result = apply_credit_receipt_payment(
+                profile=profile,
+                receipt_id=receipt_id,
+                amount=request.POST.get("amount"),
+                payment_method=payment_method,
+                stk_payment_id=stk_payment_id,
+            )
+        else:
+            result = apply_account_payment(
+                profile=profile,
+                kind=kind,
+                account_id=account_id,
+                amount=request.POST.get("amount"),
+                payment_method=payment_method,
+                stk_payment_id=stk_payment_id,
+            )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
         return JsonResponse({"ok": False, "error": message}, status=400)
@@ -451,6 +584,10 @@ def analytics_account_pay_stk(request, role_segment):
         account_id = int(request.POST.get("account_id") or 0)
     except (TypeError, ValueError):
         account_id = 0
+    try:
+        receipt_id = int(request.POST.get("receipt_id") or 0)
+    except (TypeError, ValueError):
+        receipt_id = 0
     client = Client.objects.filter(pk=account_id).first()
     if client is None:
         return JsonResponse({"ok": False, "error": "Client not found."}, status=404)
@@ -461,16 +598,42 @@ def analytics_account_pay_stk(request, role_segment):
             status=400,
         )
 
+    receipt = None
+    if receipt_id:
+        from shops.models import ShopReceipt, ShopReceiptKind, ShopReceiptStatus
+
+        receipt = (
+            ShopReceipt.objects.filter(
+                pk=receipt_id,
+                client_id=client.pk,
+                kind=ShopReceiptKind.CREDIT,
+            )
+            .exclude(status=ShopReceiptStatus.CANCELLED)
+            .first()
+        )
+        if receipt is None:
+            return JsonResponse(
+                {"ok": False, "error": "Credit receipt not found for this client."},
+                status=404,
+            )
+
+    account_reference = f"CR{client.pk}"
+    description = f"Credit {client.full_name}"[:40]
+    if receipt is not None:
+        account_reference = f"R{receipt.pk}"[:12]
+        description = f"{receipt.receipt_number} {client.full_name}"[:40]
+
     try:
         payment = initiate_stk_push(
             purpose="credit",
             amount=request.POST.get("amount"),
             phone=phone,
-            account_reference=f"CR{client.pk}",
-            description=f"Credit {client.full_name}"[:40],
+            account_reference=account_reference,
+            description=description,
             profile=profile,
             account_kind="credit",
             account_id=client.pk,
+            receipt=receipt,
             request=request,
         )
     except ValidationError as exc:
@@ -505,6 +668,44 @@ def analytics_account_pay_stk_status(request, role_segment, payment_id):
     if payment is None:
         return JsonResponse({"ok": False, "error": "STK payment not found."}, status=404)
     return JsonResponse({"ok": True, **stk_payment_payload(payment)})
+
+
+@active_employee_required
+@require_POST
+def analytics_credit_receipt_update(request, role_segment, receipt_id):
+    """Update payment due date on one credit receipt."""
+    from .module_permissions import require_module_permission
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return JsonResponse({"ok": False, "error": "Wrong portal."}, status=403)
+
+    denied = require_module_permission(
+        request, profile, "analytics", "clients", as_json=True
+    )
+    if denied is not None:
+        from .module_permissions import employee_may
+
+        if not employee_may(profile, "analytics", "credits"):
+            return denied
+
+    try:
+        result = update_credit_receipt_due_date(
+            profile=profile,
+            receipt_id=receipt_id,
+            credit_due_date=request.POST.get("credit_due_date"),
+        )
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        return JsonResponse({"ok": False, "error": message}, status=400)
+
+    return JsonResponse(result)
 
 
 def _analytics_receipt_shop_access(profile, shop_id):

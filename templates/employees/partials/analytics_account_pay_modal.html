@@ -10,6 +10,7 @@
   data-balance-raw="{{ balance_raw }}"
   data-stk-ready="{% if stk_ready %}1{% else %}0{% endif %}"
   data-client-phone="{{ client_phone|default:'' }}"
+  {% if client_credit_payments_url %}data-client-credit-payments-url="{{ client_credit_payments_url }}"{% endif %}
   hidden
 >
   <div class="workspace-modal-backdrop" data-ax-pay-modal-close></div>

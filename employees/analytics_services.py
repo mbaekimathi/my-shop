@@ -397,6 +397,17 @@ def apply_account_payment(
                 receipt.save(update_fields=update_fields)
                 remaining = (remaining - apply).quantize(Decimal("0.01"))
                 cleared += 1
+                from shops.credit_audit import log_credit_payment
+
+                log_credit_payment(
+                    client_id=client.pk,
+                    receipt=receipt,
+                    amount=apply,
+                    payment_method=method,
+                    actor=profile,
+                    stk_payment=stk_payment if method == "mpesa" else None,
+                    mpesa_receipt_number=mpesa_receipt_number,
+                )
 
             if method == "mpesa":
                 stk_payment.applied = True
@@ -575,6 +586,198 @@ def apply_account_payment(
                 f"Payment of {_money_ksh(pay_amount)} applied "
                 f"oldest → newest across {cleared} receipt"
                 f"{'' if cleared == 1 else 's'}."
+            ),
+        }
+
+
+def _credit_receipt_for_profile(profile, receipt_id: int):
+    shop_ids = {shop.pk for shop in actionable_shops_for_profile(profile)}
+    return (
+        ShopReceipt.objects.select_for_update()
+        .filter(
+            pk=receipt_id,
+            kind=ShopReceiptKind.CREDIT,
+            shop_id__in=shop_ids,
+        )
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .select_related("client", "shop")
+        .first()
+    )
+
+
+def update_credit_receipt_due_date(*, profile, receipt_id: int, credit_due_date: str) -> dict:
+    """Update the expected payment date on one credit receipt."""
+    from datetime import date
+
+    from django.core.exceptions import ValidationError
+    from django.db import transaction
+
+    raw = (credit_due_date or "").strip()
+    if not raw:
+        raise ValidationError("Payment due date is required.")
+    try:
+        due_date = date.fromisoformat(raw)
+    except ValueError:
+        raise ValidationError("Enter a valid payment due date.")
+
+    with transaction.atomic():
+        receipt = _credit_receipt_for_profile(profile, receipt_id)
+        if receipt is None:
+            raise ValidationError("Credit receipt not found.")
+        due = _due_amount(receipt.total, receipt.amount_paid)
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        old_due_date = receipt.credit_due_date
+        if old_due_date == due_date:
+            pay_by = due_date.strftime("%d %b %Y")
+            return {
+                "ok": True,
+                "receipt_id": receipt.pk,
+                "pay_by": pay_by,
+                "pay_by_raw": due_date.isoformat(),
+                "pay_by_overdue": due > 0 and due_date < today,
+                "message": f"Payment due date is already {pay_by}.",
+            }
+        receipt.credit_due_date = due_date
+        receipt.save(update_fields=["credit_due_date"])
+        from shops.credit_audit import log_credit_due_date_change
+
+        log_credit_due_date_change(
+            receipt=receipt,
+            old_date=old_due_date,
+            new_date=due_date,
+            actor=profile,
+        )
+        pay_by = due_date.strftime("%d %b %Y")
+        return {
+            "ok": True,
+            "receipt_id": receipt.pk,
+            "pay_by": pay_by,
+            "pay_by_raw": due_date.isoformat(),
+            "pay_by_overdue": due > 0 and due_date < today,
+            "message": f"Payment due date updated to {pay_by}.",
+        }
+
+
+def apply_credit_receipt_payment(
+    *,
+    profile,
+    receipt_id: int,
+    amount,
+    payment_method: str = "cash",
+    stk_payment_id: str = "",
+) -> dict:
+    """Apply a payment to one credit receipt (not FIFO across the account)."""
+    from django.core.exceptions import ValidationError
+    from django.db import transaction
+
+    method = (payment_method or "cash").strip().lower()
+    if method not in ("cash", "mpesa"):
+        raise ValidationError("Choose cash or M-Pesa.")
+
+    pay_amount = _parse_pay_amount(amount)
+    mpesa_receipt_number = ""
+
+    with transaction.atomic():
+        receipt = _credit_receipt_for_profile(profile, receipt_id)
+        if receipt is None:
+            raise ValidationError("Credit receipt not found.")
+
+        due = _due_amount(receipt.total, receipt.amount_paid)
+        if due <= 0:
+            raise ValidationError("This receipt has no balance due.")
+        if pay_amount > due:
+            raise ValidationError(f"Amount exceeds due on this receipt ({_money_ksh(due)}).")
+
+        if method == "mpesa":
+            from shops.daraja_stk import require_successful_stk, stk_ready
+
+            if not stk_ready():
+                raise ValidationError(
+                    "STK Push is not enabled or Daraja credentials are not verified."
+                )
+            client = receipt.client
+            expected_phone = (
+                receipt.client_phone
+                or (client.phone_number if client else "")
+                or (client.phone_normalized if client else "")
+            )
+            stk_payment = require_successful_stk(
+                public_id=stk_payment_id,
+                expected_amount=pay_amount,
+                expected_phone=expected_phone,
+                purpose="credit",
+            )
+            if stk_payment.applied:
+                raise ValidationError("This M-Pesa payment was already applied.")
+            if stk_payment.receipt_id and int(stk_payment.receipt_id) != int(receipt.pk):
+                raise ValidationError("M-Pesa payment is for a different receipt.")
+            if stk_payment.account_kind and stk_payment.account_kind != "credit":
+                raise ValidationError("M-Pesa payment is not for a credit account.")
+            if receipt.client_id and stk_payment.account_id:
+                if int(stk_payment.account_id) != int(receipt.client_id):
+                    raise ValidationError("M-Pesa payment belongs to a different client.")
+            mpesa_receipt_number = stk_payment.mpesa_receipt_number or ""
+            stk_payment.receipt = receipt
+            stk_payment.applied = True
+            stk_payment.save(update_fields=["receipt", "applied", "updated_at"])
+
+        receipt.amount_paid = (
+            Decimal(receipt.amount_paid or 0) + pay_amount
+        ).quantize(Decimal("0.01"))
+        update_fields = ["amount_paid"]
+        if method == "mpesa" and mpesa_receipt_number and not receipt.mpesa_receipt_number:
+            receipt.mpesa_receipt_number = mpesa_receipt_number
+            update_fields.append("mpesa_receipt_number")
+        receipt.save(update_fields=update_fields)
+
+        from shops.credit_audit import log_credit_payment
+
+        log_credit_payment(
+            client_id=receipt.client_id,
+            receipt=receipt,
+            amount=pay_amount,
+            payment_method=method,
+            actor=profile,
+            stk_payment=stk_payment if method == "mpesa" else None,
+            mpesa_receipt_number=mpesa_receipt_number,
+        )
+
+        due_after = _due_amount(receipt.total, receipt.amount_paid)
+        balance_after = _zero()
+        if receipt.client_id:
+            balance_after = sum(
+                (
+                    _due_amount(row.total, row.amount_paid)
+                    for row in ShopReceipt.objects.filter(
+                        client_id=receipt.client_id,
+                        kind=ShopReceiptKind.CREDIT,
+                        shop_id__in={shop.pk for shop in actionable_shops_for_profile(profile)},
+                    ).exclude(status=ShopReceiptStatus.CANCELLED)
+                ),
+                _zero(),
+            )
+
+        pay_label = "M-Pesa" if method == "mpesa" else "Cash"
+        ref_bit = f" · Ref {mpesa_receipt_number}" if mpesa_receipt_number else ""
+        status = _payment_status_for_due(due_after, receipt.amount_paid)
+        return {
+            "ok": True,
+            "kind": "credit",
+            "receipt_id": receipt.pk,
+            "account_id": receipt.client_id,
+            "payment_method": method,
+            "mpesa_receipt_number": mpesa_receipt_number,
+            "receipt_due": _money_ksh(due_after),
+            "receipt_due_raw": str(due_after),
+            "receipt_status": status,
+            "receipt_status_tone": _status_tone(status),
+            "account_balance": _money_ksh(balance_after),
+            "account_balance_raw": str(balance_after),
+            "message": (
+                f"{pay_label} payment of {_money_ksh(pay_amount)} applied to "
+                f"{receipt.receipt_number}{ref_bit}."
             ),
         }
 
@@ -1697,6 +1900,9 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
         .prefetch_related("lines")
         .order_by("-created_at")
     )
+    from django.utils import timezone
+
+    today = timezone.localdate()
     balance = _zero()
     open_count = 0
     total_paid = _zero()
@@ -1734,6 +1940,13 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
         if due > 0:
             open_count += 1
         status = _payment_status_for_due(due, paid)
+        pay_by = ""
+        pay_by_raw = ""
+        pay_by_overdue = False
+        if row.credit_due_date:
+            pay_by = row.credit_due_date.strftime("%d %b %Y")
+            pay_by_raw = row.credit_due_date.isoformat()
+            pay_by_overdue = due > 0 and row.credit_due_date < today
         rows.append(
             {
                 "id": f"credit-{row.pk}",
@@ -1749,6 +1962,9 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
                 "due_raw": str(due),
                 "can_pay": due > 0,
                 "when": row.created_at,
+                "pay_by": pay_by,
+                "pay_by_raw": pay_by_raw,
+                "pay_by_overdue": pay_by_overdue,
                 "cashier": cashier or "—",
                 "item_count": len(lines),
                 "lines": lines,

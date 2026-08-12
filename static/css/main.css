@@ -12727,6 +12727,93 @@ body.workspace-modal-open {
   color: var(--teal);
 }
 
+.ax-pay-by.is-overdue {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+/* Client credit audit trail. */
+.ax--list-table[data-ax-section="client-credit-audit"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-title--stack {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-account-kicker {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-title--stack h2 {
+  margin: 0;
+  font-size: clamp(1.05rem, 2.2vw, 1.28rem);
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-title--stack .ax-period {
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-ledger-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-ledger-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-ledger-lead {
+  margin: 0.15rem 0 0;
+  font-size: 0.74rem;
+  color: var(--mist-dim);
+}
+
+.ax-audit-event {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.ax-audit-event i,
+.ax-audit-event svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.ax-audit-row.is-good .ax-audit-event {
+  color: var(--teal);
+}
+
+.ax-audit-row.is-warn .ax-audit-event {
+  color: var(--accent-deep);
+}
+
+.ax-audit-row.is-bad .ax-audit-event {
+  color: var(--warn);
+}
+
+.ax-audit-row.is-synthetic td {
+  opacity: 0.84;
+}
+
 .ax-status {
   display: inline-flex;
   align-items: center;
@@ -14507,6 +14594,57 @@ body.workspace-modal-open {
 .ax-col-actions {
   width: 3rem;
   text-align: center;
+}
+
+.ax-col-actions--multi {
+  width: auto;
+  min-width: 4.75rem;
+}
+
+.ax-col-actions-group {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.ax-eye--manage {
+  background: color-mix(in srgb, var(--mist-soft) 12%, var(--surface));
+  color: var(--mist-dim);
+}
+
+.ax-eye--manage:hover {
+  background: color-mix(in srgb, var(--mist-soft) 22%, var(--surface));
+  color: var(--text-strong);
+}
+
+.ax-receipt-manage-section + .ax-receipt-manage-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+}
+
+.ax-receipt-manage-heading {
+  margin: 0 0 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax-receipt-manage-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.ax-receipt-manage-actions {
+  margin-top: 0.55rem;
+}
+
+.ax-receipt-manage-save-date {
+  min-height: 2.25rem;
 }
 
 .ax-eye {

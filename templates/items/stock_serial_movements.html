@@ -1,0 +1,175 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Serial number movements — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section class="stock-panel stock-panel--report stock-panel--serials" data-animate="rise" data-stock-mode="serial-movements">
+  <header class="stock-panel-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">Stock management · Serials · All shops</p>
+        <h2>Serial number movements</h2>
+        <p>Stock in, out, transfer, and sale events that include serial numbers.</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ row_count }}</strong>
+          <span>movement{{ row_count|pluralize }}</span>
+        </p>
+        {% if display_shops %}
+        <p class="stock-stat">
+          <strong>{{ display_shops|length }}</strong>
+          <span>shop{{ display_shops|length|pluralize }}</span>
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <form class="stock-report-filters stock-report-filters--serials" method="get" data-stock-report-filters data-stock-serial-filters>
+      <input type="hidden" name="mode" value="serial-movements">
+
+      <label class="stock-report-field">
+        <span>Time</span>
+        <select name="range" data-stock-report-range aria-label="Time range">
+          <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == 'month' %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == 'year' %} selected{% endif %}>Year</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field" data-range-field="day"{% if report_range != 'day' %} hidden{% endif %}>
+        <span>Date</span>
+        <input type="date" name="date" value="{{ report_date_value }}" data-stock-report-calendar required aria-label="Select day">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != 'period' %} hidden{% endif %}>
+        <span>From</span>
+        <input type="date" name="date_from" value="{{ report_date_from }}" data-stock-report-calendar required aria-label="Period start">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != 'period' %} hidden{% endif %}>
+        <span>To</span>
+        <input type="date" name="date_to" value="{{ report_date_to }}" data-stock-report-calendar required aria-label="Period end">
+      </label>
+      <label class="stock-report-field" data-range-field="month"{% if report_range != 'month' %} hidden{% endif %}>
+        <span>Month</span>
+        <input type="month" name="month" value="{{ report_month_value }}" data-stock-report-calendar required aria-label="Select month">
+      </label>
+      <label class="stock-report-field" data-range-field="year"{% if report_range != 'year' %} hidden{% endif %}>
+        <span>Year</span>
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          data-stock-report-calendar
+          required
+          aria-label="Select year"
+        >
+      </label>
+
+      <label class="stock-report-field stock-report-field--grow">
+        <span>Search serial</span>
+        <input
+          type="search"
+          name="q"
+          value="{{ search }}"
+          placeholder="Serial number…"
+          aria-label="Search serial number"
+          data-serial-scan
+        >
+      </label>
+
+      <button type="submit" class="stock-report-apply">Apply</button>
+    </form>
+  </header>
+
+  {% if rows %}
+  <div class="stock-matrix-scroll stock-matrix-scroll--list stock-serials-scroll">
+    <table class="stock-serials-table stock-serials-table--detail">
+      <thead>
+        <tr>
+          <th scope="col" class="stock-serials-col--when">When</th>
+          <th scope="col">Type</th>
+          <th scope="col">Item</th>
+          <th scope="col" class="stock-serials-col--serial">Serial</th>
+          <th scope="col">From</th>
+          <th scope="col">To</th>
+          <th scope="col">By</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td class="stock-serials-col--when" data-label="When">
+            {% if report_range == 'day' %}
+            {{ row.happened_at|time:"H:i" }}
+            {% else %}
+            {{ row.happened_at|date:"d M Y" }} · {{ row.happened_at|time:"H:i" }}
+            {% endif %}
+          </td>
+          <td data-label="Type">
+            <span class="stock-report-type stock-report-type--{{ row.event_type }}">{{ row.event_label }}</span>
+          </td>
+          <td data-label="Item">
+            <strong>{{ row.item_name }}</strong>
+            {% if row.item_category %}
+            <span class="stock-report-from">{{ row.item_category }}</span>
+            {% endif %}
+          </td>
+          <td class="stock-serials-col--serial" data-label="Serial">
+            <strong class="stock-serial-number">{{ row.serial_number }}</strong>
+          </td>
+          <td data-label="From">{{ row.from_label }}</td>
+          <td data-label="To">{{ row.to_label }}</td>
+          <td data-label="By">{{ row.by }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="stock-report-footnote">Showing {{ row_count }} serial movement{{ row_count|pluralize }} for {{ report_period_label }}</p>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="arrow-down-up" aria-hidden="true"></i>
+    <p>{% if search %}No serial movements match this search.{% else %}No serial movements in {{ report_period_label }}.{% endif %}</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script
+  src="{% static 'js/serial-scan.js' %}?v=2"
+  data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
+></script>
+<script>
+  (() => {
+    const form = document.querySelector("[data-stock-report-filters]");
+    if (!form) return;
+
+    const rangeSelect = form.querySelector("[data-stock-report-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+
+    const syncRangeFields = (range) => {
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.querySelectorAll("input").forEach((input) => {
+          input.disabled = !match;
+          if (match) input.setAttribute("required", "required");
+          else input.removeAttribute("required");
+        });
+      });
+    };
+
+    syncRangeFields(rangeSelect?.value || "day");
+    rangeSelect?.addEventListener("change", () => {
+      syncRangeFields(rangeSelect.value || "day");
+    });
+  })();
+</script>
+{% endblock %}

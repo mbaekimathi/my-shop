@@ -1,0 +1,122 @@
+<div
+  class="workspace-modal ax-receipt-manage-modal"
+  data-ax-receipt-manage-modal
+  data-pay-url="{{ pay_url }}"
+  {% if stk_initiate_url %}data-stk-initiate-url="{{ stk_initiate_url }}"{% endif %}
+  {% if stk_status_url_template %}data-stk-status-url-template="{{ stk_status_url_template }}"{% endif %}
+  {% if receipt_update_url_template %}data-receipt-update-url-template="{{ receipt_update_url_template }}"{% endif %}
+  data-account-kind="{{ account_kind }}"
+  data-account-id="{{ account_id }}"
+  data-stk-ready="{% if stk_ready %}1{% else %}0{% endif %}"
+  data-client-phone="{{ client_phone|default:'' }}"
+  data-can-pay-account="{% if can_pay %}1{% else %}0{% endif %}"
+  {% if client_credit_payments_url %}data-client-credit-payments-url="{{ client_credit_payments_url }}"{% endif %}
+  hidden
+>
+  <div class="workspace-modal-backdrop" data-ax-receipt-manage-close></div>
+  <div
+    class="workspace-modal-dialog ax-pay-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-receipt-manage-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <h2 id="ax-receipt-manage-title" data-ax-receipt-manage-title>Receipt</h2>
+        <p class="ax-receipt-modal-meta" data-ax-receipt-manage-meta></p>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-ax-receipt-manage-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="ax-pay-wrap">
+      <form class="ax-pay-form ax-receipt-manage-form" data-ax-receipt-manage-form>
+        {% csrf_token %}
+        <input type="hidden" name="kind" value="{{ account_kind }}">
+        <input type="hidden" name="account_id" value="{{ account_id }}">
+        <input type="hidden" name="receipt_id" value="" data-ax-receipt-manage-id>
+        <input type="hidden" name="stk_payment_id" value="" data-ax-receipt-manage-stk-id>
+
+        <div class="ax-receipt-manage-section">
+          <h3 class="ax-receipt-manage-heading">Payment due date</h3>
+          <label class="ax-pay-label" for="ax-receipt-manage-due-date">
+            Pay by
+            <input
+              id="ax-receipt-manage-due-date"
+              class="ax-pay-input"
+              type="date"
+              name="credit_due_date"
+              data-ax-receipt-manage-due-date
+              required
+            >
+          </label>
+          <div class="ax-receipt-manage-actions">
+            <button type="button" class="btn btn--ghost ax-receipt-manage-save-date" data-ax-receipt-manage-save-date>
+              Save date
+            </button>
+          </div>
+        </div>
+
+        <div class="ax-receipt-manage-section" data-ax-receipt-manage-pay-wrap hidden>
+          <h3 class="ax-receipt-manage-heading">Record payment</h3>
+          <p class="ax-receipt-manage-hint">
+            Due on this receipt <strong data-ax-receipt-manage-due-label>—</strong>
+          </p>
+
+          <div class="ax-pay-methods" role="group" aria-label="Payment method">
+            <label class="ax-pay-method is-active">
+              <input type="radio" name="payment_method" value="cash" checked data-ax-receipt-manage-method>
+              <span>Cash</span>
+            </label>
+            <label class="ax-pay-method{% if not stk_ready %} is-disabled{% endif %}">
+              <input
+                type="radio"
+                name="payment_method"
+                value="mpesa"
+                data-ax-receipt-manage-method
+                {% if not stk_ready %}disabled{% endif %}
+              >
+              <span>M-Pesa{% if not stk_ready %} ({{ stk_off_label|default:"STK off" }}){% endif %}</span>
+            </label>
+          </div>
+
+          <label class="ax-pay-label ax-pay-phone-row" data-ax-receipt-manage-phone-row hidden>
+            Phone for STK
+            <input
+              class="ax-pay-input"
+              type="tel"
+              name="phone"
+              value="{{ client_phone|default:'' }}"
+              placeholder="07XX XXX XXX"
+              data-ax-receipt-manage-phone
+            >
+          </label>
+
+          <div class="ax-pay-row">
+            <label class="ax-pay-label" for="ax-receipt-manage-amount">
+              Amount to pay
+            </label>
+            <div class="ax-pay-controls">
+              <input
+                id="ax-receipt-manage-amount"
+                class="ax-pay-input"
+                type="number"
+                name="amount"
+                min="0.01"
+                step="0.01"
+                inputmode="decimal"
+                placeholder="0.00"
+                data-ax-receipt-manage-amount
+              >
+              <button type="submit" class="btn btn--primary ax-pay-submit" data-ax-receipt-manage-pay-submit>
+                Pay
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <p class="ax-pay-status" data-ax-receipt-manage-status hidden></p>
+      </form>
+    </div>
+  </div>
+</div>

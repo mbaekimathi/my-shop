@@ -588,8 +588,8 @@ def sidebar_for_stock_management(
 
     if role in full_workflow_roles:
         primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-        # Serials / return-clients: Serials + Return clients only.
-        if active_mode in ("serials", "return-clients"):
+        # Serials workflow: Serials, movements, and return clients only.
+        if active_mode in ("serials", "serial-movements", "return-clients"):
             if _allowed("serials"):
                 primary.extend(
                     [
@@ -598,6 +598,12 @@ def sidebar_for_stock_management(
                             "hash",
                             href=stock_management_url(role, "serials"),
                             active=active_mode == "serials",
+                        ),
+                        _link(
+                            "Serial number movements",
+                            "arrow-down-up",
+                            href=stock_management_url(role, "serial-movements"),
+                            active=active_mode == "serial-movements",
                         ),
                         _link(
                             "Return clients",
@@ -921,6 +927,67 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
+def sidebar_for_analytics_detail(role, *, profile=None):
+    """Minimal sidebar for analytics account/detail pages — no section nav."""
+    dashboard_url = reverse(role_home_url_name(role))
+    return resolve_sidebar_hrefs(
+        {
+            "page": "analytics",
+            "dashboard_url": dashboard_url,
+            "primary": [
+                _link("Dashboard", "layout-dashboard", href=dashboard_url),
+            ],
+            "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
+def sidebar_for_client_credit_account(
+    role,
+    *,
+    client_name,
+    account_href,
+    audit_href,
+    profile=None,
+    active="account",
+):
+    """Sidebar for client credit account pages."""
+    dashboard_url = reverse(role_home_url_name(role))
+    name = (client_name or "Client").strip()
+    return resolve_sidebar_hrefs(
+        {
+            "page": "analytics",
+            "dashboard_url": dashboard_url,
+            "primary": [
+                _link("Dashboard", "layout-dashboard", href=dashboard_url),
+                _link(
+                    f"{name} · Credit account",
+                    "contact",
+                    href=account_href,
+                    active=active == "account",
+                ),
+                _link(
+                    f"{name} · Credit payments",
+                    "history",
+                    href=audit_href,
+                    active=active == "audit",
+                ),
+            ],
+            "footer": _footer_site_links(
+                profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],

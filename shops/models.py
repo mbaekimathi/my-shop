@@ -128,6 +128,11 @@ class ShopReceipt(models.Model):
         related_name="shop_receipts",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    credit_due_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Expected payment date for credit sales.",
+    )
     last_returned_at = models.DateTimeField(null=True, blank=True)
     last_returned_by = models.ForeignKey(
         "employees.EmployeeProfile",
@@ -877,3 +882,70 @@ class Expense(models.Model):
 
     def __str__(self):
         return f"{self.name} — {self.amount} ({self.shop.name})"
+
+
+class ClientCreditAccountEventKind(models.TextChoices):
+    CREDIT_ISSUED = "credit_issued", "Credit issued"
+    PAYMENT_CASH = "payment_cash", "Cash payment"
+    PAYMENT_MPESA = "payment_mpesa", "M-Pesa payment"
+    DUE_DATE_SET = "due_date_set", "Payment due date set"
+    DUE_DATE_CHANGED = "due_date_changed", "Payment due date changed"
+    ITEMS_RETURNED = "items_returned", "Items returned"
+    CREDIT_CANCELLED = "credit_cancelled", "Credit note cancelled"
+
+
+class ClientCreditAccountEvent(models.Model):
+    """Audit trail for client credit accounts — payments and credit-note changes."""
+
+    client = models.ForeignKey(
+        Client,
+        on_delete=models.CASCADE,
+        related_name="credit_account_events",
+    )
+    shop = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="client_credit_account_events",
+    )
+    receipt = models.ForeignKey(
+        ShopReceipt,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="credit_account_events",
+    )
+    stk_payment = models.ForeignKey(
+        MpesaStkPayment,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="credit_account_events",
+    )
+    kind = models.CharField(
+        max_length=32,
+        choices=ClientCreditAccountEventKind.choices,
+        db_index=True,
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    detail = models.CharField(max_length=255, blank=True, default="")
+    meta = models.JSONField(default=dict, blank=True)
+    actor = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="client_credit_account_events",
+    )
+    occurred_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-occurred_at", "-pk"]
+        indexes = [
+            models.Index(fields=["client", "-occurred_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.get_kind_display()} · client {self.client_id}"

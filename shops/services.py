@@ -2006,6 +2006,10 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         elif receipt.payment_method == ShopPaymentMethod.CASH:
             payment = f"Cash {_receipt_money(receipt.cash_amount)}"
 
+    credit_due_label = ""
+    if receipt.kind == ShopReceiptKind.CREDIT and receipt.credit_due_date:
+        credit_due_label = receipt.credit_due_date.strftime("%d %b %Y")
+
     show_tax = bool(receipt.tax_amount and receipt.tax_amount > 0)
     tax_pct = (
         f"{receipt.tax_percent.quantize(Decimal('1')):.0f}" if show_tax else "0"
@@ -2041,6 +2045,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         "show_tax": show_tax,
         "total": _receipt_money(receipt.total),
         "payment": payment,
+        "credit_due_date": credit_due_label,
         "payment_details": {
             "label": payment_details.get("label") or "",
             "lines": list(payment_details.get("lines") or []),
@@ -2092,6 +2097,8 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
         )
     if ticket.get("status"):
         rows.append(_receipt_pad_line("Status", ticket["status"], width))
+    if ticket.get("credit_due_date"):
+        rows.append(_receipt_pad_line("Pay by", ticket["credit_due_date"], width))
     if ticket.get("cashier"):
         rows.append(_receipt_pad_line("Cashier", ticket["cashier"], width))
 
@@ -2819,6 +2826,20 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
         else:
             mpesa_receipt_number = ""
 
+        credit_due_date = None
+        if kind == ShopReceiptKind.CREDIT:
+            raw_due = (payload.get("credit_due_date") or "").strip()
+            if not raw_due:
+                raise ValidationError("Payment due date is required for credit sales.")
+            try:
+                from datetime import date
+
+                credit_due_date = date.fromisoformat(raw_due)
+            except ValueError:
+                raise ValidationError("Enter a valid payment due date.")
+            if credit_due_date < timezone.localdate():
+                raise ValidationError("Payment due date cannot be in the past.")
+
         client = None
         if client_phone and client_name:
             client = upsert_client(
@@ -2843,6 +2864,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
             mpesa_amount=mpesa_amount,
             mpesa_receipt_number=mpesa_receipt_number,
             share_whatsapp=share_whatsapp,
+            credit_due_date=credit_due_date,
             created_by=authorising,
         )
 
@@ -2874,6 +2896,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
                 for row in prepared
             ]
         )
+
+        if kind == ShopReceiptKind.CREDIT and receipt.client_id:
+            from shops.credit_audit import log_credit_receipt_issued
+
+            log_credit_receipt_issued(receipt=receipt)
 
         stock_updates = []
         if kind != ShopReceiptKind.QUOTATION:
@@ -4102,6 +4129,16 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         summary = (
             f"Returned {returned_units} unit(s) on {receipt.receipt_number}. "
             f"Remaining total KSh {total}."
+        )
+
+    if receipt.kind == ShopReceiptKind.CREDIT and receipt.client_id:
+        from shops.credit_audit import log_credit_return
+
+        log_credit_return(
+            receipt=receipt,
+            summary=summary,
+            actor=authorising,
+            occurred_at=now,
         )
 
     return {

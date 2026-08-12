@@ -9,6 +9,7 @@
   data-animate="rise"
   data-ax-section="client-account"
   data-ax-ledger
+  data-client-credit-payments-url="{{ client_credit_payments_url }}"
 >
   <header class="ax-top">
     <div class="ax-top-main">
@@ -60,7 +61,7 @@
   </section>
   {% endif %}
 
-  {% include "employees/partials/analytics_receipt_ledger.html" with ledger_search=True table_class="ax-table--account" receipt_count=receipt_count %}
+  {% include "employees/partials/analytics_receipt_ledger.html" with ledger_search=True ledger_show_pay_by=True ledger_show_manage=True table_class="ax-table--account" receipt_count=receipt_count %}
 </section>
 {% endblock %}
 
@@ -89,10 +90,11 @@
 {% if can_pay %}
 {% include "employees/partials/analytics_account_pay_modal.html" %}
 {% endif %}
+{% include "employees/partials/analytics_receipt_manage_modal.html" %}
 {% include "employees/partials/analytics_share_credit_note_modal.html" %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=9"></script>
+<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=13"></script>
 {% endblock %}

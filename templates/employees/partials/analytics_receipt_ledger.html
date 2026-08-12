@@ -38,8 +38,11 @@
           <th>Total</th>
           <th>Paid</th>
           <th>Due</th>
+          {% if ledger_show_pay_by %}
+          <th>Pay by</th>
+          {% endif %}
           <th>When</th>
-          <th class="ax-col-actions">View</th>
+          <th class="ax-col-actions{% if ledger_show_manage %} ax-col-actions--multi{% endif %}">{% if ledger_show_manage %}Actions{% else %}View{% endif %}</th>
         </tr>
       </thead>
       <tbody>
@@ -49,7 +52,7 @@
           class="ax-receipt-row"
           data-ax-receipt-row
           data-row-id="{{ row.id }}"
-          data-search-text="{{ row.number }} {{ row.shop }} {{ row.status }} {{ row.cashier }}"
+          data-search-text="{{ row.number }} {{ row.shop }} {{ row.status }} {{ row.cashier }}{% if row.pay_by %} {{ row.pay_by }}{% endif %}"
         >
           <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
           <td data-label="Shop">{{ row.shop }}</td>
@@ -60,21 +63,50 @@
           <td data-label="Total">{{ row.total }}</td>
           <td data-label="Paid">{{ row.paid|default:"—" }}</td>
           <td data-label="Due">{{ row.due }}</td>
+          {% if ledger_show_pay_by %}
+          <td data-label="Pay by">
+            {% if row.pay_by %}
+            <span class="ax-pay-by{% if row.pay_by_overdue %} is-overdue{% endif %}">{{ row.pay_by }}</span>
+            {% else %}—{% endif %}
+          </td>
+          {% endif %}
           <td data-label="When">{% if row.when %}{{ row.when|date:"d M Y · H:i" }}{% else %}—{% endif %}</td>
-          <td class="ax-col-actions" data-label="View">
-            <button
-              type="button"
-              class="ax-eye"
-              data-ax-receipt-view
-              data-lines-id="{{ row.id }}"
-              data-receipt-number="{{ row.number }}"
-              data-receipt-total="{{ row.total }}"
-              data-receipt-shop="{{ row.shop }}"
-              data-receipt-due="{{ row.due }}"
-              aria-label="View items on {{ row.number }}"
-            >
-              <i data-lucide="eye" aria-hidden="true"></i>
-            </button>
+          <td class="ax-col-actions{% if ledger_show_manage %} ax-col-actions--multi{% endif %}" data-label="{% if ledger_show_manage %}Actions{% else %}View{% endif %}">
+            <div class="ax-col-actions-group">
+              <button
+                type="button"
+                class="ax-eye"
+                data-ax-receipt-view
+                data-lines-id="{{ row.id }}"
+                data-receipt-number="{{ row.number }}"
+                data-receipt-total="{{ row.total }}"
+                data-receipt-shop="{{ row.shop }}"
+                data-receipt-due="{{ row.due }}"
+                data-receipt-pay-by="{{ row.pay_by }}"
+                aria-label="View items on {{ row.number }}"
+              >
+                <i data-lucide="eye" aria-hidden="true"></i>
+              </button>
+              {% if ledger_show_manage %}
+              <button
+                type="button"
+                class="ax-eye ax-eye--manage"
+                data-ax-receipt-manage
+                data-receipt-id="{{ row.pay_id }}"
+                data-receipt-number="{{ row.number }}"
+                data-receipt-shop="{{ row.shop }}"
+                data-receipt-total="{{ row.total }}"
+                data-receipt-due="{{ row.due }}"
+                data-receipt-due-raw="{{ row.due_raw }}"
+                data-receipt-pay-by="{{ row.pay_by }}"
+                data-receipt-pay-by-raw="{{ row.pay_by_raw }}"
+                data-receipt-can-pay="{% if row.can_pay %}1{% else %}0{% endif %}"
+                aria-label="Update {{ row.number }}"
+              >
+                <i data-lucide="pencil" aria-hidden="true"></i>
+              </button>
+              {% endif %}
+            </div>
           </td>
         </tr>
         {% endfor %}

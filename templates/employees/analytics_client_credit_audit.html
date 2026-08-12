@@ -1,0 +1,84 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="ax ax--account ax--list-table ax--audit"
+  data-animate="rise"
+  data-ax-section="client-credit-audit"
+>
+  <header class="ax-top">
+    <div class="ax-top-main">
+      <div class="ax-title ax-title--stack">
+        <span class="ax-account-kicker">Credit payments</span>
+        <h2>{{ client.full_name }}</h2>
+        <span class="ax-period">{{ client.phone_number }}</span>
+      </div>
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ account_href }}">Credit account</a>
+        <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back" }}</a>
+      </div>
+    </div>
+    <p class="ax-lead">
+      Audit trail of payments and credit-note changes for this client across your shops.
+    </p>
+  </header>
+
+  <section class="ax-summary-board" aria-label="Audit summary">
+    <article class="ax-summary-hero is-neutral">
+      <span class="ax-summary-hero-label">Recorded events</span>
+      <strong class="ax-summary-hero-value">{{ event_count }}</strong>
+      <em class="ax-summary-hero-hint">{{ payment_count }} payment{{ payment_count|pluralize }} · {{ change_count }} change{{ change_count|pluralize }}</em>
+    </article>
+  </section>
+
+  <section class="ax-ledger ax-audit-feed" aria-label="Credit account audit trail">
+    <header class="ax-ledger-head">
+      <div>
+        <h3>Account history</h3>
+        <p class="ax-ledger-lead">Newest activity first</p>
+      </div>
+    </header>
+
+    {% if rows %}
+    <div class="ax-table-wrap">
+      <table class="ax-table ax-table--account ax-table--audit">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Event</th>
+            <th>Receipt</th>
+            <th>Shop</th>
+            <th>Amount</th>
+            <th>Detail</th>
+            <th>By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr class="ax-audit-row is-{{ row.tone|default:'neutral' }}{% if row.synthetic %} is-synthetic{% endif %}">
+            <td data-label="When">{{ row.when_label }}</td>
+            <td data-label="Event">
+              <span class="ax-audit-event">
+                <i data-lucide="{{ row.icon }}" aria-hidden="true"></i>
+                <span>{{ row.kind_label }}</span>
+              </span>
+            </td>
+            <td data-label="Receipt">{{ row.receipt_number }}</td>
+            <td data-label="Shop">{{ row.shop }}</td>
+            <td data-label="Amount">{{ row.amount }}</td>
+            <td data-label="Detail">{{ row.detail }}</td>
+            <td data-label="By">{{ row.actor }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="ax-empty">{{ empty_message }}</p>
+    {% endif %}
+  </section>
+</section>
+{% endblock %}

@@ -36,6 +36,12 @@
       <strong>{{ p.status }}</strong>
     </div>
     {% endif %}
+    {% if p.credit_due_date %}
+    <div>
+      <span>Pay by</span>
+      <strong>{{ p.credit_due_date }}</strong>
+    </div>
+    {% endif %}
     {% if p.cashier %}
     <div>
       <span>Cashier</span>

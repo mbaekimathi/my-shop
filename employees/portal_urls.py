@@ -247,9 +247,19 @@ urlpatterns = [
         name="analytics_account_pay_stk_status",
     ),
     path(
+        "<role_segment:role_segment>/analytics/credit-receipt/<int:receipt_id>/due-date/",
+        analytics_views.analytics_credit_receipt_update,
+        name="analytics_credit_receipt_update",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/suppliers/<slug:kind>/<int:supplier_id>/",
         analytics_views.analytics_supplier_account,
         name="analytics_supplier_account",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/clients/<int:client_id>/payments/",
+        analytics_views.analytics_client_credit_audit,
+        name="analytics_client_credit_audit",
     ),
     path(
         "<role_segment:role_segment>/analytics/clients/<int:client_id>/",
