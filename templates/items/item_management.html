@@ -158,7 +158,7 @@
           <span>Remove current image</span>
         </label>
       </div>
-      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="edit-" %}
+      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="edit-" pricing_shops=edit_pricing_shops pricing_shops_empty_message="No shops are allocated to your account." %}
       <div class="workspace-modal-actions">
         <button class="btn btn--ghost" type="button" data-modal-close>Cancel</button>
         <button class="btn btn--primary" type="submit">

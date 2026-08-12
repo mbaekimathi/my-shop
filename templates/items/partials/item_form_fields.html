@@ -114,7 +114,7 @@
       {% endfor %}
     </div>
     {% else %}
-    <p class="shop-pricing-empty">No active shops available. Add a shop first to set individual prices.</p>
+    <p class="shop-pricing-empty">{{ pricing_shops_empty_message|default:"No active shops available. Add a shop first to set individual prices." }}</p>
     {% endif %}
   </div>
 </div>

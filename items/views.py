@@ -126,6 +126,13 @@ def _active_pricing_shops():
     return list(Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name"))
 
 
+def _pricing_shops_for_profile(profile):
+    """Active shops allocated to the signed-in employee."""
+    return list(
+        profile.assigned_shops.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+
+
 def _shop_prices_from_post(post, shops) -> dict:
     prices = {}
     for shop in shops:
@@ -239,8 +246,16 @@ def item_management(request, profile, meta, module, page_sidebar):
         elif action == "edit":
             edit_item = get_object_or_404(Item, pk=item_id)
             form_data = _form_data_from_post(request.POST)
+            editable_shop_ids = {
+                shop.pk for shop in _pricing_shops_for_profile(profile)
+            }
             try:
-                update_item(edit_item, request.POST, request.FILES)
+                update_item(
+                    edit_item,
+                    request.POST,
+                    request.FILES,
+                    editable_shop_ids=editable_shop_ids,
+                )
             except ValidationError as exc:
                 form_errors = _validation_errors(exc)
                 open_edit_modal = True
@@ -271,6 +286,7 @@ def item_management(request, profile, meta, module, page_sidebar):
             return denied
 
     pricing_shops = _active_pricing_shops()
+    edit_pricing_shops = _pricing_shops_for_profile(profile)
     from employees.access import role_url_segment
 
     item_count = Item.objects.count()
@@ -294,6 +310,7 @@ def item_management(request, profile, meta, module, page_sidebar):
             "use_item_catalog_api": True,
             "item_catalog_url": item_catalog_url,
             "pricing_shops": pricing_shops,
+            "edit_pricing_shops": edit_pricing_shops,
             "form_data": form_data,
             "form_errors": form_errors,
             "open_register_modal": open_register_modal,

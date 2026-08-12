@@ -757,12 +757,14 @@ def _parse_individual_shop_prices(
     *,
     existing_item=None,
     existing_shop_prices=None,
+    editable_shop_ids=None,
 ):
     """Parse per-shop prices from POST fields shop_price_<id>.
 
     On create, blank shop prices default to the maximum selling price.
     On update, blank or unchanged prices keep the current shop price and are
-    only clamped when the min/max range changes.
+    only clamped when the min/max range changes. Shops outside editable_shop_ids
+    always keep their stored price (clamped when the range changes).
     """
     errors = []
     prices_by_shop = {}
@@ -778,6 +780,17 @@ def _parse_individual_shop_prices(
         raw = data.get(f"shop_price_{shop.pk}")
         raw_str = str(raw).strip() if raw is not None else ""
         existing = existing_shop_prices.get(shop.pk) if existing_item is not None else None
+
+        if (
+            existing_item is not None
+            and editable_shop_ids is not None
+            and shop.pk not in editable_shop_ids
+        ):
+            if existing is not None:
+                prices_by_shop[shop.pk] = _clamp_price(
+                    existing, minimum_price, maximum_price
+                )
+            continue
 
         if existing_item is not None and existing is not None:
             if not raw_str:
@@ -847,7 +860,7 @@ def _sync_shop_item_prices(item: Item, prices_by_shop: dict) -> None:
         )
 
 
-def validate_item_payload(data, files, *, existing_item=None) -> dict:
+def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=None) -> dict:
     category = (data.get("category") or "").strip()
     name = (data.get("name") or "").strip()
     description = (data.get("description") or "").strip()
@@ -896,6 +909,7 @@ def validate_item_payload(data, files, *, existing_item=None) -> dict:
             minimum_price,
             maximum_price,
             existing_item=existing_item,
+            editable_shop_ids=editable_shop_ids,
         )
         errors.extend(price_errors)
         if shop_prices:
@@ -1017,8 +1031,13 @@ def create_item(profile, data, files) -> Item:
         return item
 
 
-def update_item(item: Item, data, files) -> Item:
-    cleaned = validate_item_payload(data, files, existing_item=item)
+def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
+    cleaned = validate_item_payload(
+        data,
+        files,
+        existing_item=item,
+        editable_shop_ids=editable_shop_ids,
+    )
     was_individual = item.use_individual_shop_prices
     with transaction.atomic():
         item.category = cleaned["category"]
