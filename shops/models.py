@@ -944,7 +944,10 @@ class ClientCreditAccountEvent(models.Model):
     class Meta:
         ordering = ["-occurred_at", "-pk"]
         indexes = [
-            models.Index(fields=["client", "-occurred_at"]),
+            models.Index(
+                fields=["client", "-occurred_at"],
+                name="shops_clien_client__8a0f0d_idx",
+            ),
         ]
 
     def __str__(self):
