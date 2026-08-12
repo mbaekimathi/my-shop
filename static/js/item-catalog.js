@@ -219,7 +219,17 @@
     const descShort =
       description.length > 56 ? `${description.slice(0, 53).trimEnd()}…` : description;
     const imageUrl = String(item.image_url || "");
-    const shopPrices = JSON.stringify(item.shop_prices || {});
+    const shopPrices = (() => {
+      const rows = Array.isArray(item.shop_price_rows) ? item.shop_price_rows : [];
+      if (rows.length) {
+        const map = {};
+        rows.forEach((row) => {
+          map[String(row.shop_id)] = row.price;
+        });
+        return JSON.stringify(map);
+      }
+      return JSON.stringify(item.shop_prices || {});
+    })();
     const tr = document.createElement("tr");
     if (item.is_suspended) tr.className = "item-row--suspended";
     tr.setAttribute("data-item-row", "");

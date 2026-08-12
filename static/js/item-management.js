@@ -19,6 +19,7 @@
     if (!root) return;
     const selected = root.querySelector('input[name="pricing_mode"]:checked');
     const mode = selected?.value || "single";
+    const isEditForm = Boolean(root.closest("[data-edit-form]"));
     root.querySelectorAll("[data-pricing-panel]").forEach((panel) => {
       const isActive = panel.dataset.pricingPanel === mode;
       panel.hidden = !isActive;
@@ -41,7 +42,8 @@
     const maxPrice = form?.querySelector('input[name="maximum_selling_price"]')?.value?.trim() || "";
     const fillValue = maxPrice || singleInput?.value || "";
 
-    if (mode === "individual" && fillValue) {
+    // Only pre-fill blank per-shop prices when registering a new item.
+    if (mode === "individual" && fillValue && !isEditForm) {
       root.querySelectorAll("[data-shop-price-input]").forEach((input) => {
         if (!input.value) input.value = fillValue;
       });
@@ -122,7 +124,7 @@
     syncPricingMode(root);
   };
 
-  const setShopPrices = (prices, fallbackPrice) => {
+  const setShopPrices = (prices) => {
     let map = {};
     try {
       map = prices ? JSON.parse(prices) : {};
@@ -133,9 +135,6 @@
       const shopId = input.dataset.shopId;
       if (Object.prototype.hasOwnProperty.call(map, shopId)) {
         input.value = map[shopId];
-      } else if (fallbackPrice) {
-        // Missing shop price → use highest amount in the selling price range.
-        input.value = fallbackPrice;
       } else {
         input.value = "";
       }
@@ -154,10 +153,7 @@
     setField("maximum_selling_price", dataset.maximumSellingPrice);
     setField("shop_price", dataset.shopPrice);
     setPricingMode(dataset.pricingMode === "individual" ? "individual" : "single");
-    setShopPrices(
-      dataset.shopPrices,
-      dataset.maximumSellingPrice || dataset.shopPrice
-    );
+    setShopPrices(dataset.shopPrices);
     setCheckbox(
       "track_serial_number",
       dataset.trackSerialNumber === "1" || dataset.trackSerialNumber === "true"

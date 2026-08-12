@@ -429,9 +429,6 @@ def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48, sor
             shop_price_display = (
                 f"KSh {low:.2f}" if low == high else f"KSh {low:.2f} – {high:.2f}"
             )
-        shop_prices = {
-            str(shop_id): f"{price:.2f}" for shop_id, price in item_shop_map.items()
-        }
         shop_price_rows = []
         for shop in active_shops:
             if item.use_individual_shop_prices:
@@ -446,6 +443,9 @@ def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48, sor
                     "price": f"{resolved:.2f}",
                 }
             )
+        shop_prices = {
+            str(row["shop_id"]): row["price"] for row in shop_price_rows
+        }
         image_url = ""
         try:
             if item.image:
@@ -717,6 +717,25 @@ def _parse_price(raw_value: str, label: str) -> Decimal:
     return amount.quantize(Decimal("0.01"))
 
 
+def _clamp_price(price: Decimal, minimum_price, maximum_price) -> Decimal:
+    """Keep a price inside the selling range (min/max inclusive)."""
+    clamped = price
+    if minimum_price is not None and clamped < minimum_price:
+        clamped = minimum_price
+    if maximum_price is not None and clamped > maximum_price:
+        clamped = maximum_price
+    return clamped.quantize(Decimal("0.01"))
+
+
+def _existing_shop_prices(item: Item) -> dict:
+    return {
+        shop_id: price.quantize(Decimal("0.01"))
+        for shop_id, price in ShopItemPrice.objects.filter(item=item).values_list(
+            "shop_id", "price"
+        )
+    }
+
+
 def _active_shops():
     from shops.models import Shop
 
@@ -730,10 +749,20 @@ def _pricing_mode_from_data(data) -> str:
     return mode
 
 
-def _parse_individual_shop_prices(data, shops, minimum_price, maximum_price):
+def _parse_individual_shop_prices(
+    data,
+    shops,
+    minimum_price,
+    maximum_price,
+    *,
+    existing_item=None,
+    existing_shop_prices=None,
+):
     """Parse per-shop prices from POST fields shop_price_<id>.
 
-    Blank shop prices default to the maximum selling price.
+    On create, blank shop prices default to the maximum selling price.
+    On update, blank or unchanged prices keep the current shop price and are
+    only clamped when the min/max range changes.
     """
     errors = []
     prices_by_shop = {}
@@ -742,9 +771,40 @@ def _parse_individual_shop_prices(data, shops, minimum_price, maximum_price):
         errors.append("No active shops are available to set individual prices.")
         return prices_by_shop, errors
 
+    if existing_item is not None:
+        existing_shop_prices = existing_shop_prices or _existing_shop_prices(existing_item)
+
     for shop in shops:
         raw = data.get(f"shop_price_{shop.pk}")
-        if raw is None or str(raw).strip() == "":
+        raw_str = str(raw).strip() if raw is not None else ""
+        existing = existing_shop_prices.get(shop.pk) if existing_item is not None else None
+
+        if existing_item is not None and existing is not None:
+            if not raw_str:
+                prices_by_shop[shop.pk] = _clamp_price(
+                    existing, minimum_price, maximum_price
+                )
+                continue
+            try:
+                submitted = _parse_price(raw_str, f"Shop price for {shop.name}")
+            except ValidationError as exc:
+                errors.append(exc.message)
+                continue
+            if submitted == existing:
+                prices_by_shop[shop.pk] = _clamp_price(
+                    existing, minimum_price, maximum_price
+                )
+                continue
+            if minimum_price is not None and maximum_price is not None:
+                if not (minimum_price <= submitted <= maximum_price):
+                    errors.append(
+                        f"Shop price for “{shop.name}” must be between the minimum and maximum selling prices."
+                    )
+                    continue
+            prices_by_shop[shop.pk] = submitted
+            continue
+
+        if raw_str == "":
             if maximum_price is None:
                 errors.append(
                     f"Enter a shop price for “{shop.name}”, or set a maximum selling price."
@@ -753,7 +813,7 @@ def _parse_individual_shop_prices(data, shops, minimum_price, maximum_price):
             prices_by_shop[shop.pk] = maximum_price
             continue
         try:
-            price = _parse_price(str(raw), f"Shop price for {shop.name}")
+            price = _parse_price(raw_str, f"Shop price for {shop.name}")
         except ValidationError as exc:
             errors.append(exc.message)
             continue
@@ -831,39 +891,87 @@ def validate_item_payload(data, files, *, existing_item=None) -> dict:
     if pricing_mode == "individual":
         shops = _active_shops()
         shop_prices, price_errors = _parse_individual_shop_prices(
-            data, shops, minimum_price, maximum_price
+            data,
+            shops,
+            minimum_price,
+            maximum_price,
+            existing_item=existing_item,
         )
         errors.extend(price_errors)
         if shop_prices:
             shop_price = min(shop_prices.values())
     else:
         raw_shop_price = data.get("shop_price")
-        if raw_shop_price is None or str(raw_shop_price).strip() == "":
+        raw_shop_price_str = (
+            str(raw_shop_price).strip() if raw_shop_price is not None else ""
+        )
+        existing_single_price = (
+            existing_item.shop_price.quantize(Decimal("0.01"))
+            if existing_item is not None
+            else None
+        )
+
+        if existing_item is not None and existing_single_price is not None:
+            if not raw_shop_price_str:
+                shop_price = _clamp_price(
+                    existing_single_price, minimum_price, maximum_price
+                )
+            else:
+                try:
+                    submitted = _parse_price(raw_shop_price_str, "Shop price")
+                except ValidationError as exc:
+                    errors.append(exc.message)
+                    submitted = None
+                if submitted is not None:
+                    if submitted <= 0:
+                        shop_price = _clamp_price(
+                            maximum_price or existing_single_price,
+                            minimum_price,
+                            maximum_price,
+                        )
+                    elif submitted == existing_single_price:
+                        shop_price = _clamp_price(
+                            existing_single_price, minimum_price, maximum_price
+                        )
+                    elif (
+                        minimum_price is not None
+                        and maximum_price is not None
+                        and not (minimum_price <= submitted <= maximum_price)
+                    ):
+                        errors.append(
+                            "Shop price must be between the minimum and maximum selling prices."
+                        )
+                        shop_price = None
+                    else:
+                        shop_price = submitted
+        elif raw_shop_price_str == "":
             if maximum_price is not None:
                 shop_price = maximum_price
             else:
                 errors.append("Shop price is required.")
         else:
             try:
-                shop_price = _parse_price(raw_shop_price, "Shop price")
+                shop_price = _parse_price(raw_shop_price_str, "Shop price")
             except ValidationError as exc:
                 errors.append(exc.message)
                 shop_price = None
 
-        if shop_price is not None and shop_price <= 0:
-            if maximum_price is not None:
-                shop_price = maximum_price
-            else:
-                errors.append("Shop price must be greater than zero.")
-                shop_price = None
+            if shop_price is not None and shop_price <= 0:
+                if maximum_price is not None:
+                    shop_price = maximum_price
+                else:
+                    errors.append("Shop price must be greater than zero.")
+                    shop_price = None
 
-        if (
-            minimum_price is not None
-            and maximum_price is not None
-            and shop_price is not None
-            and not (minimum_price <= shop_price <= maximum_price)
-        ):
-            errors.append("Shop price must be between the minimum and maximum selling prices.")
+            if (
+                minimum_price is not None
+                and maximum_price is not None
+                and shop_price is not None
+                and not (minimum_price <= shop_price <= maximum_price)
+            ):
+                errors.append(
+                    "Shop price must be between the minimum and maximum selling prices."
+                )
 
     if minimum_price is not None and maximum_price is not None:
         if minimum_price > maximum_price:
@@ -911,6 +1019,7 @@ def create_item(profile, data, files) -> Item:
 
 def update_item(item: Item, data, files) -> Item:
     cleaned = validate_item_payload(data, files, existing_item=item)
+    was_individual = item.use_individual_shop_prices
     with transaction.atomic():
         item.category = cleaned["category"]
         item.name = cleaned["name"]
@@ -934,7 +1043,7 @@ def update_item(item: Item, data, files) -> Item:
 
         if cleaned["use_individual_shop_prices"]:
             _sync_shop_item_prices(item, cleaned["shop_prices"])
-        else:
+        elif was_individual:
             ShopItemPrice.objects.filter(item=item).delete()
 
         return item
