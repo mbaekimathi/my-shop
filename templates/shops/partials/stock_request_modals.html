@@ -32,6 +32,7 @@
       <p class="stock-request-modal-lead">
         Review and edit quantities to send from <strong>{{ shop.name }}</strong>.
         Accepting prints a delivery note (from this shop to the requesting shop).
+        Declining notifies the requesting shop that the request was declined.
         Dismiss hides this for 5 minutes; refresh brings it back.
       </p>
 
@@ -43,6 +44,7 @@
             action="{% url 'employees:my_shop_stock_request_respond' shop.id req.pk %}"
             class="stock-request-form"
             data-request-form
+            data-requesting-shop="{% if req.shop %}{{ req.shop.name }}{% else %}the requesting shop{% endif %}"
             novalidate
           >
             {% csrf_token %}
@@ -195,17 +197,19 @@
               </label>
               <p class="stock-request-code-hint" data-verify-status>
                 Enter any active staff member’s 6-digit ID (any role) to unlock Accept and Decline.
+                Decline notifies the requesting shop.
               </p>
             </div>
 
             <footer class="stock-transfer-form-foot">
-              <div class="stock-request-card-actions" data-decision-actions hidden>
+              <div class="stock-request-card-actions" data-decision-actions>
                 <button
                   type="submit"
-                  class="btn btn--ghost"
+                  class="btn btn--ghost stock-request-decline-btn"
                   name="decision"
                   value="decline"
                   data-decision-submit="decline"
+                  formnovalidate
                   disabled
                 >
                   Decline
@@ -262,7 +266,7 @@
     </div>
     <div class="stock-request-modal-body stock-transfer-body">
       <p class="stock-request-modal-lead">
-        Decisions on stock you requested for <strong>{{ shop.name }}</strong>.
+        Accept and decline updates for stock you requested for <strong>{{ shop.name }}</strong>.
       </p>
       <div class="stock-transfer-stack">
         {% for req in stock_request_decisions %}
@@ -310,7 +314,10 @@
           {% if req.request_status == "fulfilled" %}
           <p class="stock-request-notes">Stock has been transferred into this shop.</p>
           {% else %}
-          <p class="stock-request-notes">No stock was transferred.</p>
+          <p class="stock-request-notes">
+            {% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}The supplying shop{% endif %}
+            declined this request. No stock was transferred.
+          </p>
           {% endif %}
           {% for line in req.lines.all %}
             {% if line.note %}

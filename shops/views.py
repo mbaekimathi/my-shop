@@ -765,7 +765,7 @@ def _stock_request_status_payload(shop):
             "unseen": not movement.supplier_notified,
         }
         alerts.append(entry)
-    decision_count = (
+    decisions = list(
         StockMovement.objects.filter(
             movement_type=StockMovementType.REQUEST,
             shop=shop,
@@ -774,15 +774,28 @@ def _stock_request_status_payload(shop):
                 StockRequestStatus.DECLINED,
             ),
             requester_notified=False,
-        ).count()
+        )
+        .select_related("requested_from_shop")
+        .order_by("-responded_at", "-created_at")
     )
+    decision_alerts = []
+    for movement in decisions:
+        supplier = movement.requested_from_shop
+        decision_alerts.append(
+            {
+                "id": movement.pk,
+                "status": movement.request_status,
+                "from_shop": supplier.name if supplier else "another shop",
+            }
+        )
     unseen_count = sum(1 for row in alerts if row["unseen"])
     return {
         "ok": True,
         "pending_count": len(alerts),
         "unseen_count": unseen_count,
         "pending": alerts,
-        "decision_count": decision_count,
+        "decision_count": len(decision_alerts),
+        "decisions": decision_alerts,
     }
 
 
@@ -1497,7 +1510,7 @@ def my_shop_stock_request_status(request, shop_id):
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
     denied = _require_my_shop_permission(
-        request, profile, "stock_requests", as_json=True, portal_ok=True
+        request, profile, "workspace", as_json=True, portal_ok=True
     )
     if denied:
         return denied

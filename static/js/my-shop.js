@@ -580,7 +580,7 @@
     statusRoot?.getAttribute("data-stock-request-status-url") || "";
   const shopIdForAlerts = statusRoot?.getAttribute("data-shop-id") || "";
 
-  const pushStockRequestToast = (text) => {
+  const pushStockRequestToast = (text, tone = "warning") => {
     let host = document.querySelector("[data-workspace-toast]");
     if (!host) {
       host = document.createElement("div");
@@ -594,7 +594,8 @@
     }
     const list = host.querySelector(".workspace-messages") || host;
     const item = document.createElement("li");
-    item.className = "workspace-toast__item workspace-toast__item--warning";
+    const safeTone = tone === "error" ? "error" : tone === "success" ? "success" : "warning";
+    item.className = `workspace-toast__item workspace-toast__item--${safeTone}`;
     item.innerHTML = `<span class="workspace-toast__text"></span>`;
     item.querySelector(".workspace-toast__text").textContent = text;
     list.appendChild(item);
@@ -606,19 +607,49 @@
 
   if (statusUrl && shopIdForAlerts) {
     const storageKey = `myshop:stock-req:${shopIdForAlerts}`;
-    let knownIds = [];
+    const decisionKey = `myshop:stock-req-dec:${shopIdForAlerts}`;
+    const seededKey = `myshop:stock-req-seeded:${shopIdForAlerts}`;
+
+    const readIdList = (key) => {
+      try {
+        const parsed = JSON.parse(sessionStorage.getItem(key) || "[]");
+        return Array.isArray(parsed) ? parsed.map(String) : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const writeIdList = (key, ids) => {
+      try {
+        sessionStorage.setItem(key, JSON.stringify(ids));
+      } catch {
+        /* ignore quota */
+      }
+    };
+
+    let knownIds = readIdList(storageKey);
+    let knownDecisionIds = readIdList(decisionKey);
+    let seeded = false;
     try {
-      knownIds = JSON.parse(sessionStorage.getItem(storageKey) || "[]");
-      if (!Array.isArray(knownIds)) knownIds = [];
+      seeded = sessionStorage.getItem(seededKey) === "1";
     } catch {
-      knownIds = [];
+      seeded = false;
     }
-    knownIds = knownIds.map(String);
 
     const seedKnown = (pending) => {
       knownIds = pending.map((row) => String(row.id));
+      writeIdList(storageKey, knownIds);
+    };
+
+    const seedKnownDecisions = (decisions) => {
+      knownDecisionIds = decisions.map((row) => String(row.id));
+      writeIdList(decisionKey, knownDecisionIds);
+    };
+
+    const markSeeded = () => {
+      seeded = true;
       try {
-        sessionStorage.setItem(storageKey, JSON.stringify(knownIds));
+        sessionStorage.setItem(seededKey, "1");
       } catch {
         /* ignore quota */
       }
@@ -651,10 +682,16 @@
         const data = await response.json();
         if (!data?.ok) return;
         const pending = Array.isArray(data.pending) ? data.pending : [];
+        const decisions = Array.isArray(data.decisions) ? data.decisions : [];
         const newRows = pending.filter((row) => !knownIds.includes(String(row.id)));
+        const newDecisions = decisions.filter(
+          (row) => !knownDecisionIds.includes(String(row.id))
+        );
 
-        if (!knownIds.length) {
+        if (!seeded) {
           seedKnown(pending);
+          seedKnownDecisions(decisions);
+          markSeeded();
           return;
         }
 
@@ -669,6 +706,7 @@
           pushStockRequestToast(message);
           notifyBrowser("Stock request", message);
           seedKnown(pending);
+          seedKnownDecisions(decisions);
           // Reload so incoming modal + badge HTML stay in sync.
           window.setTimeout(() => {
             window.location.reload();
@@ -676,7 +714,35 @@
           return;
         }
 
+        if (newDecisions.length) {
+          const sample = newDecisions[0];
+          const fromName = sample?.from_shop || "another shop";
+          const allDeclined = newDecisions.every((row) => row.status === "declined");
+          const allAccepted = newDecisions.every((row) => row.status === "fulfilled");
+          let message;
+          if (newDecisions.length === 1 && allDeclined) {
+            message = `${fromName} declined your stock request.`;
+          } else if (newDecisions.length === 1 && allAccepted) {
+            message = `${fromName} accepted your stock request.`;
+          } else if (allDeclined) {
+            message = `${newDecisions.length} stock requests were declined.`;
+          } else if (allAccepted) {
+            message = `${newDecisions.length} stock requests were accepted.`;
+          } else {
+            message = `Updates on your stock requests, including from ${fromName}.`;
+          }
+          pushStockRequestToast(message, allDeclined ? "error" : "success");
+          notifyBrowser("Stock request update", message);
+          seedKnown(pending);
+          seedKnownDecisions(decisions);
+          window.setTimeout(() => {
+            window.location.reload();
+          }, 900);
+          return;
+        }
+
         seedKnown(pending);
+        seedKnownDecisions(decisions);
 
         const badge = document.querySelector(".workspace-nav-badge");
         if (badge && typeof data.pending_count === "number") {
@@ -1004,10 +1070,7 @@
     const actions = form.querySelector("[data-decision-actions]");
     const status = form.querySelector("[data-verify-status]");
     const buttons = form.querySelectorAll("[data-decision-submit]");
-    if (actions) {
-      if (verified) actions.removeAttribute("hidden");
-      else actions.setAttribute("hidden", "");
-    }
+    if (actions) actions.removeAttribute("hidden");
     buttons.forEach((btn) => {
       btn.disabled = !verified;
     });
@@ -1106,6 +1169,19 @@
       window.alert("Enter a valid active staff 6-digit ID.");
       form.querySelector("[data-login-code]")?.focus();
       return false;
+    }
+
+    if (decision === "decline") {
+      const shopName =
+        form.getAttribute("data-requesting-shop") || "the requesting shop";
+      if (
+        !window.confirm(
+          `Decline this stock request from ${shopName}? They will be notified that it was declined.`
+        )
+      ) {
+        return false;
+      }
+      return true;
     }
 
     if (decision === "accept") {

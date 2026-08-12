@@ -25449,6 +25449,23 @@ body.workspace-modal-open .stock-country-menu {
   display: none !important;
 }
 
+.stock-request-card-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.stock-request-decline-btn {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.stock-request-decline-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 16%, var(--surface));
+  color: var(--danger);
+}
+
 .stock-request-code-row {
   display: grid;
   grid-template-columns: 1fr auto;
