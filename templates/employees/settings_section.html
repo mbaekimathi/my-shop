@@ -1,6 +1,6 @@
 {% extends "employees/workspace_base.html" %}
 
-{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section class="item-panel item-panel--dense" data-animate="rise">

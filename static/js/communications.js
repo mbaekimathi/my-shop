@@ -15,6 +15,8 @@
     analytics: root.getAttribute("data-api-analytics"),
   };
 
+  const companyName = root.getAttribute("data-company-name") || "MY-SHOP";
+
   const csrf =
     document.querySelector("input[name=csrfmiddlewaretoken]")?.value ||
     document.cookie
@@ -436,7 +438,7 @@
   async function logoutBridge() {
     if (
       !window.confirm(
-        "Disconnect WhatsApp from MY-SHOP? You will need to scan the QR again."
+        `Disconnect WhatsApp from ${companyName}? You will need to scan the QR again.`
       )
     ) {
       return;

@@ -1,16 +1,16 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}{{ item.name }} · Serials — MY-SHOP{% endblock %}
+{% block title %}{{ item.name }} · Serials — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section class="stock-panel stock-panel--report stock-panel--serials" data-animate="rise" data-stock-mode="serials">
   <header class="stock-panel-head">
     <div class="stock-panel-head-top">
       <div>
-        <p class="stock-kicker">Serials · {{ item.category }} · All shops</p>
+        <p class="stock-kicker">Serials · {{ item.category }} · {{ shops_label }}</p>
         <h2>{{ item.name }}</h2>
-        <p>Every serial for this item across all shops — in stock, sold, returned, or stocked out.</p>
+        <p>Every serial for this item at shops allocated to your account — in stock, sold, returned, or stocked out. Open a serial to see every movement since it was registered.</p>
       </div>
       <div class="stock-stats">
         <p class="stock-stat">
@@ -62,7 +62,12 @@
     </form>
   </header>
 
-  {% if rows %}
+  {% if not display_shops %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="store" aria-hidden="true"></i>
+    <p>No shops are allocated to your account.</p>
+  </div>
+  {% elif rows %}
   <div class="stock-matrix-scroll stock-matrix-scroll--list stock-serials-scroll">
     <table class="stock-serials-table stock-serials-table--detail">
       <thead>
@@ -79,7 +84,10 @@
         {% for row in rows %}
         <tr>
           <td class="stock-serials-col--serial" data-label="Serial">
-            <strong class="stock-serial-number">{{ row.serial_number }}</strong>
+            <a class="stock-serial-number-link" href="{{ row.history_url }}" title="View movements since registration">
+              <strong class="stock-serial-number">{{ row.serial_number }}</strong>
+              <span class="stock-report-from">Movements</span>
+            </a>
           </td>
           <td class="stock-serials-col--status" data-label="Status">
             <span class="stock-report-type stock-report-type--{% if row.status == 'in_stock' %}in{% elif row.status == 'sold' %}sale{% elif row.status == 'returned' %}request{% else %}out{% endif %}">
@@ -137,7 +145,7 @@
       </tbody>
     </table>
   </div>
-  <p class="stock-report-footnote">Showing {{ row_count }} serial{{ row_count|pluralize }} across all shops</p>
+  <p class="stock-report-footnote">Showing {{ row_count }} serial{{ row_count|pluralize }} for {{ shops_label }}</p>
   {% else %}
   <div class="dashboard-placeholder">
     <i data-lucide="hash" aria-hidden="true"></i>

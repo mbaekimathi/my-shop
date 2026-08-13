@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Sign in — MY-SHOP{% endblock %}
+{% block title %}Sign in — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 {% block body_class %}page-auth page-auth--portal{% endblock %}
 
 {% block body %}
@@ -17,7 +17,7 @@
     <div class="auth-visual-content">
       <div class="auth-visual-brand">
         <span class="brand-mark" aria-hidden="true"></span>
-        <p class="brand brand--aside">MY-SHOP</p>
+        <p class="brand brand--aside">{{ company_name|default:"MY-SHOP" }}</p>
       </div>
       <p class="auth-visual-kicker" data-auth-visual-kicker>
         {% if login_mode == 'shop' %}Branch portal{% else %}Staff portal{% endif %}
@@ -63,7 +63,7 @@
       data-login-mode="{{ login_mode }}"
     >
       <header class="auth-head">
-        <p class="auth-eyebrow">MY-SHOP access</p>
+        <p class="auth-eyebrow">{{ company_name|default:"MY-SHOP" }} access</p>
         <h1>Sign in</h1>
         <p>Choose how you want to enter, then use your 6-digit code.</p>
       </header>

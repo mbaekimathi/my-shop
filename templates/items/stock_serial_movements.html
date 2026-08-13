@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}Serial number movements — MY-SHOP{% endblock %}
+{% block title %}Serial number movements — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section class="stock-panel stock-panel--report stock-panel--serials" data-animate="rise" data-stock-mode="serial-movements">

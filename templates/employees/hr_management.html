@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}HR Management — MY-SHOP{% endblock %}
+{% block title %}HR Management — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section class="item-panel item-panel--dense item-panel--hr hr--list-table" data-animate="rise" data-hr-panel>

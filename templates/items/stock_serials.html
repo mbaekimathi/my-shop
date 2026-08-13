@@ -1,16 +1,16 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}Serials — MY-SHOP{% endblock %}
+{% block title %}Serials — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section class="stock-panel stock-panel--report stock-panel--serials" data-animate="rise" data-stock-mode="serials">
   <header class="stock-panel-head">
     <div class="stock-panel-head-top">
       <div>
-        <p class="stock-kicker">Stock management · Serials · All shops</p>
+        <p class="stock-kicker">Stock management · Serials · {{ shops_label }}</p>
         <h2>Serials</h2>
-        <p>In-stock serial counts per shop. Open a row to see every unit.</p>
+        <p>In-stock serial counts for shops allocated to your account. Open a row to see every unit.</p>
       </div>
       <div class="stock-stats">
         <p class="stock-stat">
@@ -44,7 +44,12 @@
     </form>
   </header>
 
-  {% if rows %}
+  {% if not display_shops %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="store" aria-hidden="true"></i>
+    <p>No shops are allocated to your account.</p>
+  </div>
+  {% elif rows %}
   <div class="stock-matrix-scroll stock-matrix-scroll--list stock-serials-scroll">
     <table class="stock-serials-table stock-serials-table--list{% if show_all_shops %} stock-serials-table--shops{% endif %}">
       <thead>
@@ -86,7 +91,7 @@
       </tbody>
     </table>
   </div>
-  <p class="stock-report-footnote">Showing {{ item_count }} item{{ item_count|pluralize }} across all shops</p>
+  <p class="stock-report-footnote">Showing {{ item_count }} item{{ item_count|pluralize }} for {{ shops_label }}</p>
   {% else %}
   <div class="dashboard-placeholder">
     <i data-lucide="hash" aria-hidden="true"></i>

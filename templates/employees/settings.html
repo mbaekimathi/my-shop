@@ -1,6 +1,6 @@
 {% extends "employees/workspace_base.html" %}
 
-{% block title %}System Settings — MY-SHOP{% endblock %}
+{% block title %}System Settings — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section class="workspace-hero" data-animate="rise">

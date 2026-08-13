@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}{% if is_movements_page %}Stock Movement{% else %}Stock Report{% endif %} — MY-SHOP{% endblock %}
+{% block title %}{% if is_movements_page %}Stock Movement{% else %}Stock Report{% endif %} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section class="stock-panel stock-panel--report" data-animate="rise" data-stock-mode="{{ stock_mode }}">

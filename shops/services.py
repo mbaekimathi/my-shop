@@ -6,7 +6,7 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.utils import timezone
 
 from employees.countries import COUNTRY_DIAL_CODES
@@ -37,6 +37,7 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 PHONE_RE = re.compile(r"^[\d+\-\s()]{7,40}$")
 LOGIN_CODE_RE = re.compile(r"^\d{6}$")
 MIN_PASSWORD_LENGTH = 6
+DEFAULT_COMPANY_NAME = "MY-SHOP"
 _SHOP_LOGIN_DUMMY_HASH = None
 
 
@@ -941,6 +942,15 @@ def get_company_profile() -> CompanyProfile:
     return profile_row
 
 
+def get_company_display_name() -> str:
+    """Company profile name for branding, with MY-SHOP as fallback."""
+    try:
+        name = (get_company_profile().name or "").strip()
+    except DatabaseError:
+        return DEFAULT_COMPANY_NAME
+    return name or DEFAULT_COMPANY_NAME
+
+
 def validate_company_profile_payload(data, files, *, existing: CompanyProfile) -> dict:
     name = (data.get("name") or "").strip()
     phone_number = (data.get("phone_number") or "").strip()
@@ -1154,7 +1164,7 @@ def receipt_details_qr_payload(
     payment: str = "",
 ) -> str:
     rows = [
-        "MY-SHOP RECEIPT",
+        f"{get_company_display_name()} RECEIPT",
         f"No: {receipt_number}",
         f"Type: {kind_label}",
     ]
@@ -1935,7 +1945,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
     company = get_company_profile()
     kind = receipt.get_kind_display()
     shop = receipt.shop
-    company_name = (company.name or "").strip() or (shop.name if shop else "MY-SHOP")
+    company_name = (company.name or "").strip() or (shop.name if shop else DEFAULT_COMPANY_NAME)
     company_location = (company.location or "").strip()
     company_phone = (company.phone_number or "").strip()
     if not company_location and shop:
@@ -2023,7 +2033,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         logo_url = ""
 
     return {
-        "mark": "MY-SHOP",
+        "mark": (company_name or DEFAULT_COMPANY_NAME).upper(),
         "shop_name": company_name.upper(),
         "shop_location": company_location,
         "shop_phone": company_phone,
@@ -2062,10 +2072,12 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
     else:
         width = _receipt_char_width(pos)
     rule = "-" * width
-    rows = [
-        _receipt_center(ticket.get("mark") or "MY-SHOP", width),
-        _receipt_center(ticket.get("shop_name") or "", width),
-    ]
+    mark = (ticket.get("mark") or DEFAULT_COMPANY_NAME).strip()
+    shop_name = (ticket.get("shop_name") or "").strip()
+    rows = []
+    if mark and mark.upper() != shop_name.upper():
+        rows.append(_receipt_center(mark, width))
+    rows.append(_receipt_center(shop_name, width))
     if ticket.get("shop_location"):
         rows.append(_receipt_center(ticket["shop_location"], width))
     if ticket.get("shop_phone"):
@@ -2208,7 +2220,7 @@ def _build_receipt_message(receipt, lines) -> str:
 def _supplier_receipt_shop_header(shop: Shop) -> dict:
     """Company / shop header fields shared by supplier receipts."""
     company = get_company_profile()
-    company_name = (company.name or "").strip() or (shop.name if shop else "MY-SHOP")
+    company_name = (company.name or "").strip() or (shop.name if shop else DEFAULT_COMPANY_NAME)
     company_location = (company.location or "").strip()
     company_phone = (company.phone_number or "").strip()
     if not company_location and shop:
@@ -2225,7 +2237,7 @@ def _supplier_receipt_shop_header(shop: Shop) -> dict:
     except (ValueError, AttributeError):
         logo_url = ""
     return {
-        "mark": "MY-SHOP",
+        "mark": (company_name or DEFAULT_COMPANY_NAME).upper(),
         "shop_name": company_name.upper(),
         "shop_location": company_location,
         "shop_phone": company_phone,

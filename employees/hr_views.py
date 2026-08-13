@@ -20,8 +20,8 @@ from .models import (
 )
 from .pagination import page_url, pagination_links, redirect_query_page
 from .permissions_catalog import (
-    PERMISSION_MODULES,
     is_valid_permission_key,
+    permission_modules_for_display,
 )
 from .services import (
     EMPTY_EMPLOYEE_FORM,
@@ -482,7 +482,7 @@ def _render_hr_permissions(request, profile, section_meta):
     allowed_lookup = _permission_allowed_lookup([employee.pk for employee in employees])
 
     modules = []
-    for module in PERMISSION_MODULES:
+    for module in permission_modules_for_display():
         rows = []
         for employee in employees:
             toggles = []

@@ -18,9 +18,15 @@ def service_worker(request):
 
 
 def web_manifest(request):
+    import json
     from django.conf import settings
-    from django.http import FileResponse
+    from django.http import JsonResponse
     from pathlib import Path
+    from shops.services import get_company_display_name
 
     manifest_path = Path(settings.BASE_DIR) / "static" / "manifest.webmanifest"
-    return FileResponse(manifest_path.open("rb"), content_type="application/manifest+json")
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    brand = get_company_display_name()
+    data["name"] = brand
+    data["short_name"] = brand
+    return JsonResponse(data, content_type="application/manifest+json")

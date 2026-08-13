@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 {% csrf_token %}
@@ -23,7 +23,7 @@
     <section class="pos-settings-group">
       <div class="pos-settings-group-head">
         <h3>STK Push</h3>
-        <p>Allow MY-SHOP to prompt customers for M-Pesa payment via Safaricom STK Push.</p>
+        <p>Allow {{ company_name|default:"MY-SHOP" }} to prompt customers for M-Pesa payment via Safaricom STK Push.</p>
       </div>
       <ul class="pos-settings-list">
         <li class="pos-settings-row">

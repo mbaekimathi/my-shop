@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}Shop login — MY-SHOP{% endblock %}
+{% block title %}Shop login — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block body_class %}page-workspace page-shop-select{% endblock %}
 
@@ -21,7 +21,7 @@
   >
     <div class="workspace-modal-head shop-select-head">
       <div>
-        <p class="shop-select-kicker">MY-SHOP</p>
+        <p class="shop-select-kicker">{{ company_name|default:"MY-SHOP" }}</p>
         <h2 id="shop-select-title">
           {% if multi_shop %}Select a shop &amp; sign in{% else %}Sign in to {{ selected_shop.name }}{% endif %}
         </h2>

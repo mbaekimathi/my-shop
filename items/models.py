@@ -127,6 +127,13 @@ class ShopStock(models.Model):
         return f"{self.item.name} @ {self.shop.name}: {self.quantity}"
 
 
+class ItemSerialStatus(models.TextChoices):
+    IN_STOCK = "in_stock", "In stock"
+    SOLD = "sold", "Sold"
+    RETURNED = "returned", "Returned"
+    OUT = "out", "Stocked out"
+
+
 class ItemSerial(models.Model):
     item = models.ForeignKey(
         Item,
@@ -142,6 +149,14 @@ class ItemSerial(models.Model):
     )
     serial_number = models.CharField(max_length=120, db_index=True)
     is_available = models.BooleanField(default=True, db_index=True)
+    status_override = models.CharField(
+        max_length=16,
+        blank=True,
+        default="",
+        db_index=True,
+        choices=ItemSerialStatus.choices,
+        help_text="When set, serial pages use this status instead of inferring it from sales and stock.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -19,6 +19,7 @@ from items.views import (
     stock_management_catalog,
     stock_management_print,
     stock_serial_detail,
+    stock_serial_history,
     stock_serial_return_client,
 )
 from shops.services import (
@@ -26,6 +27,7 @@ from shops.services import (
     daraja_settings_as_dict,
     get_communications_settings,
     get_company_pos_settings,
+    get_company_display_name,
     get_company_profile,
     get_company_working_hours_settings,
     get_daraja_settings,
@@ -278,6 +280,27 @@ def stock_serial_detail_page(request, role_segment, item_id):
         "icon": module["icon"],
     }
     return stock_serial_detail(request, profile, meta, module, item_id)
+
+
+@active_employee_required
+@require_http_methods(["GET", "POST"])
+def stock_serial_history_page(request, role_segment, item_id, serial_number):
+    """Movement history for one serial number from registration to now."""
+    denied, profile, meta, module_or_expected = _stock_serials_page_guard(
+        request, role_segment
+    )
+    if denied is not None:
+        return denied
+    if profile is None:
+        return redirect(
+            "employees:stock_serial_history",
+            role_segment=module_or_expected,
+            item_id=item_id,
+            serial_number=serial_number,
+        )
+    return stock_serial_history(
+        request, profile, meta, module_or_expected, item_id, serial_number
+    )
 
 
 def _stock_serials_page_guard(request, role_segment):
@@ -1558,7 +1581,7 @@ def _company_pos_settings(
         )
     context["receipt_sample"] = {
         "ticket": {
-            "mark": "MY-SHOP",
+            "mark": get_company_display_name(),
             "shop_name": context["receipt_preview"]["shop_name"],
             "shop_location": context["receipt_preview"]["shop_location"],
             "shop_phone": context["receipt_preview"]["shop_phone"],

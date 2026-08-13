@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}Shop Management — MY-SHOP{% endblock %}
+{% block title %}Shop Management — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section class="item-panel item-panel--dense" data-animate="rise" data-shop-total="{{ shop_count }}">

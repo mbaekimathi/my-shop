@@ -10,6 +10,7 @@ from employees.countries import COUNTRY_DIAL_CODES
 from .models import (
     Item,
     ItemSerial,
+    ItemSerialStatus,
     ShopItemPrice,
     ShopStock,
     StockMovement,
@@ -706,6 +707,292 @@ def check_serials_already_in_stock(*, item_id, serials) -> dict[str, dict]:
             "shop_name": (row["shop__name"] or "") if row["shop_id"] else "",
         }
     return found
+
+
+SERIAL_AVAILABLE_STATUSES = frozenset(
+    {ItemSerialStatus.IN_STOCK, ItemSerialStatus.RETURNED}
+)
+
+
+def _serial_status_key(value) -> str:
+    return str(value or "").strip().upper()
+
+
+def _adjust_serial_shop_stock(serial: ItemSerial, *, delta: int, unit_cost=0) -> None:
+    """Move shop + item qty by one when a serial's availability is corrected."""
+    if delta == 0 or serial.shop_id is None or serial.item_id is None:
+        return
+    stock, _ = ShopStock.objects.select_for_update().get_or_create(
+        shop_id=serial.shop_id,
+        item_id=serial.item_id,
+        defaults={"quantity": 0},
+    )
+    if delta > 0:
+        apply_stock_in_average_cost(
+            stock,
+            qty=1,
+            unit_cost=unit_cost if unit_cost else stock.average_cost,
+        )
+        stock.quantity = int(stock.quantity or 0) + 1
+        stock.save(update_fields=["quantity", "average_cost", "updated_at"])
+        serial.item.stock = int(serial.item.stock or 0) + 1
+        serial.item.save(update_fields=["stock", "updated_at"])
+        return
+    stock.quantity = max(0, int(stock.quantity or 0) - 1)
+    stock.save(update_fields=["quantity", "updated_at"])
+    serial.item.stock = max(0, int(serial.item.stock or 0) - 1)
+    serial.item.save(update_fields=["stock", "updated_at"])
+
+
+def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool, str]:
+    """
+    If this serial is still on an active sale/credit, treat it as returned.
+
+    Keeps receipt remaining-serials, qty, and shop stock consistent so the unit
+    can be sold again. Returns (released, receipt_number).
+    """
+    from django.utils import timezone
+
+    from shops.models import (
+        ShopPaymentMethod,
+        ShopReceiptKind,
+        ShopReceiptLine,
+        ShopReceiptStatus,
+    )
+
+    serial_key = _serial_status_key(serial.serial_number)
+    lines = (
+        ShopReceiptLine.objects.select_for_update()
+        .select_related("receipt", "receipt__shop", "item")
+        .filter(
+            item_id=serial.item_id,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        )
+        .exclude(receipt__status=ShopReceiptStatus.CANCELLED)
+        .order_by("-receipt__created_at", "-id")
+    )
+    target = None
+    matched_serial = ""
+    for line in lines:
+        remaining = [
+            str(value).strip()
+            for value in (line.remaining_serial_numbers or [])
+            if str(value).strip()
+        ]
+        matched_serial = next(
+            (value for value in remaining if _serial_status_key(value) == serial_key),
+            "",
+        )
+        if matched_serial:
+            target = line
+            break
+    if target is None:
+        return False, ""
+
+    receipt = target.receipt
+    shop = receipt.shop or serial.shop
+    now = timezone.now()
+    existing_returned = [
+        str(value).strip()
+        for value in (target.returned_serial_numbers or [])
+        if str(value).strip()
+    ]
+    target.returned_serial_numbers = existing_returned + [matched_serial]
+    target.returned_quantity = int(target.returned_quantity or 0) + 1
+    remaining_after = max(0, int(target.quantity or 0) - int(target.returned_quantity))
+    target.line_total = (
+        Decimal(target.unit_price or 0) * remaining_after
+    ).quantize(Decimal("0.01"))
+    target.save(
+        update_fields=["returned_serial_numbers", "returned_quantity", "line_total"]
+    )
+
+    if shop is not None and target.item_id:
+        stock, _ = ShopStock.objects.select_for_update().get_or_create(
+            shop=shop, item_id=target.item_id, defaults={"quantity": 0}
+        )
+        apply_stock_in_average_cost(
+            stock,
+            qty=1,
+            unit_cost=Decimal(target.unit_cost or 0),
+        )
+        stock.quantity = int(stock.quantity or 0) + 1
+        stock.save(update_fields=["quantity", "average_cost", "updated_at"])
+        item = serial.item
+        item.stock = int(item.stock or 0) + 1
+        item.save(update_fields=["stock", "updated_at"])
+        if serial.shop_id != shop.pk:
+            serial.shop = shop
+            serial.save(update_fields=["shop", "updated_at"])
+
+    all_lines = list(receipt.lines.order_by("id"))
+    remaining_subtotal = sum(
+        (
+            (Decimal(line.unit_price or 0) * line.remaining_quantity).quantize(
+                Decimal("0.01")
+            )
+            for line in all_lines
+        ),
+        Decimal("0.00"),
+    )
+    tax_percent = Decimal(receipt.tax_percent or 0)
+    if remaining_subtotal <= 0:
+        tax_amount = Decimal("0.00")
+        total = Decimal("0.00")
+        cash_amount = Decimal("0.00")
+        mpesa_amount = Decimal("0.00")
+        status = ShopReceiptStatus.CANCELLED
+    else:
+        tax_amount = (remaining_subtotal * tax_percent / Decimal("100")).quantize(
+            Decimal("0.01")
+        )
+        total = (remaining_subtotal + tax_amount).quantize(Decimal("0.01"))
+        any_returned = any(int(line.returned_quantity or 0) > 0 for line in all_lines)
+        status = (
+            ShopReceiptStatus.PARTIAL_RETURN
+            if any_returned
+            else ShopReceiptStatus.ACTIVE
+        )
+        cash_amount = receipt.cash_amount
+        mpesa_amount = receipt.mpesa_amount
+        if receipt.kind == ShopReceiptKind.SALE:
+            if receipt.payment_method == ShopPaymentMethod.CASH:
+                cash_amount = total
+                mpesa_amount = Decimal("0.00")
+            elif receipt.payment_method == ShopPaymentMethod.MPESA:
+                mpesa_amount = total
+                cash_amount = Decimal("0.00")
+            elif receipt.payment_method == ShopPaymentMethod.BOTH:
+                old_total = Decimal(receipt.total or 0)
+                if old_total > 0:
+                    ratio = total / old_total
+                    cash_amount = (Decimal(receipt.cash_amount or 0) * ratio).quantize(
+                        Decimal("0.01")
+                    )
+                    mpesa_amount = (total - cash_amount).quantize(Decimal("0.01"))
+                else:
+                    cash_amount = Decimal("0.00")
+                    mpesa_amount = total
+            else:
+                cash_amount = Decimal("0.00")
+                mpesa_amount = Decimal("0.00")
+        else:
+            cash_amount = Decimal("0.00")
+            mpesa_amount = Decimal("0.00")
+
+    receipt.subtotal = remaining_subtotal
+    receipt.tax_amount = tax_amount
+    receipt.total = total
+    receipt.cash_amount = cash_amount
+    receipt.mpesa_amount = mpesa_amount
+    receipt.status = status
+    receipt.last_returned_at = now
+    receipt.last_returned_by = profile
+    receipt.save(
+        update_fields=[
+            "subtotal",
+            "tax_amount",
+            "total",
+            "cash_amount",
+            "mpesa_amount",
+            "status",
+            "last_returned_at",
+            "last_returned_by",
+        ]
+    )
+    return True, receipt.receipt_number or ""
+
+
+def _serial_is_on_sale_or_returned(serial: ItemSerial) -> tuple[bool, bool]:
+    from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
+
+    serial_key = _serial_status_key(serial.serial_number)
+    on_sale = False
+    was_returned = False
+    lines = ShopReceiptLine.objects.filter(
+        item_id=serial.item_id,
+        receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+    ).exclude(receipt__status=ShopReceiptStatus.CANCELLED)
+    for line in lines.only("serial_numbers", "returned_serial_numbers"):
+        remaining = {
+            _serial_status_key(value)
+            for value in (line.remaining_serial_numbers or [])
+            if str(value).strip()
+        }
+        returned = {
+            _serial_status_key(value)
+            for value in (line.returned_serial_numbers or [])
+            if str(value).strip()
+        }
+        if serial_key in remaining:
+            on_sale = True
+        if serial_key in returned:
+            was_returned = True
+        if on_sale and was_returned:
+            break
+    return on_sale, was_returned
+
+
+def _derived_serial_status(serial: ItemSerial, *, on_sale: bool, was_returned: bool) -> str:
+    if on_sale:
+        return ItemSerialStatus.SOLD
+    if was_returned:
+        return ItemSerialStatus.RETURNED
+    if serial.is_available:
+        return ItemSerialStatus.IN_STOCK
+    return ItemSerialStatus.OUT
+
+
+def apply_serial_status(*, profile, serial: ItemSerial, new_status: str) -> str:
+    """Correct a serial's displayed status and keep availability/stock consistent."""
+    new_status = (new_status or "").strip().lower()
+    labels = dict(ItemSerialStatus.choices)
+    if new_status not in labels:
+        raise ValidationError("Choose a valid serial status.")
+
+    with transaction.atomic():
+        serial = (
+            ItemSerial.objects.select_for_update()
+            .select_related("item", "shop")
+            .get(pk=serial.pk)
+        )
+        was_available = bool(serial.is_available)
+        will_be_available = new_status in SERIAL_AVAILABLE_STATUSES
+        released_from_sale = False
+        receipt_number = ""
+
+        if will_be_available:
+            released_from_sale, receipt_number = _release_serial_from_open_sale(
+                serial, profile=profile
+            )
+            serial.refresh_from_db(fields=["shop"])
+
+        serial.is_available = will_be_available
+        if will_be_available and not was_available and not released_from_sale:
+            _adjust_serial_shop_stock(serial, delta=1)
+        elif not will_be_available and was_available:
+            _adjust_serial_shop_stock(serial, delta=-1)
+
+        on_sale, was_returned = _serial_is_on_sale_or_returned(serial)
+        derived = _derived_serial_status(
+            serial, on_sale=on_sale, was_returned=was_returned
+        )
+        serial.status_override = "" if derived == new_status else new_status
+        serial.save(
+            update_fields=["is_available", "shop", "status_override", "updated_at"]
+        )
+
+    label = labels[new_status]
+    if released_from_sale and receipt_number:
+        return (
+            f"Status updated to {label}. Removed from active sale {receipt_number} "
+            "and returned to stock."
+        )
+    if released_from_sale:
+        return (
+            f"Status updated to {label}. Removed from the active sale and returned to stock."
+        )
+    return f"Status updated to {label}."
 
 
 def search_suppliers(

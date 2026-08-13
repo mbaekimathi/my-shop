@@ -1,159 +1,318 @@
-{% extends "employees/workspace_base.html" %}
-{% load static %}
-
-{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
-{% block workspace_content %}
-<section
-  class="item-panel item-panel--dense item-panel--working-hours"
-  data-animate="rise"
->
-  <header class="item-panel-head">
-    <div class="item-panel-head-top">
-      <div>
-        <p class="stock-kicker">Settings · Working hours</p>
-        <h2>{{ meta.headline }}</h2>
-        <p>{{ meta.summary }} Set working days for all shops and opening/closing times for each shop.</p>
-      </div>
-      <div class="stock-stats">
-        <p class="stock-stat">
-          <strong>{{ active_shop_count }}</strong>
-          <span>shop{{ active_shop_count|pluralize }}</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ working_day_count }}</strong>
-          <span>working day{{ working_day_count|pluralize }}</span>
-        </p>
-      </div>
-    </div>
-  </header>
-
-  <form class="working-hours-form" method="post">
-    {% csrf_token %}
-
-    <section class="pos-settings-group working-hours-group">
-      <div class="pos-settings-group-head">
-        <h3>Working hours prompts</h3>
-        <p>When enabled, each shop shows open/close balance popups during its configured hours.</p>
-      </div>
-      <ul class="pos-settings-list">
-        <li class="pos-settings-row">
-          <div class="pos-settings-copy">
-            <strong>Enable working hours prompts</strong>
-            <p>Prompt staff on all {{ active_shop_count }} shop{{ active_shop_count|pluralize }} to record opening and closing balances.</p>
-          </div>
-          <label class="perm-switch">
-            <input
-              type="checkbox"
-              class="perm-switch-input"
-              name="enabled"
-              value="1"
-              {% if form_data.enabled %}checked{% endif %}
-              aria-label="Enable working hours prompts"
-            >
-            <span class="perm-switch-ui" aria-hidden="true"></span>
-            <span class="perm-switch-state">{% if form_data.enabled %}On{% else %}Off{% endif %}</span>
-          </label>
-        </li>
-      </ul>
-    </section>
-
-    <section class="pos-settings-group working-hours-group">
-      <div class="pos-settings-group-head">
-        <h3>Working days</h3>
-        <p>Select the days all shops operate.</p>
-      </div>
-      <div class="working-hours-days" role="group" aria-label="Working days">
-        {% for day in working_day_rows %}
-        <label class="working-hours-day">
-          <input
-            type="checkbox"
-            name="{{ day.field }}"
-            value="1"
-            {% if day.checked %}checked{% endif %}
-          >
-          <span class="working-hours-day-ui">
-            <strong>{{ day.short }}</strong>
-            <em>{{ day.label }}</em>
-          </span>
-        </label>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="pos-settings-group working-hours-group working-hours-shops-group">
-      <div class="pos-settings-group-head">
-        <h3>Shop opening &amp; closing times</h3>
-        <p>
-          {% if form_data.enabled %}
-          Set when each shop should prompt for opening and closing balances on the shop floor.
-          {% else %}
-          Configure hours for each shop. Prompts apply when working hours are enabled.
-          {% endif %}
-        </p>
-      </div>
-      {% if working_hours_shops %}
-      <div class="staff-table-wrap working-hours-shops-wrap">
-        <table class="staff-table working-hours-shops-table">
-          <thead>
-            <tr>
-              <th scope="col">Shop</th>
-              <th scope="col">Location</th>
-              <th scope="col">Code</th>
-              <th scope="col">Opening</th>
-              <th scope="col">Closing</th>
-              <th scope="col">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in working_hours_shops %}
-            <tr>
-              <td data-label="Shop"><strong>{{ row.shop_name }}</strong></td>
-              <td data-label="Location">{{ row.shop_location }}</td>
-              <td data-label="Code"><span class="working-hours-shop-code">{{ row.login_code }}</span></td>
-              <td data-label="Opening">
-                <input
-                  type="time"
-                  class="working-hours-shop-time"
-                  name="shop_{{ row.shop_id }}_start_time"
-                  value="{{ row.start_time }}"
-                  required
-                  aria-label="{{ row.shop_name }} opening time"
-                >
-              </td>
-              <td data-label="Closing">
-                <input
-                  type="time"
-                  class="working-hours-shop-time"
-                  name="shop_{{ row.shop_id }}_end_time"
-                  value="{{ row.end_time }}"
-                  required
-                  aria-label="{{ row.shop_name }} closing time"
-                >
-              </td>
-              <td data-label="Status">
-                <span class="working-hours-shop-status working-hours-shop-status--{{ row.status_tone }}">
-                  {{ row.status_label }}
-                </span>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <div class="dashboard-placeholder">
-        <i data-lucide="store" aria-hidden="true"></i>
-        <p>No active shops yet. Register shops under Shop Management.</p>
-      </div>
-      {% endif %}
-    </section>
-
-    <div class="company-profile-actions">
-      <button type="submit" class="btn btn--primary">
-        <i data-lucide="save" aria-hidden="true"></i>
-        <span>Save working hours</span>
-      </button>
-    </div>
-  </form>
-</section>
-{% endblock %}
+{% extends "employees/workspace_base.html" %}
+
+{% load static %}
+
+
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+
+<section
+
+  class="item-panel item-panel--dense item-panel--working-hours"
+
+  data-animate="rise"
+
+>
+
+  <header class="item-panel-head">
+
+    <div class="item-panel-head-top">
+
+      <div>
+
+        <p class="stock-kicker">Settings · Working hours</p>
+
+        <h2>{{ meta.headline }}</h2>
+
+        <p>{{ meta.summary }} Set working days for all shops and opening/closing times for each shop.</p>
+
+      </div>
+
+      <div class="stock-stats">
+
+        <p class="stock-stat">
+
+          <strong>{{ active_shop_count }}</strong>
+
+          <span>shop{{ active_shop_count|pluralize }}</span>
+
+        </p>
+
+        <p class="stock-stat">
+
+          <strong>{{ working_day_count }}</strong>
+
+          <span>working day{{ working_day_count|pluralize }}</span>
+
+        </p>
+
+      </div>
+
+    </div>
+
+  </header>
+
+
+
+  <form class="working-hours-form" method="post">
+
+    {% csrf_token %}
+
+
+
+    <section class="pos-settings-group working-hours-group">
+
+      <div class="pos-settings-group-head">
+
+        <h3>Working hours prompts</h3>
+
+        <p>When enabled, each shop shows open/close balance popups during its configured hours.</p>
+
+      </div>
+
+      <ul class="pos-settings-list">
+
+        <li class="pos-settings-row">
+
+          <div class="pos-settings-copy">
+
+            <strong>Enable working hours prompts</strong>
+
+            <p>Prompt staff on all {{ active_shop_count }} shop{{ active_shop_count|pluralize }} to record opening and closing balances.</p>
+
+          </div>
+
+          <label class="perm-switch">
+
+            <input
+
+              type="checkbox"
+
+              class="perm-switch-input"
+
+              name="enabled"
+
+              value="1"
+
+              {% if form_data.enabled %}checked{% endif %}
+
+              aria-label="Enable working hours prompts"
+
+            >
+
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+
+            <span class="perm-switch-state">{% if form_data.enabled %}On{% else %}Off{% endif %}</span>
+
+          </label>
+
+        </li>
+
+      </ul>
+
+    </section>
+
+
+
+    <section class="pos-settings-group working-hours-group">
+
+      <div class="pos-settings-group-head">
+
+        <h3>Working days</h3>
+
+        <p>Select the days all shops operate.</p>
+
+      </div>
+
+      <div class="working-hours-days" role="group" aria-label="Working days">
+
+        {% for day in working_day_rows %}
+
+        <label class="working-hours-day">
+
+          <input
+
+            type="checkbox"
+
+            name="{{ day.field }}"
+
+            value="1"
+
+            {% if day.checked %}checked{% endif %}
+
+          >
+
+          <span class="working-hours-day-ui">
+
+            <strong>{{ day.short }}</strong>
+
+            <em>{{ day.label }}</em>
+
+          </span>
+
+        </label>
+
+        {% endfor %}
+
+      </div>
+
+    </section>
+
+
+
+    <section class="pos-settings-group working-hours-group working-hours-shops-group">
+
+      <div class="pos-settings-group-head">
+
+        <h3>Shop opening &amp; closing times</h3>
+
+        <p>
+
+          {% if form_data.enabled %}
+
+          Set when each shop should prompt for opening and closing balances on the shop floor.
+
+          {% else %}
+
+          Configure hours for each shop. Prompts apply when working hours are enabled.
+
+          {% endif %}
+
+        </p>
+
+      </div>
+
+      {% if working_hours_shops %}
+
+      <div class="staff-table-wrap working-hours-shops-wrap">
+
+        <table class="staff-table working-hours-shops-table">
+
+          <thead>
+
+            <tr>
+
+              <th scope="col">Shop</th>
+
+              <th scope="col">Location</th>
+
+              <th scope="col">Code</th>
+
+              <th scope="col">Opening</th>
+
+              <th scope="col">Closing</th>
+
+              <th scope="col">Status</th>
+
+            </tr>
+
+          </thead>
+
+          <tbody>
+
+            {% for row in working_hours_shops %}
+
+            <tr>
+
+              <td data-label="Shop"><strong>{{ row.shop_name }}</strong></td>
+
+              <td data-label="Location">{{ row.shop_location }}</td>
+
+              <td data-label="Code"><span class="working-hours-shop-code">{{ row.login_code }}</span></td>
+
+              <td data-label="Opening">
+
+                <input
+
+                  type="time"
+
+                  class="working-hours-shop-time"
+
+                  name="shop_{{ row.shop_id }}_start_time"
+
+                  value="{{ row.start_time }}"
+
+                  required
+
+                  aria-label="{{ row.shop_name }} opening time"
+
+                >
+
+              </td>
+
+              <td data-label="Closing">
+
+                <input
+
+                  type="time"
+
+                  class="working-hours-shop-time"
+
+                  name="shop_{{ row.shop_id }}_end_time"
+
+                  value="{{ row.end_time }}"
+
+                  required
+
+                  aria-label="{{ row.shop_name }} closing time"
+
+                >
+
+              </td>
+
+              <td data-label="Status">
+
+                <span class="working-hours-shop-status working-hours-shop-status--{{ row.status_tone }}">
+
+                  {{ row.status_label }}
+
+                </span>
+
+              </td>
+
+            </tr>
+
+            {% endfor %}
+
+          </tbody>
+
+        </table>
+
+      </div>
+
+      {% else %}
+
+      <div class="dashboard-placeholder">
+
+        <i data-lucide="store" aria-hidden="true"></i>
+
+        <p>No active shops yet. Register shops under Shop Management.</p>
+
+      </div>
+
+      {% endif %}
+
+    </section>
+
+
+
+    <div class="company-profile-actions">
+
+      <button type="submit" class="btn btn--primary">
+
+        <i data-lucide="save" aria-hidden="true"></i>
+
+        <span>Save working hours</span>
+
+      </button>
+
+    </div>
+
+  </form>
+
+</section>
+
+{% endblock %}
+

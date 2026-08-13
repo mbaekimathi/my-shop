@@ -565,11 +565,18 @@
       <span>Item</span><span>Price</span><span>Qty</span><span>Total</span>
     </div>`;
 
+    const mark = (t.mark || "").trim();
+    const shopName = t.shop_name || "";
+    const markHtml =
+      mark && mark.toUpperCase() !== String(shopName).toUpperCase()
+        ? `<p class="receipt-ticket-mark">${escapeHtml(mark)}</p>`
+        : "";
+
     return `<div class="receipt-ticket-inner">
   <div class="receipt-ticket-brand">
     ${logo}
-    <p class="receipt-ticket-mark">${escapeHtml(t.mark || "MY-SHOP")}</p>
-    <h4>${escapeHtml(t.shop_name)}</h4>
+    ${markHtml}
+    <h4>${escapeHtml(shopName)}</h4>
     ${t.shop_location ? `<p>${escapeHtml(t.shop_location)}</p>` : ""}
     ${t.shop_phone ? `<p>${escapeHtml(t.shop_phone)}</p>` : ""}
     ${

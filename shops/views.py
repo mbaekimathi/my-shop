@@ -482,10 +482,12 @@ def my_shop_select(request):
 
     profile = get_profile_for_request(request)
     if not employee_may_any(profile, "my-shop"):
+        from shops.services import get_company_display_name
+
         return permission_denied_response(
             request,
             profile,
-            message="You do not have permission to access MY-SHOP.",
+            message=f"You do not have permission to access {get_company_display_name()}.",
         )
     shops = shops_for_profile(profile)
 

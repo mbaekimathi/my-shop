@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Employee Registration — MY-SHOP{% endblock %}
+{% block title %}Employee Registration — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 {% block body_class %}page-auth{% endblock %}
 
 {% block body %}
@@ -17,7 +17,7 @@
     <div class="auth-visual-content">
       <div class="auth-visual-brand">
         <span class="brand-mark" aria-hidden="true"></span>
-        <p class="brand brand--aside">MY-SHOP</p>
+        <p class="brand brand--aside">{{ company_name|default:"MY-SHOP" }}</p>
       </div>
       <p class="auth-visual-lead">Join the floor team and get set up for shifts, tills, and live sales.</p>
       <ul class="auth-visual-points">
@@ -51,7 +51,7 @@
       <header class="auth-head">
         <p class="auth-eyebrow">New team member</p>
         <h1>Register as Employee</h1>
-        <p>Complete your profile to request floor access on MY-SHOP.</p>
+        <p>Complete your profile to request floor access on {{ company_name|default:"MY-SHOP" }}.</p>
       </header>
 
       {% if errors %}

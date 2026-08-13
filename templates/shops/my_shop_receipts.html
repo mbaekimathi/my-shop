@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section
@@ -157,6 +157,6 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script src="{% static 'js/shop-printer.js' %}?v=19"></script>
+<script src="{% static 'js/shop-printer.js' %}?v=20"></script>
 <script src="{% static 'js/my-shop-receipts.js' %}?v=6"></script>
 {% endblock %}

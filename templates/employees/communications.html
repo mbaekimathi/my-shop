@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 {% csrf_token %}
@@ -9,6 +9,7 @@
   class="comms is-simple{% if bridge.status == 'connected' %} is-linked{% endif %}"
   data-animate="rise"
   data-comms
+  data-company-name="{{ company_name|default:'MY-SHOP' }}"
   data-mode="simple"
   data-api-status="{{ comms_api.status }}"
   data-api-logout="{{ comms_api.logout }}"
@@ -302,5 +303,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/communications.js' %}?v=29"></script>
+<script src="{% static 'js/communications.js' %}?v=30"></script>
 {% endblock %}

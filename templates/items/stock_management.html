@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static humanize %}
 
-{% block title %}Stock Management — MY-SHOP{% endblock %}
+{% block title %}Stock Management — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <form

@@ -1,0 +1,184 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ serial.serial_number }} · Movements — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="stock-panel stock-panel--report stock-panel--serials" data-animate="rise" data-stock-mode="serials">
+  <header class="stock-panel-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">Serials · {{ item.category }} · {{ item.name }}</p>
+        <h2>{{ serial.serial_number }}</h2>
+        <p>
+          Every movement since this serial was registered
+          {% if serial.created_at %}
+          ({{ serial.created_at|date:"d M Y" }} · {{ serial.created_at|time:"H:i" }})
+          {% endif %}
+          to now.
+        </p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ row_count }}</strong>
+          <span>movement{{ row_count|pluralize }}</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ unit_status_label }}</strong>
+          <span>status</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ unit_shop_name }}</strong>
+          <span>shop</span>
+        </p>
+      </div>
+    </div>
+
+    <div class="stock-report-filters stock-report-filters--serials">
+      <a class="stock-report-apply stock-report-apply--ghost" href="{{ list_href }}">Back</a>
+      <span class="stock-serials-status-chip">
+        <span class="stock-report-type stock-report-type--{% if unit_status == 'in_stock' %}in{% elif unit_status == 'sold' %}sale{% elif unit_status == 'returned' %}returned{% else %}out{% endif %}">
+          {{ unit_status_label }}
+        </span>
+        {% if status_is_manual %}
+        <span class="stock-report-from">Saved status</span>
+        {% endif %}
+      </span>
+      <button
+        type="button"
+        class="stock-report-apply"
+        data-serial-status-open
+      >
+        Change status
+      </button>
+    </div>
+  </header>
+
+  {% if rows %}
+  <div class="stock-matrix-scroll stock-matrix-scroll--list stock-serials-scroll">
+    <table class="stock-serials-table stock-serials-table--detail stock-serials-table--history">
+      <thead>
+        <tr>
+          <th scope="col" class="stock-serials-col--when">When</th>
+          <th scope="col">Type</th>
+          <th scope="col">From</th>
+          <th scope="col">To</th>
+          <th scope="col">By</th>
+          <th scope="col">Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td class="stock-serials-col--when" data-label="When">
+            {{ row.happened_at|date:"d M Y" }} · {{ row.happened_at|time:"H:i" }}
+          </td>
+          <td data-label="Type">
+            <span class="stock-report-type stock-report-type--{{ row.event_type }}">{{ row.event_label }}</span>
+          </td>
+          <td data-label="From">{{ row.from_label }}</td>
+          <td data-label="To">{{ row.to_label }}</td>
+          <td data-label="By">{{ row.by }}</td>
+          <td data-label="Detail">
+            {% if row.detail %}
+            {{ row.detail }}
+            {% else %}
+            <span class="stock-serials-empty">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="stock-report-footnote">
+    Showing {{ row_count }} movement{{ row_count|pluralize }} from
+    {% if serial.created_at %}{{ serial.created_at|date:"d M Y" }}{% else %}registration{% endif %}
+    to now
+  </p>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="arrow-down-up" aria-hidden="true"></i>
+    <p>No movements recorded for this serial yet.</p>
+  </div>
+  {% endif %}
+</section>
+
+<div
+  class="workspace-modal stock-serial-status-modal"
+  data-modal="serial-status"
+  data-serial-status-modal
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-serial-status-close></div>
+  <div
+    class="workspace-modal-dialog stock-serial-status-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="serial-status-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <p class="stock-serial-modal-kicker">{{ item.name }}</p>
+        <h2 id="serial-status-title">Change status</h2>
+      </div>
+      <button class="workspace-icon-btn" type="button" aria-label="Close" data-serial-status-close>
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form class="workspace-modal-form" method="post">
+      {% csrf_token %}
+      <p class="stock-serial-status-modal-serial">{{ serial.serial_number }}</p>
+      <label class="field">
+        <span class="field-label">Status</span>
+        <select name="status" aria-label="Serial status" data-serial-status-select>
+          {% for value, label in status_choices %}
+          <option value="{{ value }}"{% if unit_status == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="workspace-modal-actions">
+        <button class="btn btn--ghost" type="button" data-serial-status-close>Cancel</button>
+        <button class="btn btn--primary" type="submit">
+          <i data-lucide="check" aria-hidden="true"></i>
+          <span>Save status</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const modal = document.querySelector("[data-serial-status-modal]");
+    const openBtn = document.querySelector("[data-serial-status-open]");
+    if (!modal || !openBtn) return;
+
+    const selectEl = modal.querySelector("[data-serial-status-select]");
+
+    const setOpen = (open) => {
+      modal.hidden = !open;
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+      document.body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+      if (open) {
+        window.lucide?.createIcons?.();
+        window.setTimeout(() => selectEl?.focus(), 40);
+      }
+    };
+
+    openBtn.addEventListener("click", () => setOpen(true));
+    modal.querySelectorAll("[data-serial-status-close]").forEach((el) => {
+      el.addEventListener("click", () => setOpen(false));
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) setOpen(false);
+    });
+  })();
+</script>
+{% endblock %}

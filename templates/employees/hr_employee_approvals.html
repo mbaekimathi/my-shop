@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}Pending approvals — MY-SHOP{% endblock %}
+{% block title %}Pending approvals — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 {% include "employees/partials/employee_access_table.html" with panel_title="Employee approvals" panel_description="Assign a <strong>role</strong> and set status to <strong>Active</strong> to approve each registration." empty_message="No employees are waiting for approval. New registrations will appear here." %}

@@ -220,7 +220,9 @@ def my_shop_url(*, switch=False):
 
 
 def _myshop_link(*, active=False):
-    return _link("MY-SHOP", "store", href=my_shop_url(), active=active)
+    from shops.services import get_company_display_name
+
+    return _link(get_company_display_name(), "store", href=my_shop_url(), active=active)
 
 
 def _employee_login_switch_link():
@@ -843,7 +845,7 @@ def sidebar_for_hr_management(role, *, active_view="home", profile=None):
 
 def sidebar_for_hr_permissions(role, profile=None):
     """Sidebar for the permissions matrix — jump links to each module section."""
-    from .permissions_catalog import PERMISSION_MODULES
+    from .permissions_catalog import permission_modules_for_display
 
     dashboard_url = reverse(role_home_url_name(role))
     primary = [
@@ -854,7 +856,7 @@ def sidebar_for_hr_permissions(role, profile=None):
                 module["icon"],
                 href=f"#module-{module['slug']}",
             )
-            for module in PERMISSION_MODULES
+            for module in permission_modules_for_display()
         ],
     ]
     return resolve_sidebar_hrefs(

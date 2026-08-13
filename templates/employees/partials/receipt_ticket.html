@@ -4,7 +4,9 @@
     {% if p.logo_url %}
     <img class="receipt-ticket-logo" src="{{ p.logo_url }}" alt="">
     {% endif %}
-    <p class="receipt-ticket-mark">MY-SHOP</p>
+    {% if p.mark and p.mark|upper != p.shop_name|upper %}
+    <p class="receipt-ticket-mark">{{ p.mark }}</p>
+    {% endif %}
     <h4>{{ p.shop_name }}</h4>
     {% if p.shop_location %}<p>{{ p.shop_location }}</p>{% endif %}
     {% if p.shop_phone %}<p>{{ p.shop_phone }}</p>{% endif %}

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Registration Submitted — MY-SHOP{% endblock %}
+{% block title %}Registration Submitted — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 {% block body_class %}page-auth{% endblock %}
 
 {% block body %}

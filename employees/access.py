@@ -184,9 +184,13 @@ def active_employee_required(view_func):
             )
 
         if meta["status"] != EmployeeStatus.ACTIVE:
+            from shops.services import get_company_display_name
+
             return _login_redirect(
                 request,
-                message="Your employee account cannot access MY-SHOP yet.",
+                message=(
+                    f"Your employee account cannot access {get_company_display_name()} yet."
+                ),
             )
 
         return view_func(request, *args, **kwargs)

@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}{{ meta.title }} — MY-SHOP{% endblock %}
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 {% csrf_token %}
@@ -113,7 +113,7 @@
               name="message_from_name"
               autocomplete="organization"
               maxlength="120"
-              placeholder="e.g. MY-SHOP Support"
+              placeholder="e.g. {{ company_name|default:'MY-SHOP' }} Support"
               value="{{ comms.message_from_name }}"
               required
             >

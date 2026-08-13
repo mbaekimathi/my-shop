@@ -149,6 +149,20 @@ assert _DASHBOARD_SLUGS <= _PERMISSION_SLUGS, (
 )
 
 
+def permission_modules_for_display():
+    """Permission modules with the shop-floor label taken from company profile."""
+    from shops.services import get_company_display_name
+
+    brand = get_company_display_name()
+    modules = []
+    for module in PERMISSION_MODULES:
+        if module["slug"] == "my-shop":
+            modules.append({**module, "label": brand})
+        else:
+            modules.append(module)
+    return modules
+
+
 def iter_permission_keys():
     for module in PERMISSION_MODULES:
         for submodule in module["submodules"]:

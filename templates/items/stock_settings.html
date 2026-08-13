@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}Stock Settings — MY-SHOP{% endblock %}
+{% block title %}Stock Settings — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 {% csrf_token %}

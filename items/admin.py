@@ -65,8 +65,15 @@ class ShopStockAdmin(admin.ModelAdmin):
 
 @admin.register(ItemSerial)
 class ItemSerialAdmin(admin.ModelAdmin):
-    list_display = ("serial_number", "item", "shop", "is_available", "updated_at")
-    list_filter = ("is_available", "shop", "item__category")
+    list_display = (
+        "serial_number",
+        "item",
+        "shop",
+        "is_available",
+        "status_override",
+        "updated_at",
+    )
+    list_filter = ("is_available", "status_override", "shop", "item__category")
     search_fields = ("serial_number", "item__name", "shop__name")
     autocomplete_fields = ("item", "shop")
 

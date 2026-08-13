@@ -4,7 +4,7 @@
 
 
 
-{% block title %}MY-SHOP — Employee Portal{% endblock %}
+{% block title %}{{ company_name|default:"MY-SHOP" }} — Employee Portal{% endblock %}
 
 {% block body_class %}page-landing{% endblock %}
 
@@ -20,11 +20,11 @@
 
   <div class="shell header-inner">
 
-    <a class="brand brand--nav" href="{% url 'core:landing' %}" aria-label="MY-SHOP home">
+    <a class="brand brand--nav" href="{% url 'core:landing' %}" aria-label="{{ company_name|default:'MY-SHOP' }} home">
 
       <span class="brand-mark" aria-hidden="true"></span>
 
-      <span class="brand-text">MY-SHOP</span>
+      <span class="brand-text">{{ company_name|default:"MY-SHOP" }}</span>
 
     </a>
 
@@ -63,7 +63,7 @@
 
 <main id="main">
 
-  <section class="hero" aria-label="MY-SHOP introduction">
+  <section class="hero" aria-label="{{ company_name|default:'MY-SHOP' }} introduction">
 
     <div class="hero-media" aria-hidden="true">
 
@@ -91,7 +91,7 @@
 
     <div class="shell hero-content">
 
-      <p class="brand brand--hero" data-animate="rise">MY-SHOP</p>
+      <p class="brand brand--hero" data-animate="rise">{{ company_name|default:"MY-SHOP" }}</p>
 
       <h1 class="hero-title" data-animate="rise" data-delay="1">Your team. One portal.</h1>
 
@@ -267,9 +267,9 @@
 
   <div class="shell footer-inner">
 
-    <span class="brand brand--footer">MY-SHOP</span>
+    <span class="brand brand--footer">{{ company_name|default:"MY-SHOP" }}</span>
 
-    <p>&copy; {% now "Y" %} MY-SHOP Employee Portal</p>
+    <p>&copy; {% now "Y" %} {{ company_name|default:"MY-SHOP" }} Employee Portal</p>
 
   </div>
 

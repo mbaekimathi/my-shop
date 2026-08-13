@@ -1,6 +1,6 @@
 {% extends "employees/workspace_base.html" %}
 
-{% block title %}My Profile — MY-SHOP{% endblock %}
+{% block title %}My Profile — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section class="workspace-hero" data-animate="rise">
@@ -9,7 +9,7 @@
     <span>Account</span>
   </p>
   <h2 class="workspace-hero-title">My profile</h2>
-  <p class="workspace-hero-copy">Your employee identity and contact details on MY-SHOP.</p>
+  <p class="workspace-hero-copy">Your employee identity and contact details on {{ company_name|default:"MY-SHOP" }}.</p>
 </section>
 
 <div class="workspace-grid workspace-grid--profile" data-animate="rise" data-delay="1">

@@ -16,6 +16,7 @@ from employees.workspace import sidebar_for_stock_management
 from .models import Item, ShopItemPrice, ShopStock
 from .services import (
     actionable_shops_for_profile,
+    apply_serial_status,
     apply_stock_movement,
     build_stock_catalog_page,
     build_stock_print_document,
@@ -131,6 +132,24 @@ def _pricing_shops_for_profile(profile):
     return list(
         profile.assigned_shops.filter(is_hidden=False, is_suspended=False).order_by("name")
     )
+
+
+def _serial_shops_for_profile(profile):
+    """Shops the signed-in employee may see on serials pages (allocated shops only)."""
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+
+    allocated = _pricing_shops_for_profile(profile)
+    if allocated or profile.role in SHOP_ASSIGNABLE_ROLES:
+        return allocated
+    return actionable_shops_for_profile(profile)
+
+
+def _serial_shops_label(shops):
+    if not shops:
+        return "No allocated shops"
+    if len(shops) == 1:
+        return shops[0].name
+    return f"{len(shops)} allocated shops"
 
 
 def _shop_prices_from_post(post, shops) -> dict:
@@ -2540,9 +2559,38 @@ def _serial_client_info(receipt):
         "client_name": client_name or "Walk-in",
         "client_phone": client_phone,
         "receipt_number": receipt.receipt_number,
+        "shop_id": receipt.shop_id,
         "shop_name": receipt.shop.name if receipt.shop_id else "—",
         "kind_label": receipt.get_kind_display(),
     }
+
+
+def _serial_list_contains(raw, serial_key: str) -> bool:
+    return bool(serial_key) and serial_key in _movement_serial_numbers(raw)
+
+
+def _serial_unit_state(serial, sale_by_serial, return_by_serial):
+    from .models import ItemSerialStatus
+
+    key = str(serial.serial_number or "").strip().upper()
+    sale = sale_by_serial.get(key) or sale_by_serial.get(serial.serial_number)
+    returned = return_by_serial.get(key) or return_by_serial.get(serial.serial_number)
+    override = (getattr(serial, "status_override", None) or "").strip().lower()
+    if override in ItemSerialStatus.values:
+        if override == ItemSerialStatus.SOLD:
+            event = sale or returned
+        elif override == ItemSerialStatus.RETURNED:
+            event = returned or sale
+        else:
+            event = sale or returned
+        return override, ItemSerialStatus(override).label, event
+    if sale is not None:
+        return "sold", "Sold", sale
+    if returned is not None:
+        return "returned", "Returned", returned
+    if serial.is_available:
+        return "in_stock", "In stock", None
+    return "out", "Stocked out", None
 
 
 def _serial_sale_lookup(item):
@@ -2565,8 +2613,9 @@ def _serial_sale_lookup(item):
             "sold_at": line.receipt.created_at,
         }
         for serial in line.remaining_serial_numbers:
-            if serial not in sale_by_serial:
-                sale_by_serial[serial] = info
+            key = str(serial).strip().upper()
+            if key and key not in sale_by_serial:
+                sale_by_serial[key] = info
     return sale_by_serial
 
 
@@ -2597,18 +2646,17 @@ def _serial_return_lookup(item):
             "sold_at": receipt.created_at,
         }
         for serial in line.returned_serial_numbers or []:
-            serial = str(serial).strip()
-            if serial and serial not in return_by_serial:
-                return_by_serial[serial] = info
+            key = str(serial).strip().upper()
+            if key and key not in return_by_serial:
+                return_by_serial[key] = info
     return return_by_serial
 
 
 def stock_serials(request, profile, meta, module):
-    """List serial-tracked items with in-stock counts for every shop."""
+    """List serial-tracked items with in-stock counts for allocated shops."""
     from django.db.models import Count, Q
 
     from employees.access import role_url_segment
-    from shops.models import Shop
 
     from .models import ItemSerial
 
@@ -2621,44 +2669,50 @@ def stock_serials(request, profile, meta, module):
         profile=profile,
     )
 
-    display_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
+    display_shops = _serial_shops_for_profile(profile)
+    shop_ids = [shop.pk for shop in display_shops]
+    shops_label = _serial_shops_label(display_shops)
 
-    items_qs = Item.objects.filter(track_serial_number=True).annotate(
-        serial_total=Count("serials", distinct=True),
-        serial_in_stock=Count(
-            "serials",
-            filter=Q(serials__is_available=True),
-            distinct=True,
-        ),
-        serial_out=Count(
-            "serials",
-            filter=Q(serials__is_available=False),
-            distinct=True,
-        ),
-    )
-    items_qs = items_qs.filter(serial_total__gt=0).order_by("category", "name")
-    if search:
-        items_qs = items_qs.filter(
-            Q(name__icontains=search) | Q(category__icontains=search)
-        )
-
-    items = list(items_qs)
-    item_ids = [item.pk for item in items]
+    items = []
     shop_in_map: dict[int, dict[int, int]] = {}
-    if item_ids and display_shops:
-        for item_id, shop_id, qty in (
-            ItemSerial.objects.filter(
-                item_id__in=item_ids,
-                is_available=True,
-                shop_id__in=[shop.pk for shop in display_shops],
+    if shop_ids:
+        items_qs = Item.objects.filter(track_serial_number=True).annotate(
+            serial_total=Count(
+                "serials",
+                filter=Q(serials__shop_id__in=shop_ids),
+                distinct=True,
+            ),
+            serial_in_stock=Count(
+                "serials",
+                filter=Q(serials__is_available=True, serials__shop_id__in=shop_ids),
+                distinct=True,
+            ),
+            serial_out=Count(
+                "serials",
+                filter=Q(serials__is_available=False, serials__shop_id__in=shop_ids),
+                distinct=True,
+            ),
+        )
+        items_qs = items_qs.filter(serial_total__gt=0).order_by("category", "name")
+        if search:
+            items_qs = items_qs.filter(
+                Q(name__icontains=search) | Q(category__icontains=search)
             )
-            .values("item_id", "shop_id")
-            .annotate(qty=Count("id"))
-            .values_list("item_id", "shop_id", "qty")
-        ):
-            shop_in_map.setdefault(item_id, {})[shop_id] = int(qty)
+
+        items = list(items_qs)
+        item_ids = [item.pk for item in items]
+        if item_ids:
+            for item_id, shop_id, qty in (
+                ItemSerial.objects.filter(
+                    item_id__in=item_ids,
+                    is_available=True,
+                    shop_id__in=shop_ids,
+                )
+                .values("item_id", "shop_id")
+                .annotate(qty=Count("id"))
+                .values_list("item_id", "shop_id", "qty")
+            ):
+                shop_in_map.setdefault(item_id, {})[shop_id] = int(qty)
 
     segment = role_url_segment(profile.role)
     rows = []
@@ -2698,6 +2752,7 @@ def stock_serials(request, profile, meta, module):
             "search": search,
             "display_shops": display_shops,
             "show_all_shops": len(display_shops) > 1,
+            "shops_label": shops_label,
             "selected_shop_id": "",
             "stock_mode": "serials",
         },
@@ -3099,7 +3154,7 @@ def stock_serial_return_client(
 
 
 def stock_serial_detail(request, profile, meta, module, item_id):
-    """Show all serial numbers for one item across every shop."""
+    """Show serial numbers for one item at the employee's allocated shops."""
     from employees.access import role_url_segment
 
     from .models import ItemSerial
@@ -3117,7 +3172,17 @@ def stock_serial_detail(request, profile, meta, module, item_id):
         profile=profile,
     )
 
+    display_shops = _serial_shops_for_profile(profile)
+    shop_ids = {shop.pk for shop in display_shops}
+    shops_label = _serial_shops_label(display_shops)
+
     serials_qs = ItemSerial.objects.filter(item=item).select_related("shop")
+    if shop_ids:
+        serials_qs = serials_qs.filter(
+            Q(shop_id__in=shop_ids) | Q(shop__isnull=True)
+        )
+    else:
+        serials_qs = serials_qs.none()
     if search:
         serials_qs = serials_qs.filter(serial_number__icontains=search)
 
@@ -3129,31 +3194,24 @@ def stock_serial_detail(request, profile, meta, module, item_id):
     returned_count = 0
     out_count = 0
 
+    segment = role_url_segment(profile.role)
     for serial in serials_qs:
-        sale = sale_by_serial.get(serial.serial_number)
-        returned = return_by_serial.get(serial.serial_number)
         # Still on an active sale → sold. After a return, do not flip back to
         # "In stock" — keep status as Returned until the unit is sold again.
-        if sale is not None:
-            status = "sold"
-            status_label = "Sold"
+        status, status_label, event = _serial_unit_state(
+            serial, sale_by_serial, return_by_serial
+        )
+        event_shop_id = event.get("shop_id") if event else None
+        if shop_ids and serial.shop_id not in shop_ids and event_shop_id not in shop_ids:
+            continue
+        if status == "sold":
             sold_count += 1
-            event = sale
-        elif returned is not None:
-            status = "returned"
-            status_label = "Returned"
+        elif status == "returned":
             returned_count += 1
-            event = returned
-        elif serial.is_available:
-            status = "in_stock"
-            status_label = "In stock"
+        elif status == "in_stock":
             in_stock_count += 1
-            event = None
         else:
-            status = "out"
-            status_label = "Stocked out"
             out_count += 1
-            event = None
 
         if status_filter != "all" and status != status_filter:
             continue
@@ -3171,10 +3229,16 @@ def stock_serial_detail(request, profile, meta, module, item_id):
                 "returned_at": event.get("returned_at") if event else None,
                 "kind_label": event["kind_label"] if event else "",
                 "sale_shop_name": event["shop_name"] if event else "",
+                "history_url": reverse(
+                    "employees:stock_serial_history",
+                    kwargs={
+                        "role_segment": segment,
+                        "item_id": item.pk,
+                        "serial_number": serial.serial_number,
+                    },
+                ),
             }
         )
-
-    segment = role_url_segment(profile.role)
     list_url = reverse(
         "employees:workspace_module",
         kwargs={"role_segment": segment, "module_slug": "stock-management"},
@@ -3200,6 +3264,241 @@ def stock_serial_detail(request, profile, meta, module, item_id):
             "out_count": out_count,
             "search": search,
             "status_filter": status_filter,
+            "list_href": list_href,
+            "display_shops": display_shops,
+            "shops_label": shops_label,
+            "stock_mode": "serials",
+        },
+    )
+
+
+def _build_serial_history_events(*, item, serial, shop_ids):
+    """All stock/sale/return events for one serial, oldest first."""
+    from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
+
+    from .models import StockMovementLine, StockMovementType, StockRequestStatus
+
+    serial_key = str(serial.serial_number or "").strip().upper()
+    events = []
+    type_labels = {
+        StockMovementType.IN: "Stock in",
+        StockMovementType.OUT: "Stock out",
+        StockMovementType.REQUEST: "Stock request",
+    }
+
+    lines = (
+        StockMovementLine.objects.filter(item=item)
+        .select_related(
+            "item",
+            "movement",
+            "movement__shop",
+            "movement__requested_from_shop",
+            "movement__created_by__user",
+            "movement__responded_by__user",
+        )
+        .order_by("movement__created_at", "id")
+    )
+    for line in lines:
+        if not _serial_list_contains(line.serial_numbers, serial_key):
+            continue
+        movement = line.movement
+        counts_toward_transfer = False
+        transfer_direction = ""
+        if movement.movement_type == StockMovementType.REQUEST:
+            counts_toward_transfer = _request_transfer_counts_toward_units(movement)
+            transfer_direction = _transfer_direction(movement, shop_ids)
+        event_type = movement.movement_type
+        event_label = type_labels.get(
+            movement.movement_type, movement.get_movement_type_display()
+        )
+        if transfer_direction:
+            event_label = _transfer_event_label(
+                event_type=event_type,
+                direction=transfer_direction,
+            )
+        event = _timeline_event_from_movement_line(
+            movement=movement,
+            line=line,
+            happened_at=movement.created_at,
+            event_type=event_type,
+            event_label=event_label,
+            actor=movement.created_by,
+            counts_toward_transfer=counts_toward_transfer,
+            transfer_direction=transfer_direction,
+        )
+        event["detail"] = (line.note or "").strip()
+        events.append(event)
+        if (
+            movement.movement_type == StockMovementType.REQUEST
+            and movement.request_status == StockRequestStatus.FULFILLED
+            and movement.responded_at
+        ):
+            transfer_direction = _transfer_direction(movement, shop_ids)
+            fulfilled = _timeline_event_from_movement_line(
+                movement=movement,
+                line=line,
+                happened_at=movement.responded_at,
+                event_type="transfer_fulfilled",
+                event_label=_transfer_event_label(
+                    event_type="transfer_fulfilled",
+                    direction=transfer_direction,
+                ),
+                actor=movement.responded_by,
+                transfer_direction=transfer_direction,
+            )
+            fulfilled["detail"] = (line.note or "").strip()
+            events.append(fulfilled)
+
+    receipt_lines = (
+        ShopReceiptLine.objects.filter(
+            item=item,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        )
+        .exclude(receipt__status=ShopReceiptStatus.CANCELLED)
+        .select_related(
+            "receipt",
+            "receipt__shop",
+            "receipt__created_by__user",
+            "receipt__last_returned_by__user",
+            "receipt__client",
+            "item",
+        )
+        .order_by("receipt__created_at", "id")
+    )
+    for line in receipt_lines:
+        receipt = line.receipt
+        parties = _movement_parties_for_receipt(receipt=receipt)
+        if _serial_list_contains(line.serial_numbers, serial_key):
+            events.append(
+                {
+                    "happened_at": receipt.created_at,
+                    "event_type": "sale",
+                    "event_label": "Stock sale",
+                    "from_label": parties["from_label"],
+                    "to_label": parties["to_label"],
+                    "by": _employee_display_name(receipt.created_by),
+                    "detail": receipt.receipt_number or "",
+                    "movement_id": None,
+                }
+            )
+        if _serial_list_contains(line.returned_serial_numbers, serial_key):
+            events.append(
+                {
+                    "happened_at": receipt.last_returned_at or receipt.created_at,
+                    "event_type": "returned",
+                    "event_label": "Returned",
+                    "from_label": parties["to_label"],
+                    "to_label": parties["from_label"],
+                    "by": _employee_display_name(receipt.last_returned_by),
+                    "detail": receipt.receipt_number or "",
+                    "movement_id": None,
+                }
+            )
+
+    if not any(event.get("event_type") == "in" for event in events) and serial.created_at:
+        events.append(
+            {
+                "happened_at": serial.created_at,
+                "event_type": "in",
+                "event_label": "Registered",
+                "from_label": "—",
+                "to_label": serial.shop.name if serial.shop_id else "—",
+                "by": "—",
+                "detail": "",
+                "movement_id": None,
+            }
+        )
+
+    events.sort(key=lambda row: (row["happened_at"], row.get("movement_id") or 0))
+    return events
+
+
+def stock_serial_history(request, profile, meta, module, item_id, serial_number):
+    """Show every movement for one serial from registration to now."""
+    from employees.access import role_url_segment
+    from shops.models import Shop
+
+    from .models import ItemSerial, ItemSerialStatus
+
+    item = get_object_or_404(Item, pk=item_id, track_serial_number=True)
+    serial = get_object_or_404(
+        ItemSerial.objects.select_related("shop", "item"),
+        item=item,
+        serial_number__iexact=(serial_number or "").strip(),
+    )
+
+    if request.method == "POST":
+        try:
+            message = apply_serial_status(
+                profile=profile,
+                serial=serial,
+                new_status=request.POST.get("status") or "",
+            )
+        except ValidationError as exc:
+            messages.error(
+                request,
+                exc.messages[0] if getattr(exc, "messages", None) else str(exc),
+            )
+        else:
+            messages.success(request, message)
+        segment = role_url_segment(profile.role)
+        return redirect(
+            "employees:stock_serial_history",
+            role_segment=segment,
+            item_id=item.pk,
+            serial_number=serial.serial_number,
+        )
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="serials",
+        shop_id="",
+        profile=profile,
+    )
+
+    display_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+    shop_ids = [shop.pk for shop in display_shops]
+    rows = _build_serial_history_events(
+        item=item, serial=serial, shop_ids=shop_ids
+    )
+
+    sale_by_serial = _serial_sale_lookup(item)
+    return_by_serial = _serial_return_lookup(item)
+    status, status_label, event = _serial_unit_state(
+        serial, sale_by_serial, return_by_serial
+    )
+
+    segment = role_url_segment(profile.role)
+    list_href = reverse(
+        "employees:stock_serial_detail",
+        kwargs={"role_segment": segment, "item_id": item.pk},
+    )
+
+    return render(
+        request,
+        "items/stock_serial_history.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "item": item,
+            "serial": serial,
+            "rows": rows,
+            "row_count": len(rows),
+            "unit_status": status,
+            "unit_status_label": status_label,
+            "unit_shop_name": (
+                event["shop_name"]
+                if event and status in ("sold", "returned")
+                else (serial.shop.name if serial.shop_id else "—")
+            ),
+            "status_choices": ItemSerialStatus.choices,
+            "status_is_manual": bool((serial.status_override or "").strip()),
             "list_href": list_href,
             "stock_mode": "serials",
         },

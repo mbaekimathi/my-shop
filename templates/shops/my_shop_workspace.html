@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}{{ shop.name }} — MY-SHOP{% endblock %}
+{% block title %}{{ shop.name }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section
@@ -622,7 +622,7 @@
 <script src="{% static 'js/shop-catalog.js' %}?v=4"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script src="{% static 'js/shop-printer.js' %}?v=19"></script>
+<script src="{% static 'js/shop-printer.js' %}?v=20"></script>
 <script src="{% static 'js/my-shop.js' %}?v=55"></script>
 <script src="{% static 'js/stock-catalog.js' %}?v=22"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
