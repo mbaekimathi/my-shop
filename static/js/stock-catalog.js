@@ -1000,7 +1000,7 @@
                 type="button"
                 class="buy-stock-pick-name"
                 data-stock-item-toggle
-                aria-label="Select ${escapeHtml(name)}"
+                aria-label="Add ${escapeHtml(name)}"
               >
                 <strong>${escapeHtml(name)}</strong>
               </button>
@@ -1026,9 +1026,9 @@
             type="button"
             class="buy-stock-pick-select"
             data-stock-item-toggle
-            aria-label="Select ${escapeHtml(name)}"
+            aria-label="Add ${escapeHtml(name)}"
           >
-            <span>Select</span>
+            <span>Add item</span>
             <i data-lucide="plus" aria-hidden="true"></i>
           </button>
         </div>`;
@@ -1372,15 +1372,34 @@
     if (!simpleMode || !searchFirst) return;
     setBrowseOpen(false);
     groupEls.clear();
-    listRoot.innerHTML = `
-      <div class="buy-stock-simple-empty" data-stock-catalog-idle>
-        <i data-lucide="package-search" aria-hidden="true"></i>
+    const hasParked = Boolean(parked?.querySelector("[data-item-row]"));
+    listRoot.innerHTML = hasParked
+      ? `
+      <div class="buy-stock-simple-empty buy-stock-simple-empty--compact" data-stock-catalog-idle>
+        <p>Search or browse to add another item</p>
+      </div>`
+      : `
+      <div class="buy-stock-simple-empty buy-stock-simple-empty-card" data-stock-catalog-idle>
+        <span class="buy-stock-simple-empty-icon" aria-hidden="true">
+          <i data-lucide="package-search"></i>
+        </span>
         <p>Search or browse for an item to begin</p>
       </div>`;
     if (moreWrap) moreWrap.hidden = true;
     if (noResults) noResults.hidden = true;
     updateCount(0, "");
     if (window.lucide?.createIcons) window.lucide.createIcons();
+  };
+
+  const resetLiveSearch = ({ focusSearch = false } = {}) => {
+    window.clearTimeout(searchTimer);
+    abortController?.abort();
+    if (searchInput) searchInput.value = "";
+    parkFilled();
+    showIdleHint();
+    setBusy(false);
+    setPickerCollapsed(false);
+    if (focusSearch) searchInput?.focus();
   };
 
   const openPicker = ({ browse = false } = {}) => {
@@ -1467,13 +1486,16 @@
     reload(query);
   });
 
+  panel.addEventListener("stock-catalog:reset-search", (event) => {
+    if (!simpleMode) return;
+    resetLiveSearch({
+      focusSearch: Boolean(event?.detail?.focusSearch),
+    });
+  });
+
   panel.addEventListener("stock-catalog:collapse-picker", () => {
     if (!simpleMode) return;
-    if (searchInput) searchInput.value = "";
-    abortController?.abort();
-    parkFilled();
-    showIdleHint();
-    setBusy(false);
+    resetLiveSearch();
     setPickerCollapsed(true);
   });
 

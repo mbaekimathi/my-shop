@@ -3245,7 +3245,7 @@
     if (!ready.length) {
       return blockSubmit(
         simpleCatalog
-          ? "Add items first — search and select an item above."
+          ? "Add items first — search and add an item above."
           : "Add items first — enter quantity on at least one item.",
         panel.querySelector("[data-item-search]") ||
           panel.querySelector("[data-stock-qty]") ||
@@ -3869,12 +3869,8 @@
       setRowOpen(row, true);
       parkSelectedRow(row);
       if (panel.hasAttribute("data-stock-catalog-search-first")) {
-        const searchInput = panel.querySelector("[data-item-search]");
-        if (searchInput && searchInput.value) {
-          searchInput.value = "";
-        }
+        panel.dispatchEvent(new CustomEvent("stock-catalog:reset-search"));
       }
-      panel.dispatchEvent(new CustomEvent("stock-catalog:collapse-picker"));
       row.scrollIntoView({ behavior: "smooth", block: "nearest" });
       renderSummary();
       return;
@@ -3918,6 +3914,28 @@
       event.preventDefault();
       event.stopPropagation();
       commitInlineSerialEntry(row);
+      return;
+    }
+
+    if (
+      simpleCatalog &&
+      target.matches(
+        "[data-stock-qty]:not([type='hidden']), [data-stock-buying-price]"
+      )
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      refreshRowState(row);
+      if (target.matches("[data-stock-qty]:not([type='hidden'])")) {
+        const price = getInputsRow(row)?.querySelector("[data-stock-buying-price]");
+        if (price && !String(price.value || "").trim()) {
+          price.focus();
+          price.select?.();
+          return;
+        }
+      }
+      const searchInput = panel.querySelector("[data-item-search]");
+      searchInput?.focus();
       return;
     }
 

@@ -23937,6 +23937,12 @@ html[data-theme="dark"] .shop-serial-modal-media img {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.35rem;
   align-items: stretch;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin: -0.35rem -0.15rem 0;
+  padding: 0.35rem 0.15rem 0.2rem;
+  background: color-mix(in srgb, var(--panel-muted) 45%, var(--surface));
 }
 
 .buy-stock-simple-search-field {
@@ -24050,6 +24056,16 @@ html[data-theme="dark"] .shop-serial-modal-media img {
   border: 1px dashed color-mix(in srgb, var(--line) 82%, var(--mist-soft));
   border-radius: 16px;
   background: color-mix(in srgb, var(--surface) 94%, var(--panel-muted));
+}
+
+.buy-stock-simple-empty--compact {
+  padding: 0.35rem 0.15rem 0.15rem;
+  justify-items: start;
+  text-align: left;
+}
+
+.buy-stock-simple-empty--compact p {
+  font-size: 0.82rem;
 }
 
 .buy-stock-simple-empty-icon {
