@@ -552,7 +552,6 @@ def _catalog_base_qs():
             "description",
             "shop_price",
             "minimum_selling_price",
-            "maximum_selling_price",
             "use_individual_shop_prices",
             "track_serial_number",
             "image",
@@ -612,7 +611,6 @@ def _catalog_rows_for_items(shop, items):
                 "description": description,
                 "price": str(price),
                 "min_price": str(item.minimum_selling_price),
-                "max_price": str(item.maximum_selling_price),
                 "stock": int(stock_by_item.get(item.pk, 0)),
                 "track_serial": bool(item.track_serial_number),
                 "image_url": image_url,
@@ -2387,12 +2385,17 @@ def my_shop_serial_search(request, shop_id):
     query = (request.GET.get("q") or "").strip()
     match = (request.GET.get("match") or "contains").strip().lower()
     exclude = request.GET.getlist("exclude") or []
+    try:
+        limit = int(request.GET.get("limit") or 12)
+    except (TypeError, ValueError):
+        limit = 12
+    limit = min(max(limit, 1), 500)
     results = search_available_serials(
         item_id=item_id,
         shop_id=shop.pk,
         query=query,
         exclude=exclude,
-        limit=12,
+        limit=limit,
         match=match,
     )
     return JsonResponse(

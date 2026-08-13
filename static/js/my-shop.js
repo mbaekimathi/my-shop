@@ -1131,25 +1131,22 @@
     }
 
     try {
-      const body = new URLSearchParams({ login_code: code });
-      const response = await fetch(verifyUrl, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "X-CSRFToken": getCsrfToken(form),
-        },
-        credentials: "same-origin",
-        body,
+      const { verifyStaffLoginCode } = await import("./offline/staff.js");
+      const data = await verifyStaffLoginCode({
+        url: verifyUrl,
+        code,
+        csrfToken: getCsrfToken(form),
       });
-      const data = await response.json().catch(() => ({}));
       if (seq !== employeeVerifySeq) return false;
-      if (!response.ok || !data.ok) {
+      if (!data.ok) {
         setVerified(form, false, data.error || "Not a valid active staff ID.");
         return false;
       }
-      const label = data.name
-        ? `Verified: ${data.name} (${data.employee_id}).`
-        : `Verified staff ${data.employee_id}.`;
+      const label = data.message
+        ? data.message
+        : data.name
+          ? `Verified: ${data.name} (${data.employee_id}).`
+          : `Verified staff ${data.employee_id}.`;
       setVerified(form, true, `${label} You can Accept or Decline.`);
       return true;
     } catch (_error) {
@@ -1557,7 +1554,7 @@
       }
     });
 
-    /** @type {Map<string, {id:string, name:string, category:string, description:string, price:number, listPrice:number, minPrice:number, maxPrice:number, stock:number, image:string, qty:number, trackSerial?:boolean, serials?:string[]}>} */
+    /** @type {Map<string, {id:string, name:string, category:string, description:string, price:number, listPrice:number, minPrice:number, stock:number, image:string, qty:number, trackSerial?:boolean, serials?:string[]}>} */
     const cart = new Map();
     let activeProductId = "";
 
@@ -2325,25 +2322,21 @@
         return false;
       }
       try {
-        const body = new URLSearchParams({ login_code: code });
-        const response = await fetch(cartVerifyUrl, {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            "X-CSRFToken": getCsrfToken(checkoutForm),
-          },
-          credentials: "same-origin",
-          body,
+        const { verifyStaffLoginCode } = await import("./offline/staff.js");
+        const data = await verifyStaffLoginCode({
+          url: cartVerifyUrl,
+          code,
+          csrfToken: getCsrfToken(checkoutForm),
         });
-        const data = await response.json().catch(() => ({}));
         if (seq !== cartVerifySeq) return false;
-        if (!response.ok || !data.ok) {
+        if (!data.ok) {
           setCartVerified(false, data.error || "Not a valid active staff ID.");
           return false;
         }
         setCartVerified(
           true,
-          `Verified: ${data.name || "staff"} (${data.employee_id || code}).`
+          data.message ||
+            `Verified: ${data.name || "staff"} (${data.employee_id || code}).`
         );
         if (autoCheckout && checkoutEnabled && cart.size > 0 && !checkoutInFlight) {
           await submitCheckout();
@@ -2882,12 +2875,6 @@
       const minPrice = roundMoney(
         el?.getAttribute?.("data-item-min-price") || el?.dataset?.itemMinPrice || 0
       );
-      const maxPrice = roundMoney(
-        el?.getAttribute?.("data-item-max-price") ||
-          el?.dataset?.itemMaxPrice ||
-          listPrice ||
-          minPrice
-      );
       const price = roundMoney(
         el?.getAttribute?.("data-item-price") || el?.dataset?.itemPrice || listPrice
       );
@@ -2908,7 +2895,6 @@
         price,
         listPrice,
         minPrice,
-        maxPrice,
         stock: Math.max(
           0,
           Math.floor(
@@ -2926,16 +2912,14 @@
       };
     };
 
-    const clampPrice = (price, minPrice, maxPrice, listPrice = maxPrice) => {
+    const clampPrice = (price, minPrice, listPrice) => {
       let next = roundMoney(price);
-      if (!Number.isFinite(next)) next = listPrice > 0 ? listPrice : maxPrice;
+      if (!Number.isFinite(next)) next = listPrice > 0 ? listPrice : 0;
       if (!discountEnabled) {
         return listPrice > 0 ? listPrice : Math.max(0, next);
       }
       const min = roundMoney(minPrice);
-      const max = roundMoney(maxPrice);
       if (min > 0 && next < min) next = min;
-      if (max > 0 && next > max) next = max;
       if (next < 0) next = 0;
       return next;
     };
@@ -2951,7 +2935,6 @@
           const qty = Math.max(1, Math.floor(Number(line.qty) || 1));
           const listPrice = Number(line.listPrice || line.price) || 0;
           const minPrice = Number(line.minPrice) || 0;
-          const maxPrice = Number(line.maxPrice || line.listPrice || line.minPrice) || 0;
           const storedPrice = Number(line.price) || 0;
           const serials = Array.isArray(line.serials)
             ? line.serials
@@ -2965,11 +2948,10 @@
             category: String(line.category || ""),
             description: String(line.description || ""),
             price: discountEnabled
-              ? clampPrice(storedPrice, minPrice, maxPrice, listPrice)
+              ? clampPrice(storedPrice, minPrice, listPrice)
               : listPrice,
             listPrice,
             minPrice,
-            maxPrice,
             stock: Math.max(0, Math.floor(Number(line.stock) || 0)),
             image: String(line.image || ""),
             qty: trackSerial && serials.length ? serials.length : qty,
@@ -3019,13 +3001,11 @@
           price: 0,
           listPrice: 0,
           minPrice: 0,
-          maxPrice: 0,
           image: "",
         };
       const listPrice = roundMoney(base.listPrice ?? base.price ?? 0);
       const minPrice = roundMoney(base.minPrice ?? 0);
-      const maxPrice = roundMoney(base.maxPrice ?? listPrice ?? minPrice);
-      const price = clampPrice(base.price ?? listPrice, minPrice, maxPrice, listPrice);
+      const price = clampPrice(base.price ?? listPrice, minPrice, listPrice);
       const trackSerial = Boolean(base.trackSerial || meta?.trackSerial);
       let serials = Array.isArray(meta?.serials)
         ? meta.serials
@@ -3054,7 +3034,6 @@
         price,
         listPrice,
         minPrice,
-        maxPrice,
         stock,
         image: base.image || "",
         qty: trackSerial && serials.length ? serials.length : nextQty,
@@ -3081,21 +3060,17 @@
       if (!base) return null;
       const listPrice = roundMoney(base.listPrice ?? meta?.listPrice ?? base.price ?? 0);
       const minPrice = roundMoney(base.minPrice ?? meta?.minPrice ?? 0);
-      const maxPrice = roundMoney(
-        base.maxPrice ?? meta?.maxPrice ?? listPrice ?? minPrice
-      );
-      const nextPrice = clampPrice(price, minPrice, maxPrice, listPrice);
+      const nextPrice = clampPrice(price, minPrice, listPrice);
       if (existing) {
         existing.price = nextPrice;
         existing.listPrice = listPrice;
         existing.minPrice = minPrice;
-        existing.maxPrice = maxPrice;
         cart.set(id, existing);
       }
       return nextPrice;
     };
 
-    const syncPriceHint = (minPrice, maxPrice, salePrice, listPrice = maxPrice) => {
+    const syncPriceHint = (minPrice, salePrice, listPrice) => {
       if (!productPriceHint) return;
       if (!discountEnabled) {
         productPriceHint.textContent =
@@ -3105,9 +3080,11 @@
       }
       const parts = [];
       if (minPrice > 0) parts.push(`Min ${money(minPrice)}`);
-      if (maxPrice > 0) parts.push(`Max ${money(maxPrice)}`);
       if (listPrice > 0) parts.push(`List ${money(listPrice)}`);
       if (salePrice + 0.0001 < listPrice) parts.push("Discount applied");
+      else if (listPrice > 0 && salePrice > listPrice + 0.0001) {
+        parts.push("Price increased");
+      }
       productPriceHint.textContent = parts.join(" · ");
       productPriceHint.classList.toggle(
         "is-discount",
@@ -3173,12 +3150,6 @@
       const minPrice = roundMoney(
         productModal.dataset.itemMinPrice || line?.minPrice || 0
       );
-      const maxPrice = roundMoney(
-        productModal.dataset.itemMaxPrice ||
-          line?.maxPrice ||
-          listPrice ||
-          minPrice
-      );
       const salePrice = roundMoney(
         discountEnabled
           ? line?.price ?? productModal.dataset.itemPrice ?? listPrice
@@ -3188,9 +3159,8 @@
         productPriceInput.min = String(
           discountEnabled ? minPrice || 0 : listPrice || 0
         );
-        productPriceInput.max = String(
-          discountEnabled ? maxPrice || 0 : listPrice || 0
-        );
+        if (discountEnabled) productPriceInput.removeAttribute("max");
+        else productPriceInput.max = String(listPrice || 0);
         productPriceInput.value = salePrice.toFixed(2);
         productPriceInput.readOnly = !discountEnabled;
         productPriceInput.tabIndex = discountEnabled ? 0 : -1;
@@ -3198,7 +3168,7 @@
       productPriceInput
         ?.closest(".shop-product-price-field")
         ?.classList.toggle("is-locked", !discountEnabled);
-      syncPriceHint(minPrice, maxPrice, salePrice, listPrice);
+      syncPriceHint(minPrice, salePrice, listPrice);
     };
 
     const syncFab = () => {
@@ -3250,7 +3220,7 @@
       const salePrice = roundMoney(
         discountEnabled
           ? existing?.price ??
-              clampPrice(item.listPrice, item.minPrice, item.maxPrice, item.listPrice)
+              clampPrice(item.listPrice, item.minPrice, item.listPrice)
           : item.listPrice
       );
       activeProductId = item.id;
@@ -3262,7 +3232,6 @@
       productModal.dataset.itemPrice = String(salePrice);
       productModal.dataset.itemListPrice = String(item.listPrice);
       productModal.dataset.itemMinPrice = String(item.minPrice);
-      productModal.dataset.itemMaxPrice = String(item.maxPrice);
       productModal.dataset.itemImage = item.image;
       productModal.dataset.itemTrackSerial = item.trackSerial ? "1" : "0";
 
@@ -3273,9 +3242,8 @@
         productPriceInput.min = String(
           discountEnabled ? item.minPrice || 0 : item.listPrice || 0
         );
-        productPriceInput.max = String(
-          discountEnabled ? item.maxPrice || 0 : item.listPrice || 0
-        );
+        if (discountEnabled) productPriceInput.removeAttribute("max");
+        else productPriceInput.max = String(item.listPrice || 0);
         productPriceInput.value = salePrice.toFixed(2);
         productPriceInput.readOnly = !discountEnabled;
         productPriceInput.tabIndex = discountEnabled ? 0 : -1;
@@ -3283,7 +3251,7 @@
       productPriceInput
         ?.closest(".shop-product-price-field")
         ?.classList.toggle("is-locked", !discountEnabled);
-      syncPriceHint(item.minPrice, item.maxPrice, salePrice, item.listPrice);
+      syncPriceHint(item.minPrice, salePrice, item.listPrice);
       if (productStock) {
         productStock.textContent =
           item.stock > 0 ? `${item.stock} in stock` : "Out of stock";
@@ -3311,7 +3279,6 @@
       proxy.setAttribute("data-item-price", String(line.listPrice || line.price || 0));
       proxy.setAttribute("data-item-list-price", String(line.listPrice || line.price || 0));
       proxy.setAttribute("data-item-min-price", String(line.minPrice || 0));
-      proxy.setAttribute("data-item-max-price", String(line.maxPrice || line.listPrice || 0));
       proxy.setAttribute("data-item-stock", String(line.stock || 0));
       proxy.setAttribute(
         "data-item-track-serial",
@@ -3386,9 +3353,8 @@
         priceInput.type = "number";
         priceInput.className = "shop-cart-price-input";
         priceInput.min = String(discountEnabled ? line.minPrice || 0 : line.listPrice || 0);
-        priceInput.max = String(
-          discountEnabled ? line.maxPrice || line.listPrice || 0 : line.listPrice || 0
-        );
+        if (!discountEnabled) priceInput.max = String(line.listPrice || 0);
+        else priceInput.removeAttribute("max");
         priceInput.step = "0.01";
         priceInput.inputMode = "decimal";
         priceInput.value = roundMoney(
@@ -3405,18 +3371,19 @@
 
         const priceHint = document.createElement("span");
         priceHint.className = "shop-cart-price-hint";
-        if (discountEnabled && line.minPrice > 0 && line.maxPrice > 0) {
-          priceHint.textContent = `Min ${money(line.minPrice)} · Max ${money(line.maxPrice)}`;
-          if (
-            line.listPrice > 0 &&
-            line.price + 0.0001 < line.listPrice
-          ) {
+        if (discountEnabled && line.minPrice > 0 && line.listPrice > 0) {
+          let hint = `Min ${money(line.minPrice)} · List ${money(line.listPrice)}`;
+          if (line.price + 0.0001 < line.listPrice) {
+            hint += " · Discount applied";
             priceHint.classList.add("is-discount");
+          } else if (line.price > line.listPrice + 0.0001) {
+            hint += " · Price increased";
           }
+          priceHint.textContent = hint;
         } else if (discountEnabled && line.minPrice > 0) {
           priceHint.textContent = `Min ${money(line.minPrice)}`;
-        } else if (discountEnabled && line.maxPrice > 0) {
-          priceHint.textContent = `Max ${money(line.maxPrice)}`;
+        } else if (discountEnabled && line.listPrice > 0) {
+          priceHint.textContent = `List ${money(line.listPrice)}`;
         }
 
         copy.append(name, priceField);
@@ -3745,6 +3712,22 @@
       serialSaleCommitBusy = true;
       let ok = false;
       try {
+        const searchSaleSerials = async ({ query, match, exclude }) => {
+          if (!serialSearchUrl || !serialSaleItem?.id || !shopId) {
+            return { ok: false, results: [], error: "unavailable" };
+          }
+          const { searchSerialsOnlineOrCache } = await import("./offline/serials.js");
+          return searchSerialsOnlineOrCache({
+            url: serialSearchUrl,
+            itemId: serialSaleItem.id,
+            shopId,
+            query,
+            match,
+            exclude,
+            limit: 12,
+          });
+        };
+
         if (isSerialSaleLast4Mode() && !resolved && serial.length <= 4) {
           if (!serialSearchUrl) {
             setSerialSaleStatus("Select a full serial from the suggestions.", {
@@ -3752,18 +3735,11 @@
             });
             return false;
           }
-          const params = new URLSearchParams({
-            item_id: String(serialSaleItem.id),
-            shop_id: String(shopId),
-            q: serial.slice(-4),
+          const data = await searchSaleSerials({
+            query: serial.slice(-4),
             match: "last4",
+            exclude: collectSerialSaleValues(),
           });
-          collectSerialSaleValues().forEach((s) => params.append("exclude", s));
-          const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
-            headers: { Accept: "application/json" },
-            credentials: "same-origin",
-          });
-          const data = await response.json().catch(() => ({}));
           const results = Array.isArray(data.results) ? data.results : [];
           if (results.length === 1) {
             ok = applySerialSaleChoice(results[0], { fromSuggest: true });
@@ -3784,7 +3760,9 @@
             return false;
           }
           setSerialSaleStatus(
-            "No in-stock serial ends with those digits. Check and try again.",
+            data.offline
+              ? "Offline — type or scan the full serial."
+              : "No in-stock serial ends with those digits. Check and try again.",
             { error: true }
           );
           return false;
@@ -3799,19 +3777,12 @@
           return ok;
         }
 
-        const params = new URLSearchParams({
-          item_id: String(serialSaleItem.id),
-          shop_id: String(shopId),
-          q: serial,
+        const data = await searchSaleSerials({
+          query: serial,
           match: isSerialSaleLast4Mode() ? "last4" : "contains",
+          exclude: collectSerialSaleValues(),
         });
-        collectSerialSaleValues().forEach((s) => params.append("exclude", s));
-        const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
-          headers: { Accept: "application/json" },
-          credentials: "same-origin",
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
+        if (!data.ok && !data.offline && !(data.results || []).length) {
           setSerialSaleStatus(data.error || "Could not search serials.", {
             error: true,
           });
@@ -3836,9 +3807,39 @@
           setSerialSaleStatus("Select a serial from the list.", { error: true });
           return false;
         }
-        setSerialSaleStatus("Serial not available at this shop.", { error: true });
+        const offlineMiss = Boolean(
+          data.offline || (typeof navigator !== "undefined" && !navigator.onLine)
+        );
+        if (offlineMiss && serial.length > 4) {
+          ok = applySerialSaleChoice(serial);
+          if (ok) {
+            lastSerialSaleCommitSerial = serial;
+            lastSerialSaleCommitAt = Date.now();
+            setSerialSaleStatus(
+              "Offline — serial will be confirmed when you reconnect."
+            );
+          }
+          return ok;
+        }
+        setSerialSaleStatus(
+          offlineMiss
+            ? "Offline — type or scan the full serial."
+            : "Serial not available at this shop.",
+          { error: true }
+        );
         return false;
       } catch (_err) {
+        if (typeof navigator !== "undefined" && !navigator.onLine && serial.length > 4) {
+          ok = applySerialSaleChoice(serial);
+          if (ok) {
+            lastSerialSaleCommitSerial = serial;
+            lastSerialSaleCommitAt = Date.now();
+            setSerialSaleStatus(
+              "Offline — serial will be confirmed when you reconnect."
+            );
+            return ok;
+          }
+        }
         setSerialSaleStatus("Could not verify serial. Try again.", { error: true });
         return false;
       } finally {
@@ -3925,29 +3926,35 @@
         return;
       }
       const seq = ++serialSaleSearchSeq;
-      const params = new URLSearchParams({
-        item_id: String(serialSaleItem.id),
-        shop_id: String(shopId),
-        q,
-        match: isSerialSaleLast4Mode() ? "last4" : "contains",
-      });
-      others.forEach((serial) => params.append("exclude", serial));
       try {
-        const response = await fetch(`${serialSearchUrl}?${params.toString()}`, {
-          headers: { Accept: "application/json" },
-          credentials: "same-origin",
+        const { searchSerialsOnlineOrCache } = await import("./offline/serials.js");
+        const data = await searchSerialsOnlineOrCache({
+          url: serialSearchUrl,
+          itemId: serialSaleItem.id,
+          shopId,
+          query: q,
+          match: isSerialSaleLast4Mode() ? "last4" : "contains",
+          exclude: [...others],
+          limit: 12,
         });
-        const data = await response.json().catch(() => ({}));
         if (seq !== serialSaleSearchSeq) return;
-        if (!response.ok) {
+        const results = Array.isArray(data.results) ? data.results : [];
+        if (!data.ok && !results.length) {
           hideSerialSaleSuggest(serialSaleEntryWrap);
-          setSerialSaleStatus(data.error || "Could not search serials.", {
-            error: true,
-          });
+          if (data.offline) {
+            setSerialSaleStatus(
+              "Offline — type or scan a full serial if search has no saved list.",
+              { error: true }
+            );
+          } else if (data.error) {
+            setSerialSaleStatus(data.error, { error: true });
+          }
           return;
         }
-        const results = Array.isArray(data.results) ? data.results : [];
         renderSerialSaleSuggest(input, results);
+        if (data.fromCache) {
+          setSerialSaleStatus("Offline — showing saved serials for this item.");
+        }
       } catch (_error) {
         if (seq !== serialSaleSearchSeq) return;
         hideSerialSaleSuggest(serialSaleEntryWrap);
@@ -3990,7 +3997,6 @@
       const salePrice = clampPrice(
         item.price ?? existing?.price ?? item.listPrice,
         item.minPrice ?? existing?.minPrice ?? 0,
-        item.maxPrice ?? existing?.maxPrice ?? item.listPrice ?? 0,
         item.listPrice ?? existing?.listPrice ?? 0
       );
       serialSaleItem = {
@@ -3999,9 +4005,6 @@
         price: salePrice,
         listPrice: roundMoney(item.listPrice ?? existing?.listPrice ?? salePrice),
         minPrice: roundMoney(item.minPrice ?? existing?.minPrice ?? 0),
-        maxPrice: roundMoney(
-          item.maxPrice ?? existing?.maxPrice ?? item.listPrice ?? salePrice
-        ),
         trackSerial: true,
         serials: Array.isArray(item.serials)
           ? item.serials
@@ -4051,6 +4054,21 @@
       setSerialSaleOpen(true);
       window.MyShopSerialScan?.enhance?.(serialSaleModal);
       window.setTimeout(() => focusSerialSaleEntry(), 40);
+      if (serialSearchUrl && shopId && serialSaleItem.id && navigator.onLine) {
+        import("./offline/serials.js")
+          .then(({ searchSerialsOnlineOrCache }) =>
+            searchSerialsOnlineOrCache({
+              url: serialSearchUrl,
+              itemId: serialSaleItem.id,
+              shopId,
+              query: "",
+              match: "contains",
+              exclude: [],
+              limit: 500,
+            })
+          )
+          .catch(() => {});
+      }
     };
 
     const confirmSerialSale = async () => {
@@ -4111,7 +4129,6 @@
             ? productPriceInput?.value ?? item.price
             : existing?.price ?? item.listPrice,
           item.minPrice,
-          item.maxPrice,
           item.listPrice
         );
         if (productModal && sourceEl === productModal) {
@@ -4131,7 +4148,6 @@
           ? productPriceInput?.value ?? item.price
           : existing?.price ?? item.listPrice,
         item.minPrice,
-        item.maxPrice,
         item.listPrice
       );
       if (productModal && sourceEl === productModal) {
@@ -4143,7 +4159,6 @@
         price: existing ? existing.price : salePrice,
         listPrice: item.listPrice,
         minPrice: item.minPrice,
-        maxPrice: item.maxPrice,
       });
       // If newly added from popup with discount, ensure price sticks.
       if (!existing) {
@@ -4506,19 +4521,15 @@
     const applySalePriceFromInput = () => {
       if (!activeProductId || !productModal || !productPriceInput) return;
       const minPrice = roundMoney(productModal.dataset.itemMinPrice || 0);
-      const maxPrice = roundMoney(
-        productModal.dataset.itemMaxPrice || productModal.dataset.itemListPrice || 0
-      );
       const listPrice = roundMoney(productModal.dataset.itemListPrice || 0);
       if (!discountEnabled) {
         productPriceInput.value = listPrice.toFixed(2);
         productModal.dataset.itemPrice = String(listPrice);
-        syncPriceHint(minPrice, maxPrice, listPrice, listPrice);
+        syncPriceHint(minPrice, listPrice, listPrice);
         if (cart.has(activeProductId)) {
           setLinePrice(activeProductId, listPrice, {
             listPrice,
             minPrice,
-            maxPrice,
           });
           renderCart();
         }
@@ -4527,18 +4538,16 @@
       const nextPrice = clampPrice(
         productPriceInput.value,
         minPrice,
-        maxPrice,
         listPrice
       );
       productPriceInput.value = nextPrice.toFixed(2);
       productModal.dataset.itemPrice = String(nextPrice);
-      syncPriceHint(minPrice, maxPrice, nextPrice, listPrice);
+      syncPriceHint(minPrice, nextPrice, listPrice);
 
       if (cart.has(activeProductId)) {
         setLinePrice(activeProductId, nextPrice, {
           listPrice,
           minPrice,
-          maxPrice,
         });
         renderCart();
       }

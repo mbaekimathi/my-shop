@@ -13,7 +13,12 @@ EMPLOYEE_ID_RE = re.compile(r"^\d{6}$")
 PHONE_RE = re.compile(r"^[\d\s\-()]{7,20}$")
 
 
-def process_sync_operations(employee: EmployeeProfile, operations: list) -> dict:
+def process_sync_operations(
+    employee: EmployeeProfile | None,
+    operations: list,
+    *,
+    portal_shop=None,
+) -> dict:
     results = []
     applied = 0
     failed = 0
@@ -24,7 +29,9 @@ def process_sync_operations(employee: EmployeeProfile, operations: list) -> dict
         payload = op.get("payload") or {}
 
         try:
-            result_payload = _dispatch(employee, op_type, payload)
+            result_payload = _dispatch(
+                employee, op_type, payload, portal_shop=portal_shop
+            )
             results.append(
                 {
                     "id": op_id,
@@ -62,7 +69,24 @@ class SyncOperationError(Exception):
         self.message = message
 
 
-def _dispatch(employee: EmployeeProfile, op_type: str, payload: dict) -> dict:
+def _dispatch(
+    employee: EmployeeProfile | None,
+    op_type: str,
+    payload: dict,
+    *,
+    portal_shop=None,
+) -> dict:
+    if portal_shop is not None:
+        if op_type != "complete_shop_checkout":
+            raise SyncOperationError(
+                "Shop sign-in can only sync queued shop sales.",
+                "unsupported_type",
+            )
+        return _sync_complete_shop_checkout(
+            employee, payload, portal_shop=portal_shop
+        )
+    if employee is None:
+        raise SyncOperationError("Sign in to sync queued changes.", "auth_required")
     if op_type == "create_sale":
         return _sync_create_sale(employee, payload)
     if op_type == "complete_shop_checkout":
@@ -95,7 +119,12 @@ def _sync_create_sale(employee: EmployeeProfile, payload: dict) -> dict:
     return {"client_id": sale.client_id, "total": str(sale.total), "source": sale.source}
 
 
-def _sync_complete_shop_checkout(employee: EmployeeProfile, payload: dict) -> dict:
+def _sync_complete_shop_checkout(
+    employee: EmployeeProfile | None,
+    payload: dict,
+    *,
+    portal_shop=None,
+) -> dict:
     """Replay a shop-floor receipt queued while offline."""
     from django.core.cache import cache
     from django.core.exceptions import ValidationError
@@ -103,15 +132,6 @@ def _sync_complete_shop_checkout(employee: EmployeeProfile, payload: dict) -> di
     from shops.models import Shop
     from shops.services import complete_shop_checkout
     from shops.session import get_shop_for_profile
-
-    if employee.role not in (
-        EmployeeRole.SHOP_CASHIER,
-        EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.SUPER_ADMIN,
-        EmployeeRole.COMPANY_MANAGER,
-        EmployeeRole.IT_SUPPORT,
-    ):
-        raise SyncOperationError("Your role cannot complete shop checkout.", "forbidden")
 
     client_id = (payload.get("client_id") or "").strip()
     if not client_id:
@@ -129,15 +149,37 @@ def _sync_complete_shop_checkout(employee: EmployeeProfile, payload: dict) -> di
     if shop_id <= 0:
         raise SyncOperationError("shop_id is required.", "invalid_shop")
 
-    shop = get_shop_for_profile(employee, shop_id)
-    if shop is None:
-        shop = Shop.objects.filter(pk=shop_id, is_hidden=False).first()
-        if shop is None or employee.role not in (
+    if portal_shop is not None:
+        if int(portal_shop.pk) != shop_id:
+            raise SyncOperationError("You are not authorised for that shop.", "forbidden")
+        shop = portal_shop
+    else:
+        if employee is None:
+            raise SyncOperationError(
+                "Your role cannot complete shop checkout.", "forbidden"
+            )
+        if employee.role not in (
+            EmployeeRole.SHOP_CASHIER,
+            EmployeeRole.SHOP_MANAGER,
             EmployeeRole.SUPER_ADMIN,
             EmployeeRole.COMPANY_MANAGER,
             EmployeeRole.IT_SUPPORT,
         ):
-            raise SyncOperationError("You are not authorised for that shop.", "forbidden")
+            raise SyncOperationError(
+                "Your role cannot complete shop checkout.", "forbidden"
+            )
+
+        shop = get_shop_for_profile(employee, shop_id)
+        if shop is None:
+            shop = Shop.objects.filter(pk=shop_id, is_hidden=False).first()
+            if shop is None or employee.role not in (
+                EmployeeRole.SUPER_ADMIN,
+                EmployeeRole.COMPANY_MANAGER,
+                EmployeeRole.IT_SUPPORT,
+            ):
+                raise SyncOperationError(
+                    "You are not authorised for that shop.", "forbidden"
+                )
 
     checkout_payload = dict(payload.get("checkout") or payload)
     checkout_payload.pop("shop_id", None)

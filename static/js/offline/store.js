@@ -101,3 +101,38 @@ export async function cacheEmployeeIdCheck(code, result) {
 export async function getCachedEmployeeIdCheck(code) {
   return cacheGet(`emp_id:${code}`);
 }
+
+export async function cacheStaffVerify(code, result, ttlSeconds = 60 * 60 * 24) {
+  return cacheSet(`staff_verify:${String(code || "").trim()}`, result, ttlSeconds);
+}
+
+export async function getCachedStaffVerify(code) {
+  return cacheGet(`staff_verify:${String(code || "").trim()}`);
+}
+
+export async function cacheShopSerials(shopId, itemId, serials, ttlSeconds = 60 * 60 * 12) {
+  const key = `shop-serials:${shopId}:${itemId}`;
+  const list = [
+    ...new Set(
+      (serials || [])
+        .map((serial) => String(serial || "").trim().toUpperCase())
+        .filter(Boolean)
+    ),
+  ];
+  return cacheSet(key, list, ttlSeconds);
+}
+
+export async function getCachedShopSerials(shopId, itemId) {
+  const list = await cacheGet(`shop-serials:${shopId}:${itemId}`);
+  return Array.isArray(list) ? list : [];
+}
+
+export async function mergeCachedShopSerials(shopId, itemId, serials) {
+  const existing = await getCachedShopSerials(shopId, itemId);
+  const extra = (serials || [])
+    .map((serial) => String(serial || "").trim().toUpperCase())
+    .filter(Boolean);
+  const next = [...new Set([...existing, ...extra])];
+  await cacheShopSerials(shopId, itemId, next);
+  return next;
+}

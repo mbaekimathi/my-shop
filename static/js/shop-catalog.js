@@ -124,7 +124,6 @@
     const stock = Math.max(0, Math.floor(Number(item.stock) || 0));
     const price = money(item.price);
     const minPrice = money(item.min_price);
-    const maxPrice = money(item.max_price || item.min_price);
     const desc = String(item.description || "");
     const descShort = desc.length > 90 ? `${desc.slice(0, 87).trimEnd()}...` : desc;
     const name = String(item.name || "");
@@ -143,7 +142,6 @@
     article.setAttribute("data-item-description", desc);
     article.setAttribute("data-item-price", price);
     article.setAttribute("data-item-min-price", minPrice);
-    article.setAttribute("data-item-max-price", maxPrice);
     article.setAttribute("data-item-list-price", price);
     article.setAttribute("data-item-stock", String(stock));
     article.setAttribute("data-item-track-serial", trackSerial);
@@ -282,6 +280,43 @@
   const cacheKeyFor = (page, q) =>
     `shop-catalog:${shopId}:p${page}:s${pageSize}:q${String(q || "").toLowerCase()}`;
 
+  const tokensFrom = (query) =>
+    String(query || "")
+      .toLowerCase()
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+  const hasRenderedItems = () =>
+    Boolean(root.querySelector("[data-item-row]"));
+
+  const filterRenderedItems = (query) => {
+    const tokens = tokensFrom(query);
+    const hasQuery = tokens.length > 0;
+    let visible = 0;
+    root.querySelectorAll("[data-item-category-group]").forEach((section) => {
+      const categoryLabel =
+        section.querySelector(".shop-floor-category-head h3")?.textContent || "";
+      let groupVisible = 0;
+      section.querySelectorAll("[data-item-row]").forEach((row) => {
+        const haystack = `${row.dataset.searchText || ""} ${categoryLabel}`.toLowerCase();
+        const match = !hasQuery || tokens.every((token) => haystack.includes(token));
+        row.hidden = !match;
+        if (match) {
+          groupVisible += 1;
+          visible += 1;
+        }
+      });
+      section.hidden = groupVisible === 0;
+      const countEl = section.querySelector("[data-category-count]");
+      if (countEl) countEl.textContent = String(groupVisible);
+    });
+    if (noResults) noResults.hidden = visible > 0 || !hasQuery;
+    if (root) root.hidden = visible === 0 && hasQuery;
+    updateCountLabel(hasQuery ? visible : totalCount, hasQuery);
+    floor.toggleAttribute("data-catalog-local-filter", hasQuery);
+  };
+
   const syncUiAfterRender = () => {
     const visible = root.querySelectorAll("[data-item-row]").length;
     if (noResults) noResults.hidden = visible > 0 || (!activeQuery && totalCount === 0);
@@ -321,6 +356,11 @@
       const store = await import("./offline/store.js");
       data = await store.cacheGet(cacheKey);
       fromCache = Boolean(data?.ok);
+      if (!fromCache && q) {
+        data = await store.cacheGet(cacheKeyFor(page, ""));
+        fromCache = Boolean(data?.ok);
+        if (fromCache) data = { ...data, localFilter: q };
+      }
       if (!fromCache) {
         throw new Error("offline_catalog_miss");
       }
@@ -377,6 +417,16 @@
           const cached = await store.cacheGet(cacheKeyFor(page, q));
           if (seq === inFlight && cached?.ok) {
             result = { data: cached, fromCache: true };
+          } else if (q) {
+            const unfiltered = await store.cacheGet(cacheKeyFor(page, ""));
+            if (seq === inFlight && unfiltered?.ok) {
+              result = {
+                data: { ...unfiltered, localFilter: q },
+                fromCache: true,
+              };
+            } else {
+              throw _error;
+            }
           } else {
             throw _error;
           }
@@ -393,7 +443,7 @@
       currentPage = Number(data.page || page);
       hasMore = Boolean(data.has_more);
       nextPage = data.next_page || null;
-      activeQuery = String(data.q || q || "");
+      activeQuery = String(data.localFilter || data.q || q || "");
 
       const ok = await appendItems(data.items, { replace: !append, seq });
       if (!ok || seq !== inFlight) return;
@@ -401,15 +451,25 @@
       if (fromCache) floor.setAttribute("data-catalog-from-cache", "1");
       else floor.removeAttribute("data-catalog-from-cache");
 
-      syncUiAfterRender();
+      const localFilter = String(data.localFilter || q || "");
+      const offline = typeof navigator !== "undefined" && !navigator.onLine;
+      if (offline && localFilter) {
+        filterRenderedItems(localFilter);
+      } else {
+        syncUiAfterRender();
+      }
 
       // First paint is done — keep fetching remaining pages in the background.
-      if (hasMore && nextPage) {
+      if (hasMore && nextPage && !offline) {
         loadRemainingPages({ seq, q: activeQuery });
       }
     } catch (_error) {
       if (seq !== inFlight) return;
       if (!append) {
+        if (hasRenderedItems()) {
+          filterRenderedItems(activeQuery);
+          return;
+        }
         const offline = typeof navigator !== "undefined" && !navigator.onLine;
         root.innerHTML = offline
           ? '<div class="dashboard-placeholder"><p>Offline — open this shop online once to cache the catalog.</p></div>'
@@ -423,6 +483,18 @@
   };
 
   const reload = (q = "") => {
+    const offline = typeof navigator !== "undefined" && !navigator.onLine;
+    if (offline && hasRenderedItems()) {
+      filterRenderedItems(q);
+      activeQuery = q;
+      return;
+    }
+    if (!offline) {
+      floor.removeAttribute("data-catalog-local-filter");
+      root.querySelectorAll("[data-item-row]").forEach((row) => {
+        row.hidden = false;
+      });
+    }
     groupEls.clear();
     currentPage = 0;
     nextPage = 1;

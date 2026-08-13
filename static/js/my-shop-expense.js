@@ -116,19 +116,14 @@
     }
 
     try {
-      const body = new URLSearchParams({ login_code: code });
-      const response = await fetch(verifyUrl, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "X-CSRFToken": getCsrf(),
-        },
-        credentials: "same-origin",
-        body,
+      const { verifyStaffLoginCode } = await import("./offline/staff.js");
+      const data = await verifyStaffLoginCode({
+        url: verifyUrl,
+        code,
+        csrfToken: getCsrf(),
       });
-      const data = await response.json().catch(() => ({}));
       if (current !== verifySeq) return false;
-      if (!response.ok || !data.ok) {
+      if (!data.ok) {
         verified = false;
         setStatus(data.error || "Not a valid active staff ID.", { error: true });
         syncSubmit();
@@ -136,7 +131,8 @@
       }
       verified = true;
       setStatus(
-        `Verified: ${data.name || "staff"} (${data.employee_id || code}).`,
+        data.message ||
+          `Verified: ${data.name || "staff"} (${data.employee_id || code}).`,
         { ok: true }
       );
       syncSubmit();

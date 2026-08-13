@@ -220,7 +220,6 @@ def seed_shop_floor(cashier_profile):
         defaults={
             "description": "Offline checkout fixture",
             "minimum_selling_price": Decimal("10.00"),
-            "maximum_selling_price": Decimal("100.00"),
             "shop_price": Decimal("25.00"),
             "stock": 500,
             "track_serial_number": False,
@@ -426,6 +425,64 @@ def run_loop(iterations: int) -> tuple[int, int]:
             r = client.get(f"/my-shop/{shop.id}/catalog/?page=1&page_size=24")
             if r.status_code != 200 or not r.json().get("ok"):
                 errors.append("shop catalog read access")
+
+            anon = Client().post(
+                "/employees/api/sync/",
+                data=json.dumps({"operations": []}),
+                content_type="application/json",
+            )
+            if anon.status_code != 403:
+                errors.append("anon sync not blocked")
+
+            from shops.models import ShopReceipt
+
+            portal = Client()
+            portal_session = portal.session
+            portal_session["active_shop_id"] = str(shop.pk)
+            portal_session["shop_portal_auth"] = True
+            portal_session.save()
+            portal_checkout_id = str(uuid.uuid4())
+            portal_payload = build_shop_checkout_payload(
+                shop, floor_item, cashier_profile, client_id=portal_checkout_id
+            )
+            before_portal = ShopReceipt.objects.filter(shop=shop).count()
+            r = portal.post(
+                "/employees/api/sync/",
+                data=json.dumps(
+                    {
+                        "operations": [
+                            {
+                                "id": str(uuid.uuid4()),
+                                "type": "complete_shop_checkout",
+                                "payload": portal_payload,
+                            }
+                        ]
+                    }
+                ),
+                content_type="application/json",
+            )
+            if r.status_code not in (200, 207) or r.json().get("failed"):
+                errors.append("shop portal checkout sync")
+            if ShopReceipt.objects.filter(shop=shop).count() != before_portal + 1:
+                errors.append("shop portal checkout applied")
+
+            r = portal.post(
+                "/employees/api/sync/",
+                data=json.dumps(
+                    {
+                        "operations": [
+                            {
+                                "id": str(uuid.uuid4()),
+                                "type": "create_sale",
+                                "payload": build_sale_payload(skus[0]),
+                            }
+                        ]
+                    }
+                ),
+                content_type="application/json",
+            )
+            if r.status_code not in (200, 207) or not r.json().get("failed"):
+                errors.append("shop portal rejects non-checkout ops")
 
         results = [
             report("ONLINE ping", ping_s, BUDGET_PING),

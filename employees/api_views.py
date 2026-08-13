@@ -3,9 +3,27 @@ import json
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_http_methods
 
-from .access import active_employee_required, get_profile_for_request
+from .access import get_employee_meta_for_request, get_profile_for_request
+from .models import EmployeeStatus
 from .sync_handlers import SyncOperationError, _sync_register_employee, process_sync_operations
 from .throttle import rate_limit
+
+
+def _sync_actor(request):
+    """Return (employee_profile, portal_shop) for offline queue replay."""
+    if getattr(request, "user", None) is not None and request.user.is_authenticated:
+        meta = get_employee_meta_for_request(request) or {}
+        if meta.get("status") == EmployeeStatus.ACTIVE:
+            profile = get_profile_for_request(request)
+            if profile is not None:
+                return profile, None
+
+    from shops.session import resolve_portal_shop
+
+    portal_shop = resolve_portal_shop(request)
+    if portal_shop is not None:
+        return None, portal_shop
+    return None, None
 
 
 @require_GET
@@ -14,12 +32,20 @@ def ping_api(request):
     return JsonResponse({"ok": True})
 
 
-@active_employee_required
 @rate_limit("sync")
 @require_http_methods(["POST"])
 def sync_api(request):
-    """Batch sync for authenticated offline queue (registration, admin updates)."""
-    profile = get_profile_for_request(request)
+    """Batch sync for employee or shop-portal offline queues."""
+    profile, portal_shop = _sync_actor(request)
+    if profile is None and portal_shop is None:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "auth_required",
+                "message": "Sign in again to sync queued changes.",
+            },
+            status=403,
+        )
 
     try:
         body = json.loads(request.body.decode("utf-8") or "{}")
@@ -42,7 +68,9 @@ def sync_api(request):
             status=400,
         )
 
-    result = process_sync_operations(profile, operations)
+    result = process_sync_operations(
+        profile, operations, portal_shop=portal_shop
+    )
     status = 200 if result["failed"] == 0 else 207
     return JsonResponse(result, status=status)
 
