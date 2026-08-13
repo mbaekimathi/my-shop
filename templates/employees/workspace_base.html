@@ -127,7 +127,7 @@
       document.querySelectorAll(`[data-modal-open="${name}"]`).forEach((trigger) => {
         trigger.addEventListener("click", (event) => {
           const focusSelector =
-            name === "buy-stock" ? "[data-item-search]" : "[data-expense-category]";
+            name === "buy-stock" ? "[data-item-search]" : "[data-expense-name-draft]";
           if (openWorkspaceActionModal(name, focusSelector)) {
             event.preventDefault();
             return;
@@ -147,7 +147,7 @@
       const name = (params.get("modal") || "").trim();
       if (name !== "buy-stock" && name !== "register-expense") return;
       const focusSelector =
-        name === "buy-stock" ? "[data-item-search]" : "[data-expense-category]";
+        name === "buy-stock" ? "[data-item-search]" : "[data-expense-name-draft]";
       if (!openWorkspaceActionModal(name, focusSelector)) return;
       params.delete("modal");
       const query = params.toString();

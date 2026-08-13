@@ -2435,53 +2435,82 @@ def build_stock_request_delivery_note(
     }
 
 
-def build_expense_supplier_receipt(expense, *, shop: Shop, authorised_by: str = "") -> dict:
-    """Build a supplier copy receipt after registering an expense."""
+def build_expense_supplier_receipt(
+    expense=None, *, shop: Shop, authorised_by: str = "", expenses=None
+) -> dict:
+    """Build a supplier copy receipt after registering one or more expenses."""
+    rows = [row for row in (expenses or []) if row is not None]
+    if not rows and expense is not None:
+        rows = [expense]
+    first = rows[0] if rows else expense
     pos = get_company_pos_settings()
-    supplier_name = (expense.supplier_name or "").strip() or "—"
-    dial = (expense.supplier_phone_country_code or "").strip()
-    phone = (expense.supplier_phone_number or "").strip()
+    supplier_name = ((first.supplier_name if first else "") or "").strip() or "—"
+    dial = ((first.supplier_phone_country_code if first else "") or "").strip()
+    phone = ((first.supplier_phone_number if first else "") or "").strip()
     supplier_phone = f"{dial} {phone}".strip()
     client = supplier_name
     if supplier_phone:
         client = f"{supplier_name} · {supplier_phone}"
 
-    category = ""
-    if hasattr(expense, "get_category_display"):
-        category = expense.get_category_display()
+    categories = []
+    for row in rows:
+        if hasattr(row, "get_category_display"):
+            label = row.get_category_display()
+            if label and label not in categories:
+                categories.append(label)
+    category = categories[0] if len(categories) == 1 else (
+        f"{len(rows)} expenses" if len(rows) > 1 else (categories[0] if categories else "")
+    )
     payment_label = ""
-    if hasattr(expense, "get_payment_status_display"):
-        payment_label = expense.get_payment_status_display()
+    if first and hasattr(first, "get_payment_status_display"):
+        payment_label = first.get_payment_status_display()
 
-    created = timezone.localtime(expense.created_at)
-    amount = expense.amount
-    ticket = {
-        **_supplier_receipt_shop_header(shop),
-        "receipt_number": format_simple_doc_number(
-            DOC_NUMBER_PREFIX["expense"], expense.pk
-        ),
-        "kind": "Expense",
-        "date": created.strftime("%d %b %Y · %H:%M"),
-        "party_label": "Supplier",
-        "client": client,
-        "cashier": authorised_by or "",
-        "status": category,
-        "lines": [
+    created = timezone.localtime(first.created_at if first else timezone.now())
+    total = Decimal("0.00")
+    ticket_lines = []
+    for row in rows:
+        amount = row.amount
+        total += amount
+        ticket_lines.append(
             {
-                "name": str(expense.name or "Expense"),
+                "name": str(row.name or "Expense"),
                 "qty": 1,
                 "price": _receipt_money(amount),
                 "total": _receipt_money(amount),
                 "serials": [],
                 "serials_extra": 0,
             }
+        )
+    receipt_number = format_simple_doc_number(
+        DOC_NUMBER_PREFIX["expense"], getattr(first, "pk", 0) or 0
+    )
+    if len(rows) > 1 and getattr(rows[-1], "pk", None):
+        receipt_number = f"{receipt_number}-{rows[-1].pk}"
+    ticket = {
+        **_supplier_receipt_shop_header(shop),
+        "receipt_number": receipt_number,
+        "kind": "Expense",
+        "date": created.strftime("%d %b %Y · %H:%M"),
+        "party_label": "Supplier",
+        "client": client,
+        "cashier": authorised_by or "",
+        "status": category,
+        "lines": ticket_lines or [
+            {
+                "name": "Expense",
+                "qty": 1,
+                "price": _receipt_money(0),
+                "total": _receipt_money(0),
+                "serials": [],
+                "serials_extra": 0,
+            }
         ],
         "cancelled": False,
-        "subtotal": _receipt_money(amount),
+        "subtotal": _receipt_money(total),
         "tax_percent": "0",
         "tax_amount": _receipt_money(0),
         "show_tax": False,
-        "total": _receipt_money(amount),
+        "total": _receipt_money(total),
         "payment": payment_label,
         "payment_details": {"label": "", "lines": []},
         "footer": "Supplier copy · Expense recorded",
@@ -2507,7 +2536,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
     Validates the authorising staff 6-digit ID, creates a receipt, and for
     sale/credit deducts shop stock. Quotations never touch stock.
     """
-    from employees.services import verify_active_employee_code
+    from employees.services import invalid_staff_code_message, verify_active_employee_code
     from items.models import Item, ItemSerial, ShopItemPrice, ShopStock
 
     from .models import ShopReceipt, ShopReceiptLine
@@ -2532,7 +2561,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
     login_code = (payload.get("login_code") or "").strip()
     authorising = verify_active_employee_code(login_code)
     if authorising is None:
-        raise ValidationError("Enter a valid active staff 6-digit ID.")
+        raise ValidationError(invalid_staff_code_message(login_code, shop=shop))
 
     from employees.module_permissions import ensure_employee_may
 
@@ -2754,13 +2783,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
             ShopReceiptKind.CREDIT,
             ShopReceiptKind.QUOTATION,
         }
-        if requires_client:
-            if not client_name:
-                raise ValidationError("Client full name is required.")
-            if not client_phone_raw:
-                raise ValidationError("Client phone number is required.")
-        elif bool(client_name) != bool(client_phone_raw):
-            raise ValidationError("Provide both client name and phone, or leave both blank.")
+        if requires_client and not client_name and not client_phone_raw:
+            raise ValidationError(
+                "Enter a client name, a phone number, or both for credit and quotation."
+            )
 
         if client_phone_raw:
             normalized = _normalize_phone(client_phone_raw)
@@ -3423,8 +3449,55 @@ def upsert_expense_supplier(
     return supplier
 
 
+def _payload_values(payload, key):
+    if hasattr(payload, "getlist"):
+        values = list(payload.getlist(key))
+        if values:
+            return values
+    value = payload.get(key) if hasattr(payload, "get") else None
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _parse_expense_lines(payload) -> list[dict]:
+    categories = _payload_values(payload, "category")
+    names = _payload_values(payload, "name")
+    amounts = _payload_values(payload, "amount")
+    count = max(len(categories), len(names), len(amounts))
+    if count == 0:
+        raise ValidationError("Add at least one expense.")
+    valid_categories = {choice.value for choice in ExpenseCategory}
+    lines = []
+    for index in range(count):
+        category = (
+            categories[index] if index < len(categories) else ""
+        )
+        name = names[index] if index < len(names) else ""
+        amount_raw = amounts[index] if index < len(amounts) else ""
+        category = str(category or "").strip().lower()
+        name = str(name or "").strip().upper()
+        label = f"Expense {index + 1}"
+        if category not in valid_categories:
+            raise ValidationError(f"{label}: choose a category.")
+        if not name:
+            raise ValidationError(f"{label}: name is required.")
+        if len(name) > 200:
+            raise ValidationError(f"{label}: name is too long.")
+        try:
+            amount = _money(amount_raw)
+        except ValidationError:
+            raise ValidationError(f"{label}: enter a valid amount.")
+        if amount <= 0:
+            raise ValidationError(f"{label}: amount must be greater than zero.")
+        lines.append({"category": category, "name": name, "amount": amount})
+    return lines
+
+
 def register_shop_expense(*, shop: Shop, profile, payload: dict) -> dict:
-    """Validate expense payload, upsert expense supplier, and save the expense."""
+    """Validate expense payload, upsert expense supplier, and save expense line(s)."""
     from employees.services import verify_active_employee_code
 
     if shop.is_suspended:
@@ -3444,23 +3517,7 @@ def register_shop_expense(*, shop: Shop, profile, payload: dict) -> dict:
         message="You do not have permission to register expenses.",
     )
 
-    category = (payload.get("category") or "").strip().lower()
-    if category not in {choice.value for choice in ExpenseCategory}:
-        raise ValidationError("Choose an expense category.")
-
-    name = (payload.get("name") or "").strip().upper()
-    if not name:
-        raise ValidationError("Expense name is required.")
-    if len(name) > 200:
-        raise ValidationError("Expense name is too long.")
-
-    amount_raw = payload.get("amount")
-    try:
-        amount = _money(amount_raw)
-    except ValidationError:
-        raise ValidationError("Enter a valid expense amount.")
-    if amount <= 0:
-        raise ValidationError("Expense amount must be greater than zero.")
+    lines = _parse_expense_lines(payload)
 
     payment_status = (payload.get("payment_status") or "").strip().lower()
     if payment_status not in {choice.value for choice in ExpensePaymentStatus}:
@@ -3489,29 +3546,38 @@ def register_shop_expense(*, shop: Shop, profile, payload: dict) -> dict:
             iso=supplier_iso,
             supplier_id=supplier_id,
         )
-        expense = Expense.objects.create(
-            shop=shop,
-            category=category,
-            name=name,
-            amount=amount,
-            amount_paid=(
-                amount
-                if payment_status == ExpensePaymentStatus.PAID
-                else _money(0)
-            ),
-            payment_status=payment_status,
-            supplier=supplier,
-            supplier_name=supplier_name,
-            supplier_phone_country_code=dial,
-            supplier_phone_number=phone,
-            created_by=authorising,
-        )
+        expenses = [
+            Expense.objects.create(
+                shop=shop,
+                category=line["category"],
+                name=line["name"],
+                amount=line["amount"],
+                amount_paid=(
+                    line["amount"]
+                    if payment_status == ExpensePaymentStatus.PAID
+                    else _money(0)
+                ),
+                payment_status=payment_status,
+                supplier=supplier,
+                supplier_name=supplier_name,
+                supplier_phone_country_code=dial,
+                supplier_phone_number=phone,
+                created_by=authorising,
+            )
+            for line in lines
+        ]
 
+    expense = expenses[0]
+    if len(expenses) == 1:
+        message = f"Expense “{expense.name}” recorded for {shop.name}."
+    else:
+        message = f"Recorded {len(expenses)} expenses for {shop.name}."
     return {
         "expense": expense,
+        "expenses": expenses,
         "authorised_by": authorising.user.get_full_name()
         or authorising.user.username,
-        "message": f"Expense “{expense.name}” recorded for {shop.name}.",
+        "message": message,
     }
 
 

@@ -36,6 +36,7 @@ USE_X_FORWARDED_HOST = resolve_bool("DJANGO_USE_X_FORWARDED_HOST", default=True)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 CSRF_TRUSTED_ORIGINS = resolve_csrf_trusted_origins()
+CSRF_FAILURE_VIEW = "myshop.csrf.csrf_failure"
 
 # Optional override; otherwise auto from request / ngrok.
 DARAJA_CALLBACK_BASE_URL = os.getenv("DARAJA_CALLBACK_BASE_URL", "").strip()

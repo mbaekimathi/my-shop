@@ -103,6 +103,18 @@ def shop_floor_required(view_func):
         if resolve_portal_shop(request) is not None:
             return view_func(request, *args, **kwargs)
 
+        wants_json = "application/json" in (request.headers.get("Accept") or "")
+        if wants_json and not getattr(request.user, "is_authenticated", False):
+            from django.http import JsonResponse
+
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "Shop session expired. Refresh and sign in again.",
+                },
+                status=403,
+            )
+
         from employees.access import active_employee_required
 
         return active_employee_required(view_func)(request, *args, **kwargs)

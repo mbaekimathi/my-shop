@@ -339,6 +339,7 @@ def _require_my_shop_permission(
     login_code=None,
     actor=None,
     portal_ok=False,
+    shop=None,
 ):
     """
     Gate MY-SHOP actions against the acting employee.
@@ -348,7 +349,7 @@ def _require_my_shop_permission(
     (`login_code` / `actor`) so that employee's matrix permissions apply.
     """
     from employees.module_permissions import require_module_permission
-    from employees.services import verify_active_employee_code
+    from employees.services import invalid_staff_code_message, verify_active_employee_code
 
     acting = actor
     if acting is None and login_code is not None:
@@ -358,7 +359,7 @@ def _require_my_shop_permission(
     if acting is None:
         if portal_ok:
             return None
-        error = "Enter a valid active staff 6-digit ID."
+        error = invalid_staff_code_message(login_code, shop=shop)
         if as_json:
             from django.http import JsonResponse
 
@@ -1579,29 +1580,11 @@ def my_shop_register_expense(request, shop_id):
     if request.method == "GET":
         return redirect(expense_modal_url)
 
-    form_data = {
-        "category": (request.POST.get("category") or "").strip().lower(),
-        "name": (request.POST.get("name") or "").strip().upper(),
-        "amount": (request.POST.get("amount") or "").strip(),
-        "payment_status": (request.POST.get("payment_status") or "").strip().lower(),
-        "supplier_id": (request.POST.get("supplier_id") or "").strip(),
-        "supplier_name": (request.POST.get("supplier_name") or "").strip().upper(),
-        "supplier_phone_country_code": (
-            request.POST.get("supplier_phone_country_code") or "+254"
-        ).strip(),
-        "supplier_phone_country_iso": (
-            request.POST.get("supplier_phone_country_iso") or "KE"
-        )
-        .strip()
-        .upper(),
-        "supplier_phone_number": (
-            request.POST.get("supplier_phone_number") or ""
-        ).strip(),
-        "login_code": (request.POST.get("login_code") or "").strip(),
-    }
     wants_json = _wants_json_response(request)
     try:
-        result = register_shop_expense(shop=shop, profile=profile, payload=form_data)
+        result = register_shop_expense(
+            shop=shop, profile=profile, payload=request.POST
+        )
     except ValidationError as exc:
         form_errors = _validation_errors(exc)
         if wants_json:
@@ -1623,10 +1606,14 @@ def my_shop_register_expense(request, shop_id):
     if not (next_url.startswith("/") and not next_url.startswith("//")):
         next_url = workspace_url
     if wants_json:
+        expenses = result.get("expenses") or (
+            [result["expense"]] if result.get("expense") else []
+        )
         print_payload = build_expense_supplier_receipt(
-            result["expense"],
+            result.get("expense"),
             shop=shop,
             authorised_by=result.get("authorised_by") or "",
+            expenses=expenses,
         )
         return JsonResponse(
             {
@@ -2016,8 +2003,10 @@ def my_shop_verify_login_code(request, shop_id):
     code = (request.POST.get("login_code") or request.POST.get("employee_code") or "").strip()
     authorising = verify_active_employee_code(code)
     if authorising is None:
+        from employees.services import invalid_staff_code_message
+
         return JsonResponse(
-            {"ok": False, "error": "Not a valid active staff ID."},
+            {"ok": False, "error": invalid_staff_code_message(code, shop=shop)},
             status=400,
         )
     from employees.module_permissions import my_shop_capabilities
@@ -2070,6 +2059,7 @@ def my_shop_checkout(request, shop_id):
         perm_key,
         as_json=True,
         login_code=payload.get("login_code"),
+        shop=shop,
     )
     if denied:
         return denied

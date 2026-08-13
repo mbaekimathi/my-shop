@@ -1,24 +1,22 @@
 {% if register_expense_modal %}
 <div
-  class="workspace-modal register-expense-modal"
+  class="workspace-modal buy-stock-modal register-expense-modal"
   data-modal="register-expense"
   hidden
   aria-hidden="true"
 >
   <div class="workspace-modal-backdrop" data-modal-close="register-expense"></div>
   <div
-    class="workspace-modal-dialog register-expense-modal-dialog"
+    class="workspace-modal-dialog buy-stock-modal-dialog register-expense-modal-dialog"
     role="dialog"
     aria-modal="true"
     aria-labelledby="register-expense-modal-title"
   >
-    <div class="workspace-modal-head register-expense-modal-head">
-      <div>
-        <p class="register-expense-modal-kicker">{{ shop.name }} · Expense</p>
+    <div class="workspace-modal-head buy-stock-modal-head">
+      <div class="buy-stock-modal-head-copy">
+        <p class="buy-stock-modal-kicker">{{ shop.name }}</p>
         <h2 id="register-expense-modal-title">Register expense</h2>
-        <p class="register-expense-modal-summary">
-          Category, amount, supplier, payment status, and staff ID.
-        </p>
+        <p class="buy-stock-modal-lead">Add expenses, then record them together.</p>
       </div>
       <button
         class="workspace-icon-btn"

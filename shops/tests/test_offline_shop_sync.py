@@ -186,6 +186,20 @@ class ShopPortalOfflineSyncTests(TestCase):
         self.assertEqual(data.get("failed"), 1)
         self.assertEqual(data["results"][0].get("error"), "unsupported_type")
 
+    def test_verify_login_code_json_when_session_expired(self):
+        url = reverse(
+            "employees:my_shop_verify_login_code", kwargs={"shop_id": self.shop.pk}
+        )
+        response = Client().post(
+            url,
+            {"login_code": self.profile.employee_id},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+        data = response.json()
+        self.assertFalse(data.get("ok"))
+        self.assertIn("session", data.get("error", "").lower())
+
     def test_verify_login_code_accepts_active_cashier(self):
         response = self._portal_client().post(
             reverse("employees:my_shop_verify_login_code", kwargs={"shop_id": self.shop.pk}),
@@ -206,11 +220,16 @@ class ShopPortalOfflineSyncTests(TestCase):
         self.assertEqual(bad.status_code, 400)
         self.assertFalse(bad.json().get("ok"))
 
+        shop_code = client.post(url, {"login_code": self.shop.login_code})
+        self.assertEqual(shop_code.status_code, 400)
+        self.assertIn("shop branch code", shop_code.json().get("error", "").lower())
+
         self.profile.status = EmployeeStatus.SUSPENDED
         self.profile.save(update_fields=["status", "updated_at"])
         suspended = client.post(url, {"login_code": self.profile.employee_id})
         self.assertEqual(suspended.status_code, 400)
         self.assertFalse(suspended.json().get("ok"))
+        self.assertIn("suspended", suspended.json().get("error", "").lower())
 
     def test_portal_online_checkout_verifies_and_completes_sale(self):
         client = self._portal_client()
@@ -276,6 +295,103 @@ class ShopPortalOfflineSyncTests(TestCase):
         receipt = ShopReceipt.objects.get(receipt_number=data["receipt_number"])
         self.assertEqual(receipt.client_name, "")
         self.assertEqual(receipt.client_phone, "")
+
+    def _post_checkout(self, payload):
+        return self._portal_client().post(
+            reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    def _sale_line(self):
+        return {
+            "id": self.item.pk,
+            "qty": 1,
+            "price": str(self.item.shop_price),
+            "serials": [],
+        }
+
+    def test_sale_checkout_allows_name_or_phone_independently(self):
+        name_only = self._post_checkout(
+            {
+                "kind": "sale",
+                "payment_method": "cash",
+                "client_name": "WALK IN NAME",
+                "client_phone": "",
+                "login_code": self.profile.employee_id,
+                "lines": [self._sale_line()],
+            }
+        )
+        self.assertEqual(name_only.status_code, 200, name_only.content)
+        named = ShopReceipt.objects.get(
+            receipt_number=name_only.json()["receipt_number"]
+        )
+        self.assertEqual(named.client_name, "WALK IN NAME")
+        self.assertEqual(named.client_phone, "")
+        self.assertIsNone(named.client_id)
+
+        phone_only = self._post_checkout(
+            {
+                "kind": "sale",
+                "payment_method": "cash",
+                "client_name": "",
+                "client_phone": "0712345678",
+                "login_code": self.profile.employee_id,
+                "lines": [self._sale_line()],
+            }
+        )
+        self.assertEqual(phone_only.status_code, 200, phone_only.content)
+        phoned = ShopReceipt.objects.get(
+            receipt_number=phone_only.json()["receipt_number"]
+        )
+        self.assertEqual(phoned.client_name, "")
+        self.assertEqual(phoned.client_phone, "+254712345678")
+        self.assertIsNone(phoned.client_id)
+
+    def test_credit_checkout_allows_name_or_phone_independently(self):
+        name_only = self._post_checkout(
+            {
+                "kind": "credit",
+                "client_name": "CREDIT NAME ONLY",
+                "client_phone": "",
+                "login_code": self.profile.employee_id,
+                "lines": [self._sale_line()],
+            }
+        )
+        self.assertEqual(name_only.status_code, 200, name_only.content)
+        named = ShopReceipt.objects.get(
+            receipt_number=name_only.json()["receipt_number"]
+        )
+        self.assertEqual(named.client_name, "CREDIT NAME ONLY")
+        self.assertEqual(named.client_phone, "")
+
+        phone_only = self._post_checkout(
+            {
+                "kind": "credit",
+                "client_name": "",
+                "client_phone": "0712345679",
+                "login_code": self.profile.employee_id,
+                "lines": [self._sale_line()],
+            }
+        )
+        self.assertEqual(phone_only.status_code, 200, phone_only.content)
+        phoned = ShopReceipt.objects.get(
+            receipt_number=phone_only.json()["receipt_number"]
+        )
+        self.assertEqual(phoned.client_name, "")
+        self.assertEqual(phoned.client_phone, "+254712345679")
+
+        missing = self._post_checkout(
+            {
+                "kind": "credit",
+                "client_name": "",
+                "client_phone": "",
+                "login_code": self.profile.employee_id,
+                "lines": [self._sale_line()],
+            }
+        )
+        self.assertEqual(missing.status_code, 400)
+        self.assertFalse(missing.json().get("ok"))
 
     def test_credit_checkout_due_date_defaults_optional(self):
         client = self._portal_client()
@@ -354,6 +470,30 @@ class ShopPortalOfflineSyncTests(TestCase):
         )
         self.assertIn(response.status_code, (400, 403))
         self.assertFalse(response.json().get("ok"))
+        self.assertEqual(ShopReceipt.objects.filter(shop=self.shop).count(), 0)
+
+        shop_code = self._portal_client().post(
+            reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}),
+            data=json.dumps(
+                {
+                    "kind": "sale",
+                    "payment_method": "cash",
+                    "login_code": self.shop.login_code,
+                    "lines": [
+                        {
+                            "id": self.item.pk,
+                            "qty": 1,
+                            "price": str(self.item.shop_price),
+                            "serials": [],
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertIn(shop_code.status_code, (400, 403))
+        self.assertFalse(shop_code.json().get("ok"))
+        self.assertIn("shop branch code", shop_code.json().get("error", "").lower())
         self.assertEqual(ShopReceipt.objects.filter(shop=self.shop).count(), 0)
 
     def test_employee_session_can_sync_queued_checkout(self):

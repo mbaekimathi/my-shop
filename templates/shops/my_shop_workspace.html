@@ -322,12 +322,12 @@
           <p class="shop-cart-client-label" data-cart-client-heading>
             Link client{% if default_kind != "sale" %} <span class="shop-serial-required" aria-hidden="true">*</span>{% endif %}
           </p>
-          <p class="shop-cart-client-note" data-cart-client-note {% if default_kind == "sale" %}{% else %}hidden{% endif %}>
-            Optional for sales
+          <p class="shop-cart-client-note" data-cart-client-note>
+            {% if default_kind == "sale" %}Optional. Enter a name, a phone number, or both.{% else %}Enter a name, a phone number, or both.{% endif %}
           </p>
         </div>
         <label class="shop-cart-input">
-          <span data-cart-client-phone-label>Client phone{% if default_kind == "sale" %} <em>(optional)</em>{% else %} <span class="shop-serial-required">*</span>{% endif %}</span>
+          <span data-cart-client-phone-label>Client phone <em>(optional)</em></span>
           <input
             type="tel"
             name="client_phone"
@@ -335,12 +335,11 @@
             inputmode="tel"
             data-cart-client-phone
             placeholder="07XX XXX XXX"
-            {% if default_kind != "sale" %}required{% endif %}
           >
         </label>
         <div class="shop-cart-name-wrap">
           <label class="shop-cart-input">
-            <span data-cart-client-name-label>Client full name{% if default_kind == "sale" %} <em>(optional)</em>{% else %} <span class="shop-serial-required">*</span>{% endif %}</span>
+            <span data-cart-client-name-label>Client full name <em>(optional)</em></span>
             <input
               type="text"
               name="client_name"
@@ -350,7 +349,6 @@
               placeholder="Full name"
               aria-autocomplete="list"
               aria-controls="shop-cart-client-suggest"
-              {% if default_kind != "sale" %}required{% endif %}
             >
           </label>
           <div
@@ -387,14 +385,16 @@
 
       <div class="shop-cart-staff" data-cart-staff-wrap>
         <label class="shop-cart-input">
-          <span>Staff ID (6 digits)</span>
+          <span>Employee ID (not shop code)</span>
           <input
             type="text"
-            name="login_code"
+            name="staff_employee_id"
             inputmode="numeric"
             maxlength="6"
-            autocomplete="one-time-code"
-            placeholder="Enter 6-digit staff ID"
+            autocomplete="off"
+            autocorrect="off"
+            spellcheck="false"
+            placeholder="Personal 6-digit employee ID"
             data-cart-login-code
             required
           >
@@ -406,12 +406,12 @@
       <p class="shop-cart-status" data-cart-status>
         {% if pos_flags.print_channels %}
           {% if pos_settings.compulsory_print_on_sale %}
-        Enter an active staff member’s 6-digit ID to complete and print.
+        Enter the seller’s personal 6-digit employee ID (not the shop code) to complete and print.
           {% else %}
-        Enter an active staff member’s 6-digit ID to complete. Connect a printer to print.
+        Enter the seller’s personal 6-digit employee ID (not the shop code) to complete. Connect a printer to print.
           {% endif %}
         {% else %}
-        Enter an active staff member’s 6-digit ID to complete the receipt.
+        Enter the seller’s personal 6-digit employee ID (not the shop code) to complete the receipt.
         {% endif %}
       </p>
 
@@ -622,11 +622,11 @@
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script src="{% static 'js/shop-printer.js' %}?v=20"></script>
-<script src="{% static 'js/my-shop.js' %}?v=60"></script>
-<script src="{% static 'js/stock-catalog.js' %}?v=27"></script>
+<script src="{% static 'js/my-shop.js' %}?v=63"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=28"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix35"></script>
-<script src="{% static 'js/my-shop-expense.js' %}?v=7"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix36"></script>
+<script src="{% static 'js/my-shop-expense.js' %}?v=8"></script>
 <script
   src="{% static 'js/serial-scan.js' %}?v=8"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"

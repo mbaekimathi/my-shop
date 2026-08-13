@@ -24,8 +24,9 @@
   <form
     method="post"
     action="{% url 'employees:my_shop_register_expense' shop.pk %}"
-    class="shop-expense-form"
+    class="shop-expense-form buy-stock-simple"
     data-shop-expense-form
+    data-expense-multi
     {% if expense_compact %}data-supplier-print{% endif %}
     novalidate
   >
@@ -35,167 +36,193 @@
     {% endif %}
     <input type="hidden" name="supplier_id" value="{{ form_data.supplier_id }}" data-expense-supplier-id>
 
-    <div class="shop-expense-grid">
-      <label class="shop-cart-input">
-        <span>Expense category</span>
-        <select name="category" required data-expense-category>
-          <option value="">Select category</option>
-          {% for value, label in expense_categories %}
-          <option value="{{ value }}"{% if form_data.category == value %} selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
+    <template data-expense-category-template>
+      <option value="">Category</option>
+      {% for value, label in expense_categories %}
+      <option value="{{ value }}">{{ label }}</option>
+      {% endfor %}
+    </template>
 
-      <label class="shop-cart-input">
-        <span>Expense name</span>
-        <input
-          type="text"
-          name="name"
-          placeholder="e.g. ELECTRICITY BILL"
-          autocomplete="off"
-          data-uppercase
-          data-expense-name
-          value="{{ form_data.name }}"
-          required
-        >
-      </label>
-
-      <label class="shop-cart-input">
-        <span>Expense amount</span>
-        <input
-          type="number"
-          name="amount"
-          min="1"
-          step="1"
-          inputmode="numeric"
-          placeholder="0"
-          data-expense-amount
-          value="{{ form_data.amount }}"
-          required
-        >
-      </label>
-
-      <label class="shop-cart-input">
-        <span>Payment status</span>
-        <select name="payment_status" required data-expense-payment>
-          <option value="">Select</option>
-          {% for value, label in payment_statuses %}
-          <option value="{{ value }}"{% if form_data.payment_status == value %} selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
-
-      <div class="shop-cart-input shop-cart-input--phone">
-        <span>Supplier contact</span>
-        <div class="stock-phone-field" data-stock-phone-field data-supplier-search-root>
-          <input
-            type="hidden"
-            name="supplier_phone_country_code"
-            value="{{ form_data.supplier_phone_country_code|default:'+254' }}"
-            data-expense-supplier-dial
-            data-stock-supplier-dial
-          >
-          <input
-            type="hidden"
-            name="supplier_phone_country_iso"
-            value="{{ form_data.supplier_phone_country_iso|default:'KE' }}"
-            data-expense-supplier-iso
-            data-stock-supplier-iso
-          >
-          <button
-            type="button"
-            class="stock-country-trigger"
-            data-stock-country-trigger
-            aria-label="Select country"
-            aria-haspopup="listbox"
-            aria-expanded="false"
-          >
-            <img
-              class="flag-img"
-              src="https://flagcdn.com/w40/{{ form_data.supplier_phone_country_iso|default:'KE'|lower }}.png"
-              width="20"
-              height="15"
-              alt=""
-              data-stock-flag-img
-            >
-          </button>
-          <span class="stock-phone-dial" data-stock-dial-display>{{ form_data.supplier_phone_country_code|default:'+254' }}</span>
-          <input
-            type="tel"
-            name="supplier_phone_number"
-            placeholder="7XXXXXXXX"
-            inputmode="numeric"
-            maxlength="9"
-            autocomplete="tel-national"
-            data-expense-supplier-phone
-            data-stock-supplier-phone
-            data-supplier-search="phone"
-            value="{{ form_data.supplier_phone_number }}"
-            required
-          >
-          <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
-        </div>
-      </div>
-
-      <label class="shop-cart-input">
-        <span>Supplier name</span>
-        <div class="stock-supplier-name-wrap" data-supplier-search-root>
+    <div class="buy-stock-simple-main shop-expense-simple-main">
+      <div class="shop-expense-composer">
+        <label class="shop-cart-input">
+          <span class="visually-hidden">Category</span>
+          <select data-expense-category-draft aria-label="Category">
+            <option value="">Category</option>
+            {% for value, label in expense_categories %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="shop-cart-input shop-expense-composer-name">
+          <span class="visually-hidden">Expense name</span>
           <input
             type="text"
-            name="supplier_name"
-            placeholder="SUPPLIER NAME"
-            autocomplete="organization"
+            placeholder="Expense name"
+            autocomplete="off"
             data-uppercase
-            data-expense-supplier-name
-            data-supplier-search="name"
-            value="{{ form_data.supplier_name }}"
-            required
+            data-expense-name-draft
+            aria-label="Expense name"
           >
-          <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+        </label>
+        <label class="shop-cart-input">
+          <span class="visually-hidden">Amount</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            inputmode="numeric"
+            placeholder="Amount"
+            data-expense-amount-draft
+            aria-label="Amount"
+          >
+        </label>
+        <button type="button" class="buy-stock-pick-select shop-expense-add" data-expense-add>
+          <span>Add</span>
+          <i data-lucide="plus" aria-hidden="true"></i>
+        </button>
+      </div>
+
+      <div class="buy-stock-simple-list">
+        <div class="buy-stock-simple-parked shop-expense-parked" hidden data-expense-parked-wrap>
+          <div class="buy-stock-simple-parked-head">
+            <p class="buy-stock-simple-parked-label">
+              Your expenses
+              <span class="buy-stock-simple-parked-count" data-expense-count hidden></span>
+            </p>
+            <button class="stock-float-clear buy-stock-simple-clear" type="button" data-expense-clear hidden>
+              Clear
+            </button>
+          </div>
+          <div data-expense-parked></div>
         </div>
-      </label>
+        <div class="buy-stock-simple-empty buy-stock-simple-empty-card" data-expense-idle>
+          <span class="buy-stock-simple-empty-icon" aria-hidden="true">
+            <i data-lucide="wallet"></i>
+          </span>
+          <p>Add a name and amount, then tap Add</p>
+        </div>
+      </div>
     </div>
 
-    <label class="shop-cart-input">
-      <span>Staff ID (6 digits)</span>
-      <input
-        type="text"
-        name="login_code"
-        inputmode="numeric"
-        maxlength="6"
-        autocomplete="one-time-code"
-        placeholder="Enter 6-digit staff ID"
-        data-expense-login-code
-        value="{{ form_data.login_code }}"
-        required
-      >
-    </label>
-    <p class="shop-cart-status" data-expense-status>
-      Enter an active staff member’s 6-digit ID to record this expense.
-    </p>
+    <aside class="buy-stock-simple-confirm stock-float--in" data-expense-confirm aria-live="polite">
+      <div class="buy-stock-simple-confirm-card">
+        <div class="buy-stock-simple-supplier shop-expense-supplier">
+          <label class="stock-float-field">
+            <span>Supplier phone</span>
+            <div class="stock-phone-field" data-stock-phone-field data-supplier-search-root>
+              <input
+                type="hidden"
+                name="supplier_phone_country_code"
+                value="{{ form_data.supplier_phone_country_code|default:'+254' }}"
+                data-expense-supplier-dial
+                data-stock-supplier-dial
+              >
+              <input
+                type="hidden"
+                name="supplier_phone_country_iso"
+                value="{{ form_data.supplier_phone_country_iso|default:'KE' }}"
+                data-expense-supplier-iso
+                data-stock-supplier-iso
+              >
+              <button
+                type="button"
+                class="stock-country-trigger"
+                data-stock-country-trigger
+                aria-label="Select country"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+              >
+                <img
+                  class="flag-img"
+                  src="https://flagcdn.com/w40/{{ form_data.supplier_phone_country_iso|default:'KE'|lower }}.png"
+                  width="20"
+                  height="15"
+                  alt=""
+                  data-stock-flag-img
+                >
+              </button>
+              <span class="stock-phone-dial" data-stock-dial-display>{{ form_data.supplier_phone_country_code|default:'+254' }}</span>
+              <input
+                type="tel"
+                name="supplier_phone_number"
+                placeholder="7XXXXXXXX"
+                inputmode="numeric"
+                maxlength="9"
+                autocomplete="tel-national"
+                data-expense-supplier-phone
+                data-stock-supplier-phone
+                data-supplier-search="phone"
+                value="{{ form_data.supplier_phone_number }}"
+                required
+              >
+              <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+            </div>
+          </label>
+          <label class="stock-float-field">
+            <span>Supplier name</span>
+            <div class="stock-supplier-name-wrap" data-supplier-search-root>
+              <input
+                type="text"
+                name="supplier_name"
+                placeholder="Search name…"
+                autocomplete="organization"
+                data-uppercase
+                data-expense-supplier-name
+                data-supplier-search="name"
+                value="{{ form_data.supplier_name }}"
+                required
+              >
+              <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+            </div>
+          </label>
+          <label class="stock-float-field">
+            <span>Payment</span>
+            <select name="payment_status" required data-expense-payment>
+              <option value="">Select</option>
+              {% for value, label in payment_statuses %}
+              <option value="{{ value }}"{% if form_data.payment_status == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <p class="stock-float-apply-status buy-stock-apply-status" data-expense-hint hidden></p>
+        </div>
 
-    <div class="shop-day-actions">
-      {% if expense_compact %}
-      <button class="btn btn--ghost" type="button" data-modal-close="register-expense">
-        Cancel
-      </button>
-      {% else %}
-      <a
-        class="btn btn--ghost"
-        href="{% url 'employees:my_shop_workspace' shop.id %}"
-      >
-        Cancel
-      </a>
-      {% endif %}
-      <button
-        type="submit"
-        class="btn btn--primary"
-        data-expense-submit
-        disabled
-      >
-        Record expense
-      </button>
-    </div>
+        <div class="buy-stock-simple-footer">
+          <label class="stock-float-field stock-float-field--login">
+            <span>Staff ID</span>
+            <input
+              type="text"
+              name="login_code"
+              inputmode="numeric"
+              maxlength="6"
+              autocomplete="one-time-code"
+              placeholder="6 digits"
+              data-expense-login-code
+              value="{{ form_data.login_code }}"
+              required
+            >
+          </label>
+          <p class="shop-cart-status stock-float-login-status" data-expense-status></p>
+          <div class="shop-expense-actions">
+            {% if not expense_compact %}
+            <a class="btn btn--ghost" href="{% url 'employees:my_shop_workspace' shop.id %}">
+              Cancel
+            </a>
+            {% endif %}
+            <button
+              type="submit"
+              class="stock-float-submit buy-stock-simple-submit"
+              data-expense-submit
+              disabled
+            >
+              <i data-lucide="printer" aria-hidden="true"></i>
+              <span data-expense-submit-label>{% if expense_compact %}Record &amp; print{% else %}Record expenses{% endif %}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
   </form>
 
   {% if recent_expenses and not expense_compact %}

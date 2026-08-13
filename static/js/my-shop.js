@@ -1506,12 +1506,12 @@
         return "Checkout is disabled in POS settings.";
       }
       if (enabledPrintChannels.length && cartRoot.dataset.posCompulsoryPrint === "1") {
-        return "Enter an active staff member’s 6-digit ID to complete and print.";
+        return "Enter the seller’s personal 6-digit employee ID (not the shop code) to complete and print.";
       }
       if (enabledPrintChannels.length) {
-        return "Enter an active staff member’s 6-digit ID to complete. Connect a printer to print.";
+        return "Enter the seller’s personal 6-digit employee ID (not the shop code) to complete. Connect a printer to print.";
       }
-      return "Enter an active staff member’s 6-digit ID to complete the receipt.";
+      return "Enter the seller’s personal 6-digit employee ID (not the shop code) to complete the receipt.";
     })();
     let cartCodeVerified = false;
     let cartVerifyTimer = null;
@@ -2051,8 +2051,8 @@
     const syncClientRequirements = () => {
       const hasSerials = cartHasSerialTracked();
       const required = selectedKind() !== "sale";
-      if (clientPhoneInput) clientPhoneInput.required = required;
-      if (clientNameInput) clientNameInput.required = required;
+      if (clientPhoneInput) clientPhoneInput.required = false;
+      if (clientNameInput) clientNameInput.required = false;
       if (clientBlock) clientBlock.classList.toggle("is-required", required);
       if (clientHeading) {
         clientHeading.innerHTML = required
@@ -2062,23 +2062,20 @@
       if (clientNote) {
         clientNote.hidden = false;
         if (required) {
-          clientNote.textContent = "Required for credit and quotation.";
+          clientNote.textContent = "Enter a name, a phone number, or both.";
         } else if (hasSerials) {
           clientNote.textContent =
-            "Optional for sales. Recommended so serials can be linked to a client.";
+            "Optional. Enter a name, a phone number, or both so serials can be linked.";
         } else {
-          clientNote.textContent = "Optional for sales";
+          clientNote.textContent =
+            "Optional. Enter a name, a phone number, or both.";
         }
       }
       if (clientPhoneLabel) {
-        clientPhoneLabel.innerHTML = required
-          ? 'Client phone <span class="shop-serial-required">*</span>'
-          : 'Client phone <em>(optional)</em>';
+        clientPhoneLabel.innerHTML = "Client phone <em>(optional)</em>";
       }
       if (clientNameLabel) {
-        clientNameLabel.innerHTML = required
-          ? 'Client full name <span class="shop-serial-required">*</span>'
-          : 'Client full name <em>(optional)</em>';
+        clientNameLabel.innerHTML = "Client full name <em>(optional)</em>";
       }
     };
 
@@ -2444,9 +2441,9 @@
       if (kind === "credit" || kind === "quotation") {
         const phone = normalizeClientPhoneField({ force: true });
         const name = (clientNameInput?.value || "").trim();
-        if (!phone || !name) {
+        if (!phone && !name) {
           setCartStatus(
-            "Link a client (name and phone) for credit and quotation.",
+            "Enter a client name, a phone number, or both for credit and quotation.",
             { error: true }
           );
           focusCartClientFields();
@@ -4117,9 +4114,9 @@
 
       const phone = (clientPhoneInput?.value || "").trim();
       const name = (clientNameInput?.value || "").trim();
-      if (!phone || !name) {
+      if (!phone && !name) {
         setCartStatus(
-          "Client details are optional for sales. Add them in the cart if you want this serial linked.",
+          "Client details are optional. Add a name, a phone number, or both if you want this serial linked.",
           { ok: true }
         );
       }

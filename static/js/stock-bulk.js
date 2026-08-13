@@ -2099,8 +2099,12 @@
   const heldCountEl = floatRoot?.querySelector("[data-stock-float-held-count]");
   const summaryEl = floatRoot?.querySelector("[data-stock-float-summary]");
   const linesEl = floatRoot?.querySelector("[data-stock-float-lines]");
-  const clearBtn = floatRoot?.querySelector("[data-stock-float-clear]");
+  const clearBtn =
+    form.querySelector("[data-stock-float-clear]") ||
+    floatRoot?.querySelector("[data-stock-float-clear]");
   const submitBtn = floatRoot?.querySelector("[data-stock-float-submit]");
+  const submitLabelEl = submitBtn?.querySelector("[data-stock-submit-label]");
+  const cartCountEl = form.querySelector("[data-buy-stock-count]");
   const readyCountEl = floatRoot?.querySelector("[data-stock-ready-count]");
   const readyUnitsEl = floatRoot?.querySelector("[data-stock-ready-units]");
   const usesCatalogApi = panel.hasAttribute("data-stock-catalog-api");
@@ -3191,7 +3195,7 @@
     }, 180);
   };
 
-  const detailsPanelLabel = simpleCatalog ? "Finish stock-in panel" : "submit panel";
+  const detailsPanelLabel = simpleCatalog ? "supplier section" : "submit panel";
 
   const blockSubmit = (message, focusEl) => {
     setApplyStatus(message, true);
@@ -3245,7 +3249,7 @@
     if (!ready.length) {
       return blockSubmit(
         simpleCatalog
-          ? "Add items first — search and add an item above."
+          ? "Add items first — search and tap Add."
           : "Add items first — enter quantity on at least one item.",
         panel.querySelector("[data-item-search]") ||
           panel.querySelector("[data-stock-qty]") ||
@@ -3352,7 +3356,7 @@
   const setLoginStatus = (message, { ok = false, error = false } = {}) => {
     if (!loginStatusEl) return;
     loginStatusEl.textContent =
-      message || "Enter an active staff member’s 6-digit ID to stock in.";
+      message || (simpleCatalog ? "" : "Enter an active staff member’s 6-digit ID to stock in.");
     loginStatusEl.classList.toggle("is-ok", ok);
     loginStatusEl.classList.toggle("is-error", error);
   };
@@ -3446,56 +3450,83 @@
     const hasReady = ready.length > 0;
     const busy = isCatalogBusy();
 
-    if (emptyEl) emptyEl.hidden = hasReady;
+    const parkedCount = parkedRoot()?.querySelectorAll("[data-item-row][data-item-id]").length || 0;
+    if (emptyEl) emptyEl.hidden = hasReady || (simpleCatalog && parkedCount > 0);
     if (heldEl) {
       heldEl.hidden = heldCount === 0;
       if (heldCountEl) heldCountEl.textContent = String(heldCount);
     }
     if (summaryEl) summaryEl.hidden = true;
-    if (linesEl) linesEl.hidden = !hasReady;
-    if (clearBtn) clearBtn.hidden = !hasReady;
+    if (linesEl) linesEl.hidden = simpleCatalog || !hasReady;
+    if (clearBtn) clearBtn.hidden = simpleCatalog ? parkedCount === 0 : !hasReady;
+    if (cartCountEl) {
+      cartCountEl.textContent = parkedCount ? String(parkedCount) : "";
+      cartCountEl.hidden = parkedCount === 0;
+    }
     if (applyPanel) applyPanel.hidden = !(mode === "in" || mode === "out");
     if (submitBtn) {
       // Keep clickable so incomplete fields can be focused on submit.
       submitBtn.disabled = !hasReady || busy;
       submitBtn.classList.toggle("is-catalog-busy", busy);
     }
+    if (submitLabelEl) {
+      submitLabelEl.textContent = hasReady
+        ? `Buy ${ready.length} item${ready.length === 1 ? "" : "s"}`
+        : "Buy items";
+    }
     if (readyCountEl) readyCountEl.textContent = String(ready.length);
     if (readyUnitsEl) readyUnitsEl.textContent = String(units);
 
     if (mode === "in") {
       if (!hasReady) {
-        const needs =
-          [
-            stockReq.in.supplier ? "supplier" : "",
-            stockReq.in.payment_status ? "payment" : "",
-            stockReq.in.buying_price ? "unit buying price" : "",
-          ].filter(Boolean);
-        setApplyStatus(
-          needs.length
-            ? `Add item quantities, then enter ${needs.join(", ")}.`
-            : "Add item quantities to stock in."
-        );
+        if (simpleCatalog) {
+          setApplyStatus(
+            parkedCount
+              ? "Enter qty and price on your items."
+              : "Search and add items to buy."
+          );
+        } else {
+          const needs =
+            [
+              stockReq.in.supplier ? "supplier" : "",
+              stockReq.in.payment_status ? "payment" : "",
+              stockReq.in.buying_price ? "unit buying price" : "",
+            ].filter(Boolean);
+          setApplyStatus(
+            needs.length
+              ? `Add item quantities, then enter ${needs.join(", ")}.`
+              : "Add item quantities to stock in."
+          );
+        }
       } else if (stockReq.in.supplier && !supplierCoreReady()) {
         setApplyStatus(
-          "Enter supplier phone and name — details apply to all ready items.",
+          simpleCatalog
+            ? "Enter supplier phone and name."
+            : "Enter supplier phone and name — details apply to all ready items.",
           true
         );
       } else if (!floatSupplierReady()) {
         setApplyStatus(
           stockReq.in.payment_status
-            ? "Select payment status before submitting."
-            : "Complete supplier details before submitting.",
+            ? "Select payment status."
+            : "Complete supplier details.",
           true
         );
       } else if (!ready.every((item) => rowHasBuyingPrice(item.row))) {
-        setApplyStatus("Enter unit buying price on every stocked item.", true);
+        setApplyStatus(
+          simpleCatalog ? "Enter a buying price on each item." : "Enter unit buying price on every stocked item.",
+          true
+        );
       } else if (requiresLoginCode && !loginVerified) {
         setApplyStatus(
-          "Item details complete. Enter a valid staff ID to stock in."
+          simpleCatalog ? "Enter staff ID to confirm." : "Item details complete. Enter a valid staff ID to stock in."
         );
       } else {
-        setApplyStatus(`Ready to stock in ${ready.length} item(s).`);
+        setApplyStatus(
+          simpleCatalog
+            ? `Ready to buy ${ready.length} item${ready.length === 1 ? "" : "s"}.`
+            : `Ready to stock in ${ready.length} item(s).`
+        );
       }
     } else if (mode === "out") {
       if (!hasReady) {

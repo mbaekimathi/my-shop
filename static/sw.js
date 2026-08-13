@@ -1,5 +1,5 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v8";
+const CACHE_VERSION = "myshop-v9";
 
 const PRECACHE = [
   "/static/css/main.css",

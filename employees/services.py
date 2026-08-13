@@ -50,6 +50,37 @@ def verify_active_employee_code(code: str):
     )
 
 
+def invalid_staff_code_message(code: str, *, shop=None) -> str:
+    """Explain why a cart/staff 6-digit code was rejected."""
+    code = (code or "").strip()
+    if not code:
+        return "Enter a valid active staff 6-digit ID."
+    if not EMPLOYEE_ID_RE.match(code):
+        return "Staff ID must be exactly 6 digits."
+
+    shop_code = str(getattr(shop, "login_code", "") or "").strip()
+    if shop_code and shop_code == code:
+        return (
+            "That's the shop branch code, not a staff ID. "
+            "Enter the employee's personal 6-digit ID."
+        )
+
+    profile = (
+        EmployeeProfile.objects.filter(employee_id=code)
+        .select_related("user")
+        .first()
+    )
+    if profile is None:
+        return "Not a valid active staff ID."
+    if profile.status == EmployeeStatus.PENDING_APPROVAL:
+        return "That staff ID is still pending approval."
+    if profile.status == EmployeeStatus.SUSPENDED:
+        return "That staff ID is suspended."
+    if not profile.user.is_active:
+        return "That staff account is disabled."
+    return "Not a valid active staff ID."
+
+
 def _employee_id_cache_key(code: str) -> str:
     return f"{EMPLOYEE_ID_CACHE_PREFIX}{code}"
 

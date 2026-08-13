@@ -54,14 +54,26 @@ export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
       method: "POST",
       headers: {
         Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
         "X-CSRFToken": csrfToken || "",
       },
       credentials: "same-origin",
       body,
     });
-    const data = await response.json().catch(() => ({}));
+    const contentType = response.headers.get("content-type") || "";
+    const data = contentType.includes("application/json")
+      ? await response.json().catch(() => ({}))
+      : {};
     if (!response.ok || !data.ok) {
-      return { ok: false, error: data.error || "Not a valid active staff ID." };
+      let error = data.error;
+      if (!error) {
+        if (response.status === 403 || response.status === 401) {
+          error = "Shop session expired. Refresh and sign in again.";
+        } else {
+          error = "Not a valid active staff ID.";
+        }
+      }
+      return { ok: false, error };
     }
     const employeeId = data.employee_id || normalized;
     const name = data.name || "staff";

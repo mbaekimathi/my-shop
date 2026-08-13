@@ -8,16 +8,26 @@
     root.getAttribute("data-expense-supplier-search-url") || "";
   const codeInput = form.querySelector("[data-expense-login-code]");
   const statusEl = form.querySelector("[data-expense-status]");
+  const hintEl = form.querySelector("[data-expense-hint]");
   const submitBtn = form.querySelector("[data-expense-submit]");
+  const submitLabelEl = form.querySelector("[data-expense-submit-label]");
   const supplierIdInput = form.querySelector("[data-expense-supplier-id]");
   const supplierNameInput = form.querySelector("[data-expense-supplier-name]");
   const supplierPhoneInput = form.querySelector("[data-expense-supplier-phone]");
   const supplierDialInput = form.querySelector("[data-expense-supplier-dial]");
   const supplierIsoInput = form.querySelector("[data-expense-supplier-iso]");
-  const categoryInput = form.querySelector("[data-expense-category]");
-  const nameInput = form.querySelector("[data-expense-name]");
-  const amountInput = form.querySelector("[data-expense-amount]");
   const paymentInput = form.querySelector("[data-expense-payment]");
+  const categoryDraft = form.querySelector("[data-expense-category-draft]");
+  const nameDraft = form.querySelector("[data-expense-name-draft]");
+  const amountDraft = form.querySelector("[data-expense-amount-draft]");
+  const addBtn = form.querySelector("[data-expense-add]");
+  const parkedWrap = form.querySelector("[data-expense-parked-wrap]");
+  const parkedRoot = form.querySelector("[data-expense-parked]");
+  const idleEl = form.querySelector("[data-expense-idle]");
+  const clearBtn = form.querySelector("[data-expense-clear]");
+  const countEl = form.querySelector("[data-expense-count]");
+  const categoryTemplate = form.querySelector("[data-expense-category-template]");
+  const printSupplier = form.hasAttribute("data-supplier-print");
 
   let verified = false;
   let verifyTimer = null;
@@ -50,19 +60,57 @@
     return digits.slice(0, 9);
   };
 
+  const escapeHtml = (value) =>
+    String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const categoryLabel = (value) => {
+    const match = [...(categoryDraft?.options || [])].find(
+      (opt) => opt.value === String(value || "")
+    );
+    return match?.textContent?.trim() || value || "Expense";
+  };
+
+  const categoryOptionsHtml = () =>
+    categoryTemplate?.innerHTML?.trim() || categoryDraft?.innerHTML || "";
+
   const setStatus = (message, { ok = false, error = false } = {}) => {
     if (!statusEl) return;
-    statusEl.textContent =
-      message ||
-      "Enter an active staff member’s 6-digit ID to record this expense.";
+    statusEl.textContent = message || "";
     statusEl.classList.toggle("is-ok", ok);
     statusEl.classList.toggle("is-error", error);
   };
 
-  const fieldsReady = () => {
-    const category = (categoryInput?.value || "").trim();
-    const name = (nameInput?.value || "").trim();
-    const amount = Number(amountInput?.value);
+  const setHint = (message, error = false) => {
+    if (!hintEl) return;
+    hintEl.textContent = message || "";
+    hintEl.hidden = !message;
+    hintEl.classList.toggle("is-error", Boolean(error && message));
+    hintEl.classList.toggle("is-ready", Boolean(message && !error));
+  };
+
+  const rows = () => [...(parkedRoot?.querySelectorAll("[data-expense-row]") || [])];
+
+  const rowValues = (row) => {
+    const category = (row.querySelector("[name='category']")?.value || "").trim();
+    const name = (row.querySelector("[name='name']")?.value || "").trim();
+    const amount = Number(row.querySelector("[name='amount']")?.value);
+    return {
+      category,
+      name,
+      amount,
+      ok:
+        Boolean(category && name) &&
+        Number.isFinite(amount) &&
+        amount > 0 &&
+        Number.isInteger(amount),
+    };
+  };
+
+  const supplierReady = () => {
     const payment = (paymentInput?.value || "").trim();
     const supplierName = (supplierNameInput?.value || "").trim();
     const dial = (supplierDialInput?.value || "").trim();
@@ -70,21 +118,126 @@
       supplierPhoneInput?.value || "",
       dial
     );
-    return Boolean(
-      category &&
-        name &&
-        Number.isFinite(amount) &&
-        amount > 0 &&
-        Number.isInteger(amount) &&
-        payment &&
-        supplierName &&
-        dial &&
-        phone.length === 9
-    );
+    return Boolean(payment && supplierName && dial && phone.length === 9);
   };
 
-  const syncSubmit = () => {
-    if (submitBtn) submitBtn.disabled = !(verified && fieldsReady());
+  const readyRows = () => rows().filter((row) => rowValues(row).ok);
+
+  const syncCart = () => {
+    const all = rows();
+    const ready = readyRows();
+    if (parkedWrap) parkedWrap.hidden = all.length === 0;
+    if (idleEl) idleEl.hidden = all.length > 0;
+    if (clearBtn) clearBtn.hidden = all.length === 0;
+    if (countEl) {
+      countEl.textContent = all.length ? String(all.length) : "";
+      countEl.hidden = all.length === 0;
+    }
+    if (submitLabelEl) {
+      if (!printSupplier) {
+        submitLabelEl.textContent = ready.length
+          ? `Record ${ready.length} expense${ready.length === 1 ? "" : "s"}`
+          : "Record expenses";
+      } else {
+        submitLabelEl.textContent = ready.length
+          ? `Record ${ready.length} & print`
+          : "Record & print";
+      }
+    }
+    if (!all.length) {
+      setHint("Add expenses, then enter supplier details.");
+    } else if (ready.length < all.length) {
+      setHint("Enter amount on every expense.", true);
+    } else if (!supplierReady()) {
+      setHint("Enter supplier phone, name, and payment.", true);
+    } else if (!verified) {
+      setHint("Enter staff ID to confirm.");
+    } else {
+      setHint(`Ready to record ${ready.length} expense${ready.length === 1 ? "" : "s"}.`);
+    }
+    if (submitBtn) {
+      submitBtn.disabled = !(verified && ready.length > 0 && supplierReady());
+    }
+  };
+
+  const clearDraft = ({ keepCategory = true } = {}) => {
+    if (!keepCategory && categoryDraft) categoryDraft.value = "";
+    if (nameDraft) nameDraft.value = "";
+    if (amountDraft) amountDraft.value = "";
+  };
+
+  const addExpense = () => {
+    const category = (categoryDraft?.value || "").trim();
+    const name = (nameDraft?.value || "").trim().toUpperCase();
+    const amount = Number(amountDraft?.value);
+    if (!category) {
+      setHint("Choose a category first.", true);
+      categoryDraft?.focus();
+      return false;
+    }
+    if (!name) {
+      setHint("Enter an expense name.", true);
+      nameDraft?.focus();
+      return false;
+    }
+    if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+      setHint("Enter a whole amount greater than zero.", true);
+      amountDraft?.focus();
+      return false;
+    }
+    if (!parkedRoot) return false;
+
+    const row = document.createElement("article");
+    row.className = "buy-stock-pick is-selected";
+    row.setAttribute("data-expense-row", "");
+    row.innerHTML = `
+      <div class="buy-stock-pick-head">
+        <div class="buy-stock-pick-copy">
+          <div class="buy-stock-pick-title">
+            <strong data-expense-row-title>${escapeHtml(name)}</strong>
+            <button
+              type="button"
+              class="buy-stock-pick-remove"
+              data-expense-remove
+              aria-label="Remove ${escapeHtml(name)}"
+              title="Remove"
+            >
+              <i data-lucide="x" aria-hidden="true"></i>
+            </button>
+          </div>
+          <p class="buy-stock-pick-meta">${escapeHtml(categoryLabel(category))}</p>
+        </div>
+      </div>
+      <div class="buy-stock-pick-inputs">
+        <div class="stock-item-inputs stock-item-inputs--matrix">
+          <div class="stock-in-field-row buy-stock-pick-fields shop-expense-row-fields">
+            <label class="stock-inline-field">
+              <span>Category</span>
+              <select name="category">${categoryOptionsHtml()}</select>
+            </label>
+            <label class="stock-inline-field">
+              <span>Amount</span>
+              <input
+                type="number"
+                name="amount"
+                min="1"
+                step="1"
+                inputmode="numeric"
+                value="${amount}"
+              >
+            </label>
+          </div>
+          <input type="hidden" name="name" value="${escapeHtml(name)}">
+        </div>
+      </div>`;
+    const select = row.querySelector("[name='category']");
+    if (select) select.value = category;
+    parkedRoot.insertBefore(row, parkedRoot.firstElementChild);
+    if (window.lucide?.createIcons) window.lucide.createIcons();
+    clearDraft();
+    nameDraft?.focus();
+    syncCart();
+    return true;
   };
 
   const verifyCode = async () => {
@@ -97,13 +250,13 @@
           ? `Enter ${6 - code.length} more digit${6 - code.length === 1 ? "" : "s"}.`
           : ""
       );
-      syncSubmit();
+      syncCart();
       return false;
     }
     if (!/^\d{6}$/.test(code)) {
       verified = false;
       setStatus("Staff ID must be exactly 6 digits.", { error: true });
-      syncSubmit();
+      syncCart();
       return false;
     }
     if (!verifyUrl) {
@@ -111,7 +264,7 @@
       setStatus("Verification is unavailable. Refresh and try again.", {
         error: true,
       });
-      syncSubmit();
+      syncCart();
       return false;
     }
 
@@ -126,7 +279,7 @@
       if (!data.ok) {
         verified = false;
         setStatus(data.error || "Not a valid active staff ID.", { error: true });
-        syncSubmit();
+        syncCart();
         return false;
       }
       verified = true;
@@ -135,13 +288,13 @@
           `Verified: ${data.name || "staff"} (${data.employee_id || code}).`,
         { ok: true }
       );
-      syncSubmit();
+      syncCart();
       return true;
     } catch (_) {
       if (current !== verifySeq) return false;
       verified = false;
       setStatus("Could not verify staff ID. Try again.", { error: true });
-      syncSubmit();
+      syncCart();
       return false;
     }
   };
@@ -180,10 +333,10 @@
       }
     }
     form.querySelectorAll("[data-supplier-search-root]").forEach(hideSuggest);
-    syncSubmit();
+    syncCart();
   };
 
-  const renderSuggest = (wrap, results, { by = "name" } = {}) => {
+  const renderSuggest = (wrap, results) => {
     const suggest = wrap?.querySelector("[data-supplier-suggest]");
     if (!suggest) return;
     suggest.innerHTML = "";
@@ -223,7 +376,7 @@
       if (supplierNameInput) supplierNameInput.value = query;
     }
     if (supplierIdInput) supplierIdInput.value = "";
-    syncSubmit();
+    syncCart();
 
     if (
       (by === "name" && query.length < 2) ||
@@ -244,7 +397,7 @@
       const data = await response.json();
       if (current !== searchSeq) return;
       const results = Array.isArray(data.results) ? data.results : [];
-      renderSuggest(wrap, results, { by });
+      renderSuggest(wrap, results);
     } catch (_) {
       /* ignore network errors while typing */
     }
@@ -255,7 +408,6 @@
     searchTimer = window.setTimeout(() => runSupplierSearch(input), 220);
   };
 
-  // Country picker scoped to this expense form (avoids clashing with buy-stock).
   const countryMenu = root.querySelector("[data-stock-country-menu]");
   const countrySearch = countryMenu?.querySelector("[data-stock-country-search]");
   const countryOptions = [
@@ -297,7 +449,7 @@
         dial
       );
     }
-    syncSubmit();
+    syncCart();
   };
 
   const openCountryMenu = (phoneRoot, trigger) => {
@@ -366,21 +518,64 @@
     form.querySelectorAll("[data-supplier-search-root]").forEach(hideSuggest);
   });
 
-  [
-    categoryInput,
-    nameInput,
-    amountInput,
-    paymentInput,
-    supplierNameInput,
-    supplierPhoneInput,
-  ].forEach((el) => {
-    el?.addEventListener("input", syncSubmit);
-    el?.addEventListener("change", syncSubmit);
+  addBtn?.addEventListener("click", (event) => {
+    event.preventDefault();
+    addExpense();
+  });
+
+  [categoryDraft, nameDraft, amountDraft].forEach((el) => {
+    el?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      if (el === categoryDraft && !(nameDraft?.value || "").trim()) {
+        nameDraft?.focus();
+        return;
+      }
+      if (el === nameDraft && !(amountDraft?.value || "").trim()) {
+        amountDraft?.focus();
+        return;
+      }
+      addExpense();
+    });
+  });
+
+  parkedRoot?.addEventListener("click", (event) => {
+    const removeBtn = event.target.closest("[data-expense-remove]");
+    if (!removeBtn) return;
+    event.preventDefault();
+    removeBtn.closest("[data-expense-row]")?.remove();
+    syncCart();
+    nameDraft?.focus();
+  });
+
+  parkedRoot?.addEventListener("input", (event) => {
+    const row = event.target.closest("[data-expense-row]");
+    if (!row) return;
+    if (event.target.matches("[name='name']")) {
+      const title = row.querySelector("[data-expense-row-title]");
+      if (title) title.textContent = event.target.value || "Expense";
+    }
+    if (event.target.matches("[name='category']")) {
+      const meta = row.querySelector(".buy-stock-pick-meta");
+      if (meta) meta.textContent = categoryLabel(event.target.value);
+    }
+    syncCart();
+  });
+
+  clearBtn?.addEventListener("click", () => {
+    if (parkedRoot) parkedRoot.innerHTML = "";
+    syncCart();
+    nameDraft?.focus();
+  });
+
+  [paymentInput, supplierNameInput, supplierPhoneInput].forEach((el) => {
+    el?.addEventListener("input", syncCart);
+    el?.addEventListener("change", syncCart);
   });
 
   codeInput?.addEventListener("input", () => {
     verified = false;
-    syncSubmit();
+    syncCart();
     window.clearTimeout(verifyTimer);
     verifyTimer = window.setTimeout(() => {
       verifyCode();
@@ -391,12 +586,24 @@
   });
 
   form.addEventListener("submit", async (event) => {
-    if (!fieldsReady()) {
+    const ready = readyRows();
+    if (!ready.length) {
       event.preventDefault();
-      setStatus("Fill all expense and supplier fields first.", { error: true });
+      setHint("Add expenses first — tap Add.", true);
+      nameDraft?.focus();
       return;
     }
-    const printSupplier = form.hasAttribute("data-supplier-print");
+    if (ready.length < rows().length) {
+      event.preventDefault();
+      setHint("Enter amount on every expense.", true);
+      return;
+    }
+    if (!supplierReady()) {
+      event.preventDefault();
+      setHint("Enter supplier phone, name, and payment.", true);
+      (supplierPhoneInput?.value ? supplierNameInput : supplierPhoneInput)?.focus();
+      return;
+    }
     if (!verified) {
       event.preventDefault();
       const ok = await verifyCode();
@@ -417,7 +624,7 @@
 
     event.preventDefault();
     if (submitBtn) submitBtn.disabled = true;
-    setStatus("Recording expense and printing supplier receipt…");
+    setStatus("Recording expenses and printing supplier receipt…");
     try {
       const body = new FormData(form);
       body.set("ajax", "1");
@@ -455,7 +662,7 @@
   });
 
   if (window.initUppercaseInputs) window.initUppercaseInputs(form);
-  syncSubmit();
+  syncCart();
   if ((codeInput?.value || "").trim().length === 6) {
     verifyCode();
   }

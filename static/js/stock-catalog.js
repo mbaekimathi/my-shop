@@ -1028,7 +1028,7 @@
             data-stock-item-toggle
             aria-label="Add ${escapeHtml(name)}"
           >
-            <span>Add item</span>
+            <span>Add</span>
             <i data-lucide="plus" aria-hidden="true"></i>
           </button>
         </div>`;
@@ -1376,14 +1376,14 @@
     listRoot.innerHTML = hasParked
       ? `
       <div class="buy-stock-simple-empty buy-stock-simple-empty--compact" data-stock-catalog-idle>
-        <p>Search or browse to add another item</p>
+        <p>Search to add another item</p>
       </div>`
       : `
       <div class="buy-stock-simple-empty buy-stock-simple-empty-card" data-stock-catalog-idle>
         <span class="buy-stock-simple-empty-icon" aria-hidden="true">
           <i data-lucide="package-search"></i>
         </span>
-        <p>Search or browse for an item to begin</p>
+        <p>Type a name to add items</p>
       </div>`;
     if (moreWrap) moreWrap.hidden = true;
     if (noResults) noResults.hidden = true;
