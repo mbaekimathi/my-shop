@@ -328,7 +328,14 @@ def build_client_credit_audit_trail(*, profile, client_id: int) -> dict:
 
     shop_ids = [shop.pk for shop in actionable_shops_for_profile(profile)]
     client = Client.objects.filter(pk=client_id).first()
-    if client is None:
+    if client is None or not shop_ids:
+        raise Http404("Client not found.")
+
+    if not (
+        ShopReceipt.objects.filter(client_id=client.pk, shop_id__in=shop_ids)
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .exists()
+    ):
         raise Http404("Client not found.")
 
     ensure_client_credit_audit_backfill(client_id=client.pk, shop_ids=shop_ids)

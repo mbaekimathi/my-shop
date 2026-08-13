@@ -25,6 +25,11 @@ def normalize_submodule(module_slug: str, submodule_slug: str) -> str:
     slug = (submodule_slug or "").strip()
     if module_slug == "analytics" and slug in {"overview", ""}:
         return "view"
+    if module_slug == "stock-management" and slug in {
+        "serial-movements",
+        "return-clients",
+    }:
+        return "serials"
     return slug
 
 
@@ -106,8 +111,8 @@ def permission_denied_response(
 ):
     text = message or "You do not have permission to perform this action."
     if as_json:
-        return JsonResponse({"ok": False, "error": text}, status=403)
-    messages.error(request, text)
+        return JsonResponse({"ok": False, "error": text, "code": "unauthorized"}, status=403)
+    messages.error(request, text, extra_tags="unauthorized")
     if profile is not None:
         return redirect_to_role_home(profile)
     from django.shortcuts import redirect

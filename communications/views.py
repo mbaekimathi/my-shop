@@ -17,6 +17,7 @@ from employees.access import (
 )
 from employees.module_permissions import (
     employee_may_any,
+    module_capabilities,
     permission_denied_response,
     require_module_permission,
 )
@@ -43,7 +44,7 @@ from .services import (
 )
 
 
-def _guard(request, role_segment, *, as_json=False):
+def _guard(request, role_segment, *, as_json=False, submodule="view"):
     profile = get_profile_for_request(request)
     if role_from_url_segment(role_segment) is None:
         raise Http404("Role portal not found.")
@@ -70,7 +71,7 @@ def _guard(request, role_segment, *, as_json=False):
             as_json=as_json,
         )
     denied = require_module_permission(
-        request, profile, "whatsapp", "view", as_json=as_json
+        request, profile, "whatsapp", submodule, as_json=as_json
     )
     if denied:
         return None, denied
@@ -194,6 +195,9 @@ def _filters_from_request(request) -> dict:
 
 def communications_dashboard(request, profile, meta, module, page_sidebar=None):
     """Main /…/communications/ page (called from workspace_module)."""
+    denied = require_module_permission(request, profile, "whatsapp", "view")
+    if denied:
+        return denied
     segment = role_url_segment(profile.role)
     bridge = fetch_bridge_status()
     scoped = constrain_filters_to_profile({}, profile)
@@ -210,7 +214,9 @@ def communications_dashboard(request, profile, meta, module, page_sidebar=None):
         "categories": list_product_categories(),
         "audience_types": AUDIENCE_TYPE_CHOICES,
         "audience_summary": audience_summary(
-            shop_id=scoped.get("shop_id"), shop_ids=scoped.get("shop_ids")
+            shop_id=scoped.get("shop_id"),
+            shop_ids=scoped.get("shop_ids"),
+            shop_scoped=scoped.get("shop_scoped"),
         ),
         "spend_tiers": SPEND_TIER_CHOICES,
         "transaction_mins": TRANSACTION_MIN_CHOICES,
@@ -219,6 +225,7 @@ def communications_dashboard(request, profile, meta, module, page_sidebar=None):
         "recent_campaigns": recent_campaigns(8),
         "reply_unread_count": unread_reply_count(),
         "comms_api": _api_urls(segment),
+        "module_permissions": module_capabilities(profile, "whatsapp"),
     }
     return render(request, "employees/communications.html", context)
 
@@ -242,7 +249,7 @@ def communications_api_status(request, role_segment):
 @active_employee_required
 @require_http_methods(["GET", "POST"])
 def communications_api_inbox(request, role_segment):
-    profile, deny = _guard(request, role_segment, as_json=True)
+    profile, deny = _guard(request, role_segment, as_json=True, submodule="inbox")
     if deny:
         return deny
     mark_read = request.method == "POST" or request.GET.get("mark_read") in {
@@ -256,7 +263,7 @@ def communications_api_inbox(request, role_segment):
 @active_employee_required
 @require_GET
 def communications_api_analytics(request, role_segment):
-    profile, deny = _guard(request, role_segment, as_json=True)
+    profile, deny = _guard(request, role_segment, as_json=True, submodule="analytics")
     if deny:
         return deny
     return JsonResponse(analytics_payload())
@@ -265,7 +272,7 @@ def communications_api_analytics(request, role_segment):
 @active_employee_required
 @require_POST
 def communications_api_logout(request, role_segment):
-    profile, deny = _guard(request, role_segment, as_json=True)
+    profile, deny = _guard(request, role_segment, as_json=True, submodule="connect")
     if deny:
         return deny
     result = logout_bridge()
@@ -275,7 +282,7 @@ def communications_api_logout(request, role_segment):
 @active_employee_required
 @require_GET
 def communications_api_recipients(request, role_segment):
-    profile, deny = _guard(request, role_segment, as_json=True)
+    profile, deny = _guard(request, role_segment, as_json=True, submodule="send")
     if deny:
         return deny
     filters = constrain_filters_to_profile(_filters_from_request(request), profile)
@@ -286,7 +293,7 @@ def communications_api_recipients(request, role_segment):
 @active_employee_required
 @require_http_methods(["GET", "POST"])
 def communications_api_preview(request, role_segment):
-    profile, deny = _guard(request, role_segment, as_json=True)
+    profile, deny = _guard(request, role_segment, as_json=True, submodule="send")
     if deny:
         return deny
     if request.method == "POST" and request.content_type and "application/json" in (
@@ -326,7 +333,7 @@ def communications_api_preview(request, role_segment):
 @active_employee_required
 @require_POST
 def communications_api_send(request, role_segment):
-    profile, deny = _guard(request, role_segment, as_json=True)
+    profile, deny = _guard(request, role_segment, as_json=True, submodule="send")
     if deny:
         return deny
 
@@ -383,7 +390,7 @@ def communications_api_send(request, role_segment):
 @active_employee_required
 @require_GET
 def communications_api_campaign(request, role_segment, campaign_id):
-    profile, deny = _guard(request, role_segment, as_json=True)
+    profile, deny = _guard(request, role_segment, as_json=True, submodule="send")
     if deny:
         return deny
     campaign = BroadcastCampaign.objects.filter(pk=campaign_id).first()

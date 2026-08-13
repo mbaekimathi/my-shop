@@ -99,6 +99,7 @@ def serial_search_api(request):
 @require_GET
 def serial_in_stock_check_api(request):
     """Live check: is this serial already available for stock-in?"""
+    profile = get_profile_for_request(request)
     item_id = (request.GET.get("item_id") or "").strip()
     serials = request.GET.getlist("serial") or []
     if not serials:
@@ -106,6 +107,9 @@ def serial_in_stock_check_api(request):
         if raw:
             serials = [raw]
     found = check_serials_already_in_stock(item_id=item_id, serials=serials)
+    allowed_shop_ids = {
+        shop.pk for shop in actionable_shops_for_profile(profile)
+    } if profile is not None else set()
     ordered = []
     seen = set()
     for raw in serials:
@@ -114,11 +118,15 @@ def serial_in_stock_check_api(request):
             continue
         seen.add(serial)
         hit = found.get(serial)
+        shop_name = (hit or {}).get("shop_name") or ""
+        hit_shop_id = (hit or {}).get("shop_id")
+        if hit and allowed_shop_ids and hit_shop_id not in allowed_shop_ids:
+            shop_name = "Another shop"
         ordered.append(
             {
                 "serial": serial,
                 "in_stock": bool(hit),
-                "shop_name": (hit or {}).get("shop_name") or "",
+                "shop_name": shop_name,
             }
         )
         if len(ordered) >= 12:
@@ -364,6 +372,7 @@ def item_management_catalog(request, role_segment):
         page=request.GET.get("page") or 1,
         page_size=request.GET.get("page_size") or 48,
         sort=request.GET.get("sort") or "category",
+        shops=_pricing_shops_for_profile(profile),
     )
     return JsonResponse(payload)
 
@@ -1693,7 +1702,7 @@ def stock_low_stock_settings(request, profile, meta, module):
     """Per-item low stock notification thresholds."""
     from django.db.models import Sum
 
-    from employees.models import EmployeeRole
+    from employees.module_permissions import employee_may
     from employees.workspace import sidebar_for_stock_management, stock_management_url
 
     from .models import Item, ShopStock
@@ -1703,10 +1712,7 @@ def stock_low_stock_settings(request, profile, meta, module):
         active_mode="low-stock",
         profile=profile,
     )
-    can_edit = profile.role in (
-        EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.IT_SUPPORT,
-    )
+    can_edit = employee_may(profile, "stock-management", "low-stock")
     wants_json = (
         "application/json" in (request.headers.get("Accept") or "").lower()
         or request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -1777,11 +1783,14 @@ def stock_low_stock_settings(request, profile, meta, module):
             item.save(
                 update_fields=["low_stock_notify", "low_stock_threshold", "updated_at"]
             )
+            allocated_ids = [
+                shop.pk for shop in actionable_shops_for_profile(profile)
+            ]
+            stock_for_item = ShopStock.objects.filter(item=item)
+            if allocated_ids:
+                stock_for_item = stock_for_item.filter(shop_id__in=allocated_ids)
             total_units = (
-                ShopStock.objects.filter(item=item).aggregate(total=Sum("quantity"))[
-                    "total"
-                ]
-                or 0
+                stock_for_item.aggregate(total=Sum("quantity"))["total"] or 0
             )
             is_low = bool(notify and total_units <= threshold)
             if wants_json:
@@ -1803,9 +1812,18 @@ def stock_low_stock_settings(request, profile, meta, module):
         messages.error(request, "Unknown action.")
         return redirect(stock_management_url(profile.role, "low-stock"))
 
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+
+    allocated_shops = actionable_shops_for_profile(profile)
+    allocated_ids = [shop.pk for shop in allocated_shops]
+    stock_qs = ShopStock.objects.all()
+    if allocated_ids:
+        stock_qs = stock_qs.filter(shop_id__in=allocated_ids)
+    elif getattr(profile, "role", None) in SHOP_ASSIGNABLE_ROLES:
+        stock_qs = stock_qs.none()
     stock_totals = {
         row["item_id"]: int(row["total"] or 0)
-        for row in ShopStock.objects.values("item_id").annotate(total=Sum("quantity"))
+        for row in stock_qs.values("item_id").annotate(total=Sum("quantity"))
     }
     low_stock_items = []
     notify_count = 0
@@ -1844,7 +1862,7 @@ def stock_low_stock_settings(request, profile, meta, module):
 
 def stock_settings(request, profile, meta, module):
     """Configure which stock in/out/request fields are compulsory."""
-    from employees.models import EmployeeRole
+    from employees.module_permissions import employee_may
     from employees.workspace import sidebar_for_stock_management, stock_management_url
     from shops.services import (
         get_company_stock_settings,
@@ -1857,10 +1875,7 @@ def stock_settings(request, profile, meta, module):
         active_mode="settings",
         profile=profile,
     )
-    can_edit = profile.role in (
-        EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.IT_SUPPORT,
-    )
+    can_edit = employee_may(profile, "stock-management", "settings")
     wants_json = (
         "application/json" in (request.headers.get("Accept") or "").lower()
         or request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -2030,7 +2045,7 @@ def stock_settings(request, profile, meta, module):
 @require_http_methods(["GET", "POST"])
 def stock_management(request, profile, meta, module, page_sidebar):
     from employees.models import EmployeeRole
-    from employees.module_permissions import require_module_permission
+    from employees.module_permissions import employee_may, require_module_permission
 
     from .models import ShopStock
 
@@ -2051,16 +2066,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
         mode = "view"
 
     # Return-clients / serial-movements share the serials permission key.
-    # Settings / low-stock are reference pages — anyone who can view stock may open them.
-    permission_mode = (
-        "serials"
-        if mode in ("return-clients", "serial-movements")
-        else "view"
-        if mode in ("settings", "low-stock")
-        else mode
-    )
     denied = require_module_permission(
-        request, profile, "stock-management", permission_mode
+        request, profile, "stock-management", mode
     )
     if denied is not None:
         return denied
@@ -2405,6 +2412,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
                 "employees:stock_management_print",
                 kwargs={"role_segment": role_url_segment(profile.role)},
             ),
+            "can_print_stock": employee_may(profile, "stock-management", "print"),
         },
     )
 
@@ -3522,7 +3530,7 @@ def stock_management_print(request, role_segment):
     if role_url_segment(profile.role) != role_segment:
         raise Http404("Not found.")
 
-    denied = require_module_permission(request, profile, "stock-management", "view")
+    denied = require_module_permission(request, profile, "stock-management", "print")
     if denied is not None:
         return denied
 

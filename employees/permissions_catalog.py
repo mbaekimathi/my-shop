@@ -22,6 +22,9 @@ PERMISSION_MODULES = (
             {"slug": "serials", "label": "Serials"},
             {"slug": "movements", "label": "Stock Movement"},
             {"slug": "report", "label": "Stock Report"},
+            {"slug": "settings", "label": "Stock Settings"},
+            {"slug": "low-stock", "label": "Low Stock Alerts"},
+            {"slug": "print", "label": "Print stock"},
         ),
     },
     {
@@ -97,6 +100,10 @@ PERMISSION_MODULES = (
         "summary": "Personal WhatsApp broadcasts, inbox replies, and send analytics.",
         "submodules": (
             {"slug": "view", "label": "View WhatsApp"},
+            {"slug": "send", "label": "Send broadcasts"},
+            {"slug": "inbox", "label": "Inbox replies"},
+            {"slug": "analytics", "label": "Send analytics"},
+            {"slug": "connect", "label": "Connect / disconnect"},
         ),
     },
     {

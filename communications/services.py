@@ -255,6 +255,7 @@ def parse_filters(raw: dict | None) -> dict[str, Any]:
         "last_purchase_days": last_purchase_days,
         "shop_id": shop_id,
         "shop_ids": shop_ids,
+        "shop_scoped": bool(raw.get("shop_scoped")),
         "search": search,
         "client_ids": client_ids,
         "destinations": destinations,
@@ -294,6 +295,7 @@ def _base_receipt_qs(
 
 def constrain_filters_to_profile(filters: dict | None, profile) -> dict[str, Any]:
     """Restrict WhatsApp audience shop_id / shop_ids to allocated shops."""
+    from employees.models import SHOP_ASSIGNABLE_ROLES
     from items.services import actionable_shops_for_profile
 
     parsed = parse_filters(filters)
@@ -304,6 +306,7 @@ def constrain_filters_to_profile(filters: dict | None, profile) -> dict[str, Any
         parsed["shop_ids"] = []
     else:
         parsed["shop_ids"] = allowed
+    parsed["shop_scoped"] = getattr(profile, "role", None) in SHOP_ASSIGNABLE_ROLES
     return parsed
 
 
@@ -332,13 +335,21 @@ def _client_ids_for_categories(
 
 
 def _last_product_for_clients(
-    client_ids: list[int], *, kinds: list[str]
+    client_ids: list[int],
+    *,
+    kinds: list[str],
+    shop_id: int | None = None,
+    shop_ids: list[int] | None = None,
 ) -> dict[int, str]:
     if not client_ids:
         return {}
     receipts = (
-        ShopReceipt.objects.filter(client_id__in=client_ids, kind__in=kinds)
-        .exclude(status=ShopReceiptStatus.CANCELLED)
+        _base_receipt_qs(
+            kinds=kinds,
+            shop_id=shop_id,
+            shop_ids=shop_ids,
+        )
+        .filter(client_id__in=client_ids)
         .order_by("client_id", "-created_at")
         .prefetch_related("lines")
     )
@@ -355,17 +366,21 @@ def _last_product_for_clients(
 
 
 def _categories_for_clients(
-    client_ids: list[int], *, kinds: list[str]
+    client_ids: list[int],
+    *,
+    kinds: list[str],
+    shop_id: int | None = None,
+    shop_ids: list[int] | None = None,
 ) -> dict[int, list[str]]:
     if not client_ids:
         return {}
     rows = (
-        ShopReceipt.objects.filter(
-            client_id__in=client_ids,
-            kind__in=kinds,
-            lines__item__isnull=False,
+        _base_receipt_qs(
+            kinds=kinds,
+            shop_id=shop_id,
+            shop_ids=shop_ids,
         )
-        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .filter(client_id__in=client_ids, lines__item__isnull=False)
         .values_list("client_id", "lines__item__category")
         .distinct()
     )
@@ -409,7 +424,9 @@ def _group_counts_for_audience(
 
 
 def audience_summary(
-    shop_id: int | None = None, shop_ids: list[int] | None = None
+    shop_id: int | None = None,
+    shop_ids: list[int] | None = None,
+    shop_scoped: bool = False,
 ) -> list[dict[str, Any]]:
     """Counts for the Sales / Credits / Quotations / Leads / WhatsApp tabs."""
     summary = []
@@ -425,8 +442,20 @@ def audience_summary(
             )
             continue
         if value == AUDIENCE_LEADS:
+            leads_qs = Client.objects.all()
+            if shop_scoped:
+                lead_ids = _base_receipt_qs(
+                    kinds=[
+                        ShopReceiptKind.SALE,
+                        ShopReceiptKind.CREDIT,
+                        ShopReceiptKind.QUOTATION,
+                    ],
+                    shop_id=shop_id,
+                    shop_ids=shop_ids,
+                ).values_list("client_id", flat=True)
+                leads_qs = leads_qs.filter(pk__in=lead_ids)
             with_phone = 0
-            for phone in Client.objects.values_list(
+            for phone in leads_qs.values_list(
                 "phone_normalized", "phone_number"
             ):
                 if _normalize_phone(phone[0] or phone[1] or ""):
@@ -545,6 +574,8 @@ def _query_receipt_audience(f: dict[str, Any]) -> list[Recipient]:
         selected_ids=set(f.get("client_ids") or []),
         apply_selected=False,
         audience_meta=f["audience_type"],
+        shop_id=f.get("shop_id"),
+        shop_ids=f.get("shop_ids"),
     )
 
 
@@ -554,6 +585,13 @@ def _query_leads_audience(f: dict[str, Any]) -> list[Recipient]:
     clients_qs = Client.objects.all().only(
         "id", "full_name", "phone_number", "phone_normalized"
     )
+    if f.get("shop_scoped"):
+        lead_ids = _base_receipt_qs(
+            kinds=kinds,
+            shop_id=f.get("shop_id"),
+            shop_ids=f.get("shop_ids"),
+        ).values_list("client_id", flat=True)
+        clients_qs = clients_qs.filter(pk__in=lead_ids)
 
     if f["categories"]:
         allowed = _client_ids_for_categories(
@@ -640,6 +678,8 @@ def _query_leads_audience(f: dict[str, Any]) -> list[Recipient]:
         row_meta=row_meta,
         kinds=kinds,
         audience_meta=AUDIENCE_LEADS,
+        shop_id=f.get("shop_id"),
+        shop_ids=f.get("shop_ids"),
     )
 
 
@@ -652,6 +692,8 @@ def _build_recipients(
     selected_ids: set[int],
     apply_selected: bool,
     audience_meta: str,
+    shop_id: int | None = None,
+    shop_ids: list[int] | None = None,
 ) -> list[Recipient]:
     clients_qs = Client.objects.filter(pk__in=client_ids).only(
         "id", "full_name", "phone_number", "phone_normalized"
@@ -670,6 +712,8 @@ def _build_recipients(
         row_meta=row_meta,
         kinds=kinds,
         audience_meta=audience_meta,
+        shop_id=shop_id,
+        shop_ids=shop_ids,
     )
 
 
@@ -679,10 +723,16 @@ def _build_recipients_from_clients(
     row_meta: dict[int, dict],
     kinds: list[str],
     audience_meta: str,
+    shop_id: int | None = None,
+    shop_ids: list[int] | None = None,
 ) -> list[Recipient]:
     client_ids = [c.pk for c in clients]
-    last_products = _last_product_for_clients(client_ids, kinds=kinds)
-    categories_map = _categories_for_clients(client_ids, kinds=kinds)
+    last_products = _last_product_for_clients(
+        client_ids, kinds=kinds, shop_id=shop_id, shop_ids=shop_ids
+    )
+    categories_map = _categories_for_clients(
+        client_ids, kinds=kinds, shop_id=shop_id, shop_ids=shop_ids
+    )
     recipients: list[Recipient] = []
     for client in clients:
         phone = _normalize_phone(client.phone_normalized or client.phone_number)

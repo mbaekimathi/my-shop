@@ -19,7 +19,8 @@
     <div class="workspace-toast" role="status" aria-live="polite" data-workspace-toast>
       <ul class="message-list workspace-messages">
         {% for message in messages %}
-        {% if 'error' in message.tags %}
+        {% if 'unauthorized' in message.tags %}
+        {% elif 'error' in message.tags %}
         <li class="workspace-toast__item workspace-toast__item--error" data-toast-duration="4000">
           <span class="workspace-toast__icon" aria-hidden="true">
             <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
@@ -58,6 +59,7 @@
     {% include "employees/partials/workspace_footer.html" %}
   </div>
 </div>
+{% include "employees/partials/unauthorized_popup.html" %}
 {% block workspace_overlays %}
 {% if shop_day_modal %}
 {% include "shops/partials/shop_day_modal.html" %}
@@ -71,6 +73,7 @@
 {% if shop_day_modal %}
 <script src="{% static 'js/my-shop-day-prompt.js' %}?v=3"></script>
 {% endif %}
+<script src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
 <script>
   (() => {
     const root = document.querySelector("[data-workspace]");
@@ -217,14 +220,18 @@
     const toast = document.querySelector("[data-workspace-toast]");
     if (toast) {
       const items = [...toast.querySelectorAll("[data-toast-duration]")];
-      const duration = Math.max(
-        ...items.map((el) => Number(el.dataset.toastDuration) || 1000),
-        1000
-      );
-      window.setTimeout(() => {
-        toast.classList.add("is-hiding");
-        window.setTimeout(() => toast.remove(), 220);
-      }, duration);
+      if (!items.length) {
+        toast.remove();
+      } else {
+        const duration = Math.max(
+          ...items.map((el) => Number(el.dataset.toastDuration) || 1000),
+          1000
+        );
+        window.setTimeout(() => {
+          toast.classList.add("is-hiding");
+          window.setTimeout(() => toast.remove(), 220);
+        }, duration);
+      }
     }
   })();
 </script>

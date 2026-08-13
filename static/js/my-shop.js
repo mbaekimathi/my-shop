@@ -1299,12 +1299,19 @@
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) {
+          const errorText = data.error || "Could not respond to this request.";
+          if (
+            data.code === "unauthorized" ||
+            window.MyshopUnauthorized?.isUnauthorizedText?.(errorText)
+          ) {
+            window.MyshopUnauthorized?.show(errorText);
+          }
           if (status) {
-            status.textContent = data.error || "Could not respond to this request.";
+            status.textContent = errorText;
             status.classList.add("is-error");
             status.classList.remove("is-ok");
           } else {
-            window.alert(data.error || "Could not respond to this request.");
+            window.alert(errorText);
           }
           buttons.forEach((btn) => {
             btn.disabled = form.dataset.codeVerified !== "1";
@@ -2703,7 +2710,14 @@
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) {
-          setCartStatus(data.error || "Could not complete the receipt.", {
+          const errorText = data.error || "Could not complete the receipt.";
+          if (
+            data.code === "unauthorized" ||
+            window.MyshopUnauthorized?.isUnauthorizedText?.(errorText)
+          ) {
+            window.MyshopUnauthorized?.show(errorText);
+          }
+          setCartStatus(errorText, {
             error: true,
           });
           return;

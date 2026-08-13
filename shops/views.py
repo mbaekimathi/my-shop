@@ -15,6 +15,7 @@ from employees.access import (
     get_profile_for_request,
     role_home_url_name,
 )
+from employees.models import SHOP_ASSIGNABLE_ROLES
 from employees.countries import COUNTRY_DIAL_CODES
 from employees.throttle import rate_limit
 from employees.workspace import sidebar_for_my_shop
@@ -112,6 +113,20 @@ def _validation_errors(exc: ValidationError) -> list:
     return exc.messages if hasattr(exc, "messages") else [str(exc)]
 
 
+def _shop_management_in_scope(profile, shop) -> bool:
+    """Shop-scoped staff may only manage shops allocated to them."""
+    if profile is None or getattr(profile, "role", None) not in SHOP_ASSIGNABLE_ROLES:
+        return True
+    return profile.assigned_shops.filter(pk=shop.pk).exists()
+
+
+def _shops_for_shop_management(profile):
+    qs = Shop.objects.select_related("created_by__user").order_by("name")
+    if getattr(profile, "role", None) in SHOP_ASSIGNABLE_ROLES:
+        return list(qs.filter(assigned_employees=profile))
+    return list(qs)
+
+
 def _wants_json_response(request) -> bool:
     accept = (request.headers.get("Accept") or "").lower()
     requested_with = (request.headers.get("X-Requested-With") or "").lower()
@@ -158,6 +173,9 @@ def shop_management(request, profile, meta, module, page_sidebar):
 
         elif action == "edit":
             edit_shop = get_object_or_404(Shop, pk=shop_id)
+            if not _shop_management_in_scope(profile, edit_shop):
+                messages.error(request, "You are not allocated to that shop.")
+                return redirect(request.path)
             form_data = _form_data_from_post(request.POST)
             try:
                 update_shop(edit_shop, request.POST, request.FILES)
@@ -170,6 +188,9 @@ def shop_management(request, profile, meta, module, page_sidebar):
 
         elif action == "toggle_suspend":
             shop = get_object_or_404(Shop, pk=shop_id)
+            if not _shop_management_in_scope(profile, shop):
+                messages.error(request, "You are not allocated to that shop.")
+                return redirect(request.path)
             toggle_shop_suspended(shop)
             state = "suspended" if shop.is_suspended else "unsuspended"
             messages.success(request, f"Shop “{shop.name}” {state}.")
@@ -177,6 +198,9 @@ def shop_management(request, profile, meta, module, page_sidebar):
 
         elif action == "toggle_hide":
             shop = get_object_or_404(Shop, pk=shop_id)
+            if not _shop_management_in_scope(profile, shop):
+                messages.error(request, "You are not allocated to that shop.")
+                return redirect(request.path)
             toggle_shop_hidden(shop)
             state = "hidden" if shop.is_hidden else "visible"
             messages.success(request, f"Shop “{shop.name}” is now {state}.")
@@ -184,6 +208,9 @@ def shop_management(request, profile, meta, module, page_sidebar):
 
         elif action == "delete":
             shop = get_object_or_404(Shop, pk=shop_id)
+            if not _shop_management_in_scope(profile, shop):
+                messages.error(request, "You are not allocated to that shop.")
+                return redirect(request.path)
             name = shop.name
             delete_shop(shop)
             messages.success(request, f"Shop “{name}” deleted.")
@@ -197,7 +224,7 @@ def shop_management(request, profile, meta, module, page_sidebar):
         if denied is not None:
             return denied
 
-    shops = list(Shop.objects.select_related("created_by__user").order_by("name"))
+    shops = _shops_for_shop_management(profile)
 
     return render(
         request,
@@ -874,7 +901,11 @@ def _require_active_shop_session(request, shop_id):
 
     shop = get_shop_for_profile(profile, shop_id)
     if shop is None:
-        messages.error(request, "You are not authorised to open that shop.")
+        messages.error(
+            request,
+            "You are not authorised to open that shop.",
+            extra_tags="unauthorized",
+        )
         return None, None, redirect("employees:my_shop")
 
     active = resolve_active_shop(request, profile)

@@ -869,7 +869,7 @@ def sidebar_for_stock_management(
                     ),
                 ),
                 (
-                    "view",
+                    "settings",
                     _link(
                         "Stock Settings",
                         "sliders-horizontal",
@@ -878,7 +878,7 @@ def sidebar_for_stock_management(
                     ),
                 ),
                 (
-                    "view",
+                    "low-stock",
                     _link(
                         "Low Stock Alerts",
                         "bell-ring",
@@ -888,7 +888,7 @@ def sidebar_for_stock_management(
                 ),
             ]
             primary.extend(link for mode, link in candidates if _allowed(mode))
-            if active_mode == "view" and _allowed("view"):
+            if active_mode == "view" and _allowed("print"):
                 primary.append(
                     _action("Print stock", "printer", action="print-stock")
                 )
@@ -903,6 +903,7 @@ def sidebar_for_stock_management(
                     active=active_mode == "view",
                 )
             )
+        if _allowed("settings"):
             primary.append(
                 _link(
                     "Stock Settings",
@@ -911,6 +912,7 @@ def sidebar_for_stock_management(
                     active=active_mode == "settings",
                 )
             )
+        if _allowed("low-stock"):
             primary.append(
                 _link(
                     "Low Stock Alerts",
@@ -919,6 +921,7 @@ def sidebar_for_stock_management(
                     active=active_mode == "low-stock",
                 )
             )
+        if _allowed("print"):
             primary.append(
                 _action("Print stock", "printer", action="print-stock")
             )

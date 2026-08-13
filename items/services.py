@@ -516,7 +516,9 @@ def build_stock_catalog_page(
     }
 
 
-def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48, sort="category"):
+def build_item_management_catalog_page(
+    *, q: str = "", page=1, page_size=48, sort="category", shops=None
+):
     """Paginated item-management rows with shop price display fields."""
     try:
         page = max(1, int(page or 1))
@@ -557,7 +559,8 @@ def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48, sor
     next_page = page_data["next_page"]
     page = page_data["page"]
     item_ids = [item.pk for item in items]
-    active_shops = _active_shops()
+    active_shops = list(shops) if shops is not None else _active_shops()
+    allowed_shop_ids = {shop.pk for shop in active_shops}
 
     prices_list_by_item = {}
     prices_map_by_item = {}
@@ -565,6 +568,8 @@ def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48, sor
         for item_id, shop_id, price in ShopItemPrice.objects.filter(
             item_id__in=item_ids
         ).values_list("item_id", "shop_id", "price"):
+            if allowed_shop_ids and shop_id not in allowed_shop_ids:
+                continue
             prices_list_by_item.setdefault(item_id, []).append(price)
             prices_map_by_item.setdefault(item_id, {})[shop_id] = price
 

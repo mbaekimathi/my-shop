@@ -1,0 +1,80 @@
+<div
+  class="unauth-popup"
+  data-unauthorized-popup
+  hidden
+  aria-hidden="true"
+>
+  <div class="unauth-popup__backdrop" data-unauthorized-close></div>
+  <div
+    class="unauth-popup__dialog"
+    role="alertdialog"
+    aria-modal="true"
+    aria-labelledby="unauth-popup-title"
+    aria-describedby="unauth-popup-detail"
+  >
+    <div class="unauth-popup__atmosphere" aria-hidden="true">
+      <span class="unauth-popup__grid"></span>
+      <span class="unauth-popup__orb unauth-popup__orb--1"></span>
+      <span class="unauth-popup__orb unauth-popup__orb--2"></span>
+      <span class="unauth-popup__orb unauth-popup__orb--3"></span>
+      <span class="unauth-popup__scan"></span>
+    </div>
+
+    <button
+      class="unauth-popup__close"
+      type="button"
+      aria-label="Dismiss"
+      data-unauthorized-close
+    >
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+
+    <p class="unauth-popup__badge">
+      <span class="unauth-popup__live" aria-hidden="true"></span>
+      <span>Live · Access denied</span>
+    </p>
+
+    <div class="unauth-popup__lock" aria-hidden="true">
+      <span class="unauth-popup__ring"></span>
+      <span class="unauth-popup__ring unauth-popup__ring--2"></span>
+      <span class="unauth-popup__ring unauth-popup__ring--3"></span>
+      <span class="unauth-popup__lock-core">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M19.69 14a6.9 6.9 0 0 0 .31-2V5l-8-3-3.16 1.18" />
+          <path d="M4.73 4.73 4 5v7c0 6 8 10 8 10a20.3 20.3 0 0 0 5.62-4.38" />
+          <line x1="1" x2="23" y1="1" y2="23" />
+        </svg>
+      </span>
+    </div>
+
+    <h2 id="unauth-popup-title">You're not authorised</h2>
+    <p id="unauth-popup-detail" data-unauthorized-detail>
+      You do not have permission to perform this action.
+    </p>
+
+    <div class="unauth-popup__meta">
+      <span class="unauth-popup__clock" data-unauthorized-clock>—</span>
+      <span class="unauth-popup__secure">
+        <i data-lucide="lock" aria-hidden="true"></i>
+        Secure session
+      </span>
+    </div>
+
+    <div class="unauth-popup__progress" aria-hidden="true">
+      <span class="unauth-popup__progress-bar" data-unauthorized-progress></span>
+    </div>
+
+    <button class="btn btn--primary unauth-popup__action" type="button" data-unauthorized-close>
+      <i data-lucide="check" aria-hidden="true"></i>
+      <span>Got it</span>
+    </button>
+  </div>
+</div>
+
+{% if messages %}
+{% for message in messages %}
+{% if 'unauthorized' in message.tags %}
+<span hidden data-unauthorized-seed>{{ message }}</span>
+{% endif %}
+{% endfor %}
+{% endif %}

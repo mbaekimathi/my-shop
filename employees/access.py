@@ -220,7 +220,11 @@ def hr_staff_required(view_func):
     def wrapper(request, *args, **kwargs):
         profile = get_profile_for_request(request)
         if profile is None or profile.role not in HR_STAFF_ROLES:
-            messages.error(request, "You do not have permission to access HR Management.")
+            messages.error(
+                request,
+                "You do not have permission to access HR Management.",
+                extra_tags="unauthorized",
+            )
             if profile is not None:
                 return redirect_to_role_home(profile)
             return redirect("employees:login")

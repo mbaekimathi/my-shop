@@ -187,6 +187,7 @@
             aria-label="Search items"
           >
         </label>
+        {% if can_print_stock != False %}
         <button
           type="button"
           class="stock-print-trigger stock-view-print"
@@ -195,6 +196,7 @@
           <i data-lucide="printer" aria-hidden="true"></i>
           <span>Print</span>
         </button>
+        {% endif %}
         {% if not shops %}
         <p class="stock-shop-bar-hint">No shops are allocated to your account.</p>
         {% endif %}
@@ -1050,7 +1052,7 @@
 
 {% block workspace_overlays %}
 {{ block.super }}
-{% if stock_mode == 'view' %}
+{% if stock_mode == 'view' and can_print_stock != False %}
 <div
   class="workspace-modal stock-print-modal"
   data-modal="print-stock"

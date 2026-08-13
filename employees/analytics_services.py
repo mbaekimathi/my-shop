@@ -2268,7 +2268,13 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
     """Full credit ledger and outstanding balance for one client."""
     shop_ids = [shop.pk for shop in actionable_shops_for_profile(profile)]
     client = Client.objects.filter(pk=client_id).first()
-    if client is None:
+    if client is None or not shop_ids:
+        raise Http404("Client not found.")
+    if not (
+        ShopReceipt.objects.filter(client_id=client.pk, shop_id__in=shop_ids)
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .exists()
+    ):
         raise Http404("Client not found.")
 
     receipts = list(
@@ -2428,6 +2434,10 @@ def build_supplier_account(
         supplier = ExpenseSupplier.objects.filter(pk=supplier_id).first()
         if supplier is None:
             raise Http404("Supplier not found.")
+        if not shop_ids or not Expense.objects.filter(
+            shop_id__in=shop_ids, supplier_id=supplier.pk
+        ).exists():
+            raise Http404("Supplier not found.")
         expenses = list(
             _within_created_range(
                 Expense.objects.filter(shop_id__in=shop_ids, supplier_id=supplier.pk),
@@ -2511,6 +2521,8 @@ def build_supplier_account(
 
     supplier = Supplier.objects.filter(pk=supplier_id).first()
     if supplier is None:
+        raise Http404("Supplier not found.")
+    if not shop_ids or not _stock_lines_for_supplier(supplier, shop_ids).exists():
         raise Http404("Supplier not found.")
 
     lines = list(
@@ -4851,8 +4863,17 @@ def _build_clients(filters):
             total_balance + balance,
         )
 
+    client_ids_in_scope = set(
+        ShopReceipt.objects.filter(shop_id__in=shop_ids)
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .exclude(client_id=None)
+        .values_list("client_id", flat=True)
+        .distinct()
+    )
     ranked = []
-    for client in Client.objects.order_by("full_name", "id"):
+    for client in Client.objects.filter(pk__in=client_ids_in_scope).order_by(
+        "full_name", "id"
+    ):
         phone = client.phone_number or ""
         label = f"{client.full_name} · {phone}" if phone else client.full_name
         total_credits, total_balance = totals_by_client.get(client.pk, (0, _zero()))
@@ -5314,6 +5335,9 @@ def _build_suppliers(filters):
         prev_entries, prev_balance = shop_map.get(shop_id, (0, _zero()))
         shop_map[shop_id] = (prev_entries + 1, prev_balance + due)
 
+    stock_suppliers = [
+        supplier for supplier in stock_suppliers if supplier.pk in stock_by_supplier_shop
+    ]
     stock_rows, shop_totals = _supplier_shop_rows(
         suppliers=stock_suppliers,
         shops=shops,
@@ -5397,7 +5421,11 @@ def _build_expenses(filters):
         prev_entries, prev_balance = shop_map.get(row["shop_id"], (0, _zero()))
         shop_map[row["shop_id"]] = (prev_entries + entries, prev_balance + balance)
 
-    expense_suppliers = list(ExpenseSupplier.objects.order_by("name", "id"))
+    expense_suppliers = [
+        supplier
+        for supplier in ExpenseSupplier.objects.order_by("name", "id")
+        if supplier.pk in exp_by_supplier_shop
+    ]
     expense_rows, shop_totals = _supplier_shop_rows(
         suppliers=expense_suppliers,
         shops=shops,
