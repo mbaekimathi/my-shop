@@ -154,6 +154,11 @@
     const phoneRow = payModal.querySelector("[data-ax-pay-phone-row]");
     const phoneInput = payModal.querySelector("[data-ax-pay-phone]");
     const stkIdInput = payModal.querySelector("[data-ax-stk-id]");
+    const receiptIdInput = payModal.querySelector("[data-ax-pay-receipt-id]");
+    const payTitleEl = payModal.querySelector("[data-ax-pay-title]");
+    const payHintEl = payModal.querySelector("[data-ax-pay-hint]");
+    const payDueEl = payModal.querySelector("[data-ax-pay-due]");
+    const payBalanceEl = payModal.querySelector("[data-ax-pay-balance]");
     const methodInputs = payModal.querySelectorAll("[data-ax-pay-method]");
 
     function getCsrf() {
@@ -189,16 +194,56 @@
       payStatusEl.className = error ? "ax-pay-status is-error" : "ax-pay-status is-ok";
     }
 
-    function openPayModal() {
+    function openPayModal(source) {
+      const accountDueRaw = payModal.getAttribute("data-balance-raw") || "";
+      const accountDueLabel = payModal.getAttribute("data-balance") || "";
+      const receiptId = (source?.getAttribute?.("data-receipt-id") || "").trim();
+      const payAll = !receiptId || source?.getAttribute?.("data-pay-all") === "1";
+      const dueRaw = payAll
+        ? accountDueRaw
+        : source?.getAttribute?.("data-receipt-due-raw") || accountDueRaw;
+      const dueLabel = payAll
+        ? accountDueLabel
+        : source?.getAttribute?.("data-receipt-due") || accountDueLabel;
+      const receiptNumber = source?.getAttribute?.("data-receipt-number") || "receipt";
+
+      if (receiptIdInput) receiptIdInput.value = payAll ? "" : receiptId;
+      if (payTitleEl) payTitleEl.textContent = payAll ? "Pay all" : `Pay ${receiptNumber}`;
+      const dueNumber = Number.parseFloat(String(dueRaw || "0").replace(/,/g, "")) || 0;
+      if (payHintEl) {
+        if (dueNumber <= 0) {
+          payHintEl.textContent = payAll
+            ? "No outstanding balance for this filter."
+            : "This receipt is fully paid.";
+        } else {
+          payHintEl.textContent = payAll
+            ? "Clears from earliest receipt to latest."
+            : "Pays this receipt only.";
+        }
+      }
+      if (payDueEl) payDueEl.textContent = dueLabel;
+      if (payBalanceEl) payBalanceEl.textContent = dueLabel;
       if (payAmount) {
         payAmount.value = "";
+        if (dueNumber > 0) payAmount.max = String(dueNumber);
+        else payAmount.removeAttribute("max");
         payAmount.focus();
       }
+      if (paySubmit) paySubmit.disabled = dueNumber <= 0;
       if (stkIdInput) stkIdInput.value = "";
       const cash = payModal.querySelector('[data-ax-pay-method][value="cash"]');
       if (cash) cash.checked = true;
       syncMethodUi();
-      setPayStatus("");
+      if (dueNumber <= 0) {
+        setPayStatus(
+          payAll
+            ? "No outstanding balance to pay."
+            : "This receipt has no balance due.",
+          { error: true }
+        );
+      } else {
+        setPayStatus("");
+      }
       payModal.hidden = false;
       syncModalOpen();
       if (window.lucide && typeof window.lucide.createIcons === "function") {
@@ -210,6 +255,8 @@
       payModal.hidden = true;
       if (payAmount) payAmount.value = "";
       if (stkIdInput) stkIdInput.value = "";
+      if (receiptIdInput) receiptIdInput.value = "";
+      if (paySubmit) paySubmit.disabled = false;
       setPayStatus("");
       syncModalOpen();
     }
@@ -321,9 +368,10 @@
     });
 
     document.addEventListener("click", (event) => {
-      if (event.target.closest("[data-ax-pay-open]")) {
+      const payOpen = event.target.closest("[data-ax-pay-open]");
+      if (payOpen) {
         event.preventDefault();
-        openPayModal();
+        openPayModal(payOpen);
         return;
       }
       if (event.target.closest("[data-ax-pay-modal-close]")) {

@@ -42,7 +42,7 @@
           <th>Pay by</th>
           {% endif %}
           <th>When</th>
-          <th class="ax-col-actions{% if ledger_show_manage %} ax-col-actions--multi{% endif %}">{% if ledger_show_manage %}Actions{% else %}View{% endif %}</th>
+          <th class="ax-col-actions{% if ledger_show_manage or ledger_show_receipt_pay %} ax-col-actions--multi{% endif %}">{% if ledger_show_manage or ledger_show_receipt_pay %}Actions{% else %}View{% endif %}</th>
         </tr>
       </thead>
       <tbody>
@@ -71,7 +71,7 @@
           </td>
           {% endif %}
           <td data-label="When">{% if row.when %}{{ row.when|date:"d M Y · H:i" }}{% else %}—{% endif %}</td>
-          <td class="ax-col-actions{% if ledger_show_manage %} ax-col-actions--multi{% endif %}" data-label="{% if ledger_show_manage %}Actions{% else %}View{% endif %}">
+          <td class="ax-col-actions{% if ledger_show_manage or ledger_show_receipt_pay %} ax-col-actions--multi{% endif %}" data-label="{% if ledger_show_manage or ledger_show_receipt_pay %}Actions{% else %}View{% endif %}">
             <div class="ax-col-actions-group">
               <button
                 type="button"
@@ -87,6 +87,20 @@
               >
                 <i data-lucide="eye" aria-hidden="true"></i>
               </button>
+              {% if ledger_show_receipt_pay %}
+              <button
+                type="button"
+                class="ax-receipt-pay{% if not row.can_pay %} is-settled{% endif %}"
+                data-ax-pay-open
+                data-receipt-id="{{ row.pay_id }}"
+                data-receipt-number="{{ row.number }}"
+                data-receipt-due="{{ row.due }}"
+                data-receipt-due-raw="{{ row.due_raw }}"
+                data-receipt-shop="{{ row.shop }}"
+              >
+                Pay
+              </button>
+              {% endif %}
               {% if ledger_show_manage %}
               <button
                 type="button"

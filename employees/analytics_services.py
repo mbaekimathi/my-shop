@@ -118,6 +118,8 @@ ANALYTICS_SECTIONS = (
 
 ANALYTICS_SECTION_BY_SLUG = {row["slug"]: row for row in ANALYTICS_SECTIONS}
 
+ANALYTICS_DASHBOARD_SECTION_SLUGS = frozenset({"suppliers", "credits", "clients"})
+
 ANALYTICS_LIST_TABLE_SECTIONS = frozenset(
     {
         "revenue",
@@ -304,6 +306,38 @@ def _parse_pay_amount(value) -> Decimal:
     return amount
 
 
+def _allocated_shop_filter(profile, request=None, *, shop_ids=None) -> dict:
+    """Shop filter limited to shops allocated to the signed-in employee."""
+    filter_shops = actionable_shops_for_profile(profile)
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+    raw_values = []
+    if shop_ids is not None:
+        if isinstance(shop_ids, (str, int)):
+            raw_values = [shop_ids]
+        else:
+            raw_values = list(shop_ids)
+    elif request is not None:
+        getter = getattr(request, "GET", None) or getattr(request, "POST", None)
+        if getter is not None:
+            raw_values = getter.getlist("shop_id") if hasattr(getter, "getlist") else []
+    selected_shop_ids = _parse_shop_ids(raw_values, shops_by_id)
+    active_shop_ids = selected_shop_ids or [shop.pk for shop in filter_shops]
+    selected_shops = [shops_by_id[pk] for pk in selected_shop_ids if pk in shops_by_id]
+    if len(selected_shops) == 1:
+        shop_filter_label = selected_shops[0].name
+    elif selected_shops:
+        shop_filter_label = f"{len(selected_shops)} shops"
+    else:
+        shop_filter_label = "All shops"
+    return {
+        "filter_shops": filter_shops,
+        "selected_shop_ids": selected_shop_ids,
+        "active_shop_ids": active_shop_ids,
+        "selected_shops": selected_shops,
+        "shop_filter_label": shop_filter_label,
+    }
+
+
 def apply_account_payment(
     *,
     profile,
@@ -312,6 +346,9 @@ def apply_account_payment(
     amount,
     payment_method: str = "cash",
     stk_payment_id: str = "",
+    shop_ids=None,
+    start=None,
+    end=None,
 ) -> dict:
     """Apply a payment to an account, clearing receipts oldest → newest (FIFO)."""
     from django.core.exceptions import ValidationError
@@ -329,7 +366,20 @@ def apply_account_payment(
 
     pay_amount = _parse_pay_amount(amount)
     remaining = pay_amount
-    shop_ids = {shop.pk for shop in actionable_shops_for_profile(profile)}
+    allocated = {shop.pk for shop in actionable_shops_for_profile(profile)}
+    if shop_ids:
+        parsed = set()
+        values = [shop_ids] if isinstance(shop_ids, (str, int)) else list(shop_ids)
+        for raw in values:
+            try:
+                pk = int(str(raw).strip())
+            except (TypeError, ValueError):
+                continue
+            if pk in allocated:
+                parsed.add(pk)
+        shop_ids = parsed or allocated
+    else:
+        shop_ids = allocated
     cleared = 0
     mpesa_receipt_number = ""
 
@@ -442,9 +492,13 @@ def apply_account_payment(
             if supplier is None:
                 raise ValidationError("Supplier not found.")
             expenses = list(
-                Expense.objects.select_for_update()
-                .filter(shop_id__in=shop_ids, supplier_id=supplier.pk)
-                .order_by("created_at", "pk")
+                _within_created_range(
+                    Expense.objects.select_for_update().filter(
+                        shop_id__in=shop_ids, supplier_id=supplier.pk
+                    ),
+                    start,
+                    end,
+                ).order_by("created_at", "pk")
             )
             balance_before = sum(
                 (_due_amount(row.amount, row.amount_paid) for row in expenses),
@@ -500,9 +554,12 @@ def apply_account_payment(
         if supplier is None:
             raise ValidationError("Supplier not found.")
         lines = list(
-            _stock_lines_for_supplier(supplier, list(shop_ids)).select_related(
-                "movement"
-            )
+            _within_created_range(
+                _stock_lines_for_supplier(supplier, list(shop_ids)),
+                start,
+                end,
+                lookup="movement__created_at",
+            ).select_related("movement")
         )
         by_movement = {}
         order = []
@@ -778,6 +835,179 @@ def apply_credit_receipt_payment(
             "message": (
                 f"{pay_label} payment of {_money_ksh(pay_amount)} applied to "
                 f"{receipt.receipt_number}{ref_bit}."
+            ),
+        }
+
+
+def apply_supplier_receipt_payment(
+    *,
+    profile,
+    kind: str,
+    account_id: int,
+    receipt_id: int,
+    amount,
+    shop_ids=None,
+) -> dict:
+    """Apply a cash payment to one stock-in or expense receipt."""
+    from django.core.exceptions import ValidationError
+    from django.db import transaction
+
+    kind = (kind or "").strip().lower()
+    if kind not in ("expense", "stock"):
+        raise ValidationError("Unknown payment type.")
+
+    pay_amount = _parse_pay_amount(amount)
+    shop_filter = _allocated_shop_filter(profile, shop_ids=shop_ids)
+    active_shop_ids = shop_filter["active_shop_ids"]
+
+    with transaction.atomic():
+        if kind == "expense":
+            supplier = ExpenseSupplier.objects.filter(pk=account_id).first()
+            if supplier is None:
+                raise ValidationError("Supplier not found.")
+            expense = (
+                Expense.objects.select_for_update()
+                .filter(
+                    pk=receipt_id,
+                    supplier_id=supplier.pk,
+                    shop_id__in=active_shop_ids,
+                )
+                .first()
+            )
+            if expense is None:
+                raise ValidationError("Expense receipt not found.")
+            due = _due_amount(expense.amount, expense.amount_paid)
+            if due <= 0:
+                raise ValidationError("This receipt has no balance due.")
+            if pay_amount > due:
+                raise ValidationError(
+                    f"Amount exceeds due on this receipt ({_money_ksh(due)})."
+                )
+            paid = (Decimal(expense.amount_paid or 0) + pay_amount).quantize(
+                Decimal("0.01")
+            )
+            due_after = _due_amount(expense.amount, paid)
+            if due_after <= 0:
+                status = ExpensePaymentStatus.PAID
+            elif paid > 0:
+                status = ExpensePaymentStatus.PARTIAL
+            else:
+                status = ExpensePaymentStatus.UNPAID
+            expense.amount_paid = paid
+            expense.payment_status = status
+            expense.save(update_fields=["amount_paid", "payment_status"])
+            balance_after = sum(
+                (
+                    _due_amount(row.amount, row.amount_paid)
+                    for row in Expense.objects.filter(
+                        shop_id__in=active_shop_ids, supplier_id=supplier.pk
+                    )
+                ),
+                _zero(),
+            )
+            number = format_simple_doc_number("E", expense.pk)
+            return {
+                "ok": True,
+                "kind": kind,
+                "receipt_id": expense.pk,
+                "account_id": supplier.pk,
+                "receipt_due": _money_ksh(due_after),
+                "receipt_due_raw": str(due_after),
+                "receipt_status": _payment_status_for_due(due_after, paid),
+                "receipt_status_tone": _status_tone(
+                    _payment_status_for_due(due_after, paid)
+                ),
+                "account_balance": _money_ksh(balance_after),
+                "account_balance_raw": str(balance_after),
+                "message": (
+                    f"Payment of {_money_ksh(pay_amount)} applied to {number}."
+                ),
+            }
+
+        supplier = Supplier.objects.filter(pk=account_id).first()
+        if supplier is None:
+            raise ValidationError("Supplier not found.")
+        movement = (
+            StockMovement.objects.select_for_update()
+            .filter(
+                pk=receipt_id,
+                shop_id__in=active_shop_ids,
+                movement_type=StockMovementType.IN,
+            )
+            .first()
+        )
+        if movement is None:
+            raise ValidationError("Stock-in receipt not found.")
+        receipt_total = _zero()
+        matching_lines = list(
+            _stock_lines_for_supplier(supplier, active_shop_ids).filter(
+                movement_id=movement.pk
+            )
+        )
+        if not matching_lines:
+            raise ValidationError("Stock-in receipt not found.")
+        for line in matching_lines:
+            qty = int(line.quantity or 0)
+            unit = Decimal(line.buying_price or 0)
+            receipt_total += (unit * qty).quantize(Decimal("0.01"))
+        due = _due_amount(receipt_total, movement.amount_paid)
+        if due <= 0:
+            raise ValidationError("This receipt has no balance due.")
+        if pay_amount > due:
+            raise ValidationError(
+                f"Amount exceeds due on this receipt ({_money_ksh(due)})."
+            )
+        paid = (Decimal(movement.amount_paid or 0) + pay_amount).quantize(
+            Decimal("0.01")
+        )
+        due_after = _due_amount(receipt_total, paid)
+        if due_after <= 0:
+            status = StockPaymentStatus.PAID
+        elif paid > 0:
+            status = StockPaymentStatus.PARTIAL
+        else:
+            status = StockPaymentStatus.UNPAID
+        movement.amount_paid = paid
+        movement.payment_status = status
+        movement.save(update_fields=["amount_paid", "payment_status"])
+        movement.lines.update(payment_status=status)
+
+        balance_after = _zero()
+        by_movement = {}
+        for line in _stock_lines_for_supplier(supplier, active_shop_ids).select_related(
+            "movement"
+        ):
+            linked = line.movement
+            if linked is None:
+                continue
+            info = by_movement.setdefault(
+                linked.pk,
+                {
+                    "total": _zero(),
+                    "paid": Decimal(linked.amount_paid or 0),
+                },
+            )
+            qty = int(line.quantity or 0)
+            unit = Decimal(line.buying_price or 0)
+            info["total"] += (unit * qty).quantize(Decimal("0.01"))
+        for info in by_movement.values():
+            balance_after += _due_amount(info["total"], info["paid"])
+        number = format_simple_doc_number("I", movement.pk)
+        return {
+            "ok": True,
+            "kind": kind,
+            "receipt_id": movement.pk,
+            "account_id": supplier.pk,
+            "receipt_due": _money_ksh(due_after),
+            "receipt_due_raw": str(due_after),
+            "receipt_status": _payment_status_for_due(due_after, paid),
+            "receipt_status_tone": _status_tone(
+                _payment_status_for_due(due_after, paid)
+            ),
+            "account_balance": _money_ksh(balance_after),
+            "account_balance_raw": str(balance_after),
+            "message": (
+                f"Payment of {_money_ksh(pay_amount)} applied to {number}."
             ),
         }
 
@@ -1658,32 +1888,80 @@ def _opex_and_drawings_by_shop(expenses_qs) -> tuple[dict, dict]:
     return opex_by_shop, drawings_by_shop
 
 
-def _filters_context(profile, request):
+def _date_filter_context(request=None, *, data=None, allow_all_time=False) -> dict:
+    """Parse day / period / month / year filters. All-time when range is missing."""
+    from django.utils import timezone
     from items.views import _report_range_bounds
 
-    range_type, start, end, filter_context = _report_range_bounds(request)
+    getter = data
+    if getter is None and request is not None:
+        getter = (
+            request.POST
+            if str(getattr(request, "method", "GET")).upper() == "POST"
+            else request.GET
+        )
+    range_raw = ""
+    if getter is not None and hasattr(getter, "get"):
+        range_raw = (getter.get("range") or "").strip().lower()
+    today = timezone.localdate()
+    if allow_all_time and range_raw not in ("day", "period", "month", "year"):
+        return {
+            "report_range": "all",
+            "report_date_value": today.isoformat(),
+            "report_date_from": today.isoformat(),
+            "report_date_to": today.isoformat(),
+            "report_month_value": today.strftime("%Y-%m"),
+            "report_year_value": f"{today.year}-01",
+            "report_period_label": "All time",
+            "range_type": "all",
+            "start": None,
+            "end": None,
+            "prev_start": None,
+            "prev_end": None,
+        }
+
+    class _QueryRequest:
+        GET = getter or {}
+
+    range_type, start, end, filter_context = _report_range_bounds(
+        request if request is not None and not allow_all_time and data is None else _QueryRequest()
+    )
+    delta = end - start
+    return {
+        **filter_context,
+        "range_type": range_type,
+        "start": start,
+        "end": end,
+        "prev_start": start - delta,
+        "prev_end": start,
+    }
+
+
+def _within_created_range(qs, start, end, *, lookup: str = "created_at"):
+    if start and end:
+        return qs.filter(**{f"{lookup}__gte": start, f"{lookup}__lt": end})
+    return qs
+
+
+def _filters_context(profile, request, *, allow_all_time=False):
+    date_filter = _date_filter_context(request, allow_all_time=allow_all_time)
     filter_shops = actionable_shops_for_profile(profile)
     shops_by_id = {shop.pk: shop for shop in filter_shops}
     selected_shop_ids = _parse_shop_ids(request.GET.getlist("shop_id"), shops_by_id)
     active_shop_ids = selected_shop_ids or [shop.pk for shop in filter_shops]
-    delta = end - start
-    prev_start, prev_end = start - delta, start
+    range_type = date_filter.get("range_type") or date_filter.get("report_range") or "day"
     return {
-        **filter_context,
+        **date_filter,
         "filter_shops": filter_shops,
         "selected_shop_ids": selected_shop_ids,
         "active_shop_ids": active_shop_ids,
         "report_range_label": {
+            "all": "All time",
             "day": "Day",
             "period": "Period",
             "month": "Month",
             "year": "Year",
         }.get(range_type, "Day"),
-        "range_type": range_type,
-        "start": start,
-        "end": end,
-        "prev_start": prev_start,
-        "prev_end": prev_end,
     }
 
 
@@ -1696,7 +1974,11 @@ def get_analytics_section(slug: str) -> dict:
 
 def build_analytics_page(*, profile, request, section_slug: str = "overview") -> dict:
     section = get_analytics_section(section_slug)
-    filters = _filters_context(profile, request)
+    filters = _filters_context(
+        profile,
+        request,
+        allow_all_time=section["slug"] == "suppliers",
+    )
     filters["role"] = profile.role
     filters["query"] = request.GET.urlencode()
     builders = {
@@ -2023,20 +2305,35 @@ def _stock_lines_for_supplier(supplier: Supplier, shop_ids):
     ).select_related("movement", "movement__shop", "item")
 
 
-def build_supplier_account(*, profile, kind: str, supplier_id: int) -> dict:
+def build_supplier_account(
+    *, profile, kind: str, supplier_id: int, request=None, shop_ids=None
+) -> dict:
     """Ledger for a stock or expense supplier, grouped by receipt / stock-in event."""
     kind = (kind or "").strip().lower()
     if kind not in ("expense", "stock"):
         raise Http404("Supplier type not found.")
 
-    shop_ids = [shop.pk for shop in actionable_shops_for_profile(profile)]
+    shop_filter = _allocated_shop_filter(profile, request, shop_ids=shop_ids)
+    shop_ids = shop_filter["active_shop_ids"]
+    date_filter = _date_filter_context(request, allow_all_time=True)
+    start, end = date_filter["start"], date_filter["end"]
+    period_label = date_filter.get("report_period_label") or "All time"
+    scope_hint = (
+        shop_filter["selected_shops"][0].name
+        if len(shop_filter["selected_shops"]) == 1
+        else shop_filter["shop_filter_label"]
+    )
 
     if kind == "expense":
         supplier = ExpenseSupplier.objects.filter(pk=supplier_id).first()
         if supplier is None:
             raise Http404("Supplier not found.")
         expenses = list(
-            Expense.objects.filter(shop_id__in=shop_ids, supplier_id=supplier.pk)
+            _within_created_range(
+                Expense.objects.filter(shop_id__in=shop_ids, supplier_id=supplier.pk),
+                start,
+                end,
+            )
             .select_related("shop", "created_by", "created_by__user")
             .order_by("-created_at")
         )
@@ -2098,10 +2395,18 @@ def build_supplier_account(*, profile, kind: str, supplier_id: int) -> dict:
             "total": _money_ksh(total),
             "rows": rows,
             "ledger_title": "Expense receipts",
-            "empty_message": "No expense receipts for this supplier in your shops.",
+            "empty_message": (
+                f"No expense receipts for this supplier at {scope_hint} ({period_label})."
+                if shop_filter["selected_shop_ids"]
+                else f"No expense receipts for this supplier in your shops ({period_label})."
+            ),
             "account_kind": "expense",
             "account_id": supplier.pk,
-            "can_pay": balance > 0,
+            "can_pay": True,
+            "ledger_show_receipt_pay": True,
+            "scope_hint": scope_hint,
+            **shop_filter,
+            **date_filter,
         }
 
     supplier = Supplier.objects.filter(pk=supplier_id).first()
@@ -2109,7 +2414,12 @@ def build_supplier_account(*, profile, kind: str, supplier_id: int) -> dict:
         raise Http404("Supplier not found.")
 
     lines = list(
-        _stock_lines_for_supplier(supplier, shop_ids)
+        _within_created_range(
+            _stock_lines_for_supplier(supplier, shop_ids),
+            start,
+            end,
+            lookup="movement__created_at",
+        )
         .select_related(
             "movement",
             "movement__shop",
@@ -2202,10 +2512,18 @@ def build_supplier_account(*, profile, kind: str, supplier_id: int) -> dict:
         "total": _money_ksh(total),
         "rows": rows,
         "ledger_title": "Stock-in receipts",
-        "empty_message": "No stock-in receipts for this supplier in your shops.",
+        "empty_message": (
+            f"No stock-in receipts for this supplier at {scope_hint} ({period_label})."
+            if shop_filter["selected_shop_ids"]
+            else f"No stock-in receipts for this supplier in your shops ({period_label})."
+        ),
         "account_kind": "stock",
         "account_id": supplier.pk,
-        "can_pay": balance > 0,
+        "can_pay": True,
+        "ledger_show_receipt_pay": True,
+        "scope_hint": scope_hint,
+        **shop_filter,
+        **date_filter,
     }
 
 
@@ -4749,6 +5067,8 @@ def _build_suppliers(filters):
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     query = filters.get("query") or ""
     role = filters["role"]
+    start, end = filters.get("start"), filters.get("end")
+    period_label = filters.get("report_period_label") or "All time"
 
     stock_suppliers = list(Supplier.objects.order_by("name", "id"))
     key_to_supplier_id = {
@@ -4760,22 +5080,23 @@ def _build_suppliers(filters):
 
     # movement_id -> {supplier_id, shop_id, total, paid}
     movements: dict[int, dict] = {}
-    stock_lines = (
+    stock_lines = _within_created_range(
         StockMovementLine.objects.filter(
             movement__shop_id__in=shop_ids,
             movement__movement_type=StockMovementType.IN,
-        )
-        .select_related("movement")
-        .only(
-            "quantity",
-            "buying_price",
-            "supplier_name",
-            "supplier_phone_country_code",
-            "supplier_phone_number",
-            "movement_id",
-            "movement__shop_id",
-            "movement__amount_paid",
-        )
+        ),
+        start,
+        end,
+        lookup="movement__created_at",
+    ).select_related("movement").only(
+        "quantity",
+        "buying_price",
+        "supplier_name",
+        "supplier_phone_country_code",
+        "supplier_phone_number",
+        "movement_id",
+        "movement__shop_id",
+        "movement__amount_paid",
     )
     for line in stock_lines:
         movement = line.movement
@@ -4828,8 +5149,9 @@ def _build_suppliers(filters):
 
     return {
         "headline": "Stock suppliers",
+        "period_label": period_label,
         "lead": (
-            "Live outstanding purchase balances by shop. "
+            f"Purchase balances for {period_label}. "
             "En = stock receipts; Bal = unpaid amount still owed."
         ),
         "hide_date_filters": True,
@@ -4852,8 +5174,8 @@ def _build_suppliers(filters):
                 stock_rows,
                 empty="No stock suppliers on file.",
                 footnote=(
-                    "Click a supplier to review receipts and pay. "
-                    "Sorted by highest outstanding balance."
+                    f"Click a supplier to review receipts and pay. "
+                    f"Showing {period_label}, sorted by highest outstanding balance."
                 ),
                 shop_grid=True,
                 searchable=True,

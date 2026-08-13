@@ -133,11 +133,57 @@ def is_workspace_dashboard(request):
     return view_name in WORKSPACE_DASHBOARD_VIEWS
 
 
-def workspace_back_url(request, role):
-    """Parent URL in the site path hierarchy for the current page."""
-    if is_workspace_dashboard(request):
-        return None
+def _with_request_query(url, request, *, drop=()):
+    """Append current GET filters to a parent URL, dropping helper params."""
+    params = request.GET.copy()
+    for key in drop:
+        params.pop(key, None)
+    query = params.urlencode()
+    if query:
+        return f"{url}?{query}"
+    return url
 
+
+def _same_origin_previous_path(request):
+    """Previous same-origin page, if it is a different path from the current one."""
+    from urllib.parse import urlparse
+
+    raw = (request.META.get("HTTP_REFERER") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return None
+    host = (request.get_host() or "").lower()
+    if parsed.netloc and parsed.netloc.lower() != host:
+        return None
+    path = parsed.path or ""
+    if not path.startswith("/"):
+        return None
+    lowered = path.lower()
+    if any(
+        marker in lowered
+        for marker in ("/logout", "/login", "/static/", "/sw.js", "/api/")
+    ):
+        return None
+    current = (request.path or "").rstrip("/") or "/"
+    if (path.rstrip("/") or "/") == current:
+        return None
+    if parsed.query:
+        return f"{path}?{parsed.query}"
+    return path
+
+
+def _my_shop_workspace_href(kwargs):
+    shop_id = kwargs.get("shop_id")
+    if shop_id:
+        return reverse("employees:my_shop_workspace", kwargs={"shop_id": shop_id})
+    return reverse("employees:my_shop")
+
+
+def _workspace_parent_url(request, role):
+    """Fallback parent URL when there is no usable referer."""
     match = getattr(request, "resolver_match", None)
     if match is None:
         return reverse(role_home_url_name(role))
@@ -145,12 +191,10 @@ def workspace_back_url(request, role):
     view_name = match.view_name
     kwargs = match.kwargs
     segment = role_url_segment(role)
+    dashboard = reverse(role_home_url_name(role))
 
-    if view_name == "employees:profile":
-        return reverse(role_home_url_name(role))
-
-    if view_name == "employees:settings":
-        return reverse(role_home_url_name(role))
+    if view_name in {"employees:profile", "employees:settings", "employees:workspace_module"}:
+        return dashboard
 
     if view_name == "employees:settings_section":
         section = kwargs.get("section")
@@ -158,41 +202,141 @@ def workspace_back_url(request, role):
             return settings_section_url("company-pos")
         return reverse("employees:settings")
 
-    if view_name == "employees:workspace_module":
-        return reverse(role_home_url_name(role))
+    if view_name == "employees:analytics_section":
+        section = (kwargs.get("section") or "").strip().lower()
+        from .analytics_services import ANALYTICS_DASHBOARD_SECTION_SLUGS
+
+        if section in ANALYTICS_DASHBOARD_SECTION_SLUGS:
+            return dashboard
+        return analytics_url(role)
+
+    if view_name == "employees:analytics_supplier_account":
+        from_section = (request.GET.get("from") or "").strip().lower()
+        kind = (kwargs.get("kind") or "").strip().lower()
+        if from_section in ("expenses", "suppliers"):
+            section = from_section
+        elif kind == "expense":
+            section = "expenses"
+        else:
+            section = "suppliers"
+        return _with_request_query(
+            analytics_section_url(role, section),
+            request,
+            drop=("from",),
+        )
+
+    if view_name in {
+        "employees:analytics_client_account",
+        "employees:analytics_client_credit",
+    }:
+        from_credits = "/analytics/credits/" in (request.path or "")
+        section = "credits" if from_credits else "clients"
+        return _with_request_query(analytics_section_url(role, section), request)
+
+    if view_name == "employees:analytics_client_credit_audit":
+        client_id = kwargs.get("client_id")
+        if client_id:
+            href = reverse(
+                "employees:analytics_client_account",
+                kwargs={"role_segment": segment, "client_id": client_id},
+            )
+            return _with_request_query(href, request)
+        return analytics_section_url(role, "credits")
+
+    if view_name == "employees:analytics_receipts_list":
+        return _with_request_query(analytics_section_url(role, "receipts"), request)
 
     if view_name in {
         "employees:my_shop",
         "employees:my_shop_select",
         "employees:my_shop_workspace",
+    }:
+        return dashboard
+
+    if view_name in {
         "employees:my_shop_buy_stock",
+        "employees:my_shop_catalog",
         "employees:my_shop_stock_requests",
         "employees:my_shop_register_expense",
         "employees:my_shop_receipts",
         "employees:my_shop_reprint",
         "employees:my_shop_day_toggle",
     }:
-        return reverse(role_home_url_name(role))
+        return _my_shop_workspace_href(kwargs)
+
+    if view_name == "employees:my_shop_receipt_detail":
+        shop_id = kwargs.get("shop_id")
+        if shop_id:
+            return reverse("employees:my_shop_receipts", kwargs={"shop_id": shop_id})
+        return _my_shop_workspace_href(kwargs)
+
+    if view_name == "employees:my_shop_receipt_return":
+        shop_id = kwargs.get("shop_id")
+        receipt_id = kwargs.get("receipt_id")
+        if shop_id and receipt_id:
+            return reverse(
+                "employees:my_shop_receipt_detail",
+                kwargs={"shop_id": shop_id, "receipt_id": receipt_id},
+            )
+        if shop_id:
+            return reverse("employees:my_shop_receipts", kwargs={"shop_id": shop_id})
+        return _my_shop_workspace_href(kwargs)
+
+    if view_name == "employees:stock_serial_history":
+        item_id = kwargs.get("item_id")
+        if item_id:
+            return _with_request_query(
+                reverse(
+                    "employees:stock_serial_detail",
+                    kwargs={"role_segment": segment, "item_id": item_id},
+                ),
+                request,
+            )
+        return stock_management_url(role, "serials")
+
+    if view_name in {
+        "employees:stock_serial_detail",
+        "employees:stock_serial_return_client",
+        "employees:stock_serial_return_guest",
+        "employees:stock_management_catalog",
+        "employees:stock_management_print",
+    }:
+        return stock_management_url(role, "serials" if "serial" in view_name else "view")
+
+    if view_name == "employees:item_management_catalog":
+        return reverse(
+            "employees:workspace_module",
+            kwargs={"role_segment": segment, "module_slug": "item-management"},
+        )
+
+    if view_name in {
+        "employees:hr_management",
+        "employees:hr_management_page",
+    }:
+        return dashboard
 
     if view_name == "employees:hr_section":
         return hr_management_url(role)
 
-    if view_name == "employees:hr_employee_approvals":
+    if view_name in {
+        "employees:hr_employee_approvals",
+        "employees:hr_employee_approvals_page",
+    }:
         return hr_management_url(role)
 
-    if view_name == "employees:hr_employee_approvals_page":
-        from .pagination import page_url
+    return dashboard
 
-        page = int(kwargs.get("page", 1))
-        if page > 1:
-            return page_url(
-                "hr_employee_approvals",
-                page - 1,
-                url_kwargs={"role_segment": segment},
-            )
-        return hr_management_url(role)
 
-    return reverse(role_home_url_name(role))
+def workspace_back_url(request, role):
+    """Previous page when possible, otherwise the parent page in the site hierarchy."""
+    if is_workspace_dashboard(request):
+        return None
+
+    previous = _same_origin_previous_path(request)
+    if previous:
+        return previous
+
+    return _workspace_parent_url(request, role)
 
 
 def _link(label, icon, *, url_name=None, href=None, active=False, danger=False, muted=False, badge=None):
@@ -274,31 +418,68 @@ def resolve_sidebar_hrefs(sidebar):
     return sidebar
 
 
+def _dashboard_analytics_section_links(role, *, active_slug=None, profile=None):
+    """Suppliers / Credits / Clients live on the dashboard, not under Analytics."""
+    from .analytics_services import ANALYTICS_DASHBOARD_SECTION_SLUGS, ANALYTICS_SECTIONS
+    from .module_permissions import employee_may
+
+    wanted = ("suppliers", "credits", "clients")
+    by_slug = {row["slug"]: row for row in ANALYTICS_SECTIONS}
+    links = []
+    for slug in wanted:
+        if slug not in ANALYTICS_DASHBOARD_SECTION_SLUGS:
+            continue
+        section = by_slug.get(slug)
+        if section is None:
+            continue
+        if profile is not None and not employee_may(profile, "analytics", slug):
+            continue
+        links.append(
+            _link(
+                section["label"],
+                section["icon"],
+                href=analytics_section_url(role, slug),
+                active=active_slug == slug,
+            )
+        )
+    return links
+
+
 def _module_sidebar_links(role, *, active_slug=None, profile=None):
     from .module_permissions import employee_may_any
 
     modules = get_dashboard_modules(role)
     if profile is not None:
         modules = [module for module in modules if employee_may_any(profile, module["slug"])]
-    return [
-        _link(
-            module["label"],
-            module["icon"],
-            href=module["href"],
-            active=module["slug"] == active_slug if active_slug else False,
+    links = []
+    for module in modules:
+        links.append(
+            _link(
+                module["label"],
+                module["icon"],
+                href=module["href"],
+                active=module["slug"] == active_slug if active_slug else False,
+            )
         )
-        for module in modules
-    ]
+        if module["slug"] == "analytics":
+            links.extend(
+                _dashboard_analytics_section_links(
+                    role, active_slug=active_slug, profile=profile
+                )
+            )
+    return links
 
 
-def sidebar_for_role_dashboard(role, profile=None):
+def sidebar_for_role_dashboard(role, profile=None, *, active_slug=None):
     """Sidebar links for role home / dashboard pages."""
     dashboard_url = reverse(role_home_url_name(role))
     return resolve_sidebar_hrefs(
         {
             "page": "role_dashboard",
             "dashboard_url": dashboard_url,
-            "primary": _module_sidebar_links(role, profile=profile),
+            "primary": _module_sidebar_links(
+                role, active_slug=active_slug, profile=profile
+            ),
             "footer": _footer_site_links(
                 profile=profile,
                 tail=[
@@ -895,7 +1076,7 @@ def analytics_section_url(role, section):
 
 def sidebar_for_analytics(role, *, active_view="overview", profile=None):
     """Sidebar links for Analytics — each section is its own page."""
-    from .analytics_services import ANALYTICS_SECTIONS
+    from .analytics_services import ANALYTICS_DASHBOARD_SECTION_SLUGS, ANALYTICS_SECTIONS
     from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
@@ -910,6 +1091,7 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
         )
         for section in ANALYTICS_SECTIONS
         if section["slug"] != "overview"
+        and section["slug"] not in ANALYTICS_DASHBOARD_SECTION_SLUGS
         and (profile is None or employee_may(profile, "analytics", section["slug"]))
     ]
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]

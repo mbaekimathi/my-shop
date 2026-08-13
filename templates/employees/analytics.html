@@ -23,6 +23,7 @@
         <h2>{{ page.headline }}</h2>
         <span class="ax-period">{% if page.period_label %}{{ page.period_label }}{% else %}{{ report_period_label }}{% endif %}</span>
       </div>
+      {% if not page.hide_date_filters %}
       <form class="ax-filters" method="get" data-analytics-filters>
         <select name="shop_id" aria-label="Shop">
           <option value="">All shops</option>
@@ -30,7 +31,6 @@
           <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
           {% endfor %}
         </select>
-        {% if not page.hide_date_filters %}
         <select name="range" data-analytics-range aria-label="Time range">
           <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
           <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
@@ -53,9 +53,9 @@
           required
           aria-label="Year"
         >
-        {% endif %}
         <button type="submit" class="ax-apply">Apply</button>
       </form>
+      {% endif %}
     </div>
     {% if page.lead %}<p class="ax-lead">{{ page.lead }}</p>{% endif %}
   </header>
@@ -377,6 +377,27 @@
           <span class="ax-card-hint">Hover amounts for full KSh</span>
           {% endif %}
         </div>
+        {% if section_slug == "suppliers" or section_slug == "expenses" %}
+        <form class="ax-filters ax-filters--card" method="get"{% if section_slug == "suppliers" %} data-analytics-filters{% endif %} aria-label="{% if section_slug == 'suppliers' %}Filter by shop and date{% else %}Filter by shop{% endif %}">
+          {% for key, values in request.GET.lists %}
+            {% if key != "shop_id" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" %}
+              {% for value in values %}
+              <input type="hidden" name="{{ key }}" value="{{ value }}">
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+          <select name="shop_id" aria-label="Shop"{% if section_slug != "suppliers" %} onchange="this.form.submit()"{% endif %}>
+            <option value="">All shops</option>
+            {% for shop in filter_shops %}
+            <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+            {% endfor %}
+          </select>
+          {% if section_slug == "suppliers" %}
+          {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
+          <button type="submit" class="ax-apply">Apply</button>
+          {% endif %}
+        </form>
+        {% endif %}
         {% if page.show_search and table.searchable %}
         <label class="ax-table-search">
           <span class="visually-hidden">{{ page.search_placeholder|default:"Search" }}</span>
@@ -592,20 +613,21 @@
   (() => {
     const root = document.querySelector("[data-analytics]");
     if (!root) return;
-    const form = root.querySelector("[data-analytics-filters]");
-    const rangeSelect = form?.querySelector("[data-analytics-range]");
-    const rangeFields = [...(form?.querySelectorAll("[data-range-field]") || [])];
-    const syncRange = () => {
-      const range = rangeSelect?.value || "day";
-      rangeFields.forEach((field) => {
-        const match = field.getAttribute("data-range-field") === range;
-        field.hidden = !match;
-        field.disabled = !match;
-        field.required = match;
-      });
-    };
-    rangeSelect?.addEventListener("change", syncRange);
-    syncRange();
+    root.querySelectorAll("[data-analytics-filters]").forEach((form) => {
+      const rangeSelect = form.querySelector("[data-analytics-range]");
+      const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+      const syncRange = () => {
+        const range = rangeSelect?.value || "day";
+        rangeFields.forEach((field) => {
+          const match = field.getAttribute("data-range-field") === range;
+          field.hidden = !match;
+          field.disabled = !match;
+          field.required = match;
+        });
+      };
+      rangeSelect?.addEventListener("change", syncRange);
+      syncRange();
+    });
 
     const search = root.querySelector("[data-ax-table-search]");
     if (!search) return;

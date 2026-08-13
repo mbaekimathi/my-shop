@@ -22,9 +22,9 @@
   >
     <div class="workspace-modal-head">
       <div>
-        <h2 id="ax-pay-modal-title">Pay account</h2>
+        <h2 id="ax-pay-modal-title" data-ax-pay-title>Pay all</h2>
         <p class="ax-receipt-modal-meta">
-          Clears from earliest receipt to latest.
+          <span data-ax-pay-hint>Clears from earliest receipt to latest.</span>
           Balance <strong data-ax-pay-balance>{{ balance }}</strong>
         </p>
       </div>
@@ -37,7 +37,24 @@
         {% csrf_token %}
         <input type="hidden" name="kind" value="{{ account_kind }}">
         <input type="hidden" name="account_id" value="{{ account_id }}">
+        <input type="hidden" name="receipt_id" value="" data-ax-pay-receipt-id>
         <input type="hidden" name="stk_payment_id" value="" data-ax-stk-id>
+        {% for shop_id in selected_shop_ids %}
+        <input type="hidden" name="shop_id" value="{{ shop_id }}">
+        {% endfor %}
+        {% if report_range %}
+        <input type="hidden" name="range" value="{{ report_range }}">
+        {% endif %}
+        {% if report_range == "day" %}
+        <input type="hidden" name="date" value="{{ report_date_value }}">
+        {% elif report_range == "period" %}
+        <input type="hidden" name="date_from" value="{{ report_date_from }}">
+        <input type="hidden" name="date_to" value="{{ report_date_to }}">
+        {% elif report_range == "month" %}
+        <input type="hidden" name="month" value="{{ report_month_value }}">
+        {% elif report_range == "year" %}
+        <input type="hidden" name="year" value="{{ report_year_value|slice:':4' }}">
+        {% endif %}
 
         {% if account_kind == "credit" %}
         <div class="ax-pay-methods" role="group" aria-label="Payment method">

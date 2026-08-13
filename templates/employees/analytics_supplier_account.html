@@ -4,23 +4,40 @@
 {% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
-<section class="ax" data-animate="rise">
+<section class="ax ax--account" data-animate="rise" data-ax-section="supplier-account">
   <header class="ax-top">
     <div class="ax-top-main">
       <div class="ax-title">
         <h2>{{ supplier_name }}</h2>
-        <span class="ax-period">{{ kind_label }}</span>
+        <span class="ax-period">{{ shop_filter_label|default:"All shops" }} · {{ report_period_label|default:"All time" }} · {{ kind_label }}</span>
       </div>
       <div class="ax-top-actions">
-        {% if can_pay %}
-        <button type="button" class="ax-apply" data-ax-pay-open>Pay</button>
-        {% endif %}
+        <button type="button" class="ax-apply" data-ax-pay-open data-pay-all="1">Pay all</button>
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back to suppliers" }}</a>
       </div>
     </div>
+    <form class="ax-filters" method="get" data-analytics-filters>
+      {% for key, values in request.GET.lists %}
+        {% if key != "shop_id" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" %}
+          {% for value in values %}
+          <input type="hidden" name="{{ key }}" value="{{ value }}">
+          {% endfor %}
+        {% endif %}
+      {% endfor %}
+      <select name="shop_id" aria-label="Shop">
+        <option value="">All shops</option>
+        {% for shop in filter_shops %}
+        <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+        {% endfor %}
+      </select>
+      {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
+      <button type="submit" class="ax-apply">Apply</button>
+    </form>
     <p class="ax-lead">
       {{ supplier_phone|default:"—" }}
       · {{ entries }} receipt{{ entries|pluralize }}
+      · {{ scope_hint|default:"All shops" }}
+      · {{ report_period_label|default:"All time" }}
       · balance <strong data-ax-account-balance>{{ balance }}</strong>
     </p>
   </header>
@@ -37,14 +54,14 @@
       <em>{{ entries }} receipts</em>
     </article>
     <article class="ax-kpi">
-      <span>Lifetime value</span>
+      <span>{% if report_range and report_range != 'all' %}Period value{% else %}Lifetime value{% endif %}</span>
       <strong>{{ total }}</strong>
-      <em>All linked receipts</em>
+      <em>{{ report_period_label|default:"All linked receipts" }}</em>
     </article>
     <article class="ax-kpi is-bad">
       <span>Total balance</span>
       <strong data-ax-account-balance>{{ balance }}</strong>
-      <em>Unpaid / partial</em>
+      <em>{% if report_range and report_range != 'all' %}Unpaid in {{ report_period_label }}{% else %}Unpaid / partial{% endif %}</em>
     </article>
   </div>
 
@@ -74,12 +91,29 @@
     <div class="ax-receipt-modal-body" data-ax-receipt-modal-body></div>
   </div>
 </div>
-{% if can_pay %}
 {% include "employees/partials/analytics_account_pay_modal.html" %}
-{% endif %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=5"></script>
+<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=15"></script>
+<script>
+  (() => {
+    const form = document.querySelector("[data-analytics-filters]");
+    if (!form) return;
+    const rangeSelect = form.querySelector("[data-analytics-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const syncRange = () => {
+      const range = rangeSelect?.value || "day";
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.disabled = !match;
+        field.required = match;
+      });
+    };
+    rangeSelect?.addEventListener("change", syncRange);
+    syncRange();
+  })();
+</script>
 {% endblock %}

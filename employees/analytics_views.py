@@ -12,8 +12,11 @@ from .access import (
     role_url_segment,
 )
 from .analytics_services import (
+    ANALYTICS_DASHBOARD_SECTION_SLUGS,
+    _date_filter_context,
     apply_account_payment,
     apply_credit_receipt_payment,
+    apply_supplier_receipt_payment,
     build_analytics_page,
     build_analytics_receipts_list,
     build_client_credit_account,
@@ -27,6 +30,7 @@ from .workspace import (
     get_dashboard_module,
     sidebar_for_analytics,
     sidebar_for_client_credit_account,
+    sidebar_for_role_dashboard,
 )
 from shops.daraja_stk import stk_ready as daraja_stk_ready
 from shops.daraja_stk import sync_callback_base_from_request
@@ -135,8 +139,16 @@ def _render_analytics(request, profile, *, section_slug="overview"):
             "module": module,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_analytics(
-                profile.role, active_view=section["slug"], profile=profile
+            "page_sidebar": (
+                sidebar_for_role_dashboard(
+                    profile.role,
+                    profile=profile,
+                    active_slug=section["slug"],
+                )
+                if section["slug"] in ANALYTICS_DASHBOARD_SECTION_SLUGS
+                else sidebar_for_analytics(
+                    profile.role, active_view=section["slug"], profile=profile
+                )
             ),
             **context,
         },
@@ -402,7 +414,7 @@ def analytics_client_credit_audit(request, role_segment, client_id):
 @require_GET
 def analytics_supplier_account(request, role_segment, kind, supplier_id):
     """Supplier account ledger (/…/analytics/suppliers/<kind>/<id>/)."""
-    from .workspace import analytics_section_url
+    from .workspace import _with_request_query, analytics_section_url
 
     profile = get_profile_for_request(request)
     if role_from_url_segment(role_segment) is None:
@@ -432,25 +444,22 @@ def analytics_supplier_account(request, role_segment, kind, supplier_id):
         return denied
 
     account = build_supplier_account(
-        profile=profile, kind=kind, supplier_id=supplier_id
+        profile=profile, kind=kind, supplier_id=supplier_id, request=request
     )
-    query = request.GET.urlencode()
+    from_section = (request.GET.get("from") or "").strip().lower()
     from_expenses = "/analytics/expenses" in (request.META.get("HTTP_REFERER") or "")
-    back_section = "expenses" if from_expenses else "suppliers"
-    # Prefer explicit next= query, else infer from referer / kind usage.
-    next_section = (request.GET.get("from") or "").strip().lower()
-    if next_section in ("expenses", "suppliers"):
-        back_section = next_section
-    back_href = analytics_section_url(profile.role, back_section)
-    if query:
-        # Drop helper params from preserved filters when going back.
-        from urllib.parse import parse_qs, urlencode
+    if from_section in ("expenses", "suppliers"):
+        back_section = from_section
+    elif (kind or "").strip().lower() == "expense" or from_expenses:
+        back_section = "expenses"
+    else:
+        back_section = "suppliers"
 
-        params = parse_qs(query, keep_blank_values=True)
-        params.pop("from", None)
-        cleaned = urlencode({k: v[0] for k, v in params.items()})
-        if cleaned:
-            back_href = f"{back_href}?{cleaned}"
+    back_href = _with_request_query(
+        analytics_section_url(profile.role, back_section),
+        request,
+        drop=("from",),
+    )
 
     return render(
         request,
@@ -466,8 +475,16 @@ def analytics_supplier_account(request, role_segment, kind, supplier_id):
             "module": module,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_analytics(
-                profile.role, active_view=back_section, profile=profile
+            "page_sidebar": (
+                sidebar_for_role_dashboard(
+                    profile.role,
+                    profile=profile,
+                    active_slug="suppliers",
+                )
+                if back_section == "suppliers"
+                else sidebar_for_analytics(
+                    profile.role, active_view=back_section, profile=profile
+                )
             ),
             "back_href": back_href,
             "back_label": (
@@ -522,7 +539,21 @@ def analytics_account_pay(request, role_segment):
                 payment_method=payment_method,
                 stk_payment_id=stk_payment_id,
             )
+        elif receipt_id and kind in ("expense", "stock"):
+            result = apply_supplier_receipt_payment(
+                profile=profile,
+                kind=kind,
+                account_id=account_id,
+                receipt_id=receipt_id,
+                amount=request.POST.get("amount"),
+                shop_ids=request.POST.getlist("shop_id"),
+            )
         else:
+            date_filter = (
+                _date_filter_context(request, allow_all_time=True)
+                if kind in ("expense", "stock")
+                else {}
+            )
             result = apply_account_payment(
                 profile=profile,
                 kind=kind,
@@ -530,6 +561,9 @@ def analytics_account_pay(request, role_segment):
                 amount=request.POST.get("amount"),
                 payment_method=payment_method,
                 stk_payment_id=stk_payment_id,
+                shop_ids=request.POST.getlist("shop_id"),
+                start=date_filter.get("start"),
+                end=date_filter.get("end"),
             )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)

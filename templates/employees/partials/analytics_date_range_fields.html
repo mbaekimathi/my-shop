@@ -1,0 +1,25 @@
+<select name="range" data-analytics-range aria-label="Time range">
+  {% if include_all_time %}
+  <option value="all"{% if report_range == 'all' or not report_range %} selected{% endif %}>All time</option>
+  {% endif %}
+  <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
+  <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
+  <option value="month"{% if report_range == 'month' %} selected{% endif %}>Month</option>
+  <option value="year"{% if report_range == 'year' %} selected{% endif %}>Year</option>
+</select>
+<input type="date" name="date" value="{{ report_date_value }}" data-range-field="day"{% if report_range != 'day' %} hidden disabled{% endif %}{% if report_range == 'day' %} required{% endif %} aria-label="Date">
+<input type="date" name="date_from" value="{{ report_date_from }}" data-range-field="period"{% if report_range != 'period' %} hidden disabled{% endif %}{% if report_range == 'period' %} required{% endif %} aria-label="From">
+<input type="date" name="date_to" value="{{ report_date_to }}" data-range-field="period"{% if report_range != 'period' %} hidden disabled{% endif %}{% if report_range == 'period' %} required{% endif %} aria-label="To">
+<input type="month" name="month" value="{{ report_month_value }}" data-range-field="month"{% if report_range != 'month' %} hidden disabled{% endif %}{% if report_range == 'month' %} required{% endif %} aria-label="Month">
+<input
+  type="number"
+  name="year"
+  min="2000"
+  max="2100"
+  step="1"
+  value="{{ report_year_value|slice:':4' }}"
+  data-range-field="year"
+  {% if report_range != 'year' %}hidden disabled{% endif %}
+  {% if report_range == 'year' %}required{% endif %}
+  aria-label="Year"
+>

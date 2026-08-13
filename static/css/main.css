@@ -14219,16 +14219,55 @@ body.workspace-modal-open {
 .ax--list-table[data-ax-section="suppliers"] .ax-card-head,
 .ax--list-table[data-ax-section="expenses"] .ax-card-head {
   flex-wrap: wrap;
+  gap: 0.5rem 0.65rem;
   padding-bottom: 0.15rem;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
 }
 
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card,
+.ax--list-table[data-ax-section="expenses"] .ax-filters--card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card select,
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="date"],
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="month"],
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="number"],
+.ax--list-table[data-ax-section="expenses"] .ax-filters--card select {
+  min-height: 2rem;
+  min-width: 8.5rem;
+  max-width: 12rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card .ax-apply {
+  min-height: 2rem;
+  border-radius: 999px;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card select:focus,
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card input:focus,
+.ax--list-table[data-ax-section="expenses"] .ax-filters--card select:focus {
+  outline: 2px solid color-mix(in srgb, var(--teal) 35%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
 .ax--list-table[data-ax-section="suppliers"] .ax-table-search,
 .ax--list-table[data-ax-section="expenses"] .ax-table-search {
-  flex: 1 1 12rem;
+  flex: 0 1 16rem;
   min-width: 0;
-  max-width: 18rem;
-  margin-left: auto;
+  max-width: 16rem;
+  margin-left: 0;
 }
 
 .ax--list-table[data-ax-section="suppliers"] .ax-table-search input,
@@ -14377,9 +14416,25 @@ body.workspace-modal-open {
     min-width: 38rem;
   }
 
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card,
+  .ax--list-table[data-ax-section="expenses"] .ax-filters--card {
+    flex: 1 1 8rem;
+    margin-left: 0;
+    order: 2;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card select,
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="date"],
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="month"],
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="number"],
+  .ax--list-table[data-ax-section="expenses"] .ax-filters--card select {
+    width: 100%;
+    max-width: none;
+  }
+
   .ax--list-table[data-ax-section="suppliers"] .ax-table-search,
   .ax--list-table[data-ax-section="expenses"] .ax-table-search {
-    flex: 1 1 100%;
+    flex: 1 1 12rem;
     max-width: none;
     order: 3;
   }
@@ -14670,6 +14725,58 @@ body.workspace-modal-open {
 .ax-eye i {
   width: 0.95rem;
   height: 0.95rem;
+}
+
+.ax-receipt-pay {
+  min-height: 2rem;
+  padding: 0 0.65rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #101820;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ax-receipt-pay:hover {
+  background: var(--accent-deep);
+}
+
+.ax-receipt-pay.is-settled {
+  background: color-mix(in srgb, var(--mist) 16%, var(--surface));
+  color: var(--text-strong);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.ax-receipt-pay.is-settled:hover {
+  background: color-mix(in srgb, var(--mist) 26%, var(--surface));
+}
+
+[data-ax-section="supplier-account"] .ax-top-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+[data-ax-section="supplier-account"] .ax-filters {
+  margin-top: 0.55rem;
+}
+
+[data-ax-section="supplier-account"] .ax-table th.ax-col-actions,
+[data-ax-section="supplier-account"] .ax-table td.ax-col-actions {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  min-width: 6.5rem;
+  background: var(--surface);
+  box-shadow: -1px 0 0 var(--line);
+}
+
+[data-ax-section="supplier-account"] .ax-table thead th.ax-col-actions {
+  z-index: 3;
 }
 
 .ax-receipt-modal-dialog {
