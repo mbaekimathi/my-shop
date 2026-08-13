@@ -190,7 +190,7 @@ class StockOutReason(models.TextChoices):
     WASTE = "waste", "Waste"
     TRANSFER = "transfer", "Transfer"
     DISPLAY = "display", "Display"
-    RETURN = "return", "Return"
+    RETURN = "return", "Supplier return"
 
 
 class StockRequestStatus(models.TextChoices):

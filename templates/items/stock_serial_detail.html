@@ -90,7 +90,7 @@
             </a>
           </td>
           <td class="stock-serials-col--status" data-label="Status">
-            <span class="stock-report-type stock-report-type--{% if row.status == 'in_stock' %}in{% elif row.status == 'sold' %}sale{% elif row.status == 'returned' %}request{% else %}out{% endif %}">
+            <span class="stock-report-type stock-report-type--{% if row.status == 'in_stock' %}in{% elif row.status == 'sold' %}sale{% elif row.status == 'returned' %}returned{% else %}out{% endif %}">
               {{ row.status_label }}
             </span>
           </td>

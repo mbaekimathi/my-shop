@@ -668,6 +668,14 @@
       }
     };
 
+    let pollTimer = null;
+    const stopPolling = () => {
+      if (pollTimer) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
     const pollStockRequests = async () => {
       if (document.hidden) return;
       try {
@@ -678,6 +686,10 @@
           },
           credentials: "same-origin",
         });
+        if (response.status === 401 || response.status === 403) {
+          stopPolling();
+          return;
+        }
         if (!response.ok) return;
         const data = await response.json();
         if (!data?.ok) return;
@@ -758,7 +770,7 @@
       }
     };
 
-    window.setInterval(pollStockRequests, 12000);
+    pollTimer = window.setInterval(pollStockRequests, 12000);
     window.setTimeout(pollStockRequests, 2500);
   }
 

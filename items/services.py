@@ -3,7 +3,7 @@ import re
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import OuterRef, Subquery
+from django.db.models import F, OuterRef, Q, Subquery
 
 from employees.countries import COUNTRY_DIAL_CODES
 
@@ -903,6 +903,90 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
     return True, receipt.receipt_number or ""
 
 
+def serial_transfer_times_for_item(item_id) -> dict:
+    """Uppercased serial → latest shop-to-shop transfer datetime.
+
+    Shop-to-shop is a fulfilled stock request or a stock-out with reason
+    transfer. Client receipt returns are not transfers.
+    """
+    lookup = {}
+    if not item_id:
+        return lookup
+    lines = (
+        StockMovementLine.objects.filter(item_id=item_id)
+        .filter(
+            Q(
+                movement__movement_type=StockMovementType.REQUEST,
+                movement__request_status=StockRequestStatus.FULFILLED,
+            )
+            | Q(
+                movement__movement_type=StockMovementType.OUT,
+                reason=StockOutReason.TRANSFER,
+            )
+        )
+        .select_related("movement")
+    )
+    for line in lines:
+        movement = line.movement
+        if movement.movement_type == StockMovementType.REQUEST:
+            when = movement.responded_at or movement.created_at
+        else:
+            when = movement.created_at
+        if when is None:
+            continue
+        for raw in line.serial_numbers or []:
+            key = _serial_status_key(raw)
+            if not key:
+                continue
+            prev = lookup.get(key)
+            if prev is None or when > prev:
+                lookup[key] = when
+    return lookup
+
+
+def _latest_client_return_meta(serial: ItemSerial):
+    """Latest sold-receipt client return: (returned_at, shop_id) or (None, None)."""
+    from shops.models import ShopReceiptKind, ShopReceiptLine
+
+    serial_key = _serial_status_key(serial.serial_number)
+    lines = (
+        ShopReceiptLine.objects.filter(
+            item_id=serial.item_id,
+            returned_quantity__gt=0,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        )
+        .select_related("receipt")
+        .order_by(
+            F("receipt__last_returned_at").desc(nulls_last=True),
+            "-receipt__created_at",
+            "-id",
+        )
+    )
+    for line in lines:
+        returned = {
+            _serial_status_key(value)
+            for value in (line.returned_serial_numbers or [])
+            if str(value).strip()
+        }
+        if serial_key not in returned:
+            continue
+        receipt = line.receipt
+        return receipt.last_returned_at or receipt.created_at, receipt.shop_id
+    return None, None
+
+
+def _serial_left_client_return_state(serial: ItemSerial) -> bool:
+    """True when a client-returned unit later moved shop-to-shop."""
+    serial_key = _serial_status_key(serial.serial_number)
+    returned_at, return_shop_id = _latest_client_return_meta(serial)
+    transfer_at = serial_transfer_times_for_item(serial.item_id).get(serial_key)
+    if transfer_at and (returned_at is None or transfer_at >= returned_at):
+        return True
+    if serial.shop_id and return_shop_id and int(serial.shop_id) != int(return_shop_id):
+        return True
+    return False
+
+
 def _serial_is_on_sale_or_returned(serial: ItemSerial) -> tuple[bool, bool]:
     from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
 
@@ -936,7 +1020,7 @@ def _serial_is_on_sale_or_returned(serial: ItemSerial) -> tuple[bool, bool]:
 def _derived_serial_status(serial: ItemSerial, *, on_sale: bool, was_returned: bool) -> str:
     if on_sale:
         return ItemSerialStatus.SOLD
-    if was_returned:
+    if was_returned and not _serial_left_client_return_state(serial):
         return ItemSerialStatus.RETURNED
     if serial.is_available:
         return ItemSerialStatus.IN_STOCK
@@ -1738,7 +1822,7 @@ def _parse_movement_lines(data, movement_type: str):
             if stock_req.require_reason_on_out:
                 if reason not in valid_reasons:
                     errors.append(
-                        f"{line_label}: choose a reason (waste, transfer, display, or return)."
+                        f"{line_label}: choose a reason (waste, transfer, display, or supplier return)."
                     )
                     continue
             elif reason not in valid_reasons:

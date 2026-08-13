@@ -28,6 +28,7 @@ from .services import (
     last_buying_prices_for_items,
     search_available_serials,
     search_suppliers,
+    serial_transfer_times_for_item,
     toggle_item_suspended,
     update_item,
 )
@@ -1971,7 +1972,7 @@ def stock_settings(request, profile, meta, module):
                 {
                     "field": "require_reason_on_out",
                     "label": "Reason",
-                    "hint": "Waste, transfer, display, or return",
+                    "hint": "Waste, transfer, display, or supplier return",
                     "enabled": settings_row.require_reason_on_out,
                 },
                 {
@@ -2569,12 +2570,29 @@ def _serial_list_contains(raw, serial_key: str) -> bool:
     return bool(serial_key) and serial_key in _movement_serial_numbers(raw)
 
 
-def _serial_unit_state(serial, sale_by_serial, return_by_serial):
+def _serial_transfer_supersedes_return(serial, returned, transfer_at):
+    """Shop-to-shop after a client return is In stock/out, not Returned."""
+    returned_at = returned.get("returned_at") if returned else None
+    if transfer_at and (returned_at is None or transfer_at >= returned_at):
+        return True
+    return_shop_id = returned.get("shop_id") if returned else None
+    if serial.shop_id and return_shop_id and int(serial.shop_id) != int(return_shop_id):
+        return True
+    return False
+
+
+def _serial_unit_state(
+    serial, sale_by_serial, return_by_serial, transfer_at_by_serial=None
+):
     from .models import ItemSerialStatus
 
     key = str(serial.serial_number or "").strip().upper()
     sale = sale_by_serial.get(key) or sale_by_serial.get(serial.serial_number)
     returned = return_by_serial.get(key) or return_by_serial.get(serial.serial_number)
+    transfer_at_by_serial = transfer_at_by_serial or {}
+    transfer_at = transfer_at_by_serial.get(key) or transfer_at_by_serial.get(
+        serial.serial_number
+    )
     override = (getattr(serial, "status_override", None) or "").strip().lower()
     if override in ItemSerialStatus.values:
         if override == ItemSerialStatus.SOLD:
@@ -2586,7 +2604,9 @@ def _serial_unit_state(serial, sale_by_serial, return_by_serial):
         return override, ItemSerialStatus(override).label, event
     if sale is not None:
         return "sold", "Sold", sale
-    if returned is not None:
+    if returned is not None and not _serial_transfer_supersedes_return(
+        serial, returned, transfer_at
+    ):
         return "returned", "Returned", returned
     if serial.is_available:
         return "in_stock", "In stock", None
@@ -2620,7 +2640,7 @@ def _serial_sale_lookup(item):
 
 
 def _serial_return_lookup(item):
-    """Map serial_number → latest return info (original sale client + when returned)."""
+    """Map serial_number → latest client receipt return (sold, then returned)."""
     from shops.models import ShopReceiptKind, ShopReceiptLine
 
     lines = (
@@ -3188,6 +3208,7 @@ def stock_serial_detail(request, profile, meta, module, item_id):
 
     sale_by_serial = _serial_sale_lookup(item)
     return_by_serial = _serial_return_lookup(item)
+    transfer_at_by_serial = serial_transfer_times_for_item(item.pk)
     rows = []
     in_stock_count = 0
     sold_count = 0
@@ -3196,10 +3217,10 @@ def stock_serial_detail(request, profile, meta, module, item_id):
 
     segment = role_url_segment(profile.role)
     for serial in serials_qs:
-        # Still on an active sale → sold. After a return, do not flip back to
-        # "In stock" — keep status as Returned until the unit is sold again.
+        # Still on an active sale → sold. Client receipt return → Returned,
+        # unless the unit later moved shop-to-shop (that is a transfer).
         status, status_label, event = _serial_unit_state(
-            serial, sale_by_serial, return_by_serial
+            serial, sale_by_serial, return_by_serial, transfer_at_by_serial
         )
         event_shop_id = event.get("shop_id") if event else None
         if shop_ids and serial.shop_id not in shop_ids and event_shop_id not in shop_ids:
@@ -3276,7 +3297,12 @@ def _build_serial_history_events(*, item, serial, shop_ids):
     """All stock/sale/return events for one serial, oldest first."""
     from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
 
-    from .models import StockMovementLine, StockMovementType, StockRequestStatus
+    from .models import (
+        StockMovementLine,
+        StockMovementType,
+        StockOutReason,
+        StockRequestStatus,
+    )
 
     serial_key = str(serial.serial_number or "").strip().upper()
     events = []
@@ -3311,6 +3337,13 @@ def _build_serial_history_events(*, item, serial, shop_ids):
         event_label = type_labels.get(
             movement.movement_type, movement.get_movement_type_display()
         )
+        if movement.movement_type == StockMovementType.OUT:
+            reason = (line.reason or "").strip().lower()
+            if reason == StockOutReason.TRANSFER:
+                event_type = "transfer_fulfilled"
+                event_label = "Transfer"
+            elif reason == StockOutReason.RETURN:
+                event_label = "Supplier return"
         if transfer_direction:
             event_label = _transfer_event_label(
                 event_type=event_type,
@@ -3354,7 +3387,6 @@ def _build_serial_history_events(*, item, serial, shop_ids):
             item=item,
             receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
         )
-        .exclude(receipt__status=ShopReceiptStatus.CANCELLED)
         .select_related(
             "receipt",
             "receipt__shop",
@@ -3367,8 +3399,12 @@ def _build_serial_history_events(*, item, serial, shop_ids):
     )
     for line in receipt_lines:
         receipt = line.receipt
+        has_return = _serial_list_contains(line.returned_serial_numbers, serial_key)
+        has_sale = _serial_list_contains(line.serial_numbers, serial_key) or has_return
+        if receipt.status == ShopReceiptStatus.CANCELLED and not has_return:
+            continue
         parties = _movement_parties_for_receipt(receipt=receipt)
-        if _serial_list_contains(line.serial_numbers, serial_key):
+        if has_sale:
             events.append(
                 {
                     "happened_at": receipt.created_at,
@@ -3381,12 +3417,12 @@ def _build_serial_history_events(*, item, serial, shop_ids):
                     "movement_id": None,
                 }
             )
-        if _serial_list_contains(line.returned_serial_numbers, serial_key):
+        if has_return:
             events.append(
                 {
                     "happened_at": receipt.last_returned_at or receipt.created_at,
                     "event_type": "returned",
-                    "event_label": "Returned",
+                    "event_label": "Client return",
                     "from_label": parties["to_label"],
                     "to_label": parties["from_label"],
                     "by": _employee_display_name(receipt.last_returned_by),
@@ -3466,8 +3502,9 @@ def stock_serial_history(request, profile, meta, module, item_id, serial_number)
 
     sale_by_serial = _serial_sale_lookup(item)
     return_by_serial = _serial_return_lookup(item)
+    transfer_at_by_serial = serial_transfer_times_for_item(item.pk)
     status, status_label, event = _serial_unit_state(
-        serial, sale_by_serial, return_by_serial
+        serial, sale_by_serial, return_by_serial, transfer_at_by_serial
     )
 
     segment = role_url_segment(profile.role)

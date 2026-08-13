@@ -748,7 +748,7 @@
             <option value="waste">Waste</option>
             <option value="transfer">Transfer</option>
             <option value="display">Display</option>
-            <option value="return">Return</option>
+            <option value="return">Supplier return</option>
           </select>
         </label>
         <label class="stock-inline-field">

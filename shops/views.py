@@ -1508,9 +1508,9 @@ def my_shop_stock_request_from_stock(request, shop_id):
 @require_http_methods(["GET"])
 def my_shop_stock_request_status(request, shop_id):
     """Poll endpoint: incoming stock-request alerts for the active shop."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_shop_read_access(request, shop_id)
     if denied:
-        return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+        return denied
     denied = _require_my_shop_permission(
         request, profile, "workspace", as_json=True, portal_ok=True
     )
