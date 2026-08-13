@@ -111,7 +111,7 @@
     <form class="workspace-modal-form" method="post" enctype="multipart/form-data" novalidate>
       {% csrf_token %}
       <input type="hidden" name="action" value="register">
-      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="" %}
+      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="" pricing_shops_empty_message="No shops are allocated to your account." %}
       <div class="workspace-modal-actions">
         <button class="btn btn--ghost" type="button" data-modal-close>Cancel</button>
         <button class="btn btn--primary" type="submit">

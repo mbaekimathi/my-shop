@@ -37,6 +37,8 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 CSRF_TRUSTED_ORIGINS = resolve_csrf_trusted_origins()
 CSRF_FAILURE_VIEW = "myshop.csrf.csrf_failure"
+# Long-lived so shop-floor pages left open do not hit CSRF "Page expired".
+CSRF_COOKIE_AGE = int(os.getenv("CSRF_COOKIE_AGE", str(60 * 60 * 24 * 365 * 10)))
 
 # Optional override; otherwise auto from request / ngrok.
 DARAJA_CALLBACK_BASE_URL = os.getenv("DARAJA_CALLBACK_BASE_URL", "").strip()
@@ -180,6 +182,7 @@ else:
 SESSION_CACHE_ALIAS = "default"
 SESSION_COOKIE_AGE = int(os.getenv("SESSION_COOKIE_AGE", str(60 * 60 * 24 * 14)))
 SESSION_SAVE_EVERY_REQUEST = False
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
 # Prefer Argon2 for new hashes; keep PBKDF2 so existing passwords still verify
 # and upgrade on next successful login.

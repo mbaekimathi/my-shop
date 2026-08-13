@@ -10911,6 +10911,10 @@ body.workspace-modal-open {
   background: color-mix(in srgb, var(--ok) 55%, transparent);
 }
 
+.ax-band-legend--sales .is-result::before {
+  background: color-mix(in srgb, var(--ok) 75%, transparent);
+}
+
 .ax-table--shops .ax-th--band-cash,
 .ax-table--shops .ax-cell--band-cash {
   background: color-mix(in srgb, var(--teal) 4%, transparent);
@@ -10936,6 +10940,11 @@ body.workspace-modal-open {
 
   .ax-summary-tiles {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-summary-tiles,
+  .ax--list-table[data-ax-section="credits"] .ax-summary-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -12036,6 +12045,10 @@ body.workspace-modal-open {
   margin-top: 0.05rem;
 }
 
+.ax--list-table[data-ax-section="sales"] .ax-summary-tiles {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .ax--list-table[data-ax-section="sales"] .ax-kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -12449,6 +12462,10 @@ body.workspace-modal-open {
 
 .ax--list-table[data-ax-section="credits"] .ax-summary-board {
   margin-top: 0.05rem;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-summary-tiles {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .ax--list-table[data-ax-section="credits"] .ax-summary-hero.is-warn {

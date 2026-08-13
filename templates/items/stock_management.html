@@ -196,7 +196,7 @@
           <span>Print</span>
         </button>
         {% if not shops %}
-        <p class="stock-shop-bar-hint">Register a shop first.</p>
+        <p class="stock-shop-bar-hint">No shops are allocated to your account.</p>
         {% endif %}
       </div>
       {% else %}
@@ -366,7 +366,7 @@
     {% elif stock_mode == 'view' and not all_shops %}
     <div class="dashboard-placeholder">
       <i data-lucide="store" aria-hidden="true"></i>
-      <p>Register a shop first to view stock.</p>
+      <p>No shops are allocated to your account.</p>
     </div>
     {% elif use_stock_catalog_api and item_count %}
     <section class="stock-view-catalog">

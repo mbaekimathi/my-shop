@@ -8,7 +8,7 @@
   <header class="stock-panel-head">
     <div class="stock-panel-head-top">
       <div>
-        <p class="stock-kicker">Stock management · Returns · All shops</p>
+        <p class="stock-kicker">Stock management · Returns · {{ shops_label|default:"Allocated shops" }}</p>
         <h2>Return clients</h2>
         <p>Clients who returned serial-tracked items. Open a row to see every return.</p>
       </div>
@@ -87,7 +87,7 @@
       </tbody>
     </table>
   </div>
-  <p class="stock-report-footnote">Showing {{ client_count }} client{{ client_count|pluralize }} across all shops</p>
+  <p class="stock-report-footnote">Showing {{ client_count }} client{{ client_count|pluralize }} for {{ shops_label|default:"allocated shops" }}</p>
   {% else %}
   <div class="dashboard-placeholder">
     <i data-lucide="undo-2" aria-hidden="true"></i>

@@ -419,10 +419,10 @@
         {% endif %}
       </header>
       {% if table.shop_grid and section_slug == "revenue" %}
-      <div class="ax-band-legend" aria-label="Column groups">
-        <span class="is-flow">Trading</span>
-        <span class="is-till">Costs</span>
-        <span class="is-pl">Result</span>
+      <div class="ax-band-legend ax-band-legend--items" aria-label="Column groups">
+        <span class="is-flow">Sales · Credits</span>
+        <span class="is-total">Total</span>
+        <span class="is-result">Stock · Expenses · Profit</span>
       </div>
       {% elif table.shop_grid and section_slug == "balances" %}
       <div class="ax-band-legend ax-band-legend--balances" aria-label="Column groups">
@@ -436,6 +436,7 @@
         <span class="is-cash">Cash</span>
         <span class="is-mpesa">M-Pesa</span>
         <span class="is-total">Total</span>
+        <span class="is-result">Stock · Profit</span>
       </div>
       {% elif table.shop_grid and section_slug == "items" %}
       <div class="ax-band-legend ax-band-legend--items" aria-label="Column groups">
@@ -449,9 +450,11 @@
         <span class="is-total">Total</span>
       </div>
       {% elif table.shop_grid and section_slug == "credits" %}
-      <div class="ax-band-legend ax-band-legend--credits" aria-label="Column groups">
-        <span class="is-flow">By shop</span>
+      <div class="ax-band-legend ax-band-legend--sales" aria-label="Column groups">
+        <span class="is-cash">Paid</span>
+        <span class="is-mpesa">Due</span>
         <span class="is-total">Total</span>
+        <span class="is-result">Stock · Profit</span>
       </div>
       {% elif table.shop_grid and section_slug == "suppliers" %}
       <div class="ax-band-legend ax-band-legend--suppliers" aria-label="Column groups">
@@ -469,7 +472,7 @@
         <p class="ax-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
         {% endif %}
         {% if table.rows %}
-        <table class="ax-table{% if table.shop_grid %} ax-table--shops{% endif %}{% if section_slug == 'revenue' %} ax-table--pl{% endif %}{% if table.table_class %} {{ table.table_class }}{% endif %}">
+        <table class="ax-table{% if table.shop_grid %} ax-table--shops{% endif %}{% if table.table_class %} {{ table.table_class }}{% endif %}">
           <thead>
             <tr>
               {% for col in table.columns %}

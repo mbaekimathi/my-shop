@@ -34,7 +34,13 @@ from .constants import (
 )
 from .models import BroadcastCampaign
 from .replies import inbox_threads, unread_reply_count
-from .services import audience_summary, list_product_categories, preview_message, recipients_payload
+from .services import (
+    audience_summary,
+    constrain_filters_to_profile,
+    list_product_categories,
+    preview_message,
+    recipients_payload,
+)
 
 
 def _guard(request, role_segment, *, as_json=False):
@@ -190,6 +196,7 @@ def communications_dashboard(request, profile, meta, module, page_sidebar=None):
     """Main /…/communications/ page (called from workspace_module)."""
     segment = role_url_segment(profile.role)
     bridge = fetch_bridge_status()
+    scoped = constrain_filters_to_profile({}, profile)
     context = {
         "profile": profile,
         "meta": meta,
@@ -202,7 +209,9 @@ def communications_dashboard(request, profile, meta, module, page_sidebar=None):
         "bridge_hints": bridge_deploy_hints(),
         "categories": list_product_categories(),
         "audience_types": AUDIENCE_TYPE_CHOICES,
-        "audience_summary": audience_summary(),
+        "audience_summary": audience_summary(
+            shop_id=scoped.get("shop_id"), shop_ids=scoped.get("shop_ids")
+        ),
         "spend_tiers": SPEND_TIER_CHOICES,
         "transaction_mins": TRANSACTION_MIN_CHOICES,
         "last_purchase_windows": LAST_PURCHASE_WINDOWS,
@@ -269,7 +278,7 @@ def communications_api_recipients(request, role_segment):
     profile, deny = _guard(request, role_segment, as_json=True)
     if deny:
         return deny
-    filters = _filters_from_request(request)
+    filters = constrain_filters_to_profile(_filters_from_request(request), profile)
     payload = recipients_payload(filters, sample=500)
     return JsonResponse(payload)
 
@@ -288,12 +297,14 @@ def communications_api_preview(request, role_segment):
         except json.JSONDecodeError:
             payload = {}
         template = payload.get("body") or payload.get("template") or ""
-        filters = payload.get("filters") or _filters_from_request(request)
+        filters = constrain_filters_to_profile(
+            payload.get("filters") or _filters_from_request(request), profile
+        )
         client_id = payload.get("client_id")
         destination_key = payload.get("destination_key")
     else:
         template = request.POST.get("body") or request.GET.get("body") or ""
-        filters = _filters_from_request(request)
+        filters = constrain_filters_to_profile(_filters_from_request(request), profile)
         client_id = request.GET.get("client_id") or request.POST.get("client_id")
         destination_key = request.GET.get("destination_key") or request.POST.get(
             "destination_key"

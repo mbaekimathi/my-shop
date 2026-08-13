@@ -9,7 +9,7 @@ from django.db.models import F, Q
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods
 
-from employees.access import active_employee_required
+from employees.access import active_employee_required, get_profile_for_request
 from employees.countries import COUNTRY_DIAL_CODES
 from employees.workspace import sidebar_for_stock_management
 
@@ -78,6 +78,12 @@ def serial_search_api(request):
     query = (request.GET.get("q") or "").strip()
     match = (request.GET.get("match") or "contains").strip().lower()
     exclude = request.GET.getlist("exclude") or []
+    profile = get_profile_for_request(request)
+    if profile is None:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+    allowed = {str(shop.pk) for shop in actionable_shops_for_profile(profile)}
+    if shop_id and shop_id not in allowed:
+        return JsonResponse({"ok": True, "results": [], "match": match})
     results = search_available_serials(
         item_id=item_id,
         shop_id=shop_id,
@@ -120,26 +126,13 @@ def serial_in_stock_check_api(request):
     return JsonResponse({"ok": True, "results": ordered})
 
 
-def _active_pricing_shops():
-    from shops.models import Shop
-
-    return list(Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name"))
-
-
 def _pricing_shops_for_profile(profile):
-    """Active shops allocated to the signed-in employee."""
-    return list(
-        profile.assigned_shops.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
+    """Active shops the signed-in employee may price (allocated when shop-scoped)."""
+    return actionable_shops_for_profile(profile)
 
 
 def _serial_shops_for_profile(profile):
-    """Shops the signed-in employee may see on serials pages (allocated shops only)."""
-    from employees.models import SHOP_ASSIGNABLE_ROLES
-
-    allocated = _pricing_shops_for_profile(profile)
-    if allocated or profile.role in SHOP_ASSIGNABLE_ROLES:
-        return allocated
+    """Shops the signed-in employee may see on serials pages."""
     return actionable_shops_for_profile(profile)
 
 
@@ -160,8 +153,8 @@ def _shop_prices_from_post(post, shops) -> dict:
     return prices
 
 
-def _form_data_from_post(post) -> dict:
-    shops = _active_pricing_shops()
+def _form_data_from_post(post, profile) -> dict:
+    shops = _pricing_shops_for_profile(profile)
     pricing_mode = (post.get("pricing_mode") or "single").strip().lower()
     if pricing_mode not in ("single", "individual"):
         pricing_mode = "single"
@@ -249,9 +242,17 @@ def item_management(request, profile, meta, module, page_sidebar):
             return denied
 
         if action == "register":
-            form_data = _form_data_from_post(request.POST)
+            form_data = _form_data_from_post(request.POST, profile)
+            editable_shop_ids = {
+                shop.pk for shop in _pricing_shops_for_profile(profile)
+            }
             try:
-                create_item(profile, request.POST, request.FILES)
+                create_item(
+                    profile,
+                    request.POST,
+                    request.FILES,
+                    editable_shop_ids=editable_shop_ids,
+                )
             except ValidationError as exc:
                 form_errors = _validation_errors(exc)
                 open_register_modal = True
@@ -261,7 +262,7 @@ def item_management(request, profile, meta, module, page_sidebar):
 
         elif action == "edit":
             edit_item = get_object_or_404(Item, pk=item_id)
-            form_data = _form_data_from_post(request.POST)
+            form_data = _form_data_from_post(request.POST, profile)
             editable_shop_ids = {
                 shop.pk for shop in _pricing_shops_for_profile(profile)
             }
@@ -301,8 +302,8 @@ def item_management(request, profile, meta, module, page_sidebar):
         if denied is not None:
             return denied
 
-    pricing_shops = _active_pricing_shops()
-    edit_pricing_shops = _pricing_shops_for_profile(profile)
+    pricing_shops = _pricing_shops_for_profile(profile)
+    edit_pricing_shops = pricing_shops
     from employees.access import role_url_segment
 
     item_count = Item.objects.count()
@@ -2030,7 +2031,6 @@ def stock_settings(request, profile, meta, module):
 def stock_management(request, profile, meta, module, page_sidebar):
     from employees.models import EmployeeRole
     from employees.module_permissions import require_module_permission
-    from shops.models import Shop
 
     from .models import ShopStock
 
@@ -2090,12 +2090,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
     if mode == "return-clients":
         return stock_serial_returns(request, profile, meta, module)
 
-    all_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
-    action_shops = actionable_shops_for_profile(profile)
-    # Current stock: all shops. Stock in / out / request: only shops allocated to the employee.
-    shops = all_shops if mode == "view" else action_shops
+    shops = actionable_shops_for_profile(profile)
+    all_shops = shops
     shops_by_id = {str(shop.pk): shop for shop in shops}
 
     def _resolve_shop(raw):
@@ -2420,7 +2416,6 @@ def stock_management_catalog(request, role_segment):
     from employees.access import get_profile_for_request, role_url_segment
     from employees.models import EmployeeRole
     from employees.module_permissions import require_module_permission
-    from shops.models import Shop
 
     profile = get_profile_for_request(request)
     if profile is None or not profile.is_active_employee:
@@ -2457,16 +2452,13 @@ def stock_management_catalog(request, role_segment):
         requested_shop_ids = [shop_id]
 
     if mode == "view":
-        all_shops = list(
-            Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-        )
-        shops_by_id = {shop.pk: shop for shop in all_shops}
+        action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}
         view_shop_id = requested_shop_ids[0] if requested_shop_ids else 0
-        if view_shop_id and view_shop_id not in shops_by_id:
+        if view_shop_id and view_shop_id not in action_shops:
             return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
         payload = build_stock_catalog_page(
             shop_id=view_shop_id or None,
-            shop_ids=None if view_shop_id else [shop.pk for shop in all_shops],
+            shop_ids=None if view_shop_id else list(action_shops.keys()),
             mode="view",
             q=request.GET.get("q") or "",
             page=request.GET.get("page") or 1,
@@ -2763,7 +2755,7 @@ def _employee_display_name(profile):
     return employee_id or "—"
 
 
-def _returned_serial_line_queryset(*, shop_id="", client_id=None, client_phone=""):
+def _returned_serial_line_queryset(*, shop_id="", shop_ids=None, client_id=None, client_phone=""):
     from shops.models import ShopReceiptKind, ShopReceiptLine
     from shops.services import _normalize_phone
 
@@ -2790,6 +2782,8 @@ def _returned_serial_line_queryset(*, shop_id="", client_id=None, client_phone="
     )
     if str(shop_id).isdigit():
         lines = lines.filter(receipt__shop_id=int(shop_id))
+    elif shop_ids is not None:
+        lines = lines.filter(receipt__shop_id__in=list(shop_ids))
     if client_id is not None:
         lines = lines.filter(receipt__client_id=client_id)
     elif client_phone:
@@ -2865,10 +2859,7 @@ def _iter_returned_serial_rows(lines):
 
 
 def stock_serial_movements(request, profile, meta, module):
-    """Chronological stock events that include serial numbers, across all shops."""
-    from employees.models import SHOP_ASSIGNABLE_ROLES
-    from shops.models import Shop
-
+    """Chronological stock events that include serial numbers, for allocated shops."""
     from .models import Item
 
     search = (request.GET.get("q") or "").strip()
@@ -2881,12 +2872,10 @@ def stock_serial_movements(request, profile, meta, module):
         profile=profile,
     )
 
-    display_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
+    display_shops = _serial_shops_for_profile(profile)
     shop_ids = [shop.pk for shop in display_shops]
-    no_shop_access = profile.role in SHOP_ASSIGNABLE_ROLES and not display_shops
-    shop_ids_for_query = [] if no_shop_access else shop_ids
+    shops_label = _serial_shops_label(display_shops)
+    shop_ids_for_query = shop_ids
 
     serial_items = list(
         Item.objects.filter(track_serial_number=True).order_by("category", "name")
@@ -2944,6 +2933,7 @@ def stock_serial_movements(request, profile, meta, module):
             "row_count": len(rows),
             "search": search,
             "display_shops": display_shops,
+            "shops_label": shops_label,
             "stock_mode": "serial-movements",
             **filter_context,
         },
@@ -2951,9 +2941,8 @@ def stock_serial_movements(request, profile, meta, module):
 
 
 def stock_serial_returns(request, profile, meta, module):
-    """Clients who returned serial-tracked items across all shops."""
+    """Clients who returned serial-tracked items at allocated shops."""
     from employees.access import role_url_segment
-    from shops.models import Shop
 
     search = (request.GET.get("q") or "").strip()
 
@@ -2964,12 +2953,13 @@ def stock_serial_returns(request, profile, meta, module):
         profile=profile,
     )
 
-    display_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
+    display_shops = _serial_shops_for_profile(profile)
+    shops_label = _serial_shops_label(display_shops)
     shop_index = {shop.pk: index for index, shop in enumerate(display_shops)}
 
-    lines = _returned_serial_line_queryset(shop_id="")
+    lines = _returned_serial_line_queryset(
+        shop_ids=[shop.pk for shop in display_shops]
+    )
     clients = {}
     for row in _iter_returned_serial_rows(lines):
         key = (
@@ -3051,6 +3041,7 @@ def stock_serial_returns(request, profile, meta, module):
             "search": search,
             "display_shops": display_shops,
             "show_all_shops": len(display_shops) > 1,
+            "shops_label": shops_label,
             "selected_shop_id": "",
             "stock_mode": "return-clients",
         },
@@ -3060,7 +3051,7 @@ def stock_serial_returns(request, profile, meta, module):
 def stock_serial_return_client(
     request, profile, meta, module, *, client_id=None, guest_phone="", guest_name=""
 ):
-    """All returned serial items for one client across all shops."""
+    """Returned serial items for one client at allocated shops."""
     from employees.access import role_url_segment
     from shops.models import Client
 
@@ -3073,12 +3064,18 @@ def stock_serial_return_client(
         profile=profile,
     )
 
+    display_shops = _serial_shops_for_profile(profile)
+    shops_label = _serial_shops_label(display_shops)
+    allocated_shop_ids = [shop.pk for shop in display_shops]
+
     client = None
     if client_id is not None:
         client = get_object_or_404(Client, pk=client_id)
         client_name = (client.full_name or "").strip() or "Client"
         client_phone = (client.phone_number or "").strip()
-        lines = _returned_serial_line_queryset(shop_id="", client_id=client.pk)
+        lines = _returned_serial_line_queryset(
+            shop_ids=allocated_shop_ids, client_id=client.pk
+        )
     else:
         guest_phone = (guest_phone or request.GET.get("phone") or "").strip()
         guest_name = (guest_name or request.GET.get("name") or "").strip()
@@ -3087,7 +3084,7 @@ def stock_serial_return_client(
         client_name = guest_name or "Walk-in"
         client_phone = guest_phone
         lines = _returned_serial_line_queryset(
-            shop_id="", client_phone=guest_phone or guest_name
+            shop_ids=allocated_shop_ids, client_phone=guest_phone or guest_name
         )
 
     rows = []
@@ -3140,6 +3137,7 @@ def stock_serial_return_client(
             "row_count": len(rows),
             "search": search,
             "list_href": list_href,
+            "shops_label": shops_label,
             "stock_mode": "return-clients",
         },
     )
@@ -3423,7 +3421,6 @@ def _build_serial_history_events(*, item, serial, shop_ids):
 def stock_serial_history(request, profile, meta, module, item_id, serial_number):
     """Show every movement for one serial from registration to now."""
     from employees.access import role_url_segment
-    from shops.models import Shop
 
     from .models import ItemSerial, ItemSerialStatus
 
@@ -3463,9 +3460,7 @@ def stock_serial_history(request, profile, meta, module, item_id, serial_number)
         profile=profile,
     )
 
-    display_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
+    display_shops = _serial_shops_for_profile(profile)
     shop_ids = [shop.pk for shop in display_shops]
     rows = _build_serial_history_events(
         item=item, serial=serial, shop_ids=shop_ids
@@ -3518,7 +3513,6 @@ def stock_management_print(request, role_segment):
     """Printable stock list: items only, items+prices, or items+stock."""
     from employees.access import get_profile_for_request, role_url_segment
     from employees.module_permissions import require_module_permission
-    from shops.models import Shop
     from shops.services import get_company_profile
     from django.utils import timezone
 
@@ -3542,9 +3536,7 @@ def stock_management_print(request, role_segment):
     if paper not in ("a4", "80", "50"):
         paper = "a4"
 
-    all_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
+    all_shops = actionable_shops_for_profile(profile)
     shops_by_id = {shop.pk: shop for shop in all_shops}
 
     selected_shops = []

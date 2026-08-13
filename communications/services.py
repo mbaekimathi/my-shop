@@ -95,13 +95,17 @@ def _item_counts_for_audience(
     *,
     kinds: list[str],
     shop_id: int | None,
+    shop_ids: list[int] | None = None,
     outstanding_only: bool = False,
     limit: int = 40,
 ) -> list[dict[str, Any]]:
     """Popular items bought by this audience, with distinct client counts."""
     rows = (
         _base_receipt_qs(
-            kinds=kinds, shop_id=shop_id, outstanding_only=outstanding_only
+            kinds=kinds,
+            shop_id=shop_id,
+            shop_ids=shop_ids,
+            outstanding_only=outstanding_only,
         )
         .filter(lines__item_id__isnull=False)
         .values("lines__item_id", "lines__item_name")
@@ -131,13 +135,17 @@ def _client_ids_for_items(
     *,
     kinds: list[str],
     shop_id: int | None,
+    shop_ids: list[int] | None = None,
     outstanding_only: bool = False,
 ) -> set[int]:
     if not item_ids:
         return set()
     return set(
         _base_receipt_qs(
-            kinds=kinds, shop_id=shop_id, outstanding_only=outstanding_only
+            kinds=kinds,
+            shop_id=shop_id,
+            shop_ids=shop_ids,
+            outstanding_only=outstanding_only,
         )
         .filter(lines__item_id__in=item_ids)
         .values_list("client_id", flat=True)
@@ -210,6 +218,15 @@ def parse_filters(raw: dict | None) -> dict[str, Any]:
     except (TypeError, ValueError):
         shop_id = None
 
+    shop_ids = None
+    if "shop_ids" in raw:
+        shop_ids = []
+        for value in raw.get("shop_ids") or []:
+            try:
+                shop_ids.append(int(value))
+            except (TypeError, ValueError):
+                continue
+
     search = (raw.get("search") or raw.get("q") or "").strip()
     client_ids = _parse_client_ids(raw.get("client_ids") or raw.get("selected_ids"))
     destinations = raw.get("destinations") or raw.get("wa_destinations") or []
@@ -237,6 +254,7 @@ def parse_filters(raw: dict | None) -> dict[str, Any]:
         "min_transactions": min_transactions,
         "last_purchase_days": last_purchase_days,
         "shop_id": shop_id,
+        "shop_ids": shop_ids,
         "search": search,
         "client_ids": client_ids,
         "destinations": destinations,
@@ -258,6 +276,7 @@ def _base_receipt_qs(
     *,
     kinds: list[str],
     shop_id: int | None = None,
+    shop_ids: list[int] | None = None,
     outstanding_only: bool = False,
 ):
     qs = (
@@ -266,9 +285,26 @@ def _base_receipt_qs(
     )
     if shop_id:
         qs = qs.filter(shop_id=shop_id)
+    elif shop_ids is not None:
+        qs = qs.filter(shop_id__in=list(shop_ids))
     if outstanding_only:
         qs = qs.filter(total__gt=F("amount_paid"))
     return qs
+
+
+def constrain_filters_to_profile(filters: dict | None, profile) -> dict[str, Any]:
+    """Restrict WhatsApp audience shop_id / shop_ids to allocated shops."""
+    from items.services import actionable_shops_for_profile
+
+    parsed = parse_filters(filters)
+    allowed = [shop.pk for shop in actionable_shops_for_profile(profile)]
+    shop_id = parsed.get("shop_id")
+    if shop_id is not None and shop_id not in allowed:
+        parsed["shop_id"] = None
+        parsed["shop_ids"] = []
+    else:
+        parsed["shop_ids"] = allowed
+    return parsed
 
 
 def _client_ids_for_categories(
@@ -276,13 +312,17 @@ def _client_ids_for_categories(
     *,
     kinds: list[str],
     shop_id: int | None,
+    shop_ids: list[int] | None = None,
     outstanding_only: bool = False,
 ) -> set[int]:
     if not categories:
         return set()
     qs = (
         _base_receipt_qs(
-            kinds=kinds, shop_id=shop_id, outstanding_only=outstanding_only
+            kinds=kinds,
+            shop_id=shop_id,
+            shop_ids=shop_ids,
+            outstanding_only=outstanding_only,
         )
         .filter(lines__item__category__in=categories)
         .values_list("client_id", flat=True)
@@ -341,11 +381,15 @@ def _group_counts_for_audience(
     *,
     kinds: list[str],
     shop_id: int | None,
+    shop_ids: list[int] | None = None,
     outstanding_only: bool = False,
 ) -> list[dict[str, Any]]:
     rows = (
         _base_receipt_qs(
-            kinds=kinds, shop_id=shop_id, outstanding_only=outstanding_only
+            kinds=kinds,
+            shop_id=shop_id,
+            shop_ids=shop_ids,
+            outstanding_only=outstanding_only,
         )
         .filter(lines__item__isnull=False)
         .exclude(lines__item__category="")
@@ -364,7 +408,9 @@ def _group_counts_for_audience(
     ]
 
 
-def audience_summary(shop_id: int | None = None) -> list[dict[str, Any]]:
+def audience_summary(
+    shop_id: int | None = None, shop_ids: list[int] | None = None
+) -> list[dict[str, Any]]:
     """Counts for the Sales / Credits / Quotations / Leads / WhatsApp tabs."""
     summary = []
     for value, label in AUDIENCE_TYPE_CHOICES:
@@ -398,7 +444,10 @@ def audience_summary(shop_id: int | None = None) -> list[dict[str, Any]]:
         outstanding = value == AUDIENCE_CREDIT
         count = (
             _base_receipt_qs(
-                kinds=kinds, shop_id=shop_id, outstanding_only=outstanding
+                kinds=kinds,
+                shop_id=shop_id,
+                shop_ids=shop_ids,
+                outstanding_only=outstanding,
             )
             .values("client_id")
             .distinct()
@@ -419,7 +468,10 @@ def _query_receipt_audience(f: dict[str, Any]) -> list[Recipient]:
     kinds = _receipt_kinds_for_audience(f["audience_type"])
     outstanding = bool(f.get("outstanding_only")) and f["audience_type"] == AUDIENCE_CREDIT
     receipts = _base_receipt_qs(
-        kinds=kinds, shop_id=f["shop_id"], outstanding_only=outstanding
+        kinds=kinds,
+        shop_id=f["shop_id"],
+        shop_ids=f.get("shop_ids"),
+        outstanding_only=outstanding,
     )
 
     if f["categories"]:
@@ -427,6 +479,7 @@ def _query_receipt_audience(f: dict[str, Any]) -> list[Recipient]:
             f["categories"],
             kinds=kinds,
             shop_id=f["shop_id"],
+            shop_ids=f.get("shop_ids"),
             outstanding_only=outstanding,
         )
         if not client_ids:
@@ -438,6 +491,7 @@ def _query_receipt_audience(f: dict[str, Any]) -> list[Recipient]:
             f["item_ids"],
             kinds=kinds,
             shop_id=f["shop_id"],
+            shop_ids=f.get("shop_ids"),
             outstanding_only=outstanding,
         )
         if not item_client_ids:
@@ -506,6 +560,7 @@ def _query_leads_audience(f: dict[str, Any]) -> list[Recipient]:
             f["categories"],
             kinds=kinds,
             shop_id=f["shop_id"],
+            shop_ids=f.get("shop_ids"),
             outstanding_only=False,
         )
         if not allowed:
@@ -517,6 +572,7 @@ def _query_leads_audience(f: dict[str, Any]) -> list[Recipient]:
             f["item_ids"],
             kinds=kinds,
             shop_id=f["shop_id"],
+            shop_ids=f.get("shop_ids"),
             outstanding_only=False,
         )
         if not allowed_items:
@@ -531,6 +587,8 @@ def _query_leads_audience(f: dict[str, Any]) -> list[Recipient]:
         ).exclude(status=ShopReceiptStatus.CANCELLED)
         if f["shop_id"]:
             txn_qs = txn_qs.filter(shop_id=f["shop_id"])
+        elif f.get("shop_ids") is not None:
+            txn_qs = txn_qs.filter(shop_id__in=list(f["shop_ids"]))
         txn_client_ids = [
             int(row["client_id"])
             for row in (
@@ -554,13 +612,16 @@ def _query_leads_audience(f: dict[str, Any]) -> list[Recipient]:
     clients = list(clients_qs.order_by("full_name", "id"))
     client_ids = [c.pk for c in clients]
 
+    spend_qs = ShopReceipt.objects.filter(
+        client_id__in=client_ids,
+        kind__in=[ShopReceiptKind.SALE, ShopReceiptKind.CREDIT],
+    ).exclude(status=ShopReceiptStatus.CANCELLED)
+    if f.get("shop_id"):
+        spend_qs = spend_qs.filter(shop_id=f["shop_id"])
+    elif f.get("shop_ids") is not None:
+        spend_qs = spend_qs.filter(shop_id__in=list(f["shop_ids"]))
     spend_rows = (
-        ShopReceipt.objects.filter(
-            client_id__in=client_ids,
-            kind__in=[ShopReceiptKind.SALE, ShopReceiptKind.CREDIT],
-        )
-        .exclude(status=ShopReceiptStatus.CANCELLED)
-        .values("client_id")
+        spend_qs.values("client_id")
         .annotate(
             last_purchase_at=Max("created_at"),
             lifetime_spend=Coalesce(Sum("total"), Decimal("0")),
@@ -895,22 +956,26 @@ def recipients_payload(
             groups = _group_counts_for_audience(
                 kinds=item_kinds,
                 shop_id=f["shop_id"],
+                shop_ids=f.get("shop_ids"),
                 outstanding_only=False,
             )
             items = _item_counts_for_audience(
                 kinds=item_kinds,
                 shop_id=f["shop_id"],
+                shop_ids=f.get("shop_ids"),
                 outstanding_only=False,
             )
         else:
             groups = _group_counts_for_audience(
                 kinds=kinds,
                 shop_id=f["shop_id"],
+                shop_ids=f.get("shop_ids"),
                 outstanding_only=outstanding,
             )
             items = _item_counts_for_audience(
                 kinds=kinds,
                 shop_id=f["shop_id"],
+                shop_ids=f.get("shop_ids"),
                 outstanding_only=outstanding,
             )
         selected_count = len(selected_clients) if selected_clients else len(all_rows)
@@ -925,7 +990,9 @@ def recipients_payload(
             {"value": value, "label": label}
             for value, label in AUDIENCE_TYPE_CHOICES
         ],
-        "audience_summary": audience_summary(f["shop_id"]),
+        "audience_summary": audience_summary(
+            shop_id=f["shop_id"], shop_ids=f.get("shop_ids")
+        ),
         "categories": list_product_categories(),
         "groups": groups,
         "items": items,

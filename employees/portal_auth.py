@@ -54,12 +54,12 @@ def clear_employee_auth(request):
 
 def begin_shop_portal_session(request, shop):
     """Exclusive shop portal sign-in: drop employee auth, set shop session."""
-    from shops.session import set_shop_portal_session
+    from shops.session import persist_shop_portal_session, set_shop_portal_session
 
     clear_employee_auth(request)
     set_shop_portal_session(request, shop)
     request.session.cycle_key()
-    request.session.modified = True
+    persist_shop_portal_session(request)
 
 
 def begin_employee_session(request, user, profile):

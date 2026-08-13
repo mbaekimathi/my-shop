@@ -19,7 +19,7 @@ from .constants import (
     MSG_PENDING,
 )
 from .models import BroadcastCampaign, OutboundMessage
-from .services import parse_filters, query_recipients, render_placeholders
+from .services import constrain_filters_to_profile, query_recipients, render_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def create_campaign(
     if status_payload.get("status") != BRIDGE_STATUS_CONNECTED:
         raise ValueError("WhatsApp is not connected. Scan the QR code first.")
 
-    parsed = parse_filters(filters)
+    parsed = constrain_filters_to_profile(filters, profile)
     recipients = query_recipients(parsed)
     if not recipients:
         if parsed.get("client_ids"):

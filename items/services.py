@@ -371,22 +371,19 @@ def build_stock_catalog_page(
     item_ids = [item.pk for item in items]
 
     # Multi-shop matrix for view and for in/out/request when shop_ids are provided.
+    # shop_ids=[] means no shops (do not fall back to every active shop).
     multi_shop_modes = {"view", "in", "out", "request"}
     use_multi_shop = mode in multi_shop_modes and (
-        bool(shop_ids) or (mode == "view" and not shop_id)
+        shop_ids is not None or (mode == "view" and not shop_id)
     )
     view_shop_ids = []
     if use_multi_shop:
         if shop_id and not shop_ids:
             view_shop_ids = [int(shop_id)]
-        elif shop_ids:
+        elif shop_ids is not None:
             view_shop_ids = [int(sid) for sid in shop_ids if sid]
         else:
-            view_shop_ids = list(
-                Shop.objects.filter(is_hidden=False, is_suspended=False)
-                .order_by("name")
-                .values_list("pk", flat=True)
-            )
+            view_shop_ids = []
 
     shop_qty_map = {}
     from_qty_map = {}
@@ -1210,7 +1207,7 @@ def _parse_individual_shop_prices(
     prices_by_shop = {}
 
     if not shops:
-        errors.append("No active shops are available to set individual prices.")
+        errors.append("No shops are available to set individual prices.")
         return prices_by_shop, errors
 
     if existing_item is not None:
@@ -1327,6 +1324,9 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
 
     if pricing_mode == "individual":
         shops = _active_shops()
+        if editable_shop_ids is not None:
+            allowed = set(editable_shop_ids)
+            shops = [shop for shop in shops if shop.pk in allowed]
         shop_prices, price_errors = _parse_individual_shop_prices(
             data,
             shops,
@@ -1409,8 +1409,8 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
     return cleaned
 
 
-def create_item(profile, data, files) -> Item:
-    cleaned = validate_item_payload(data, files)
+def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
+    cleaned = validate_item_payload(data, files, editable_shop_ids=editable_shop_ids)
     with transaction.atomic():
         item = Item.objects.create(
             category=cleaned["category"],

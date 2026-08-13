@@ -8,7 +8,7 @@
   <header class="stock-panel-head">
     <div class="stock-panel-head-top">
       <div>
-        <p class="stock-kicker">Return clients · All shops</p>
+        <p class="stock-kicker">Return clients · {{ shops_label|default:"Allocated shops" }}</p>
         <h2>{{ client_name }}</h2>
         <p>
           {% if client_phone %}{{ client_phone }} · {% endif %}
@@ -99,7 +99,7 @@
       </tbody>
     </table>
   </div>
-  <p class="stock-report-footnote">Showing {{ row_count }} return{{ row_count|pluralize }} across all shops</p>
+  <p class="stock-report-footnote">Showing {{ row_count }} return{{ row_count|pluralize }} for {{ shops_label|default:"allocated shops" }}</p>
   {% else %}
   <div class="dashboard-placeholder">
     <i data-lucide="undo-2" aria-hidden="true"></i>

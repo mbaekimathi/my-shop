@@ -6,6 +6,8 @@ from items.services import actionable_shops_for_profile
 
 SESSION_SHOP_KEY = "active_shop_id"
 SESSION_SHOP_PORTAL_KEY = "shop_portal_auth"
+# Shop portal stays signed in until explicit logout. Refreshed on each use.
+SHOP_PORTAL_SESSION_AGE = 60 * 60 * 24 * 365 * 10
 
 
 def shops_for_profile(profile):
@@ -31,10 +33,17 @@ def is_shop_portal_session(request) -> bool:
     return bool(request.session.get(SESSION_SHOP_PORTAL_KEY))
 
 
+def persist_shop_portal_session(request):
+    """Keep the shop portal cookie alive until the user signs out."""
+    request.session.set_expiry(SHOP_PORTAL_SESSION_AGE)
+    request.session.modified = True
+
+
 def set_shop_portal_session(request, shop):
     """Mark the browser as signed in to a shop via the public shop portal."""
     set_active_shop(request, shop)
     request.session[SESSION_SHOP_PORTAL_KEY] = True
+    persist_shop_portal_session(request)
 
 
 def clear_shop_portal_session(request):
@@ -63,6 +72,7 @@ def resolve_portal_shop(request):
     if shop is None:
         clear_shop_portal_session(request)
         return None
+    persist_shop_portal_session(request)
     return shop
 
 

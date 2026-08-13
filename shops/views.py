@@ -413,6 +413,7 @@ def shop_portal_login(request):
 @require_http_methods(["GET", "POST"])
 def shop_portal_logout(request):
     clear_shop_portal_session(request)
+    request.session.flush()
     return redirect("employees:shop_login")
 
 
