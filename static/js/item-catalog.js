@@ -107,7 +107,7 @@
             ? `<th scope="col" class="item-col--category">Category</th>`
             : ""
         }
-        <th scope="col" class="item-col--range">Price range</th>
+        <th scope="col" class="item-col--range">Min price</th>
         ${shopPriceHeadHtml()}
         ${shopHeaderCells()}
         <th scope="col" class="item-col--status">Status</th>
@@ -259,19 +259,12 @@
         </div>
       </td>
       ${categoryCell}
-      <td class="item-cell--range" data-label="Price range">
+      <td class="item-cell--range" data-label="Min price">
         <span class="item-price-range">
           <span class="item-price-range-bound item-price-range-bound--min">
             <span class="item-price-range-label">Min</span>
             <span class="item-price-range-amount">KSh ${escapeHtml(
               item.minimum_selling_price || "0.00"
-            )}</span>
-          </span>
-          <span class="item-price-range-sep" aria-hidden="true"></span>
-          <span class="item-price-range-bound item-price-range-bound--max">
-            <span class="item-price-range-label">Max</span>
-            <span class="item-price-range-amount">KSh ${escapeHtml(
-              item.maximum_selling_price || "0.00"
             )}</span>
           </span>
         </span>
@@ -320,7 +313,6 @@
             data-name="${escapeHtml(name)}"
             data-description="${escapeHtml(description)}"
             data-minimum-selling-price="${escapeHtml(item.minimum_selling_price || "")}"
-            data-maximum-selling-price="${escapeHtml(item.maximum_selling_price || "")}"
             data-shop-price="${escapeHtml(item.shop_price || "")}"
             data-pricing-mode="${escapeHtml(item.pricing_mode || "single")}"
             data-shop-prices="${escapeHtml(shopPrices)}"

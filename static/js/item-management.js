@@ -33,14 +33,11 @@
       singleInput.required = true;
     }
 
-    // Per-shop prices are optional; blank values default to the max selling price.
     root.querySelectorAll("[data-shop-price-input]").forEach((input) => {
-      input.required = false;
+      input.required = mode === "individual" && !input.disabled;
     });
 
-    const form = root.closest("form");
-    const maxPrice = form?.querySelector('input[name="maximum_selling_price"]')?.value?.trim() || "";
-    const fillValue = maxPrice || singleInput?.value || "";
+    const fillValue = singleInput?.value?.trim() || "";
 
     // Only pre-fill blank per-shop prices when registering a new item.
     if (mode === "individual" && fillValue && !isEditForm) {
@@ -150,7 +147,6 @@
     setField("name", dataset.name);
     setField("description", dataset.description);
     setField("minimum_selling_price", dataset.minimumSellingPrice);
-    setField("maximum_selling_price", dataset.maximumSellingPrice);
     setField("shop_price", dataset.shopPrice);
     setPricingMode(dataset.pricingMode === "individual" ? "individual" : "single");
     setShopPrices(dataset.shopPrices);

@@ -11,12 +11,12 @@
     return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   };
 
-  const hostMaxSell = (el) => {
+  const hostSellingPrice = (el) => {
     if (!el) return 0;
     const row = el.closest?.("[data-item-row]") || el;
     const n = Number(
-      row?.getAttribute?.("data-max-selling-price") ||
-        el.getAttribute?.("data-max-selling-price") ||
+      row?.getAttribute?.("data-selling-price") ||
+        el.getAttribute?.("data-selling-price") ||
         0
     );
     return Number.isFinite(n) && n > 0 ? n : 0;
@@ -35,10 +35,10 @@
           priceRoot?.querySelector?.("[data-stock-buying-price]")?.value || ""
         ).trim();
         const buy = Number(raw);
-        const maxSell = hostMaxSell(host) || hostMaxSell(item.cell);
+        const selling = hostSellingPrice(host) || hostSellingPrice(item.cell);
         const qty = Number(item.quantity || 0);
-        if (!(buy > 0) || !(maxSell > 0) || buy <= maxSell) return null;
-        return { name: item.name || "Item", buy, maxSell, qty };
+        if (!(buy > 0) || !(selling > 0) || buy <= selling) return null;
+        return { name: item.name || "Item", buy, selling, qty };
       })
       .filter(Boolean);
   };
@@ -49,13 +49,13 @@
     const lines = high.slice(0, 8).map((h) => {
       const unitGuess = h.qty > 1 ? h.buy / h.qty : 0;
       const unitHint =
-        unitGuess > 0 && unitGuess <= h.maxSell
+        unitGuess > 0 && unitGuess <= h.selling
           ? ` If KSh ${moneyLabel(h.buy)} was the total for ${h.qty}, unit cost is about KSh ${moneyLabel(unitGuess)}.`
           : "";
-      return `• ${h.name}: unit buy KSh ${moneyLabel(h.buy)} > max sell KSh ${moneyLabel(h.maxSell)}.${unitHint}`;
+      return `• ${h.name}: unit buy KSh ${moneyLabel(h.buy)} > selling price KSh ${moneyLabel(h.selling)}.${unitHint}`;
     });
     return window.confirm(
-      `Unit buying price is above the max selling price on ${high.length} item(s).\n\n` +
+      `Unit buying price is above the selling price on ${high.length} item(s).\n\n` +
         `Enter the cost of ONE unit, not the invoice total.\n\n` +
         lines.join("\n") +
         (high.length > 8 ? `\n• …and ${high.length - 8} more` : "") +

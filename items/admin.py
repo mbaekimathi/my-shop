@@ -34,7 +34,6 @@ class ItemAdmin(admin.ModelAdmin):
         "track_serial_number",
         "is_suspended",
         "minimum_selling_price",
-        "maximum_selling_price",
         "created_at",
     )
     list_filter = (

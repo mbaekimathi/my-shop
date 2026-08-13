@@ -126,7 +126,7 @@
                 data-item-row
                 data-item-id="{{ item.pk }}"
                 data-item-name="{{ item.name }}"
-                data-max-selling-price="{{ item.maximum_selling_price }}"
+                data-selling-price="{{ item.shop_price }}"
                 data-track-serial="{% if item.track_serial_number %}1{% else %}0{% endif %}"
                 data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
               >

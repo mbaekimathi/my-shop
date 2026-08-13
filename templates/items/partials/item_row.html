@@ -20,16 +20,11 @@
       </div>
     </div>
   </td>
-  <td class="item-cell--range" data-label="Price range">
+  <td class="item-cell--range" data-label="Min price">
     <span class="item-price-range">
       <span class="item-price-range-bound item-price-range-bound--min">
         <span class="item-price-range-label">Min</span>
         <span class="item-price-range-amount">KSh {{ row.item.minimum_selling_price|floatformat:2 }}</span>
-      </span>
-      <span class="item-price-range-sep" aria-hidden="true"></span>
-      <span class="item-price-range-bound item-price-range-bound--max">
-        <span class="item-price-range-label">Max</span>
-        <span class="item-price-range-amount">KSh {{ row.item.maximum_selling_price|floatformat:2 }}</span>
       </span>
     </span>
   </td>
@@ -72,7 +67,6 @@
         data-name="{{ row.item.name }}"
         data-description="{{ row.item.description }}"
         data-minimum-selling-price="{{ row.item.minimum_selling_price }}"
-        data-maximum-selling-price="{{ row.item.maximum_selling_price }}"
         data-shop-price="{{ row.item.shop_price }}"
         data-pricing-mode="{{ row.pricing_mode }}"
         data-shop-prices="{{ row.shop_prices_json }}"

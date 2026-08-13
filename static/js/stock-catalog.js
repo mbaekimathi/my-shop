@@ -784,7 +784,14 @@
     </label>
     <input type="hidden" name="serial_numbers" value="" data-stock-field disabled>`;
 
-  const buildShopCell = (item, shop, stockQty) => {
+  const sellingPriceFor = (item, index) => {
+    if (Array.isArray(item.selling_prices) && item.selling_prices[index] != null) {
+      return String(item.selling_prices[index] || "");
+    }
+    return String(item.selling_price || "");
+  };
+
+  const buildShopCell = (item, shop, stockQty, sellingPrice = "") => {
     const prev = money(item.last_buying_price);
     const track = item.track_serial && mode !== "request" ? "1" : "0";
     const shopLabel = escapeHtml(shop.name || "Shop");
@@ -858,7 +865,7 @@
         data-stock-shop-cell
         data-item-id="${item.id}"
         data-item-name="${escapeHtml(item.name || "")}"
-        data-max-selling-price="${item.max_selling_price || ""}"
+        data-selling-price="${escapeHtml(sellingPrice || item.selling_price || "")}"
         data-shop-id="${shop.id}"
         data-shop-name="${shopLabel}"
         data-item-stock="${stockQty}"
@@ -892,7 +899,7 @@
         : viewShops.map(() => stock);
       const cells = viewShops
         .map((shop, index) =>
-          buildShopCell(item, shop, quantities[index] || 0)
+          buildShopCell(item, shop, quantities[index] || 0, sellingPriceFor(item, index))
         )
         .join("");
       const header = document.createElement("tr");
@@ -902,7 +909,7 @@
       header.setAttribute("data-item-row", "");
       header.setAttribute("data-item-id", String(item.id));
       header.setAttribute("data-item-name", name);
-      header.setAttribute("data-max-selling-price", String(item.max_selling_price || ""));
+      header.setAttribute("data-selling-price", String(item.selling_price || ""));
       header.setAttribute("data-track-serial", track);
       header.setAttribute(
         "data-search-text",
@@ -979,7 +986,7 @@
       header.setAttribute("data-item-id", String(item.id));
       header.setAttribute("data-item-name", name);
       header.setAttribute("data-item-stock", String(stock));
-      header.setAttribute("data-max-selling-price", String(item.max_selling_price || ""));
+      header.setAttribute("data-selling-price", String(item.selling_price || ""));
       header.setAttribute("data-track-serial", track);
       header.setAttribute(
         "data-search-text",
@@ -1036,7 +1043,7 @@
     header.setAttribute("data-item-id", String(item.id));
     header.setAttribute("data-item-name", name);
     header.setAttribute("data-item-stock", String(stock));
-    header.setAttribute("data-max-selling-price", String(item.max_selling_price || ""));
+    header.setAttribute("data-selling-price", String(item.selling_price || ""));
     header.setAttribute("data-track-serial", track);
     header.setAttribute(
       "data-search-text",

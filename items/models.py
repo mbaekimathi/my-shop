@@ -13,7 +13,6 @@ class Item(models.Model):
     name = models.CharField(max_length=200, db_index=True)
     description = models.TextField(blank=True)
     minimum_selling_price = models.DecimalField(max_digits=12, decimal_places=2)
-    maximum_selling_price = models.DecimalField(max_digits=12, decimal_places=2)
     shop_price = models.DecimalField(max_digits=12, decimal_places=2)
     use_individual_shop_prices = models.BooleanField(default=False, db_index=True)
     stock = models.PositiveIntegerField(default=0)
@@ -46,19 +45,21 @@ class Item(models.Model):
 
         Uses the per-shop override when individual pricing is on and the
         override is positive; otherwise the global shop_price when positive.
-        Missing or zero prices fall back to the maximum selling price so
+        Missing or zero prices fall back to the minimum selling price so
         shops never surface a 0 list price.
         """
         if self.use_individual_shop_prices:
             if shop_price_override is not None and shop_price_override > 0:
                 return shop_price_override
-            return self.maximum_selling_price
+            if self.shop_price is not None and self.shop_price > 0:
+                return self.shop_price
+            return self.minimum_selling_price
         if self.shop_price is not None and self.shop_price > 0:
             return self.shop_price
-        return self.maximum_selling_price
+        return self.minimum_selling_price
 
     def price_for_shop(self, shop):
-        """Resolve selling price for a shop (override → shop_price → max range)."""
+        """Resolve selling price for a shop (override → shop_price → min)."""
         override = None
         if self.use_individual_shop_prices:
             row = self.shop_prices.filter(shop_id=getattr(shop, "pk", shop)).first()

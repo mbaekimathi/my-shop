@@ -139,12 +139,12 @@ def apply_stock_in_average_cost(shop_stock: ShopStock, *, qty: int, unit_cost) -
 
 
 def resolve_sale_unit_cost(
-    shop_stock: ShopStock | None, *, fallback=None, max_sell=None
+    shop_stock: ShopStock | None, *, fallback=None, sell_ceiling=None
 ) -> Decimal:
     """Unit cost to stamp on a sale/credit line.
 
     Prefers shop weighted average, then last non-zero buy. Values above the
-    item's max selling price are treated as implausible (often an invoice total
+    item's list/selling price are treated as implausible (often an invoice total
     typed as a unit cost) and skipped.
     """
     last = _money_cost(fallback)
@@ -153,7 +153,7 @@ def resolve_sale_unit_cost(
         if shop_stock is not None
         else Decimal("0.00")
     )
-    ceiling = _money_cost(max_sell)
+    ceiling = _money_cost(sell_ceiling)
 
     def _plausible(amount: Decimal) -> bool:
         if amount <= 0:
@@ -169,11 +169,11 @@ def resolve_sale_unit_cost(
     return Decimal("0.00")
 
 
-def _effective_in_unit_cost(buying_price, qty, max_sell=None) -> Decimal:
+def _effective_in_unit_cost(buying_price, qty, sell_ceiling=None) -> Decimal:
     """Unit buy for WAC. Drops zeros; splits likely invoice totals by qty."""
     buy = _money_cost(buying_price)
     units = max(0, int(qty or 0))
-    ceiling = _money_cost(max_sell)
+    ceiling = _money_cost(sell_ceiling)
     if buy <= 0 or units <= 0:
         return Decimal("0.00")
     if ceiling > 0 and buy > ceiling:
@@ -189,7 +189,7 @@ def recalc_shop_stock_average_costs(*, shop_id=None, item_ids=None) -> dict:
     """
     Rebuild ShopStock.average_cost from non-zero stock-in unit buying prices.
 
-    Unpriced ins are ignored. Buys above max sell are treated as invoice totals
+    Unpriced ins are ignored. Buys above list price are treated as invoice totals
     when qty > 1. Shops with no priced ins inherit the latest plausible buy
     from any shop.
     """
@@ -210,11 +210,20 @@ def recalc_shop_stock_average_costs(*, shop_id=None, item_ids=None) -> dict:
 
     stock_item_ids = set(stock_qs.values_list("item_id", flat=True))
     line_item_ids = set(line_qs.values_list("item_id", flat=True))
-    max_sell_by_item = dict(
-        Item.objects.filter(pk__in=(stock_item_ids | line_item_ids)).values_list(
-            "pk", "maximum_selling_price"
-        )
-    )
+    item_ids = stock_item_ids | line_item_ids
+    sell_ceiling_by_item = {}
+    for pk, shop_price, min_price in Item.objects.filter(pk__in=item_ids).values_list(
+        "pk", "shop_price", "minimum_selling_price"
+    ):
+        if shop_price and shop_price > 0:
+            sell_ceiling_by_item[pk] = shop_price
+        elif min_price and min_price > 0:
+            sell_ceiling_by_item[pk] = min_price
+    for item_id, price in ShopItemPrice.objects.filter(
+        item_id__in=item_ids
+    ).values_list("item_id", "price"):
+        if price and price > sell_ceiling_by_item.get(item_id, 0):
+            sell_ceiling_by_item[item_id] = price
 
     wac_by_shop_item: dict[tuple[int, int], tuple[int, Decimal]] = {}
     last_by_item: dict[int, Decimal] = {}
@@ -222,7 +231,7 @@ def recalc_shop_stock_average_costs(*, shop_id=None, item_ids=None) -> dict:
         "movement__shop_id", "item_id", "quantity", "buying_price"
     )
     for sid, iid, qty, buy in lines.iterator():
-        unit = _effective_in_unit_cost(buy, qty, max_sell_by_item.get(iid))
+        unit = _effective_in_unit_cost(buy, qty, sell_ceiling_by_item.get(iid))
         if unit <= 0:
             continue
         units = max(0, int(qty or 0))
@@ -342,7 +351,9 @@ def build_stock_catalog_page(
         "description",
         "track_serial_number",
         "is_suspended",
-        "maximum_selling_price",
+        "shop_price",
+        "minimum_selling_price",
+        "use_individual_shop_prices",
     ).order_by("category", "name")
     if not include_suspended:
         qs = qs.filter(is_suspended=False)
@@ -406,6 +417,13 @@ def build_stock_catalog_page(
             item_ids, prefer_shop_id=shop_id
         )
 
+    price_map_by_item: dict[int, dict] = {}
+    if item_ids:
+        for item_id, sid, price in ShopItemPrice.objects.filter(
+            item_id__in=item_ids
+        ).values_list("item_id", "shop_id", "price"):
+            price_map_by_item.setdefault(item_id, {})[sid] = price
+
     shops_meta = []
     if view_shop_ids:
         shops_by_id = {
@@ -423,6 +441,13 @@ def build_stock_catalog_page(
         if len(description) > 120:
             description = description[:117].rstrip() + "..."
         price = last_buying.get(item.pk)
+        item_price_map = price_map_by_item.get(item.pk) or {}
+        override = (
+            item_price_map.get(int(shop_id))
+            if shop_id and item.use_individual_shop_prices
+            else None
+        )
+        selling = item.resolve_list_price(override)
         row = {
             "id": item.pk,
             "name": item.name,
@@ -435,11 +460,7 @@ def build_stock_catalog_page(
             "last_buying_price": (
                 format(price, "f") if price is not None else None
             ),
-            "max_selling_price": (
-                format(item.maximum_selling_price, "f")
-                if item.maximum_selling_price
-                else None
-            ),
+            "selling_price": format(selling, "f") if selling else None,
         }
         if use_multi_shop:
             quantities = [
@@ -449,6 +470,17 @@ def build_stock_catalog_page(
             row["row_total"] = sum(quantities)
             if len(view_shop_ids) == 1:
                 row["shop_qty"] = quantities[0] if quantities else 0
+            selling_prices = []
+            for sid in view_shop_ids:
+                shop_override = (
+                    item_price_map.get(int(sid))
+                    if item.use_individual_shop_prices
+                    else None
+                )
+                selling_prices.append(
+                    format(item.resolve_list_price(shop_override), "f")
+                )
+            row["selling_prices"] = selling_prices
         rows.append(row)
 
     total_units = 0
@@ -510,7 +542,6 @@ def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48, sor
         "name",
         "description",
         "minimum_selling_price",
-        "maximum_selling_price",
         "shop_price",
         "use_individual_shop_prices",
         "track_serial_number",
@@ -583,7 +614,6 @@ def build_item_management_catalog_page(*, q: str = "", page=1, page_size=48, sor
                 "category": item.category,
                 "description": description,
                 "minimum_selling_price": f"{item.minimum_selling_price:.2f}",
-                "maximum_selling_price": f"{item.maximum_selling_price:.2f}",
                 "shop_price": f"{item.shop_price:.2f}",
                 "shop_price_display": shop_price_display,
                 "pricing_mode": (
@@ -1130,13 +1160,11 @@ def _parse_price(raw_value: str, label: str) -> Decimal:
     return amount.quantize(Decimal("0.01"))
 
 
-def _clamp_price(price: Decimal, minimum_price, maximum_price) -> Decimal:
-    """Keep a price inside the selling range (min/max inclusive)."""
+def _clamp_price(price: Decimal, minimum_price) -> Decimal:
+    """Raise a price up to the minimum selling price when needed."""
     clamped = price
     if minimum_price is not None and clamped < minimum_price:
         clamped = minimum_price
-    if maximum_price is not None and clamped > maximum_price:
-        clamped = maximum_price
     return clamped.quantize(Decimal("0.01"))
 
 
@@ -1166,7 +1194,6 @@ def _parse_individual_shop_prices(
     data,
     shops,
     minimum_price,
-    maximum_price,
     *,
     existing_item=None,
     existing_shop_prices=None,
@@ -1174,10 +1201,10 @@ def _parse_individual_shop_prices(
 ):
     """Parse per-shop prices from POST fields shop_price_<id>.
 
-    On create, blank shop prices default to the maximum selling price.
-    On update, blank or unchanged prices keep the current shop price and are
-    only clamped when the min/max range changes. Shops outside editable_shop_ids
-    always keep their stored price (clamped when the range changes).
+    On create, every shop price is required and must be at least the minimum
+    selling price. On update, blank or unchanged prices keep the current shop
+    price and are raised to min when the floor increases. Shops outside
+    editable_shop_ids always keep their stored price (clamped to min).
     """
     errors = []
     prices_by_shop = {}
@@ -1200,16 +1227,12 @@ def _parse_individual_shop_prices(
             and shop.pk not in editable_shop_ids
         ):
             if existing is not None:
-                prices_by_shop[shop.pk] = _clamp_price(
-                    existing, minimum_price, maximum_price
-                )
+                prices_by_shop[shop.pk] = _clamp_price(existing, minimum_price)
             continue
 
         if existing_item is not None and existing is not None:
             if not raw_str:
-                prices_by_shop[shop.pk] = _clamp_price(
-                    existing, minimum_price, maximum_price
-                )
+                prices_by_shop[shop.pk] = _clamp_price(existing, minimum_price)
                 continue
             try:
                 submitted = _parse_price(raw_str, f"Shop price for {shop.name}")
@@ -1217,26 +1240,21 @@ def _parse_individual_shop_prices(
                 errors.append(exc.message)
                 continue
             if submitted == existing:
-                prices_by_shop[shop.pk] = _clamp_price(
-                    existing, minimum_price, maximum_price
+                prices_by_shop[shop.pk] = _clamp_price(existing, minimum_price)
+                continue
+            if submitted <= 0:
+                errors.append(f"Enter a shop price for “{shop.name}”.")
+                continue
+            if minimum_price is not None and submitted < minimum_price:
+                errors.append(
+                    f"Shop price for “{shop.name}” cannot be below the minimum selling price."
                 )
                 continue
-            if minimum_price is not None and maximum_price is not None:
-                if not (minimum_price <= submitted <= maximum_price):
-                    errors.append(
-                        f"Shop price for “{shop.name}” must be between the minimum and maximum selling prices."
-                    )
-                    continue
             prices_by_shop[shop.pk] = submitted
             continue
 
         if raw_str == "":
-            if maximum_price is None:
-                errors.append(
-                    f"Enter a shop price for “{shop.name}”, or set a maximum selling price."
-                )
-                continue
-            prices_by_shop[shop.pk] = maximum_price
+            errors.append(f"Enter a shop price for “{shop.name}”.")
             continue
         try:
             price = _parse_price(raw_str, f"Shop price for {shop.name}")
@@ -1244,19 +1262,13 @@ def _parse_individual_shop_prices(
             errors.append(exc.message)
             continue
         if price <= 0:
-            if maximum_price is None:
-                errors.append(
-                    f"Enter a shop price for “{shop.name}”, or set a maximum selling price."
-                )
-                continue
-            prices_by_shop[shop.pk] = maximum_price
+            errors.append(f"Shop price for “{shop.name}” must be greater than zero.")
             continue
-        if minimum_price is not None and maximum_price is not None:
-            if not (minimum_price <= price <= maximum_price):
-                errors.append(
-                    f"Shop price for “{shop.name}” must be between the minimum and maximum selling prices."
-                )
-                continue
+        if minimum_price is not None and price < minimum_price:
+            errors.append(
+                f"Shop price for “{shop.name}” cannot be below the minimum selling price."
+            )
+            continue
         prices_by_shop[shop.pk] = price
 
     return prices_by_shop, errors
@@ -1306,10 +1318,9 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
 
     try:
         minimum_price = _parse_price(data.get("minimum_selling_price"), "Minimum selling price")
-        maximum_price = _parse_price(data.get("maximum_selling_price"), "Maximum selling price")
     except ValidationError as exc:
         errors.append(exc.message)
-        minimum_price = maximum_price = None
+        minimum_price = None
 
     shop_price = None
     shop_prices = {}
@@ -1320,7 +1331,6 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
             data,
             shops,
             minimum_price,
-            maximum_price,
             existing_item=existing_item,
             editable_shop_ids=editable_shop_ids,
         )
@@ -1340,9 +1350,7 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
 
         if existing_item is not None and existing_single_price is not None:
             if not raw_shop_price_str:
-                shop_price = _clamp_price(
-                    existing_single_price, minimum_price, maximum_price
-                )
+                shop_price = _clamp_price(existing_single_price, minimum_price)
             else:
                 try:
                     submitted = _parse_price(raw_shop_price_str, "Shop price")
@@ -1351,31 +1359,19 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
                     submitted = None
                 if submitted is not None:
                     if submitted <= 0:
-                        shop_price = _clamp_price(
-                            maximum_price or existing_single_price,
-                            minimum_price,
-                            maximum_price,
-                        )
+                        errors.append("Shop price must be greater than zero.")
+                        shop_price = None
                     elif submitted == existing_single_price:
-                        shop_price = _clamp_price(
-                            existing_single_price, minimum_price, maximum_price
-                        )
-                    elif (
-                        minimum_price is not None
-                        and maximum_price is not None
-                        and not (minimum_price <= submitted <= maximum_price)
-                    ):
+                        shop_price = _clamp_price(existing_single_price, minimum_price)
+                    elif minimum_price is not None and submitted < minimum_price:
                         errors.append(
-                            "Shop price must be between the minimum and maximum selling prices."
+                            "Shop price cannot be below the minimum selling price."
                         )
                         shop_price = None
                     else:
                         shop_price = submitted
         elif raw_shop_price_str == "":
-            if maximum_price is not None:
-                shop_price = maximum_price
-            else:
-                errors.append("Shop price is required.")
+            errors.append("Shop price is required.")
         else:
             try:
                 shop_price = _parse_price(raw_shop_price_str, "Shop price")
@@ -1384,25 +1380,15 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
                 shop_price = None
 
             if shop_price is not None and shop_price <= 0:
-                if maximum_price is not None:
-                    shop_price = maximum_price
-                else:
-                    errors.append("Shop price must be greater than zero.")
-                    shop_price = None
+                errors.append("Shop price must be greater than zero.")
+                shop_price = None
 
             if (
                 minimum_price is not None
-                and maximum_price is not None
                 and shop_price is not None
-                and not (minimum_price <= shop_price <= maximum_price)
+                and shop_price < minimum_price
             ):
-                errors.append(
-                    "Shop price must be between the minimum and maximum selling prices."
-                )
-
-    if minimum_price is not None and maximum_price is not None:
-        if minimum_price > maximum_price:
-            errors.append("Minimum selling price cannot be greater than maximum selling price.")
+                errors.append("Shop price cannot be below the minimum selling price.")
 
     if image:
         if image.content_type not in ALLOWED_IMAGE_TYPES:
@@ -1418,7 +1404,6 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
         raise ValidationError(errors)
 
     cleaned["minimum_selling_price"] = minimum_price
-    cleaned["maximum_selling_price"] = maximum_price
     cleaned["shop_price"] = shop_price
     cleaned["shop_prices"] = shop_prices
     return cleaned
@@ -1432,7 +1417,6 @@ def create_item(profile, data, files) -> Item:
             name=cleaned["name"],
             description=cleaned["description"],
             minimum_selling_price=cleaned["minimum_selling_price"],
-            maximum_selling_price=cleaned["maximum_selling_price"],
             shop_price=cleaned["shop_price"],
             use_individual_shop_prices=cleaned["use_individual_shop_prices"],
             image=cleaned.get("image"),
@@ -1457,7 +1441,6 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
         item.name = cleaned["name"]
         item.description = cleaned["description"]
         item.minimum_selling_price = cleaned["minimum_selling_price"]
-        item.maximum_selling_price = cleaned["maximum_selling_price"]
         item.shop_price = cleaned["shop_price"]
         item.use_individual_shop_prices = cleaned["use_individual_shop_prices"]
         item.track_serial_number = cleaned["track_serial_number"]
@@ -1610,12 +1593,31 @@ def _parse_movement_lines(data, movement_type: str):
     if not raw_ids:
         raise ValidationError("Enter quantity on at least one item.")
 
-    item_meta_by_id = {
-        str(pk): {"track": track, "max_sell": max_sell, "name": name}
-        for pk, track, max_sell, name in Item.objects.filter(
-            pk__in=raw_ids
-        ).values_list("pk", "track_serial_number", "maximum_selling_price", "name")
-    }
+    item_meta_by_id = {}
+    override_by_item_shop = {}
+    item_rows = list(
+        Item.objects.filter(pk__in=raw_ids).values_list(
+            "pk",
+            "track_serial_number",
+            "name",
+            "shop_price",
+            "minimum_selling_price",
+            "use_individual_shop_prices",
+        )
+    )
+    for pk, track, name, shop_price, min_price, individual in item_rows:
+        item_meta_by_id[str(pk)] = {
+            "track": track,
+            "name": name,
+            "shop_price": shop_price,
+            "min_price": min_price,
+            "individual": individual,
+        }
+    if item_meta_by_id:
+        for item_id, shop_id, price in ShopItemPrice.objects.filter(
+            item_id__in=[pk for pk, *_ in item_rows]
+        ).values_list("item_id", "shop_id", "price"):
+            override_by_item_shop[(str(item_id), str(shop_id))] = price
 
     from shops.services import get_company_stock_settings
 
@@ -1696,17 +1698,32 @@ def _parse_movement_lines(data, movement_type: str):
                         continue
             else:
                 buying_price = None
-            max_sell = _money_cost(item_meta.get("max_sell"))
+            line_shop = (
+                str(raw_line_shops[index]).strip()
+                if index < len(raw_line_shops)
+                else ""
+            )
+            override = (
+                override_by_item_shop.get((item_id, line_shop))
+                if item_meta.get("individual")
+                else None
+            )
+            if override is not None and override > 0:
+                sell_ceiling = _money_cost(override)
+            else:
+                sell_ceiling = _money_cost(
+                    item_meta.get("shop_price") or item_meta.get("min_price")
+                )
             item_name = (item_meta.get("name") or "").strip() or line_label
             if (
                 buying_price
-                and max_sell > 0
-                and buying_price > max_sell
+                and sell_ceiling > 0
+                and buying_price > sell_ceiling
                 and not confirm_high_buy
             ):
                 errors.append(
                     f"“{item_name}”: unit buying price KSh {buying_price} is above the "
-                    f"max selling price (KSh {max_sell}). Enter the cost per unit "
+                    f"selling price (KSh {sell_ceiling}). Enter the cost per unit "
                     f"(not the invoice total), or confirm to keep this price."
                 )
                 continue
@@ -2040,7 +2057,7 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
                     out_unit_cost = resolve_sale_unit_cost(
                         line["shop_stock"],
                         fallback=out_fallback_costs.get(item.pk),
-                        max_sell=item.maximum_selling_price,
+                        sell_ceiling=item.price_for_shop(shop),
                     )
                     line["unit_cost"] = out_unit_cost
                 StockMovementLine.objects.create(
@@ -2450,7 +2467,7 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
             "name",
             "category",
             "shop_price",
-            "maximum_selling_price",
+            "minimum_selling_price",
             "use_individual_shop_prices",
         )
     )

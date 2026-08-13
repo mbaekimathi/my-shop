@@ -2666,12 +2666,6 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
                     f"(KSh {item.minimum_selling_price})."
                 )
                 continue
-            elif unit_price > item.maximum_selling_price:
-                errors.append(
-                    f"“{item.name}” is above the maximum selling price "
-                    f"(KSh {item.maximum_selling_price})."
-                )
-                continue
 
             stock = stock_by_item.get(item_id)
             if stock is None:
@@ -2722,7 +2716,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
                 unit_cost = resolve_sale_unit_cost(
                     stock,
                     fallback=last_buy,
-                    max_sell=item.maximum_selling_price,
+                    sell_ceiling=list_price,
                 )
                 line_cogs = (unit_cost * qty).quantize(Decimal("0.01"))
                 if unit_cost > 0 and unit_price < unit_cost:

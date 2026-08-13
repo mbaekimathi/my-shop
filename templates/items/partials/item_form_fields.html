@@ -10,22 +10,13 @@
   <span class="field-label">Item description</span>
   <textarea name="description" rows="3" placeholder="Short description of the item" id="{{ prefix }}description">{{ form_data.description }}</textarea>
 </label>
-<div class="field-row">
-  <label class="field">
-    <span class="field-label">Minimum selling price (KSh)</span>
-    <div class="currency-field">
-      <span class="currency-prefix" aria-hidden="true">KSh</span>
-      <input type="number" name="minimum_selling_price" value="{{ form_data.minimum_selling_price }}" min="0" step="0.01" required id="{{ prefix }}minimum-selling-price" inputmode="decimal">
-    </div>
-  </label>
-  <label class="field">
-    <span class="field-label">Maximum selling price (KSh)</span>
-    <div class="currency-field">
-      <span class="currency-prefix" aria-hidden="true">KSh</span>
-      <input type="number" name="maximum_selling_price" value="{{ form_data.maximum_selling_price }}" min="0" step="0.01" required id="{{ prefix }}maximum-selling-price" inputmode="decimal">
-    </div>
-  </label>
-</div>
+<label class="field">
+  <span class="field-label">Minimum selling price (KSh)</span>
+  <div class="currency-field">
+    <span class="currency-prefix" aria-hidden="true">KSh</span>
+    <input type="number" name="minimum_selling_price" value="{{ form_data.minimum_selling_price }}" min="0" step="0.01" required id="{{ prefix }}minimum-selling-price" inputmode="decimal">
+  </div>
+</label>
 
 <div class="shop-pricing" data-shop-pricing>
   <span class="field-label">Shop pricing</span>
@@ -106,8 +97,8 @@
             inputmode="decimal"
             data-shop-price-input
             data-shop-id="{{ shop.pk }}"
-            placeholder="Max range"
-            title="Leave blank to use the maximum selling price"
+            placeholder="Shop price"
+            title="Required shop selling price"
           >
         </div>
       </label>

@@ -182,7 +182,6 @@ def seed_fixture():
             defaults={
                 "description": "x" * 200,
                 "minimum_selling_price": Decimal("50.00"),
-                "maximum_selling_price": Decimal("200.00"),
                 "shop_price": Decimal("100.00"),
                 "stock": 100,
                 "created_by": profile,

@@ -481,7 +481,7 @@
                 data-item-id="{{ item.pk }}"
                 data-item-name="{{ item.name }}"
                 data-item-stock="{{ row.shop_qty }}"
-                data-max-selling-price="{{ item.maximum_selling_price }}"
+                data-selling-price="{{ item.shop_price }}"
                 data-track-serial="{% if item.track_serial_number and stock_mode != 'request' %}1{% else %}0{% endif %}"
                 data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
               >
@@ -1243,10 +1243,10 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=25"></script>
+<script src="{% static 'js/stock-catalog.js' %}?v=26"></script>
 <script src="{% static 'js/item-search.js' %}?v=4"></script>
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix30"></script>
+<script src="{% static 'js/stock-bulk.js' %}?v=matrix34"></script>
 <script
   src="{% static 'js/serial-scan.js' %}?v=7"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
