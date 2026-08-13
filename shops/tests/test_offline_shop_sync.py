@@ -9,6 +9,7 @@ from decimal import Decimal
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
+from django.utils import timezone
 
 from django.urls import reverse
 
@@ -246,6 +247,90 @@ class ShopPortalOfflineSyncTests(TestCase):
         self.assertEqual(receipt.total, Decimal("50.00"))
         stock = ShopStock.objects.get(shop=self.shop, item=self.item)
         self.assertEqual(stock.quantity, 48)
+
+    def test_sale_checkout_allows_missing_client(self):
+        response = self._portal_client().post(
+            reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}),
+            data=json.dumps(
+                {
+                    "kind": "sale",
+                    "payment_method": "cash",
+                    "client_name": "",
+                    "client_phone": "",
+                    "login_code": self.profile.employee_id,
+                    "lines": [
+                        {
+                            "id": self.item.pk,
+                            "qty": 1,
+                            "price": str(self.item.shop_price),
+                            "serials": [],
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        self.assertTrue(data.get("ok"))
+        receipt = ShopReceipt.objects.get(receipt_number=data["receipt_number"])
+        self.assertEqual(receipt.client_name, "")
+        self.assertEqual(receipt.client_phone, "")
+
+    def test_credit_checkout_due_date_defaults_optional(self):
+        client = self._portal_client()
+        url = reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk})
+        today = timezone.localdate().isoformat()
+        with_due = client.post(
+            url,
+            data=json.dumps(
+                {
+                    "kind": "credit",
+                    "client_name": "CREDIT CLIENT",
+                    "client_phone": "0712345678",
+                    "credit_due_date": today,
+                    "login_code": self.profile.employee_id,
+                    "lines": [
+                        {
+                            "id": self.item.pk,
+                            "qty": 1,
+                            "price": str(self.item.shop_price),
+                            "serials": [],
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(with_due.status_code, 200, with_due.content)
+        dated = ShopReceipt.objects.get(receipt_number=with_due.json()["receipt_number"])
+        self.assertEqual(dated.credit_due_date.isoformat(), today)
+
+        without_due = client.post(
+            url,
+            data=json.dumps(
+                {
+                    "kind": "credit",
+                    "client_name": "CREDIT CLIENT TWO",
+                    "client_phone": "0712345679",
+                    "login_code": self.profile.employee_id,
+                    "lines": [
+                        {
+                            "id": self.item.pk,
+                            "qty": 1,
+                            "price": str(self.item.shop_price),
+                            "serials": [],
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(without_due.status_code, 200, without_due.content)
+        open_ended = ShopReceipt.objects.get(
+            receipt_number=without_due.json()["receipt_number"]
+        )
+        self.assertIsNone(open_ended.credit_due_date)
 
     def test_portal_online_checkout_rejects_bad_staff_code(self):
         response = self._portal_client().post(

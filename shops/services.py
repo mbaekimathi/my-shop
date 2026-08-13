@@ -2644,7 +2644,6 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
             )
 
         prepared = []
-        has_serial_sale_lines = False
         for row in parsed_lines:
             item_id = row["item_id"]
             qty = row["qty"]
@@ -2680,7 +2679,6 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
 
             serial_objects = {}
             if item.track_serial_number and kind != ShopReceiptKind.QUOTATION:
-                has_serial_sale_lines = True
                 if not serials:
                     errors.append(f"“{item.name}” requires serial numbers.")
                     continue
@@ -2752,10 +2750,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
         if not prepared:
             raise ValidationError("Add at least one valid item to the cart.")
 
-        requires_client = (
-            kind in {ShopReceiptKind.CREDIT, ShopReceiptKind.QUOTATION}
-            or has_serial_sale_lines
-        )
+        requires_client = kind in {
+            ShopReceiptKind.CREDIT,
+            ShopReceiptKind.QUOTATION,
+        }
         if requires_client:
             if not client_name:
                 raise ValidationError("Client full name is required.")
@@ -2845,16 +2843,15 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
         credit_due_date = None
         if kind == ShopReceiptKind.CREDIT:
             raw_due = (payload.get("credit_due_date") or "").strip()
-            if not raw_due:
-                raise ValidationError("Payment due date is required for credit sales.")
-            try:
-                from datetime import date
+            if raw_due:
+                try:
+                    from datetime import date
 
-                credit_due_date = date.fromisoformat(raw_due)
-            except ValueError:
-                raise ValidationError("Enter a valid payment due date.")
-            if credit_due_date < timezone.localdate():
-                raise ValidationError("Payment due date cannot be in the past.")
+                    credit_due_date = date.fromisoformat(raw_due)
+                except ValueError:
+                    raise ValidationError("Enter a valid payment due date.")
+                if credit_due_date < timezone.localdate():
+                    raise ValidationError("Payment due date cannot be in the past.")
 
         client = None
         if client_phone and client_name:

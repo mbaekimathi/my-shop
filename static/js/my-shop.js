@@ -2034,9 +2034,23 @@
         (line) => line.trackSerial || (line.serials && line.serials.length)
       );
 
+    const localTodayIso = () => {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
+
+    const ensureCreditDueDefault = () => {
+      if (!creditDueInput) return;
+      creditDueInput.min = localTodayIso();
+      if (!creditDueInput.value) creditDueInput.value = localTodayIso();
+    };
+
     const syncClientRequirements = () => {
       const hasSerials = cartHasSerialTracked();
-      const required = selectedKind() !== "sale" || hasSerials;
+      const required = selectedKind() !== "sale";
       if (clientPhoneInput) clientPhoneInput.required = required;
       if (clientNameInput) clientNameInput.required = required;
       if (clientBlock) clientBlock.classList.toggle("is-required", required);
@@ -2046,16 +2060,14 @@
           : "Link client";
       }
       if (clientNote) {
-        if (hasSerials) {
-          clientNote.hidden = false;
-          clientNote.textContent =
-            "Required — serial numbers in this cart are linked to these client details.";
-        } else if (required) {
-          clientNote.hidden = false;
+        clientNote.hidden = false;
+        if (required) {
           clientNote.textContent = "Required for credit and quotation.";
+        } else if (hasSerials) {
+          clientNote.textContent =
+            "Optional for sales. Recommended so serials can be linked to a client.";
         } else {
-          clientNote.hidden = false;
-          clientNote.textContent = "Optional for cash sales without serials";
+          clientNote.textContent = "Optional for sales";
         }
       }
       if (clientPhoneLabel) {
@@ -2276,7 +2288,10 @@
       const isQuote = kind === "quotation";
       const isCredit = kind === "credit";
       if (creditDueWrap) creditDueWrap.hidden = !isCredit;
-      if (creditDueInput) creditDueInput.required = isCredit;
+      if (creditDueInput) {
+        creditDueInput.required = false;
+        if (isCredit) ensureCreditDueDefault();
+      }
       if (whatsappWrap) whatsappWrap.hidden = !isQuote;
       if (!isQuote && checkoutForm) {
         const wa = checkoutForm.querySelector("[data-cart-whatsapp]");
@@ -2370,6 +2385,9 @@
       if (cashInput) cashInput.value = "";
       if (mpesaInput) mpesaInput.value = "";
       if (creditDueInput) creditDueInput.value = "";
+      if (selectedKind() === "credit" || defaultKind === "credit") {
+        ensureCreditDueDefault();
+      }
       clientNameAutofilled = false;
       clientPhoneAutofilled = false;
       setClientHint("");
@@ -2423,12 +2441,12 @@
           return;
         }
       }
-      if (cartHasSerialTracked()) {
+      if (kind === "credit" || kind === "quotation") {
         const phone = normalizeClientPhoneField({ force: true });
         const name = (clientNameInput?.value || "").trim();
         if (!phone || !name) {
           setCartStatus(
-            "Link a client (name and phone) for serial-tracked sales.",
+            "Link a client (name and phone) for credit and quotation.",
             { error: true }
           );
           focusCartClientFields();
@@ -2479,14 +2497,7 @@
 
       if (kind === "credit") {
         const dueDate = (creditDueInput?.value || "").trim();
-        if (!dueDate) {
-          setCartStatus("Enter the payment due date for this credit.", {
-            error: true,
-          });
-          creditDueInput?.focus();
-          return;
-        }
-        payload.credit_due_date = dueDate;
+        if (dueDate) payload.credit_due_date = dueDate;
       }
 
       const needsStk =
@@ -4108,13 +4119,11 @@
       const name = (clientNameInput?.value || "").trim();
       if (!phone || !name) {
         setCartStatus(
-          "Link a client in the cart — required for serial-tracked sales.",
-          { error: true }
+          "Client details are optional for sales. Add them in the cart if you want this serial linked.",
+          { ok: true }
         );
-        focusCartClientFields();
-      } else {
-        setCartOpen(true);
       }
+      setCartOpen(true);
       return true;
     };
 
@@ -4170,7 +4179,8 @@
     loadCart();
     if (checkoutEnabled) {
       if (creditDueInput) {
-        creditDueInput.min = new Date().toISOString().slice(0, 10);
+        creditDueInput.min = localTodayIso();
+        if (selectedKind() === "credit") ensureCreditDueDefault();
       }
       renderCart();
       syncCheckoutMode();
