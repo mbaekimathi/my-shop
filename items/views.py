@@ -28,7 +28,6 @@ from .services import (
     last_buying_prices_for_items,
     search_available_serials,
     search_suppliers,
-    serial_transfer_times_for_item,
     toggle_item_suspended,
     update_item,
 )
@@ -2570,43 +2569,19 @@ def _serial_list_contains(raw, serial_key: str) -> bool:
     return bool(serial_key) and serial_key in _movement_serial_numbers(raw)
 
 
-def _serial_transfer_supersedes_return(serial, returned, transfer_at):
-    """Shop-to-shop after a client return is In stock/out, not Returned."""
-    returned_at = returned.get("returned_at") if returned else None
-    if transfer_at and (returned_at is None or transfer_at >= returned_at):
-        return True
-    return_shop_id = returned.get("shop_id") if returned else None
-    if serial.shop_id and return_shop_id and int(serial.shop_id) != int(return_shop_id):
-        return True
-    return False
-
-
-def _serial_unit_state(
-    serial, sale_by_serial, return_by_serial, transfer_at_by_serial=None
-):
+def _serial_unit_state(serial, sale_by_serial, return_by_serial):
     from .models import ItemSerialStatus
 
     key = str(serial.serial_number or "").strip().upper()
     sale = sale_by_serial.get(key) or sale_by_serial.get(serial.serial_number)
     returned = return_by_serial.get(key) or return_by_serial.get(serial.serial_number)
-    transfer_at_by_serial = transfer_at_by_serial or {}
-    transfer_at = transfer_at_by_serial.get(key) or transfer_at_by_serial.get(
-        serial.serial_number
-    )
     override = (getattr(serial, "status_override", None) or "").strip().lower()
-    if override in ItemSerialStatus.values:
-        if override == ItemSerialStatus.SOLD:
-            event = sale or returned
-        elif override == ItemSerialStatus.RETURNED:
-            event = returned or sale
-        else:
-            event = sale or returned
-        return override, ItemSerialStatus(override).label, event
     if sale is not None:
         return "sold", "Sold", sale
-    if returned is not None and not _serial_transfer_supersedes_return(
-        serial, returned, transfer_at
-    ):
+    if override in ItemSerialStatus.values:
+        event = returned or sale
+        return override, ItemSerialStatus(override).label, event
+    if returned is not None:
         return "returned", "Returned", returned
     if serial.is_available:
         return "in_stock", "In stock", None
@@ -3208,7 +3183,6 @@ def stock_serial_detail(request, profile, meta, module, item_id):
 
     sale_by_serial = _serial_sale_lookup(item)
     return_by_serial = _serial_return_lookup(item)
-    transfer_at_by_serial = serial_transfer_times_for_item(item.pk)
     rows = []
     in_stock_count = 0
     sold_count = 0
@@ -3217,10 +3191,10 @@ def stock_serial_detail(request, profile, meta, module, item_id):
 
     segment = role_url_segment(profile.role)
     for serial in serials_qs:
-        # Still on an active sale → sold. Client receipt return → Returned,
-        # unless the unit later moved shop-to-shop (that is a transfer).
+        # Still on an active sale → sold. Client receipt return stays Returned
+        # until sold again or status is changed manually.
         status, status_label, event = _serial_unit_state(
-            serial, sale_by_serial, return_by_serial, transfer_at_by_serial
+            serial, sale_by_serial, return_by_serial
         )
         event_shop_id = event.get("shop_id") if event else None
         if shop_ids and serial.shop_id not in shop_ids and event_shop_id not in shop_ids:
@@ -3502,9 +3476,8 @@ def stock_serial_history(request, profile, meta, module, item_id, serial_number)
 
     sale_by_serial = _serial_sale_lookup(item)
     return_by_serial = _serial_return_lookup(item)
-    transfer_at_by_serial = serial_transfer_times_for_item(item.pk)
     status, status_label, event = _serial_unit_state(
-        serial, sale_by_serial, return_by_serial, transfer_at_by_serial
+        serial, sale_by_serial, return_by_serial
     )
 
     segment = role_url_segment(profile.role)
