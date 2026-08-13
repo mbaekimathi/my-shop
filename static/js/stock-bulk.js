@@ -5,6 +5,64 @@
 
   const mode = panel.dataset.stockMode || "view";
 
+  const moneyLabel = (value) => {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n)) return "0";
+    return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  };
+
+  const hostMaxSell = (el) => {
+    if (!el) return 0;
+    const row = el.closest?.("[data-item-row]") || el;
+    const n = Number(
+      row?.getAttribute?.("data-max-selling-price") ||
+        el.getAttribute?.("data-max-selling-price") ||
+        0
+    );
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+
+  const highUnitBuyingLines = (ready) => {
+    if (mode !== "in" || !Array.isArray(ready)) return [];
+    return ready
+      .map((item) => {
+        const host = item.cell || item.row;
+        const priceRoot =
+          item.cell ||
+          item.row?.querySelector?.("[data-stock-item-inputs]") ||
+          item.row;
+        const raw = (
+          priceRoot?.querySelector?.("[data-stock-buying-price]")?.value || ""
+        ).trim();
+        const buy = Number(raw);
+        const maxSell = hostMaxSell(host) || hostMaxSell(item.cell);
+        const qty = Number(item.quantity || 0);
+        if (!(buy > 0) || !(maxSell > 0) || buy <= maxSell) return null;
+        return { name: item.name || "Item", buy, maxSell, qty };
+      })
+      .filter(Boolean);
+  };
+
+  const confirmHighUnitBuyingPrices = (ready) => {
+    const high = highUnitBuyingLines(ready);
+    if (!high.length) return true;
+    const lines = high.slice(0, 8).map((h) => {
+      const unitGuess = h.qty > 1 ? h.buy / h.qty : 0;
+      const unitHint =
+        unitGuess > 0 && unitGuess <= h.maxSell
+          ? ` If KSh ${moneyLabel(h.buy)} was the total for ${h.qty}, unit cost is about KSh ${moneyLabel(unitGuess)}.`
+          : "";
+      return `• ${h.name}: unit buy KSh ${moneyLabel(h.buy)} > max sell KSh ${moneyLabel(h.maxSell)}.${unitHint}`;
+    });
+    return window.confirm(
+      `Unit buying price is above the max selling price on ${high.length} item(s).\n\n` +
+        `Enter the cost of ONE unit, not the invoice total.\n\n` +
+        lines.join("\n") +
+        (high.length > 8 ? `\n• …and ${high.length - 8} more` : "") +
+        `\n\nContinue anyway?`
+    );
+  };
+
   const navigateWithShops = () => {
     const params = new URLSearchParams();
     params.set("mode", mode);
@@ -901,7 +959,7 @@
         const missingPrice = ready.find((item) => !cellHasPrice(item.cell));
         if (missingPrice) {
           return blockSubmit(
-            `Enter buying price first — for ${missingPrice.name} · ${missingPrice.shopName}.`,
+            `Enter unit buying price first — for ${missingPrice.name} · ${missingPrice.shopName}.`,
             missingPrice.cell.querySelector("[data-stock-buying-price]") ||
               missingPrice.cell
           );
@@ -1957,6 +2015,7 @@
       if (submitInFlight) return;
       const ready = collectReady();
       if (focusFirstIncomplete(ready)) return;
+      if (!confirmHighUnitBuyingPrices(ready)) return;
       if (mode === "request" && requestingShopInput) {
         requestingShopInput.value = requestingShopId;
       }
@@ -1975,6 +2034,9 @@
       try {
         const body = new FormData(form);
         body.set("ajax", "1");
+        if (highUnitBuyingLines(ready).length) {
+          body.set("confirm_high_buying_price", "1");
+        }
         const response = await fetch(
           form.getAttribute("action") || window.location.href,
           {
@@ -2661,7 +2723,7 @@
     const inputs = getInputsRow(row);
     if (reason === "price") {
       inputs?.querySelector("[data-stock-buying-price]")?.focus();
-      setApplyStatus("Enter buying price before moving to another item.", true);
+      setApplyStatus("Enter unit buying price before moving to another item.", true);
       return;
     }
     const qtyFocus =
@@ -3222,7 +3284,7 @@
       if (missingPrice) {
         setRowOpen(missingPrice.row, true);
         return blockSubmit(
-          `Enter buying price first — for ${missingPrice.name}.`,
+          `Enter unit buying price first — for ${missingPrice.name}.`,
           getInputsRow(missingPrice.row)?.querySelector("[data-stock-buying-price]") ||
             missingPrice.row
         );
@@ -3407,7 +3469,7 @@
           [
             stockReq.in.supplier ? "supplier" : "",
             stockReq.in.payment_status ? "payment" : "",
-            stockReq.in.buying_price ? "buying price" : "",
+            stockReq.in.buying_price ? "unit buying price" : "",
           ].filter(Boolean);
         setApplyStatus(
           needs.length
@@ -3427,7 +3489,7 @@
           true
         );
       } else if (!ready.every((item) => rowHasBuyingPrice(item.row))) {
-        setApplyStatus("Enter buying price on every stocked item.", true);
+        setApplyStatus("Enter unit buying price on every stocked item.", true);
       } else if (requiresLoginCode && !loginVerified) {
         setApplyStatus(
           "Item details complete. Enter a valid staff ID to stock in."
@@ -3571,6 +3633,7 @@
 
     const ready = prepareStockInRows();
     if (!ready.length || !canSubmitStockIn(ready)) return false;
+    if (!confirmHighUnitBuyingPrices(ready)) return false;
 
     autoStockInFlight = true;
     if (submitBtn) submitBtn.disabled = true;
@@ -3578,6 +3641,9 @@
     try {
       const body = new FormData(form);
       body.set("ajax", "1");
+      if (highUnitBuyingLines(ready).length) {
+        body.set("confirm_high_buying_price", "1");
+      }
       const response = await fetch(
         form.getAttribute("action") || window.location.href,
         {
@@ -4544,6 +4610,8 @@
       setFieldsEnabled(item.row, true);
     });
 
+    if (!confirmHighUnitBuyingPrices(readyActive)) return;
+
     if (autoStockInFlight) return;
     autoStockInFlight = true;
     if (submitBtn) submitBtn.disabled = true;
@@ -4553,6 +4621,9 @@
     try {
       const body = new FormData(form);
       body.set("ajax", "1");
+      if (highUnitBuyingLines(readyActive).length) {
+        body.set("confirm_high_buying_price", "1");
+      }
       const response = await fetch(
         form.getAttribute("action") || window.location.href,
         {

@@ -113,7 +113,7 @@
                 <th scope="col" class="stock-matrix-shop-col stock-th--pair" title="{{ shop.name }}">
                   <span class="stock-th-pair">
                     <span class="stock-th-pair-name">{{ shop.name }}</span>
-                    <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span><span>Buy</span></span>
+                    <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span><span>Unit buy</span></span>
                   </span>
                 </th>
               </tr>
@@ -126,6 +126,7 @@
                 data-item-row
                 data-item-id="{{ item.pk }}"
                 data-item-name="{{ item.name }}"
+                data-max-selling-price="{{ item.maximum_selling_price }}"
                 data-track-serial="{% if item.track_serial_number %}1{% else %}0{% endif %}"
                 data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
               >
@@ -190,7 +191,7 @@
                       step="1"
                       placeholder="0"
                       inputmode="numeric"
-                      aria-label="Buying price at {{ shop.name }}"
+                      aria-label="Unit buying price at {{ shop.name }}"
                       data-stock-buying-price
                     >
                     <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>

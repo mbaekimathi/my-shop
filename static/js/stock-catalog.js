@@ -614,7 +614,7 @@
         </label>`;
     const priceBlock = `<label class="stock-inline-field">
           <span class="stock-inline-label-row">
-            <span>Buying price</span>
+            <span>Unit buying price</span>
             ${
               prev
                 ? `<em class="stock-prev-price">Prev ${prev}</em>`
@@ -657,7 +657,7 @@
         </label>`;
       const priceBlockSimple = `<label class="stock-inline-field">
           <span class="stock-inline-label-row">
-            <span>Price</span>
+            <span>Unit buy</span>
             ${
               prev
                 ? `<em class="stock-prev-price">Prev ${prev}</em>`
@@ -825,8 +825,8 @@
             step="1"
             placeholder="${prev || "0"}"
             inputmode="numeric"
-            aria-label="Buying price at ${shopLabel}"
-            title="${prev ? `Previous ${prev}` : "Buying price"}"
+            aria-label="Unit buying price at ${shopLabel}"
+            title="${prev ? `Previous unit ${prev}` : "Unit buying price"}"
             data-stock-buying-price
             ${prev ? `data-stock-prev-buying="${prev}"` : ""}
           >`
@@ -858,6 +858,7 @@
         data-stock-shop-cell
         data-item-id="${item.id}"
         data-item-name="${escapeHtml(item.name || "")}"
+        data-max-selling-price="${item.max_selling_price || ""}"
         data-shop-id="${shop.id}"
         data-shop-name="${shopLabel}"
         data-item-stock="${stockQty}"
@@ -901,6 +902,7 @@
       header.setAttribute("data-item-row", "");
       header.setAttribute("data-item-id", String(item.id));
       header.setAttribute("data-item-name", name);
+      header.setAttribute("data-max-selling-price", String(item.max_selling_price || ""));
       header.setAttribute("data-track-serial", track);
       header.setAttribute(
         "data-search-text",
@@ -977,6 +979,7 @@
       header.setAttribute("data-item-id", String(item.id));
       header.setAttribute("data-item-name", name);
       header.setAttribute("data-item-stock", String(stock));
+      header.setAttribute("data-max-selling-price", String(item.max_selling_price || ""));
       header.setAttribute("data-track-serial", track);
       header.setAttribute(
         "data-search-text",
@@ -1033,6 +1036,7 @@
     header.setAttribute("data-item-id", String(item.id));
     header.setAttribute("data-item-name", name);
     header.setAttribute("data-item-stock", String(stock));
+    header.setAttribute("data-max-selling-price", String(item.max_selling_price || ""));
     header.setAttribute("data-track-serial", track);
     header.setAttribute(
       "data-search-text",

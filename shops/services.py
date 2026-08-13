@@ -2706,14 +2706,24 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
             unit_cost = Decimal("0.00")
             line_cogs = Decimal("0.00")
             if kind != ShopReceiptKind.QUOTATION:
+                last_buy = fallback_costs.get(item_id)
                 unit_cost = resolve_sale_unit_cost(
-                    stock, fallback=fallback_costs.get(item_id)
+                    stock,
+                    fallback=last_buy,
+                    max_sell=item.maximum_selling_price,
                 )
                 line_cogs = (unit_cost * qty).quantize(Decimal("0.01"))
                 if unit_cost > 0 and unit_price < unit_cost:
+                    extra = ""
+                    try:
+                        last_dec = _money(last_buy) if last_buy is not None else Decimal("0.00")
+                    except ValidationError:
+                        last_dec = Decimal("0.00")
+                    if last_dec > 0 and last_dec != unit_cost:
+                        extra = f", last buy KSh {last_dec}"
                     errors.append(
-                        f"“{item.name}” is below cost "
-                        f"(sell KSh {unit_price}, cost KSh {unit_cost})."
+                        f"“{item.name}” is below unit cost "
+                        f"(sell KSh {unit_price}, cost KSh {unit_cost}{extra})."
                     )
                     continue
 

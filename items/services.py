@@ -118,13 +118,18 @@ def apply_stock_in_average_cost(shop_stock: ShopStock, *, qty: int, unit_cost) -
     Update shop stock weighted average for an inbound quantity.
 
     Expects ``shop_stock.quantity`` to be the on-hand qty *before* the inbound add.
+    Zero/missing unit cost leaves the existing average unchanged so unpriced
+    stock-ins do not dilute COGS.
     """
     qty = max(0, int(qty or 0))
     unit = _money_cost(unit_cost)
+    current = _money_cost(getattr(shop_stock, "average_cost", 0))
+    if qty <= 0 or unit <= 0:
+        return current
     old_qty = max(0, int(shop_stock.quantity or 0))
     new_avg = weighted_average_cost(
         old_qty=old_qty,
-        old_avg=getattr(shop_stock, "average_cost", 0),
+        old_avg=current,
         in_qty=qty,
         in_price=unit,
     )
@@ -132,13 +137,124 @@ def apply_stock_in_average_cost(shop_stock: ShopStock, *, qty: int, unit_cost) -
     return new_avg
 
 
-def resolve_sale_unit_cost(shop_stock: ShopStock | None, *, fallback=None) -> Decimal:
-    """Unit cost to stamp on a sale/credit line."""
-    if shop_stock is not None:
-        avg = _money_cost(getattr(shop_stock, "average_cost", 0))
-        if avg > 0:
-            return avg
-    return _money_cost(fallback)
+def resolve_sale_unit_cost(
+    shop_stock: ShopStock | None, *, fallback=None, max_sell=None
+) -> Decimal:
+    """Unit cost to stamp on a sale/credit line.
+
+    Prefers shop weighted average, then last non-zero buy. Values above the
+    item's max selling price are treated as implausible (often an invoice total
+    typed as a unit cost) and skipped.
+    """
+    last = _money_cost(fallback)
+    avg = (
+        _money_cost(getattr(shop_stock, "average_cost", 0))
+        if shop_stock is not None
+        else Decimal("0.00")
+    )
+    ceiling = _money_cost(max_sell)
+
+    def _plausible(amount: Decimal) -> bool:
+        if amount <= 0:
+            return False
+        if ceiling > 0 and amount > ceiling:
+            return False
+        return True
+
+    if _plausible(avg):
+        return avg
+    if _plausible(last):
+        return last
+    return Decimal("0.00")
+
+
+def _effective_in_unit_cost(buying_price, qty, max_sell=None) -> Decimal:
+    """Unit buy for WAC. Drops zeros; splits likely invoice totals by qty."""
+    buy = _money_cost(buying_price)
+    units = max(0, int(qty or 0))
+    ceiling = _money_cost(max_sell)
+    if buy <= 0 or units <= 0:
+        return Decimal("0.00")
+    if ceiling > 0 and buy > ceiling:
+        if units > 1:
+            unit = (buy / Decimal(units)).quantize(Decimal("0.01"))
+            if unit > 0 and unit <= ceiling:
+                return unit
+        return Decimal("0.00")
+    return buy
+
+
+def recalc_shop_stock_average_costs(*, shop_id=None, item_ids=None) -> dict:
+    """
+    Rebuild ShopStock.average_cost from non-zero stock-in unit buying prices.
+
+    Unpriced ins are ignored. Buys above max sell are treated as invoice totals
+    when qty > 1. Shops with no priced ins inherit the latest plausible buy
+    from any shop.
+    """
+    stock_qs = ShopStock.objects.all().only(
+        "id", "shop_id", "item_id", "average_cost"
+    )
+    line_qs = StockMovementLine.objects.filter(
+        buying_price__isnull=False,
+        buying_price__gt=0,
+        movement__movement_type=StockMovementType.IN,
+    )
+    if shop_id is not None:
+        stock_qs = stock_qs.filter(shop_id=shop_id)
+    if item_ids is not None:
+        ids = [int(pk) for pk in item_ids if pk]
+        stock_qs = stock_qs.filter(item_id__in=ids)
+        line_qs = line_qs.filter(item_id__in=ids)
+
+    stock_item_ids = set(stock_qs.values_list("item_id", flat=True))
+    line_item_ids = set(line_qs.values_list("item_id", flat=True))
+    max_sell_by_item = dict(
+        Item.objects.filter(pk__in=(stock_item_ids | line_item_ids)).values_list(
+            "pk", "maximum_selling_price"
+        )
+    )
+
+    wac_by_shop_item: dict[tuple[int, int], tuple[int, Decimal]] = {}
+    last_by_item: dict[int, Decimal] = {}
+    lines = line_qs.order_by("movement__created_at", "id").values_list(
+        "movement__shop_id", "item_id", "quantity", "buying_price"
+    )
+    for sid, iid, qty, buy in lines.iterator():
+        unit = _effective_in_unit_cost(buy, qty, max_sell_by_item.get(iid))
+        if unit <= 0:
+            continue
+        units = max(0, int(qty or 0))
+        key = (int(sid), int(iid))
+        old_qty, old_avg = wac_by_shop_item.get(key, (0, Decimal("0.00")))
+        new_avg = weighted_average_cost(
+            old_qty=old_qty, old_avg=old_avg, in_qty=units, in_price=unit
+        )
+        wac_by_shop_item[key] = (old_qty + units, new_avg)
+        last_by_item[int(iid)] = unit
+
+    updated = 0
+    unchanged = 0
+    to_update = []
+    for row in stock_qs.iterator():
+        key = (int(row.shop_id), int(row.item_id))
+        if key in wac_by_shop_item:
+            new_avg = wac_by_shop_item[key][1]
+        else:
+            new_avg = last_by_item.get(int(row.item_id), Decimal("0.00"))
+        new_avg = _money_cost(new_avg)
+        if _money_cost(row.average_cost) == new_avg:
+            unchanged += 1
+            continue
+        row.average_cost = new_avg
+        to_update.append(row)
+        updated += 1
+        if len(to_update) >= 500:
+            ShopStock.objects.bulk_update(to_update, ["average_cost"])
+            to_update = []
+    if to_update:
+        ShopStock.objects.bulk_update(to_update, ["average_cost"])
+    return {"updated": updated, "unchanged": unchanged}
 
 
 def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
@@ -154,6 +270,7 @@ def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
         qs = StockMovementLine.objects.filter(
             item_id=OuterRef("pk"),
             buying_price__isnull=False,
+            buying_price__gt=0,
             movement__movement_type=StockMovementType.IN,
         )
         if shop_id is not None:
@@ -224,6 +341,7 @@ def build_stock_catalog_page(
         "description",
         "track_serial_number",
         "is_suspended",
+        "maximum_selling_price",
     ).order_by("category", "name")
     if not include_suspended:
         qs = qs.filter(is_suspended=False)
@@ -315,6 +433,11 @@ def build_stock_catalog_page(
             "is_suspended": bool(item.is_suspended),
             "last_buying_price": (
                 format(price, "f") if price is not None else None
+            ),
+            "max_selling_price": (
+                format(item.maximum_selling_price, "f")
+                if item.maximum_selling_price
+                else None
             ),
         }
         if use_multi_shop:
@@ -1197,22 +1320,29 @@ def _parse_movement_lines(data, movement_type: str):
     if not raw_ids:
         raise ValidationError("Enter quantity on at least one item.")
 
-    track_by_id = {
-        str(pk): track
-        for pk, track in Item.objects.filter(pk__in=raw_ids).values_list(
-            "pk", "track_serial_number"
-        )
+    item_meta_by_id = {
+        str(pk): {"track": track, "max_sell": max_sell, "name": name}
+        for pk, track, max_sell, name in Item.objects.filter(
+            pk__in=raw_ids
+        ).values_list("pk", "track_serial_number", "maximum_selling_price", "name")
     }
 
     from shops.services import get_company_stock_settings
 
     stock_req = get_company_stock_settings()
+    confirm_high_buy = str(data.get("confirm_high_buying_price") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     lines = []
     errors = []
     for index, item_id in enumerate(raw_ids):
         item_id = str(item_id).strip()
-        tracks_serial = bool(track_by_id.get(item_id))
+        item_meta = item_meta_by_id.get(item_id) or {}
+        tracks_serial = bool(item_meta.get("track"))
         # Stock requests are quantity-only; serials are chosen when fulfilling later.
         if movement_type == StockMovementType.REQUEST:
             tracks_serial = False
@@ -1266,7 +1396,7 @@ def _parse_movement_lines(data, movement_type: str):
             price_raw = raw_prices[index] if index < len(raw_prices) else ""
             if stock_req.require_buying_price_on_in or str(price_raw).strip():
                 try:
-                    buying_price = _parse_price(price_raw, "Buying price")
+                    buying_price = _parse_price(price_raw, "Unit buying price")
                 except ValidationError as exc:
                     if stock_req.require_buying_price_on_in or str(price_raw).strip():
                         message = (
@@ -1276,6 +1406,20 @@ def _parse_movement_lines(data, movement_type: str):
                         continue
             else:
                 buying_price = None
+            max_sell = _money_cost(item_meta.get("max_sell"))
+            item_name = (item_meta.get("name") or "").strip() or line_label
+            if (
+                buying_price
+                and max_sell > 0
+                and buying_price > max_sell
+                and not confirm_high_buy
+            ):
+                errors.append(
+                    f"“{item_name}”: unit buying price KSh {buying_price} is above the "
+                    f"max selling price (KSh {max_sell}). Enter the cost per unit "
+                    f"(not the invoice total), or confirm to keep this price."
+                )
+                continue
 
             name_raw = raw_supplier_names[index] if index < len(raw_supplier_names) else ""
             dial_raw = raw_supplier_dials[index] if index < len(raw_supplier_dials) else ""
@@ -1606,6 +1750,7 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
                     out_unit_cost = resolve_sale_unit_cost(
                         line["shop_stock"],
                         fallback=out_fallback_costs.get(item.pk),
+                        max_sell=item.maximum_selling_price,
                     )
                     line["unit_cost"] = out_unit_cost
                 StockMovementLine.objects.create(

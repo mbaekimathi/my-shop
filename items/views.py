@@ -1916,8 +1916,8 @@ def stock_settings(request, profile, meta, module):
             "toggles": (
                 {
                     "field": "require_buying_price_on_in",
-                    "label": "Buying price",
-                    "hint": "Whole-number cost per unit on every stocked line",
+                    "label": "Unit buying price",
+                    "hint": "Cost of one unit (not the invoice total) on every stocked line",
                     "enabled": settings_row.require_buying_price_on_in,
                 },
                 {

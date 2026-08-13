@@ -481,6 +481,7 @@
                 data-item-id="{{ item.pk }}"
                 data-item-name="{{ item.name }}"
                 data-item-stock="{{ row.shop_qty }}"
+                data-max-selling-price="{{ item.maximum_selling_price }}"
                 data-track-serial="{% if item.track_serial_number and stock_mode != 'request' %}1{% else %}0{% endif %}"
                 data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
               >
@@ -552,7 +553,7 @@
                       {% endif %}
                       <label class="stock-inline-field">
                         <span class="stock-inline-label-row">
-                          <span>Buying price</span>
+                          <span>Unit buying price</span>
                           {% if row.last_buying_price is not None %}
                           <em class="stock-prev-price">Prev {{ row.last_buying_price|floatformat:0 }}</em>
                           {% else %}
