@@ -203,3 +203,104 @@ class AllocatedShopDataScopeTests(TestCase):
             profile=self.cashier, client_id=self.client_a.pk
         )
         self.assertEqual(account["client"].pk, self.client_a.pk)
+
+
+class StockRequestFromAnyShopTests(TestCase):
+    """Stock requests: destination allocated; supply shop may be any active shop."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="820011",
+            password="scope-pass",
+            email="req-mgr@test.local",
+            first_name="REQ",
+            last_name="MANAGER",
+            is_active=True,
+        )
+        self.manager = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="820011",
+            phone_country_code="+254",
+            phone_number="700000921",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_MANAGER,
+        )
+        self.shop_a = Shop.objects.create(
+            name="REQ SHOP A",
+            location="NAIROBI",
+            email="req-a@test.local",
+            phone_number="0700000921",
+            login_code="820111",
+            password_hash="x",
+            created_by=self.manager,
+        )
+        self.shop_b = Shop.objects.create(
+            name="REQ SHOP B",
+            location="MOMBASA",
+            email="req-b@test.local",
+            phone_number="0700000922",
+            login_code="820112",
+            password_hash="x",
+            created_by=self.manager,
+        )
+        self.manager.assigned_shops.add(self.shop_a)
+        from decimal import Decimal
+
+        from items.models import Item, ShopStock, StockMovementType
+
+        self.item = Item.objects.create(
+            category="CABLES",
+            name="REQ CABLE",
+            minimum_selling_price=Decimal("100.00"),
+            shop_price=Decimal("150.00"),
+            created_by=self.manager,
+        )
+        ShopStock.objects.create(shop=self.shop_b, item=self.item, quantity=10)
+        self.StockMovementType = StockMovementType
+
+    def test_request_from_unallocated_shop_succeeds(self):
+        from django.http import QueryDict
+
+        from items.models import StockMovement
+        from items.services import apply_stock_movement
+
+        data = QueryDict(mutable=True)
+        data.update(
+            {
+                "shop_id": str(self.shop_a.pk),
+                "requested_from_shop_id": str(self.shop_b.pk),
+                "item_id": str(self.item.pk),
+                "quantity": "2",
+                "note": "Need stock",
+            }
+        )
+        movement = apply_stock_movement(
+            self.manager, self.StockMovementType.REQUEST, data
+        )
+        self.assertEqual(movement.shop_id, self.shop_a.pk)
+        self.assertEqual(movement.requested_from_shop_id, self.shop_b.pk)
+        self.assertEqual(
+            StockMovement.objects.filter(
+                shop=self.shop_a, requested_from_shop=self.shop_b
+            ).count(),
+            1,
+        )
+
+    def test_request_to_unallocated_shop_is_rejected(self):
+        from django.core.exceptions import ValidationError
+        from django.http import QueryDict
+
+        from items.services import apply_stock_movement
+
+        data = QueryDict(mutable=True)
+        data.update(
+            {
+                "shop_id": str(self.shop_b.pk),
+                "requested_from_shop_id": str(self.shop_a.pk),
+                "item_id": str(self.item.pk),
+                "quantity": "1",
+                "note": "Should fail",
+            }
+        )
+        with self.assertRaises(ValidationError):
+            apply_stock_movement(self.manager, self.StockMovementType.REQUEST, data)

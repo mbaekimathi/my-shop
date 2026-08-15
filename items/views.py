@@ -2097,13 +2097,24 @@ def stock_management(request, profile, meta, module, page_sidebar):
     if mode == "return-clients":
         return stock_serial_returns(request, profile, meta, module)
 
+    from shops.models import Shop
+
     shops = actionable_shops_for_profile(profile)
     all_shops = shops
     shops_by_id = {str(shop.pk): shop for shop in shops}
+    # Request-from may be any active company shop (parity with MY-SHOP floor).
+    request_from_shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+    request_from_by_id = {str(shop.pk): shop for shop in request_from_shops}
 
     def _resolve_shop(raw):
         raw = (raw or "").strip()
         return shops_by_id.get(raw)
+
+    def _resolve_request_from_shop(raw):
+        raw = (raw or "").strip()
+        return request_from_by_id.get(raw)
 
     requested_shop_ids = _parse_request_shop_ids(request)
     selected_shops = []
@@ -2242,7 +2253,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     requested_from_shop = None
     if mode == "request":
-        requested_from_shop = _resolve_shop(requested_from_id)
+        requested_from_shop = _resolve_request_from_shop(requested_from_id)
         if (
             selected_shop
             and requested_from_shop
@@ -2383,6 +2394,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "items_by_category": items_by_category,
             "shops": shops,
             "all_shops": all_shops,
+            "request_from_shops": request_from_shops,
             "display_shops": display_shops,
             "show_all_shops": show_all_shops,
             "selected_shop": selected_shop,
@@ -2491,7 +2503,16 @@ def stock_management_catalog(request, role_segment):
             requesting_id = requested_shop_ids[0] if requested_shop_ids else shop_id
             if not requesting_id or requesting_id not in action_shops:
                 return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
-            if not from_id or from_id not in action_shops:
+            from shops.models import Shop
+
+            from_shop = (
+                Shop.objects.filter(
+                    pk=from_id, is_hidden=False, is_suspended=False
+                ).first()
+                if from_id
+                else None
+            )
+            if from_shop is None:
                 return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
             if from_id == requesting_id:
                 return JsonResponse(

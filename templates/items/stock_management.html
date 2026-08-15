@@ -271,7 +271,7 @@
             <span>From shop</span>
             <select data-stock-from-nav aria-label="Shop to request stock from">
               <option value="">Choose shop…</option>
-              {% for shop in shops %}
+              {% for shop in request_from_shops %}
               <option
                 value="{{ shop.pk }}"
                 {% if requested_from_shop and requested_from_shop.pk == shop.pk %}selected{% endif %}
