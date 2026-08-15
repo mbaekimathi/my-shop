@@ -1,4 +1,5 @@
 from itertools import groupby
+import json
 import re
 from decimal import Decimal
 
@@ -1005,9 +1006,8 @@ def my_shop_workspace(request, shop_id):
         default_kind == "sale" and pos_flags["cash_sale_checkout"] and enabled_payments
     )
 
-    buy_stock_ctx = _buy_stock_items_context(shop)
-    buy_stock_item_count = buy_stock_ctx["item_count"]
-
+    # Lean buy-stock modal context: avoid Item.count()/SUM(quantity) on every
+    # workspace render. The catalog itself loads via JSON after the modal opens.
     meta = {
         "title": shop.name,
         "headline": shop.name,
@@ -1078,14 +1078,19 @@ def my_shop_workspace(request, shop_id):
             "buy_stock_next": reverse(
                 "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
             ),
-            "buy_stock_item_count": buy_stock_item_count,
-            "total_units": buy_stock_ctx["total_units"],
-            "items_by_category": buy_stock_ctx["items_by_category"],
-            "countries": buy_stock_ctx["countries"],
-            "supplier_search_url": buy_stock_ctx["supplier_search_url"],
-            "stock_requirements_json": buy_stock_ctx["stock_requirements_json"],
-            "stock_catalog_url": buy_stock_ctx["stock_catalog_url"],
-            "use_stock_catalog_api": buy_stock_ctx["use_stock_catalog_api"],
+            "buy_stock_item_count": item_count,
+            "countries": COUNTRY_DIAL_CODES,
+            "supplier_search_url": reverse(
+                "employees:my_shop_supplier_search", kwargs={"shop_id": shop.pk}
+            ),
+            "serial_check_url": reverse("employees:serial_in_stock_check"),
+            "stock_requirements_json": json.dumps(
+                get_company_stock_settings().as_requirements_dict()
+            ),
+            "stock_catalog_url": reverse(
+                "employees:my_shop_buy_stock_catalog", kwargs={"shop_id": shop.pk}
+            ),
+            "use_stock_catalog_api": True,
             "register_expense_modal": True,
             "expense_next": reverse(
                 "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}

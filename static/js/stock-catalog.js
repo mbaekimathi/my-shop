@@ -105,12 +105,25 @@
 
   const simpleMode = panel.hasAttribute("data-stock-catalog-simple");
   const searchFirst = panel.hasAttribute("data-stock-catalog-search-first");
+  // Buy-stock popup: preload once, then filter in memory (no DB per keystroke).
+  const localFilter =
+    simpleMode &&
+    searchFirst &&
+    panel.hasAttribute("data-stock-catalog-local-filter");
   const parkedWrap = panel.querySelector(".buy-stock-simple-parked");
   let browseOpen = false;
   let pickerCollapsed = false;
   const itemCache = new Map();
   const memoryCache = new Map();
   let offlineStorePromise = null;
+  let localCatalog = null;
+  let localFiltered = null;
+  let localVisibleLimit = pageSize;
+  let localCatalogPromise = null;
+  let localRevalidating = false;
+  let lastRenderKey = "";
+  let localRenderFrame = 0;
+  const PRELOAD_PAGE_SIZE = 500;
 
   const getOfflineStore = () => {
     if (!offlineStorePromise) {
@@ -124,9 +137,266 @@
       q || ""
     ).toLowerCase()}`;
 
+  // Search keys are computed once per item so keystrokes only do substring tests.
+  const indexItem = (item) => {
+    if (!item || item.__searchName != null) return item;
+    item.__searchName = String(item.name || "").toLowerCase();
+    item.__searchCategory = String(item.category || "").toLowerCase();
+    item.__searchDescription = String(item.description || "").toLowerCase();
+    return item;
+  };
+
+  const filterLocalItems = (source, q) => {
+    const phrase = String(q || "")
+      .trim()
+      .toLowerCase();
+    if (!phrase) return source.slice();
+    const tokens = phrase.split(/\s+/).filter(Boolean);
+    if (tokens.length === 1) {
+      const token = tokens[0];
+      return source.filter(
+        (item) =>
+          item.__searchName.includes(token) ||
+          item.__searchCategory.includes(token) ||
+          item.__searchDescription.includes(token)
+      );
+    }
+    return source.filter((item) => {
+      if (item.__searchName.includes(phrase)) return true;
+      return tokens.every(
+        (token) =>
+          item.__searchName.includes(token) ||
+          item.__searchCategory.includes(token)
+      );
+    });
+  };
+
+  const rememberItems = (items) => {
+    (items || []).forEach((item) => {
+      if (item?.id != null) itemCache.set(String(item.id), indexItem(item));
+    });
+  };
+
+  const applyLocalSlice = ({ append = false, force = false } = {}) => {
+    const source = Array.isArray(localFiltered) ? localFiltered : [];
+    const slice = source.slice(0, localVisibleLimit);
+    // Typing often lands on the same result set (narrowing a unique match,
+    // backspacing, etc.) — skip the whole DOM pass when nothing would change.
+    // The DOM counts are part of the key so parking/removing an item still
+    // forces a reconcile even when the query is unchanged.
+    const parkedKey =
+      parked?.querySelectorAll("[data-item-row][data-item-id]").length ?? 0;
+    const domKey =
+      groupEls
+        .get("__simple__")
+        ?.querySelector("[data-stock-catalog-tbody]")?.childElementCount ?? -1;
+    const renderKey = `${source.length}:${parkedKey}:${domKey}:${slice
+      .map((item) => item.id)
+      .join(",")}`;
+    if (!force && !append && renderKey === lastRenderKey) return;
+    lastRenderKey = renderKey;
+    hasMore = source.length > localVisibleLimit;
+    nextPage = hasMore ? Math.floor(localVisibleLimit / pageSize) + 1 : null;
+    activeQuery = String(activeQuery || "");
+    if (Array.isArray(localCatalog)) {
+      totalCount = localCatalog.length;
+      panel.dataset.itemTotal = String(totalCount);
+    }
+    appendItems(slice, { replace: !append });
+    const parkedCount = parked?.querySelectorAll("[data-item-row]").length || 0;
+    const shown = Math.min(source.length, localVisibleLimit);
+    if (noResults) {
+      const idle = searchFirst && !activeQuery && !browseOpen;
+      noResults.hidden =
+        idle || shown + parkedCount > 0 || (!activeQuery && totalCount === 0);
+    }
+    if (moreWrap) moreWrap.hidden = !hasMore;
+    if (activeQuery) {
+      const savedTotal = totalCount;
+      totalCount = source.length;
+      updateCount(shown + parkedCount || source.length, true);
+      totalCount = savedTotal;
+    } else {
+      updateCount(shown + parkedCount || totalCount, false);
+    }
+    notify();
+  };
+
+  const preloadKeyFor = (page) =>
+    `stock-catalog-preload:${catalogShopIds.join("-") || shopId || "all"}:${mode}:p${page}:s${PRELOAD_PAGE_SIZE}`;
+
+  const absorbPreloadPage = (data, into) => {
+    const items = Array.isArray(data?.items) ? data.items : [];
+    into.push(...items);
+    rememberItems(items);
+    if (Array.isArray(data?.shops) && data.shops.length && multiShopMatrix) {
+      viewShops = data.shops;
+    }
+  };
+
+  const fetchPreloadPage = async (page) => {
+    const params = buildFetchParams(page, "");
+    params.set("page_size", String(PRELOAD_PAGE_SIZE));
+    const response = await fetch(`${apiUrl}?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.ok) throw new Error(data?.error || "preload_failed");
+    memoryCache.set(preloadKeyFor(page), data);
+    getOfflineStore().then((store) => {
+      if (store?.cacheSet) store.cacheSet(preloadKeyFor(page), data, 60 * 60 * 12);
+    });
+    return data;
+  };
+
+  const readPreloadFromCache = async () => {
+    const all = [];
+    let page = 1;
+    let guard = 0;
+    while (guard++ < 40) {
+      const key = preloadKeyFor(page);
+      let data = memoryCache.get(key);
+      if (!data?.ok) {
+        const store = await getOfflineStore();
+        data = store?.cacheGet ? await store.cacheGet(key) : null;
+        if (data?.ok) memoryCache.set(key, data);
+      }
+      if (!data?.ok) return null;
+      absorbPreloadPage(data, all);
+      if (!data.has_more) break;
+      page = Number(data.next_page) || page + 1;
+    }
+    return all.length ? all : null;
+  };
+
+  const fetchPreloadFromNetwork = async () => {
+    const all = [];
+    let page = 1;
+    let guard = 0;
+    while (guard++ < 40) {
+      const data = await fetchPreloadPage(page);
+      absorbPreloadPage(data, all);
+      if (!data.has_more) break;
+      page = Number(data.next_page) || page + 1;
+    }
+    return all;
+  };
+
+  const catalogSignature = (items) =>
+    Array.isArray(items)
+      ? `${items.length}:${items
+          .map((item) => `${item.id}|${item.shop_qty}|${item.last_buying_price || ""}`)
+          .join(",")}`
+      : "";
+
+  const setLocalCatalog = (items) => {
+    items.forEach(indexItem);
+    localCatalog = items;
+    totalCount = items.length;
+    panel.dataset.itemTotal = String(totalCount);
+  };
+
+  const revalidateLocalCatalog = () => {
+    if (localRevalidating) return;
+    const online = typeof navigator === "undefined" || navigator.onLine;
+    if (!online) return;
+    localRevalidating = true;
+    const before = catalogSignature(localCatalog);
+    fetchPreloadFromNetwork()
+      .then((items) => {
+        if (!items.length) return;
+        const changed = catalogSignature(items) !== before;
+        setLocalCatalog(items);
+        // Only re-render when the data actually moved, so a background refresh
+        // never yanks the list out from under someone mid-edit.
+        if (changed && (activeQuery || browseOpen)) {
+          localFiltered = filterLocalItems(items, activeQuery);
+          applyLocalSlice({ append: false, force: true });
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        localRevalidating = false;
+      });
+  };
+
+  // Cache-first: serve the stored catalog instantly, refresh in the background.
+  const ensureLocalCatalog = () => {
+    if (!localFilter) return Promise.resolve(null);
+    if (Array.isArray(localCatalog)) return Promise.resolve(localCatalog);
+    if (localCatalogPromise) return localCatalogPromise;
+
+    localCatalogPromise = (async () => {
+      const cached = await readPreloadFromCache().catch(() => null);
+      if (cached) {
+        setLocalCatalog(cached);
+        revalidateLocalCatalog();
+        return localCatalog;
+      }
+      setLocalCatalog(await fetchPreloadFromNetwork());
+      return localCatalog;
+    })().catch((err) => {
+      localCatalogPromise = null;
+      throw err;
+    });
+
+    return localCatalogPromise;
+  };
+
+  const reloadFromLocal = async (q = "", { forceBrowse = false } = {}) => {
+    const query = String(q || "").trim();
+    if (pickerCollapsed && !forceBrowse && !query) return;
+    if (query || forceBrowse) setPickerCollapsed(false);
+    if (searchFirst && !query && !forceBrowse && !browseOpen) {
+      abortController?.abort();
+      parkFilled();
+      showIdleHint();
+      setBusy(false);
+      return;
+    }
+    if (!query && (forceBrowse || browseOpen)) setBrowseOpen(true);
+
+    const warm = Array.isArray(localCatalog);
+    if (!warm) {
+      if (simpleMode) showCatalogLoading();
+      setBusy(true);
+    }
+    try {
+      const all = await ensureLocalCatalog();
+      localFiltered = filterLocalItems(all, query);
+      localVisibleLimit = pageSize;
+      activeQuery = query;
+      applyLocalSlice({ append: false });
+    } catch (_err) {
+      // Fall back to server search if preload fails.
+      await fetchPage({ page: 1, q: query, append: false });
+    } finally {
+      if (!warm) setBusy(false);
+    }
+  };
+
+  // Coalesce keystrokes into at most one render per animation frame.
+  const scheduleLocalRender = (query) => {
+    if (localRenderFrame) window.cancelAnimationFrame(localRenderFrame);
+    localRenderFrame = window.requestAnimationFrame(() => {
+      localRenderFrame = 0;
+      reloadFromLocal(query);
+    });
+  };
+
+  // Result rows are rebuilt on every keystroke, so ship the SVG inline instead
+  // of asking lucide to convert dozens of <i data-lucide> placeholders per frame.
+  const svgIcon = (name, body) =>
+    `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-${name}" aria-hidden="true">${body}</svg>`;
+  const ICON_X = svgIcon("x", '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
+  const ICON_PLUS = svgIcon("plus", '<path d="M5 12h14"/><path d="M12 5v14"/>');
+
   const refreshIcons = (root = panel) => {
     if (!window.lucide?.createIcons) return;
     if (root && root !== panel && root instanceof Element) {
+      // Reused rows keep their rendered SVGs — only pay for unconverted icons.
+      if (!root.querySelector("[data-lucide]")) return;
       window.lucide.createIcons({ root });
       return;
     }
@@ -135,6 +405,7 @@
 
   const showCatalogLoading = () => {
     if (pickerCollapsed || !listRoot) return;
+    lastRenderKey = "";
     listRoot.innerHTML = `
       <div class="buy-stock-catalog-loading" data-stock-catalog-loading aria-live="polite">
         <span class="buy-stock-catalog-loading-bar" aria-hidden="true"></span>
@@ -252,9 +523,15 @@
     return qty > 0;
   };
 
+  // Simple picker parks rows explicitly on Add, so only rows carrying state can
+  // ever need moving — scanning every result row on each keystroke is wasted.
+  const PARK_CANDIDATE_SELECTOR = simpleMode
+    ? "[data-item-row][data-item-id].is-filled, [data-item-row][data-item-id].is-selected, [data-item-row][data-item-id].is-open"
+    : "[data-item-row][data-item-id]";
+
   const parkFilled = () => {
     if (!parked) return;
-    listRoot.querySelectorAll("[data-item-row][data-item-id]").forEach((row) => {
+    listRoot.querySelectorAll(PARK_CANDIDATE_SELECTOR).forEach((row) => {
       if (!isFilledPair(row)) return;
       if (parked.contains(row)) return;
       if (editableMatrix) {
@@ -587,7 +864,7 @@
           <span class="visually-hidden">Remove</span>
         </div>
         ${entryWrap}
-        <ul class="stock-serial-scanned" data-stock-serial-scanned aria-live="polite"></ul>
+        <ul class="stock-serial-scanned" data-stock-serial-scanned aria-live="polite" hidden></ul>
         <small class="stock-serial-hint">${
           mode === "out"
             ? "Scan or search serials — press Enter after each."
@@ -655,27 +932,27 @@
           <span>Qty</span>
           <input type="number" name="quantity" min="1" step="1" placeholder="0" inputmode="numeric" data-stock-qty data-stock-field disabled>
         </label>`;
-      const priceBlockSimple = `<label class="stock-inline-field">
-          <span class="stock-inline-label-row">
-            <span>Unit buy</span>
+      const priceBlockSimple = `<label class="stock-inline-field stock-inline-field--buy">
+          <span>Unit buy</span>
+          <span class="stock-buy-price-wrap${prev ? " has-prev" : ""}">
+            <input
+              type="number"
+              name="buying_price"
+              min="0"
+              step="1"
+              placeholder="${prev || " "}"
+              inputmode="numeric"
+              data-stock-buying-price
+              data-stock-field
+              ${prev ? `data-stock-prev-buying="${prev}"` : ""}
+              disabled
+            >
             ${
               prev
-                ? `<em class="stock-prev-price">Prev ${prev}</em>`
-                : `<em class="stock-prev-price is-empty">No prev</em>`
+                ? `<span class="stock-buy-price-ghost" aria-hidden="true"><span class="stock-buy-price-ghost-label">Prev</span><span class="stock-buy-price-ghost-value">${prev}</span></span>`
+                : ""
             }
           </span>
-          <input
-            type="number"
-            name="buying_price"
-            min="0"
-            step="1"
-            placeholder="${prev || "0"}"
-            inputmode="numeric"
-            data-stock-buying-price
-            data-stock-field
-            ${prev ? `data-stock-prev-buying="${prev}"` : ""}
-            disabled
-          >
         </label>`;
       return `
       <div class="stock-in-field-row buy-stock-pick-fields">
@@ -1012,7 +1289,7 @@
                 title="Remove item"
                 hidden
               >
-                <i data-lucide="x" aria-hidden="true"></i>
+                ${ICON_X}
               </button>
             </div>
             <p class="buy-stock-pick-meta">
@@ -1029,7 +1306,7 @@
             aria-label="Add ${escapeHtml(name)}"
           >
             <span>Add</span>
-            <i data-lucide="plus" aria-hidden="true"></i>
+            ${ICON_PLUS}
           </button>
         </div>`;
       return [header];
@@ -1172,7 +1449,61 @@
     });
   };
 
+  // Simple picker: reconcile the existing rows against the new result set so
+  // live search reuses untouched rows instead of re-parsing the whole list.
+  const syncSimpleRows = (items) => {
+    parkFilled();
+    // The idle hint / loading placeholder replaces listRoot's contents, so make
+    // sure we are reconciling against a group that is actually mounted.
+    let section = groupEls.get("__simple__");
+    if (!section || section.parentElement !== listRoot) {
+      groupEls.delete("__simple__");
+      listRoot.innerHTML = "";
+      section = ensureGroup("");
+    }
+    [...listRoot.children].forEach((child) => {
+      if (child !== section) child.remove();
+    });
+    const tbody = section.querySelector("[data-stock-catalog-tbody]");
+    if (!tbody) return;
+    const parkedIds = new Set(
+      [...(parked?.querySelectorAll("[data-item-row][data-item-id]") || [])].map(
+        (row) => row.getAttribute("data-item-id")
+      )
+    );
+    const desired = items.filter((item) => !parkedIds.has(String(item.id)));
+    const desiredIds = new Set(desired.map((item) => String(item.id)));
+
+    const existing = new Map();
+    [...tbody.children].forEach((node) => {
+      const id = node.getAttribute?.("data-item-id");
+      if (!id || !desiredIds.has(id)) {
+        node.remove();
+        return;
+      }
+      existing.set(id, node);
+    });
+
+    desired.forEach((item, index) => {
+      itemCache.set(String(item.id), indexItem(item));
+      const node =
+        existing.get(String(item.id)) || buildPair(item).filter(Boolean)[0];
+      if (!node) return;
+      const current = tbody.children[index];
+      if (current !== node) tbody.insertBefore(node, current || null);
+    });
+
+    restoreParkedToTop();
+    // No sortFilledRowsInPlace here: filled rows live in the parked stack, so
+    // reordering would re-append every result row on every keystroke.
+    refreshGroupCounts();
+  };
+
   const appendItems = (items, { replace }) => {
+    if (simpleMode && replace) {
+      syncSimpleRows(items);
+      return;
+    }
     if (replace) {
       parkFilled();
       groupEls.clear();
@@ -1207,6 +1538,7 @@
 
   const showLoadError = ({ append, q }) => {
     if (append) return;
+    lastRenderKey = "";
     groupEls.clear();
     listRoot.innerHTML = `
       <div class="dashboard-placeholder" data-stock-catalog-error>
@@ -1371,6 +1703,7 @@
   const showIdleHint = () => {
     if (!simpleMode || !searchFirst) return;
     setBrowseOpen(false);
+    lastRenderKey = "";
     groupEls.clear();
     const hasParked = Boolean(parked?.querySelector("[data-item-row]"));
     listRoot.innerHTML = hasParked
@@ -1419,6 +1752,9 @@
   };
 
   const reload = (q = "", { forceBrowse = false } = {}) => {
+    if (localFilter) {
+      return reloadFromLocal(q, { forceBrowse });
+    }
     const query = String(q || "").trim();
     if (pickerCollapsed && !forceBrowse && !query) {
       return Promise.resolve();
@@ -1437,7 +1773,13 @@
   };
 
   moreBtn?.addEventListener("click", () => {
-    if (!hasMore || !nextPage || panel.hasAttribute("data-stock-catalog-busy")) return;
+    if (!hasMore || panel.hasAttribute("data-stock-catalog-busy")) return;
+    if (localFilter && Array.isArray(localFiltered)) {
+      localVisibleLimit += pageSize;
+      applyLocalSlice({ append: false });
+      return;
+    }
+    if (!nextPage) return;
     fetchPage({ page: nextPage, q: activeQuery, append: true });
   });
 
@@ -1467,10 +1809,17 @@
   searchInput?.addEventListener("input", () => {
     window.clearTimeout(searchTimer);
     const query = String(searchInput.value || "").trim();
+    const warmLocal = localFilter && Array.isArray(localCatalog);
     if (query) {
       setPickerCollapsed(false);
       setBrowseOpen(false);
-      showCatalogLoading();
+      // Local filter is instant — skip the loading flash once catalog is warm.
+      if (!warmLocal) showCatalogLoading();
+    }
+    if (warmLocal) {
+      // No debounce needed: filtering is in memory and render is frame-batched.
+      scheduleLocalRender(query);
+      return;
     }
     searchTimer = window.setTimeout(() => reload(query), 150);
   });
@@ -1513,7 +1862,8 @@
     panel.dataset.stockCatalogStarted = "1";
     if (searchFirst) {
       showIdleHint();
-      warmCatalogPage({ page: 1, q: "" });
+      if (localFilter) ensureLocalCatalog().catch(() => {});
+      else warmCatalogPage({ page: 1, q: "" });
       return;
     }
     reload("");
@@ -1524,7 +1874,8 @@
     document.addEventListener(
       "buy-stock-modal:open",
       () => {
-        warmCatalogPage({ page: 1, q: "" });
+        if (localFilter) ensureLocalCatalog().catch(() => {});
+        else warmCatalogPage({ page: 1, q: "" });
         panel.dispatchEvent(new CustomEvent("stock-catalog:load"));
       },
       { once: true }

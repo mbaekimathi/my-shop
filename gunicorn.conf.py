@@ -9,7 +9,10 @@ import multiprocessing
 import os
 
 bind = os.getenv("GUNICORN_BIND", "0.0.0.0:8000")
-workers = int(os.getenv("GUNICORN_WORKERS", multiprocessing.cpu_count() * 2 + 1))
+# Cap the auto worker count so a high-CPU host does not exhaust MySQL
+# max_connections under persistent CONN_MAX_AGE. Override with GUNICORN_WORKERS.
+_auto_workers = min(multiprocessing.cpu_count() * 2 + 1, 4)
+workers = int(os.getenv("GUNICORN_WORKERS", str(_auto_workers)))
 # gthread overlaps I/O (print scan/relay) so one slow LAN call does not stall the worker.
 threads = int(os.getenv("GUNICORN_THREADS", "2"))
 worker_class = os.getenv("GUNICORN_WORKER_CLASS", "gthread" if threads > 1 else "sync")
