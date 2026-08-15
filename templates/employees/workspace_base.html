@@ -1,6 +1,11 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block body_class %}page-workspace{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260815c">
+{% endblock %}
 
 {% block body %}
 <div class="workspace" data-workspace data-dashboard-url="{{ page_sidebar.dashboard_url }}">
@@ -71,9 +76,9 @@
 {% load static %}
 {{ block.super }}
 {% if shop_day_modal %}
-<script src="{% static 'js/my-shop-day-prompt.js' %}?v=3"></script>
+<script defer src="{% static 'js/my-shop-day-prompt.js' %}?v=3"></script>
 {% endif %}
-<script src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
+<script defer src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
 <script>
   (() => {
     const root = document.querySelector("[data-workspace]");

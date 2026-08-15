@@ -4,15 +4,24 @@
 {% block title %}Employee Registration — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 {% block body_class %}page-auth{% endblock %}
 
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/auth.css' %}?v=20260815c">
+{% endblock %}
+
 {% block body %}
 <div class="auth-shell">
   <aside class="auth-visual">
-    <img
-      class="auth-visual-image"
-      src="{% static 'img/hero-pos.jpg' %}"
-      alt=""
-      decoding="async"
-    >
+    <picture>
+      <source srcset="{% static 'img/hero-pos.webp' %}" type="image/webp">
+      <img
+        class="auth-visual-image"
+        src="{% static 'img/hero-pos.jpg' %}"
+        alt=""
+        width="1536"
+        height="1024"
+        decoding="async"
+      >
+    </picture>
     <div class="auth-visual-scrim"></div>
     <div class="auth-visual-content">
       <div class="auth-visual-brand">

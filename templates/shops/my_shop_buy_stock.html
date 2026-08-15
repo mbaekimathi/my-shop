@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+{% block title %}{{ meta.title }} â€” {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 {% include "shops/partials/buy_stock_form.html" %}
@@ -48,7 +48,7 @@
       </div>
       <ul class="stock-serial-modal-scanned" data-stock-serial-modal-scanned aria-live="polite"></ul>
       <small class="stock-serial-hint">
-        Scan continuously — press Enter after each serial. Click Done when finished.
+        Scan continuously â€” press Enter after each serial. Click Done when finished.
       </small>
     </div>
     <div class="workspace-modal-actions">
@@ -61,12 +61,13 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=28"></script>
-<script src="{% static 'js/item-search.js' %}?v=4"></script>
-<script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix36"></script>
+<script defer src="{% static 'js/stock-catalog.js' %}?v=34"></script>
+<script defer src="{% static 'js/item-search.js' %}?v=4"></script>
+<script defer src="{% static 'js/input-uppercase.js' %}"></script>
+<script defer src="{% static 'js/stock-bulk.js' %}?v=matrix46"></script>
 <script
-  src="{% static 'js/serial-scan.js' %}?v=7"
+  defer
+  src="{% static 'js/serial-scan.js' %}?v=8"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% endblock %}

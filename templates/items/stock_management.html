@@ -1245,15 +1245,16 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-catalog.js' %}?v=28"></script>
-<script src="{% static 'js/item-search.js' %}?v=4"></script>
-<script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/stock-bulk.js' %}?v=matrix36"></script>
+<script defer src="{% static 'js/stock-catalog.js' %}?v=34"></script>
+<script defer src="{% static 'js/item-search.js' %}?v=4"></script>
+<script defer src="{% static 'js/input-uppercase.js' %}"></script>
+<script defer src="{% static 'js/stock-bulk.js' %}?v=matrix46"></script>
 <script
-  src="{% static 'js/serial-scan.js' %}?v=7"
+  defer
+  src="{% static 'js/serial-scan.js' %}?v=8"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% if stock_mode == 'view' %}
-<script src="{% static 'js/stock-print.js' %}?v=7"></script>
+<script defer src="{% static 'js/stock-print.js' %}?v=7"></script>
 {% endif %}
 {% endblock %}

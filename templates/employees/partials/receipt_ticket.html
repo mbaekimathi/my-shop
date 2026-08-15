@@ -1,5 +1,5 @@
 {% with p=receipt_preview %}
-<div class="receipt-ticket-inner">
+<div class="receipt-ticket-inner{% if p.doc_type %} receipt-ticket-inner--{{ p.doc_type }}{% endif %}">
   <div class="receipt-ticket-brand">
     {% if p.logo_url %}
     <img class="receipt-ticket-logo" src="{{ p.logo_url }}" alt="">
@@ -13,61 +13,75 @@
     {% if p.shop_branch %}<p class="receipt-ticket-branch">{{ p.shop_branch }}</p>{% endif %}
   </div>
 
-  <div class="receipt-ticket-rule" aria-hidden="true"></div>
+  <p class="receipt-ticket-doc-title">{{ p.document_title|default:"Sales invoice / receipt" }}</p>
 
-  <div class="receipt-ticket-meta">
+  <div class="receipt-ticket-doc-meta">
     <div>
-      <span>Receipt</span>
+      <span>{{ p.doc_number_label|default:"Invoice No." }}</span>
       <strong data-receipt-ticket-number>{{ p.receipt_number }}</strong>
-    </div>
-    <div>
-      <span>Type</span>
-      <strong>{{ p.kind }}</strong>
     </div>
     <div>
       <span>Date</span>
       <strong>{{ p.date }}</strong>
     </div>
-    <div>
-      <span>{{ p.party_label|default:"Client" }}</span>
-      <strong>{{ p.client }}</strong>
+  </div>
+
+  <div class="receipt-ticket-rule" aria-hidden="true"></div>
+
+  <div class="receipt-ticket-parties">
+    <div class="receipt-ticket-party">
+      {% if p.route_from or p.route_to %}
+      <span class="receipt-ticket-party-label">Transfer</span>
+      {% if p.route_from %}<strong>From: {{ p.route_from }}</strong>{% endif %}
+      {% if p.route_to %}<strong>To: {{ p.route_to }}</strong>{% endif %}
+      {% else %}
+      <span class="receipt-ticket-party-label">{{ p.party_label|default:"Customer" }}</span>
+      <strong>{{ p.client|default:"—" }}</strong>
+      {% if p.party_phone %}<em>{{ p.party_phone }}</em>{% endif %}
+      {% endif %}
     </div>
-    {% if p.status %}
-    <div>
-      <span>Status</span>
-      <strong>{{ p.status }}</strong>
+    <div class="receipt-ticket-refs">
+      <span class="receipt-ticket-party-label">Reference</span>
+      <div><span>Type</span><strong>{{ p.kind }}</strong></div>
+      {% if p.receiving_branch %}
+      <div><span>Branch</span><strong>{{ p.receiving_branch }}</strong></div>
+      {% endif %}
+      {% if p.expense_category %}
+      <div><span>Category</span><strong>{{ p.expense_category }}</strong></div>
+      {% endif %}
+      {% if p.status %}
+      <div><span>Status</span><strong>{{ p.status }}</strong></div>
+      {% endif %}
+      {% if p.credit_due_date %}
+      <div><span>Pay by</span><strong>{{ p.credit_due_date }}</strong></div>
+      {% endif %}
+      {% if p.cashier %}
+      <div><span>{{ p.authorised_label|default:"Cashier" }}</span><strong>{{ p.cashier }}</strong></div>
+      {% endif %}
     </div>
-    {% endif %}
-    {% if p.credit_due_date %}
-    <div>
-      <span>Pay by</span>
-      <strong>{{ p.credit_due_date }}</strong>
-    </div>
-    {% endif %}
-    {% if p.cashier %}
-    <div>
-      <span>Cashier</span>
-      <strong>{{ p.cashier }}</strong>
-    </div>
-    {% endif %}
   </div>
 
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
 
   <div class="receipt-ticket-lines">
-    <div class="receipt-ticket-line receipt-ticket-line--head">
+    <div class="receipt-ticket-line receipt-ticket-line--head{% if p.qty_only %} receipt-ticket-line--qty{% endif %}">
       <span>Item</span>
+      {% if p.qty_only %}
+      <span>Qty</span>
+      {% else %}
       <span>Price</span>
       <span>Qty</span>
       <span>Total</span>
+      {% endif %}
     </div>
     {% if p.cancelled %}
     <p class="receipt-ticket-cancelled">*** CANCELLED / RETURNED ***</p>
     {% else %}
     {% for line in p.lines %}
-    <div class="receipt-ticket-line">
+    <div class="receipt-ticket-line{% if p.qty_only %} receipt-ticket-line--qty{% endif %}">
       <span class="receipt-ticket-item">
         <strong>{{ line.name }}</strong>
+        {% if line.detail %}<em class="receipt-ticket-detail">{{ line.detail }}</em>{% endif %}
         {% for serial in line.serials %}
         <em class="receipt-ticket-serial">SN {{ serial }}</em>
         {% endfor %}
@@ -75,9 +89,13 @@
         <em class="receipt-ticket-serial">+{{ line.serials_extra }} more serials</em>
         {% endif %}
       </span>
+      {% if p.qty_only %}
+      <span>{{ line.qty }}</span>
+      {% else %}
       <span class="receipt-ticket-price">@ {{ line.price }}</span>
       <span>{{ line.qty }}</span>
       <span>{{ line.total }}</span>
+      {% endif %}
     </div>
     {% endfor %}
     {% endif %}
@@ -86,6 +104,12 @@
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
 
   <div class="receipt-ticket-totals">
+    {% if p.qty_only %}
+    <div class="receipt-ticket-grand">
+      <span>Units</span>
+      <strong>{% if p.total_units %}{{ p.total_units }}{% else %}0{% endif %}</strong>
+    </div>
+    {% else %}
     {% if p.show_tax %}
     <div>
       <span>Subtotal</span>
@@ -106,6 +130,7 @@
       <strong>{{ p.payment }}</strong>
     </div>
     {% endif %}
+    {% endif %}
   </div>
 
   <div class="receipt-ticket-payment" data-receipt-payment-block{% if not p.payment_details.lines %} hidden{% endif %}>
@@ -119,6 +144,13 @@
       {% endfor %}
     </div>
   </div>
+
+  {% if p.cashier %}
+  <div class="receipt-ticket-auth">
+    <span>{{ p.authorised_label|default:"Cashier" }}</span>
+    <strong>{{ p.cashier }}</strong>
+  </div>
+  {% endif %}
 
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
 

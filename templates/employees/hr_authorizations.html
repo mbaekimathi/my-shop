@@ -5,32 +5,27 @@
 
 {% block workspace_content %}
 <section
-  class="item-panel item-panel--dense item-panel--hr item-panel--auth hr--list-table"
+  class="staff-panel staff-panel--dense hr-auth"
   data-animate="rise"
   data-hr-auth-panel
 >
-  <header class="item-panel-head">
-    <div class="item-panel-head-top">
-      <div>
-        <p class="stock-kicker">HR management · Authorizations</p>
-        <h2>{{ meta.headline }}</h2>
-        <p>{{ meta.summary }}</p>
-      </div>
-      <div class="stock-stats">
-        <p class="stock-stat">
-          <strong>{{ employees_page.paginator.count }}</strong>
-          <span>employee{{ employees_page.paginator.count|pluralize }}</span>
-        </p>
-        {% if shops %}
-        <p class="stock-stat">
-          <strong>{{ shops|length }}</strong>
-          <span>shop{{ shops|length|pluralize }}</span>
-        </p>
-        {% endif %}
-      </div>
+  <header class="staff-panel-head hr-auth-head">
+    <div>
+      <p class="stock-kicker">HR management</p>
+      <h2>{{ meta.headline }}</h2>
+      <p>{{ meta.summary }}</p>
     </div>
-
-    <div class="hr-auth-toolbar">
+    <div class="hr-auth-head-actions">
+      <p class="stock-stat">
+        <strong data-hr-auth-employee-count>{{ employees_page.paginator.count }}</strong>
+        <span>employee{{ employees_page.paginator.count|pluralize }}</span>
+      </p>
+      {% if shops %}
+      <p class="stock-stat">
+        <strong>{{ shops|length }}</strong>
+        <span>shop{{ shops|length|pluralize }}</span>
+      </p>
+      {% endif %}
       <a class="btn btn--ghost staff-panel-link" href="{{ permissions_url }}">
         <i data-lucide="key-round" aria-hidden="true"></i>
         <span>Module permissions</span>
@@ -40,85 +35,114 @@
         class="btn btn--primary hr-auth-save-all"
         type="submit"
         form="auth-shops-bulk"
+        data-hr-auth-save
+        disabled
         title="Save all shop assignments on this page"
       >
         <i data-lucide="check" aria-hidden="true"></i>
-        <span>Save all</span>
+        <span>Save changes</span>
       </button>
       {% endif %}
     </div>
   </header>
 
   {% if employees %}
+  <div class="hr-auth-toolbar">
+    <label class="item-search-field hr-auth-search">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input
+        type="search"
+        placeholder="Search name, ID, or role…"
+        autocomplete="off"
+        data-hr-auth-search
+        aria-label="Search employees"
+      >
+    </label>
+    <p class="hr-auth-visible" data-hr-auth-visible hidden></p>
+  </div>
+
   <form
     id="auth-shops-bulk"
     class="hr-auth-bulk-form"
     method="post"
+    data-hr-auth-form
   >
     {% csrf_token %}
     <input type="hidden" name="action" value="assign_shops">
     <input type="hidden" name="list_page" value="{{ employees_page.number }}">
 
-    <div class="item-table-wrap item-table-wrap--hr">
-      <p class="hr-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
-      <table
-        class="item-table item-table--dense item-table--hr item-table--auth"
-        style="--hr-auth-shop-count: {{ shops|length|default:1 }};"
+    <div class="hr-auth-list">
+      {% for employee in employees %}
+      <article
+        class="hr-auth-card"
+        data-hr-auth-card
+        data-search="{{ employee.user.get_full_name|default:employee.user.username }} {{ employee.employee_id }} {{ employee.get_role_display }}"
       >
-        <thead>
-          <tr>
-            <th scope="col" class="item-col--item">Employee</th>
-            {% for shop in shops %}
-            <th
-              scope="col"
-              class="hr-auth-col--shop"
-              title="{{ shop.name }}{% if shop.location %} · {{ shop.location }}{% endif %}{% if shop.is_suspended %} · suspended{% endif %}"
+        <input type="hidden" name="employee_ids" value="{{ employee.employee_id }}">
+        <div class="hr-auth-card-person">
+          {% if employee.profile_photo %}
+          <img class="staff-avatar" src="{{ employee.profile_photo.url }}" alt="" width="40" height="40">
+          {% else %}
+          <span class="staff-avatar staff-avatar--empty" aria-hidden="true">
+            <i data-lucide="user"></i>
+          </span>
+          {% endif %}
+          <div class="hr-auth-card-copy">
+            <strong>{{ employee.user.get_full_name|default:employee.user.username }}</strong>
+            <small>
+              <code>{{ employee.employee_id }}</code>
+              · {{ employee.get_role_display }}
+            </small>
+          </div>
+          <span class="hr-auth-count" data-hr-auth-count>
+            {{ employee.assigned_shop_ids|length }} shop{{ employee.assigned_shop_ids|length|pluralize }}
+          </span>
+        </div>
+
+        {% if shops %}
+        <div class="hr-auth-shops" role="group" aria-label="Shops for {{ employee.employee_id }}">
+          {% for shop in shops %}
+          <label
+            class="hr-auth-chip{% if shop.pk in employee.assigned_shop_ids %} is-on{% endif %}{% if shop.is_suspended %} is-suspended{% endif %}{% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %} is-disabled{% endif %}"
+          >
+            <input
+              class="hr-auth-chip-input"
+              type="checkbox"
+              name="shop_ids__{{ employee.employee_id }}"
+              value="{{ shop.pk }}"
+              {% if shop.pk in employee.assigned_shop_ids %}checked{% endif %}
+              {% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %}disabled{% endif %}
+              aria-label="{{ shop.name }} for {{ employee.employee_id }}"
             >
-              {{ shop.name }}
-            </th>
-            {% endfor %}
-          </tr>
-        </thead>
-        <tbody>
-          {% for employee in employees %}
-          <tr>
-            <td class="item-cell--item" data-label="Employee">
-              <input type="hidden" name="employee_ids" value="{{ employee.employee_id }}">
-              <div class="item-person">
-                {% if employee.profile_photo %}
-                <img class="item-thumb" src="{{ employee.profile_photo.url }}" alt="" width="28" height="28">
-                {% else %}
-                <span class="item-thumb item-thumb--empty" aria-hidden="true">
-                  <i data-lucide="user"></i>
-                </span>
-                {% endif %}
-                <div class="item-person-copy">
-                  <strong>{{ employee.user.get_full_name|default:employee.user.username }}</strong>
-                  <small>{{ employee.get_role_display }}</small>
-                </div>
-              </div>
-            </td>
-            {% for shop in shops %}
-            <td class="hr-auth-col--shop" data-label="{{ shop.name }}">
-              <label class="hr-auth-shop-check{% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %} is-disabled{% endif %}">
-                <input
-                  type="checkbox"
-                  name="shop_ids__{{ employee.employee_id }}"
-                  value="{{ shop.pk }}"
-                  {% if shop.pk in employee.assigned_shop_ids %}checked{% endif %}
-                  {% if shop.is_suspended and shop.pk not in employee.assigned_shop_ids %}disabled{% endif %}
-                  aria-label="{{ shop.name }} for {{ employee.employee_id }}"
-                >
-                <span class="visually-hidden">{{ shop.name }}</span>
-              </label>
-            </td>
-            {% endfor %}
-          </tr>
+            <span class="hr-auth-chip-ui">
+              <i data-lucide="store" aria-hidden="true"></i>
+              <span class="hr-auth-chip-copy">
+                <strong>{{ shop.name }}</strong>
+                {% if shop.location %}<small>{{ shop.location }}</small>{% endif %}
+              </span>
+              {% if shop.is_suspended %}
+              <span class="hr-auth-chip-badge">Suspended</span>
+              {% endif %}
+            </span>
+          </label>
           {% endfor %}
-        </tbody>
-      </table>
+        </div>
+        <div class="hr-auth-card-actions">
+          <button type="button" class="hr-auth-quick" data-hr-auth-all>All shops</button>
+          <button type="button" class="hr-auth-quick" data-hr-auth-none>Clear</button>
+        </div>
+        {% else %}
+        <p class="hr-auth-card-empty">No shops available to assign.</p>
+        {% endif %}
+      </article>
+      {% endfor %}
     </div>
   </form>
+
+  <p class="hr-auth-empty-search" data-hr-auth-no-results hidden>
+    <i data-lucide="search-x" aria-hidden="true"></i>
+    <span>No employees match that search.</span>
+  </p>
 
   {% if employees_page.has_other_pages %}
   {% include "employees/partials/pagination_nav.html" with pagination_label="Shop authorization pages" %}
@@ -153,6 +177,7 @@
 {{ block.super }}
 <script src="{% static 'js/input-uppercase.js' %}"></script>
 <script src="{% static 'js/hr-management.js' %}?v=4"></script>
+<script src="{% static 'js/hr-authorizations.js' %}?v=1"></script>
 <script src="{% static 'js/auth.js' %}"></script>
 <script src="{% static 'js/register.js' %}"></script>
 {% endblock %}

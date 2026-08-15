@@ -9,9 +9,19 @@ from employees.workspace import (
     HR_SIDEBAR_SECTIONS,
     SETTINGS_NESTED_SECTIONS,
     SETTINGS_SECTIONS,
+    sidebar_for_suppliers,
 )
 from items.services import actionable_shops_for_profile
 from shops.models import Client, Shop, ShopReceipt, ShopReceiptKind, ShopReceiptStatus
+
+
+class SupplierSidebarTests(TestCase):
+    def test_suppliers_sidebar_only_has_all_suppliers(self):
+        sidebar = sidebar_for_suppliers(EmployeeRole.IT_SUPPORT)
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertEqual(labels, ["All suppliers"])
+        self.assertTrue(sidebar["primary"][0]["active"])
+        self.assertIn("/analytics/suppliers/", sidebar["primary"][0]["href"])
 
 
 class PermissionCatalogTests(SimpleTestCase):

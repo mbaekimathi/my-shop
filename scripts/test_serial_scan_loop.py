@@ -34,14 +34,14 @@ def check_static_files() -> list[tuple[str, bool, str]]:
     checks = []
     vendor = ROOT / "static" / "vendor" / "html5-qrcode.min.js"
     js = ROOT / "static" / "js" / "serial-scan.js"
-    css = ROOT / "static" / "css" / "main.css"
+    css = ROOT / "static" / "css" / "app.css"
     checks.append(("vendor lib", vendor.exists() and vendor.stat().st_size > 10_000, str(vendor)))
     checks.append(("serial-scan.js", js.exists() and "MyShopSerialScan" in js.read_text(encoding="utf-8"), str(js)))
     checks.append(
         (
             "css scanner styles",
             ".serial-scan-modal" in css.read_text(encoding="utf-8"),
-            "main.css includes .serial-scan-modal",
+            "app.css includes .serial-scan-modal",
         )
     )
     return checks

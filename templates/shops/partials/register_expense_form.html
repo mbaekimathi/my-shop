@@ -46,33 +46,33 @@
     <div class="buy-stock-simple-main shop-expense-simple-main">
       <div class="shop-expense-composer">
         <label class="shop-cart-input">
-          <span class="visually-hidden">Category</span>
+          <span>Category</span>
           <select data-expense-category-draft aria-label="Category">
-            <option value="">Category</option>
+            <option value="">Select</option>
             {% for value, label in expense_categories %}
             <option value="{{ value }}">{{ label }}</option>
             {% endfor %}
           </select>
         </label>
         <label class="shop-cart-input shop-expense-composer-name">
-          <span class="visually-hidden">Expense name</span>
+          <span>Expense name</span>
           <input
             type="text"
-            placeholder="Expense name"
+            placeholder="e.g. Fuel, rent…"
             autocomplete="off"
             data-uppercase
             data-expense-name-draft
             aria-label="Expense name"
           >
         </label>
-        <label class="shop-cart-input">
-          <span class="visually-hidden">Amount</span>
+        <label class="shop-cart-input shop-expense-composer-amount">
+          <span>Amount</span>
           <input
             type="number"
             min="1"
             step="1"
             inputmode="numeric"
-            placeholder="Amount"
+            placeholder="0"
             data-expense-amount-draft
             aria-label="Amount"
           >

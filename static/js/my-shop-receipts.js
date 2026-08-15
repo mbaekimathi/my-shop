@@ -442,6 +442,25 @@
       })
       .join("");
 
+    const paperWidth = String(
+      payload.receipt_paper_width || printPayload.paper || "80"
+    );
+    const ticket = printPayload.ticket;
+    const ticketHtml =
+      ticket && window.RichcomPrinter?.renderTicketHtml
+        ? window.RichcomPrinter.renderTicketHtml(ticket, printPayload.qr)
+        : "";
+    const ticketPreview = ticketHtml
+      ? `<div class="shop-receipt-ticket-preview">
+  <h3>Document preview</h3>
+  <div class="receipt-ticket receipt-ticket--${escapeHtml(
+    paperWidth === "58" ? "58" : "80"
+  )}" data-receipt-modal-ticket>
+    ${ticketHtml}
+  </div>
+</div>`
+      : "";
+
     if (modalBody) {
       modalBody.innerHTML = `
 <div class="shop-receipt-detail" data-detail-panel>
@@ -461,6 +480,7 @@
       receipt.cashier || "—"
     )}</p>
   </div>
+  ${ticketPreview}
   ${clientBlock}
   <div class="shop-receipt-card shop-receipt-card--items">
     <h3>Items</h3>

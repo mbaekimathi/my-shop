@@ -91,6 +91,7 @@ python scripts/setup_mysql.py
 ```bash
 python scripts/test_mysql_efficiency.py
 python scripts/test_online_offline_loop.py
+python scripts/test_connectivity_loop.py
 python scripts/test_load_speed_loop.py
 python scripts/test_page_hop_loop.py
 ```

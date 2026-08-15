@@ -122,7 +122,7 @@
   >
     <div class="workspace-modal-head shop-receipt-modal-head">
       <div>
-        <p class="shop-receipt-modal-kicker">{{ shop.name }} · Receipt</p>
+        <p class="shop-receipt-modal-kicker">{{ shop.name }} · Invoice / receipt</p>
         <h2 id="receipt-modal-title" data-receipt-modal-title>Receipt</h2>
       </div>
       <button type="button" class="workspace-icon-btn" data-receipt-modal-close aria-label="Close">
@@ -156,7 +156,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script src="{% static 'js/shop-printer.js' %}?v=20"></script>
-<script src="{% static 'js/my-shop-receipts.js' %}?v=6"></script>
+<script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
+<script defer src="{% static 'js/my-shop-receipts.js' %}?v=7"></script>
 {% endblock %}

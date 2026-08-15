@@ -34,6 +34,8 @@
   let verifySeq = 0;
   let searchTimer = null;
   let searchSeq = 0;
+  let autoRecordTimer = null;
+  let autoRecordFlight = false;
 
   const getCsrf = () =>
     form.querySelector("[name=csrfmiddlewaretoken]")?.value ||
@@ -123,6 +125,76 @@
 
   const readyRows = () => rows().filter((row) => rowValues(row).ok);
 
+  const canAutoRecord = () => {
+    const ready = readyRows();
+    return (
+      Boolean(printSupplier) &&
+      verified &&
+      ready.length > 0 &&
+      ready.length === rows().length &&
+      supplierReady()
+    );
+  };
+
+  const submitExpenseWithPrint = async () => {
+    if (!printSupplier || autoRecordFlight) return false;
+    if (!canAutoRecord()) return false;
+
+    autoRecordFlight = true;
+    if (submitBtn) submitBtn.disabled = true;
+    setStatus("Recording expenses and printing supplier receipt…", { ok: true });
+    setHint("Recording and printing…");
+    try {
+      const body = new FormData(form);
+      body.set("ajax", "1");
+      const response = await fetch(form.getAttribute("action") || window.location.href, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        body,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) {
+        setStatus(data.error || "Could not record expense.", { error: true });
+        setHint(data.error || "Could not record expense.", true);
+        autoRecordFlight = false;
+        if (submitBtn) submitBtn.disabled = false;
+        syncCart();
+        return false;
+      }
+      setStatus(data.message || "Expense recorded. Printing supplier receipt…", {
+        ok: true,
+      });
+      if (data.receipt_text && window.RichcomPrinter?.printReceipt) {
+        await window.RichcomPrinter.printReceipt({
+          text: data.receipt_text,
+          channel: data.print_via || "",
+          qr: data.receipt_qr || null,
+          fontStyle: data.receipt_font || null,
+          ticket: data.receipt_ticket || null,
+          paperWidth: data.receipt_paper_width || "",
+        });
+      }
+      window.location.assign(data.next || window.location.href);
+      return true;
+    } catch (_) {
+      setStatus("Network error while recording expense.", { error: true });
+      setHint("Network error while recording expense.", true);
+      autoRecordFlight = false;
+      if (submitBtn) submitBtn.disabled = false;
+      syncCart();
+      return false;
+    }
+  };
+
+  const queueAutoRecordAndPrint = () => {
+    if (!printSupplier) return;
+    window.clearTimeout(autoRecordTimer);
+    autoRecordTimer = window.setTimeout(() => {
+      void submitExpenseWithPrint();
+    }, 280);
+  };
+
   const syncCart = () => {
     const all = rows();
     const ready = readyRows();
@@ -153,11 +225,17 @@
     } else if (!verified) {
       setHint("Enter staff ID to confirm.");
     } else {
-      setHint(`Ready to record ${ready.length} expense${ready.length === 1 ? "" : "s"}.`);
+      setHint(
+        printSupplier
+          ? `Verified — recording ${ready.length} expense${ready.length === 1 ? "" : "s"}…`
+          : `Ready to record ${ready.length} expense${ready.length === 1 ? "" : "s"}.`
+      );
     }
     if (submitBtn) {
-      submitBtn.disabled = !(verified && ready.length > 0 && supplierReady());
+      submitBtn.disabled =
+        autoRecordFlight || !(verified && ready.length > 0 && supplierReady());
     }
+    if (canAutoRecord()) queueAutoRecordAndPrint();
   };
 
   const clearDraft = ({ keepCategory = true } = {}) => {
@@ -205,17 +283,16 @@
               <i data-lucide="x" aria-hidden="true"></i>
             </button>
           </div>
-          <p class="buy-stock-pick-meta">${escapeHtml(categoryLabel(category))}</p>
         </div>
       </div>
       <div class="buy-stock-pick-inputs">
         <div class="stock-item-inputs stock-item-inputs--matrix">
           <div class="stock-in-field-row buy-stock-pick-fields shop-expense-row-fields">
-            <label class="stock-inline-field">
+            <label class="stock-inline-field shop-expense-field-category">
               <span>Category</span>
               <select name="category">${categoryOptionsHtml()}</select>
             </label>
-            <label class="stock-inline-field">
+            <label class="stock-inline-field shop-expense-field-amount">
               <span>Amount</span>
               <input
                 type="number"
@@ -289,6 +366,7 @@
         { ok: true }
       );
       syncCart();
+      queueAutoRecordAndPrint();
       return true;
     } catch (_) {
       if (current !== verifySeq) return false;
@@ -608,14 +686,16 @@
       event.preventDefault();
       const ok = await verifyCode();
       if (!ok) return;
-      if (!printSupplier) {
-        if (typeof form.requestSubmit === "function") {
-          form.requestSubmit(submitBtn || undefined);
-        } else {
-          form.submit();
-        }
+      if (printSupplier) {
+        queueAutoRecordAndPrint();
         return;
       }
+      if (typeof form.requestSubmit === "function") {
+        form.requestSubmit(submitBtn || undefined);
+      } else {
+        form.submit();
+      }
+      return;
     }
     if (!printSupplier) {
       if (submitBtn) submitBtn.disabled = true;
@@ -623,42 +703,7 @@
     }
 
     event.preventDefault();
-    if (submitBtn) submitBtn.disabled = true;
-    setStatus("Recording expenses and printing supplier receipt…");
-    try {
-      const body = new FormData(form);
-      body.set("ajax", "1");
-      const response = await fetch(form.getAttribute("action") || window.location.href, {
-        method: "POST",
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
-        body,
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.ok) {
-        setStatus(data.error || "Could not record expense.", { error: true });
-        if (submitBtn) submitBtn.disabled = false;
-        return;
-      }
-      setStatus(data.message || "Expense recorded. Printing supplier receipt…", {
-        ok: true,
-      });
-      if (data.receipt_text && window.RichcomPrinter?.printReceipt) {
-        await window.RichcomPrinter.printReceipt({
-          text: data.receipt_text,
-          channel: data.print_via || "",
-          qr: data.receipt_qr || null,
-          fontStyle: data.receipt_font || null,
-          ticket: data.receipt_ticket || null,
-          paperWidth: data.receipt_paper_width || "",
-        });
-      }
-      const next = data.next || window.location.href;
-      window.location.assign(next);
-    } catch (_) {
-      setStatus("Network error while recording expense.", { error: true });
-      if (submitBtn) submitBtn.disabled = false;
-    }
+    await submitExpenseWithPrint();
   });
 
   if (window.initUppercaseInputs) window.initUppercaseInputs(form);

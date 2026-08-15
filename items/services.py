@@ -339,7 +339,8 @@ def build_stock_catalog_page(
         page_size = int(page_size or 48)
     except (TypeError, ValueError):
         page_size = 48
-    page_size = min(max(page_size, 12), 96)
+    # Allow a larger page for one-shot buy-stock preloads (client-side filter).
+    page_size = min(max(page_size, 12), 500)
     mode = (mode or "in").strip().lower()
     if mode not in ("in", "out", "request", "view"):
         mode = "in"

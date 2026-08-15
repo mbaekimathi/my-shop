@@ -1142,6 +1142,31 @@ def sidebar_for_analytics_detail(role, *, profile=None):
     )
 
 
+def sidebar_for_suppliers(role, *, profile=None):
+    """Focused sidebar for the suppliers workspace — All suppliers only."""
+    dashboard_url = reverse(role_home_url_name(role))
+    return resolve_sidebar_hrefs(
+        {
+            "page": "analytics",
+            "dashboard_url": dashboard_url,
+            "primary": [
+                _link(
+                    "All suppliers",
+                    "truck",
+                    href=analytics_section_url(role, "suppliers"),
+                    active=True,
+                ),
+            ],
+            "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
 def sidebar_for_client_credit_account(
     role,
     *,

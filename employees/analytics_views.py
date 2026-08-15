@@ -31,6 +31,7 @@ from .workspace import (
     sidebar_for_analytics,
     sidebar_for_client_credit_account,
     sidebar_for_role_dashboard,
+    sidebar_for_suppliers,
 )
 from shops.daraja_stk import stk_ready as daraja_stk_ready
 from shops.daraja_stk import sync_callback_base_from_request
@@ -140,7 +141,9 @@ def _render_analytics(request, profile, *, section_slug="overview"):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": (
-                sidebar_for_role_dashboard(
+                sidebar_for_suppliers(profile.role, profile=profile)
+                if section["slug"] == "suppliers"
+                else sidebar_for_role_dashboard(
                     profile.role,
                     profile=profile,
                     active_slug=section["slug"],
@@ -476,11 +479,7 @@ def analytics_supplier_account(request, role_segment, kind, supplier_id):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": (
-                sidebar_for_role_dashboard(
-                    profile.role,
-                    profile=profile,
-                    active_slug="suppliers",
-                )
+                sidebar_for_suppliers(profile.role, profile=profile)
                 if back_section == "suppliers"
                 else sidebar_for_analytics(
                     profile.role, active_view=back_section, profile=profile

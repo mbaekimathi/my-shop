@@ -38,6 +38,8 @@ PHONE_RE = re.compile(r"^[\d+\-\s()]{7,40}$")
 LOGIN_CODE_RE = re.compile(r"^\d{6}$")
 MIN_PASSWORD_LENGTH = 6
 DEFAULT_COMPANY_NAME = "MY-SHOP"
+COMPANY_DISPLAY_NAME_CACHE_KEY = "shops:company-display-name"
+COMPANY_DISPLAY_NAME_CACHE_TIMEOUT = 60 * 5
 _SHOP_LOGIN_DUMMY_HASH = None
 
 
@@ -944,11 +946,20 @@ def get_company_profile() -> CompanyProfile:
 
 def get_company_display_name() -> str:
     """Company profile name for branding, with MY-SHOP as fallback."""
+    cached_name = cache.get(COMPANY_DISPLAY_NAME_CACHE_KEY)
+    if cached_name is not None:
+        return cached_name
     try:
         name = (get_company_profile().name or "").strip()
     except DatabaseError:
         return DEFAULT_COMPANY_NAME
-    return name or DEFAULT_COMPANY_NAME
+    display_name = name or DEFAULT_COMPANY_NAME
+    cache.set(
+        COMPANY_DISPLAY_NAME_CACHE_KEY,
+        display_name,
+        COMPANY_DISPLAY_NAME_CACHE_TIMEOUT,
+    )
+    return display_name
 
 
 def validate_company_profile_payload(data, files, *, existing: CompanyProfile) -> dict:
@@ -1034,6 +1045,7 @@ def update_company_profile(data, files) -> CompanyProfile:
         update_fields.append("logo")
 
     profile_row.save(update_fields=update_fields)
+    cache.delete(COMPANY_DISPLAY_NAME_CACHE_KEY)
     return profile_row
 
 
@@ -1935,6 +1947,37 @@ def _receipt_center(text: str, width: int) -> str:
     return f"{' ' * (pad // 2)}{value}"
 
 
+def _sales_ticket_document_meta(receipt) -> dict:
+    """Professional document labels for sale / credit / quotation tickets."""
+    kind = receipt.kind
+    if kind == ShopReceiptKind.CREDIT:
+        return {
+            "doc_type": "credit",
+            "document_title": "Credit invoice / receipt",
+            "doc_number_label": "Invoice No.",
+            "party_label": "Customer",
+            "authorised_label": "Cashier",
+            "footer": "Thank you for your business",
+        }
+    if kind == ShopReceiptKind.QUOTATION:
+        return {
+            "doc_type": "quotation",
+            "document_title": "Quotation",
+            "doc_number_label": "Quote No.",
+            "party_label": "Customer",
+            "authorised_label": "Prepared by",
+            "footer": "This quotation is not a tax invoice",
+        }
+    return {
+        "doc_type": "sale",
+        "document_title": "Sales invoice / receipt",
+        "doc_number_label": "Invoice No.",
+        "party_label": "Customer",
+        "authorised_label": "Cashier",
+        "footer": "Thank you for shopping with us",
+    }
+
+
 def _build_receipt_ticket_data(receipt, lines) -> dict:
     """
     Structured receipt payload matching the Receipt settings HTML preview.
@@ -1944,6 +1987,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
     pos = get_company_pos_settings()
     company = get_company_profile()
     kind = receipt.get_kind_display()
+    doc_meta = _sales_ticket_document_meta(receipt)
     shop = receipt.shop
     company_name = (company.name or "").strip() or (shop.name if shop else DEFAULT_COMPANY_NAME)
     company_location = (company.location or "").strip()
@@ -1996,6 +2040,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         ticket_lines.append(
             {
                 "name": str(line.item_name or "Item"),
+                "detail": "",
                 "qty": int(remaining_qty),
                 "price": _receipt_money(unit),
                 "total": _receipt_money(line_total),
@@ -2032,6 +2077,8 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
     except (ValueError, AttributeError):
         logo_url = ""
 
+    party_phone = (getattr(receipt, "client_phone", None) or "").strip()
+
     return {
         "mark": (company_name or DEFAULT_COMPANY_NAME).upper(),
         "shop_name": company_name.upper(),
@@ -2041,8 +2088,14 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         "logo_url": logo_url,
         "receipt_number": receipt.receipt_number,
         "kind": kind,
+        "doc_type": doc_meta["doc_type"],
+        "document_title": doc_meta["document_title"],
+        "doc_number_label": doc_meta["doc_number_label"],
+        "party_label": doc_meta["party_label"],
+        "authorised_label": doc_meta["authorised_label"],
         "date": date_label,
         "client": receipt.client_name or "—",
+        "party_phone": party_phone,
         "cashier": cashier,
         "status": status_label,
         "lines": ticket_lines,
@@ -2060,7 +2113,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
             "label": payment_details.get("label") or "",
             "lines": list(payment_details.get("lines") or []),
         },
-        "footer": "Thank you for shopping with us",
+        "footer": doc_meta["footer"],
     }
 
 
@@ -2085,10 +2138,16 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
     if ticket.get("shop_branch"):
         rows.append(_receipt_center(ticket["shop_branch"], width))
 
+    document_title = (ticket.get("document_title") or "").strip()
+    if document_title:
+        rows.extend([rule, _receipt_center(document_title, width)])
+
+    doc_number_label = (ticket.get("doc_number_label") or "Doc No.").strip() or "Doc No."
+    authorised_label = (ticket.get("authorised_label") or "Cashier").strip() or "Cashier"
     rows.extend(
         [
             rule,
-            _receipt_pad_line("Receipt", ticket.get("receipt_number") or "", width),
+            _receipt_pad_line(doc_number_label, ticket.get("receipt_number") or "", width),
             _receipt_pad_line("Type", ticket.get("kind") or "", width),
             _receipt_pad_line("Date", ticket.get("date") or "", width),
         ]
@@ -2097,6 +2156,10 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
         rows.append(_receipt_pad_line("From", ticket["route_from"], width))
     if ticket.get("route_to"):
         rows.append(_receipt_pad_line("To", ticket["route_to"], width))
+    if ticket.get("receiving_branch"):
+        rows.append(
+            _receipt_pad_line("Branch", ticket["receiving_branch"], width)
+        )
     if ticket.get("client") or (
         ticket.get("party_label") and not ticket.get("route_from")
     ):
@@ -2107,12 +2170,18 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
                 width,
             )
         )
+    if ticket.get("party_phone"):
+        rows.append(_receipt_pad_line("Phone", ticket["party_phone"], width))
+    if ticket.get("expense_category"):
+        rows.append(
+            _receipt_pad_line("Category", ticket["expense_category"], width)
+        )
     if ticket.get("status"):
         rows.append(_receipt_pad_line("Status", ticket["status"], width))
     if ticket.get("credit_due_date"):
         rows.append(_receipt_pad_line("Pay by", ticket["credit_due_date"], width))
     if ticket.get("cashier"):
-        rows.append(_receipt_pad_line("Cashier", ticket["cashier"], width))
+        rows.append(_receipt_pad_line(authorised_label, ticket["cashier"], width))
 
     qty_only = bool(ticket.get("qty_only"))
 
@@ -2141,6 +2210,7 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
     else:
         for line in ticket.get("lines") or []:
             name = str(line.get("name") or "Item")
+            detail = str(line.get("detail") or "").strip()
             qty = int(line.get("qty") or 0)
             if qty_only:
                 left_max = max(6, width - 4)
@@ -2159,6 +2229,8 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
                     rows.append(_receipt_pad_line("", right, width))
                 else:
                     rows.append(_receipt_pad_line(name, right, width))
+            if detail:
+                rows.append(f"  {detail[: max(8, width - 2)]}")
             for serial in line.get("serials") or []:
                 rows.append(f"  SN {str(serial)[: max(8, width - 5)]}")
             extra = int(line.get("serials_extra") or 0)
@@ -2305,6 +2377,7 @@ def build_stock_in_supplier_receipt(movement, *, shop: Shop, authorised_by=None)
         ticket_lines.append(
             {
                 "name": str(getattr(line.item, "name", None) or "Item"),
+                "detail": "",
                 "qty": qty,
                 "price": _receipt_money(unit),
                 "total": _receipt_money(line_total),
@@ -2314,15 +2387,22 @@ def build_stock_in_supplier_receipt(movement, *, shop: Shop, authorised_by=None)
         )
 
     created = timezone.localtime(movement.created_at)
+    receiving_branch = (shop.name or "").strip() if shop else ""
     ticket = {
         **_supplier_receipt_shop_header(shop),
         "receipt_number": format_simple_doc_number(
             DOC_NUMBER_PREFIX["stock_in"], movement.pk
         ),
         "kind": "Stock purchase",
+        "doc_type": "stock_in",
+        "document_title": "Supplier goods received / purchase invoice",
+        "doc_number_label": "GRN No.",
+        "authorised_label": "Authorised by",
         "date": created.strftime("%d %b %Y · %H:%M"),
         "party_label": "Supplier",
         "client": supplier_name,
+        "party_phone": supplier_phone if supplier_phone != supplier_name else "",
+        "receiving_branch": receiving_branch,
         "cashier": cashier,
         "status": "",
         "lines": ticket_lines,
@@ -2336,8 +2416,6 @@ def build_stock_in_supplier_receipt(movement, *, shop: Shop, authorised_by=None)
         "payment_details": {"label": "", "lines": []},
         "footer": "Supplier copy · Goods received",
     }
-    if supplier_phone and supplier_phone != supplier_name:
-        ticket["client"] = f"{supplier_name} · {supplier_phone}"
 
     paper = (
         pos.receipt_paper_width
@@ -2385,6 +2463,7 @@ def build_stock_request_delivery_note(
         ticket_lines.append(
             {
                 "name": str(getattr(line.item, "name", None) or "Item"),
+                "detail": "",
                 "qty": qty,
                 "price": "0",
                 "total": "0",
@@ -2401,9 +2480,14 @@ def build_stock_request_delivery_note(
             DOC_NUMBER_PREFIX["delivery"], movement.pk
         ),
         "kind": "Delivery note",
+        "doc_type": "delivery",
+        "document_title": "Delivery note / transfer voucher",
+        "doc_number_label": "Delivery No.",
+        "authorised_label": "Authorised by",
         "date": stamped.strftime("%d %b %Y · %H:%M"),
         "party_label": "",
         "client": "",
+        "party_phone": "",
         "route_from": from_name,
         "route_to": to_name,
         "cashier": cashier,
@@ -2449,8 +2533,6 @@ def build_expense_supplier_receipt(
     phone = ((first.supplier_phone_number if first else "") or "").strip()
     supplier_phone = f"{dial} {phone}".strip()
     client = supplier_name
-    if supplier_phone:
-        client = f"{supplier_name} · {supplier_phone}"
 
     categories = []
     for row in rows:
@@ -2471,9 +2553,13 @@ def build_expense_supplier_receipt(
     for row in rows:
         amount = row.amount
         total += amount
+        line_category = ""
+        if hasattr(row, "get_category_display"):
+            line_category = row.get_category_display() or ""
         ticket_lines.append(
             {
                 "name": str(row.name or "Expense"),
+                "detail": line_category,
                 "qty": 1,
                 "price": _receipt_money(amount),
                 "total": _receipt_money(amount),
@@ -2490,14 +2576,21 @@ def build_expense_supplier_receipt(
         **_supplier_receipt_shop_header(shop),
         "receipt_number": receipt_number,
         "kind": "Expense",
+        "doc_type": "expense",
+        "document_title": "Expense claim / payment voucher",
+        "doc_number_label": "Claim No.",
+        "authorised_label": "Authorised by",
         "date": created.strftime("%d %b %Y · %H:%M"),
         "party_label": "Supplier",
         "client": client,
+        "party_phone": supplier_phone,
+        "expense_category": category,
         "cashier": authorised_by or "",
-        "status": category,
+        "status": "",
         "lines": ticket_lines or [
             {
                 "name": "Expense",
+                "detail": "",
                 "qty": 1,
                 "price": _receipt_money(0),
                 "total": _receipt_money(0),
@@ -2513,7 +2606,7 @@ def build_expense_supplier_receipt(
         "total": _receipt_money(total),
         "payment": payment_label,
         "payment_details": {"label": "", "lines": []},
-        "footer": "Supplier copy · Expense recorded",
+        "footer": "Expense claim · Payment voucher",
     }
     paper = (
         pos.receipt_paper_width

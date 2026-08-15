@@ -256,78 +256,114 @@
   body {
     font-family: "Manrope", system-ui, sans-serif;
     font-size: ${style.fontSize};
-    font-weight: 900 !important;
-    line-height: 1.4;
+    font-weight: 800 !important;
+    line-height: 1.35;
     padding: ${style.paperMm === "58" ? "2.5mm 2mm 3mm" : "3.5mm 3mm 4mm"};
     -webkit-font-smoothing: none;
     -moz-osx-font-smoothing: unset;
     text-rendering: geometricPrecision;
-    text-shadow: 0.35px 0 0 #000, -0.35px 0 0 #000, 0 0.35px 0 #000, 0 -0.35px 0 #000;
+    text-shadow: 0.3px 0 0 #000, -0.3px 0 0 #000;
   }
-  .receipt-ticket-inner { width: 100%; font-weight: 900 !important; }
+  .receipt-ticket-inner { width: 100%; font-weight: 800 !important; }
   .receipt-ticket-brand { text-align: center; }
   .receipt-ticket-logo {
     display: block;
     width: auto;
     max-width: 42%;
     max-height: 14mm;
-    margin: 0 auto 0.4em;
+    margin: 0 auto 0.35em;
     object-fit: contain;
   }
   .receipt-ticket-mark {
-    margin: 0 0 0.3em;
-    font-size: 0.78em;
-    font-weight: 900 !important;
-    letter-spacing: 0.14em;
+    margin: 0 0 0.25em;
+    font-size: 0.72em;
+    font-weight: 800 !important;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
   }
   .receipt-ticket-brand h4 {
     margin: 0;
-    font-size: 1.22em;
+    font-size: 1.15em;
     font-weight: 900 !important;
     letter-spacing: 0.02em;
   }
   .receipt-ticket-brand p {
-    margin: 0.12em 0 0;
-    font-size: 0.98em;
-    font-weight: 900 !important;
+    margin: 0.1em 0 0;
+    font-size: 0.92em;
+    font-weight: 700 !important;
   }
   .receipt-ticket-branch {
+    font-size: 0.88em;
+    font-weight: 800 !important;
+  }
+  .receipt-ticket-doc-title {
+    margin: 0.55em 0 0.35em;
+    padding: 0.28em 0;
+    text-align: center;
     font-size: 0.92em;
     font-weight: 900 !important;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-top: 1.5px solid #000;
+    border-bottom: 1.5px solid #000;
   }
-  .receipt-ticket-rule {
-    height: 0;
-    margin: 0.65em 0;
-    border: 0;
-    border-top: 2px solid #000 !important;
-  }
-  .receipt-ticket-meta { display: grid; gap: 0.28em; }
-  .receipt-ticket-meta > div {
+  .receipt-ticket-doc-meta {
     display: grid;
-    grid-template-columns: ${style.paperMm === "58" ? "3.6em" : "4.2em"} 1fr;
-    gap: 0.35em;
+    gap: 0.22em;
+    margin-top: 0.35em;
+  }
+  .receipt-ticket-doc-meta > div,
+  .receipt-ticket-refs > div {
+    display: grid;
+    grid-template-columns: ${style.paperMm === "58" ? "4.2em" : "5em"} 1fr;
+    gap: 0.3em;
     align-items: baseline;
   }
-  .receipt-ticket-meta span {
-    font-size: 0.9em;
-    font-weight: 900 !important;
+  .receipt-ticket-doc-meta span,
+  .receipt-ticket-refs span,
+  .receipt-ticket-party-label {
+    font-size: 0.82em;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
-  .receipt-ticket-meta strong {
+  .receipt-ticket-doc-meta strong,
+  .receipt-ticket-refs strong,
+  .receipt-ticket-party strong {
     font-weight: 900 !important;
     word-break: break-word;
   }
-  .receipt-ticket-lines { display: grid; gap: 0.45em; }
+  .receipt-ticket-parties {
+    display: grid;
+    gap: 0.55em;
+  }
+  .receipt-ticket-party {
+    display: grid;
+    gap: 0.12em;
+  }
+  .receipt-ticket-party em {
+    font-style: normal;
+    font-size: 0.9em;
+    font-weight: 700 !important;
+  }
+  .receipt-ticket-refs { display: grid; gap: 0.18em; }
+  .receipt-ticket-rule {
+    height: 0;
+    margin: 0.55em 0;
+    border: 0;
+    border-top: 1.5px solid #000 !important;
+  }
+  .receipt-ticket-lines { display: grid; gap: 0.4em; }
   .receipt-ticket-line {
     display: grid;
     grid-template-columns: ${
       style.paperMm === "58"
-        ? "minmax(0, 1fr) 3.6em 1.6em 3.2em"
-        : "minmax(0, 1fr) 4.2em 2em 3.8em"
+        ? "minmax(0, 1fr) 3.4em 1.5em 3em"
+        : "minmax(0, 1fr) 4em 1.9em 3.6em"
     };
-    gap: 0.28em;
+    gap: 0.25em;
     align-items: baseline;
-    font-weight: 900 !important;
+    font-weight: 800 !important;
   }
   .receipt-ticket-line--qty {
     grid-template-columns: minmax(0, 1fr) ${
@@ -337,18 +373,18 @@
   .receipt-ticket-line > span:nth-child(2),
   .receipt-ticket-line > span:nth-child(3),
   .receipt-ticket-line > span:nth-child(4) {
-    text-align: left;
+    text-align: right;
     font-variant-numeric: tabular-nums;
-    font-weight: 900 !important;
+    font-weight: 800 !important;
   }
   .receipt-ticket-line--head {
-    font-size: 0.88em;
+    font-size: 0.78em;
     font-weight: 900 !important;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    border-bottom: 1.5px solid #000;
+    border-bottom: 1px solid #000;
     padding-bottom: 0.15em;
-    margin-bottom: 0.1em;
+    margin-bottom: 0.08em;
   }
   .receipt-ticket-item { min-width: 0; overflow: hidden; }
   .receipt-ticket-item strong {
@@ -358,20 +394,21 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .receipt-ticket-detail,
   .receipt-ticket-serial {
     display: block;
-    margin-top: 0.08em;
+    margin-top: 0.06em;
     font-style: normal;
-    font-size: 0.86em;
-    font-weight: 900 !important;
+    font-size: 0.82em;
+    font-weight: 700 !important;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .receipt-ticket-price {
     white-space: nowrap;
-    font-size: 0.98em;
-    font-weight: 900 !important;
+    font-size: 0.95em;
+    font-weight: 800 !important;
   }
   .receipt-ticket-cancelled {
     margin: 0.3em 0;
@@ -381,51 +418,60 @@
   }
   .receipt-ticket-totals {
     display: grid;
-    gap: 0.28em;
-    font-weight: 900 !important;
+    gap: 0.22em;
+    font-weight: 800 !important;
   }
   .receipt-ticket-totals > div {
     display: flex;
     justify-content: space-between;
     gap: 0.7em;
-    font-weight: 900 !important;
+    font-weight: 800 !important;
   }
   .receipt-ticket-totals span,
   .receipt-ticket-totals strong {
-    font-weight: 900 !important;
+    font-weight: 800 !important;
   }
   .receipt-ticket-grand {
     margin-top: 0.12em;
-    padding-top: 0.35em;
-    border-top: 2.5px solid #000 !important;
-    font-size: 1.12em;
+    padding: 0.3em 0.15em;
+    border-top: 2px solid #000 !important;
+    border-bottom: 2px solid #000 !important;
+    font-size: 1.08em;
     font-weight: 900 !important;
   }
   .receipt-ticket-grand strong { font-weight: 900 !important; }
-  .receipt-ticket-payment { text-align: center; font-weight: 900 !important; }
+  .receipt-ticket-auth {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.6em;
+    margin-top: 0.45em;
+    font-size: 0.9em;
+    font-weight: 800 !important;
+  }
+  .receipt-ticket-payment { text-align: center; font-weight: 800 !important; }
   .receipt-ticket-payment-title {
-    margin: 0 0 0.3em;
+    margin: 0 0 0.25em;
     font-weight: 900 !important;
-    font-size: 1em;
+    font-size: 0.95em;
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
   .receipt-ticket-payment-lines p {
     margin: 0.08em 0;
-    font-weight: 900 !important;
+    font-weight: 800 !important;
   }
   .receipt-ticket-footer {
     margin: 0;
     text-align: center;
-    font-size: 0.95em;
-    font-weight: 900 !important;
+    font-size: 0.9em;
+    font-weight: 800 !important;
   }
   .receipt-ticket-qr {
     display: grid;
     justify-items: center;
-    gap: 0.3rem;
-    margin-top: 0.5rem;
-    padding-top: 0.3rem;
+    gap: 0.25rem;
+    margin-top: 0.45rem;
+    padding-top: 0.25rem;
   }
   .receipt-ticket-qr img {
     width: ${style.qrSize};
@@ -436,15 +482,15 @@
   .receipt-ticket-qr p {
     margin: 0;
     text-align: center;
-    font-size: 0.88em;
+    font-size: 0.82em;
     letter-spacing: 0.02em;
     text-transform: uppercase;
-    font-weight: 900 !important;
+    font-weight: 800 !important;
   }
   pre {
     margin: 0;
     font: inherit;
-    font-weight: 900 !important;
+    font-weight: 800 !important;
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -454,9 +500,9 @@
     margin: 4px 0 0;
     font-size: 0.9em;
     text-transform: uppercase;
-    font-weight: 900 !important;
+    font-weight: 800 !important;
   }
-  .qr-text { margin-top: 6px; font-size: 0.95em; font-weight: 900 !important; }
+  .qr-text { margin-top: 6px; font-size: 0.95em; font-weight: 800 !important; }
 `;
 
   const renderTicketHtml = (ticket, qr = null) => {
@@ -473,6 +519,10 @@
       ? `<p class="receipt-ticket-cancelled">*** CANCELLED / RETURNED ***</p>`
       : (t.lines || [])
           .map((line) => {
+            const detail = String(line.detail || "").trim();
+            const detailHtml = detail
+              ? `<em class="receipt-ticket-detail">${escapeHtml(detail)}</em>`
+              : "";
             const serials = (line.serials || [])
               .map((s) => `<em class="receipt-ticket-serial">SN ${escapeHtml(s)}</em>`)
               .join("");
@@ -485,7 +535,7 @@
               return `<div class="receipt-ticket-line receipt-ticket-line--qty">
   <span class="receipt-ticket-item">
     <strong>${escapeHtml(line.name || "Item")}</strong>
-    ${serials}${extraHtml}
+    ${detailHtml}${serials}${extraHtml}
   </span>
   <span>${escapeHtml(line.qty ?? "")}</span>
 </div>`;
@@ -493,7 +543,7 @@
             return `<div class="receipt-ticket-line">
   <span class="receipt-ticket-item">
     <strong>${escapeHtml(line.name || "Item")}</strong>
-    ${serials}${extraHtml}
+    ${detailHtml}${serials}${extraHtml}
   </span>
   <span class="receipt-ticket-price">@ ${escapeHtml(line.price || "0")}</span>
   <span>${escapeHtml(line.qty ?? "")}</span>
@@ -541,10 +591,6 @@
       ? `<div><span>Paid</span><strong>${escapeHtml(t.payment)}</strong></div>`
       : "";
 
-    const partyRow =
-      t.client || (t.party_label && !t.route_from)
-        ? metaRow(t.party_label || "Client", t.client || "—")
-        : "";
     const totalsBlock = qtyOnly
       ? `<div class="receipt-ticket-grand">
       <span>Units</span><strong>${escapeHtml(
@@ -557,6 +603,7 @@
       <span>Total</span><strong>KSh ${escapeHtml(t.total || "0")}</strong>
     </div>
     ${paidBlock}`;
+
     const linesHead = qtyOnly
       ? `<div class="receipt-ticket-line receipt-ticket-line--head receipt-ticket-line--qty">
       <span>Item</span><span>Qty</span>
@@ -572,7 +619,51 @@
         ? `<p class="receipt-ticket-mark">${escapeHtml(mark)}</p>`
         : "";
 
-    return `<div class="receipt-ticket-inner">
+    const documentTitle =
+      t.document_title || t.kind || "Sales invoice / receipt";
+    const docNumberLabel = t.doc_number_label || "Invoice No.";
+    const authorisedLabel = t.authorised_label || "Cashier";
+    const partyLabel = t.party_label || "Customer";
+
+    const partyBlock =
+      t.route_from || t.route_to
+        ? `<div class="receipt-ticket-party">
+  <span class="receipt-ticket-party-label">Transfer</span>
+  ${t.route_from ? `<strong>From: ${escapeHtml(t.route_from)}</strong>` : ""}
+  ${t.route_to ? `<strong>To: ${escapeHtml(t.route_to)}</strong>` : ""}
+</div>`
+        : `<div class="receipt-ticket-party">
+  <span class="receipt-ticket-party-label">${escapeHtml(partyLabel)}</span>
+  <strong>${escapeHtml(t.client || "—")}</strong>
+  ${
+    t.party_phone
+      ? `<em>${escapeHtml(t.party_phone)}</em>`
+      : ""
+  }
+</div>`;
+
+    const refsBlock = `<div class="receipt-ticket-refs">
+  <span class="receipt-ticket-party-label">Reference</span>
+  ${metaRow("Type", t.kind)}
+  ${metaRow("Branch", t.receiving_branch)}
+  ${metaRow("Category", t.expense_category)}
+  ${metaRow("Status", t.status)}
+  ${metaRow("Pay by", t.credit_due_date)}
+  ${metaRow(authorisedLabel, t.cashier)}
+</div>`;
+
+    const authBlock = t.cashier
+      ? `<div class="receipt-ticket-auth">
+  <span>${escapeHtml(authorisedLabel)}</span>
+  <strong>${escapeHtml(t.cashier)}</strong>
+</div>`
+      : "";
+
+    const docTypeClass = t.doc_type
+      ? ` receipt-ticket-inner--${escapeHtml(t.doc_type)}`
+      : "";
+
+    return `<div class="receipt-ticket-inner${docTypeClass}">
   <div class="receipt-ticket-brand">
     ${logo}
     ${markHtml}
@@ -585,16 +676,15 @@
         : ""
     }
   </div>
-  <div class="receipt-ticket-rule" aria-hidden="true"></div>
-  <div class="receipt-ticket-meta">
-    ${metaRow("Receipt", t.receipt_number)}
-    ${metaRow("Type", t.kind)}
+  <p class="receipt-ticket-doc-title">${escapeHtml(documentTitle)}</p>
+  <div class="receipt-ticket-doc-meta">
+    ${metaRow(docNumberLabel, t.receipt_number)}
     ${metaRow("Date", t.date)}
-    ${metaRow("From", t.route_from)}
-    ${metaRow("To", t.route_to)}
-    ${partyRow}
-    ${metaRow("Status", t.status)}
-    ${metaRow("Cashier", t.cashier)}
+  </div>
+  <div class="receipt-ticket-rule" aria-hidden="true"></div>
+  <div class="receipt-ticket-parties">
+    ${partyBlock}
+    ${refsBlock}
   </div>
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
   <div class="receipt-ticket-lines">
@@ -606,6 +696,7 @@
     ${totalsBlock}
   </div>
   ${paymentBlock}
+  ${authBlock}
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
   <p class="receipt-ticket-footer">${escapeHtml(
     t.footer || "Thank you for shopping with us"

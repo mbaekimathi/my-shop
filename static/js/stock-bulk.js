@@ -43,24 +43,92 @@
       .filter(Boolean);
   };
 
+  const escapeConfirmText = (value) =>
+    String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
   const confirmHighUnitBuyingPrices = (ready) => {
     const high = highUnitBuyingLines(ready);
-    if (!high.length) return true;
-    const lines = high.slice(0, 8).map((h) => {
-      const unitGuess = h.qty > 1 ? h.buy / h.qty : 0;
-      const unitHint =
-        unitGuess > 0 && unitGuess <= h.selling
-          ? ` If KSh ${moneyLabel(h.buy)} was the total for ${h.qty}, unit cost is about KSh ${moneyLabel(unitGuess)}.`
+    if (!high.length) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+      const existing = document.querySelector("[data-stock-price-confirm]");
+      existing?.remove();
+
+      const root = document.createElement("div");
+      root.className = "stock-price-confirm";
+      root.setAttribute("data-stock-price-confirm", "");
+      root.setAttribute("role", "dialog");
+      root.setAttribute("aria-modal", "true");
+      root.setAttribute("aria-labelledby", "stock-price-confirm-title");
+
+      const lines = high.slice(0, 6).map((h) => {
+        const unitGuess = h.qty > 1 ? h.buy / h.qty : 0;
+        const hint =
+          unitGuess > 0 && unitGuess <= h.selling
+            ? `<small>If KSh ${escapeConfirmText(moneyLabel(h.buy))} was the total for ${h.qty}, unit ≈ KSh ${escapeConfirmText(moneyLabel(unitGuess))}</small>`
+            : "";
+        return `<li>
+          <strong>${escapeConfirmText(h.name)}</strong>
+          <span>Buy KSh ${escapeConfirmText(moneyLabel(h.buy))} · sell KSh ${escapeConfirmText(moneyLabel(h.selling))}</span>
+          ${hint}
+        </li>`;
+      });
+      const more =
+        high.length > 6
+          ? `<p class="stock-price-confirm__more">+${high.length - 6} more item${high.length - 6 === 1 ? "" : "s"}</p>`
           : "";
-      return `• ${h.name}: unit buy KSh ${moneyLabel(h.buy)} > selling price KSh ${moneyLabel(h.selling)}.${unitHint}`;
+
+      root.innerHTML = `
+        <div class="stock-price-confirm__backdrop" data-stock-price-confirm-dismiss></div>
+        <div class="stock-price-confirm__card">
+          <div class="stock-price-confirm__icon" aria-hidden="true">!</div>
+          <div class="stock-price-confirm__copy">
+            <h3 id="stock-price-confirm-title">Unit buy above selling</h3>
+            <p>On ${high.length} item${high.length === 1 ? "" : "s"} the unit buying price is higher than the selling price. Enter the cost of <strong>one unit</strong>, not the invoice total.</p>
+            <ul class="stock-price-confirm__list">${lines.join("")}</ul>
+            ${more}
+          </div>
+          <div class="stock-price-confirm__actions">
+            <button type="button" class="stock-price-confirm__btn stock-price-confirm__btn--ghost" data-stock-price-confirm-dismiss>
+              Review prices
+            </button>
+            <button type="button" class="stock-price-confirm__btn stock-price-confirm__btn--go" data-stock-price-confirm-continue>
+              Continue anyway
+            </button>
+          </div>
+        </div>`;
+
+      const finish = (ok) => {
+        document.removeEventListener("keydown", onKey);
+        root.classList.add("is-hiding");
+        window.setTimeout(() => root.remove(), 180);
+        resolve(ok);
+      };
+      const onKey = (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          finish(false);
+        }
+      };
+
+      root
+        .querySelectorAll("[data-stock-price-confirm-dismiss]")
+        .forEach((el) => el.addEventListener("click", () => finish(false)));
+      root
+        .querySelector("[data-stock-price-confirm-continue]")
+        ?.addEventListener("click", () => finish(true));
+      document.addEventListener("keydown", onKey);
+
+      (document.querySelector(".workspace-frame") || document.body).appendChild(root);
+      window.requestAnimationFrame(() => {
+        root.classList.add("is-open");
+        root.querySelector("[data-stock-price-confirm-dismiss].stock-price-confirm__btn")?.focus();
+      });
     });
-    return window.confirm(
-      `Unit buying price is above the selling price on ${high.length} item(s).\n\n` +
-        `Enter the cost of ONE unit, not the invoice total.\n\n` +
-        lines.join("\n") +
-        (high.length > 8 ? `\n• …and ${high.length - 8} more` : "") +
-        `\n\nContinue anyway?`
-    );
   };
 
   const navigateWithShops = () => {
@@ -2015,7 +2083,7 @@
       if (submitInFlight) return;
       const ready = collectReady();
       if (focusFirstIncomplete(ready)) return;
-      if (!confirmHighUnitBuyingPrices(ready)) return;
+      if (!(await confirmHighUnitBuyingPrices(ready))) return;
       if (mode === "request" && requestingShopInput) {
         requestingShopInput.value = requestingShopId;
       }
@@ -2668,6 +2736,7 @@
     const raw = (getInputsRow(row)?.querySelector("[data-stock-buying-price]")?.value || "").trim();
     if (!raw) return false;
     const n = Number(raw);
+    // Must be an entered whole number (0 allowed only if explicitly typed).
     return Number.isFinite(n) && n >= 0 && Number.isInteger(n);
   };
 
@@ -2755,6 +2824,7 @@
       parked.insertBefore(inputs, row.nextSibling);
     }
     row.classList.add("is-selected");
+    delete row.dataset.stockRowSynced;
     syncParkedVisibility();
     syncItemRemoveControls(row);
   };
@@ -2862,6 +2932,7 @@
     if (countEl) countEl.textContent = "0";
     row.classList.remove("is-selected");
     const wasParked = isParkedRow(row);
+    delete row.dataset.stockRowSynced;
     setRowOpen(row, false);
     syncFilled(row);
 
@@ -2881,10 +2952,9 @@
     const incomplete = rowIncompleteReason(row);
     if (incomplete) {
       // Allow dismissing a partial selection instead of trapping the user.
-      // Simple buy-stock keeps partial lines visible so the user can finish them.
       if (simpleCatalog) {
         parkSelectedRow(row);
-        setRowOpen(row, true);
+        setRowOpen(row, true, { focus: false });
         return true;
       }
       removeItemRow(row);
@@ -2924,7 +2994,7 @@
       }
       if (simpleCatalog) {
         parkSelectedRow(row);
-        setRowOpen(row, true);
+        setRowOpen(row, true, { focus: false });
       } else {
         setRowOpen(row, false);
         moveItemPairToTop(row);
@@ -2941,7 +3011,7 @@
     }
     if (simpleCatalog) {
       parkSelectedRow(row);
-      setRowOpen(row, true);
+      setRowOpen(row, true, { focus: false });
       syncFilled(row);
       return true;
     }
@@ -2953,6 +3023,29 @@
     return true;
   };
 
+  const syncBuyPriceGhost = (input) => {
+    if (!(input instanceof HTMLInputElement)) return;
+    if (!input.matches("[data-stock-buying-price]")) return;
+    const wrap = input.closest(".stock-buy-price-wrap");
+    if (!wrap) return;
+    const filled = Boolean(String(input.value || "").trim());
+    wrap.classList.toggle("is-filled", filled);
+    const ghost = wrap.querySelector(".stock-buy-price-ghost");
+    if (ghost) ghost.hidden = filled;
+  };
+
+  // Keep prev-price ghost in sync on every keystroke (capture so nothing misses it).
+  panel.addEventListener(
+    "input",
+    (event) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement && target.matches("[data-stock-buying-price]")) {
+        syncBuyPriceGhost(target);
+      }
+    },
+    true
+  );
+
   const setFieldsEnabled = (row, enabled) => {
     const inputs = getInputsRow(row);
     inputs?.querySelectorAll("[data-stock-field]").forEach((field) => {
@@ -2963,27 +3056,44 @@
     });
   };
 
-  const setRowOpen = (row, open) => {
+  const setRowOpen = (row, open, { focus = true } = {}) => {
     const inputs = getInputsRow(row);
-    const keepVisible = simpleCatalog && (open || isParkedRow(row) || row.classList.contains("is-selected"));
-    const show = Boolean(open || keepVisible);
+    // Simple buy-stock: parked items keep qty / unit buy visible in the list.
+    const show = Boolean(open);
     row.classList.toggle("is-open", show);
     row.setAttribute("aria-expanded", String(show));
     if (inputs) inputs.hidden = !show;
     setFieldsEnabled(row, show);
     if (show) {
+      inputs
+        ?.querySelectorAll("[data-stock-buying-price]")
+        .forEach((input) => syncBuyPriceGhost(input));
       const refundSelect = inputs?.querySelector("[data-stock-refund]");
       if (refundSelect) syncRefundFromSelect(refundSelect);
-      if (open) {
-        const focusTarget =
-          inputs?.querySelector("[data-stock-qty]:not([type='hidden'])") ||
-          inputs?.querySelector("[data-stock-buying-price]") ||
-          inputs?.querySelector("[data-stock-serial-input]");
-        focusTarget?.focus();
+      // Never steal focus during catalog live-search re-renders, or while the
+      // user is still typing in the item search box.
+      if (open && focus) {
+        const active = document.activeElement;
+        const searchBusy =
+          active instanceof Element &&
+          (active.matches?.("[data-item-search]") ||
+            Boolean(active.closest?.("[data-item-search]")));
+        if (!searchBusy) {
+          const focusTarget =
+            inputs?.querySelector("[data-stock-qty]:not([type='hidden'])") ||
+            inputs?.querySelector("[data-stock-buying-price]") ||
+            inputs?.querySelector("[data-stock-serial-input]");
+          focusTarget?.focus();
+        }
       }
       refreshRowState(row);
     }
     syncItemRemoveControls(row);
+  };
+
+  const focusItemSearch = () => {
+    const searchInput = panel.querySelector("[data-item-search]");
+    searchInput?.focus();
   };
 
   const syncFilled = (row) => {
@@ -3054,6 +3164,54 @@
       })
       .filter(Boolean);
 
+  const selectedItemRows = () => {
+    if (!simpleCatalog) return [];
+    return rows().filter(
+      (row) => isParkedRow(row) || row.classList.contains("is-selected")
+    );
+  };
+
+  // Every line in Your items must have qty + buying price before stock-in.
+  const findIncompleteSelectedItem = () => {
+    if (!simpleCatalog || mode !== "in") return null;
+    for (const row of selectedItemRows()) {
+      const name = row.dataset.itemName || "Item";
+      const qty = getQty(row);
+      const hasPrice = rowHasBuyingPrice(row);
+      if (!qty) {
+        return {
+          row,
+          name,
+          reason: "qty",
+          message: `Enter quantity first — for ${name}.`,
+        };
+      }
+      if (!hasPrice) {
+        return {
+          row,
+          name,
+          reason: "price",
+          message: `Enter unit buying price first — for ${name}.`,
+        };
+      }
+    }
+    return null;
+  };
+
+  const focusIncompleteSelectedItem = (issue) => {
+    if (!issue?.row) return false;
+    setRowOpen(issue.row, true, { focus: false });
+    issue.row.scrollIntoView({ behavior: "smooth", block: "center" });
+    const inputs = getInputsRow(issue.row);
+    const focusEl =
+      issue.reason === "price"
+        ? inputs?.querySelector("[data-stock-buying-price]")
+        : inputs?.querySelector("[data-stock-serial-input]") ||
+          inputs?.querySelector("[data-stock-qty]:not([type='hidden'])") ||
+          inputs?.querySelector("[data-stock-qty]");
+    return blockSubmit(issue.message, focusEl || issue.row);
+  };
+
   const isCatalogBusy = () =>
     catalogBusy || panel.getAttribute("data-stock-catalog-busy") === "1";
 
@@ -3120,6 +3278,7 @@
 
   const canSubmitStockIn = (ready) => {
     if (!ready.length) return false;
+    if (findIncompleteSelectedItem()) return false;
     if (!floatSupplierReady()) return false;
     if (!ready.every((item) => rowHasBuyingPrice(item.row))) return false;
     return ready.every((item) => rowHasSupplierDetails(item.row));
@@ -3245,6 +3404,10 @@
         "Wait — items are still loading. Try again in a moment.",
         submitBtn || floatRoot
       );
+    }
+    const incompleteSelected = findIncompleteSelectedItem();
+    if (incompleteSelected) {
+      return focusIncompleteSelectedItem(incompleteSelected);
     }
     if (!ready.length) {
       return blockSubmit(
@@ -3429,6 +3592,7 @@
         { ok: true }
       );
       renderSummary();
+      queueAutoStockInAndPrint();
       return true;
     } catch (_error) {
       if (current !== loginVerifySeq) return false;
@@ -3465,8 +3629,10 @@
     }
     if (applyPanel) applyPanel.hidden = !(mode === "in" || mode === "out");
     if (submitBtn) {
-      // Keep clickable so incomplete fields can be focused on submit.
-      submitBtn.disabled = !hasReady || busy;
+      // Keep clickable with selected lines so missing qty/price can be focused.
+      const canAttemptSubmit =
+        simpleCatalog && mode === "in" ? parkedCount > 0 || hasReady : hasReady;
+      submitBtn.disabled = !canAttemptSubmit || busy;
       submitBtn.classList.toggle("is-catalog-busy", busy);
     }
     if (submitLabelEl) {
@@ -3478,13 +3644,23 @@
     if (readyUnitsEl) readyUnitsEl.textContent = String(units);
 
     if (mode === "in") {
+      const incompleteSelected = findIncompleteSelectedItem();
       if (!hasReady) {
         if (simpleCatalog) {
-          setApplyStatus(
-            parkedCount
-              ? "Enter qty and price on your items."
-              : "Search and add items to buy."
-          );
+          if (incompleteSelected) {
+            setApplyStatus(
+              incompleteSelected.reason === "price"
+                ? `Enter buying price for ${incompleteSelected.name}.`
+                : `Enter quantity for ${incompleteSelected.name}.`,
+              true
+            );
+          } else {
+            setApplyStatus(
+              parkedCount
+                ? "Enter qty and buying price on your items."
+                : "Search and add items to buy."
+            );
+          }
         } else {
           const needs =
             [
@@ -3498,6 +3674,13 @@
               : "Add item quantities to stock in."
           );
         }
+      } else if (incompleteSelected) {
+        setApplyStatus(
+          incompleteSelected.reason === "price"
+            ? `Enter buying price for ${incompleteSelected.name}.`
+            : `Enter quantity for ${incompleteSelected.name}.`,
+          true
+        );
       } else if (stockReq.in.supplier && !supplierCoreReady()) {
         setApplyStatus(
           simpleCatalog
@@ -3524,7 +3707,9 @@
       } else {
         setApplyStatus(
           simpleCatalog
-            ? `Ready to buy ${ready.length} item${ready.length === 1 ? "" : "s"}.`
+            ? form.hasAttribute("data-supplier-print")
+              ? `Verified — recording ${ready.length} item${ready.length === 1 ? "" : "s"}…`
+              : `Ready to buy ${ready.length} item${ready.length === 1 ? "" : "s"}.`
             : `Ready to stock in ${ready.length} item(s).`
         );
       }
@@ -3664,7 +3849,10 @@
 
     const ready = prepareStockInRows();
     if (!ready.length || !canSubmitStockIn(ready)) return false;
-    if (!confirmHighUnitBuyingPrices(ready)) return false;
+    if (!(await confirmHighUnitBuyingPrices(ready))) {
+      renderSummary();
+      return false;
+    }
 
     autoStockInFlight = true;
     if (submitBtn) submitBtn.disabled = true;
@@ -3883,6 +4071,7 @@
 
     if (simpleCatalog) {
       if (isParkedRow(row) || row.classList.contains("is-selected")) {
+        // Already in Your items — focus qty/price without collapsing others.
         setRowOpen(row, true);
         row.scrollIntoView({ behavior: "smooth", block: "nearest" });
         renderSummary();
@@ -3897,11 +4086,13 @@
       for (const other of openOthers) {
         closeAndParkRow(other);
       }
-      setRowOpen(row, true);
+      // Park with qty / unit buy always visible alongside other selected lines.
       parkSelectedRow(row);
+      setRowOpen(row, true, { focus: false });
       if (panel.hasAttribute("data-stock-catalog-search-first")) {
         panel.dispatchEvent(new CustomEvent("stock-catalog:reset-search"));
       }
+      focusItemSearch();
       row.scrollIntoView({ behavior: "smooth", block: "nearest" });
       renderSummary();
       return;
@@ -4032,9 +4223,13 @@
   });
 
   panel.addEventListener("focusin", (event) => {
-    if (mode !== "out") return;
     const target = event.target;
     if (!(target instanceof Element)) return;
+    // Keep Your-items qty / unit buy visible while searching for more lines.
+    if (simpleCatalog && target.matches("[data-item-search]")) {
+      return;
+    }
+    if (mode !== "out") return;
     if (!target.matches("[data-serial-search]")) return;
     queueSerialSearch(target);
   });
@@ -4076,6 +4271,9 @@
     )) {
       if (target.matches("[data-stock-refund]")) {
         syncRefundFromSelect(target);
+      }
+      if (target.matches("[data-stock-buying-price]")) {
+        syncBuyPriceGhost(target);
       }
       if (target.matches("[data-stock-supplier-phone]")) {
         delete target.dataset.supplierResolved;
@@ -4198,6 +4396,7 @@
     const root = input.closest("[data-supplier-search-root]");
     const host =
       root?.closest(".buy-stock-simple-confirm-card") ||
+      root?.closest(".buy-stock-simple-supplier") ||
       root?.closest("[data-stock-float]") ||
       null;
     suggest.classList.remove("is-open-up");
@@ -4205,7 +4404,14 @@
     const inputRect = input.getBoundingClientRect();
     const hostRect = host.getBoundingClientRect();
     const spaceBelow = hostRect.bottom - inputRect.bottom;
-    if (spaceBelow < 160) suggest.classList.add("is-open-up");
+    // Prefer opening upward in the compact confirm footer so the match
+    // does not cover Payment / Staff ID.
+    if (
+      spaceBelow < 180 ||
+      input.matches("[data-stock-float-supplier-name], [data-stock-supplier-name]")
+    ) {
+      suggest.classList.add("is-open-up");
+    }
   };
 
   const resolveSupplierTargets = (fromInput) => {
@@ -4298,6 +4504,19 @@
     const suggest = root?.querySelector("[data-supplier-suggest]");
     if (!suggest) return;
     suggest.innerHTML = "";
+    const by = input.getAttribute("data-supplier-search") || "name";
+    const query = String(input.value || "").trim().toUpperCase();
+
+    // Already filled with the only match — don't float the name over Payment.
+    if (
+      by === "name" &&
+      results.length === 1 &&
+      String(results[0]?.name || "").trim().toUpperCase() === query
+    ) {
+      suggest.hidden = true;
+      return;
+    }
+
     if (!results.length) {
       const empty = document.createElement("button");
       empty.type = "button";
@@ -4310,7 +4529,6 @@
       suggest.hidden = false;
       return;
     }
-    const by = input.getAttribute("data-supplier-search") || "name";
     results.forEach((supplier) => {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -4391,8 +4609,34 @@
   floatRoot?.addEventListener("focusin", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    if (
+      target.matches(
+        "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-refund], [data-stock-login-code], [data-stock-float-login-code]"
+      )
+    ) {
+      hideSupplierSuggest(floatRoot);
+      return;
+    }
     if (!target.matches("[data-supplier-search]")) return;
     if ((target.value || "").trim()) queueSupplierSearch(target);
+  });
+
+  floatRoot?.addEventListener("focusout", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.matches("[data-supplier-search]")) return;
+    const next = event.relatedTarget;
+    if (next instanceof Element && next.closest("[data-supplier-search-root]")) return;
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (
+        active instanceof Element &&
+        active.closest("[data-supplier-search-root]")
+      ) {
+        return;
+      }
+      hideSupplierSuggest(floatRoot);
+    }, 0);
   });
 
   // Form-level backup so float fields always search even if a parent listener misses.
@@ -4521,7 +4765,8 @@
   const syncAllRows = () => {
     rows().forEach((row) => {
       if (simpleCatalog && (isParkedRow(row) || row.classList.contains("is-selected"))) {
-        setRowOpen(row, true);
+        // Your items always show qty / unit buy, even with many lines.
+        setRowOpen(row, true, { focus: false });
         syncFilled(row);
         return;
       }
@@ -4530,9 +4775,24 @@
     });
   };
   syncAllRows();
+  // Live search re-renders every keystroke; keep the summary off that frame.
+  let summaryFrame = 0;
+  const queueSummary = () => {
+    if (summaryFrame) return;
+    summaryFrame = window.requestAnimationFrame(() => {
+      summaryFrame = 0;
+      renderSummary();
+    });
+  };
+
   document.addEventListener("stock-catalog:rendered", () => {
-    // Keep open/filled state for parked rows; only close brand-new unloaded rows.
+    // Keep parked/open state; only close brand-new unloaded rows.
+    // Live search re-fires this — never steal focus from the search box.
     rows().forEach((row) => {
+      // Rows are reused across renders, so each only needs one sync pass.
+      // parkSelectedRow / removeItemRow clear the marker when state changes.
+      if (row.dataset.stockRowSynced === "1") return;
+      row.dataset.stockRowSynced = "1";
       if (
         row.classList.contains("is-open") ||
         row.classList.contains("is-filled") ||
@@ -4540,14 +4800,14 @@
         (simpleCatalog && isParkedRow(row))
       ) {
         if (simpleCatalog && (isParkedRow(row) || row.classList.contains("is-selected"))) {
-          setRowOpen(row, true);
+          setRowOpen(row, true, { focus: false });
         }
         return;
       }
       setRowOpen(row, false);
       syncFilled(row);
     });
-    renderSummary();
+    queueSummary();
   });
 
   document.addEventListener("stock-catalog:busy", (event) => {
@@ -4659,7 +4919,10 @@
       setFieldsEnabled(item.row, true);
     });
 
-    if (!confirmHighUnitBuyingPrices(readyActive)) return;
+    if (!(await confirmHighUnitBuyingPrices(readyActive))) {
+      renderSummary();
+      return;
+    }
 
     if (autoStockInFlight) return;
     autoStockInFlight = true;

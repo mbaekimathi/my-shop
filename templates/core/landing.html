@@ -8,7 +8,10 @@
 
 {% block body_class %}page-landing{% endblock %}
 
-
+{% block extra_head %}
+{{ block.super }}
+<link rel="preload" as="image" href="{% static 'img/hero-pos.webp' %}" type="image/webp" fetchpriority="high">
+{% endblock %}
 
 {% block body %}
 
@@ -67,21 +70,18 @@
 
     <div class="hero-media" aria-hidden="true">
 
-      <img
-
-        src="{% static 'img/hero-pos.jpg' %}"
-
-        alt=""
-
-        class="hero-image"
-
-        width="1920"
-
-        height="1080"
-
-        fetchpriority="high"
-
-      >
+      <picture>
+        <source srcset="{% static 'img/hero-pos.webp' %}" type="image/webp">
+        <img
+          src="{% static 'img/hero-pos.jpg' %}"
+          alt=""
+          class="hero-image"
+          width="1536"
+          height="1024"
+          fetchpriority="high"
+          decoding="async"
+        >
+      </picture>
 
       <div class="hero-veil"></div>
 

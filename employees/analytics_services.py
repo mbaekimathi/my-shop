@@ -100,7 +100,7 @@ ANALYTICS_SECTIONS = (
         "slug": "suppliers",
         "label": "Suppliers",
         "icon": "truck",
-        "summary": "Stock suppliers by shop — entries and balance, plus totals.",
+        "summary": "All suppliers by shop — entries and outstanding balance, plus totals.",
     },
     {
         "slug": "expenses",
@@ -5335,8 +5335,15 @@ def _build_suppliers(filters):
         prev_entries, prev_balance = shop_map.get(shop_id, (0, _zero()))
         shop_map[shop_id] = (prev_entries + 1, prev_balance + due)
 
+    def _outstanding(supplier) -> Decimal:
+        by_shop = stock_by_supplier_shop.get(supplier.pk) or {}
+        total = _zero()
+        for _entries, balance in by_shop.values():
+            total += Decimal(balance or 0)
+        return total
+
     stock_suppliers = [
-        supplier for supplier in stock_suppliers if supplier.pk in stock_by_supplier_shop
+        supplier for supplier in stock_suppliers if _outstanding(supplier) > 0
     ]
     stock_rows, shop_totals = _supplier_shop_rows(
         suppliers=stock_suppliers,
@@ -5352,13 +5359,12 @@ def _build_suppliers(filters):
     )
 
     return {
-        "headline": "Stock suppliers",
+        "headline": "All suppliers",
         "period_label": period_label,
         "lead": (
-            f"Purchase balances for {period_label}. "
+            f"Suppliers with outstanding balances for {period_label}. "
             "En = stock receipts; Bal = unpaid amount still owed."
         ),
-        "hide_date_filters": True,
         "show_search": True,
         "search_placeholder": "Search suppliers…",
         "search_empty": "No suppliers match that search.",
@@ -5373,12 +5379,12 @@ def _build_suppliers(filters):
         "insights": [],
         "tables": [
             _table(
-                "Balances by shop",
+                "Outstanding balances by shop",
                 _supplier_pair_columns(shops),
                 stock_rows,
-                empty="No stock suppliers on file.",
+                empty="No suppliers with an outstanding balance.",
                 footnote=(
-                    f"Click a supplier to review receipts and pay. "
+                    f"Only suppliers still owed money. "
                     f"Showing {period_label}, sorted by highest outstanding balance."
                 ),
                 shop_grid=True,

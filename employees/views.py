@@ -1516,13 +1516,20 @@ def _company_pos_settings(
                 "shop_branch": "",
                 "receipt_number": preview_receipt_number(kind="sale", settings_row=pos),
                 "kind": "Sale",
+                "doc_type": "sale",
+                "document_title": "Sales invoice / receipt",
+                "doc_number_label": "Invoice No.",
+                "party_label": "Customer",
+                "authorised_label": "Cashier",
                 "date": "07 Aug 2026 · 09:15",
                 "client": "JANE WAMBUI",
+                "party_phone": "+254 712 555 010",
                 "cashier": "Staff 104822",
                 "status": "",
                 "lines": (
                     {
                         "name": "HDMI Cable 2M",
+                        "detail": "",
                         "qty": 1,
                         "price": "850",
                         "total": "850",
@@ -1530,6 +1537,7 @@ def _company_pos_settings(
                     },
                     {
                         "name": "USB-C Hub",
+                        "detail": "",
                         "qty": 2,
                         "price": "1,200",
                         "total": "2,400",
@@ -1537,6 +1545,7 @@ def _company_pos_settings(
                     },
                     {
                         "name": "Mouse Pad XL",
+                        "detail": "",
                         "qty": 1,
                         "price": "450",
                         "total": "450",
@@ -1572,6 +1581,7 @@ def _company_pos_settings(
         preview_lines.append(
             {
                 "name": line["name"],
+                "detail": line.get("detail") or "",
                 "qty": line["qty"],
                 "price": line["price"],
                 "total": line["total"],
@@ -1589,8 +1599,17 @@ def _company_pos_settings(
             "logo_url": logo_url,
             "receipt_number": context["receipt_preview"]["receipt_number"],
             "kind": context["receipt_preview"]["kind"],
+            "doc_type": context["receipt_preview"].get("doc_type") or "sale",
+            "document_title": context["receipt_preview"].get("document_title")
+            or "Sales invoice / receipt",
+            "doc_number_label": context["receipt_preview"].get("doc_number_label")
+            or "Invoice No.",
+            "party_label": context["receipt_preview"].get("party_label") or "Customer",
+            "authorised_label": context["receipt_preview"].get("authorised_label")
+            or "Cashier",
             "date": context["receipt_preview"]["date"],
             "client": context["receipt_preview"]["client"],
+            "party_phone": context["receipt_preview"].get("party_phone") or "",
             "cashier": context["receipt_preview"]["cashier"],
             "status": context["receipt_preview"].get("status") or "",
             "lines": preview_lines,
