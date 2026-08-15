@@ -1,5 +1,5 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v9";
+const CACHE_VERSION = "myshop-v10";
 
 const PRECACHE = [
   "/static/css/main.css",
@@ -24,6 +24,8 @@ const PRECACHE = [
 ];
 
 const isApi = (url) => url.pathname.includes("/api/");
+const isConnectivityPing = (url) =>
+  url.pathname === "/employees/api/ping/" || url.pathname === "/pos/api/ping/";
 
 const isNavigation = (request) =>
   request.mode === "navigate" ||
@@ -111,6 +113,11 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (!isSameOrigin(url)) return;
+
+  // Let health probes fail as real fetch failures. Converting them to an
+  // offline-looking 503 makes the page confuse a transient SW failure with a
+  // confirmed application outage.
+  if (isConnectivityPing(url)) return;
 
   if (isApi(url)) {
     event.respondWith(

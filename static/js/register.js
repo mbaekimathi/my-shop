@@ -66,7 +66,8 @@
 
     setIdStatus("loading", "Checking code availability…");
     try {
-      if (!navigator.onLine) {
+      const { isOnline } = await import("./offline/connectivity.js");
+      if (!isOnline()) {
         const cached = await import("./offline/store.js").then((m) =>
           m.getCachedEmployeeIdCheck(code)
         );
@@ -186,7 +187,8 @@
       return;
     }
 
-    if (!navigator.onLine) {
+    const { isOnline } = await import("./offline/connectivity.js");
+    if (!isOnline()) {
       event.preventDefault();
       const payload = {
         employee_id: form.querySelector("[data-employee-id]")?.value?.trim(),

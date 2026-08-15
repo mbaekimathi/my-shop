@@ -2692,8 +2692,8 @@
       };
 
       try {
-        const online = typeof navigator === "undefined" || navigator.onLine;
-        if (!online) {
+        const { isOnline } = await import("./offline/connectivity.js");
+        if (!isOnline()) {
           await queueOfflineCheckout();
           return;
         }
@@ -2709,6 +2709,10 @@
           body: JSON.stringify(payload),
         });
         const data = await response.json().catch(() => ({}));
+        if (response.status === 503 || data.offline) {
+          await queueOfflineCheckout();
+          return;
+        }
         if (!response.ok || !data.ok) {
           const errorText = data.error || "Could not complete the receipt.";
           if (
@@ -3829,9 +3833,8 @@
           setSerialSaleStatus("Select a serial from the list.", { error: true });
           return false;
         }
-        const offlineMiss = Boolean(
-          data.offline || (typeof navigator !== "undefined" && !navigator.onLine)
-        );
+        const { isOnline } = await import("./offline/connectivity.js");
+        const offlineMiss = Boolean(data.offline || !isOnline());
         if (offlineMiss && serial.length > 4) {
           ok = applySerialSaleChoice(serial);
           if (ok) {
@@ -3851,7 +3854,8 @@
         );
         return false;
       } catch (_err) {
-        if (typeof navigator !== "undefined" && !navigator.onLine && serial.length > 4) {
+        const { isOnline } = await import("./offline/connectivity.js");
+        if (!isOnline() && serial.length > 4) {
           ok = applySerialSaleChoice(serial);
           if (ok) {
             lastSerialSaleCommitSerial = serial;
@@ -4076,7 +4080,7 @@
       setSerialSaleOpen(true);
       window.MyShopSerialScan?.enhance?.(serialSaleModal);
       window.setTimeout(() => focusSerialSaleEntry(), 40);
-      if (serialSearchUrl && shopId && serialSaleItem.id && navigator.onLine) {
+      if (serialSearchUrl && shopId && serialSaleItem.id) {
         import("./offline/serials.js")
           .then(({ searchSerialsOnlineOrCache }) =>
             searchSerialsOnlineOrCache({

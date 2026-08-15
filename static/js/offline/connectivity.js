@@ -2,12 +2,23 @@
  * Online/offline detection and UI status updates.
  */
 
-let online = typeof navigator !== "undefined" ? navigator.onLine : true;
+// navigator.onLine only reports whether the browser has a network interface. It
+// is not proof that MY-SHOP is reachable (especially after sleep, VPN changes,
+// or adapter changes), so begin optimistic and confirm through the ping endpoint.
+let online = true;
 let knownState = null;
 let toastRemoveTimer = null;
 const listeners = new Set();
 
 const OFFLINE_TOAST_OUT_MS = 220;
+const PING_INTERVAL_MS = 30_000;
+const PING_TIMEOUT_MS = 7_000;
+const FAILED_PINGS_FOR_OFFLINE = 2;
+
+let failedPings = 0;
+let pingInFlight = null;
+let pingSequence = 0;
+let initialized = false;
 
 function refreshLucideIcons() {
   if (window.lucide?.createIcons) {
@@ -149,36 +160,74 @@ export function onConnectivityChange(fn) {
   return () => listeners.delete(fn);
 }
 
+async function ping() {
+  if (pingInFlight) return pingInFlight;
+
+  const sequence = ++pingSequence;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
+
+  pingInFlight = fetch("/employees/api/ping/", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+    signal: controller.signal,
+  })
+    .then((response) => {
+      // A successful application response is the only confirmation that the
+      // browser can currently reach this MY-SHOP deployment.
+      if (!response.ok) throw new Error(`Ping failed (HTTP ${response.status})`);
+      return response.json().catch(() => ({}));
+    })
+    .then((data) => {
+      if (data?.ok === false) throw new Error("Ping was rejected");
+      if (sequence !== pingSequence) return;
+      failedPings = 0;
+      if (!online) {
+        online = true;
+        notify();
+      }
+    })
+    .catch(() => {
+      if (sequence !== pingSequence) return;
+      failedPings += 1;
+      // A single timeout or service-worker fallback must not make the entire
+      // app appear offline. Confirm loss of reachability first.
+      if (failedPings >= FAILED_PINGS_FOR_OFFLINE && online) {
+        online = false;
+        notify();
+      }
+    })
+    .finally(() => {
+      window.clearTimeout(timeout);
+      if (sequence === pingSequence) pingInFlight = null;
+    });
+
+  return pingInFlight;
+}
+
+export function checkConnectivity() {
+  return ping();
+}
+
 export function initConnectivity() {
+  if (initialized) return;
+  initialized = true;
+
   window.addEventListener("online", () => {
-    online = true;
-    notify();
+    // Do not mark the app online until MY-SHOP itself answers the health check.
+    ping();
   });
   window.addEventListener("offline", () => {
-    online = false;
-    notify();
+    // This event can be false after adapter/VPN changes. Confirm it with ping.
+    ping();
   });
 
-  const ping = async () => {
-    if (!navigator.onLine) {
-      online = false;
-      notify();
-      return;
-    }
-    try {
-      const res = await fetch("/employees/api/ping/", {
-        method: "GET",
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      online = res.ok;
-    } catch (_e) {
-      online = false;
-    }
-    notify();
-  };
-
   ping();
-  setInterval(ping, 30000);
   notify();
+  window.setInterval(ping, PING_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") ping();
+  });
 }

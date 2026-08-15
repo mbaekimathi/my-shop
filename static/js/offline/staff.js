@@ -3,6 +3,7 @@
  */
 
 import * as store from "./store.js";
+import { isOnline } from "./connectivity.js";
 
 export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
   const normalized = String(code || "").trim();
@@ -44,7 +45,7 @@ export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
     };
   };
 
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
+  if (!isOnline()) {
     return offlineFallback();
   }
 
@@ -64,6 +65,9 @@ export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
     const data = contentType.includes("application/json")
       ? await response.json().catch(() => ({}))
       : {};
+    if (response.status === 503 || data.offline) {
+      return offlineFallback();
+    }
     if (!response.ok || !data.ok) {
       let error = data.error;
       if (!error) {

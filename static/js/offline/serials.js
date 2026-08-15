@@ -3,6 +3,7 @@
  */
 
 import * as store from "./store.js";
+import { isOnline } from "./connectivity.js";
 
 export function filterCachedSerials(
   serials,
@@ -73,8 +74,7 @@ export async function searchSerialsOnlineOrCache({
   });
   (exclude || []).forEach((serial) => params.append("exclude", serial));
 
-  const online = typeof navigator === "undefined" || navigator.onLine;
-  if (online) {
+  if (isOnline()) {
     try {
       const response = await fetch(`${url}?${params.toString()}`, {
         headers: { Accept: "application/json" },
@@ -82,6 +82,9 @@ export async function searchSerialsOnlineOrCache({
       });
       const data = await response.json().catch(() => ({}));
       const results = Array.isArray(data.results) ? data.results : [];
+      if (response.status === 503 || data.offline) {
+        throw new Error("offline");
+      }
       if (response.ok) {
         try {
           if (!query) {
