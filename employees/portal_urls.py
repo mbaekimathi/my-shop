@@ -257,6 +257,11 @@ urlpatterns = [
         name="analytics_credit_receipt_update",
     ),
     path(
+        "<role_segment:role_segment>/analytics/credits/audits/",
+        analytics_views.analytics_credit_audits,
+        name="analytics_credit_audits",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/suppliers/<slug:kind>/<int:supplier_id>/",
         analytics_views.analytics_supplier_account,
         name="analytics_supplier_account",

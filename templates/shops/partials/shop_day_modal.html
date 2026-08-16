@@ -26,9 +26,9 @@
         </h2>
         <p class="shop-day-modal-summary">
           {% if shop_day_prompt.mode == 'close' %}
-          Working hours end at {{ shop_day_prompt.end_time }}. Enter closing balances to finish the day. You can dismiss for 30 minutes.
+          Working hours end at {{ shop_day_prompt.end_time }}. Enter closing cash, M-Pesa, and credit balances to finish the day. You can dismiss for 30 minutes; the prompt returns until you submit.
           {% else %}
-          Working hours start at {{ shop_day_prompt.start_time }}. Enter opening balances to start trading. You can dismiss for 30 minutes.
+          Working hours start at {{ shop_day_prompt.start_time }}. Enter opening cash, M-Pesa, and credit balances to start trading. You can dismiss for 30 minutes; the prompt returns until you submit.
           {% endif %}
         </p>
       </div>
@@ -50,7 +50,7 @@
 
         <div class="pos-settings-group-head shop-day-form-head">
           <h3>{% if shop_day_prompt.mode == 'close' %}Closing balances{% else %}Opening balances{% endif %}</h3>
-          <p>Whole shillings · confirm stock · staff ID</p>
+          <p>All balances required · whole shillings · confirm stock · staff ID</p>
         </div>
 
         <div class="shop-day-balances">

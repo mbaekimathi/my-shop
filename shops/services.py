@@ -3127,15 +3127,27 @@ def get_last_closed_shop_day(shop: Shop):
     )
 
 
-def _session_activity_totals(session, *, sales=None, expenses=None) -> dict:
-    """Cash/M-Pesa sales and expenses that fall inside a day session window."""
+def _session_activity_totals(
+    session, *, sales=None, expenses=None, supplier_payments=None
+) -> dict:
+    """Cash/M-Pesa sales and paid outflows inside a day session window.
+
+    Cashbox expected cash = opening cash + cash sales − expenses paid
+    − owner drawings paid − suppliers paid.
+    M-Pesa expected = opening M-Pesa + M-Pesa sales (outflows are cash).
+    Owner drawings reduce cash but are equity, not operating expense.
+    """
     from decimal import Decimal
+
+    from .models import ExpenseCategory
 
     opened = session.opened_at
     closed = session.closed_at or timezone.now()
     cash_sales = Decimal("0.00")
     mpesa_sales = Decimal("0.00")
-    expense_total = Decimal("0.00")
+    expenses_paid = Decimal("0.00")
+    drawings_paid = Decimal("0.00")
+    suppliers_paid = Decimal("0.00")
 
     for sale in sales or []:
         when = sale["created_at"]
@@ -3146,12 +3158,35 @@ def _session_activity_totals(session, *, sales=None, expenses=None) -> dict:
     for expense in expenses or []:
         when = expense["created_at"]
         if opened <= when < closed:
-            expense_total += Decimal(expense.get("amount") or 0)
+            # Prefer amount_paid (cash that left the till); fall back to amount
+            # only when older rows lack amount_paid.
+            if "amount_paid" in expense:
+                paid = Decimal(expense.get("amount_paid") or 0)
+            else:
+                paid = Decimal(expense.get("amount") or 0)
+            if (
+                str(expense.get("category") or "").strip().lower()
+                == ExpenseCategory.OWNER_DRAWINGS
+            ):
+                drawings_paid += paid
+            else:
+                expenses_paid += paid
+
+    for payment in supplier_payments or []:
+        when = payment["created_at"]
+        if opened <= when < closed:
+            suppliers_paid += Decimal(payment.get("amount_paid") or 0)
 
     opening_cash = Decimal(session.opening_cash or 0)
     opening_mpesa = Decimal(session.opening_mpesa or 0)
     opening_credit = Decimal(session.opening_credit or 0)
-    expected_cash = opening_cash + cash_sales - expense_total
+    expected_cash = (
+        opening_cash
+        + cash_sales
+        - expenses_paid
+        - drawings_paid
+        - suppliers_paid
+    )
     expected_mpesa = opening_mpesa + mpesa_sales
 
     closing_cash = (
@@ -3186,7 +3221,10 @@ def _session_activity_totals(session, *, sales=None, expenses=None) -> dict:
         "cash_sales": cash_sales,
         "mpesa_sales": mpesa_sales,
         "sales_total": cash_sales + mpesa_sales,
-        "expenses": expense_total,
+        "expenses": expenses_paid,
+        "expenses_paid": expenses_paid,
+        "drawings_paid": drawings_paid,
+        "suppliers_paid": suppliers_paid,
         "expected_cash": expected_cash,
         "expected_mpesa": expected_mpesa,
         "expected_credit": opening_credit,
@@ -3226,6 +3264,8 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
     if not sessions:
         return []
 
+    from items.models import StockMovement, StockMovementType
+
     min_opened = min(session.opened_at for session in sessions)
     max_closed = max(
         (session.closed_at or timezone.now()) for session in sessions
@@ -3245,13 +3285,25 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
             shop=shop,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
-        ).values("created_at", "amount")
+        ).values("created_at", "amount_paid", "category")
+    )
+    supplier_payments = list(
+        StockMovement.objects.filter(
+            shop=shop,
+            movement_type=StockMovementType.IN,
+            created_at__gte=min_opened,
+            created_at__lt=max_closed,
+            amount_paid__gt=0,
+        ).values("created_at", "amount_paid")
     )
 
     rows = []
     for session in sessions:
         activity = _session_activity_totals(
-            session, sales=sales, expenses=expenses
+            session,
+            sales=sales,
+            expenses=expenses,
+            supplier_payments=supplier_payments,
         )
         rows.append(
             {
@@ -3269,6 +3321,8 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
 
 def day_session_balance_summary(session) -> dict:
     """Live expected balances for one session (open or closed)."""
+    from items.models import StockMovement, StockMovementType
+
     from .models import Expense, ShopReceipt
 
     if session is None:
@@ -3290,16 +3344,49 @@ def day_session_balance_summary(session) -> dict:
             shop_id=session.shop_id,
             created_at__gte=session.opened_at,
             created_at__lt=closed,
-        ).values("created_at", "amount")
+        ).values("created_at", "amount_paid", "category")
     )
-    return _session_activity_totals(session, sales=sales, expenses=expenses)
+    supplier_payments = list(
+        StockMovement.objects.filter(
+            shop_id=session.shop_id,
+            movement_type=StockMovementType.IN,
+            created_at__gte=session.opened_at,
+            created_at__lt=closed,
+            amount_paid__gt=0,
+        ).values("created_at", "amount_paid")
+    )
+    return _session_activity_totals(
+        session,
+        sales=sales,
+        expenses=expenses,
+        supplier_payments=supplier_payments,
+    )
+
+
+def _required_balance_amount(payload: dict, *, keys: tuple[str, ...], label: str) -> Decimal:
+    """Require an explicit balance entry (0 is allowed; blank is not)."""
+    raw = None
+    for key in keys:
+        if key in payload and payload.get(key) is not None:
+            raw = payload.get(key)
+            break
+    text = "" if raw is None else str(raw).strip()
+    if text == "":
+        raise ValidationError(f"Enter the {label} balance.")
+    return _money(text)
 
 
 def _parse_balance_fields(payload: dict) -> dict:
     return {
-        "cash": _money(payload.get("cash_amount") or payload.get("cash") or 0),
-        "mpesa": _money(payload.get("mpesa_amount") or payload.get("mpesa") or 0),
-        "credit": _money(payload.get("credit_amount") or payload.get("credit") or 0),
+        "cash": _required_balance_amount(
+            payload, keys=("cash_amount", "cash"), label="cash"
+        ),
+        "mpesa": _required_balance_amount(
+            payload, keys=("mpesa_amount", "mpesa"), label="M-Pesa"
+        ),
+        "credit": _required_balance_amount(
+            payload, keys=("credit_amount", "credit"), label="credit"
+        ),
     }
 
 
@@ -3575,6 +3662,10 @@ def _parse_expense_lines(payload) -> list[dict]:
         label = f"Expense {index + 1}"
         if category not in valid_categories:
             raise ValidationError(f"{label}: choose a category.")
+        if category == ExpenseCategory.OWNER_DRAWINGS:
+            raise ValidationError(
+                f"{label}: owner drawings are recorded on the Day page."
+            )
         if not name:
             raise ValidationError(f"{label}: name is required.")
         if len(name) > 200:
@@ -3674,6 +3765,76 @@ def register_shop_expense(*, shop: Shop, profile, payload: dict) -> dict:
     }
 
 
+@transaction.atomic
+def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
+    """Record an owner cash drawing against the open shop day (equity, not opex)."""
+    from employees.services import verify_active_employee_code
+
+    from .models import Expense, ShopDaySession
+
+    if shop.is_suspended:
+        raise ValidationError(f"Shop “{shop.name}” is suspended.")
+
+    open_session = (
+        ShopDaySession.objects.select_for_update()
+        .filter(shop=shop, closed_at__isnull=True)
+        .first()
+    )
+    if open_session is None:
+        raise ValidationError("Open the shop day before recording a drawing.")
+
+    login_code = (payload.get("login_code") or "").strip()
+    authorising = verify_active_employee_code(login_code)
+    if authorising is None:
+        raise ValidationError("Enter a valid active staff 6-digit ID.")
+
+    from employees.module_permissions import ensure_employee_may
+
+    ensure_employee_may(
+        authorising,
+        "my-shop",
+        "register_expense",
+        message="You do not have permission to record owner drawings.",
+    )
+
+    name = (payload.get("name") or payload.get("note") or "").strip().upper()
+    if not name:
+        name = "OWNER DRAWING"
+    if len(name) > 200:
+        raise ValidationError("Drawing note is too long.")
+
+    try:
+        amount = _money(payload.get("amount"))
+    except ValidationError as exc:
+        raise ValidationError("Enter a valid drawing amount.") from exc
+    if amount <= 0:
+        raise ValidationError("Drawing amount must be greater than zero.")
+
+    expense = Expense.objects.create(
+        shop=shop,
+        category=ExpenseCategory.OWNER_DRAWINGS,
+        name=name,
+        amount=amount,
+        amount_paid=amount,
+        payment_status=ExpensePaymentStatus.PAID,
+        supplier=None,
+        supplier_name="",
+        supplier_phone_country_code="",
+        supplier_phone_number="",
+        created_by=authorising,
+    )
+    return {
+        "expense": expense,
+        "session": open_session,
+        "authorised_by": authorising.user.get_full_name()
+        or authorising.user.username,
+        "message": (
+            f"Owner drawing of KSh {amount.quantize(Decimal('1'))} "
+            f"recorded for {shop.name}."
+        ),
+    }
+
+
 def _parse_iso_date(value, *, field_label: str):
     from datetime import datetime
 
@@ -3762,6 +3923,7 @@ def _receipt_list_item(receipt) -> dict:
         )
     return {
         "id": receipt.pk,
+        "source": "pos",
         "receipt_number": receipt.receipt_number,
         "kind": receipt.kind,
         "kind_label": receipt.get_kind_display(),
@@ -3779,6 +3941,97 @@ def _receipt_list_item(receipt) -> dict:
             receipt.kind in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}
             and receipt.status != ShopReceiptStatus.CANCELLED
         ),
+    }
+
+
+def _stock_receipt_list_item(movement) -> dict:
+    from items.models import StockPaymentStatus
+
+    created = timezone.localtime(movement.created_at)
+    lines = list(movement.lines.all())
+    first = lines[0] if lines else None
+    supplier_name = (getattr(first, "supplier_name", None) or "").strip()
+    dial = (getattr(first, "supplier_phone_country_code", None) or "").strip()
+    phone = (getattr(first, "supplier_phone_number", None) or "").strip()
+    supplier_phone = f"{dial} {phone}".strip()
+    total = Decimal("0.00")
+    for line in lines:
+        qty = int(line.quantity or 0)
+        unit = Decimal(line.buying_price or 0)
+        total += (unit * qty).quantize(Decimal("0.01"))
+    cashier = ""
+    if movement.created_by_id and movement.created_by:
+        user = getattr(movement.created_by, "user", None)
+        if user is not None:
+            cashier = (
+                user.get_full_name()
+                or getattr(movement.created_by, "employee_id", "")
+                or user.username
+                or ""
+            )
+    pay_status = (
+        getattr(first, "payment_status", None) or movement.payment_status or ""
+    ).strip()
+    status_label = dict(StockPaymentStatus.choices).get(
+        pay_status,
+        pay_status.replace("_", " ").title() if pay_status else "Recorded",
+    )
+    return {
+        "id": movement.pk,
+        "source": "stock",
+        "receipt_number": format_simple_doc_number(
+            DOC_NUMBER_PREFIX["stock_in"], movement.pk
+        ),
+        "kind": "stock",
+        "kind_label": "Stock purchase",
+        "status": pay_status or "recorded",
+        "status_label": status_label,
+        "payment_method": "",
+        "payment_label": status_label,
+        "client_name": supplier_name,
+        "client_phone": supplier_phone,
+        "total": str(total),
+        "created_at": created.isoformat(),
+        "created_label": created.strftime("%d %b %Y · %H:%M"),
+        "cashier": cashier,
+        "can_return": False,
+    }
+
+
+def _expense_receipt_list_item(expense) -> dict:
+    created = timezone.localtime(expense.created_at)
+    dial = (expense.supplier_phone_country_code or "").strip()
+    phone = (expense.supplier_phone_number or "").strip()
+    supplier_phone = f"{dial} {phone}".strip()
+    cashier = ""
+    if expense.created_by_id and expense.created_by:
+        user = getattr(expense.created_by, "user", None)
+        if user is not None:
+            cashier = (
+                user.get_full_name()
+                or getattr(expense.created_by, "employee_id", "")
+                or user.username
+                or ""
+            )
+    return {
+        "id": expense.pk,
+        "source": "expense",
+        "receipt_number": format_simple_doc_number(
+            DOC_NUMBER_PREFIX["expense"], expense.pk
+        ),
+        "kind": "expense",
+        "kind_label": "Expense",
+        "status": expense.payment_status,
+        "status_label": expense.get_payment_status_display(),
+        "payment_method": "",
+        "payment_label": expense.get_payment_status_display(),
+        "client_name": (expense.supplier_name or "").strip(),
+        "client_phone": supplier_phone,
+        "total": str(expense.amount),
+        "created_at": created.isoformat(),
+        "created_label": created.strftime("%d %b %Y · %H:%M"),
+        "cashier": cashier,
+        "can_return": False,
     }
 
 
@@ -3842,12 +4095,15 @@ def list_shop_receipts(
     date_to: str = "",
     month: str = "",
     year: str = "",
+    kind: str = "all",
     limit: int = 200,
 ) -> dict:
-    """List shop receipts with live search and date filters."""
+    """List POS, stock-supplier, and expense-supplier receipts for a shop."""
     from datetime import datetime, time
 
     from django.db.models import Q
+
+    from items.models import StockMovement, StockMovementType
 
     from .models import ShopReceipt
 
@@ -3868,95 +4124,376 @@ def list_shop_receipts(
     except (TypeError, ValueError):
         limit_n = 200
 
-    qs = (
-        ShopReceipt.objects.filter(
-            shop=shop,
-            created_at__gte=start_dt,
-            created_at__lte=end_dt,
-        )
-        .select_related("created_by__user")
-        .order_by("-created_at", "-id")
-    )
-
     q = (query or "").strip()
-    if q:
-        qs = qs.filter(
-            Q(receipt_number__icontains=q)
-            | Q(client_name__icontains=q)
-            | Q(client_phone__icontains=q)
-            | Q(kind__icontains=q)
-        )
+    q_l = q.lower()
+    kind_key = (kind or "all").strip().lower()
+    if kind_key in ("", "all", "any"):
+        kind_key = "all"
+    elif kind_key in ("sales", "sale"):
+        kind_key = "sale"
+    elif kind_key in ("credits", "credit"):
+        kind_key = "credit"
+    elif kind_key in ("quotations", "quotation", "quote"):
+        kind_key = "quotation"
+    elif kind_key in ("stock", "stock-suppliers", "stock_suppliers"):
+        kind_key = "stock"
+    elif kind_key in ("expense", "expenses", "expense-suppliers", "expense_suppliers"):
+        kind_key = "expense"
+    else:
+        raise ValidationError("Unknown receipt type filter.")
 
-    total_count = qs.count()
-    receipts = list(qs[:limit_n])
+    include_pos = kind_key in ("all", "sale", "credit", "quotation")
+    include_stock = kind_key in ("all", "stock")
+    include_expense = kind_key in ("all", "expense")
+
+    merged = []
+
+    if include_pos:
+        pos_qs = (
+            ShopReceipt.objects.filter(
+                shop=shop,
+                created_at__gte=start_dt,
+                created_at__lte=end_dt,
+            )
+            .select_related("created_by__user")
+            .order_by("-created_at", "-id")
+        )
+        if kind_key in ("sale", "credit", "quotation"):
+            pos_qs = pos_qs.filter(kind=kind_key)
+        if q:
+            pos_qs = pos_qs.filter(
+                Q(receipt_number__icontains=q)
+                | Q(client_name__icontains=q)
+                | Q(client_phone__icontains=q)
+                | Q(kind__icontains=q)
+            )
+        merged.extend(_receipt_list_item(row) for row in pos_qs)
+
+    if include_stock:
+        stock_qs = (
+            StockMovement.objects.filter(
+                shop=shop,
+                movement_type=StockMovementType.IN,
+                created_at__gte=start_dt,
+                created_at__lte=end_dt,
+            )
+            .select_related("created_by__user")
+            .prefetch_related("lines")
+            .order_by("-created_at", "-id")
+        )
+        for movement in stock_qs:
+            item = _stock_receipt_list_item(movement)
+            if q_l:
+                hay = " ".join(
+                    [
+                        item["receipt_number"],
+                        item["client_name"],
+                        item["client_phone"],
+                        item["kind_label"],
+                        item["cashier"],
+                        "stock",
+                        "supplier",
+                    ]
+                ).lower()
+                if q_l not in hay:
+                    continue
+            merged.append(item)
+
+    if include_expense:
+        expense_qs = (
+            Expense.objects.filter(
+                shop=shop,
+                created_at__gte=start_dt,
+                created_at__lte=end_dt,
+            )
+            .select_related("created_by__user")
+            .order_by("-created_at", "-id")
+        )
+        for expense in expense_qs:
+            item = _expense_receipt_list_item(expense)
+            if q_l:
+                hay = " ".join(
+                    [
+                        item["receipt_number"],
+                        item["client_name"],
+                        item["client_phone"],
+                        item["kind_label"],
+                        item["cashier"],
+                        expense.name or "",
+                        "expense",
+                        "supplier",
+                    ]
+                ).lower()
+                if q_l not in hay:
+                    continue
+            merged.append(item)
+
+    merged.sort(key=lambda row: (row["created_at"], row["id"]), reverse=True)
+    total_count = len(merged)
+    receipts = merged[:limit_n]
     return {
         "ok": True,
         "count": total_count,
         "returned": len(receipts),
         "filter_mode": (filter_mode or "day").strip().lower(),
+        "kind": kind_key,
         "date_from": start_date.isoformat(),
         "date_to": end_date.isoformat(),
-        "receipts": [_receipt_list_item(row) for row in receipts],
+        "receipts": receipts,
     }
 
 
-def get_shop_receipt_detail(*, shop: Shop, receipt_id: int) -> dict:
-    """Full receipt payload for the receipts modal (details + reprint text)."""
-    from .models import ShopReceipt
-
-    try:
-        receipt = (
-            ShopReceipt.objects.select_related("created_by__user", "client", "shop")
-            .prefetch_related("lines")
-            .get(pk=receipt_id, shop=shop)
-        )
-    except ShopReceipt.DoesNotExist as exc:
-        raise ValidationError("Receipt not found for this shop.") from exc
-
-    lines = list(receipt.lines.all())
-    sold_serials_by_item = _sold_serials_by_item_for_lines(lines)
-    pos_settings = get_company_pos_settings()
-    ticket = _build_receipt_ticket_data(receipt, lines)
-    message = _render_receipt_text(ticket)
-    item = _receipt_list_item(receipt)
-    line_payloads = [
-        _receipt_line_payload(line, sold_serials_by_item=sold_serials_by_item)
-        for line in lines
-    ]
-    returnable_lines = []
-    for line, payload in zip(lines, line_payloads):
-        if line.remaining_quantity <= 0:
-            continue
-        if receipt.kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
-            continue
-        if receipt.status == ShopReceiptStatus.CANCELLED:
-            continue
-        # Serial sale lines are only returnable when a sold serial still exists.
-        if line.serial_numbers and not payload["remaining_serial_numbers"]:
-            continue
-        returnable_lines.append(payload)
+def _supplier_detail_from_print(
+    *,
+    print_payload: dict,
+    source: str,
+    record_id: int,
+    client_name: str,
+    client_phone: str,
+    status: str,
+    status_label: str,
+    total,
+    created_at,
+    cashier: str,
+    can_return: bool = False,
+    line_rows: list | None = None,
+) -> dict:
+    ticket = print_payload.get("receipt_ticket") or {}
+    lines = []
+    raw_lines = line_rows or []
+    if raw_lines:
+        for idx, line in enumerate(raw_lines, start=1):
+            qty = int(line.get("qty") or 1)
+            unit = Decimal(line.get("unit") or 0)
+            line_total = (unit * qty).quantize(Decimal("0.01"))
+            serials = list(line.get("serials") or [])
+            lines.append(
+                {
+                    "id": idx,
+                    "item_id": None,
+                    "item_name": line.get("name") or "Item",
+                    "quantity": qty,
+                    "returned_quantity": 0,
+                    "remaining_quantity": qty,
+                    "unit_price": str(unit),
+                    "line_total": str(line_total),
+                    "remaining_total": str(line_total),
+                    "serial_numbers": serials,
+                    "returned_serial_numbers": [],
+                    "remaining_serial_numbers": serials,
+                    "track_serial": bool(serials),
+                }
+            )
+    else:
+        for idx, line in enumerate(ticket.get("lines") or [], start=1):
+            qty = int(line.get("qty") or 1)
+            serials = list(line.get("serials") or [])
+            lines.append(
+                {
+                    "id": idx,
+                    "item_id": None,
+                    "item_name": line.get("name") or "Item",
+                    "quantity": qty,
+                    "returned_quantity": 0,
+                    "remaining_quantity": qty,
+                    "unit_price": str(line.get("price") or "0").replace(",", ""),
+                    "line_total": str(line.get("total") or "0").replace(",", ""),
+                    "remaining_total": str(line.get("total") or "0").replace(",", ""),
+                    "serial_numbers": serials,
+                    "returned_serial_numbers": [],
+                    "remaining_serial_numbers": serials,
+                    "track_serial": bool(serials),
+                }
+            )
+    created = timezone.localtime(created_at)
+    kind_label = ticket.get("kind") or (
+        "Stock purchase" if source == "stock" else "Expense"
+    )
     return {
         "ok": True,
         "receipt": {
-            **item,
-            "subtotal": str(receipt.subtotal),
-            "tax_percent": str(receipt.tax_percent),
-            "tax_amount": str(receipt.tax_amount),
-            "cash_amount": str(receipt.cash_amount),
-            "mpesa_amount": str(receipt.mpesa_amount),
-            "lines": line_payloads,
-            "returnable_lines": returnable_lines,
+            "id": record_id,
+            "source": source,
+            "receipt_number": print_payload.get("receipt_number")
+            or ticket.get("receipt_number")
+            or "",
+            "kind": source,
+            "kind_label": kind_label,
+            "status": status,
+            "status_label": status_label,
+            "payment_method": "",
+            "payment_label": ticket.get("payment") or status_label,
+            "client_name": client_name,
+            "client_phone": client_phone,
+            "total": str(total),
+            "created_at": created.isoformat(),
+            "created_label": created.strftime("%d %b %Y · %H:%M"),
+            "cashier": cashier,
+            "can_return": can_return,
+            "subtotal": str(total),
+            "tax_percent": "0",
+            "tax_amount": "0",
+            "cash_amount": "0",
+            "mpesa_amount": "0",
+            "lines": lines,
+            "returnable_lines": [],
         },
-        "receipt_text": message,
+        "receipt_text": print_payload.get("receipt_text") or "",
         "receipt_ticket": ticket,
-        "receipt_qr": receipt_qr_for_receipt(receipt, pos_settings),
-        "receipt_font": receipt_font_style(pos_settings),
-        "receipt_paper_width": (
-            pos_settings.receipt_paper_width
-            if pos_settings.receipt_paper_width in RECEIPT_PAPER_WIDTHS
-            else "80"
-        ),
+        "receipt_qr": print_payload.get("receipt_qr")
+        or {"payload": "", "label": "", "ready": False, "image_data_url": ""},
+        "receipt_font": print_payload.get("receipt_font"),
+        "receipt_paper_width": print_payload.get("receipt_paper_width") or "80",
+        "print_via": print_payload.get("print_via") or "",
+        "print_channels": print_payload.get("print_channels") or [],
     }
+
+
+def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos") -> dict:
+    """Full receipt payload for the receipts modal (details + reprint text)."""
+    from items.models import StockMovement, StockMovementType
+
+    from .models import ShopReceipt
+
+    source_key = (source or "pos").strip().lower()
+    if source_key in ("", "pos", "sale", "credit", "quotation"):
+        try:
+            receipt = (
+                ShopReceipt.objects.select_related("created_by__user", "client", "shop")
+                .prefetch_related("lines")
+                .get(pk=receipt_id, shop=shop)
+            )
+        except ShopReceipt.DoesNotExist as exc:
+            raise ValidationError("Receipt not found for this shop.") from exc
+
+        lines = list(receipt.lines.all())
+        sold_serials_by_item = _sold_serials_by_item_for_lines(lines)
+        pos_settings = get_company_pos_settings()
+        ticket = _build_receipt_ticket_data(receipt, lines)
+        message = _render_receipt_text(ticket)
+        item = _receipt_list_item(receipt)
+        line_payloads = [
+            _receipt_line_payload(line, sold_serials_by_item=sold_serials_by_item)
+            for line in lines
+        ]
+        returnable_lines = []
+        for line, payload in zip(lines, line_payloads):
+            if line.remaining_quantity <= 0:
+                continue
+            if receipt.kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
+                continue
+            if receipt.status == ShopReceiptStatus.CANCELLED:
+                continue
+            # Serial sale lines are only returnable when a sold serial still exists.
+            if line.serial_numbers and not payload["remaining_serial_numbers"]:
+                continue
+            returnable_lines.append(payload)
+        return {
+            "ok": True,
+            "receipt": {
+                **item,
+                "subtotal": str(receipt.subtotal),
+                "tax_percent": str(receipt.tax_percent),
+                "tax_amount": str(receipt.tax_amount),
+                "cash_amount": str(receipt.cash_amount),
+                "mpesa_amount": str(receipt.mpesa_amount),
+                "lines": line_payloads,
+                "returnable_lines": returnable_lines,
+            },
+            "receipt_text": message,
+            "receipt_ticket": ticket,
+            "receipt_qr": receipt_qr_for_receipt(receipt, pos_settings),
+            "receipt_font": receipt_font_style(pos_settings),
+            "receipt_paper_width": (
+                pos_settings.receipt_paper_width
+                if pos_settings.receipt_paper_width in RECEIPT_PAPER_WIDTHS
+                else "80"
+            ),
+        }
+
+    if source_key == "stock":
+        try:
+            movement = (
+                StockMovement.objects.select_related("created_by__user", "shop")
+                .prefetch_related("lines__item")
+                .get(
+                    pk=receipt_id,
+                    shop=shop,
+                    movement_type=StockMovementType.IN,
+                )
+            )
+        except StockMovement.DoesNotExist as exc:
+            raise ValidationError("Stock receipt not found for this shop.") from exc
+        print_payload = build_stock_in_supplier_receipt(
+            movement, shop=shop, authorised_by=movement.created_by
+        )
+        list_item = _stock_receipt_list_item(movement)
+        line_rows = []
+        for line in movement.lines.all():
+            serials = list(line.serial_numbers or [])
+            line_rows.append(
+                {
+                    "name": str(getattr(line.item, "name", None) or "Item"),
+                    "qty": int(line.quantity or 0),
+                    "unit": Decimal(line.buying_price or 0),
+                    "serials": [str(s) for s in serials],
+                }
+            )
+        return _supplier_detail_from_print(
+            print_payload=print_payload,
+            source="stock",
+            record_id=movement.pk,
+            client_name=list_item["client_name"],
+            client_phone=list_item["client_phone"],
+            status=list_item["status"],
+            status_label=list_item["status_label"],
+            total=list_item["total"],
+            created_at=movement.created_at,
+            cashier=list_item["cashier"],
+            line_rows=line_rows,
+        )
+
+    if source_key == "expense":
+        try:
+            expense = Expense.objects.select_related("created_by__user", "shop").get(
+                pk=receipt_id, shop=shop
+            )
+        except Expense.DoesNotExist as exc:
+            raise ValidationError("Expense receipt not found for this shop.") from exc
+        cashier = ""
+        if expense.created_by_id and expense.created_by and expense.created_by.user:
+            cashier = (
+                expense.created_by.user.get_full_name()
+                or expense.created_by.employee_id
+                or expense.created_by.user.username
+                or ""
+            )
+        print_payload = build_expense_supplier_receipt(
+            expense, shop=shop, authorised_by=cashier, expenses=[expense]
+        )
+        list_item = _expense_receipt_list_item(expense)
+        return _supplier_detail_from_print(
+            print_payload=print_payload,
+            source="expense",
+            record_id=expense.pk,
+            client_name=list_item["client_name"],
+            client_phone=list_item["client_phone"],
+            status=list_item["status"],
+            status_label=list_item["status_label"],
+            total=list_item["total"],
+            created_at=expense.created_at,
+            cashier=list_item["cashier"],
+            line_rows=[
+                {
+                    "name": str(expense.name or "Expense"),
+                    "qty": 1,
+                    "unit": Decimal(expense.amount or 0),
+                    "serials": [],
+                }
+            ],
+        )
+
+    raise ValidationError("Unknown receipt source.")
 
 
 @transaction.atomic

@@ -4,7 +4,7 @@
 {% block body_class %}page-workspace{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260815c">
+<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260816-day">
 {% endblock %}
 
 {% block body %}
@@ -76,7 +76,7 @@
 {% load static %}
 {{ block.super }}
 {% if shop_day_modal %}
-<script defer src="{% static 'js/my-shop-day-prompt.js' %}?v=3"></script>
+<script defer src="{% static 'js/my-shop-day-prompt.js' %}?v=4"></script>
 {% endif %}
 <script defer src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
 <script>

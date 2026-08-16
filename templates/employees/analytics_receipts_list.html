@@ -16,11 +16,16 @@
       </div>
     </div>
     <form class="ax-filters" method="get" data-analytics-filters>
+      <select data-receipt-kind-switch aria-label="Receipt type">
+        {% for option in kind_options %}
+        <option value="{{ option.slug }}"{% if option.slug == kind.slug %} selected{% endif %}>{{ option.short_label }}</option>
+        {% endfor %}
+      </select>
       <input
         type="search"
         name="q"
         value="{{ search }}"
-        placeholder="Search receipt, client, shop…"
+        placeholder="Search receipt, client, supplier, shop…"
         aria-label="Search"
       >
       <select name="shop_id" aria-label="Shop">
@@ -72,7 +77,7 @@
             <tr>
               <th>Receipt</th>
               <th>Shop</th>
-              <th>Client</th>
+              <th>Client / supplier</th>
               <th>Total</th>
               <th>Status</th>
               <th>When</th>
@@ -121,6 +126,19 @@
     };
     rangeSelect?.addEventListener("change", syncRange);
     syncRange();
+
+    const kindSwitch = form.querySelector("[data-receipt-kind-switch]");
+    kindSwitch?.addEventListener("change", () => {
+      const next = (kindSwitch.value || "").trim();
+      if (!next) return;
+      const path = window.location.pathname.replace(
+        /\/analytics\/receipts\/[^/]+\/?$/,
+        `/analytics/receipts/${next}/`
+      );
+      const params = new URLSearchParams(new FormData(form));
+      const query = params.toString();
+      window.location.assign(query ? `${path}?${query}` : path);
+    });
   })();
 </script>
 {% endblock %}

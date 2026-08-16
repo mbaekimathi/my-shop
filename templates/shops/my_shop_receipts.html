@@ -37,7 +37,7 @@
         <span>Search</span>
         <input
           type="search"
-          placeholder="Receipt no., client, phone…"
+          placeholder="Receipt no., client, supplier, phone…"
           autocomplete="off"
           data-receipts-search
           aria-label="Search receipts"
@@ -45,7 +45,19 @@
       </label>
 
       <label class="stock-report-field">
-        <span>Filter</span>
+        <span>Type</span>
+        <select data-receipts-kind aria-label="Receipt type">
+          <option value="all" selected>All types</option>
+          <option value="sale">Sales</option>
+          <option value="credit">Credits</option>
+          <option value="quotation">Quotations</option>
+          <option value="stock">Stock suppliers</option>
+          <option value="expense">Expense suppliers</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field">
+        <span>Period</span>
         <select data-receipts-filter-mode>
           <option value="day" selected>Single day</option>
           <option value="period">Period</option>
@@ -92,7 +104,7 @@
         <tr>
           <th>Receipt</th>
           <th>Type</th>
-          <th>Client</th>
+          <th>Client / supplier</th>
           <th>Total</th>
           <th>When</th>
           <th>Status</th>

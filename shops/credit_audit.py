@@ -401,6 +401,189 @@ def build_client_credit_audit_trail(*, profile, client_id: int) -> dict:
     }
 
 
+def build_credit_audits(*, profile) -> dict:
+    """Chronological non-sale audit feed for all accessible credit accounts."""
+    from employees.analytics_services import actionable_shops_for_profile
+
+    shop_ids = [shop.pk for shop in actionable_shops_for_profile(profile)]
+    empty = {
+        "headline": "Credit audits",
+        "lead": (
+            "Payments, due-date updates, returns, and cancellations on credit "
+            "receipts. Initial credit sales are not shown."
+        ),
+        "period_label": "All accessible shops",
+        "rows": [],
+        "event_count": 0,
+        "payment_count": 0,
+        "change_count": 0,
+        "empty_message": "No credit account changes recorded yet.",
+        "summary_board": {
+            "hero": {
+                "label": "Recorded changes",
+                "value": "0",
+                "hint": "No activity yet",
+                "tone": "neutral",
+            },
+            "tiles": [
+                {
+                    "label": "Payments",
+                    "value": "0",
+                    "hint": "Cash · M-Pesa",
+                    "icon": "wallet",
+                    "tone": "cash",
+                },
+                {
+                    "label": "Other changes",
+                    "value": "0",
+                    "hint": "Due dates · returns",
+                    "icon": "history",
+                    "tone": "warn",
+                },
+                {
+                    "label": "Paid amount",
+                    "value": _money_ksh(0),
+                    "hint": "Collected on credits",
+                    "icon": "banknote",
+                    "tone": "good",
+                },
+                {
+                    "label": "Clients",
+                    "value": "0",
+                    "hint": "With audit activity",
+                    "icon": "contact",
+                    "tone": "shops",
+                },
+            ],
+        },
+    }
+    if not shop_ids:
+        return empty
+
+    client_ids = list(
+        ShopReceipt.objects.filter(
+            shop_id__in=shop_ids,
+            kind=ShopReceiptKind.CREDIT,
+            client_id__isnull=False,
+        )
+        .values_list("client_id", flat=True)
+        .distinct()
+    )
+    for client_id in client_ids:
+        ensure_client_credit_audit_backfill(
+            client_id=client_id,
+            shop_ids=shop_ids,
+        )
+
+    events = list(
+        ClientCreditAccountEvent.objects.filter(shop_id__in=shop_ids)
+        .exclude(kind=ClientCreditAccountEventKind.CREDIT_ISSUED)
+        .select_related(
+            "client",
+            "shop",
+            "receipt",
+            "actor",
+            "actor__user",
+            "stk_payment",
+        )
+        .order_by("-occurred_at", "-pk")
+    )
+
+    rows = []
+    payment_count = 0
+    change_count = 0
+    paid_total = _zero()
+    client_names: set[str] = set()
+    for event in events:
+        kind = event.kind
+        if kind in {
+            ClientCreditAccountEventKind.PAYMENT_CASH,
+            ClientCreditAccountEventKind.PAYMENT_MPESA,
+        }:
+            payment_count += 1
+            if event.amount is not None:
+                paid_total += Decimal(event.amount or 0)
+        else:
+            change_count += 1
+        when = timezone.localtime(event.occurred_at)
+        client_name = event.client.full_name if event.client else "—"
+        if event.client_id:
+            client_names.add(client_name)
+        rows.append(
+            {
+                "id": event.pk,
+                "when_label": when.strftime("%d %b %Y · %H:%M"),
+                "client": client_name,
+                "kind_label": event.get_kind_display(),
+                "tone": _event_tone(kind),
+                "icon": _event_icon(kind),
+                "receipt_number": event.receipt.receipt_number if event.receipt else "—",
+                "shop": event.shop.name if event.shop else "—",
+                "amount": _money_ksh(event.amount) if event.amount is not None else "—",
+                "detail": event.detail or event.get_kind_display(),
+                "actor": _actor_label(event.actor),
+                "synthetic": bool((event.meta or {}).get("synthetic")),
+            }
+        )
+
+    event_count = len(rows)
+    client_count = len(client_names)
+    return {
+        "headline": "Credit audits",
+        "lead": (
+            "Payments, due-date updates, returns, and cancellations on credit "
+            "receipts. Initial credit sales are not shown."
+        ),
+        "period_label": "All accessible shops",
+        "rows": rows,
+        "event_count": event_count,
+        "payment_count": payment_count,
+        "change_count": change_count,
+        "empty_message": "No credit account changes recorded yet.",
+        "summary_board": {
+            "hero": {
+                "label": "Recorded changes",
+                "value": str(event_count),
+                "hint": (
+                    f"{payment_count} payment{'s' if payment_count != 1 else ''} · "
+                    f"{change_count} other change{'s' if change_count != 1 else ''}"
+                ),
+                "tone": "neutral",
+            },
+            "tiles": [
+                {
+                    "label": "Payments",
+                    "value": str(payment_count),
+                    "hint": "Cash · M-Pesa",
+                    "icon": "wallet",
+                    "tone": "cash",
+                },
+                {
+                    "label": "Other changes",
+                    "value": str(change_count),
+                    "hint": "Due dates · returns",
+                    "icon": "history",
+                    "tone": "warn" if change_count else "good",
+                },
+                {
+                    "label": "Paid amount",
+                    "value": _money_ksh(paid_total),
+                    "hint": "Collected on credits",
+                    "icon": "banknote",
+                    "tone": "good",
+                },
+                {
+                    "label": "Clients",
+                    "value": str(client_count),
+                    "hint": "With audit activity",
+                    "icon": "contact",
+                    "tone": "shops",
+                },
+            ],
+        },
+    }
+
+
 def client_credit_audit_url(role, client_id, *, query: str = "") -> str:
     from django.urls import reverse
 

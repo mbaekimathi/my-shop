@@ -181,6 +181,13 @@ class StockMovementType(models.TextChoices):
     REQUEST = "request", "Request Stock"
 
 
+class StockEntrySource(models.TextChoices):
+    """Where the movement was submitted from (set by the view, not the user)."""
+
+    BUY_ITEMS = "buy_items", "Buy items"
+    STOCK_MANAGEMENT = "stock_management", "Stock management"
+
+
 class StockPaymentStatus(models.TextChoices):
     UNPAID = "unpaid", "Unpaid"
     PAID = "paid", "Paid"
@@ -205,6 +212,17 @@ class StockMovement(models.Model):
         max_length=16,
         choices=StockMovementType.choices,
         db_index=True,
+    )
+    entry_source = models.CharField(
+        max_length=32,
+        choices=StockEntrySource.choices,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text=(
+            "UI entry point that created this movement. Blank for legacy rows "
+            "created before this field existed."
+        ),
     )
     shop = models.ForeignKey(
         "shops.Shop",

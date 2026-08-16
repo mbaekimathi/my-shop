@@ -23,6 +23,23 @@
         <h2>{{ page.headline }}</h2>
         <span class="ax-period">{% if page.period_label %}{{ page.period_label }}{% else %}{{ report_period_label }}{% endif %}</span>
       </div>
+      {% if page.back_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ page.back_href }}">{{ page.back_label|default:"Back" }}</a>
+      </div>
+      {% endif %}
+      {% if page.supply_analytics_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ page.supply_analytics_href }}">
+          {{ page.supply_analytics_label }}
+        </a>
+      </div>
+      {% endif %}
+      {% if credit_audits_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ credit_audits_href }}">Credit audits</a>
+      </div>
+      {% endif %}
       {% if not page.hide_date_filters %}
       <form class="ax-filters" method="get" data-analytics-filters>
         <select name="shop_id" aria-label="Shop">
@@ -31,7 +48,22 @@
           <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
           {% endfor %}
         </select>
-        {% if section_slug == "suppliers" %}
+        {% if page.expense_category %}
+        <input type="hidden" name="category" value="{{ page.expense_category }}">
+        {% endif %}
+        {% if section_slug == "receipts" %}
+        <select name="receipt_kind" aria-label="Receipt type">
+          <option value="all"{% if page.receipt_kind == 'all' or not page.receipt_kind %} selected{% endif %}>All types</option>
+          <option value="sales"{% if page.receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
+          <option value="credits"{% if page.receipt_kind == 'credits' %} selected{% endif %}>Credits</option>
+          <option value="quotations"{% if page.receipt_kind == 'quotations' %} selected{% endif %}>Quotations</option>
+          <option value="stock"{% if page.receipt_kind == 'stock' %} selected{% endif %}>Stock suppliers</option>
+          <option value="expense"{% if page.receipt_kind == 'expense' %} selected{% endif %}>Expense suppliers</option>
+          <option value="cancelled"{% if page.receipt_kind == 'cancelled' %} selected{% endif %}>Cancelled</option>
+          <option value="partial-returns"{% if page.receipt_kind == 'partial-returns' %} selected{% endif %}>Partial returns</option>
+        </select>
+        {% endif %}
+        {% if section_slug == "suppliers" or section_slug == "expenses" %}
         {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
         {% else %}
         <select name="range" data-analytics-range aria-label="Time range">
@@ -381,23 +413,6 @@
           <span class="ax-card-hint">Hover amounts for full KSh</span>
           {% endif %}
         </div>
-        {% if section_slug == "expenses" %}
-        <form class="ax-filters ax-filters--card" method="get" aria-label="Filter by shop">
-          {% for key, values in request.GET.lists %}
-            {% if key != "shop_id" %}
-              {% for value in values %}
-              <input type="hidden" name="{{ key }}" value="{{ value }}">
-              {% endfor %}
-            {% endif %}
-          {% endfor %}
-          <select name="shop_id" aria-label="Shop" onchange="this.form.submit()">
-            <option value="">All shops</option>
-            {% for shop in filter_shops %}
-            <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
-            {% endfor %}
-          </select>
-        </form>
-        {% endif %}
         {% if page.show_search and table.searchable %}
         <label class="ax-table-search">
           <span class="visually-hidden">{{ page.search_placeholder|default:"Search" }}</span>
@@ -413,7 +428,9 @@
         {% elif table.shop_grid and section_slug == "suppliers" %}
         <span class="ax-card-hint">En · entries · Bal · unpaid</span>
         {% elif table.shop_grid and section_slug == "expenses" %}
-        <span class="ax-card-hint">En · entries · Bal · unpaid</span>
+        <span class="ax-card-hint">Docs · entries · Amt · total</span>
+        {% elif section_slug == "expenses" and page.expense_category %}
+        <span class="ax-card-hint">Date · supplier · price</span>
         {% elif table.shop_grid %}
         <span class="ax-card-hint">Search or hover for detail</span>
         {% endif %}
@@ -426,10 +443,17 @@
       </div>
       {% elif table.shop_grid and section_slug == "balances" %}
       <div class="ax-band-legend ax-band-legend--balances" aria-label="Column groups">
+        {% if table.title == "Live cashbox by shop" %}
+        <span class="is-cash-open">Cash · activity</span>
+        <span class="is-cash-close">Cash · live / close</span>
+        <span class="is-mpesa-open">M-Pesa · activity</span>
+        <span class="is-mpesa-close">M-Pesa · live / close</span>
+        {% else %}
         <span class="is-cash-open">Cash · opening</span>
         <span class="is-cash-close">Cash · closing</span>
         <span class="is-mpesa-open">M-Pesa · opening</span>
         <span class="is-mpesa-close">M-Pesa · closing</span>
+        {% endif %}
       </div>
       {% elif table.shop_grid and section_slug == "sales" %}
       <div class="ax-band-legend ax-band-legend--sales" aria-label="Column groups">
@@ -533,9 +557,9 @@
                 {% elif cell.kind == "money" or cell.kind == "pct" %}
                 <span class="ax-money{% if cell.tone and cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
                 {% elif cell.tone %}
-                <span class="ax-trend{% if cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}">{{ cell.label }}</span>
+                <span class="ax-trend{% if cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
                 {% elif cell.label %}
-                {{ cell.label }}
+                <span{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
                 {% else %}
                 {{ cell }}
                 {% endif %}

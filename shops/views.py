@@ -25,6 +25,7 @@ from items.models import (
     Item,
     ShopItemPrice,
     ShopStock,
+    StockEntrySource,
     StockMovement,
     StockMovementType,
     StockRequestStatus,
@@ -71,6 +72,7 @@ from .services import (
     list_shop_receipts,
     open_shop_day,
     pos_settings_as_dict,
+    register_owner_drawing,
     register_shop_expense,
     return_shop_receipt_items,
     search_clients_by_name,
@@ -1108,7 +1110,11 @@ def my_shop_workspace(request, shop_id):
                 "login_code": "",
             },
             "form_errors": [],
-            "expense_categories": ExpenseCategory.choices,
+            "expense_categories": [
+                choice
+                for choice in ExpenseCategory.choices
+                if choice[0] != ExpenseCategory.OWNER_DRAWINGS
+            ],
             "payment_statuses": ExpensePaymentStatus.choices,
             "expense_supplier_search_url": reverse(
                 "employees:expense_supplier_search"
@@ -1280,7 +1286,12 @@ def my_shop_buy_stock(request, shop_id):
             post["shop_id"] = str(shop.pk)
             post["mode"] = "in"
             try:
-                movement = apply_stock_movement(authorising, "in", post)
+                movement = apply_stock_movement(
+                    authorising,
+                    "in",
+                    post,
+                    entry_source=StockEntrySource.BUY_ITEMS,
+                )
             except ValidationError as exc:
                 errors = _validation_errors(exc)
                 if wants_json:
@@ -1750,7 +1761,7 @@ def my_shop_receipts(request, shop_id):
         active="receipts",
         title=f"Receipts — {shop.name}",
         headline="Receipts",
-        summary=f"Search, reprint, or return receipts for {shop.name}.",
+        summary=f"Search, reprint, or return receipts for {shop.name} — sales, credits, quotations, stock suppliers, and expense suppliers.",
         icon="receipt",
         template_name="shops/my_shop_receipts.html",
         extra_context={
@@ -1804,6 +1815,7 @@ def my_shop_receipts_list(request, shop_id):
             date_to=request.GET.get("to") or "",
             month=request.GET.get("month") or "",
             year=request.GET.get("year") or "",
+            kind=request.GET.get("kind") or "all",
             limit=request.GET.get("limit") or 200,
         )
     except ValidationError as exc:
@@ -1831,7 +1843,11 @@ def my_shop_receipt_detail(request, shop_id, receipt_id):
         return denied
 
     try:
-        payload = get_shop_receipt_detail(shop=shop, receipt_id=receipt_id)
+        payload = get_shop_receipt_detail(
+            shop=shop,
+            receipt_id=receipt_id,
+            source=request.GET.get("source") or "pos",
+        )
     except ValidationError as exc:
         errors = _validation_errors(exc)
         return JsonResponse(
@@ -1903,6 +1919,7 @@ def my_shop_day_toggle(request, shop_id):
     is_open = open_session is not None
     mode = "close" if is_open else "open"
     form_errors = []
+    drawing_errors = []
     form_data = {
         "cash_amount": "",
         "mpesa_amount": "",
@@ -1910,51 +1927,102 @@ def my_shop_day_toggle(request, shop_id):
         "stock_confirmed": False,
         "login_code": "",
     }
+    drawing_data = {
+        "amount": "",
+        "name": "",
+        "login_code": "",
+    }
+
+    from employees.module_permissions import employee_may
+
+    can_record_drawing = profile is None or employee_may(
+        profile, "my-shop", "register_expense"
+    )
 
     if request.method == "POST":
         wants_json = (
             request.headers.get("X-Requested-With") == "XMLHttpRequest"
             or "application/json" in (request.headers.get("Accept") or "")
         )
-        form_data = {
-            "cash_amount": (request.POST.get("cash_amount") or "").strip(),
-            "mpesa_amount": (request.POST.get("mpesa_amount") or "").strip(),
-            "credit_amount": (request.POST.get("credit_amount") or "").strip(),
-            "stock_confirmed": request.POST.get("stock_confirmed")
-            in ("1", "true", "on", "yes"),
-            "login_code": (request.POST.get("login_code") or "").strip(),
-        }
-        payload = {
-            "cash_amount": form_data["cash_amount"] or "0",
-            "mpesa_amount": form_data["mpesa_amount"] or "0",
-            "credit_amount": form_data["credit_amount"] or "0",
-            "stock_confirmed": form_data["stock_confirmed"],
-            "login_code": form_data["login_code"],
-        }
-        try:
-            result = (
-                close_shop_day(shop=shop, payload=payload)
-                if is_open
-                else open_shop_day(shop=shop, payload=payload)
+        action = (request.POST.get("action") or "").strip().lower()
+
+        if action == "drawing":
+            drawing_data = {
+                "amount": (request.POST.get("amount") or "").strip(),
+                "name": (request.POST.get("name") or "").strip(),
+                "login_code": (request.POST.get("login_code") or "").strip(),
+            }
+            denied_drawing = _require_my_shop_permission(
+                request,
+                profile,
+                "register_expense",
+                as_json=wants_json,
+                portal_ok=True,
             )
-        except ValidationError as exc:
-            form_errors = _validation_errors(exc)
-            if wants_json:
-                return JsonResponse(
-                    {"ok": False, "errors": form_errors},
-                    status=400,
+            if denied_drawing:
+                return denied_drawing
+            try:
+                result = register_owner_drawing(
+                    shop=shop, profile=profile, payload=drawing_data
                 )
+            except ValidationError as exc:
+                drawing_errors = _validation_errors(exc)
+                if wants_json:
+                    return JsonResponse(
+                        {"ok": False, "errors": drawing_errors},
+                        status=400,
+                    )
+            else:
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "message": result["message"],
+                            "action": "drawing",
+                        }
+                    )
+                messages.success(request, result["message"])
+                return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
         else:
-            if wants_json:
-                return JsonResponse(
-                    {
-                        "ok": True,
-                        "message": result["message"],
-                        "action": result["action"],
-                    }
+            form_data = {
+                "cash_amount": (request.POST.get("cash_amount") or "").strip(),
+                "mpesa_amount": (request.POST.get("mpesa_amount") or "").strip(),
+                "credit_amount": (request.POST.get("credit_amount") or "").strip(),
+                "stock_confirmed": request.POST.get("stock_confirmed")
+                in ("1", "true", "on", "yes"),
+                "login_code": (request.POST.get("login_code") or "").strip(),
+            }
+            payload = {
+                "cash_amount": form_data["cash_amount"],
+                "mpesa_amount": form_data["mpesa_amount"],
+                "credit_amount": form_data["credit_amount"],
+                "stock_confirmed": form_data["stock_confirmed"],
+                "login_code": form_data["login_code"],
+            }
+            try:
+                result = (
+                    close_shop_day(shop=shop, payload=payload)
+                    if is_open
+                    else open_shop_day(shop=shop, payload=payload)
                 )
-            messages.success(request, result["message"])
-            return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
+            except ValidationError as exc:
+                form_errors = _validation_errors(exc)
+                if wants_json:
+                    return JsonResponse(
+                        {"ok": False, "errors": form_errors},
+                        status=400,
+                    )
+            else:
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "message": result["message"],
+                            "action": result["action"],
+                        }
+                    )
+                messages.success(request, result["message"])
+                return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
 
     # Refresh open state after failed post / for GET
     open_session = get_open_shop_day(shop)
@@ -2001,14 +2069,12 @@ def my_shop_day_toggle(request, shop_id):
         profile=profile,
         shops=shops,
         active="day_toggle",
-        title=("Close shop" if is_open else "Open shop") + f" — {shop.name}",
-        headline="Close shop" if is_open else "Open shop",
+        title=("Today’s till" if is_open else "Start the day") + f" — {shop.name}",
+        headline="Today’s till" if is_open else "Start the day",
         summary=(
-            f"Record closing cash, M-Pesa, and credit balances for {shop.name}, "
-            f"then review opening/closing history below."
+            "Check the till, take a drawing if needed, then close when done."
             if is_open
-            else f"Record opening cash, M-Pesa, and credit balances for {shop.name}. "
-            f"Each open/close is saved in the list below."
+            else "Enter opening balances to start trading."
         ),
         icon="door-closed" if is_open else "door-open",
         template_name="shops/my_shop_day_toggle.html",
@@ -2022,6 +2088,9 @@ def my_shop_day_toggle(request, shop_id):
             "day_session_count": len(day_sessions),
             "form_data": form_data,
             "form_errors": form_errors,
+            "drawing_data": drawing_data,
+            "drawing_errors": drawing_errors,
+            "can_record_drawing": can_record_drawing,
             "verify_login_code_url": reverse(
                 "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
             ),

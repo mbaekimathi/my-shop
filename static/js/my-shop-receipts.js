@@ -14,6 +14,7 @@
     .filter(Boolean);
 
   const searchInput = root.querySelector("[data-receipts-search]");
+  const kindFilter = root.querySelector("[data-receipts-kind]");
   const filterMode = root.querySelector("[data-receipts-filter-mode]");
   const dayInput = root.querySelector("[data-receipts-day]");
   const fromInput = root.querySelector("[data-receipts-from]");
@@ -122,7 +123,9 @@
     const params = new URLSearchParams();
     const q = (searchInput?.value || "").trim();
     const mode = (filterMode?.value || "day").trim();
+    const kind = (kindFilter?.value || "all").trim();
     params.set("filter", mode);
+    if (kind && kind !== "all") params.set("kind", kind);
     if (q) params.set("q", q);
     if (mode === "day") params.set("day", dayInput?.value || todayIso());
     if (mode === "period") {
@@ -136,7 +139,9 @@
 
   const statusClass = (status) => {
     if (status === "cancelled") return "is-cancelled";
-    if (status === "partial_return") return "is-partial";
+    if (status === "partial_return" || status === "partial" || status === "unpaid") {
+      return "is-partial";
+    }
     return "is-active";
   };
 
@@ -168,7 +173,8 @@
                   : ""
               }`
             : "—";
-        return `<tr class="shop-receipts-row" data-receipt-id="${row.id}" tabindex="0">
+        const source = escapeHtml(row.source || "pos");
+        return `<tr class="shop-receipts-row" data-receipt-id="${row.id}" data-receipt-source="${source}" tabindex="0">
   <td data-label="Receipt">
     <strong>${escapeHtml(row.receipt_number)}</strong>
   </td>
@@ -374,18 +380,22 @@
 
     const lines = receipt.lines || [];
     const returnable = receipt.returnable_lines || [];
+    const partyTitle =
+      receipt.source === "stock" || receipt.source === "expense" || receipt.kind === "stock" || receipt.kind === "expense"
+        ? "Supplier"
+        : "Customer";
     const clientBlock =
       receipt.client_name || receipt.client_phone
         ? `<div class="shop-receipt-card">
-  <h3>Customer</h3>
+  <h3>${partyTitle}</h3>
   <dl>
     <div><dt>Name</dt><dd>${escapeHtml(receipt.client_name || "—")}</dd></div>
     <div><dt>Phone</dt><dd>${escapeHtml(receipt.client_phone || "—")}</dd></div>
   </dl>
 </div>`
         : `<div class="shop-receipt-card">
-  <h3>Customer</h3>
-  <p class="shop-receipt-muted">No customer details on this receipt.</p>
+  <h3>${partyTitle}</h3>
+  <p class="shop-receipt-muted">No ${partyTitle.toLowerCase()} details on this receipt.</p>
 </div>`;
 
     const itemsHtml = lines
@@ -546,7 +556,7 @@
     refreshIcons();
   };
 
-  const openReceipt = async (receiptId) => {
+  const openReceipt = async (receiptId, source = "pos") => {
     if (!detailUrlTemplate || !modalBody) return;
     const seq = ++detailSeq;
     openModal();
@@ -554,7 +564,14 @@
     if (modalActions) modalActions.hidden = true;
     modalBody.innerHTML = `<p class="shop-receipts-status">Loading receipt…</p>`;
     try {
-      const res = await fetch(urlFor(detailUrlTemplate, receiptId), {
+      const detailUrl = new URL(
+        urlFor(detailUrlTemplate, receiptId),
+        window.location.origin
+      );
+      if (source && source !== "pos") {
+        detailUrl.searchParams.set("source", source);
+      }
+      const res = await fetch(detailUrl.toString(), {
         headers: { Accept: "application/json" },
         credentials: "same-origin",
       });
@@ -701,6 +718,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     syncFilterPanels();
     scheduleLoad(60);
   });
+  kindFilter?.addEventListener("change", () => scheduleLoad(60));
   [dayInput, fromInput, toInput, monthInput, yearInput].forEach((input) => {
     input?.addEventListener("change", () => scheduleLoad(60));
     input?.addEventListener("input", () => scheduleLoad(180));
@@ -710,14 +728,20 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
   listEl?.addEventListener("click", (event) => {
     const row = event.target.closest("[data-receipt-id]");
     if (!row) return;
-    openReceipt(row.getAttribute("data-receipt-id"));
+    openReceipt(
+      row.getAttribute("data-receipt-id"),
+      row.getAttribute("data-receipt-source") || "pos"
+    );
   });
   listEl?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     const row = event.target.closest("[data-receipt-id]");
     if (!row) return;
     event.preventDefault();
-    openReceipt(row.getAttribute("data-receipt-id"));
+    openReceipt(
+      row.getAttribute("data-receipt-id"),
+      row.getAttribute("data-receipt-source") || "pos"
+    );
   });
 
   modal?.querySelectorAll("[data-receipt-modal-close]").forEach((el) => {

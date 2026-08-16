@@ -13,6 +13,7 @@ from .access import (
 )
 from .analytics_services import (
     ANALYTICS_DASHBOARD_SECTION_SLUGS,
+    ANALYTICS_RECEIPT_KINDS,
     _date_filter_context,
     apply_account_payment,
     apply_credit_receipt_payment,
@@ -30,7 +31,9 @@ from .workspace import (
     get_dashboard_module,
     sidebar_for_analytics,
     sidebar_for_client_credit_account,
+    sidebar_for_credits,
     sidebar_for_role_dashboard,
+    sidebar_for_stock,
     sidebar_for_suppliers,
 )
 from shops.daraja_stk import stk_ready as daraja_stk_ready
@@ -113,6 +116,8 @@ def _credit_receipt_update_url_template(profile):
 
 
 def _render_analytics(request, profile, *, section_slug="overview"):
+    from django.urls import reverse
+
     from .module_permissions import require_module_permission
 
     denied = require_module_permission(
@@ -133,16 +138,32 @@ def _render_analytics(request, profile, *, section_slug="overview"):
     )
     return render(
         request,
-        "employees/analytics.html",
+        (
+            "employees/analytics_supply.html"
+            if section["slug"] == "supply"
+            else "employees/analytics.html"
+        ),
         {
             "profile": profile,
             "meta": _analytics_meta(section),
             "module": module,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
+            "credit_audits_href": (
+                reverse(
+                    "employees:analytics_credit_audits",
+                    kwargs={"role_segment": role_url_segment(profile.role)},
+                )
+                if section["slug"] == "credits"
+                else ""
+            ),
             "page_sidebar": (
                 sidebar_for_suppliers(profile.role, profile=profile)
                 if section["slug"] == "suppliers"
+                else sidebar_for_credits(profile.role, profile=profile)
+                if section["slug"] == "credits"
+                else sidebar_for_stock(profile.role, profile=profile)
+                if section["slug"] == "stock"
                 else sidebar_for_role_dashboard(
                     profile.role,
                     profile=profile,
@@ -250,6 +271,7 @@ def analytics_receipts_list(request, role_segment, kind):
             ),
             "back_href": back_href,
             "back_label": "Back to receipts",
+            "kind_options": list(ANALYTICS_RECEIPT_KINDS.values()),
             **context,
         },
     )
@@ -408,6 +430,58 @@ def analytics_client_credit_audit(request, role_segment, client_id):
             "back_href": back_href,
             "back_label": "Back to credits" if from_credits else "Back to clients",
             **_client_credit_nav(profile, client_id),
+            **trail,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_credit_audits(request, role_segment):
+    """All non-sale changes made to accessible credit receipts."""
+    from .module_permissions import require_module_permission
+    from .workspace import analytics_section_url
+    from shops.credit_audit import build_credit_audits
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect("employees:analytics_credit_audits", role_segment=expected)
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    denied = require_module_permission(request, profile, "analytics", "credits")
+    if denied is not None:
+        return denied
+
+    trail = build_credit_audits(profile=profile)
+    return render(
+        request,
+        "employees/analytics_credit_audits.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Credit audits · Analytics",
+                "headline": "Credit audits",
+                "summary": "Payments and changes made to credit receipts.",
+                "icon": "history",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_credits(
+                profile.role, profile=profile, active="audits"
+            ),
+            "back_href": analytics_section_url(profile.role, "credits"),
             **trail,
         },
     )
@@ -794,7 +868,11 @@ def analytics_receipt_detail(request, role_segment, shop_id, receipt_id):
         return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
 
     try:
-        payload = get_shop_receipt_detail(shop=shop, receipt_id=receipt_id)
+        payload = get_shop_receipt_detail(
+            shop=shop,
+            receipt_id=receipt_id,
+            source=request.GET.get("source") or "pos",
+        )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
         return JsonResponse({"ok": False, "error": message}, status=404)

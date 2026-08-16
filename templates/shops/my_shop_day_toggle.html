@@ -11,82 +11,85 @@
   data-verify-login-url="{{ verify_login_code_url }}"
   data-animate="rise"
 >
-  <header class="item-panel-head">
+  <header class="item-panel-head shop-day-head">
     <div class="item-panel-head-top">
       <div>
-        <p class="stock-kicker">{{ shop.name }} · Day</p>
-        <h2>{{ meta.headline }}</h2>
-        <p>{{ meta.summary }}</p>
-      </div>
-      <div class="stock-stats">
-        <p class="stock-stat">
-          <strong>{% if is_open %}Open{% else %}Closed{% endif %}</strong>
-          <span>status</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ day_session_count }}</strong>
-          <span>record{{ day_session_count|pluralize }}</span>
+        <p class="stock-kicker">{{ shop.name }}</p>
+        <h2>{% if is_open %}Today’s till{% else %}Start the day{% endif %}</h2>
+        <p>
+          {% if is_open %}
+          Check the till, take a drawing if needed, then close when done.
+          {% elif last_closed %}
+          Enter opening balances to start trading.
+          {% else %}
+          Enter opening balances to open this shop.
+          {% endif %}
         </p>
       </div>
+      <p class="shop-day-badge{% if is_open %} is-open{% else %} is-closed{% endif %}">
+        <i data-lucide="{% if is_open %}door-open{% else %}door-closed{% endif %}" aria-hidden="true"></i>
+        {% if is_open %}Open{% else %}Closed{% endif %}
+      </p>
     </div>
   </header>
 
-  {% if is_open and open_session %}
-  <div class="shop-day-status is-open">
-    <i data-lucide="door-open" aria-hidden="true"></i>
-    <div>
-      <strong>Shop is open</strong>
-      <p>
-        Opened {{ open_session.opened_at|date:"d M Y · H:i" }}
-        by {{ open_session.opened_by.user.get_full_name|default:open_session.opened_by.user.username }}
-      </p>
-    </div>
-  </div>
-
-  {% if open_summary %}
-  <section class="shop-day-board" aria-label="Today’s till balances">
-    <article class="shop-day-board-card">
-      <p class="shop-day-board-label">Opening</p>
-      <strong>{{ open_summary.opening_total|floatformat:0 }}</strong>
-      <ul>
-        <li><span>Cash</span><em>{{ open_summary.opening_cash|floatformat:0 }}</em></li>
-        <li><span>M-Pesa</span><em>{{ open_summary.opening_mpesa|floatformat:0 }}</em></li>
-        <li><span>Credit</span><em>{{ open_summary.opening_credit|floatformat:0 }}</em></li>
+  {% if is_open and open_summary %}
+  <section class="shop-day-live" aria-label="Money in till now">
+    <div class="shop-day-live-hero">
+      <div class="shop-day-live-top">
+        <p class="shop-day-live-label">In till now</p>
+        <p class="shop-day-live-currency">KSh</p>
+      </div>
+      <strong class="shop-day-live-total">{{ open_summary.expected_total|floatformat:0 }}</strong>
+      <ul class="shop-day-live-split">
+        <li>
+          <span>Cash</span>
+          <em>{{ open_summary.expected_cash|floatformat:0 }}</em>
+        </li>
+        <li>
+          <span>M-Pesa</span>
+          <em>{{ open_summary.expected_mpesa|floatformat:0 }}</em>
+        </li>
+        <li>
+          <span>Credit</span>
+          <em>{{ open_summary.expected_credit|floatformat:0 }}</em>
+        </li>
       </ul>
-    </article>
-    <article class="shop-day-board-card">
-      <p class="shop-day-board-label">Activity</p>
-      <strong>{{ open_summary.sales_total|floatformat:0 }}</strong>
+    </div>
+    <details class="shop-day-live-detail">
+      <summary>
+        <span>How this was calculated</span>
+        <i data-lucide="chevron-down" aria-hidden="true"></i>
+      </summary>
       <ul>
+        <li><span>Opened with</span><em>{{ open_summary.opening_total|floatformat:0 }}</em></li>
         <li><span>Cash sales</span><em>{{ open_summary.cash_sales|floatformat:0 }}</em></li>
         <li><span>M-Pesa sales</span><em>{{ open_summary.mpesa_sales|floatformat:0 }}</em></li>
-        <li><span>Expenses</span><em>{{ open_summary.expenses|floatformat:0 }}</em></li>
+        <li><span>Expenses paid</span><em>{{ open_summary.expenses_paid|floatformat:0 }}</em></li>
+        <li><span>Owner drawings</span><em>{{ open_summary.drawings_paid|floatformat:0 }}</em></li>
+        <li><span>Suppliers paid</span><em>{{ open_summary.suppliers_paid|floatformat:0 }}</em></li>
       </ul>
-    </article>
-    <article class="shop-day-board-card is-expected">
-      <p class="shop-day-board-label">Expected now</p>
-      <strong>{{ open_summary.expected_total|floatformat:0 }}</strong>
-      <ul>
-        <li><span>Cash</span><em>{{ open_summary.expected_cash|floatformat:0 }}</em></li>
-        <li><span>M-Pesa</span><em>{{ open_summary.expected_mpesa|floatformat:0 }}</em></li>
-        <li><span>Credit</span><em>{{ open_summary.expected_credit|floatformat:0 }}</em></li>
-      </ul>
-    </article>
+      <p class="shop-day-live-meta">
+        Opened {{ open_session.opened_at|date:"d M · H:i" }}
+        by {{ open_session.opened_by.user.get_full_name|default:open_session.opened_by.user.username }}
+      </p>
+    </details>
   </section>
-  {% endif %}
-  {% else %}
+  {% elif not is_open %}
   <div class="shop-day-status">
-    <i data-lucide="door-closed" aria-hidden="true"></i>
+    <span class="shop-day-status-icon" aria-hidden="true">
+      <i data-lucide="door-closed"></i>
+    </span>
     <div>
       <strong>Shop is closed</strong>
       <p>
         {% if last_closed %}
-        Last closed {{ last_closed.closed_at|date:"d M Y · H:i" }}
+        Last close {{ last_closed.closed_at|date:"d M · H:i" }}
         · Cash {{ last_closed.closing_cash|floatformat:0 }}
         · M-Pesa {{ last_closed.closing_mpesa|floatformat:0 }}
         · Credit {{ last_closed.closing_credit|floatformat:0 }}
         {% else %}
-        Enter opening balances to start trading. Each day is saved below.
+        No day recorded yet.
         {% endif %}
       </p>
     </div>
@@ -103,28 +106,33 @@
 
   <form
     method="post"
-    class="shop-day-form"
+    class="shop-day-form shop-day-form--primary"
     data-shop-day-form
     novalidate
   >
     {% csrf_token %}
 
     <div class="pos-settings-group-head shop-day-form-head">
-      <h3>{% if is_open %}Closing balances{% else %}Opening balances{% endif %}</h3>
-      <p>
-        {% if is_open %}
-        Count the till and save closing balances for this day.
-        {% elif last_closed %}
-        Prefills from last closing · edit if needed · whole shillings
-        {% else %}
-        Whole shillings · confirm stock · staff ID
-        {% endif %}
-      </p>
+      <div class="shop-day-form-title">
+        <span class="shop-day-step">{% if is_open %}1{% else %}★{% endif %}</span>
+        <div>
+          <h3>{% if is_open %}Close shop{% else %}Open shop{% endif %}</h3>
+          <p>
+            {% if is_open %}
+            Count cash, M-Pesa, and credit, then confirm with staff ID.
+            {% elif last_closed %}
+            Prefills from last close — change if the till is different.
+            {% else %}
+            Enter cash, M-Pesa, and credit to start.
+            {% endif %}
+          </p>
+        </div>
+      </div>
     </div>
 
     <div class="shop-day-balances">
       <label class="shop-cart-input">
-        <span>{% if is_open %}Closing{% else %}Opening{% endif %} cash</span>
+        <span>Cash</span>
         <input
           type="number"
           name="cash_amount"
@@ -137,7 +145,7 @@
         >
       </label>
       <label class="shop-cart-input">
-        <span>{% if is_open %}Closing{% else %}Opening{% endif %} M-Pesa</span>
+        <span>M-Pesa</span>
         <input
           type="number"
           name="mpesa_amount"
@@ -150,7 +158,7 @@
         >
       </label>
       <label class="shop-cart-input">
-        <span>{% if is_open %}Closing{% else %}Opening{% endif %} credit</span>
+        <span>Credit</span>
         <input
           type="number"
           name="credit_amount"
@@ -164,129 +172,173 @@
       </label>
     </div>
 
-    <label class="shop-cart-check shop-day-confirm">
-      <input
-        type="checkbox"
-        name="stock_confirmed"
-        value="1"
-        data-stock-confirmed
-        {% if form_data.stock_confirmed %}checked{% endif %}
-        required
-      >
-      <span>I confirm stock is up to date</span>
-    </label>
+    <div class="shop-day-form-footer">
+      <label class="shop-cart-check shop-day-confirm">
+        <input
+          type="checkbox"
+          name="stock_confirmed"
+          value="1"
+          data-stock-confirmed
+          {% if form_data.stock_confirmed %}checked{% endif %}
+          required
+        >
+        <span>Stock is up to date</span>
+      </label>
 
-    <label class="shop-cart-input">
-      <span>Staff ID (6 digits)</span>
-      <input
-        type="text"
-        name="login_code"
-        inputmode="numeric"
-        maxlength="6"
-        autocomplete="one-time-code"
-        placeholder="Enter 6-digit staff ID"
-        data-day-login-code
-        value="{{ form_data.login_code }}"
-        required
-      >
-    </label>
-    <p class="shop-cart-status" data-day-status>
-      Enter an active staff member’s 6-digit ID to
-      {% if is_open %}close{% else %}open{% endif %} the shop.
-    </p>
+      <label class="shop-cart-input">
+        <span>Staff ID</span>
+        <input
+          type="text"
+          name="login_code"
+          inputmode="numeric"
+          maxlength="6"
+          autocomplete="one-time-code"
+          placeholder="6-digit staff ID"
+          data-day-login-code
+          value="{{ form_data.login_code }}"
+          required
+        >
+      </label>
+      <p class="shop-cart-status" data-day-status>
+        Enter staff ID to {% if is_open %}close{% else %}open{% endif %}.
+      </p>
 
-    <div class="shop-day-actions">
-      <a
-        class="btn btn--ghost"
-        href="{% url 'employees:my_shop_workspace' shop.id %}"
-      >
-        Cancel
-      </a>
-      <button
-        type="submit"
-        class="btn btn--primary"
-        data-day-submit
-        disabled
-      >
-        {% if is_open %}Close shop{% else %}Open shop{% endif %}
-      </button>
+      <div class="shop-day-actions">
+        <a class="btn btn--ghost" href="{% url 'employees:my_shop_workspace' shop.id %}">Back</a>
+        <button type="submit" class="btn btn--primary" data-day-submit disabled>
+          {% if is_open %}Close shop{% else %}Open shop{% endif %}
+        </button>
+      </div>
     </div>
   </form>
 
-  <section class="shop-day-history" aria-labelledby="day-records-title">
-    <div class="shop-day-history-head">
-      <h3 id="day-records-title">Opening &amp; closing balances</h3>
-      <p>Saved open/close records for {{ shop.name }} — newest first.</p>
+  {% if is_open and can_record_drawing %}
+  <section class="shop-day-drawings" aria-label="Owner drawings">
+    {% if drawing_errors %}
+    <div class="form-alert" role="alert">
+      {% for error in drawing_errors %}
+      <p>{{ error }}</p>
+      {% endfor %}
     </div>
+    {% endif %}
+
+    <form
+      method="post"
+      class="shop-day-form shop-day-form--drawing"
+      data-shop-day-drawing-form
+      novalidate
+    >
+      {% csrf_token %}
+      <input type="hidden" name="action" value="drawing">
+
+      <div class="pos-settings-group-head shop-day-form-head">
+        <div class="shop-day-form-title">
+          <span class="shop-day-step is-soft">2</span>
+          <div>
+            <h3>Take owner drawing</h3>
+            <p>Optional · cash out for the owner · updates till now</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="shop-day-form-footer">
+        <div class="shop-day-balances shop-day-balances--drawing">
+          <label class="shop-cart-input">
+            <span>Amount</span>
+            <input
+              type="number"
+              name="amount"
+              min="1"
+              step="1"
+              inputmode="numeric"
+              required
+              value="{{ drawing_data.amount }}"
+              placeholder="0"
+              data-drawing-amount
+            >
+          </label>
+          <label class="shop-cart-input">
+            <span>Staff ID</span>
+            <input
+              type="text"
+              name="login_code"
+              inputmode="numeric"
+              maxlength="6"
+              autocomplete="one-time-code"
+              placeholder="6-digit staff ID"
+              data-drawing-login-code
+              value="{{ drawing_data.login_code }}"
+              required
+            >
+          </label>
+        </div>
+        <input type="hidden" name="name" value="{{ drawing_data.name|default:'OWNER DRAWING' }}" data-drawing-name>
+
+        <p class="shop-cart-status" data-drawing-status>
+          Enter staff ID to record the drawing.
+        </p>
+
+        <div class="shop-day-actions">
+          <button type="submit" class="btn btn--ghost" data-drawing-submit disabled>
+            Record drawing
+          </button>
+        </div>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  <details class="shop-day-history" {% if not day_sessions %}open{% endif %}>
+    <summary id="day-records-title">
+      <span class="shop-day-history-label">
+        <i data-lucide="history" aria-hidden="true"></i>
+        Day history
+      </span>
+      {% if day_session_count %}<span class="shop-day-history-count">{{ day_session_count }}</span>{% endif %}
+    </summary>
 
     {% if day_sessions %}
     <div class="item-table-wrap shop-day-table-wrap">
       <table class="shop-day-table">
         <thead>
           <tr>
-            <th>Status</th>
-            <th>Opened</th>
+            <th>Day</th>
             <th>Opening</th>
-            <th>Closed</th>
             <th>Closing</th>
-            <th>Variance</th>
+            <th>Diff</th>
           </tr>
         </thead>
         <tbody>
           {% for row in day_sessions %}
           <tr{% if row.is_open %} class="is-open"{% endif %}>
-            <td data-label="Status">
+            <td data-label="Day">
               {% if row.is_open %}
               <span class="shop-day-pill is-open">Open</span>
               {% else %}
               <span class="shop-day-pill is-closed">Closed</span>
               {% endif %}
-            </td>
-            <td data-label="Opened">
-              <strong>{{ row.opened_at|date:"d M Y · H:i" }}</strong>
-              <span class="shop-day-table-sub">
-                {{ row.opened_by.user.get_full_name|default:row.opened_by.user.username }}
-              </span>
+              <strong>{{ row.opened_at|date:"d M · H:i" }}</strong>
+              {% if row.closed_at %}
+              <span class="shop-day-table-sub">to {{ row.closed_at|date:"H:i" }}</span>
+              {% endif %}
             </td>
             <td class="shop-day-table-balances" data-label="Opening">
               <strong class="shop-day-table-total">{{ row.opening_total|floatformat:0 }}</strong>
-              <span>Cash {{ row.opening_cash|floatformat:0 }}</span>
-              <span>M-Pesa {{ row.opening_mpesa|floatformat:0 }}</span>
-              <span>Credit {{ row.opening_credit|floatformat:0 }}</span>
-            </td>
-            <td data-label="Closed">
-              {% if row.closed_at %}
-              <strong>{{ row.closed_at|date:"d M Y · H:i" }}</strong>
-              <span class="shop-day-table-sub">
-                {% if row.closed_by %}
-                {{ row.closed_by.user.get_full_name|default:row.closed_by.user.username }}
-                {% else %}
-                —
-                {% endif %}
-              </span>
-              {% else %}
-              <span class="shop-day-table-sub">Still open</span>
-              {% endif %}
+              <span>C {{ row.opening_cash|floatformat:0 }} · M {{ row.opening_mpesa|floatformat:0 }} · Cr {{ row.opening_credit|floatformat:0 }}</span>
             </td>
             <td class="shop-day-table-balances" data-label="Closing">
               {% if row.closed_at %}
               <strong class="shop-day-table-total">{{ row.closing_total|floatformat:0 }}</strong>
-              <span>Cash {{ row.closing_cash|floatformat:0 }}</span>
-              <span>M-Pesa {{ row.closing_mpesa|floatformat:0 }}</span>
-              <span>Credit {{ row.closing_credit|floatformat:0 }}</span>
+              <span>C {{ row.closing_cash|floatformat:0 }} · M {{ row.closing_mpesa|floatformat:0 }} · Cr {{ row.closing_credit|floatformat:0 }}</span>
               {% else %}
               <span class="shop-day-table-sub">Expected {{ row.expected_total|floatformat:0 }}</span>
               {% endif %}
             </td>
-            <td data-label="Variance">
+            <td data-label="Diff">
               {% if row.closed_at and row.total_variance is not None %}
               <strong class="shop-day-variance{% if row.total_variance > 0 %} is-over{% elif row.total_variance < 0 %} is-under{% endif %}">
                 {% if row.total_variance > 0 %}+{% endif %}{{ row.total_variance|floatformat:0 }}
               </strong>
-              <span class="shop-day-table-sub">
-                Cash {% if row.cash_variance > 0 %}+{% endif %}{{ row.cash_variance|floatformat:0 }}
-                · M-Pesa {% if row.mpesa_variance > 0 %}+{% endif %}{{ row.mpesa_variance|floatformat:0 }}
-              </span>
               {% else %}
               <span class="shop-day-table-sub">—</span>
               {% endif %}
@@ -297,15 +349,13 @@
       </table>
     </div>
     {% else %}
-    <p class="shop-day-history-empty">
-      No opening/closing balance records yet. Open the shop to create the first day.
-    </p>
+    <p class="shop-day-history-empty">No days recorded yet.</p>
     {% endif %}
-  </section>
+  </details>
 </section>
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/my-shop-day.js' %}?v=3"></script>
+<script src="{% static 'js/my-shop-day.js' %}?v=7"></script>
 {% endblock %}

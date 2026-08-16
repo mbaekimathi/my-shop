@@ -13,6 +13,7 @@ from .models import (
     ItemSerialStatus,
     ShopItemPrice,
     ShopStock,
+    StockEntrySource,
     StockMovement,
     StockMovementLine,
     StockMovementType,
@@ -1869,13 +1870,19 @@ def _assert_shop_allowed(profile, shop, *, label: str = "shop"):
         raise ValidationError(f"You are not allocated to the selected {label}.")
 
 
-def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
+def apply_stock_movement(
+    profile, movement_type: str, data, *, entry_source: str = ""
+) -> StockMovement:
     if movement_type not in {
         StockMovementType.IN,
         StockMovementType.OUT,
         StockMovementType.REQUEST,
     }:
         raise ValidationError("Unknown stock action.")
+
+    source = (entry_source or "").strip()
+    if source and source not in {choice.value for choice in StockEntrySource}:
+        raise ValidationError("Unknown stock entry source.")
 
     line_payloads = _parse_movement_lines(data, movement_type)
 
@@ -2042,6 +2049,7 @@ def apply_stock_movement(profile, movement_type: str, data) -> StockMovement:
 
             movement = StockMovement.objects.create(
                 movement_type=movement_type,
+                entry_source=source,
                 shop=shop,
                 requested_from_shop=requested_from,
                 request_status=(

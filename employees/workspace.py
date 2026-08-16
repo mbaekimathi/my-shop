@@ -1142,6 +1142,31 @@ def sidebar_for_analytics_detail(role, *, profile=None):
     )
 
 
+def sidebar_for_stock(role, *, profile=None):
+    """Focused sidebar for stock analytics."""
+    dashboard_url = reverse(role_home_url_name(role))
+    return resolve_sidebar_hrefs(
+        {
+            "page": "analytics",
+            "dashboard_url": dashboard_url,
+            "primary": [
+                _link("Dashboard", "layout-dashboard", href=dashboard_url),
+                _link(
+                    "Supply analytics",
+                    "truck",
+                    href=analytics_section_url(role, "supply"),
+                ),
+            ],
+            "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
 def sidebar_for_suppliers(role, *, profile=None):
     """Focused sidebar for the suppliers workspace — All suppliers only."""
     dashboard_url = reverse(role_home_url_name(role))
@@ -1155,6 +1180,43 @@ def sidebar_for_suppliers(role, *, profile=None):
                     "truck",
                     href=analytics_section_url(role, "suppliers"),
                     active=True,
+                ),
+            ],
+            "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
+def sidebar_for_credits(role, *, profile=None, active="credits"):
+    """Focused sidebar for the credits workspace — Dashboard, Credits, audits."""
+    dashboard_url = reverse(role_home_url_name(role))
+    credits_href = analytics_section_url(role, "credits")
+    audits_href = reverse(
+        "employees:analytics_credit_audits",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+    return resolve_sidebar_hrefs(
+        {
+            "page": "analytics",
+            "dashboard_url": dashboard_url,
+            "primary": [
+                _link("Dashboard", "layout-dashboard", href=dashboard_url),
+                _link(
+                    "Credits",
+                    "credit-card",
+                    href=credits_href,
+                    active=active == "credits",
+                ),
+                _link(
+                    "Credit audits",
+                    "history",
+                    href=audits_href,
+                    active=active == "audits",
                 ),
             ],
             "footer": _footer_site_links(

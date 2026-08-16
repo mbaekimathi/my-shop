@@ -13,7 +13,7 @@ from employees.access import active_employee_required, get_profile_for_request
 from employees.countries import COUNTRY_DIAL_CODES
 from employees.workspace import sidebar_for_stock_management
 
-from .models import Item, ShopItemPrice, ShopStock
+from .models import Item, ShopItemPrice, ShopStock, StockEntrySource
 from .services import (
     actionable_shops_for_profile,
     apply_serial_status,
@@ -2193,7 +2193,12 @@ def stock_management(request, profile, meta, module, page_sidebar):
             requested_from_shop_id=requested_from_post,
         )
         try:
-            apply_stock_movement(profile, action_mode, request.POST)
+            apply_stock_movement(
+                profile,
+                action_mode,
+                request.POST,
+                entry_source=StockEntrySource.STOCK_MANAGEMENT,
+            )
         except ValidationError as exc:
             errors = (
                 list(exc.messages)

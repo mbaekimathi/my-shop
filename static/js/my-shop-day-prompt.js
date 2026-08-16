@@ -197,10 +197,35 @@
   });
   stockInput?.addEventListener("change", syncSubmit);
 
+  const balanceFields = () =>
+    ["cash_amount", "mpesa_amount", "credit_amount"].map((name) => ({
+      name,
+      input: form.querySelector(`[name="${name}"]`),
+      label:
+        name === "cash_amount"
+          ? "cash"
+          : name === "mpesa_amount"
+            ? "M-Pesa"
+            : "credit",
+    }));
+
+  const missingBalances = () =>
+    balanceFields()
+      .filter(({ input }) => !(input?.value || "").trim())
+      .map(({ label }) => `Enter the ${label} balance.`);
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     showErrors([]);
 
+    const balanceErrors = missingBalances();
+    if (balanceErrors.length) {
+      showErrors(balanceErrors);
+      balanceFields()
+        .find(({ input }) => !(input?.value || "").trim())
+        ?.input?.focus();
+      return;
+    }
     if (!stockInput?.checked) {
       setStatus("Confirm that stock is up to date first.", { error: true });
       return;
