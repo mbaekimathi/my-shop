@@ -2054,18 +2054,77 @@ def _within_created_range(qs, start, end, *, lookup: str = "created_at"):
     return qs
 
 
-def _filters_context(profile, request, *, allow_all_time=False):
+def _credits_active_shop_ids(profile, request, filter_shops, selected_shop_ids):
+    """
+    Credits must not silently include every shop for company-wide roles.
+
+    Order: explicit shop filter → allocated shops → session active shop.
+    Shop-scoped staff keep their full allocation when no shop is selected.
+    """
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+    from shops.session import resolve_active_shop
+
+    allowed_ids = [shop.pk for shop in filter_shops]
+    allowed_set = set(allowed_ids)
+    if selected_shop_ids:
+        return [pk for pk in selected_shop_ids if pk in allowed_set]
+
+    if getattr(profile, "role", None) in SHOP_ASSIGNABLE_ROLES:
+        return allowed_ids
+
+    assigned_ids = [
+        int(pk)
+        for pk in profile.assigned_shops.filter(
+            pk__in=allowed_set,
+            is_hidden=False,
+            is_suspended=False,
+        )
+        .order_by("name")
+        .values_list("pk", flat=True)
+    ]
+    if assigned_ids:
+        return assigned_ids
+
+    active = resolve_active_shop(request, profile)
+    if active is not None and active.pk in allowed_set:
+        return [active.pk]
+
+    return []
+
+
+def _filters_context(profile, request, *, allow_all_time=False, shop_scope: str = "default"):
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+
     date_filter = _date_filter_context(request, allow_all_time=allow_all_time)
     filter_shops = actionable_shops_for_profile(profile)
     shops_by_id = {shop.pk: shop for shop in filter_shops}
-    selected_shop_ids = _parse_shop_ids(request.GET.getlist("shop_id"), shops_by_id)
-    active_shop_ids = selected_shop_ids or [shop.pk for shop in filter_shops]
+    raw_shop_ids = request.GET.getlist("shop_id")
+    has_shop_param = "shop_id" in request.GET
+    selected_shop_ids = _parse_shop_ids(raw_shop_ids, shops_by_id)
+    credits_require_shop_pick = False
+    if shop_scope == "allocated":
+        shop_assignable = getattr(profile, "role", None) in SHOP_ASSIGNABLE_ROLES
+        credits_require_shop_pick = not shop_assignable
+        if has_shop_param and credits_require_shop_pick:
+            # Explicit filter choice, including "Select a shop" → no shops.
+            active_shop_ids = selected_shop_ids
+        else:
+            active_shop_ids = _credits_active_shop_ids(
+                profile, request, filter_shops, selected_shop_ids
+            )
+            # Keep a single resolved shop selected in the filter UI.
+            if not selected_shop_ids and len(active_shop_ids) == 1:
+                selected_shop_ids = list(active_shop_ids)
+    else:
+        active_shop_ids = selected_shop_ids or [shop.pk for shop in filter_shops]
     range_type = date_filter.get("range_type") or date_filter.get("report_range") or "day"
     return {
         **date_filter,
         "filter_shops": filter_shops,
         "selected_shop_ids": selected_shop_ids,
         "active_shop_ids": active_shop_ids,
+        "credits_shop_scoped": shop_scope == "allocated",
+        "credits_require_shop_pick": credits_require_shop_pick,
         "report_range_label": {
             "all": "All time",
             "day": "Day",
@@ -2089,6 +2148,7 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         profile,
         request,
         allow_all_time=section["slug"] in ("suppliers", "expenses", "supply"),
+        shop_scope="allocated" if section["slug"] == "credits" else "default",
     )
     filters["role"] = profile.role
     filters["query"] = request.GET.urlencode()
@@ -5751,7 +5811,11 @@ def _build_credits(filters):
                 "Credits by shop",
                 columns,
                 table_rows,
-                empty="No credits for selected shops and period.",
+                empty=(
+                    "Select a shop to view credits."
+                    if not shop_ids
+                    else "No credits for selected shops and period."
+                ),
                 shop_grid=True,
                 footnote=(
                     "Paid, Due, and Total are credit receipts in this period. "
@@ -5900,7 +5964,11 @@ def _build_clients(filters):
                 "Client credit accounts by shop",
                 columns,
                 client_rows,
-                empty="No credit clients in the selected shops.",
+                empty=(
+                    "Select a shop to view credit clients."
+                    if not shop_ids
+                    else "No credit clients in the selected shops."
+                ),
                 footnote=(
                     "Each client row opens the account ledger. "
                     "Txns and Owed are all-time for the selected shops, not the "

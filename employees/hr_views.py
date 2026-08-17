@@ -12,7 +12,7 @@ from shops.models import Shop
 from .access import get_profile_for_request, hr_staff_required, role_url_segment
 from .countries import COUNTRY_DIAL_CODES
 from .models import (
-    SHOP_ASSIGNABLE_ROLES,
+    SHOP_ALLOCATION_ROLES,
     EmployeeModulePermission,
     EmployeeProfile,
     EmployeeRole,
@@ -109,7 +109,7 @@ def _managed_employees_queryset():
 
 def _shop_assignable_employees_queryset():
     return (
-        EmployeeProfile.objects.filter(role__in=SHOP_ASSIGNABLE_ROLES)
+        EmployeeProfile.objects.filter(role__in=SHOP_ALLOCATION_ROLES)
         .exclude(status=EmployeeStatus.PENDING_APPROVAL)
         .select_related("user")
         .prefetch_related("assigned_shops")
@@ -152,7 +152,7 @@ def _parse_shop_ids(raw_values):
 
 def _assign_employee_shops(target, shop_ids_raw):
     """Replace delegated shops for a shop-scoped employee. Returns (ok, message)."""
-    if target.role not in SHOP_ASSIGNABLE_ROLES:
+    if target.role not in SHOP_ALLOCATION_ROLES:
         return False, (
             f"{target.employee_id} has role {target.get_role_display()}, "
             "which does not use delegated shops."

@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 
 from .countries import COUNTRY_DIAL_CODES
-from .models import SHOP_ASSIGNABLE_ROLES, EmployeeProfile, EmployeeRole, EmployeeStatus
+from .models import SHOP_ALLOCATION_ROLES, SHOP_ASSIGNABLE_ROLES, EmployeeProfile, EmployeeRole, EmployeeStatus
 
 EMPLOYEE_ID_RE = re.compile(r"^\d{6}$")
 PHONE_RE = re.compile(r"^[\d\s\-()]{7,20}$")
@@ -332,7 +332,7 @@ def update_employee(
                 "updated_at",
             ]
         )
-        if form_data["role"] not in SHOP_ASSIGNABLE_ROLES:
+        if form_data["role"] not in SHOP_ALLOCATION_ROLES:
             profile.assigned_shops.clear()
 
     if new_employee_id != previous_employee_id:

@@ -67,7 +67,7 @@ from .analytics_views import analytics_dashboard
 from communications.views import communications_dashboard
 from .countries import COUNTRY_DIAL_CODES
 from .hr_views import hr_management_page
-from .models import EmployeeProfile, EmployeeRole, EmployeeStatus, SHOP_ASSIGNABLE_ROLES
+from .models import EmployeeProfile, EmployeeRole, EmployeeStatus, SHOP_ALLOCATION_ROLES
 from .pagination import page_url, pagination_links, redirect_query_page
 from .services import (
     EMPLOYEE_ID_RE,
@@ -681,7 +681,7 @@ def update_employee_access(request, employee_id):
 
     update_fields = ["role", "status", "updated_at"]
     cleared_shops = False
-    if new_role not in SHOP_ASSIGNABLE_ROLES and target.assigned_shops.exists():
+    if new_role not in SHOP_ALLOCATION_ROLES and target.assigned_shops.exists():
         target.assigned_shops.clear()
         cleared_shops = True
         changed.append("shops cleared")

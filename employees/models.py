@@ -33,6 +33,14 @@ SHOP_ASSIGNABLE_ROLES = frozenset(
     }
 )
 
+# Roles that may be limited to assigned shops for operational data (e.g. Credits).
+SHOP_ALLOCATION_ROLES = frozenset(
+    {
+        *SHOP_ASSIGNABLE_ROLES,
+        EmployeeRole.IT_SUPPORT,
+    }
+)
+
 
 class EmployeeProfile(models.Model):
     user = models.OneToOneField(

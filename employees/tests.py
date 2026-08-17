@@ -437,3 +437,100 @@ class ClientCreditAccountTableTests(TestCase):
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIn("/analytics/credits/clients/", row[0]["href"])
         self.assertIn("all-time", page["tables"][0]["footnote"])
+
+
+class CreditsShopScopeTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="840011",
+            password="credit-pass",
+            email="it-credits@test.local",
+            first_name="IT",
+            last_name="SUPPORT",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840011",
+            phone_country_code="+254",
+            phone_number="700000941",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop_a = Shop.objects.create(
+            name="CREDITS SCOPE A",
+            location="NAIROBI",
+            email="scope-a@test.local",
+            phone_number="0700000941",
+            login_code="840111",
+            password_hash="x",
+            created_by=self.it,
+        )
+        self.shop_b = Shop.objects.create(
+            name="CREDITS SCOPE B",
+            location="MOMBASA",
+            email="scope-b@test.local",
+            phone_number="0700000942",
+            login_code="840112",
+            password_hash="x",
+            created_by=self.it,
+        )
+
+    def _request(self, **get):
+        from django.test import RequestFactory
+
+        request = RequestFactory().get("/it-support/analytics/credits/", get)
+        request.user = self.user
+        request.session = {}
+        return request
+
+    def test_it_support_credits_do_not_default_to_all_shops(self):
+        from employees.analytics_services import _filters_context
+
+        filters = _filters_context(self.it, self._request(), shop_scope="allocated")
+        self.assertEqual(filters["active_shop_ids"], [])
+        self.assertTrue(filters["credits_require_shop_pick"])
+
+    def test_it_support_credits_use_allocated_shops(self):
+        from employees.analytics_services import _filters_context
+
+        self.it.assigned_shops.add(self.shop_a)
+        filters = _filters_context(self.it, self._request(), shop_scope="allocated")
+        self.assertEqual(filters["active_shop_ids"], [self.shop_a.pk])
+        self.assertEqual(filters["selected_shop_ids"], [self.shop_a.pk])
+
+    def test_it_support_credits_use_session_shop_when_unallocated(self):
+        from employees.analytics_services import _filters_context
+        from shops.session import SESSION_SHOP_KEY
+
+        request = self._request()
+        request.session[SESSION_SHOP_KEY] = str(self.shop_b.pk)
+        filters = _filters_context(self.it, request, shop_scope="allocated")
+        self.assertEqual(filters["active_shop_ids"], [self.shop_b.pk])
+
+    def test_shop_manager_credits_keep_allocated_shops(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import _filters_context
+
+        manager_user = User.objects.create_user(
+            username="840012",
+            password="credit-pass",
+            email="mgr-credits@test.local",
+            is_active=True,
+        )
+        manager = EmployeeProfile.objects.create(
+            user=manager_user,
+            employee_id="840012",
+            phone_country_code="+254",
+            phone_number="700000942",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_MANAGER,
+        )
+        manager.assigned_shops.add(self.shop_a)
+        request = RequestFactory().get("/shop-manager/analytics/credits/")
+        request.user = manager_user
+        request.session = {}
+        filters = _filters_context(manager, request, shop_scope="allocated")
+        self.assertEqual(filters["active_shop_ids"], [self.shop_a.pk])
+        self.assertFalse(filters["credits_require_shop_pick"])
