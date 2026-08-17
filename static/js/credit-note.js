@@ -161,6 +161,11 @@
       }
       setPayStatus("Check your phone and enter your M-Pesa PIN…");
       const confirmed = await pollStk(startData.id);
+      if (!confirmed?.success || !confirmed.id) {
+        throw new Error(
+          confirmed?.result_desc || "Payment was not completed on the phone."
+        );
+      }
       if (stkIdInput) stkIdInput.value = confirmed.id;
       setPayStatus("Payment confirmed. Updating your account…");
 

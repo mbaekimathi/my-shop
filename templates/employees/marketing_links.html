@@ -1,0 +1,106 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="workspace-hero" data-animate="rise">
+  <p class="role-eyebrow">
+    <i data-lucide="megaphone" aria-hidden="true"></i>
+    <span>IT Support</span>
+  </p>
+  <h2 class="workspace-hero-title">Marketing links</h2>
+  <p class="workspace-hero-copy">
+    Public shop websites for ads and campaigns. Copy a link, then send it with Twilio.
+  </p>
+</section>
+
+<section class="item-panel item-panel--dense marketing-panel" data-animate="rise" data-delay="1" data-marketing-links>
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Shop websites</h2>
+        <p>Each branch has its own catalogue, prices, and WhatsApp enquiry.</p>
+      </div>
+      <div class="marketing-panel__head-actions">
+        <p class="item-count" data-marketing-count>{{ marketing_links|length }} link{{ marketing_links|length|pluralize }}</p>
+        {% if marketing_links %}
+        <button class="btn btn--ghost marketing-copy-btn" type="button" data-copy-all>
+          <i data-lucide="copy" aria-hidden="true"></i>
+          <span data-copy-label>Copy all</span>
+        </button>
+        {% endif %}
+      </div>
+    </div>
+    {% if marketing_links %}
+    <div class="item-search">
+      <label class="item-search-field">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input
+          type="search"
+          placeholder="Search shops…"
+          autocomplete="off"
+          data-marketing-search
+          aria-label="Search marketing links"
+        >
+      </label>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if marketing_links %}
+  <ul class="marketing-list">
+    {% for link in marketing_links %}
+    <li
+      class="marketing-card"
+      data-marketing-card
+      data-url="{{ link.url }}"
+      data-search="{{ link.name|lower }} {{ link.location|lower }}"
+    >
+      <div class="marketing-card__media" aria-hidden="true">
+        {% if link.image_url %}
+        <img src="{{ link.image_url }}" alt="" width="72" height="72">
+        {% else %}
+        <i data-lucide="store"></i>
+        {% endif %}
+      </div>
+      <div class="marketing-card__body">
+        <div class="marketing-card__title">
+          <h3>{{ link.name }}</h3>
+          <p>{{ link.location }}{% if link.phone %} · {{ link.phone }}{% endif %}</p>
+        </div>
+        <label class="marketing-card__url">
+          <span class="visually-hidden">Website URL for {{ link.name }}</span>
+          <input type="text" value="{{ link.url }}" readonly data-marketing-url>
+        </label>
+        <div class="marketing-card__actions">
+          <button class="btn btn--ghost marketing-copy-btn" type="button" data-copy-url="{{ link.url }}">
+            <i data-lucide="copy" aria-hidden="true"></i>
+            <span data-copy-label>Copy</span>
+          </button>
+          <a class="btn btn--ghost" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+            <i data-lucide="external-link" aria-hidden="true"></i>
+            <span>Open</span>
+          </a>
+        </div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <div class="item-search-empty" data-marketing-empty hidden>
+    <i data-lucide="search-x" aria-hidden="true"></i>
+    <p>No shops match your search.</p>
+  </div>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="store" aria-hidden="true"></i>
+    <p>No public shops yet. Register an active shop to get a marketing website link.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/marketing-links.js' %}?v=1"></script>
+{% endblock %}

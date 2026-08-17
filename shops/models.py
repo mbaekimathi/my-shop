@@ -670,12 +670,21 @@ class CompanyCommunicationsSettings(models.Model):
     auto_quotation = models.BooleanField(default=False)
     auto_payment_reminder = models.BooleanField(default=False)
     auto_credit_due = models.BooleanField(default=False)
+    auto_shop_website = models.BooleanField(default=False)
+    auto_stock_supplier = models.BooleanField(default=False)
+    auto_expense_supplier = models.BooleanField(default=False)
+    auto_item_catalogue = models.BooleanField(default=False)
+    automation_audience_type = models.CharField(max_length=20, blank=True, default="sale")
+    automation_last_purchase_days = models.CharField(max_length=8, blank=True, default="")
+    automation_shop_id = models.PositiveIntegerField(null=True, blank=True)
 
-    # WhatsApp Cloud API
-    whatsapp_phone_number_id = models.CharField(max_length=64, blank=True, default="")
-    whatsapp_business_account_id = models.CharField(max_length=64, blank=True, default="")
-    whatsapp_access_token = models.CharField(max_length=512, blank=True, default="")
-    whatsapp_from_number = models.CharField(max_length=32, blank=True, default="")
+    # Twilio (SMS + optional WhatsApp)
+    twilio_account_sid = models.CharField(max_length=64, blank=True, default="")
+    twilio_auth_token = models.CharField(max_length=128, blank=True, default="")
+    twilio_from_number = models.CharField(max_length=32, blank=True, default="")
+    twilio_whatsapp_from = models.CharField(max_length=40, blank=True, default="")
+    twilio_whatsapp_join_code = models.CharField(max_length=80, blank=True, default="")
+    twilio_whatsapp_lids = models.JSONField(default=dict, blank=True)
 
     # SMS / text
     sms_provider = models.CharField(
@@ -695,17 +704,24 @@ class CompanyCommunicationsSettings(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = "Company WhatsApp settings"
-        verbose_name_plural = "Company WhatsApp settings"
+        verbose_name = "Company Twilio settings"
+        verbose_name_plural = "Company Twilio settings"
 
     def __str__(self):
-        return "Company WhatsApp settings"
+        return "Company Twilio settings"
+
+    def has_twilio_credentials(self) -> bool:
+        return bool(
+            (self.twilio_account_sid or "").strip()
+            and (self.twilio_auth_token or "").strip()
+            and (
+                (self.twilio_from_number or "").strip()
+                or (self.twilio_whatsapp_from or "").strip()
+            )
+        )
 
     def has_whatsapp_credentials(self) -> bool:
-        return bool(
-            (self.whatsapp_phone_number_id or "").strip()
-            and (self.whatsapp_access_token or "").strip()
-        )
+        return self.has_twilio_credentials()
 
     def has_sms_credentials(self) -> bool:
         return bool(

@@ -12,7 +12,6 @@ from django.utils.dateparse import parse_datetime
 from shops.models import Client
 from shops.services import _normalize_phone
 
-from .bridge import _request
 from .constants import MSG_SENT
 from .ephemeral import (
     bust_outbound_index,
@@ -162,21 +161,8 @@ def _match_app_outbound(
 
 
 def _fetch_bridge_items() -> tuple[bool, list[dict[str, Any]], str]:
-    """Live-scan WhatsApp via the bridge, then return inbound items."""
-    try:
-        # Prefer an explicit live Store scan.
-        result = _request("POST", "/inbound/scan", timeout=30.0)
-        if result.get("unreachable"):
-            return False, [], result.get("error") or "WhatsApp helper is not running."
-        if result.get("_http_status") in (404, 405) or (
-            not result.get("ok", True) and "items" not in result
-        ):
-            result = _request("GET", "/inbound", timeout=30.0)
-    except Exception as exc:
-        return False, [], str(exc)
-    if result.get("unreachable") or not result.get("ok", True):
-        return False, [], result.get("error") or "Could not fetch replies."
-    return True, list(result.get("items") or []), ""
+    """Personal WhatsApp inbox was removed; Twilio inbound is not wired yet."""
+    return True, [], ""
 
 
 def _matched_replies(

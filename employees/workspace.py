@@ -35,10 +35,10 @@ ROLE_PAGE_META = {
         "icon": "scan-barcode",
     },
     EmployeeRole.IT_SUPPORT: {
-        "title": "IT Support",
-        "headline": "Support workspace",
-        "summary": "Your IT support workspace.",
-        "icon": "monitor-cog",
+        "title": "Marketing links",
+        "headline": "Marketing links",
+        "summary": "Copy and share each shop's public website.",
+        "icon": "megaphone",
     },
 }
 
@@ -78,7 +78,7 @@ DASHBOARD_MODULES = (
         "slug": "whatsapp",
         "label": "WhatsApp",
         "icon": "messages-square",
-        "summary": "WhatsApp client broadcasts from POS purchase history.",
+        "summary": "Choose what to send automatically and who receives it on WhatsApp.",
     },
 )
 
@@ -473,13 +473,24 @@ def _module_sidebar_links(role, *, active_slug=None, profile=None):
 def sidebar_for_role_dashboard(role, profile=None, *, active_slug=None):
     """Sidebar links for role home / dashboard pages."""
     dashboard_url = reverse(role_home_url_name(role))
+    primary = []
+    if role == EmployeeRole.IT_SUPPORT:
+        primary.append(
+            _link(
+                "Marketing links",
+                "megaphone",
+                href=dashboard_url,
+                active=active_slug in (None, "marketing"),
+            )
+        )
+    primary.extend(
+        _module_sidebar_links(role, active_slug=active_slug, profile=profile)
+    )
     return resolve_sidebar_hrefs(
         {
             "page": "role_dashboard",
             "dashboard_url": dashboard_url,
-            "primary": _module_sidebar_links(
-                role, active_slug=active_slug, profile=profile
-            ),
+            "primary": primary,
             "footer": _footer_site_links(
                 profile=profile,
                 tail=[
@@ -604,6 +615,15 @@ def sidebar_for_my_shop(
                         "receipt",
                         href=reverse("employees:my_shop_receipts", kwargs={"shop_id": shop.pk}),
                         active=active == "receipts",
+                    )
+                )
+            if _allowed("workspace"):
+                primary.append(
+                    _link(
+                        "Shop website",
+                        "globe",
+                        href=reverse("employees:shop_website", kwargs={"shop_id": shop.pk}),
+                        active=active == "website",
                     )
                 )
         elif active == "stock_requests" and _allowed("stock_requests"):
@@ -1290,6 +1310,17 @@ def sidebar_for_communications(role, *, active_view="home", profile=None):
                 active=active_view == "home",
             )
         )
+        primary.append(
+            _link(
+                "Share items",
+                "images",
+                href=reverse(
+                    "employees:whatsapp_catalogue",
+                    kwargs={"role_segment": segment},
+                ),
+                active=active_view == "catalogue",
+            )
+        )
     if profile is None or employee_may(profile, "settings", "whatsapp"):
         primary.append(
             _link(
@@ -1417,9 +1448,9 @@ SETTINGS_SECTIONS = (
     },
     {
         "slug": "whatsapp",
-        "label": "WhatsApp settings",
+        "label": "Twilio",
         "icon": "messages-square",
-        "summary": "API credentials for WhatsApp, Message, and Text channels.",
+        "summary": "Twilio Account SID, Auth Token, and From number for SMS or WhatsApp.",
     },
     {
         "slug": "working-hours",

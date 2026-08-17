@@ -71,11 +71,11 @@
       if (submitBtn) submitBtn.disabled = true;
       try {
         const data = await postSettings(new URLSearchParams(new FormData(form)));
-        if (kind === "whatsapp") {
+        if (kind === "twilio" || kind === "whatsapp") {
           setStatus(
             "[data-comms-whatsapp-status]",
-            Boolean(data.has_whatsapp_credentials),
-            "Enter phone number ID and access token, then save."
+            Boolean(data.has_twilio_credentials || data.has_whatsapp_credentials),
+            "Enter Account SID, Auth Token, and a From number, then save."
           );
         } else if (kind === "message") {
           setStatus(

@@ -30,12 +30,14 @@ MSG_PENDING = "pending"
 MSG_SENT = "sent"
 MSG_FAILED = "failed"
 MSG_MANUAL_REVIEW = "manual_review"
+MSG_CANCELLED = "cancelled"
 
 MSG_STATUS_CHOICES = (
     (MSG_PENDING, "Pending"),
     (MSG_SENT, "Sent"),
     (MSG_FAILED, "Failed"),
     (MSG_MANUAL_REVIEW, "Manual review"),
+    (MSG_CANCELLED, "Cancelled"),
 )
 
 # Lifetime spend tiers (KES) based on sum of sale/credit receipt totals.
@@ -76,7 +78,8 @@ TRANSACTION_MIN_CHOICES = (
 
 SEND_DELAY_MIN_SECONDS = 5
 SEND_DELAY_MAX_SECONDS = 20
-MAX_SEND_ATTEMPTS = 2  # initial + one retry
+MAX_SEND_ATTEMPTS = 8
+SEND_RETRY_BACKOFF_SECONDS = (0.8, 1.6, 3.0, 5.0, 8.0, 12.0, 16.0)
 
 PLACEHOLDERS = (
     "{first_name}",
@@ -95,7 +98,6 @@ AUDIENCE_LEADS = "leads"
 AUDIENCE_WHATSAPP = "whatsapp"
 
 AUDIENCE_TYPE_CHOICES = (
-    (AUDIENCE_WHATSAPP, "WhatsApp"),
     (AUDIENCE_SALE, "Sales"),
     (AUDIENCE_CREDIT, "Credits"),
     (AUDIENCE_QUOTATION, "Quotations"),

@@ -11,18 +11,26 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from .bridge import send_whatsapp_message
+from .twilio import (
+    _db_safe_error,
+    friendly_send_error,
+    is_auth_error,
+    is_retryable_error,
+    send_whatsapp_message,
+)
 from .campaigns import refresh_campaign_counts
 from .constants import (
+    CAMPAIGN_CANCELLED,
     CAMPAIGN_DONE,
     CAMPAIGN_QUEUED,
     CAMPAIGN_SENDING,
     MAX_SEND_ATTEMPTS,
-    MSG_MANUAL_REVIEW,
+    MSG_FAILED,
     MSG_PENDING,
     MSG_SENT,
     SEND_DELAY_MAX_SECONDS,
     SEND_DELAY_MIN_SECONDS,
+    SEND_RETRY_BACKOFF_SECONDS,
 )
 from .models import BroadcastCampaign, OutboundMessage
 from .replies import note_outbound_sent
@@ -32,7 +40,12 @@ logger = logging.getLogger(__name__)
 
 def _finish_campaign_if_complete(campaign: BroadcastCampaign) -> bool:
     """Mark done + drop image when no pending messages remain. Returns True if done."""
+    if campaign.status == CAMPAIGN_CANCELLED:
+        return True
     refresh_campaign_counts(campaign)
+    campaign.refresh_from_db()
+    if campaign.status == CAMPAIGN_CANCELLED:
+        return True
     still_pending = OutboundMessage.objects.filter(
         campaign_id=campaign.pk, status=MSG_PENDING
     ).exists()
@@ -60,14 +73,22 @@ def process_campaign_sync(
     *,
     max_messages: int | None = None,
 ) -> str:
-    campaign = BroadcastCampaign.objects.filter(pk=campaign_id).first()
-    if campaign is None:
-        return f"campaign {campaign_id} missing"
-
-    campaign.status = CAMPAIGN_SENDING
-    if not campaign.started_at:
-        campaign.started_at = timezone.now()
-    campaign.save(update_fields=["status", "started_at"])
+    with transaction.atomic():
+        campaign = (
+            BroadcastCampaign.objects.select_for_update()
+            .filter(pk=campaign_id)
+            .first()
+        )
+        if campaign is None:
+            return f"campaign {campaign_id} missing"
+        if campaign.status == CAMPAIGN_CANCELLED:
+            return f"campaign {campaign_id} cancelled"
+        if campaign.status not in {CAMPAIGN_QUEUED, CAMPAIGN_SENDING}:
+            return f"campaign {campaign_id} {campaign.status}"
+        campaign.status = CAMPAIGN_SENDING
+        if not campaign.started_at:
+            campaign.started_at = timezone.now()
+        campaign.save(update_fields=["status", "started_at"])
 
     pending_qs = OutboundMessage.objects.filter(
         campaign_id=campaign_id, status=MSG_PENDING
@@ -77,16 +98,24 @@ def process_campaign_sync(
     else:
         pending = list(pending_qs)
 
+    attempted = 0
     for index, message in enumerate(pending):
+        campaign.refresh_from_db(fields=["status"])
+        if campaign.status == CAMPAIGN_CANCELLED:
+            return f"campaign {campaign_id} cancelled"
         if index > 0:
             delay = random.uniform(SEND_DELAY_MIN_SECONDS, SEND_DELAY_MAX_SECONDS)
             time.sleep(delay)
+            campaign.refresh_from_db(fields=["status"])
+            if campaign.status == CAMPAIGN_CANCELLED:
+                return f"campaign {campaign_id} cancelled"
         _send_one(message)
+        attempted += 1
 
     campaign = BroadcastCampaign.objects.get(pk=campaign_id)
     if _finish_campaign_if_complete(campaign):
         return f"campaign {campaign_id} done"
-    return f"campaign {campaign_id} progress ({len(pending)} attempted)"
+    return f"campaign {campaign_id} progress ({attempted} attempted)"
 
 
 def process_pending_queue(*, limit: int | None = None) -> dict[str, int | str]:
@@ -134,10 +163,20 @@ def process_pending_queue(*, limit: int | None = None) -> dict[str, int | str]:
 
 
 def _send_one(message: OutboundMessage) -> None:
-    """Send once; on failure retry once after another random delay, then manual_review."""
+    """Retry a send until Twilio accepts it, or until the error cannot succeed."""
+    last_error = ""
     for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
+        campaign_status = (
+            BroadcastCampaign.objects.filter(pk=message.campaign_id)
+            .values_list("status", flat=True)
+            .first()
+        )
+        if campaign_status == CAMPAIGN_CANCELLED:
+            return
         if attempt > 1:
-            delay = random.uniform(SEND_DELAY_MIN_SECONDS, SEND_DELAY_MAX_SECONDS)
+            delay = SEND_RETRY_BACKOFF_SECONDS[
+                min(attempt - 2, len(SEND_RETRY_BACKOFF_SECONDS) - 1)
+            ]
             time.sleep(delay)
 
         media = (message.image_path or "").strip() or None
@@ -151,8 +190,14 @@ def _send_one(message: OutboundMessage) -> None:
         else:
             kwargs["phone"] = dest
         result = send_whatsapp_message(**kwargs)
+        last_error = _db_safe_error(
+            friendly_send_error(result.get("error") or "Send failed")
+        )
+        retryable = bool(result.get("retryable", is_retryable_error(last_error)))
         with transaction.atomic():
             locked = OutboundMessage.objects.select_for_update().get(pk=message.pk)
+            if locked.status != MSG_PENDING:
+                return
             locked.attempt_count = attempt
             if result.get("ok"):
                 locked.status = MSG_SENT
@@ -160,7 +205,7 @@ def _send_one(message: OutboundMessage) -> None:
                 locked.sent_at = timezone.now()
                 locked.wa_message_id = str(result.get("messageId") or "")[:200]
                 locked.wa_chat_id = str(result.get("chatId") or "")[:120]
-                # Drop bulky payload after send — matching only needs ids/phone/time.
+                locked.provider_status = str(result.get("status") or "queued")[:40]
                 locked.body = ""
                 locked.image_path = ""
                 locked.save(
@@ -171,6 +216,7 @@ def _send_one(message: OutboundMessage) -> None:
                         "sent_at",
                         "wa_message_id",
                         "wa_chat_id",
+                        "provider_status",
                         "body",
                         "image_path",
                         "updated_at",
@@ -179,22 +225,30 @@ def _send_one(message: OutboundMessage) -> None:
                 note_outbound_sent()
                 return
 
-            locked.error = (result.get("error") or "Send failed")[:2000]
-            if attempt >= MAX_SEND_ATTEMPTS:
-                locked.status = MSG_MANUAL_REVIEW
+            locked.error = last_error
+            stop_now = is_auth_error(last_error) or not retryable or attempt >= MAX_SEND_ATTEMPTS
+            if stop_now:
+                locked.status = MSG_FAILED
             else:
-                locked.status = MSG_PENDING
+                locked.error = ""
             locked.save(
                 update_fields=["attempt_count", "status", "error", "updated_at"]
             )
 
-        if attempt >= MAX_SEND_ATTEMPTS:
+        if is_auth_error(last_error) or not retryable:
             logger.warning(
-                "OutboundMessage %s flagged for manual review: %s",
+                "OutboundMessage %s failed without retry: %s",
                 message.pk,
-                result.get("error"),
+                last_error,
             )
             return
+
+    logger.warning(
+        "OutboundMessage %s failed after %s attempts: %s",
+        message.pk,
+        MAX_SEND_ATTEMPTS,
+        last_error,
+    )
 
 
 @shared_task(

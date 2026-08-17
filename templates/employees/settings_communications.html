@@ -15,7 +15,7 @@
       <div>
         <p class="stock-kicker">Settings · WhatsApp</p>
         <h2>{{ meta.headline }}</h2>
-        <p>Set up the APIs used to send WhatsApp, Message, and Text to clients.</p>
+        <p>Set up Twilio and optional Message / SMS fallbacks.</p>
       </div>
     </div>
   </header>
@@ -23,68 +23,82 @@
   <div class="pos-settings-groups daraja-settings-groups">
     <section class="pos-settings-group">
       <div class="pos-settings-group-head">
-        <h3>WhatsApp API</h3>
-        <p>Meta WhatsApp Cloud API credentials.</p>
+        <h3>Twilio</h3>
+        <p>HTTPS WhatsApp via Twilio. Works on shared hosting — no VPS helper.</p>
       </div>
-      <form class="daraja-credentials-form" data-comms-form="whatsapp" novalidate>
-        <input type="hidden" name="action" value="save_whatsapp_settings">
+      <form class="daraja-credentials-form" data-comms-form="twilio" novalidate>
+        <input type="hidden" name="action" value="save_twilio_settings">
         <div class="daraja-status" data-comms-whatsapp-status>
-          {% if comms.has_whatsapp_credentials %}
+          {% if comms.has_twilio_credentials %}
           <span class="daraja-status-pill is-ok">API configured</span>
           {% else %}
           <span class="daraja-status-pill">Not configured</span>
-          <em>Enter phone number ID and access token, then save.</em>
+          <em>Enter Account SID, Auth Token, and WhatsApp from, then save.</em>
           {% endif %}
         </div>
         <div class="daraja-fields">
           <label class="daraja-field">
-            <span>Phone number ID</span>
+            <span>Account SID</span>
             <input
               type="text"
-              name="whatsapp_phone_number_id"
+              name="twilio_account_sid"
               autocomplete="off"
               spellcheck="false"
-              placeholder="From Meta Developer"
-              value="{{ comms.whatsapp_phone_number_id }}"
+              placeholder="ACxxxxxxxx"
+              value="{{ comms.twilio_account_sid }}"
               required
             >
           </label>
           <label class="daraja-field">
-            <span>Business account ID</span>
+            <span>WhatsApp from</span>
             <input
               type="text"
-              name="whatsapp_business_account_id"
+              name="twilio_whatsapp_from"
               autocomplete="off"
-              spellcheck="false"
-              placeholder="Optional"
-              value="{{ comms.whatsapp_business_account_id }}"
+              placeholder="whatsapp:+14155238886"
+              value="{{ comms.twilio_whatsapp_from }}"
             >
           </label>
           <label class="daraja-field">
-            <span>Display / from number</span>
+            <span>From number (SMS fallback)</span>
             <input
               type="text"
-              name="whatsapp_from_number"
+              name="twilio_from_number"
               autocomplete="off"
               inputmode="tel"
-              placeholder="e.g. 2547XXXXXXXX"
-              value="{{ comms.whatsapp_from_number }}"
+              placeholder="e.g. +14155552671"
+              value="{{ comms.twilio_from_number }}"
+            >
+          </label>
+          <label class="daraja-field">
+            <span>Sandbox join code</span>
+            <input
+              type="text"
+              name="twilio_whatsapp_join_code"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="join something-something"
+              value="{{ comms.twilio_whatsapp_join_code }}"
             >
           </label>
           <label class="daraja-field daraja-field--wide">
-            <span>Access token</span>
+            <span>Auth Token</span>
             <input
               type="password"
-              name="whatsapp_access_token"
+              name="twilio_auth_token"
               autocomplete="new-password"
               spellcheck="false"
-              placeholder="{% if comms.whatsapp_access_token_set %}Saved — enter a new token to replace{% else %}Permanent or temporary token{% endif %}"
-              {% if not comms.whatsapp_access_token_set %}required{% endif %}
+              placeholder="{% if comms.twilio_auth_token_set %}Saved — enter a new token to replace{% else %}Twilio Auth Token{% endif %}"
+              {% if not comms.twilio_auth_token_set %}required{% endif %}
             >
           </label>
         </div>
+        <p class="daraja-help">
+          Copy the sandbox number from Twilio Console → Messaging → Try it out → Send a WhatsApp message
+          (usually <code>whatsapp:+14155238886</code>). Recipients must send the join code to that number first.
+        </p>
         <div class="daraja-form-actions">
-          <button type="submit" class="btn btn--primary">Save WhatsApp API</button>
+          <button type="submit" class="btn btn--primary">Save Twilio</button>
           <p class="daraja-form-message" data-comms-message hidden></p>
         </div>
       </form>
@@ -225,5 +239,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/communications-settings.js' %}?v=2"></script>
+<script src="{% static 'js/communications-settings.js' %}?v=3"></script>
 {% endblock %}

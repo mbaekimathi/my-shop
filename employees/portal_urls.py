@@ -12,6 +12,16 @@ urlpatterns = [
     path("shops/login/", shop_views.shop_portal_login, name="shop_login"),
     path("shops/logout/", shop_views.shop_portal_logout, name="shop_logout"),
     path(
+        "shop/<int:shop_id>/",
+        shop_views.shop_website,
+        name="shop_website",
+    ),
+    path(
+        "shop/<int:shop_id>/items/<int:item_id>/suggestions/",
+        shop_views.shop_website_suggestions,
+        name="shop_website_suggestions",
+    ),
+    path(
         "my-shop/<int:shop_id>/",
         shop_views.my_shop_workspace,
         name="my_shop_workspace",
@@ -120,6 +130,11 @@ urlpatterns = [
         "mpesa/daraja/callback/",
         shop_views.daraja_stk_callback,
         name="daraja_stk_callback",
+    ),
+    path(
+        "twilio/status/",
+        communications_views.twilio_status_callback,
+        name="twilio_status",
     ),
     path(
         "my-shop/<int:shop_id>/print-relay/",
@@ -305,6 +320,11 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/<slug:section>/",
         analytics_views.analytics_section,
         name="analytics_section",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/catalogue/",
+        communications_views.whatsapp_catalogue,
+        name="whatsapp_catalogue",
     ),
     path(
         "<role_segment:role_segment>/whatsapp/api/status/",

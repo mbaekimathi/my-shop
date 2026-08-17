@@ -17,8 +17,11 @@ class OutboundMessageInline(admin.TabularInline):
         "client_name",
         "phone",
         "status",
+        "provider_status",
         "attempt_count",
         "sent_at",
+        "delivered_at",
+        "read_at",
         "error",
     )
     can_delete = False

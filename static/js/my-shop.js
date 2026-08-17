@@ -1508,6 +1508,7 @@
       .map((c) => c.trim())
       .filter(Boolean);
     const checkoutEnabled = cartRoot.dataset.posCheckout === "1";
+    const creditWhatsapp = cartRoot.getAttribute("data-credit-whatsapp") === "1";
     const defaultStatusMessage = (() => {
       if (!checkoutEnabled) {
         return "Checkout is disabled in POS settings.";
@@ -2057,8 +2058,10 @@
 
     const syncClientRequirements = () => {
       const hasSerials = cartHasSerialTracked();
-      const required = selectedKind() !== "sale";
-      if (clientPhoneInput) clientPhoneInput.required = false;
+      const kind = selectedKind();
+      const required = kind !== "sale";
+      const phoneRequired = kind === "credit" && creditWhatsapp;
+      if (clientPhoneInput) clientPhoneInput.required = phoneRequired;
       if (clientNameInput) clientNameInput.required = false;
       if (clientBlock) clientBlock.classList.toggle("is-required", required);
       if (clientHeading) {
@@ -2068,7 +2071,10 @@
       }
       if (clientNote) {
         clientNote.hidden = false;
-        if (required) {
+        if (kind === "credit" && creditWhatsapp) {
+          clientNote.textContent =
+            "Enter the client phone number. A credit sale notice is sent on WhatsApp.";
+        } else if (required) {
           clientNote.textContent = "Enter a name, a phone number, or both.";
         } else if (hasSerials) {
           clientNote.textContent =
@@ -2079,7 +2085,9 @@
         }
       }
       if (clientPhoneLabel) {
-        clientPhoneLabel.innerHTML = "Client phone <em>(optional)</em>";
+        clientPhoneLabel.innerHTML = phoneRequired
+          ? 'Client phone <span class="shop-serial-required" aria-hidden="true">*</span>'
+          : "Client phone <em>(optional)</em>";
       }
       if (clientNameLabel) {
         clientNameLabel.innerHTML = "Client full name <em>(optional)</em>";
@@ -2448,6 +2456,14 @@
       if (kind === "credit" || kind === "quotation") {
         const phone = normalizeClientPhoneField({ force: true });
         const name = (clientNameInput?.value || "").trim();
+        if (kind === "credit" && creditWhatsapp && !phone) {
+          setCartStatus(
+            "Enter the client phone number so the credit sale can be sent on WhatsApp.",
+            { error: true }
+          );
+          focusCartClientFields();
+          return;
+        }
         if (!phone && !name) {
           setCartStatus(
             "Enter a client name, a phone number, or both for credit and quotation.",

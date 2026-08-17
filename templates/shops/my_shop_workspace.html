@@ -38,6 +38,7 @@
   data-pos-receipt-font-weight="{{ pos_flags.receipt_font_weight }}"
   data-pos-receipt-font-weight-css="{{ pos_flags.receipt_font_weight_css }}"
   data-pos-compulsory-print="{% if pos_settings.compulsory_print_on_sale %}1{% else %}0{% endif %}"
+  data-credit-whatsapp="{% if credit_whatsapp %}1{% else %}0{% endif %}"
   data-print-relay-url="{{ print_relay_url }}"
   data-print-channels="{{ pos_flags.print_channels|join:',' }}"
   {% if not checkout_enabled %}data-pos-checkout-blocked="1"{% endif %}
@@ -622,7 +623,7 @@
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=64"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=66"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=34"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=matrix46"></script>

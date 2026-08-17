@@ -232,12 +232,6 @@ CELERY_TIMEZONE = "Africa/Nairobi"
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "300"))
 
-# Personal WhatsApp bridge (local on VPS, or remote URL for cPanel → helper host)
-WHATSAPP_BRIDGE_URL = os.getenv("WHATSAPP_BRIDGE_URL", "http://127.0.0.1:3100").strip()
-WHATSAPP_BRIDGE_SECRET = os.getenv("WHATSAPP_BRIDGE_SECRET", "").strip()
-WHATSAPP_BRIDGE_PORT = int(os.getenv("WHATSAPP_BRIDGE_PORT", "3100"))
-# Auto-start local helper when unreachable (default on for localhost bridge).
-WHATSAPP_BRIDGE_AUTOSTART = (os.getenv("WHATSAPP_BRIDGE_AUTOSTART") or "auto").strip()
 WHATSAPP_MEDIA_MAX_BYTES = int(os.getenv("WHATSAPP_MEDIA_MAX_BYTES", str(4 * 1024 * 1024)))
 # auto | celery | inline | cron — see communications.campaigns.enqueue_campaign
 COMMS_SEND_MODE = (os.getenv("COMMS_SEND_MODE", "auto") or "auto").strip().lower()
@@ -279,6 +273,9 @@ STORAGES = {
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# Google Maps Places (storefront delivery location search).
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
 
 # Auto: serve media from Django on hosted installs unless explicitly disabled.
 SERVE_MEDIA_IN_PRODUCTION = resolve_bool(

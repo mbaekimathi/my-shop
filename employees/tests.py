@@ -534,3 +534,53 @@ class CreditsShopScopeTests(TestCase):
         filters = _filters_context(manager, request, shop_scope="allocated")
         self.assertEqual(filters["active_shop_ids"], [self.shop_a.pk])
         self.assertFalse(filters["credits_require_shop_pick"])
+
+
+class MarketingLinksPageTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="850011",
+            password="mkt-pass",
+            email="it-marketing@test.local",
+            first_name="IT",
+            last_name="LINKS",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="850011",
+            phone_country_code="+254",
+            phone_number="700000951",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.live = Shop.objects.create(
+            name="LIVE MARKET SHOP",
+            location="NAIROBI",
+            email="live-mkt@test.local",
+            phone_number="0700000951",
+            login_code="850111",
+            password_hash="x",
+            created_by=self.it,
+        )
+        Shop.objects.create(
+            name="HIDDEN MARKET SHOP",
+            location="KISUMU",
+            email="hidden-mkt@test.local",
+            phone_number="0700000952",
+            login_code="850112",
+            password_hash="x",
+            created_by=self.it,
+            is_hidden=True,
+        )
+
+    def test_it_support_home_lists_public_shop_website(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Marketing links")
+        self.assertContains(response, "LIVE MARKET SHOP")
+        self.assertContains(response, f"/shop/{self.live.pk}/")
+        self.assertNotContains(response, "HIDDEN MARKET SHOP")
+        labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
+        self.assertEqual(labels[0], "Marketing links")

@@ -5,7 +5,7 @@ from django.db import models
 
 def item_image_path(instance, filename):
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
-    return f"items/images/{instance.pk or uuid.uuid4().hex}_{ext}"
+    return f"items/images/{instance.pk or uuid.uuid4().hex}.{ext}"
 
 
 class Item(models.Model):

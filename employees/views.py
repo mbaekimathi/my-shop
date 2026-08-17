@@ -1,3 +1,5 @@
+import re
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
@@ -9,8 +11,6 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods
-
-import re
 
 from items.views import (
     item_management,
@@ -46,9 +46,9 @@ from shops.services import (
     update_company_profile,
     save_working_hours_settings,
     update_daraja_settings,
+    update_twilio_settings,
     update_message_channel_settings,
     update_sms_settings,
-    update_whatsapp_settings,
 )
 from shops.views import shop_management
 
@@ -722,7 +722,42 @@ def role_shop_cashier(request):
 
 @role_required(EmployeeRole.IT_SUPPORT)
 def role_it_support(request):
-    return _render_role_page(request, EmployeeRole.IT_SUPPORT)
+    from shops.models import Shop
+
+    profile = get_profile_for_request(request)
+    meta = ROLE_PAGE_META[EmployeeRole.IT_SUPPORT]
+    shops = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+    )
+    marketing_links = []
+    for shop in shops:
+        url = request.build_absolute_uri(
+            reverse("employees:shop_website", kwargs={"shop_id": shop.pk})
+        )
+        marketing_links.append(
+            {
+                "id": shop.pk,
+                "name": shop.name,
+                "location": shop.location,
+                "phone": shop.phone_number,
+                "image_url": shop.image.url if shop.image else "",
+                "url": url,
+            }
+        )
+    return render(
+        request,
+        "employees/marketing_links.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_role_dashboard(
+                EmployeeRole.IT_SUPPORT, profile=profile, active_slug="marketing"
+            ),
+            "marketing_links": marketing_links,
+        },
+    )
 
 
 @active_employee_required
@@ -852,14 +887,27 @@ def _company_communications_settings(request, context):
     if request.method == "POST":
         action = (request.POST.get("action") or "").strip()
 
-        if action == "save_whatsapp_settings":
+        if action == "save_twilio_settings":
             try:
-                row = update_whatsapp_settings(
-                    phone_number_id=request.POST.get("whatsapp_phone_number_id") or "",
-                    business_account_id=request.POST.get("whatsapp_business_account_id")
-                    or "",
-                    access_token=request.POST.get("whatsapp_access_token") or "",
-                    from_number=request.POST.get("whatsapp_from_number") or "",
+                from communications.twilio import verify_twilio_credentials
+
+                posted_token = (request.POST.get("twilio_auth_token") or "").strip()
+                token = posted_token or (row.twilio_auth_token or "")
+                check = verify_twilio_credentials(
+                    request.POST.get("twilio_account_sid") or "",
+                    token,
+                )
+                if check.get("auth_failed"):
+                    raise ValidationError(
+                        check.get("error")
+                        or "Twilio rejected these credentials. Check the Account SID and Auth Token."
+                    )
+                row = update_twilio_settings(
+                    account_sid=request.POST.get("twilio_account_sid") or "",
+                    auth_token=request.POST.get("twilio_auth_token") or "",
+                    from_number=request.POST.get("twilio_from_number") or "",
+                    whatsapp_from=request.POST.get("twilio_whatsapp_from") or "",
+                    join_code=request.POST.get("twilio_whatsapp_join_code") or "",
                 )
             except ValidationError as exc:
                 message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -871,11 +919,11 @@ def _company_communications_settings(request, context):
                 return JsonResponse(
                     {
                         "ok": True,
-                        "message": "WhatsApp API saved.",
+                        "message": "Twilio saved.",
                         **communications_settings_as_dict(row),
                     }
                 )
-            messages.success(request, "WhatsApp API saved.")
+            messages.success(request, "Twilio saved.")
             return redirect(request.path)
 
         if action == "save_sms_settings":

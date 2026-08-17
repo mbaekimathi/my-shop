@@ -101,7 +101,7 @@
   let historyOpen = false;
   let sideTab = "inbox";
   let replyUnread = Number(els.historyBadge?.textContent || 0) || 0;
-  let audienceType = "whatsapp";
+  let audienceType = "sale";
   let selectedGroups = new Set(["groups"]);
   let selectedItems = new Set();
   let poolRecipients = [];
@@ -117,22 +117,21 @@
         text
       )
     ) {
-      return "WhatsApp helper is not running on this computer.";
+      return "Twilio is not configured. Save credentials in Settings.";
     }
     return text;
   };
 
   const statusLabel = (status) => {
-    if (status === "connected") return "Connected";
-    if (status === "qr_pending") return "Scan QR";
-    return "Not connected";
+    if (status === "connected") return "Ready";
+    return "Not configured";
   };
 
   const humanStatus = (status) => {
     const map = {
-      connected: "Connected",
-      disconnected: "Not connected",
-      qr_pending: "Scan QR",
+      connected: "Ready",
+      disconnected: "Not configured",
+      qr_pending: "Not configured",
       queued: "Queued",
       sending: "Sending",
       done: "Done",
@@ -337,7 +336,7 @@
     if (els.phone) {
       els.phone.textContent = data.wa_phone
         ? `+${String(data.wa_phone).replace(/^\+/, "")}`
-        : "Link a device to start";
+        : "Save Twilio in Settings";
     }
     root.classList.toggle("is-linked", connected);
     if (els.logout) els.logout.hidden = bridgeStatus === "disconnected";
@@ -383,14 +382,14 @@
     if (els.connectHelp) {
       if (connected) {
         els.connectHelp.textContent =
-          "Your personal WhatsApp number is linked and ready to send.";
+          "Twilio is configured and ready to send.";
       } else if (bridgeStatus === "qr_pending") {
         els.connectHelp.textContent =
-          "Scan the QR code below with the WhatsApp app on your phone.";
+          "Save Twilio credentials in Settings.";
       } else {
         els.connectHelp.textContent =
           data.connect_help ||
-          "WhatsApp is starting automatically. Scan the QR when it appears.";
+          "Open Settings → Twilio and save Account SID, Auth Token, and a From number.";
       }
     }
 
@@ -462,10 +461,7 @@
     els.send.disabled = !(connected && picks > 0 && hasMessage);
     if (els.sendHint) {
       if (!connected) {
-        els.sendHint.textContent =
-          bridgeStatus === "qr_pending"
-            ? "Scan the QR code first."
-            : "Connect WhatsApp first (step 1).";
+        els.sendHint.textContent = "Save Twilio in Settings first (step 1).";
       } else if (picks <= 0) {
         els.sendHint.textContent = "Select at least one contact in this group.";
       } else if (!hasMessage) {
@@ -648,7 +644,7 @@
   }
 
   function setAudience(type) {
-    audienceType = type || "whatsapp";
+    audienceType = type || "sale";
     selectedGroups =
       audienceType === "whatsapp"
         ? new Set([els.waType?.value === "contacts" ? "contacts" : "groups"])
@@ -1309,7 +1305,7 @@
   }
   // Start on WhatsApp (Simple). Switching to shop lists turns on Advanced helpers.
   setMode(savedMode === "advanced" ? "advanced" : "simple", { refresh: false });
-  setAudience("whatsapp");
+  setAudience("sale");
   setSideTab("inbox");
 
   refreshStatus();

@@ -105,9 +105,12 @@ class OutboundMessage(models.Model):
     attempt_count = models.PositiveSmallIntegerField(default=0)
     error = models.TextField(blank=True, default="")
     wa_chat_id = models.CharField(max_length=120, blank=True, default="", db_index=True)
-    wa_message_id = models.CharField(max_length=200, blank=True, default="")
+    wa_message_id = models.CharField(max_length=200, blank=True, default="", db_index=True)
+    provider_status = models.CharField(max_length=40, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     sent_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

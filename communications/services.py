@@ -181,9 +181,9 @@ def _parse_client_ids(raw) -> list[int]:
 
 def parse_filters(raw: dict | None) -> dict[str, Any]:
     raw = raw or {}
-    audience_type = (raw.get("audience_type") or AUDIENCE_WHATSAPP).strip().lower()
-    if audience_type not in AUDIENCE_TYPES:
-        audience_type = AUDIENCE_WHATSAPP
+    audience_type = (raw.get("audience_type") or AUDIENCE_SALE).strip().lower()
+    if audience_type not in AUDIENCE_TYPES or audience_type == AUDIENCE_WHATSAPP:
+        audience_type = AUDIENCE_SALE
 
     category = (raw.get("category") or "").strip()
     # Support multi-select product category groups
@@ -195,9 +195,6 @@ def parse_filters(raw: dict | None) -> dict[str, Any]:
     categories = [str(c).strip() for c in categories if str(c).strip()]
     if category and category not in categories:
         categories = [category, *categories]
-    # WhatsApp defaults to groups when no Contacts/Groups filter is chosen.
-    if audience_type == AUDIENCE_WHATSAPP and not categories:
-        categories = ["groups"]
 
     spend_tier = (raw.get("spend_tier") or "").strip().lower()
     item_ids = _parse_item_ids(raw.get("item_ids") or raw.get("items") or [])
@@ -760,80 +757,8 @@ def _build_recipients_from_clients(
 
 
 def _query_whatsapp_audience(f: dict[str, Any]) -> list[Recipient]:
-    """Contacts and groups from the linked personal WhatsApp account."""
-    from .bridge import fetch_whatsapp_contacts
-
-    payload = fetch_whatsapp_contacts(
-        search=f.get("search") or "",
-        include_groups=True,
-    )
-    if not payload.get("ok"):
-        return []
-
-    categories = set(f.get("categories") or [])
-    if not categories:
-        categories = {"groups"}
-    include_contacts = "contacts" in categories
-    include_groups = "groups" in categories
-    selected = set(f.get("destinations") or [])
-
-    recipients: list[Recipient] = []
-
-    if include_contacts:
-        for row in payload.get("contacts") or []:
-            phone = _normalize_phone(row.get("phone") or "")
-            chat_id = (row.get("chatId") or row.get("id") or "").strip()
-            if not phone and not chat_id:
-                continue
-            if not chat_id and phone:
-                chat_id = f"{phone}@c.us"
-            key = chat_id or phone
-            if selected and key not in selected and phone not in selected:
-                continue
-            name = (row.get("name") or phone or "WhatsApp contact").strip()
-            recipients.append(
-                Recipient(
-                    client_id=None,
-                    full_name=name,
-                    phone=phone or chat_id,
-                    phone_normalized=phone,
-                    last_purchase_at=None,
-                    lifetime_spend=Decimal("0"),
-                    last_product="",
-                    categories=[],
-                    audience_meta=AUDIENCE_WHATSAPP,
-                    group_keys=["contacts"],
-                    chat_id=chat_id,
-                    destination_type="contact",
-                )
-            )
-
-    if include_groups:
-        for row in payload.get("groups") or []:
-            chat_id = (row.get("chatId") or row.get("id") or "").strip()
-            if not chat_id:
-                continue
-            if selected and chat_id not in selected:
-                continue
-            name = (row.get("name") or "WhatsApp group").strip()
-            recipients.append(
-                Recipient(
-                    client_id=None,
-                    full_name=name,
-                    phone=chat_id,
-                    phone_normalized="",
-                    last_purchase_at=None,
-                    lifetime_spend=Decimal("0"),
-                    last_product="",
-                    categories=[],
-                    audience_meta=AUDIENCE_WHATSAPP,
-                    group_keys=["groups"],
-                    chat_id=chat_id,
-                    destination_type="group",
-                )
-            )
-
-    return recipients
+    """Personal WhatsApp contacts/groups were removed with the VPS bridge."""
+    return []
 
 
 def query_recipients(
@@ -982,11 +907,7 @@ def recipients_payload(
         bridge_error = ""
         items = []
         if not both:
-            from .bridge import fetch_whatsapp_contacts
-
-            probe = fetch_whatsapp_contacts(include_groups=True)
-            if not probe.get("ok"):
-                bridge_error = probe.get("error") or "Could not load WhatsApp contacts."
+            bridge_error = ""
     else:
         bridge_error = ""
         kinds = _receipt_kinds_for_audience(f["audience_type"])

@@ -1,0 +1,341 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ shop.name }} | Shop online{% endblock %}
+{% block body_class %}shop-website-page{% endblock %}
+
+{% block extra_head %}
+<meta name="description" content="Browse {{ shop.name }} products and shop-specific prices.">
+{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/shop-website.css' %}?v=13">
+{% endblock %}
+
+{% block body %}
+<main
+  class="storefront"
+  data-storefront
+  data-suggestions-url-template="{{ suggestions_url_template }}"
+  data-shop-name="{{ shop.name }}"
+  data-whatsapp-phone="{{ whatsapp_phone }}"
+>
+  <header class="storefront__header">
+    <a class="storefront__brand" href="#catalogue" aria-label="{{ shop.name }} home">
+      <span class="storefront__brand-mark" aria-hidden="true">S</span>
+      <span>{{ shop.name }}</span>
+    </a>
+    <label class="storefront__search">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input
+        type="search"
+        placeholder="Search items…"
+        autocomplete="off"
+        enterkeyhint="search"
+        data-storefront-search
+        aria-label="Search items"
+      >
+    </label>
+    <button class="storefront__cart-toggle" type="button" data-storefront-cart-open>
+      <span class="storefront__cart-toggle-icon" aria-hidden="true">
+        <i data-lucide="shopping-bag"></i>
+      </span>
+      <span>My list</span>
+      <b data-storefront-cart-count hidden>0</b>
+    </button>
+    {% if shop.phone_number %}
+    <a class="storefront__contact-link" href="tel:{{ shop.phone_number }}">
+      <i data-lucide="phone-call" aria-hidden="true"></i>
+      <span>Contact us</span>
+    </a>
+    {% endif %}
+  </header>
+
+  {% if categories %}
+  <nav class="storefront__nav" aria-label="Catalogue categories">
+    {% for category in categories %}
+    <a href="#{{ category.anchor }}">{{ category.name }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+
+  {% if categories %}
+  <section class="storefront__catalogue" id="catalogue" aria-label="Product catalogue">
+    <div class="storefront__catalogue-heading">
+      <div>
+        <p class="storefront__eyebrow"><span></span> Our catalogue</p>
+        <h2>Find your next favourite.</h2>
+      </div>
+    </div>
+
+    {% for category in categories %}
+    <section class="storefront__category" id="{{ category.anchor }}" data-storefront-category>
+      <div class="storefront__category-heading">
+        <h3>{{ category.name }}</h3>
+        <span data-storefront-category-count>{{ category.items|length }} item{{ category.items|length|pluralize }}</span>
+      </div>
+      <div class="storefront__products">
+        {% for product in category.items %}
+        <article
+          class="storefront__product"
+          data-storefront-product
+          data-search-text="{{ product.name }} {{ product.category }} {{ product.description }}"
+          data-product-id="{{ product.id }}"
+          data-product-name="{{ product.name }}"
+          data-product-price="{{ product.price }}"
+          data-product-image="{{ product.image_url }}"
+          data-product-category="{{ product.category }}"
+        >
+          <div class="storefront__product-image">
+            {% if product.image_url %}
+            <img
+              src="{{ product.image_url }}"
+              alt="{{ product.name }}"
+              loading="lazy"
+              onerror="this.onerror=null;const icon=document.createElement('i');icon.setAttribute('data-lucide','package');icon.setAttribute('aria-hidden','true');this.replaceWith(icon);window.lucide&&window.lucide.createIcons&&window.lucide.createIcons();"
+            >
+            {% else %}
+            <i data-lucide="package" aria-hidden="true"></i>
+            {% endif %}
+            {% if forloop.first and product.sold_quantity %}
+            <span class="storefront__popular">Popular</span>
+            {% endif %}
+          </div>
+          <div class="storefront__product-body">
+            <div>
+              <p class="storefront__product-category">{{ product.category }}</p>
+              <h4>{{ product.name }}</h4>
+              {% if product.description %}
+              <p class="storefront__product-description">{{ product.description }}</p>
+              {% endif %}
+            </div>
+            <div class="storefront__product-footer">
+              <strong>KSh {{ product.price|floatformat:2 }}</strong>
+              <button
+                class="storefront__add"
+                type="button"
+                data-storefront-add
+                aria-label="Add {{ product.name }} to price list"
+              >
+                <i data-lucide="plus" aria-hidden="true"></i>
+                Add
+              </button>
+            </div>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+
+    <div class="storefront__empty storefront__empty--search" data-storefront-no-results hidden>
+      <i data-lucide="search-x" aria-hidden="true"></i>
+      <h2>No items match your search.</h2>
+      <p>Try another name or category.</p>
+    </div>
+  </section>
+  {% else %}
+  <section class="storefront__empty">
+    <i data-lucide="package-open" aria-hidden="true"></i>
+    <h2>Our catalogue is being prepared.</h2>
+    <p>Please contact {{ shop.name }} for current products and prices.</p>
+  </section>
+  {% endif %}
+</main>
+
+<button
+  class="storefront__cart-fab"
+  type="button"
+  data-storefront-cart-open
+  aria-label="Open cart"
+>
+  <span class="storefront__cart-fab-ring" aria-hidden="true"></span>
+  <i data-lucide="shopping-bag" aria-hidden="true"></i>
+  <span class="storefront__cart-fab-count" data-storefront-cart-count hidden>0</span>
+</button>
+
+<div class="storefront__cart-backdrop" data-storefront-cart-close hidden></div>
+<aside class="storefront__cart" data-storefront-cart aria-hidden="true" aria-labelledby="storefront-cart-title">
+  <header class="storefront__cart-head">
+    <div>
+      <p>Your price list</p>
+      <h2 id="storefront-cart-title">Plan your shop.</h2>
+    </div>
+    <button class="storefront__cart-close" type="button" data-storefront-cart-close aria-label="Close price list">
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+  </header>
+  <p class="storefront__cart-help">Adjust quantities to see an estimated total. This does not place an order.</p>
+  <ul class="storefront__cart-lines" data-storefront-cart-lines></ul>
+  <div class="storefront__cart-empty" data-storefront-cart-empty>
+    <i data-lucide="shopping-basket" aria-hidden="true"></i>
+    <p>Tap <strong>Add</strong> on an item to start your list.</p>
+  </div>
+  <section class="storefront__delivery" data-storefront-delivery hidden>
+    <label class="storefront__delivery-toggle">
+      <input type="checkbox" data-delivery-wanted>
+      <span class="storefront__delivery-switch" aria-hidden="true"></span>
+      <span class="storefront__delivery-toggle-copy">
+        <strong>I would like delivery</strong>
+        <small>Add your location if you want these items delivered</small>
+      </span>
+    </label>
+    <div class="storefront__delivery-fields" data-delivery-fields hidden>
+      <label class="storefront__delivery-label" for="storefront-delivery-location">
+        Delivery location
+      </label>
+      <div class="storefront__delivery-search">
+        <i data-lucide="map-pin" aria-hidden="true"></i>
+        <input
+          id="storefront-delivery-location"
+          type="text"
+          placeholder="Search your delivery location…"
+          autocomplete="off"
+          data-delivery-location
+          {% if google_maps_api_key %}data-maps-enabled="1"{% endif %}
+        >
+      </div>
+      <ul
+        class="storefront__delivery-suggestions"
+        data-delivery-suggestions
+        hidden
+        role="listbox"
+        aria-label="Location suggestions"
+      ></ul>
+      <p class="storefront__delivery-hint" data-delivery-hint>
+        {% if google_maps_api_key %}
+        Start typing to search with Google Maps.
+        {% else %}
+        Enter your estate, street, or landmark.
+        {% endif %}
+      </p>
+      <p class="storefront__delivery-selected" data-delivery-selected hidden></p>
+    </div>
+  </section>
+  <footer class="storefront__cart-foot">
+    <div class="storefront__cart-total">
+      <span>Overall estimated total</span>
+      <strong data-storefront-cart-total>KSh 0.00</strong>
+    </div>
+    {% if whatsapp_phone %}
+    <a
+      class="storefront__whatsapp"
+      href="#"
+      data-storefront-whatsapp
+      hidden
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      <span class="storefront__whatsapp-glow" aria-hidden="true"></span>
+      <span class="storefront__whatsapp-icon" aria-hidden="true">
+        <i data-lucide="message-circle"></i>
+      </span>
+      <span class="storefront__whatsapp-copy">
+        <strong>Enquire on WhatsApp</strong>
+        <small data-storefront-whatsapp-summary>
+          Ask {{ shop.name }} about availability
+        </small>
+      </span>
+      <span class="storefront__whatsapp-arrow" aria-hidden="true">
+        <i data-lucide="arrow-up-right"></i>
+      </span>
+    </a>
+    <p class="storefront__whatsapp-hint" data-storefront-whatsapp-hint hidden>
+      Opens WhatsApp with your list, prices, and photo links ready to send.
+    </p>
+    {% endif %}
+  </footer>
+</aside>
+
+<div class="storefront__pair-modal" data-storefront-pair-modal hidden aria-hidden="true">
+  <div class="storefront__pair-backdrop" data-storefront-pair-close></div>
+  <div
+    class="storefront__pair-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="storefront-pair-title"
+  >
+    <button
+      class="storefront__pair-close"
+      type="button"
+      data-storefront-pair-close
+      aria-label="Close suggestions"
+    >
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+    <p class="storefront__pair-kicker">Often bought together</p>
+    <h2 id="storefront-pair-title">Customers also pick these</h2>
+    <p class="storefront__pair-copy" data-storefront-pair-copy>
+      Based on real sales at this shop.
+    </p>
+    <div class="storefront__pair-list" data-storefront-pair-list></div>
+    <button class="storefront__pair-done" type="button" data-storefront-pair-close>
+      Keep browsing
+    </button>
+  </div>
+</div>
+
+<footer class="storefront__footer">
+  <span>© {% now "Y" %} {{ shop.name }}</span>
+  <span>{{ shop.location }}</span>
+  {% if shop.email %}<a href="mailto:{{ shop.email }}">{{ shop.email }}</a>{% endif %}
+</footer>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/shop-website.js' %}?v=16"></script>
+{% if google_maps_api_key %}
+<script>
+  window.__storefrontMapsReady = function () {
+    window.__storefrontMapsLoaded = true;
+    document.dispatchEvent(new CustomEvent("storefront:maps-ready"));
+  };
+</script>
+<script
+  async
+  defer
+  src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=places&callback=__storefrontMapsReady&v=weekly"
+></script>
+{% endif %}
+<script>
+(() => {
+  const root = document.querySelector("[data-storefront]");
+  if (!root) return;
+  const input = root.querySelector("[data-storefront-search]");
+  const empty = root.querySelector("[data-storefront-no-results]");
+  const products = Array.from(root.querySelectorAll("[data-storefront-product]"));
+  const categories = Array.from(root.querySelectorAll("[data-storefront-category]"));
+  let timer = 0;
+
+  const apply = () => {
+    const query = (input?.value || "").trim().toLowerCase();
+    const tokens = query.split(/\s+/).filter(Boolean);
+    let visible = 0;
+
+    products.forEach((product) => {
+      const haystack = (product.getAttribute("data-search-text") || "").toLowerCase();
+      const match = !tokens.length || tokens.every((token) => haystack.includes(token));
+      product.hidden = !match;
+      if (match) visible += 1;
+    });
+
+    categories.forEach((section) => {
+      const count = section.querySelectorAll("[data-storefront-product]:not([hidden])").length;
+      const countEl = section.querySelector("[data-storefront-category-count]");
+      section.hidden = count === 0;
+      if (countEl) {
+        countEl.textContent = `${count} item${count === 1 ? "" : "s"}`;
+      }
+    });
+
+    if (empty) empty.hidden = !(query && visible === 0);
+  };
+
+  input?.addEventListener("input", () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(apply, 80);
+  });
+})();
+</script>
+{% endblock %}

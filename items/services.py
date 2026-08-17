@@ -1432,7 +1432,10 @@ def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
         )
         if cleaned["use_individual_shop_prices"]:
             _sync_shop_item_prices(item, cleaned["shop_prices"])
-        return item
+    from communications.automations import maybe_send_new_item_catalogue
+
+    maybe_send_new_item_catalogue(item)
+    return item
 
 
 def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
@@ -2167,6 +2170,20 @@ def apply_stock_movement(
                     movement.amount_paid = paid_total
                     movement.payment_status = movement_status
                     movement.save(update_fields=["amount_paid", "payment_status"])
+
+    if (
+        last_movement is not None
+        and last_movement.movement_type == StockMovementType.IN
+        and last_movement.entry_source == StockEntrySource.BUY_ITEMS
+    ):
+        try:
+            from communications.automations import maybe_send_stock_supplier_notice
+
+            maybe_send_stock_supplier_notice(last_movement)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Buy stock WhatsApp share failed")
 
     return last_movement
 

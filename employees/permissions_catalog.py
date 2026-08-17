@@ -98,7 +98,7 @@ PERMISSION_MODULES = (
         "slug": "whatsapp",
         "label": "WhatsApp",
         "icon": "messages-square",
-        "summary": "Personal WhatsApp broadcasts, inbox replies, and send analytics.",
+        "summary": "Choose what to send automatically and who receives it on WhatsApp.",
         "submodules": (
             {"slug": "view", "label": "View WhatsApp"},
             {"slug": "send", "label": "Send broadcasts"},

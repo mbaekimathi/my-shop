@@ -51,11 +51,65 @@ def client_credit_note_path(client_id: int) -> str:
     )
 
 
+def public_site_origin(*, request=None) -> str:
+    """Public origin for customer links. Prefer HTTPS that a phone can open."""
+    from urllib.parse import urlparse
+
+    from shops.daraja_stk import (
+        detect_ngrok_public_base_url,
+        is_safaricom_callback_base,
+        resolve_callback_base_url,
+    )
+
+    candidates = []
+    try:
+        ngrok = (detect_ngrok_public_base_url() or "").strip().rstrip("/")
+        if ngrok:
+            candidates.append(ngrok)
+    except Exception:
+        pass
+    try:
+        base = (resolve_callback_base_url() or "").strip().rstrip("/")
+        if base:
+            candidates.append(base)
+    except Exception:
+        pass
+    from django.conf import settings as dj_settings
+
+    env = (getattr(dj_settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip().rstrip("/")
+    if env:
+        candidates.append(env)
+    if request is not None:
+        req_origin = (request.build_absolute_uri("/") or "").rstrip("/")
+        if req_origin:
+            candidates.append(req_origin)
+
+    seen = set()
+    unique = []
+    for item in candidates:
+        if item and item not in seen:
+            seen.add(item)
+            unique.append(item)
+    for item in unique:
+        if is_safaricom_callback_base(item):
+            return item
+    for item in unique:
+        parsed = urlparse(item if "://" in item else f"https://{item}")
+        if (parsed.scheme or "").lower() in {"http", "https"} and parsed.netloc:
+            return item
+    return ""
+
+
 def client_credit_note_url(client_id: int, *, request=None) -> str:
     path = client_credit_note_path(client_id)
+    origin = public_site_origin(request=request)
+    if origin:
+        return f"{origin}{path}"
     if request is not None:
-        return request.build_absolute_uri(path)
-    return path
+        absolute = request.build_absolute_uri(path)
+        if (absolute or "").lower().startswith(("http://", "https://")):
+            return absolute
+    return ""
 
 
 def credit_note_branding(*, request=None) -> dict:
@@ -240,6 +294,11 @@ def apply_client_credit_note_payment(
     remaining = pay_amount
     mpesa_receipt_number = ""
     cleared = 0
+    stk_payment_id = (stk_payment_id or "").strip()
+    if not stk_payment_id:
+        raise ValidationError(
+            "Complete the M-Pesa STK prompt on your phone before this account can be updated."
+        )
 
     with transaction.atomic():
         from shops.daraja_stk import require_successful_stk, stk_ready

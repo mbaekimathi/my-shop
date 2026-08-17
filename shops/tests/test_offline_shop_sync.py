@@ -83,6 +83,12 @@ class ShopPortalOfflineSyncTests(TestCase):
             ]
         )
 
+    def tearDown(self):
+        from shops.services import _invalidate_communications_settings_cache
+
+        _invalidate_communications_settings_cache()
+        super().tearDown()
+
     def _checkout_payload(self, *, client_id=None, shop_id=None):
         return {
             "client_id": client_id or str(uuid.uuid4()),
@@ -392,6 +398,81 @@ class ShopPortalOfflineSyncTests(TestCase):
         )
         self.assertEqual(missing.status_code, 400)
         self.assertFalse(missing.json().get("ok"))
+
+    def test_credit_checkout_requires_phone_when_whatsapp_credit_on(self):
+        from shops.services import set_communications_setting, update_twilio_settings
+
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+            whatsapp_from="whatsapp:+14155238886",
+        )
+        set_communications_setting(field="enable_automations", enabled=True)
+        set_communications_setting(field="auto_payment_reminder", enabled=True)
+
+        name_only = self._post_checkout(
+            {
+                "kind": "credit",
+                "client_name": "CREDIT NAME ONLY",
+                "client_phone": "",
+                "login_code": self.profile.employee_id,
+                "lines": [self._sale_line()],
+            }
+        )
+        self.assertEqual(name_only.status_code, 400, name_only.content)
+        self.assertFalse(name_only.json().get("ok"))
+        self.assertIn("phone", name_only.json().get("error", "").lower())
+
+    def test_credit_checkout_sends_whatsapp_notice(self):
+        from unittest.mock import patch
+
+        from shops.services import set_communications_setting, update_twilio_settings
+
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+            whatsapp_from="whatsapp:+14155238886",
+        )
+        set_communications_setting(field="enable_automations", enabled=True)
+        set_communications_setting(field="auto_payment_reminder", enabled=True)
+
+        class ImmediateThread:
+            def __init__(self, target=None, args=(), kwargs=None, daemon=None, name=None):
+                self._target = target
+                self._args = args
+                self._kwargs = kwargs or {}
+
+            def start(self):
+                self._target(*self._args, **self._kwargs)
+
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.twilio.send_whatsapp_message") as send,
+        ):
+            send.return_value = {"ok": True, "messageId": "SMCART1"}
+            response = self._post_checkout(
+                {
+                    "kind": "credit",
+                    "client_name": "KIM OTIENO",
+                    "client_phone": "0795606115",
+                    "login_code": self.profile.employee_id,
+                    "lines": [self._sale_line()],
+                }
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        send.assert_called_once()
+        body = send.call_args.kwargs["text"]
+        self.assertEqual(send.call_args.kwargs["phone"], "+254795606115")
+        self.assertIn("Credit sale at", body)
+        self.assertIn("Hi Kim,", body)
+        self.assertIn("Total due:", body)
+        self.assertIn("/credit-note/", body)
+        self.assertRegex(body, r"https?://[^\s]+/credit-note/")
+        self.assertIn("You can view your credit account and pay with M-Pesa using this link:", body)
+        receipt = ShopReceipt.objects.get(receipt_number=response.json()["receipt_number"])
+        self.assertIsNotNone(receipt.client_id)
 
     def test_credit_checkout_due_date_defaults_optional(self):
         client = self._portal_client()

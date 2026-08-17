@@ -117,6 +117,10 @@ COMMUNICATIONS_TOGGLE_FIELDS = {
     "auto_quotation",
     "auto_payment_reminder",
     "auto_credit_due",
+    "auto_shop_website",
+    "auto_stock_supplier",
+    "auto_expense_supplier",
+    "auto_item_catalogue",
 }
 DARAJA_OAUTH_URLS = {
     DarajaEnvironment.SANDBOX: (
@@ -542,11 +546,20 @@ def communications_settings_as_dict(
         "auto_quotation": bool(row.auto_quotation),
         "auto_payment_reminder": bool(row.auto_payment_reminder),
         "auto_credit_due": bool(row.auto_credit_due),
-        "whatsapp_phone_number_id": row.whatsapp_phone_number_id or "",
-        "whatsapp_business_account_id": row.whatsapp_business_account_id or "",
-        "whatsapp_from_number": row.whatsapp_from_number or "",
-        "whatsapp_access_token_set": bool((row.whatsapp_access_token or "").strip()),
-        "has_whatsapp_credentials": row.has_whatsapp_credentials(),
+        "auto_shop_website": bool(row.auto_shop_website),
+        "auto_stock_supplier": bool(row.auto_stock_supplier),
+        "auto_expense_supplier": bool(row.auto_expense_supplier),
+        "auto_item_catalogue": bool(row.auto_item_catalogue),
+        "automation_audience_type": row.automation_audience_type or "sale",
+        "automation_last_purchase_days": row.automation_last_purchase_days or "",
+        "automation_shop_id": row.automation_shop_id or "",
+        "twilio_account_sid": row.twilio_account_sid or "",
+        "twilio_from_number": row.twilio_from_number or "",
+        "twilio_whatsapp_from": row.twilio_whatsapp_from or "",
+        "twilio_whatsapp_join_code": row.twilio_whatsapp_join_code or "",
+        "twilio_auth_token_set": bool((row.twilio_auth_token or "").strip()),
+        "has_twilio_credentials": row.has_twilio_credentials(),
+        "has_whatsapp_credentials": row.has_twilio_credentials(),
         "sms_provider": row.sms_provider or SmsProvider.AFRICAS_TALKING,
         "sms_sender_id": row.sms_sender_id or "",
         "sms_api_base_url": row.sms_api_base_url or "",
@@ -564,9 +577,9 @@ def set_communications_setting(*, field: str, enabled: bool) -> CompanyCommunica
         raise ValidationError("Unknown communications setting.")
     row = get_communications_settings()
     if enabled:
-        if field == "enable_whatsapp" and not row.has_whatsapp_credentials():
+        if field == "enable_whatsapp" and not row.has_twilio_credentials():
             raise ValidationError(
-                "Save WhatsApp credentials below before enabling WhatsApp."
+                "Save Twilio credentials below before enabling WhatsApp."
             )
         if field == "enable_sms" and not row.has_sms_credentials():
             raise ValidationError("Save SMS credentials below before enabling Text.")
@@ -580,14 +593,19 @@ def set_communications_setting(*, field: str, enabled: bool) -> CompanyCommunica
             raise ValidationError(
                 "Enable at least one channel (WhatsApp, Message, or Text) before bulk send."
             )
-        if field == "enable_automations" and not (
-            row.enable_whatsapp or row.enable_sms or row.enable_message
-        ):
+        if field == "enable_automations" and not row.has_twilio_credentials():
             raise ValidationError(
-                "Enable at least one channel before turning on automations."
+                "Save Twilio credentials in Settings before turning on automations."
+            )
+        if field.startswith("auto_") and not row.has_twilio_credentials():
+            raise ValidationError(
+                "Save Twilio credentials in Settings before turning on automations."
             )
     setattr(row, field, bool(enabled))
     update_fields = [field, "updated_at"]
+    if enabled and field.startswith("auto_") and not row.enable_automations:
+        row.enable_automations = True
+        update_fields.append("enable_automations")
     if field in {"enable_whatsapp", "enable_sms", "enable_message"} and not enabled:
         if not (row.enable_whatsapp or row.enable_sms or row.enable_message):
             row.enable_automations = False
@@ -598,41 +616,100 @@ def set_communications_setting(*, field: str, enabled: bool) -> CompanyCommunica
     return get_communications_settings()
 
 
-def update_whatsapp_settings(
+def update_automation_audience(
     *,
-    phone_number_id: str = "",
-    business_account_id: str = "",
-    access_token: str = "",
-    from_number: str = "",
+    audience_type: str = "",
+    last_purchase_days: str = "",
+    shop_id=None,
 ) -> CompanyCommunicationsSettings:
+    from communications.constants import AUDIENCE_TYPES, AUDIENCE_SALE, AUDIENCE_WHATSAPP
+
     row = get_communications_settings()
-    phone_number_id = (phone_number_id or "").strip() or row.whatsapp_phone_number_id
-    business_account_id = (business_account_id or "").strip()
-    access_token = (access_token or "").strip()
-    from_number = (from_number or "").strip()
+    kind = (audience_type or "").strip().lower() or AUDIENCE_SALE
+    if kind not in AUDIENCE_TYPES or kind == AUDIENCE_WHATSAPP:
+        kind = AUDIENCE_SALE
+    days = str(last_purchase_days or "").strip()
+    if days and not days.isdigit():
+        days = ""
+    shop_pk = None
+    if shop_id not in (None, "", "0", 0):
+        try:
+            shop_pk = int(shop_id)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("Select a valid shop.") from exc
+        if not Shop.objects.filter(
+            pk=shop_pk, is_hidden=False, is_suspended=False
+        ).exists():
+            raise ValidationError("Select a valid shop.")
 
-    row.whatsapp_phone_number_id = phone_number_id
-    row.whatsapp_business_account_id = business_account_id
-    if access_token:
-        row.whatsapp_access_token = access_token
-    row.whatsapp_from_number = from_number
-
-    if not row.has_whatsapp_credentials():
-        raise ValidationError(
-            "Phone number ID and access token are required for WhatsApp."
-        )
-
+    row.automation_audience_type = kind
+    row.automation_last_purchase_days = days
+    row.automation_shop_id = shop_pk
     row.save(
         update_fields=[
-            "whatsapp_phone_number_id",
-            "whatsapp_business_account_id",
-            "whatsapp_access_token",
-            "whatsapp_from_number",
+            "automation_audience_type",
+            "automation_last_purchase_days",
+            "automation_shop_id",
             "updated_at",
         ]
     )
     _invalidate_communications_settings_cache()
     return get_communications_settings()
+
+
+def update_twilio_settings(
+    *,
+    account_sid: str = "",
+    auth_token: str = "",
+    from_number: str | None = None,
+    whatsapp_from: str | None = None,
+    join_code: str | None = None,
+) -> CompanyCommunicationsSettings:
+    row = get_communications_settings()
+    account_sid = (account_sid or "").strip() or row.twilio_account_sid
+    sid_match = re.search(r"AC[0-9a-fA-F]{32}", account_sid or "")
+    if sid_match:
+        account_sid = sid_match.group(0)
+    auth_token = (auth_token or "").strip()
+    if from_number is not None:
+        row.twilio_from_number = (from_number or "").strip()
+    if whatsapp_from is not None:
+        row.twilio_whatsapp_from = (whatsapp_from or "").strip()
+    if join_code is not None:
+        row.twilio_whatsapp_join_code = (join_code or "").strip()
+    row.twilio_account_sid = account_sid
+    if auth_token:
+        row.twilio_auth_token = auth_token
+    row.sms_provider = SmsProvider.TWILIO
+
+    if not row.has_twilio_credentials():
+        raise ValidationError(
+            "Account SID, Auth Token, and a From number are required for Twilio."
+        )
+
+    fields = [
+        "twilio_account_sid",
+        "twilio_auth_token",
+        "twilio_from_number",
+        "twilio_whatsapp_from",
+        "sms_provider",
+        "updated_at",
+    ]
+    if join_code is not None:
+        fields.append("twilio_whatsapp_join_code")
+    row.save(update_fields=fields)
+    _invalidate_communications_settings_cache()
+    return get_communications_settings()
+
+
+def update_whatsapp_settings(**kwargs) -> CompanyCommunicationsSettings:
+    """Back-compat alias — WhatsApp Cloud API was replaced by Twilio."""
+    return update_twilio_settings(
+        account_sid=kwargs.get("account_sid") or kwargs.get("phone_number_id") or "",
+        auth_token=kwargs.get("auth_token") or kwargs.get("access_token") or "",
+        from_number=kwargs.get("from_number") or "",
+        whatsapp_from=kwargs.get("whatsapp_from") or kwargs.get("business_account_id") or "",
+    )
 
 
 def update_sms_settings(
@@ -2622,7 +2699,7 @@ def build_expense_supplier_receipt(
     }
 
 
-def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
+def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) -> dict:
     """
     Complete a MY-SHOP cart checkout.
 
@@ -2880,6 +2957,13 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
             raise ValidationError(
                 "Enter a client name, a phone number, or both for credit and quotation."
             )
+        if kind == ShopReceiptKind.CREDIT:
+            from communications.automations import credit_whatsapp_required
+
+            if credit_whatsapp_required() and not client_phone_raw:
+                raise ValidationError(
+                    "Enter the client phone number so the credit sale can be sent on WhatsApp."
+                )
 
         if client_phone_raw:
             normalized = _normalize_phone(client_phone_raw)
@@ -2979,6 +3063,14 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
                 phone=client_phone,
                 profile=authorising,
             )
+        elif kind == ShopReceiptKind.CREDIT and client_phone:
+            client = find_client_by_phone(client_phone)
+            if client is None:
+                client = upsert_client(
+                    full_name="CUSTOMER",
+                    phone=client_phone,
+                    profile=authorising,
+                )
 
         receipt = ShopReceipt.objects.create(
             shop=shop,
@@ -3076,6 +3168,15 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict) -> dict:
     whatsapp_url = ""
     if share_whatsapp:
         whatsapp_url = _whatsapp_url(phone=client_phone, text=message)
+
+    try:
+        from communications.automations import maybe_send_receipt_share
+
+        maybe_send_receipt_share(receipt, message=message, request=request)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("WhatsApp receipt share failed")
 
     return {
         "receipt": receipt,
@@ -3756,6 +3857,16 @@ def register_shop_expense(*, shop: Shop, profile, payload: dict) -> dict:
         message = f"Expense “{expense.name}” recorded for {shop.name}."
     else:
         message = f"Recorded {len(expenses)} expenses for {shop.name}."
+    try:
+        from communications.automations import maybe_send_expense_supplier_notice
+
+        maybe_send_expense_supplier_notice(
+            expense=expense, expenses=expenses, shop=shop
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Expense WhatsApp share failed")
     return {
         "expense": expense,
         "expenses": expenses,

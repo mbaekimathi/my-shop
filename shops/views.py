@@ -3,12 +3,15 @@ import json
 import re
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from django.db.models import Q
+from django.db.models import Count, IntegerField, Q, Subquery, Sum, Value
+from django.db.models.functions import Coalesce
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.text import slugify
 from django.views.decorators.http import require_http_methods, require_POST
 
 from employees.access import (
@@ -38,7 +41,14 @@ from items.services import (
     search_suppliers,
 )
 
-from .models import ExpenseCategory, ExpensePaymentStatus, Shop
+from .models import (
+    ExpenseCategory,
+    ExpensePaymentStatus,
+    Shop,
+    ShopReceiptKind,
+    ShopReceiptLine,
+    ShopReceiptStatus,
+)
 from .daraja_stk import (
     get_stk_payment,
     handle_stk_callback,
@@ -632,8 +642,11 @@ def _catalog_rows_for_items(shop, items):
         image_url = ""
         if item.image:
             try:
-                image_url = item.image.url
-            except ValueError:
+                # Skip broken DB paths so storefront/POS show placeholders
+                # instead of 404 image requests.
+                if item.image.storage.exists(item.image.name):
+                    image_url = item.image.url
+            except (ValueError, OSError):
                 image_url = ""
         rows.append(
             {
@@ -644,11 +657,139 @@ def _catalog_rows_for_items(shop, items):
                 "price": str(price),
                 "min_price": str(item.minimum_selling_price),
                 "stock": int(stock_by_item.get(item.pk, 0)),
+                "sold_quantity": int(getattr(item, "sold_quantity", 0) or 0),
                 "track_serial": bool(item.track_serial_number),
                 "image_url": image_url,
             }
         )
     return rows
+
+
+@require_http_methods(["GET"])
+def shop_website(request, shop_id):
+    """Public, shop-specific product catalogue."""
+    shop = get_object_or_404(
+        Shop.objects.filter(is_hidden=False, is_suspended=False), pk=shop_id
+    )
+    sale_filter = Q(
+        shop_receipt_lines__receipt__shop=shop,
+        shop_receipt_lines__receipt__kind__in=(
+            ShopReceiptKind.SALE,
+            ShopReceiptKind.CREDIT,
+        ),
+        shop_receipt_lines__receipt__status__in=(
+            ShopReceiptStatus.ACTIVE,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        ),
+    )
+    items = list(
+        _catalog_base_qs()
+        .annotate(
+            sold_quantity=Coalesce(
+                Sum("shop_receipt_lines__quantity", filter=sale_filter),
+                Value(0),
+                output_field=IntegerField(),
+            )
+            - Coalesce(
+                Sum("shop_receipt_lines__returned_quantity", filter=sale_filter),
+                Value(0),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("category", "-sold_quantity", "name")
+    )
+    rows_by_id = {row["id"]: row for row in _catalog_rows_for_items(shop, items)}
+    categories = []
+    for index, (category, group) in enumerate(
+        groupby(items, key=lambda item: item.category), start=1
+    ):
+        categories.append(
+            {
+                "name": category,
+                "anchor": f"{slugify(category) or 'category'}-{index}",
+                "items": [rows_by_id[item.pk] for item in group],
+            }
+        )
+
+    suggestions_url_template = reverse(
+        "employees:shop_website_suggestions",
+        kwargs={"shop_id": shop.pk, "item_id": 0},
+    ).replace("/0/", "/__ID__/")
+    whatsapp_phone = re.sub(r"\D+", "", format_kenya_phone(shop.phone_number or ""))
+
+    return render(
+        request,
+        "shops/shop_website.html",
+        {
+            "shop": shop,
+            "categories": categories,
+            "item_count": len(items),
+            "suggestions_url_template": suggestions_url_template,
+            "whatsapp_phone": whatsapp_phone,
+            "google_maps_api_key": settings.GOOGLE_MAPS_API_KEY,
+        },
+    )
+
+
+@require_http_methods(["GET"])
+def shop_website_suggestions(request, shop_id, item_id):
+    """Return products commonly bought with an item at this shop."""
+    shop = get_object_or_404(
+        Shop.objects.filter(is_hidden=False, is_suspended=False), pk=shop_id
+    )
+    item = get_object_or_404(Item.objects.filter(is_suspended=False), pk=item_id)
+    valid_receipts = Q(
+        receipt__shop=shop,
+        receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        receipt__status__in=(
+            ShopReceiptStatus.ACTIVE,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        ),
+    )
+    receipt_ids = ShopReceiptLine.objects.filter(
+        valid_receipts, item=item
+    ).values("receipt_id")
+    suggested_items = list(
+        Item.objects.filter(
+            is_suspended=False,
+            shop_receipt_lines__receipt_id__in=Subquery(receipt_ids),
+        )
+        .exclude(pk=item.pk)
+        .annotate(
+            together_count=Count(
+                "shop_receipt_lines__receipt_id",
+                filter=Q(shop_receipt_lines__receipt_id__in=Subquery(receipt_ids)),
+                distinct=True,
+            )
+        )
+        .order_by("-together_count", "name")[:6]
+    )
+    # Fallback: popular items in the same category when no co-purchase history.
+    if not suggested_items and item.category:
+        sale_filter = Q(
+            shop_receipt_lines__receipt__shop=shop,
+            shop_receipt_lines__receipt__kind__in=(
+                ShopReceiptKind.SALE,
+                ShopReceiptKind.CREDIT,
+            ),
+            shop_receipt_lines__receipt__status__in=(
+                ShopReceiptStatus.ACTIVE,
+                ShopReceiptStatus.PARTIAL_RETURN,
+            ),
+        )
+        suggested_items = list(
+            Item.objects.filter(is_suspended=False, category=item.category)
+            .exclude(pk=item.pk)
+            .annotate(
+                sold_quantity=Coalesce(
+                    Sum("shop_receipt_lines__quantity", filter=sale_filter),
+                    Value(0),
+                    output_field=IntegerField(),
+                )
+            )
+            .order_by("-sold_quantity", "name")[:6]
+        )
+    return JsonResponse({"items": _catalog_rows_for_items(shop, suggested_items)})
 
 
 def _catalog_items_by_category(shop):
@@ -984,6 +1125,9 @@ def my_shop_workspace(request, shop_id):
     request_decisions = _stock_request_decisions_for_shop(shop)
     pos_settings = get_company_pos_settings()
     pos_flags = pos_settings_as_dict(pos_settings)
+    from communications.automations import credit_whatsapp_required
+
+    credit_whatsapp = credit_whatsapp_required()
     enabled_kinds = pos_flags["kinds"]
     enabled_payments = pos_flags["payment_methods"]
     enabled_print_channels = pos_flags["print_channels"]
@@ -1076,6 +1220,7 @@ def my_shop_workspace(request, shop_id):
             "default_kind": default_kind,
             "default_payment": default_payment,
             "default_print_via": default_print_via,
+            "credit_whatsapp": credit_whatsapp,
             "buy_stock_modal": True,
             "buy_stock_next": reverse(
                 "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
@@ -2171,7 +2316,9 @@ def my_shop_checkout(request, shop_id):
         return denied
 
     try:
-        result = complete_shop_checkout(shop=shop, profile=profile, payload=payload)
+        result = complete_shop_checkout(
+            shop=shop, profile=profile, payload=payload, request=request
+        )
     except ValidationError as exc:
         errors = _validation_errors(exc)
         return JsonResponse(
