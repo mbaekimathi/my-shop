@@ -22,6 +22,7 @@ from .analytics_services import (
     build_analytics_receipts_list,
     build_client_credit_account,
     build_supplier_account,
+    client_credit_account_url,
     get_analytics_receipt_kind,
     get_analytics_section,
     update_credit_receipt_due_date,
@@ -314,12 +315,16 @@ def analytics_client_credit(request, role_segment, client_id):
 
     account = build_client_credit_account(profile=profile, client_id=client_id)
     from shops.credit_note import credit_note_share_context
+    from shops.credit_audit import build_client_credit_audit_trail
 
     share_context = credit_note_share_context(
         request=request,
         client_id=client_id,
         client_name=account["client"].full_name,
         balance=account["balance"],
+    )
+    audit_trail = build_client_credit_audit_trail(
+        profile=profile, client_id=client_id
     )
     query = request.GET.urlencode()
     back_href = analytics_section_url(profile.role, back_section)
@@ -357,9 +362,18 @@ def analytics_client_credit(request, role_segment, client_id):
             **share_context,
             **_stk_urls_for(profile),
             "receipt_update_url_template": _credit_receipt_update_url_template(profile),
-            "client_credit_payments_url": client_credit_audit_url(
-                profile.role, client_id, query=query
+            "client_credit_payments_url": (
+                client_credit_account_url(
+                    profile.role,
+                    client_id,
+                    query=query,
+                    from_credits=from_credits,
+                )
+                + "#transactions"
             ),
+            "transaction_rows": audit_trail["rows"],
+            "transaction_count": audit_trail["event_count"],
+            "transaction_empty_message": audit_trail["empty_message"],
             **account,
         },
     )

@@ -62,6 +62,53 @@
   {% endif %}
 
   {% include "employees/partials/analytics_receipt_ledger.html" with ledger_search=True ledger_show_pay_by=True ledger_show_manage=True table_class="ax-table--account" receipt_count=receipt_count %}
+
+  <section class="ax-ledger ax-audit-feed" id="transactions" aria-label="Client account transactions">
+    <header class="ax-ledger-head">
+      <div>
+        <h3>Transactions</h3>
+        <p class="ax-ledger-lead">Payments, due-date changes, returns, and cancellations</p>
+      </div>
+      {% if transaction_count %}
+      <span class="ax-card-meta">{{ transaction_count }} transaction{{ transaction_count|pluralize }}</span>
+      {% endif %}
+    </header>
+    {% if transaction_rows %}
+    <div class="ax-table-wrap">
+      <table class="ax-table ax-table--account ax-table--audit">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Transaction</th>
+            <th>Receipt</th>
+            <th>Shop</th>
+            <th>Amount</th>
+            <th>By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in transaction_rows %}
+          <tr class="ax-audit-row is-{{ row.tone|default:'neutral' }}{% if row.synthetic %} is-synthetic{% endif %}">
+            <td data-label="When">{{ row.when_label }}</td>
+            <td data-label="Transaction">
+              <span class="ax-audit-event">
+                <i data-lucide="{{ row.icon }}" aria-hidden="true"></i>
+                <span>{{ row.kind_label }}</span>
+              </span>
+            </td>
+            <td data-label="Receipt">{{ row.receipt_number }}</td>
+            <td data-label="Shop">{{ row.shop }}</td>
+            <td data-label="Amount">{{ row.amount }}</td>
+            <td data-label="By">{{ row.actor }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="ax-empty">{{ transaction_empty_message }}</p>
+    {% endif %}
+  </section>
 </section>
 {% endblock %}
 

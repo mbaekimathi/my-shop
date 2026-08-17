@@ -419,15 +419,15 @@ def resolve_sidebar_hrefs(sidebar):
 
 
 def _dashboard_analytics_section_links(role, *, active_slug=None, profile=None):
-    """Suppliers / Clients live on the dashboard, not under Analytics."""
+    """Prominent analytics shortcuts from a role dashboard."""
     from .analytics_services import ANALYTICS_DASHBOARD_SECTION_SLUGS, ANALYTICS_SECTIONS
     from .module_permissions import employee_may
 
-    wanted = ("suppliers", "clients")
+    wanted = ("credits", "suppliers", "clients")
     by_slug = {row["slug"]: row for row in ANALYTICS_SECTIONS}
     links = []
     for slug in wanted:
-        if slug not in ANALYTICS_DASHBOARD_SECTION_SLUGS:
+        if slug not in ANALYTICS_DASHBOARD_SECTION_SLUGS and slug != "credits":
             continue
         section = by_slug.get(slug)
         if section is None:

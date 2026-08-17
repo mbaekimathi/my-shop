@@ -314,3 +314,126 @@ class StockRequestFromAnyShopTests(TestCase):
         )
         with self.assertRaises(ValidationError):
             apply_stock_movement(self.manager, self.StockMovementType.REQUEST, data)
+
+
+class ClientCreditAccountTableTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="830011",
+            password="credit-pass",
+            email="credit-cashier@test.local",
+            first_name="CREDIT",
+            last_name="CASHIER",
+            is_active=True,
+        )
+        self.cashier = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="830011",
+            phone_country_code="+254",
+            phone_number="700000931",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        self.shop = Shop.objects.create(
+            name="CREDIT SHOP",
+            location="NAIROBI",
+            email="credit-shop@test.local",
+            phone_number="0700000931",
+            login_code="830111",
+            password_hash="x",
+            created_by=self.cashier,
+        )
+        self.cashier.assigned_shops.add(self.shop)
+        self.client = Client.objects.create(
+            full_name="CREDIT CLIENT",
+            phone_number="0700002001",
+            phone_normalized="254700002001",
+            created_by=self.cashier,
+        )
+        self._receipt_n = 0
+
+    def _filters(self, **extra):
+        return {
+            "active_shop_ids": [self.shop.pk],
+            "filter_shops": [self.shop],
+            "role": self.cashier.role,
+            "query": "",
+            **extra,
+        }
+
+    def _make_client(self, name, phone_suffix):
+        return Client.objects.create(
+            full_name=name,
+            phone_number=f"0700002{phone_suffix}",
+            phone_normalized=f"254700002{phone_suffix}",
+            created_by=self.cashier,
+        )
+
+    def _make_receipt(self, client, **kwargs):
+        self._receipt_n += 1
+        defaults = {
+            "shop": self.shop,
+            "receipt_number": f"CR-{self._receipt_n}",
+            "kind": ShopReceiptKind.CREDIT,
+            "total": 100,
+            "amount_paid": 0,
+            "created_by": self.cashier,
+            "client": client,
+            "client_name": client.full_name,
+            "client_phone": client.phone_number,
+            "status": ShopReceiptStatus.ACTIVE,
+        }
+        defaults.update(kwargs)
+        return ShopReceipt.objects.create(**defaults)
+
+    def _row_for(self, page, name):
+        for row in page["tables"][0]["rows"]:
+            first = row[0]
+            if isinstance(first, dict) and name in (first.get("label") or ""):
+                return row
+        return None
+
+    def test_fully_paid_credit_is_counted_with_zero_owed(self):
+        self._make_receipt(self.client, total=100, amount_paid=100)
+        page = _build_clients(self._filters())
+        row = self._row_for(page, "CREDIT CLIENT")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[-1]["qty"], "1")
+        self.assertEqual(row[-1]["amount"], "0")
+
+    def test_cancelled_credit_is_excluded(self):
+        self._make_receipt(
+            self.client,
+            total=200,
+            amount_paid=0,
+            status=ShopReceiptStatus.CANCELLED,
+        )
+        page = _build_clients(self._filters())
+        self.assertIsNone(self._row_for(page, "CREDIT CLIENT"))
+
+    def test_sale_only_client_is_excluded(self):
+        sale_client = self._make_client("SALE CLIENT", "002")
+        self._make_receipt(
+            sale_client,
+            kind=ShopReceiptKind.SALE,
+            total=80,
+            amount_paid=80,
+        )
+        page = _build_clients(self._filters())
+        self.assertIsNone(self._row_for(page, "SALE CLIENT"))
+
+    def test_overpayment_does_not_reduce_other_receipt_due(self):
+        self._make_receipt(self.client, total=100, amount_paid=150)
+        self._make_receipt(self.client, total=80, amount_paid=0)
+        page = _build_clients(self._filters())
+        row = self._row_for(page, "CREDIT CLIENT")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[-1]["qty"], "2")
+        self.assertEqual(row[-1]["amount"], "80")
+
+    def test_credits_page_links_use_credits_account_url(self):
+        self._make_receipt(self.client)
+        page = _build_clients(self._filters(from_credits=True))
+        row = self._row_for(page, "CREDIT CLIENT")
+        self.assertIn("/analytics/credits/clients/", row[0]["href"])
+        self.assertIn("all-time", page["tables"][0]["footnote"])

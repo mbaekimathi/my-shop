@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
-from django.db.models.functions import Coalesce
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum, Value
+from django.db.models.functions import Coalesce, Greatest
 from django.http import Http404
 
 from employees.models import EmployeeProfile, EmployeeStatus
@@ -2502,13 +2502,19 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
     }
 
 
-def client_credit_account_url(role, client_id, *, query: str = "") -> str:
+def client_credit_account_url(
+    role, client_id, *, query: str = "", from_credits: bool = False
+) -> str:
     from django.urls import reverse
 
     from employees.access import role_url_segment
 
     href = reverse(
-        "employees:analytics_client_account",
+        (
+            "employees:analytics_client_credit"
+            if from_credits
+            else "employees:analytics_client_account"
+        ),
         kwargs={
             "role_segment": role_url_segment(role),
             "client_id": int(client_id),
@@ -5724,7 +5730,10 @@ def _build_credits(filters):
 
     return {
         "headline": "Credits",
-        "lead": "Credit receipts by shop — paid, due, stock value, and profit.",
+        "lead": (
+            "Credit performance by shop for the selected period, followed by "
+            "all-time client credit accounts and outstanding balances."
+        ),
         "alerts": [],
         "summary_board": _credits_summary_board(
             total_amount=total_amount,
@@ -5750,7 +5759,8 @@ def _build_credits(filters):
                     "for receipts in this period. Profit = selling value − stock."
                 ),
             )
-        ],
+        ]
+        + _build_clients({**filters, "from_credits": True})["tables"],
     }
 
 
@@ -5759,8 +5769,16 @@ def _build_clients(filters):
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     role = filters["role"]
     query = filters.get("query") or ""
+    from_credits = bool(filters.get("from_credits"))
+    outstanding_due = Greatest(
+        ExpressionWrapper(
+            F("total") - F("amount_paid"),
+            output_field=DecimalField(max_digits=12, decimal_places=2),
+        ),
+        Value(0, output_field=DecimalField(max_digits=12, decimal_places=2)),
+    )
 
-    open_credits = (
+    credit_receipts = (
         ShopReceipt.objects.filter(
             shop_id__in=shop_ids,
             kind=ShopReceiptKind.CREDIT,
@@ -5769,19 +5787,19 @@ def _build_clients(filters):
         .exclude(client_id=None)
     )
 
-    # client_id -> {shop_id: (credits, balance)}
+    # client_id -> {shop_id: (credit transactions, outstanding balance)}
     credit_by_client_shop: dict[int, dict[int, tuple[int, Decimal]]] = {}
     totals_by_client: dict[int, tuple[int, Decimal]] = {}
-    for row in open_credits.values("client_id", "shop_id").annotate(
-        credits=Count("id", filter=Q(total__gt=F("amount_paid"))),
-        balance=Coalesce(Sum(F("total") - F("amount_paid")), _zero()),
+    for row in credit_receipts.values("client_id", "shop_id").annotate(
+        credits=Count("id"),
+        balance=Coalesce(Sum(outstanding_due), _zero()),
     ):
         client_id = row["client_id"]
         if client_id is None:
             continue
         credits_n = int(row["credits"] or 0)
-        balance = Decimal(row["balance"] or 0)
-        if credits_n <= 0 and balance <= 0:
+        balance = _due_amount(row["balance"], 0)
+        if credits_n <= 0:
             continue
         shop_map = credit_by_client_shop.setdefault(client_id, {})
         prev_credits, prev_balance = shop_map.get(row["shop_id"], (0, _zero()))
@@ -5793,7 +5811,10 @@ def _build_clients(filters):
         )
 
     client_ids_in_scope = set(
-        ShopReceipt.objects.filter(shop_id__in=shop_ids)
+        ShopReceipt.objects.filter(
+            shop_id__in=shop_ids,
+            kind=ShopReceiptKind.CREDIT,
+        )
         .exclude(status=ShopReceiptStatus.CANCELLED)
         .exclude(client_id=None)
         .values_list("client_id", flat=True)
@@ -5829,7 +5850,9 @@ def _build_clients(filters):
     ) in ranked:
         cells = [
             {
-                "href": client_credit_account_url(role, client_id, query=query),
+                "href": client_credit_account_url(
+                    role, client_id, query=query, from_credits=from_credits
+                ),
                 "label": label,
             }
         ]
@@ -5839,14 +5862,22 @@ def _build_clients(filters):
                 _qty_amount_cell(
                     shop_credits,
                     shop_balance,
-                    title=f"{shop_credits} credits · {_money_ksh(shop_balance)}",
+                    title=(
+                        f"{shop_credits} credit transaction"
+                        f"{'' if shop_credits == 1 else 's'} · "
+                        f"owed {_money_ksh(shop_balance)}"
+                    ),
                 )
             )
         cells.append(
             _qty_amount_cell(
                 total_credits,
                 total_balance,
-                title=f"{total_credits} credits · {_money_ksh(total_balance)}",
+                title=(
+                    f"{total_credits} credit transaction"
+                    f"{'' if total_credits == 1 else 's'} · "
+                    f"owed {_money_ksh(total_balance)}"
+                ),
             )
         )
         client_rows.append(cells)
@@ -5854,9 +5885,9 @@ def _build_clients(filters):
     columns = ["Client"]
     for shop in shops:
         columns.append(
-            _shop_col(shop, pair=True, pair_qty="Cr", pair_amt="Bal")
+            _shop_col(shop, pair=True, pair_qty="Txns", pair_amt="Owed")
         )
-    columns.append(_pair_total_col(pair_qty="Cr", pair_amt="Bal"))
+    columns.append(_pair_total_col(pair_qty="Txns", pair_amt="Owed"))
 
     return {
         "headline": "Clients",
@@ -5866,10 +5897,17 @@ def _build_clients(filters):
         "insights": [],
         "tables": [
             _table(
-                "Clients by shop",
+                "Client credit accounts by shop",
                 columns,
                 client_rows,
-                empty="No clients on file.",
+                empty="No credit clients in the selected shops.",
+                footnote=(
+                    "Each client row opens the account ledger. "
+                    "Txns and Owed are all-time for the selected shops, not the "
+                    "date filter above. Txns = non-cancelled credit receipts; "
+                    "Owed = unpaid balance per receipt, never below zero."
+                ),
+                shop_grid=True,
             )
         ],
     }
