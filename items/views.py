@@ -878,6 +878,8 @@ def _timeline_event_from_movement_line(
         "by": _employee_display_name(actor),
         "serial_numbers": _movement_serial_numbers(line.serial_numbers),
         "movement_id": movement.pk,
+        "receipt_number": "",
+        "receipt_status": "",
         "counts_toward_transfer": counts_toward_transfer,
         "transfer_direction": transfer_direction,
         **parties,
@@ -1042,7 +1044,7 @@ def _build_movement_timeline(
 
     # Sales as separate timeline events (never mixed into stock out).
     from pos.models import SaleLine
-    from shops.models import ShopReceiptKind, ShopReceiptLine
+    from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
 
     item_name_set = {(item.name or "").strip().lower() for item in report_items}
     item_by_name = {
@@ -1061,6 +1063,7 @@ def _build_movement_timeline(
             "receipt",
             "receipt__shop",
             "receipt__created_by__user",
+            "receipt__last_returned_by__user",
             "receipt__client",
             "item",
         )
@@ -1076,11 +1079,19 @@ def _build_movement_timeline(
             (line.item_name or "").strip().lower()
         )
         parties = _movement_parties_for_receipt(receipt=line.receipt)
+        receipt_status = line.receipt.status
+        sale_label = "Stock sale"
+        if receipt_status == ShopReceiptStatus.CANCELLED:
+            sale_label = "Sale (cancelled)"
+        elif receipt_status == ShopReceiptStatus.PARTIAL_RETURN:
+            sale_label = "Sale (partial return)"
+        if line.receipt.kind == ShopReceiptKind.CREDIT:
+            sale_label = sale_label.replace("Sale", "Credit sale").replace("Stock sale", "Credit sale")
         events.append(
             {
                 "happened_at": line.receipt.created_at,
                 "event_type": "sale",
-                "event_label": "Stock sale",
+                "event_label": sale_label,
                 "shop_name": (
                     line.receipt.shop.name if line.receipt.shop_id else "—"
                 ),
@@ -1099,10 +1110,45 @@ def _build_movement_timeline(
                 "by": _employee_display_name(line.receipt.created_by),
                 "serial_numbers": _movement_serial_numbers(line.serial_numbers),
                 "movement_id": None,
+                "receipt_number": line.receipt.receipt_number,
+                "receipt_status": receipt_status,
                 **parties,
             }
         )
         units_sale += line.quantity
+
+        if line.returned_quantity and line.returned_quantity > 0:
+            events.append(
+                {
+                    "happened_at": line.receipt.last_returned_at or line.receipt.created_at,
+                    "event_type": "return",
+                    "event_label": "Return",
+                    "shop_name": (
+                        line.receipt.shop.name if line.receipt.shop_id else "—"
+                    ),
+                    "from_shop_name": "",
+                    "item_name": line.item_name or (matched.name if matched else "—"),
+                    "item_category": (
+                        matched.category
+                        if matched
+                        else (line.item.category if line.item_id and line.item else "")
+                    ),
+                    "item_id": line.item_id or (matched.pk if matched else None),
+                    "quantity": line.returned_quantity,
+                    "reason": "Return",
+                    "payment_status": "",
+                    "note": f"Return on {line.receipt.receipt_number}",
+                    "by": _employee_display_name(line.receipt.last_returned_by or line.receipt.created_by),
+                    "serial_numbers": _movement_serial_numbers(line.returned_serial_numbers),
+                    "movement_id": None,
+                    "receipt_number": line.receipt.receipt_number,
+                    "receipt_status": receipt_status,
+                    "from_label": parties.get("to_label", "—"),
+                    "to_label": parties.get("from_label", "—"),
+                    "seller": parties.get("seller", "—"),
+                    "pay": "—",
+                }
+            )
 
     if item_mode == "category" and selected_categories:
         allowed_names = {
@@ -1164,6 +1210,8 @@ def _build_movement_timeline(
                 "by": _employee_display_name(line.sale.employee),
                 "serial_numbers": [],
                 "movement_id": None,
+                "receipt_number": "",
+                "receipt_status": "",
                 **parties,
             }
         )
@@ -1269,13 +1317,14 @@ def _movement_parties_for_pos_sale(*, sale):
     }
 
 
-MOVEMENT_EVENT_FILTERS = frozenset({"all", "in", "out", "sale", "transfer"})
+MOVEMENT_EVENT_FILTERS = frozenset({"all", "in", "out", "sale", "transfer", "return"})
 
 MOVEMENT_EVENT_FILTER_TYPES = {
     "in": frozenset({"in"}),
     "out": frozenset({"out"}),
     "sale": frozenset({"sale"}),
     "transfer": frozenset({"request", "transfer_fulfilled"}),
+    "return": frozenset({"return"}),
 }
 
 
@@ -1331,7 +1380,10 @@ def _summarize_movement_events(events):
     units_sale = sum(
         event["quantity"] for event in events if event.get("event_type") == "sale"
     )
-    return units_in, units_out, units_request, units_sale, units_transfer_in, units_transfer_out
+    units_return = sum(
+        event["quantity"] for event in events if event.get("event_type") == "return"
+    )
+    return units_in, units_out, units_request, units_sale, units_transfer_in, units_transfer_out, units_return
 
 
 MOVEMENT_VIEW_BY = frozenset({"timeline", "item"})
@@ -1364,6 +1416,7 @@ def _group_movement_events_by_item(events, shop_ids):
                 "units_transfer_in": 0,
                 "units_transfer_out": 0,
                 "units_sale": 0,
+                "units_return": 0,
                 "current_stock": 0,
                 "last_at": event["happened_at"],
             }
@@ -1384,6 +1437,8 @@ def _group_movement_events_by_item(events, shop_ids):
                 row["units_transfer_out"] += quantity
         elif event_type == "sale":
             row["units_sale"] += quantity
+        elif event_type == "return":
+            row["units_return"] += quantity
         if event["happened_at"] > row["last_at"]:
             row["last_at"] = event["happened_at"]
 
@@ -1512,6 +1567,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     units_transfer_in = 0
     units_transfer_out = 0
     units_sale = 0
+    units_return = 0
     item_report_rows = []
     totals = {
         "starting_stock": 0,
@@ -1567,6 +1623,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             units_sale,
             units_transfer_in,
             units_transfer_out,
+            units_return,
         ) = _summarize_movement_events(movement_events)
         if is_item_movement_summary:
             movement_item_rows = _group_movement_events_by_item(
@@ -1672,6 +1729,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "units_transfer_in": units_transfer_in,
             "units_transfer_out": units_transfer_out,
             "units_sale": units_sale,
+            "units_return": units_return,
             "report_range_label": range_labels[range_type],
             "filter_shops": filter_shops,
             "selected_shop_ids": set(selected_shop_ids),
