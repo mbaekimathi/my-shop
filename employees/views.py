@@ -777,10 +777,16 @@ def _qr_data_url(payload):
         return ""
 
 
-def _marketing_is_hosted():
+def _marketing_is_hosted(request=None):
     from django.conf import settings as dj_settings
 
-    return bool(getattr(dj_settings, "IS_HOSTED", False))
+    if getattr(dj_settings, "IS_HOSTED", False):
+        return True
+    if request is not None:
+        origin = _request_origin(request)
+        if origin and not _is_local_origin(origin):
+            return True
+    return False
 
 
 def _shop_website_variants(request, shop_id):
@@ -788,16 +794,17 @@ def _shop_website_variants(request, shop_id):
     local_url = f"{_local_site_origin(request)}{path}"
     hosted_origin = _hosted_site_origin(request)
     hosted_url = f"{hosted_origin}{path}" if hosted_origin else ""
-    if _marketing_is_hosted():
+    if _marketing_is_hosted(request):
+        url = hosted_url or local_url
         variants = [
             {
                 "key": "hosted",
                 "label": "Hosted",
-                "url": hosted_url,
-                "qr": _qr_data_url(hosted_url),
+                "url": url,
+                "qr": _qr_data_url(url),
             },
         ]
-        return variants, "", hosted_url
+        return variants, "", url
     variants = [
         {
             "key": "local",
@@ -819,7 +826,7 @@ def marketing_links(request):
     from shops.models import Shop
 
     profile = get_profile_for_request(request)
-    is_hosted = _marketing_is_hosted()
+    is_hosted = _marketing_is_hosted(request)
     meta = {
         "title": "Marketing links",
         "headline": "Marketing links",
