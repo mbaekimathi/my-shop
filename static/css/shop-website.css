@@ -1385,29 +1385,120 @@ body.storefront-pair-open {
 }
 .storefront__footer a { color: inherit; }
 
+/* ── Tablet (≤ 960px) ── */
+@media (max-width: 960px) {
+  .storefront__products { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .85rem; }
+  .storefront__product-image { height: 155px; }
+  .storefront__product-body { min-height: 160px; }
+  .storefront__product h4 { font-size: .9rem; }
+  .storefront__product-footer strong { font-size: .88rem; }
+}
+
+/* ── Mobile (≤ 760px) — horizontal scroll per category ── */
 @media (max-width: 760px) {
-  .storefront { padding: 0 1.3rem 3rem; }
-  .storefront__header { gap: .75rem; min-height: 72px; }
-  .storefront__search { max-width: none; }
-  .storefront__contact-link { margin-left: 0; }
+  .storefront { padding: 0 1rem 3rem; }
+  .storefront__header { gap: .55rem; min-height: 56px; padding: .35rem 0; }
+  .storefront__brand { font-size: .82rem; gap: .5rem; }
+  .storefront__brand-mark { width: 26px; height: 26px; border-radius: 8px; font-size: .72rem; }
+  .storefront__search { max-width: none; padding: 0 .7rem; }
+  .storefront__search input { height: 36px; font-size: .78rem; }
+  .storefront__search svg { width: 14px; height: 14px; }
+  .storefront__cart-toggle { min-height: 36px; padding: .3rem .65rem .3rem .5rem; font-size: .68rem; gap: .35rem; }
+  .storefront__cart-toggle-icon { width: 24px; height: 24px; }
+  .storefront__cart-toggle svg { width: 12px; height: 12px; }
+  .storefront__cart-toggle span:not(.storefront__cart-toggle-icon):not([data-storefront-cart-count]) { display: none; }
+  .storefront__contact-link { margin-left: 0; font-size: .7rem; }
   .storefront__contact-link span { display: none; }
-  .storefront__catalogue-heading { display: block; }
-  .storefront__products { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
-  .storefront__product-image { height: 135px; }
-  .storefront__product-body { min-height: 158px; padding: .8rem; }
-  .storefront__product-modal { padding: .6rem; align-items: end; }
+  .storefront__contact-link svg { width: 15px; }
+
+  .storefront__nav { gap: .9rem; padding: .65rem 0 0; }
+  .storefront__nav a { font-size: .68rem; }
+
+  .storefront__catalogue { padding: 1rem 0 0; }
+  .storefront__catalogue-heading { display: block; padding-bottom: 1.5rem; }
+  .storefront__catalogue h2 { font-size: 1.65rem; }
+  .storefront__eyebrow { font-size: .6rem; margin-bottom: .6rem; }
+
+  .storefront__category { padding: 1.8rem 0; }
+  .storefront__category-heading { margin-bottom: .8rem; }
+  .storefront__category-heading h3 { font-size: 1.1rem; }
+  .storefront__category-heading span { font-size: .64rem; }
+
+  .storefront__products {
+    display: flex;
+    gap: .65rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scroll-padding-left: .25rem;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: .35rem;
+  }
+  .storefront__products::-webkit-scrollbar { display: none; }
+
+  .storefront__product {
+    flex: 0 0 140px;
+    min-width: 140px;
+    max-width: 140px;
+    scroll-snap-align: start;
+    border-radius: 14px;
+  }
+  .storefront__product:hover { transform: none; box-shadow: none; }
+
+  .storefront__product-image { height: 105px; }
+  .storefront__product-image > svg { width: 26px; }
+  .storefront__popular { font-size: .55rem; padding: .2rem .4rem; top: .45rem; left: .45rem; }
+
+  .storefront__product-body { min-height: auto; padding: .6rem; gap: .4rem; }
+  .storefront__product-category { font-size: .55rem; margin-bottom: .2rem; letter-spacing: .06em; }
+  .storefront__product h4 { font-size: .76rem; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .storefront__product-description { font-size: .62rem; margin-top: .3rem; -webkit-line-clamp: 1; }
+  .storefront__product-footer { margin-top: .5rem; }
+  .storefront__product-footer strong { font-size: .76rem; }
+  .storefront__add { font-size: .58rem; padding: .3rem .4rem; border-radius: 6px; gap: .15rem; }
+  .storefront__add svg { width: 11px; height: 11px; }
+
+  .storefront__product-modal { padding: 0; align-items: end; }
   .storefront__product-dialog {
     grid-template-columns: 1fr;
     width: 100%;
-    max-height: calc(100dvh - 1rem);
+    max-height: calc(100dvh - .5rem);
     overflow: auto;
-    border-radius: 22px 22px 16px 16px;
+    border-radius: 20px 20px 0 0;
   }
   .storefront__product-modal-media { min-height: 180px; max-height: 210px; }
-  .storefront__product-modal-panel { padding: 1.15rem 1.1rem 1.1rem; }
-  .storefront__footer { flex-direction: column; padding: 1.2rem 1.3rem; }
+  .storefront__product-modal-panel { padding: 1rem; }
+  .storefront__product-modal-panel h2 { font-size: 1.25rem; }
+  .storefront__product-modal-price { font-size: 1.05rem; }
+
+  .storefront__cart { width: 100%; padding: 1.1rem; }
+  .storefront__cart-head h2 { font-size: 1.3rem; }
+  .storefront__cart-help { font-size: .7rem; }
+
+  .storefront__cart-fab { width: 54px; height: 54px; border-radius: 18px; right: .85rem; bottom: .85rem; }
+  .storefront__cart-fab svg { width: 20px; height: 20px; }
+  .storefront__cart-fab-ring { inset: 5px; border-radius: 14px; }
+  .storefront__cart-fab-count { min-width: 1.25rem; height: 1.25rem; font-size: .6rem; }
+
+  .storefront__empty h2 { font-size: 1.2rem; }
+  .storefront__empty p { font-size: .78rem; }
+  .storefront__empty svg { width: 36px; height: 36px; }
+
+  .storefront__footer { flex-direction: column; padding: 1rem; font-size: .64rem; gap: .5rem; }
+
+  .storefront__pair-dialog { width: 100%; max-height: calc(100dvh - 1rem); padding: 1.1rem 1rem; border-radius: 20px 20px 0 0; }
+  .storefront__pair-dialog h2 { font-size: 1.25rem; }
 }
 
+/* ── Small phones (≤ 380px) ── */
 @media (max-width: 380px) {
-  .storefront__products { grid-template-columns: 1fr; }
+  .storefront { padding: 0 .75rem 2.5rem; }
+  .storefront__product { flex: 0 0 125px; min-width: 125px; max-width: 125px; }
+  .storefront__product-image { height: 90px; }
+  .storefront__product-body { padding: .5rem; }
+  .storefront__product h4 { font-size: .7rem; }
+  .storefront__product-footer strong { font-size: .7rem; }
+  .storefront__catalogue h2 { font-size: 1.4rem; }
+  .storefront__category-heading h3 { font-size: .95rem; }
 }
