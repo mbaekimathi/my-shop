@@ -393,13 +393,39 @@ class ClientCreditAccountTableTests(TestCase):
                 return row
         return None
 
-    def test_fully_paid_credit_is_counted_with_zero_owed(self):
-        self._make_receipt(self.client, total=100, amount_paid=100)
+    def test_fully_paid_credit_is_converted_to_sale(self):
+        from employees.analytics_services import apply_credit_receipt_payment
+
+        receipt = self._make_receipt(self.client, total=100, amount_paid=0)
+        result = apply_credit_receipt_payment(
+            profile=self.cashier,
+            receipt_id=receipt.pk,
+            amount="100",
+        )
+        receipt.refresh_from_db()
+        self.assertTrue(result["converted"])
+        self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
+        self.assertEqual(str(receipt.amount_paid), "100.00")
+        page = _build_clients(self._filters())
+        self.assertIsNone(self._row_for(page, "CREDIT CLIENT"))
+
+    def test_partial_credit_stays_credit_with_balance_due(self):
+        from employees.analytics_services import apply_credit_receipt_payment
+
+        receipt = self._make_receipt(self.client, total=100, amount_paid=0)
+        result = apply_credit_receipt_payment(
+            profile=self.cashier,
+            receipt_id=receipt.pk,
+            amount="40",
+        )
+        receipt.refresh_from_db()
+        self.assertFalse(result["converted"])
+        self.assertEqual(receipt.kind, ShopReceiptKind.CREDIT)
         page = _build_clients(self._filters())
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIsNotNone(row)
         self.assertEqual(row[-1]["qty"], "1")
-        self.assertEqual(row[-1]["amount"], "0")
+        self.assertEqual(row[-1]["amount"], "60")
 
     def test_cancelled_credit_is_excluded(self):
         self._make_receipt(

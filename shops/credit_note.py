@@ -339,6 +339,9 @@ def apply_client_credit_note_payment(
             raise ValidationError(
                 f"Amount exceeds balance due ({_money_ksh(balance_before)})."
             )
+        converted = 0
+        from shops.credit_settlement import record_credit_collection
+
         for receipt in receipts:
             if remaining <= 0:
                 break
@@ -346,14 +349,13 @@ def apply_client_credit_note_payment(
             if due <= 0:
                 continue
             apply = min(remaining, due)
-            receipt.amount_paid = (
-                Decimal(receipt.amount_paid or 0) + apply
-            ).quantize(Decimal("0.01"))
-            update_fields = ["amount_paid"]
-            if mpesa_receipt_number and not receipt.mpesa_receipt_number:
-                receipt.mpesa_receipt_number = mpesa_receipt_number
-                update_fields.append("mpesa_receipt_number")
-            receipt.save(update_fields=update_fields)
+            if record_credit_collection(
+                receipt,
+                amount=apply,
+                payment_method="mpesa",
+                mpesa_receipt_number=mpesa_receipt_number,
+            ):
+                converted += 1
             remaining = (remaining - apply).quantize(Decimal("0.01"))
             cleared += 1
             from shops.credit_audit import log_credit_payment
@@ -376,17 +378,25 @@ def apply_client_credit_note_payment(
             _zero(),
         )
         ref_bit = f" · Ref {mpesa_receipt_number}" if mpesa_receipt_number else ""
+        converted_note = ""
+        if converted:
+            converted_note = (
+                f" {converted} fully paid credit"
+                f"{'' if converted == 1 else 's'} now recorded as "
+                f"{'a sale' if converted == 1 else 'sales'}."
+            )
         return {
             "ok": True,
             "kind": "credit",
             "account_id": client.pk,
             "cleared": cleared,
+            "converted": converted,
             "payment_method": "mpesa",
             "mpesa_receipt_number": mpesa_receipt_number,
             "balance_before": _money_ksh(balance_before),
             "balance_after": _money_ksh(balance_after),
             "message": (
                 f"M-Pesa payment of {_money_ksh(pay_amount)} recorded{ref_bit}. "
-                f"Balance is now {_money_ksh(balance_after)}."
+                f"Balance is now {_money_ksh(balance_after)}.{converted_note}"
             ),
         }

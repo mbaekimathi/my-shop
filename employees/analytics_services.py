@@ -441,6 +441,9 @@ def apply_account_payment(
                 raise ValidationError(
                     f"Amount exceeds balance due ({_money_ksh(balance_before)})."
                 )
+            converted = 0
+            from shops.credit_settlement import record_credit_collection
+
             for receipt in receipts:
                 if remaining <= 0:
                     break
@@ -448,14 +451,13 @@ def apply_account_payment(
                 if due <= 0:
                     continue
                 apply = min(remaining, due)
-                receipt.amount_paid = (
-                    Decimal(receipt.amount_paid or 0) + apply
-                ).quantize(Decimal("0.01"))
-                update_fields = ["amount_paid"]
-                if method == "mpesa" and mpesa_receipt_number and not receipt.mpesa_receipt_number:
-                    receipt.mpesa_receipt_number = mpesa_receipt_number
-                    update_fields.append("mpesa_receipt_number")
-                receipt.save(update_fields=update_fields)
+                if record_credit_collection(
+                    receipt,
+                    amount=apply,
+                    payment_method=method,
+                    mpesa_receipt_number=mpesa_receipt_number,
+                ):
+                    converted += 1
                 remaining = (remaining - apply).quantize(Decimal("0.01"))
                 cleared += 1
                 from shops.credit_audit import log_credit_payment
@@ -482,11 +484,19 @@ def apply_account_payment(
             ref_bit = (
                 f" · Ref {mpesa_receipt_number}" if mpesa_receipt_number else ""
             )
+            converted_note = ""
+            if converted:
+                converted_note = (
+                    f" {converted} fully paid credit"
+                    f"{'' if converted == 1 else 's'} now recorded as "
+                    f"{'a sale' if converted == 1 else 'sales'}."
+                )
             return {
                 "ok": True,
                 "kind": kind,
                 "account_id": client.pk,
                 "cleared": cleared,
+                "converted": converted,
                 "payment_method": method,
                 "mpesa_receipt_number": mpesa_receipt_number,
                 "account_balance": _money_ksh(balance_after),
@@ -494,7 +504,7 @@ def apply_account_payment(
                 "message": (
                     f"{pay_label} payment of {_money_ksh(pay_amount)} applied "
                     f"oldest → newest across {cleared} receipt"
-                    f"{'' if cleared == 1 else 's'}{ref_bit}."
+                    f"{'' if cleared == 1 else 's'}{ref_bit}.{converted_note}"
                 ),
             }
 
@@ -791,14 +801,14 @@ def apply_credit_receipt_payment(
             stk_payment.applied = True
             stk_payment.save(update_fields=["receipt", "applied", "updated_at"])
 
-        receipt.amount_paid = (
-            Decimal(receipt.amount_paid or 0) + pay_amount
-        ).quantize(Decimal("0.01"))
-        update_fields = ["amount_paid"]
-        if method == "mpesa" and mpesa_receipt_number and not receipt.mpesa_receipt_number:
-            receipt.mpesa_receipt_number = mpesa_receipt_number
-            update_fields.append("mpesa_receipt_number")
-        receipt.save(update_fields=update_fields)
+        from shops.credit_settlement import record_credit_collection
+
+        converted = record_credit_collection(
+            receipt,
+            amount=pay_amount,
+            payment_method=method,
+            mpesa_receipt_number=mpesa_receipt_number,
+        )
 
         from shops.credit_audit import log_credit_payment
 
@@ -830,10 +840,15 @@ def apply_credit_receipt_payment(
         pay_label = "M-Pesa" if method == "mpesa" else "Cash"
         ref_bit = f" · Ref {mpesa_receipt_number}" if mpesa_receipt_number else ""
         status = _payment_status_for_due(due_after, receipt.amount_paid)
+        converted_note = (
+            " Receipt is now recorded as a sale." if converted else ""
+        )
         return {
             "ok": True,
             "kind": "credit",
             "receipt_id": receipt.pk,
+            "receipt_kind": receipt.kind,
+            "converted": converted,
             "account_id": receipt.client_id,
             "payment_method": method,
             "mpesa_receipt_number": mpesa_receipt_number,
@@ -845,7 +860,7 @@ def apply_credit_receipt_payment(
             "account_balance_raw": str(balance_after),
             "message": (
                 f"{pay_label} payment of {_money_ksh(pay_amount)} applied to "
-                f"{receipt.receipt_number}{ref_bit}."
+                f"{receipt.receipt_number}{ref_bit}.{converted_note}"
             ),
         }
 

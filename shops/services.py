@@ -4913,7 +4913,7 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
             else:
                 cash_amount = Decimal("0.00")
                 mpesa_amount = Decimal("0.00")
-        else:
+        elif receipt.kind != ShopReceiptKind.CREDIT:
             cash_amount = Decimal("0.00")
             mpesa_amount = Decimal("0.00")
 
@@ -4925,20 +4925,22 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
     receipt.status = status
     receipt.last_returned_at = now
     receipt.last_returned_by = authorising
-    receipt.save(
-        update_fields=[
-            "subtotal",
-            "tax_amount",
-            "total",
-            "cash_amount",
-            "mpesa_amount",
-            "status",
-            "last_returned_at",
-            "last_returned_by",
-        ]
-    )
+    return_update_fields = [
+        "subtotal",
+        "tax_amount",
+        "total",
+        "cash_amount",
+        "mpesa_amount",
+        "status",
+        "last_returned_at",
+        "last_returned_by",
+    ]
+    paid = Decimal(receipt.amount_paid or 0)
+    if paid > total:
+        receipt.amount_paid = total
+        return_update_fields.append("amount_paid")
+    receipt.save(update_fields=return_update_fields)
 
-    detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
     returned_units = sum(row["qty"] for row in prepared)
     if status == ShopReceiptStatus.CANCELLED:
         summary = (
@@ -4960,6 +4962,21 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
             actor=authorising,
             occurred_at=now,
         )
+
+    from shops.credit_settlement import convert_settled_credit_to_sale
+
+    if convert_settled_credit_to_sale(receipt):
+        receipt.save(
+            update_fields=[
+                "kind",
+                "payment_method",
+                "cash_amount",
+                "mpesa_amount",
+                "credit_due_date",
+            ]
+        )
+
+    detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
 
     return {
         **detail,
