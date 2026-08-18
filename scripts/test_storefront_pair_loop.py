@@ -149,6 +149,8 @@ def run_once(client, shop_id: int, item_a, item_b) -> dict:
         "has_template": bool(template),
         "template": template,
         "has_pair_modal": 'data-storefront-pair-modal' in html,
+        "has_product_modal": 'data-storefront-product-modal' in html,
+        "has_product_preview": 'data-storefront-preview' in html,
         "has_js": "shop-website.js" in html,
         "suggest_status": response.status_code,
         "suggest_ms": suggest_ms,
@@ -210,6 +212,8 @@ def main() -> int:
             row["page_status"] == 200
             and row["has_template"]
             and row["has_pair_modal"]
+            and row["has_product_modal"]
+            and row["has_product_preview"]
             and row["has_js"]
             and row["suggest_status"] == 200
             and row["suggest_count"] > 0

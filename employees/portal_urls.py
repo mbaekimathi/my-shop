@@ -191,6 +191,7 @@ urlpatterns = [
     path("shop-manager/", views.role_shop_manager, name="role_shop_manager"),
     path("shop-cashier/", views.role_shop_cashier, name="role_shop_cashier"),
     path("it-support/", views.role_it_support, name="role_it_support"),
+    path("it-support/marketing/", views.marketing_links, name="marketing_links"),
     path(
         "<role_segment:role_segment>/hr-management/approvals/<int:page>/",
         hr_views.hr_employee_approvals,
@@ -325,6 +326,16 @@ urlpatterns = [
         "<role_segment:role_segment>/whatsapp/catalogue/",
         communications_views.whatsapp_catalogue,
         name="whatsapp_catalogue",
+    ),
+    path(
+        "<role_segment:role_segment>/whatsapp/contacts/",
+        communications_views.whatsapp_contacts,
+        name="whatsapp_contacts",
+    ),
+    path(
+        "<role_segment:role_segment>/marketing/activities/",
+        communications_views.marketing_activities,
+        name="marketing_activities",
     ),
     path(
         "<role_segment:role_segment>/whatsapp/api/status/",

@@ -55,7 +55,7 @@ class BroadcastCampaign(models.Model):
         related_name="broadcast_campaigns",
     )
     body_template = models.TextField()
-    image = models.ImageField(upload_to=campaign_image_path, blank=True, null=True)
+    image = models.FileField(upload_to=campaign_image_path, blank=True, null=True)
     filters = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=20,
@@ -164,3 +164,44 @@ class InboundReply(models.Model):
 
     def __str__(self):
         return f"Reply from {self.phone}"
+
+
+WHATSAPP_GROUP_CREATED = "created"
+WHATSAPP_GROUP_JOINED = "joined"
+WHATSAPP_GROUP_SOURCE_CHOICES = (
+    (WHATSAPP_GROUP_CREATED, "Created"),
+    (WHATSAPP_GROUP_JOINED, "Joined"),
+)
+
+
+class WhatsAppGroup(models.Model):
+    """A WhatsApp group saved in MY-SHOP, with optional chat.whatsapp.com invite."""
+
+    name = models.CharField(max_length=200)
+    invite_link = models.CharField(max_length=500, blank=True, default="")
+    source = models.CharField(
+        max_length=20,
+        choices=WHATSAPP_GROUP_SOURCE_CHOICES,
+        default=WHATSAPP_GROUP_CREATED,
+        db_index=True,
+    )
+    members = models.ManyToManyField(
+        "shops.Client",
+        blank=True,
+        related_name="whatsapp_groups",
+    )
+    created_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="whatsapp_groups_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+
+    def __str__(self):
+        return self.name

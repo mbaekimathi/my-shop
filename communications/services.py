@@ -153,6 +153,99 @@ def _client_ids_for_items(
     )
 
 
+def companion_item_ids(
+    item_ids: list[int],
+    *,
+    shop_id: int | None = None,
+    shop_ids: list[int] | None = None,
+    limit: int = 8,
+) -> list[int]:
+    """Items commonly bought on the same receipt as the given items."""
+    from django.db.models import Subquery
+    from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
+
+    ids = [int(pk) for pk in item_ids if pk]
+    if not ids:
+        return []
+    valid = Q(
+        receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        receipt__status__in=(
+            ShopReceiptStatus.ACTIVE,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        ),
+        item_id__in=ids,
+    )
+    if shop_id:
+        valid &= Q(receipt__shop_id=shop_id)
+    elif shop_ids is not None:
+        valid &= Q(receipt__shop_id__in=list(shop_ids))
+    receipt_ids = ShopReceiptLine.objects.filter(valid).values("receipt_id")
+    rows = (
+        ShopReceiptLine.objects.filter(receipt_id__in=Subquery(receipt_ids))
+        .exclude(item_id__isnull=True)
+        .exclude(item_id__in=ids)
+        .values("item_id")
+        .annotate(together=Count("receipt_id", distinct=True))
+        .order_by("-together")[: max(1, limit)]
+    )
+    found = [int(row["item_id"]) for row in rows if row.get("item_id")]
+    if found:
+        return found
+    categories = list(
+        Item.objects.filter(pk__in=ids)
+        .exclude(category="")
+        .values_list("category", flat=True)
+        .distinct()
+    )
+    if not categories:
+        return []
+    fallback = (
+        Item.objects.filter(is_suspended=False, category__in=categories)
+        .exclude(pk__in=ids)
+        .order_by("name", "id")
+        .values_list("pk", flat=True)[: max(1, limit)]
+    )
+    return [int(pk) for pk in fallback]
+
+
+def bought_item_ids_for_filters(filters: dict | None = None, *, limit: int = 80) -> list[int]:
+    """Item ids this audience has bought, filter item first when set."""
+    f = parse_filters(filters)
+    kinds = _receipt_kinds_for_audience(f["audience_type"])
+    outstanding = bool(f.get("outstanding_only")) and f["audience_type"] == AUDIENCE_CREDIT
+    if f["audience_type"] == AUDIENCE_LEADS:
+        from shops.models import ShopReceiptKind
+
+        kinds = [
+            ShopReceiptKind.SALE,
+            ShopReceiptKind.CREDIT,
+            ShopReceiptKind.QUOTATION,
+        ]
+        outstanding = False
+    popular = _item_counts_for_audience(
+        kinds=kinds,
+        shop_id=f["shop_id"],
+        shop_ids=f.get("shop_ids"),
+        outstanding_only=outstanding,
+        limit=limit,
+    )
+    ordered = []
+    seen = set()
+    for pk in list(f.get("item_ids") or []):
+        if pk and pk not in seen:
+            seen.add(pk)
+            ordered.append(pk)
+    for row in popular:
+        try:
+            pk = int(row.get("value") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pk and pk not in seen:
+            seen.add(pk)
+            ordered.append(pk)
+    return ordered
+
+
 def _parse_client_ids(raw) -> list[int]:
     if raw is None or raw == "":
         return []
@@ -997,3 +1090,186 @@ def recipients_payload(
             for r in sample_rows
         ],
     }
+
+
+_WA_GROUP_INVITE_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?chat\.whatsapp\.com/([A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
+WHATSAPP_WEB_URL = "https://web.whatsapp.com/"
+
+
+def normalize_whatsapp_group_invite(value: str, *, required: bool = False) -> str:
+    from django.core.exceptions import ValidationError
+
+    raw = (value or "").strip()
+    if not raw:
+        if required:
+            raise ValidationError(
+                "Paste a WhatsApp group invite link (chat.whatsapp.com/…)."
+            )
+        return ""
+    match = _WA_GROUP_INVITE_RE.search(raw)
+    if not match:
+        raise ValidationError(
+            "Paste a WhatsApp group invite link (chat.whatsapp.com/…)."
+        )
+    return f"https://chat.whatsapp.com/{match.group(1)}"
+
+
+def list_whatsapp_contacts() -> list[dict[str, Any]]:
+    from shops.services import _whatsapp_url, format_kenya_phone
+
+    rows = []
+    for client in Client.objects.all().order_by("full_name", "id"):
+        phone = format_kenya_phone(client.phone_normalized or client.phone_number)
+        rows.append(
+            {
+                "id": client.pk,
+                "full_name": (client.full_name or "").strip() or "Contact",
+                "phone": phone or client.phone_number,
+                "wa_url": _whatsapp_url(
+                    phone=client.phone_normalized or client.phone_number,
+                    text="",
+                ),
+            }
+        )
+    return rows
+
+
+def add_whatsapp_contact(*, full_name: str, phone: str, profile=None):
+    from django.core.exceptions import ValidationError
+    from shops.services import upsert_client
+
+    name = (full_name or "").strip()
+    if not name:
+        raise ValidationError("Enter a contact name.")
+    client = upsert_client(full_name=name, phone=phone, profile=profile)
+    if client is None:
+        raise ValidationError("Enter a valid Kenyan phone number.")
+    return client
+
+
+def list_whatsapp_groups() -> list[dict[str, Any]]:
+    from .models import WhatsAppGroup
+
+    groups = []
+    qs = WhatsAppGroup.objects.prefetch_related("members").order_by("name", "id")
+    for group in qs:
+        members = [
+            {
+                "id": member.pk,
+                "full_name": (member.full_name or "").strip() or "Contact",
+                "phone": member.phone_number,
+            }
+            for member in group.members.all().order_by("full_name", "id")
+        ]
+        groups.append(
+            {
+                "id": group.pk,
+                "name": group.name,
+                "invite_link": group.invite_link,
+                "source": group.source,
+                "open_url": group.invite_link or WHATSAPP_WEB_URL,
+                "member_count": len(members),
+                "members": members,
+            }
+        )
+    return groups
+
+
+def create_whatsapp_group(
+    *,
+    name: str,
+    invite_link: str = "",
+    member_ids: list[int] | None = None,
+    profile=None,
+    source: str = "",
+):
+    from django.core.exceptions import ValidationError
+
+    from .models import (
+        WHATSAPP_GROUP_CREATED,
+        WHATSAPP_GROUP_JOINED,
+        WhatsAppGroup,
+    )
+
+    title = (name or "").strip()
+    invite = normalize_whatsapp_group_invite(invite_link, required=False)
+    kind = (source or "").strip() or (
+        WHATSAPP_GROUP_JOINED if invite else WHATSAPP_GROUP_CREATED
+    )
+    if kind not in {WHATSAPP_GROUP_CREATED, WHATSAPP_GROUP_JOINED}:
+        kind = WHATSAPP_GROUP_CREATED
+    if not title:
+        if invite:
+            title = "WhatsApp group"
+        else:
+            raise ValidationError("Enter a group name.")
+    ids = []
+    seen = set()
+    for raw in member_ids or []:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0 or value in seen:
+            continue
+        seen.add(value)
+        ids.append(value)
+    members = list(Client.objects.filter(pk__in=ids)) if ids else []
+    group = WhatsAppGroup.objects.create(
+        name=title,
+        invite_link=invite,
+        source=kind,
+        created_by=profile,
+    )
+    if members:
+        group.members.set(members)
+    return group
+
+
+def join_whatsapp_group(
+    *,
+    name: str,
+    invite_link: str,
+    member_ids: list[int] | None = None,
+    profile=None,
+):
+    from .models import WHATSAPP_GROUP_JOINED, WhatsAppGroup
+
+    invite = normalize_whatsapp_group_invite(invite_link, required=True)
+    existing = WhatsAppGroup.objects.filter(invite_link=invite).first()
+    if existing:
+        title = (name or "").strip()
+        updates = []
+        if title and title != existing.name:
+            existing.name = title
+            updates.append("name")
+        if existing.source != WHATSAPP_GROUP_JOINED:
+            existing.source = WHATSAPP_GROUP_JOINED
+            updates.append("source")
+        if updates:
+            updates.append("updated_at")
+            existing.save(update_fields=updates)
+        if member_ids:
+            ids = []
+            seen = set()
+            for raw in member_ids:
+                try:
+                    value = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0 and value not in seen:
+                    seen.add(value)
+                    ids.append(value)
+            if ids:
+                existing.members.add(*Client.objects.filter(pk__in=ids))
+        return existing
+    return create_whatsapp_group(
+        name=name,
+        invite_link=invite,
+        member_ids=member_ids,
+        profile=profile,
+        source=WHATSAPP_GROUP_JOINED,
+    )

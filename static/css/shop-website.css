@@ -239,6 +239,11 @@ body.storefront-cart-open .storefront__cart-fab {
   pointer-events: none;
 }
 
+body.storefront-product-open .storefront__cart-fab {
+  opacity: 0;
+  pointer-events: none;
+}
+
 body.storefront-pair-open .storefront__cart-fab {
   opacity: 1;
   pointer-events: auto;
@@ -417,6 +422,23 @@ body.storefront-pair-open .storefront__cart-fab {
 
 .storefront__product:hover { transform: translateY(-5px); box-shadow: 0 15px 28px rgba(28, 41, 32, .1); }
 
+.storefront__product-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.storefront__product-open:focus-visible {
+  outline: 2px solid var(--store-ink);
+  outline-offset: 2px;
+}
+
 .storefront__product-image {
   position: relative;
   display: grid;
@@ -457,12 +479,12 @@ body.storefront-pair-open .storefront__cart-fab {
   border-radius: 8px;
   background: var(--store-lime);
   color: var(--store-ink);
-  cursor: pointer;
   font: inherit;
   font-size: .67rem;
   font-weight: 800;
+  pointer-events: none;
 }
-.storefront__add:hover { background: #c8e74c; }
+.storefront__product-open:hover .storefront__add { background: #c8e74c; }
 .storefront__add svg { width: 13px; height: 13px; }
 
 .storefront__cart-backdrop {
@@ -978,6 +1000,209 @@ body.storefront-pair-open .storefront__cart-fab {
   text-align: center;
 }
 
+.storefront__product-modal {
+  position: fixed;
+  z-index: 32;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.storefront__product-modal[hidden] {
+  display: none !important;
+}
+
+.storefront__product-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(23, 33, 29, .48);
+  backdrop-filter: blur(6px);
+}
+
+.storefront__product-dialog {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(16rem, .95fr);
+  width: min(100%, 720px);
+  max-height: min(88vh, 560px);
+  overflow: hidden;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 28px 60px rgba(20, 32, 24, .22);
+  animation: storefront-pair-in .28s ease;
+}
+
+.storefront__product-modal-close {
+  position: absolute;
+  top: .85rem;
+  right: .85rem;
+  z-index: 2;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--store-line);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .88);
+  cursor: pointer;
+}
+
+.storefront__product-modal-close svg { width: 16px; }
+
+.storefront__product-modal-media {
+  display: grid;
+  min-height: 240px;
+  place-items: center;
+  overflow: hidden;
+  background: #eef0e8;
+}
+
+.storefront__product-modal-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fff;
+}
+
+.storefront__product-modal-media svg {
+  width: 48px;
+  color: #94a095;
+}
+
+.storefront__product-modal-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: 1.45rem 1.3rem 1.2rem;
+}
+
+.storefront__product-modal-kicker {
+  margin: 0 0 .45rem;
+  color: var(--store-muted);
+  font-size: .65rem;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.storefront__product-modal-panel h2 {
+  margin: 0;
+  font-size: 1.55rem;
+  letter-spacing: -.06em;
+  line-height: 1.15;
+}
+
+.storefront__product-modal-desc {
+  margin: .7rem 0 0;
+  overflow: auto;
+  color: var(--store-muted);
+  font-size: .82rem;
+  line-height: 1.55;
+}
+
+.storefront__product-modal-desc:empty {
+  display: none;
+}
+
+.storefront__product-modal-price {
+  display: block;
+  margin-top: auto;
+  padding-top: 1rem;
+  font-size: 1.2rem;
+  letter-spacing: -.04em;
+}
+
+.storefront__product-modal-actions {
+  display: grid;
+  gap: .75rem;
+  margin-top: 1rem;
+}
+
+.storefront__product-qty {
+  display: grid;
+  gap: .4rem;
+}
+
+.storefront__product-qty-label {
+  color: var(--store-muted);
+  font-size: .65rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.storefront__product-qty-controls {
+  display: grid;
+  grid-template-columns: 2.4rem minmax(0, 1fr) 2.4rem;
+  align-items: center;
+  gap: .4rem;
+  padding: .25rem;
+  border: 1px solid var(--store-line);
+  border-radius: 12px;
+  background: #f7f8f3;
+}
+
+.storefront__product-qty-controls button {
+  display: grid;
+  height: 2.2rem;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--store-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.storefront__product-qty-controls input {
+  width: 100%;
+  height: 2.2rem;
+  border: 0;
+  background: transparent;
+  color: var(--store-ink);
+  font: inherit;
+  font-size: .95rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.storefront__product-qty-controls input:focus {
+  outline: none;
+}
+
+.storefront__product-modal-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+  min-height: 46px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--store-lime);
+  color: var(--store-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: .86rem;
+  font-weight: 800;
+}
+
+.storefront__product-modal-add:hover {
+  background: #c8e74c;
+}
+
+.storefront__product-modal-add svg {
+  width: 16px;
+  height: 16px;
+}
+
+body.storefront-product-open {
+  overflow: hidden;
+}
+
 .storefront__pair-modal {
   position: fixed;
   z-index: 30;
@@ -1170,6 +1395,16 @@ body.storefront-pair-open {
   .storefront__products { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
   .storefront__product-image { height: 135px; }
   .storefront__product-body { min-height: 158px; padding: .8rem; }
+  .storefront__product-modal { padding: .6rem; align-items: end; }
+  .storefront__product-dialog {
+    grid-template-columns: 1fr;
+    width: 100%;
+    max-height: calc(100dvh - 1rem);
+    overflow: auto;
+    border-radius: 22px 22px 16px 16px;
+  }
+  .storefront__product-modal-media { min-height: 180px; max-height: 210px; }
+  .storefront__product-modal-panel { padding: 1.15rem 1.1rem 1.1rem; }
   .storefront__footer { flex-direction: column; padding: 1.2rem 1.3rem; }
 }
 

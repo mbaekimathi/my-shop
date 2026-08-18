@@ -1,0 +1,255 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="workspace-hero wa-share-hero" data-animate="rise">
+  <div class="wa-share-hero__copy">
+    <p class="role-eyebrow">
+      <i data-lucide="contact" aria-hidden="true"></i>
+      <span>WhatsApp · Contacts</span>
+    </p>
+    <h2 class="workspace-hero-title">Contacts</h2>
+    <p class="workspace-hero-copy">
+      Every saved phone contact. Add people, then create a WhatsApp group or join one with an invite link.
+    </p>
+  </div>
+  <div class="wa-share-hero__aside">
+    <span class="wa-chip">
+      <i data-lucide="users" aria-hidden="true"></i>
+      <strong>{{ contact_count }}</strong>
+      <span>contact{{ contact_count|pluralize }}</span>
+    </span>
+    <span class="wa-chip">
+      <i data-lucide="messages-square" aria-hidden="true"></i>
+      <strong>{{ group_count }}</strong>
+      <span>group{{ group_count|pluralize }}</span>
+    </span>
+  </div>
+</section>
+
+<section class="wa-auto wa-share wa-contacts" data-animate="rise" data-delay="1" data-wa-contacts>
+  <div class="wa-share__layout">
+    <section class="wa-card wa-share__pane">
+      <header class="wa-card__head">
+        <div>
+          <p class="wa-card__kicker">Directory</p>
+          <h3>All contacts</h3>
+          <p>People saved from sales, credits, and this page.</p>
+        </div>
+        <button class="btn btn--primary" type="button" data-modal-open="add-contact">
+          <i data-lucide="user-plus" aria-hidden="true"></i>
+          <span>Add contact</span>
+        </button>
+      </header>
+
+      <div class="wa-auto__audience">
+        <div class="wa-auto__pickbar">
+          <label class="wa-auto__search">
+            <i data-lucide="search" aria-hidden="true"></i>
+            <input type="search" placeholder="Search name or phone…" autocomplete="off" data-wa-contact-search aria-label="Search contacts">
+          </label>
+        </div>
+        <div class="wa-auto__people" data-wa-contact-list>
+          <ul class="wa-people">
+            {% for person in contacts %}
+            <li class="wa-person wa-person--static" data-wa-contact-row data-search="{{ person.full_name|lower }} {{ person.phone }}">
+              <span class="wa-person__avatar" aria-hidden="true">{{ person.full_name|slice:":1" }}</span>
+              <span class="wa-person__meta">
+                <strong>{{ person.full_name }}</strong>
+                <em>{{ person.phone }}</em>
+              </span>
+              {% if person.wa_url %}
+              <a class="btn btn--ghost wa-contact__chat" href="{{ person.wa_url }}" target="_blank" rel="noopener noreferrer">
+                <i data-lucide="message-circle" aria-hidden="true"></i>
+                <span>Chat</span>
+              </a>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          <p class="wa-auto__people-empty" data-wa-contact-empty {% if contacts %}hidden{% endif %}>
+            No contacts yet. Add a name and phone number.
+          </p>
+          <p class="wa-auto__people-empty" data-wa-contact-none hidden>
+            No contacts match your search.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="wa-card wa-share__pane">
+      <header class="wa-card__head">
+        <div>
+          <p class="wa-card__kicker">WhatsApp</p>
+          <h3>Groups</h3>
+          <p>Create a group of contacts, or join with a chat.whatsapp.com invite.</p>
+        </div>
+        <div class="wa-contacts__group-actions">
+          <button class="btn btn--ghost" type="button" data-modal-open="join-group">
+            <i data-lucide="log-in" aria-hidden="true"></i>
+            <span>Join group</span>
+          </button>
+          <button class="btn btn--primary" type="button" data-modal-open="create-group">
+            <i data-lucide="plus" aria-hidden="true"></i>
+            <span>Create group</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="wa-auto__audience">
+        <div class="wa-auto__pickbar">
+          <label class="wa-auto__search">
+            <i data-lucide="search" aria-hidden="true"></i>
+            <input type="search" placeholder="Search groups…" autocomplete="off" data-wa-group-search aria-label="Search groups">
+          </label>
+        </div>
+        <div class="wa-auto__people wa-contacts__groups" data-wa-group-list>
+          <ul class="wa-people">
+            {% for group in groups %}
+            <li class="wa-group" data-wa-group-row data-search="{{ group.name|lower }}">
+              <span class="wa-person__avatar" aria-hidden="true">
+                <i data-lucide="users"></i>
+              </span>
+              <span class="wa-person__meta">
+                <strong>{{ group.name }}</strong>
+                <em>
+                  {{ group.member_count }} member{{ group.member_count|pluralize }}
+                  {% if group.source == "joined" %} · Joined{% else %} · Created{% endif %}
+                </em>
+              </span>
+              <a class="btn btn--ghost" href="{{ group.open_url }}" target="_blank" rel="noopener noreferrer">
+                <i data-lucide="external-link" aria-hidden="true"></i>
+                <span>{% if group.invite_link %}Open WhatsApp{% else %}Create in WhatsApp{% endif %}</span>
+              </a>
+            </li>
+            {% endfor %}
+          </ul>
+          <p class="wa-auto__people-empty" data-wa-group-empty {% if groups %}hidden{% endif %}>
+            No groups yet. Create one from your contacts, or paste a WhatsApp invite to join.
+          </p>
+          <p class="wa-auto__people-empty" data-wa-group-none hidden>
+            No groups match your search.
+          </p>
+        </div>
+      </div>
+    </section>
+  </div>
+</section>
+{% endblock %}
+
+{% block workspace_overlays %}
+{{ block.super }}
+<div class="workspace-modal" data-modal="add-contact" hidden aria-hidden="true">
+  <div class="workspace-modal-backdrop" data-modal-close="add-contact"></div>
+  <div class="workspace-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="add-contact-title">
+    <div class="workspace-modal-head">
+      <h2 id="add-contact-title">Add contact</h2>
+      <button class="workspace-icon-btn" type="button" data-modal-close="add-contact" aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <form class="workspace-modal-form" method="post" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add_contact">
+      <label class="field">
+        <span class="field-label">Name</span>
+        <input type="text" name="full_name" autocomplete="name" required placeholder="Jane Doe">
+      </label>
+      <label class="field">
+        <span class="field-label">Phone</span>
+        <input type="tel" name="phone" inputmode="tel" autocomplete="tel" required placeholder="0712 345 678">
+      </label>
+      <div class="workspace-modal-actions">
+        <button class="btn btn--ghost" type="button" data-modal-close="add-contact">Cancel</button>
+        <button class="btn btn--primary" type="submit">Save contact</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="workspace-modal" data-modal="create-group" hidden aria-hidden="true">
+  <div class="workspace-modal-backdrop" data-modal-close="create-group"></div>
+  <div class="workspace-modal-dialog wa-contacts-modal" role="dialog" aria-modal="true" aria-labelledby="create-group-title">
+    <div class="workspace-modal-head">
+      <h2 id="create-group-title">Create WhatsApp group</h2>
+      <button class="workspace-icon-btn" type="button" data-modal-close="create-group" aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <form class="workspace-modal-form" method="post" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create_group">
+      <label class="field">
+        <span class="field-label">Group name</span>
+        <input type="text" name="name" required placeholder="Sales team">
+      </label>
+      <label class="field">
+        <span class="field-label">Invite link <em>(optional)</em></span>
+        <input type="url" name="invite_link" placeholder="https://chat.whatsapp.com/…">
+      </label>
+      <div class="field">
+        <span class="field-label">Members</span>
+        <label class="wa-auto__search">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input type="search" placeholder="Search contacts…" autocomplete="off" data-wa-member-search aria-label="Search members">
+        </label>
+        <div class="wa-contacts__member-pick" data-wa-member-pick>
+          {% for person in contacts %}
+          <label class="wa-person" data-search="{{ person.full_name|lower }} {{ person.phone }}">
+            <input class="wa-person__check" type="checkbox" name="member_ids" value="{{ person.id }}">
+            <span class="wa-person__avatar" aria-hidden="true">{{ person.full_name|slice:":1" }}</span>
+            <span class="wa-person__meta">
+              <strong>{{ person.full_name }}</strong>
+              <em>{{ person.phone }}</em>
+            </span>
+          </label>
+          {% empty %}
+          <p class="wa-auto__people-empty">Add contacts first, then pick members.</p>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="workspace-modal-actions">
+        <button class="btn btn--ghost" type="button" data-modal-close="create-group">Cancel</button>
+        <button class="btn btn--ghost" type="submit" name="open_whatsapp" value="1">Save and open WhatsApp</button>
+        <button class="btn btn--primary" type="submit">Save group</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="workspace-modal" data-modal="join-group" hidden aria-hidden="true">
+  <div class="workspace-modal-backdrop" data-modal-close="join-group"></div>
+  <div class="workspace-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="join-group-title">
+    <div class="workspace-modal-head">
+      <h2 id="join-group-title">Join WhatsApp group</h2>
+      <button class="workspace-icon-btn" type="button" data-modal-close="join-group" aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <form class="workspace-modal-form" method="post" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="action" value="join_group">
+      <label class="field">
+        <span class="field-label">Group name <em>(optional)</em></span>
+        <input type="text" name="name" placeholder="Weekend promo">
+      </label>
+      <label class="field">
+        <span class="field-label">Invite link</span>
+        <input type="url" name="invite_link" required placeholder="https://chat.whatsapp.com/…">
+      </label>
+      <p class="wa-share__hint">Paste the invite from WhatsApp, then open it to join on your phone or WhatsApp Web.</p>
+      <div class="workspace-modal-actions">
+        <button class="btn btn--ghost" type="button" data-modal-close="join-group">Cancel</button>
+        <button class="btn btn--primary" type="submit" name="open_whatsapp" value="1">Save and join in WhatsApp</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/whatsapp-contacts.js' %}?v=1"></script>
+{% endblock %}

@@ -314,12 +314,12 @@ class WhatsAppAutomationsPageTests(TestCase):
             status=ShopReceiptStatus.ACTIVE,
         )
 
-    def test_page_shows_what_and_who(self):
+    def test_page_shows_what_to_send(self):
         self.client.force_login(self.user)
-        response = self.client.get("/it-support/whatsapp/")
+        response = self.client.get("/employees/settings/whatsapp/")
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "WhatsApp settings")
         self.assertContains(response, "What to send")
-        self.assertContains(response, "Who to share with")
         self.assertContains(response, "Cash sale receipts")
         self.assertContains(response, "Credit sales")
         self.assertContains(response, "Buy stock")
@@ -332,19 +332,59 @@ class WhatsAppAutomationsPageTests(TestCase):
             response,
             "Send a credit sale notice to the customer phone when credit is taken at the cart.",
         )
-        self.assertContains(response, "JANE DOE")
-        self.assertContains(response, "254712345678")
-        self.assertContains(response, "Sent &amp; viewed")
-        self.assertContains(response, "Cancel a send")
-        self.assertContains(response, "data-wa-pick")
-        self.assertContains(response, "Select all")
-        self.assertContains(response, "Share items")
-        self.assertContains(response, "/it-support/whatsapp/catalogue/")
+        self.assertNotContains(response, "Who to share with")
+        self.assertNotContains(response, "Join Twilio sandbox")
+        self.assertNotContains(response, "Sent &amp; viewed")
+        self.assertNotContains(response, "Share items")
+        labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
+        self.assertNotIn("Marketing links", labels)
+        self.assertNotIn("Communication settings", labels)
+        self.assertIn("Twilio settings", labels)
+        self.assertIn("WhatsApp settings", labels)
+
+    def test_workspace_page_redirects_to_communications_settings(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/whatsapp/")
+        self.assertRedirects(response, "/employees/settings/communication-settings/")
+
+    def test_communications_hub_links_to_twilio_and_whatsapp(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/employees/settings/communication-settings/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Twilio settings")
+        self.assertContains(response, "WhatsApp settings")
+        self.assertContains(response, 'href="/employees/settings/twilio/"')
+        self.assertContains(response, 'href="/employees/settings/whatsapp/"')
+        labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
+        self.assertNotIn("Marketing links", labels)
+        self.assertNotIn("Communication settings", labels)
+        self.assertIn("Twilio settings", labels)
+        self.assertIn("WhatsApp settings", labels)
+        self.assertNotIn("Share items", labels)
+
+    def test_old_communications_url_redirects(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/employees/settings/communications/")
+        self.assertRedirects(response, "/employees/settings/communication-settings/")
+
+    def test_twilio_settings_page(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/employees/settings/twilio/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Account SID")
+        self.assertContains(response, "Save Twilio")
+        self.assertContains(response, "Join Twilio sandbox on the customer phone")
+        self.assertContains(response, "Open WhatsApp on this phone")
+        labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
+        self.assertNotIn("Marketing links", labels)
+        self.assertNotIn("Communication settings", labels)
+        self.assertIn("Twilio settings", labels)
+        self.assertIn("WhatsApp settings", labels)
 
     def test_save_audience(self):
         self.client.force_login(self.user)
         response = self.client.post(
-            "/it-support/whatsapp/",
+            "/employees/settings/whatsapp/",
             {
                 "action": "save_audience",
                 "audience_type": "sale",
@@ -374,7 +414,7 @@ class WhatsAppAutomationsPageTests(TestCase):
         )
         self.client.force_login(self.user)
         response = self.client.post(
-            "/it-support/whatsapp/",
+            "/employees/settings/whatsapp/",
             {"action": "send_website"},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
             HTTP_ACCEPT="application/json",
@@ -414,7 +454,7 @@ class WhatsAppAutomationsPageTests(TestCase):
         self.client.force_login(self.user)
         with override_settings(COMMS_SEND_MODE="cron"):
             response = self.client.post(
-                "/it-support/whatsapp/",
+                "/employees/settings/whatsapp/",
                 {
                     "action": "send_website",
                     "client_ids": [str(self.customer.pk)],
@@ -496,19 +536,55 @@ class WhatsAppCataloguePageTests(TestCase):
 
     def test_page_and_sidebar(self):
         self.client.force_login(self.user)
-        home = self.client.get("/it-support/whatsapp/")
+        home = self.client.get("/it-support/marketing/")
         self.assertEqual(home.status_code, 200)
         self.assertContains(home, "Share items")
         self.assertContains(home, 'href="/it-support/whatsapp/catalogue/"')
         response = self.client.get("/it-support/whatsapp/catalogue/")
         self.assertEqual(response.status_code, 200)
+        labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
+        self.assertEqual(labels, ["Share items", "Contacts", "Activities"])
+        self.assertTrue(response.context["page_sidebar"]["primary"][0].get("active"))
+        self.assertFalse(response.context["page_sidebar"]["primary"][1].get("active"))
+        self.assertIn(
+            "/it-support/whatsapp/contacts/",
+            response.context["page_sidebar"]["primary"][1]["href"],
+        )
+        self.assertIn(
+            "/it-support/marketing/activities/",
+            response.context["page_sidebar"]["primary"][2]["href"],
+        )
+        self.assertContains(response, "Who to share with")
         self.assertContains(response, "Pick items")
+        self.assertContains(response, "When to send")
+        self.assertContains(response, "Edit message")
+        self.assertContains(response, "card image")
+        self.assertContains(response, "data-wa-message-body")
+        self.assertContains(response, "{items}")
         self.assertContains(response, "PIXEL 9")
         self.assertContains(response, "KSh 85,000")
-        self.assertContains(response, "New items")
+        self.assertNotContains(response, "New items")
+        self.assertNotContains(response, "Sent &amp; viewed")
         self.assertContains(response, "Send selected items now")
         self.assertContains(response, "data-wa-item-pick")
         self.assertContains(response, "JANE DOE")
+        self.assertContains(response, "filter_item_id")
+        self.assertContains(response, "Add matching items")
+
+    def test_activities_page_and_sidebar(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/marketing/activities/")
+        self.assertEqual(response.status_code, 200)
+        labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
+        self.assertEqual(labels, ["Communication settings", "Share items", "Contacts", "Activities"])
+        self.assertTrue(response.context["page_sidebar"]["primary"][3].get("active"))
+        self.assertContains(response, "Waiting to send")
+        self.assertContains(response, "Sent history")
+        self.assertContains(response, "Nothing waiting. Scheduled item shares and queued messages will show up here.")
+        self.assertContains(response, 'href="/it-support/whatsapp/catalogue/"')
+        self.assertContains(response, 'href="/it-support/whatsapp/contacts/"')
+        self.assertIn("pending", response.context["activities"])
+        self.assertIn("history", response.context["activities"])
 
     def test_caption_includes_name_and_price(self):
         from communications.automations import build_item_catalogue_caption
@@ -518,6 +594,72 @@ class WhatsAppCataloguePageTests(TestCase):
         self.assertIn("PHONES", text)
         self.assertIn("KSh 85,000", text)
         self.assertIn("{first_name}", text)
+
+    def test_combined_caption_lists_every_item(self):
+        from communications.automations import build_catalogue_share_caption
+        from items.models import Item
+
+        cable = Item.objects.create(
+            category="CABLES",
+            name="USB-C CABLE",
+            minimum_selling_price=200,
+            shop_price=350,
+            created_by=self.it,
+        )
+        text = build_catalogue_share_caption([self.item, cable])
+        self.assertEqual(text, "Hi {first_name},")
+
+    def test_custom_template_keeps_intro_and_items(self):
+        from communications.automations import apply_catalogue_message_template
+        from items.models import Item
+
+        cable = Item.objects.create(
+            category="CABLES",
+            name="USB-C CABLE",
+            minimum_selling_price=200,
+            shop_price=350,
+            created_by=self.it,
+        )
+        text = apply_catalogue_message_template(
+            "Hello {first_name},\n\nNew stock:\n{items}\n\nReply YES.",
+            [self.item, cable],
+        )
+        self.assertIn("Hello {first_name}", text)
+        self.assertIn("New stock:", text)
+        self.assertIn("PIXEL 9", text)
+        self.assertIn("USB-C CABLE", text)
+        self.assertIn("Reply YES.", text)
+        self.assertNotIn("{items}", text)
+
+        card_caption = apply_catalogue_message_template(
+            "Hello {first_name},\n\nNew stock:\n{items}\n\nReply YES.",
+            [self.item, cable],
+            card=True,
+        )
+        self.assertEqual(card_caption, "Hello {first_name},\n\nNew stock:\n\nReply YES.")
+        self.assertNotIn("PIXEL 9", card_caption)
+
+    def test_catalogue_card_builds_jpeg(self):
+        from communications.catalogue_card import compose_catalogue_card
+        from items.models import Item
+
+        cable = Item.objects.create(
+            category="CABLES",
+            name="USB-C CABLE",
+            minimum_selling_price=200,
+            shop_price=350,
+            created_by=self.it,
+        )
+        card = compose_catalogue_card([self.item, cable])
+        self.assertIsNotNone(card)
+        data = card.read()
+        self.assertTrue(data.startswith(b"\xff\xd8\xff"))
+        from PIL import Image as PILImage
+        from io import BytesIO
+
+        image = PILImage.open(BytesIO(data))
+        self.assertEqual(image.size[0], 1080)
+        self.assertGreater(image.size[1], 900)
 
     def test_localhost_item_image_is_omitted(self):
         from unittest.mock import patch
@@ -593,9 +735,223 @@ class WhatsAppCataloguePageTests(TestCase):
         self.assertEqual(campaign.recipient_count, 1)
         message = OutboundMessage.objects.get(campaign=campaign)
         self.assertEqual(message.client_id, self.customer.pk)
-        self.assertIn("PIXEL 9", message.body)
-        self.assertIn("KSh 85,000", message.body)
         self.assertIn("Hi JANE", message.body)
+        self.assertTrue((campaign.image.name or "").lower().endswith(".jpg"))
+        self.assertTrue(campaign.image.read().startswith(b"\xff\xd8\xff"))
+        campaign.image.seek(0)
+
+    def test_send_multiple_items_as_one_message(self):
+        from io import BytesIO
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+        from PIL import Image as PILImage
+
+        from communications.models import BroadcastCampaign, OutboundMessage
+        from items.models import Item
+
+        def jpeg(name, color):
+            buf = BytesIO()
+            PILImage.new("RGB", (48, 48), color).save(buf, format="JPEG")
+            return SimpleUploadedFile(name, buf.getvalue(), content_type="image/jpeg")
+
+        cable = Item.objects.create(
+            category="CABLES",
+            name="USB-C CABLE",
+            minimum_selling_price=200,
+            shop_price=350,
+            created_by=self.it,
+            image=jpeg("cable.jpg", (20, 80, 160)),
+        )
+        self.item.image = jpeg("pixel.jpg", (180, 40, 40))
+        self.item.save(update_fields=["image"])
+        update_twilio_settings(
+            account_sid="ACtest",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        self.client.force_login(self.user)
+        with override_settings(
+            COMMS_SEND_MODE="cron",
+            DARAJA_CALLBACK_BASE_URL="https://shop.example.com",
+        ):
+            response = self.client.post(
+                "/it-support/whatsapp/catalogue/",
+                {
+                    "action": "send_catalogue",
+                    "item_ids": [str(self.item.pk), str(cable.pk)],
+                    "client_ids": [str(self.customer.pk)],
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        campaign = BroadcastCampaign.objects.latest("id")
+        self.assertEqual(campaign.recipient_count, 1)
+        self.assertTrue(campaign.image)
+        self.assertTrue((campaign.image.name or "").lower().endswith(".jpg"))
+        messages = list(OutboundMessage.objects.filter(campaign=campaign))
+        self.assertEqual(len(messages), 1)
+        body = messages[0].body
+        self.assertIn("Hi JANE", body)
+        self.assertNotIn("USB-C CABLE", body)
+        self.assertNotIn("PIXEL 9", body)
+        self.assertTrue(messages[0].image_path.startswith("https://shop.example.com/"))
+        self.assertTrue(messages[0].image_path.lower().endswith(".jpg"))
+        card = campaign.image.read()
+        self.assertTrue(card.startswith(b"\xff\xd8\xff"))
+
+    def test_send_uses_custom_message_template(self):
+        from django.test import override_settings
+
+        from communications.models import BroadcastCampaign, OutboundMessage
+
+        update_twilio_settings(
+            account_sid="ACtest",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        self.client.force_login(self.user)
+        with override_settings(COMMS_SEND_MODE="cron"):
+            response = self.client.post(
+                "/it-support/whatsapp/catalogue/",
+                {
+                    "action": "send_catalogue",
+                    "item_ids": [str(self.item.pk)],
+                    "client_ids": [str(self.customer.pk)],
+                    "message_body": "Hello {first_name},\n\nHot deal:\n{items}\n\nReply YES.",
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 200)
+        body = OutboundMessage.objects.get(
+            campaign=BroadcastCampaign.objects.latest("id")
+        ).body
+        self.assertIn("Hello JANE", body)
+        self.assertIn("Hot deal:", body)
+        self.assertIn("Reply YES.", body)
+        self.assertNotIn("{items}", body)
+        self.assertNotIn("{first_name}", body)
+        self.assertNotIn("PIXEL 9", body)
+
+    def test_preview_includes_share_items(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/it-support/whatsapp/catalogue/",
+            {
+                "action": "preview_audience",
+                "audience_type": "sale",
+                "last_purchase_days": "",
+                "shop_id": "",
+                "filter_item_id": "",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        names = [row["name"] for row in data.get("share_items") or []]
+        self.assertIn("PIXEL 9", names)
+
+    def test_schedule_creates_later_waves(self):
+        from django.test import override_settings
+
+        from communications.constants import CAMPAIGN_DRAFT, CAMPAIGN_QUEUED
+        from communications.models import BroadcastCampaign
+
+        update_twilio_settings(
+            account_sid="ACtest",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        self.client.force_login(self.user)
+        with override_settings(COMMS_SEND_MODE="cron"):
+            response = self.client.post(
+                "/it-support/whatsapp/catalogue/",
+                {
+                    "action": "send_catalogue",
+                    "item_ids": [str(self.item.pk)],
+                    "client_ids": [str(self.customer.pk)],
+                    "schedule_period": "7",
+                    "schedule_times": "3",
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload.get("scheduled_sends"), 2)
+        self.assertEqual(BroadcastCampaign.objects.count(), 3)
+        self.assertEqual(
+            BroadcastCampaign.objects.filter(status=CAMPAIGN_QUEUED).count(), 1
+        )
+        self.assertEqual(
+            BroadcastCampaign.objects.filter(status=CAMPAIGN_DRAFT).count(), 2
+        )
+
+    def test_activities_lists_unsent_scheduled_sends(self):
+        from django.test import override_settings
+
+        from communications.campaigns import activities_payload, campaign_as_dict
+        from communications.constants import CAMPAIGN_DRAFT
+        from communications.models import BroadcastCampaign
+
+        update_twilio_settings(
+            account_sid="ACtest",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        self.client.force_login(self.user)
+        with override_settings(COMMS_SEND_MODE="cron"):
+            response = self.client.post(
+                "/it-support/whatsapp/catalogue/",
+                {
+                    "action": "send_catalogue",
+                    "item_ids": [str(self.item.pk)],
+                    "client_ids": [str(self.customer.pk)],
+                    "schedule_period": "7",
+                    "schedule_times": "3",
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json().get("ok"))
+
+        payload = activities_payload()
+        self.assertEqual(len(payload["pending"]), 3)
+        self.assertEqual(payload["summary"]["waiting_messages"], 3)
+        self.assertGreaterEqual(payload["summary"]["scheduled_batches"], 2)
+        draft = BroadcastCampaign.objects.filter(status=CAMPAIGN_DRAFT).first()
+        self.assertIsNotNone(draft)
+        row = campaign_as_dict(draft)
+        self.assertTrue(row["is_pending"])
+        self.assertTrue(row["is_scheduled"])
+        self.assertTrue(row["can_cancel"])
+        self.assertIn("Item share", row["kind_label"])
+        self.assertTrue(row["timing_label"].startswith("Sends "))
+
+        page = self.client.get("/it-support/marketing/activities/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Waiting to send")
+        self.assertContains(page, "Item share")
+        cancel = self.client.post(
+            "/it-support/marketing/activities/",
+            {"action": "cancel_campaign", "campaign_id": str(draft.pk)},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(cancel.status_code, 200)
+        self.assertTrue(cancel.json().get("ok"))
+        self.assertIn("activities", cancel.json())
+        draft.refresh_from_db()
+        from communications.constants import CAMPAIGN_CANCELLED
+
+        self.assertEqual(draft.status, CAMPAIGN_CANCELLED)
 
     def test_auto_skip_when_toggle_off(self):
         from communications.automations import maybe_send_new_item_catalogue
@@ -628,8 +984,10 @@ class WhatsAppCataloguePageTests(TestCase):
         campaign = BroadcastCampaign.objects.latest("id")
         self.assertEqual(campaign.recipient_count, 1)
         body = OutboundMessage.objects.get(campaign=campaign).body
-        self.assertIn("PIXEL 9", body)
-        self.assertIn("KSh 85,000", body)
+        self.assertIn("Hi", body)
+        self.assertTrue((campaign.image.name or "").lower().endswith(".jpg"))
+        card = campaign.image.read()
+        self.assertTrue(card.startswith(b"\xff\xd8\xff"))
 
     def test_create_item_calls_catalogue_share(self):
         from unittest.mock import patch
@@ -652,6 +1010,122 @@ class WhatsAppCataloguePageTests(TestCase):
         share.assert_called_once()
         self.assertEqual(share.call_args.args[0].pk, item.pk)
         self.assertEqual(item.name, "USB-C CABLE")
+
+
+class WhatsAppContactsPageTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+        from shops.models import Client
+
+        self.user = User.objects.create_user(
+            username="860031",
+            password="wa-contacts",
+            email="wa-contacts@test.local",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="860031",
+            phone_country_code="+254",
+            phone_number="700000981",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.customer = Client.objects.create(
+            full_name="JANE DOE",
+            phone_number="0712345678",
+            phone_normalized="254712345678",
+            created_by=self.it,
+        )
+        self.lead = Client.objects.create(
+            full_name="LEAD ONLY",
+            phone_number="0798765432",
+            phone_normalized="254798765432",
+            created_by=self.it,
+        )
+
+    def test_page_lists_every_contact_and_sidebar(self):
+        self.client.force_login(self.user)
+        catalogue = self.client.get("/it-support/whatsapp/catalogue/")
+        self.assertContains(catalogue, 'href="/it-support/whatsapp/contacts/"')
+        response = self.client.get("/it-support/whatsapp/contacts/")
+        self.assertEqual(response.status_code, 200)
+        labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
+        self.assertEqual(
+            labels, ["Communication settings", "Share items", "Contacts", "Activities"]
+        )
+        self.assertTrue(response.context["page_sidebar"]["primary"][2].get("active"))
+        names = [row["full_name"] for row in response.context["contacts"]]
+        self.assertEqual(response.context["contact_count"], 2)
+        self.assertIn("JANE DOE", names)
+        self.assertIn("LEAD ONLY", names)
+        self.assertContains(response, "LEAD ONLY")
+        self.assertContains(response, "Add contact")
+        self.assertContains(response, "Create group")
+        self.assertContains(response, "Join group")
+
+    def test_add_contact(self):
+        from shops.models import Client
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/it-support/whatsapp/contacts/",
+            {
+                "action": "add_contact",
+                "full_name": "Sam Otieno",
+                "phone": "0711002200",
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        saved = Client.objects.get(phone_normalized="254711002200")
+        self.assertEqual(saved.full_name, "SAM OTIENO")
+        self.assertContains(response, "SAM OTIENO")
+
+    def test_create_and_join_group(self):
+        from communications.models import WhatsAppGroup
+
+        self.client.force_login(self.user)
+        created = self.client.post(
+            "/it-support/whatsapp/contacts/",
+            {
+                "action": "create_group",
+                "name": "Sales team",
+                "member_ids": [str(self.customer.pk), str(self.lead.pk)],
+            },
+            follow=True,
+        )
+        self.assertEqual(created.status_code, 200)
+        group = WhatsAppGroup.objects.get(name="Sales team")
+        self.assertEqual(group.members.count(), 2)
+        self.assertContains(created, "Sales team")
+
+        joined = self.client.post(
+            "/it-support/whatsapp/contacts/",
+            {
+                "action": "join_group",
+                "name": "Promo blast",
+                "invite_link": "https://chat.whatsapp.com/AbCdEfGhIjK",
+                "open_whatsapp": "1",
+            },
+        )
+        self.assertEqual(joined.status_code, 302)
+        self.assertEqual(joined["Location"], "https://chat.whatsapp.com/AbCdEfGhIjK")
+        promo = WhatsAppGroup.objects.get(name="Promo blast")
+        self.assertEqual(promo.source, "joined")
+        self.assertEqual(promo.invite_link, "https://chat.whatsapp.com/AbCdEfGhIjK")
+
+        bad = self.client.post(
+            "/it-support/whatsapp/contacts/",
+            {
+                "action": "join_group",
+                "invite_link": "https://example.com/not-whatsapp",
+            },
+            follow=True,
+        )
+        self.assertContains(bad, "Paste a WhatsApp group invite link")
 
 
 class WhatsAppSendLogTests(TestCase):
@@ -703,7 +1177,7 @@ class WhatsAppSendLogTests(TestCase):
 
         self.client.force_login(self.user)
         response = self.client.post(
-            "/it-support/whatsapp/",
+            "/employees/settings/whatsapp/",
             {"action": "cancel_campaign", "campaign_id": str(self.campaign.pk)},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
             HTTP_ACCEPT="application/json",
@@ -760,7 +1234,7 @@ class WhatsAppSendLogTests(TestCase):
         self.campaign.save(update_fields=["status"])
         self.client.force_login(self.user)
         response = self.client.post(
-            "/it-support/whatsapp/",
+            "/employees/settings/whatsapp/",
             {"action": "cancel_campaign", "campaign_id": str(self.campaign.pk)},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
             HTTP_ACCEPT="application/json",
@@ -826,7 +1300,7 @@ class WhatsAppRetryTests(TestCase):
         self.client.force_login(self.user)
         with override_settings(COMMS_SEND_MODE="cron"):
             response = self.client.post(
-                "/it-support/whatsapp/",
+                "/employees/settings/whatsapp/",
                 {"action": "retry_failed", "campaign_id": str(self.campaign.pk)},
                 HTTP_X_REQUESTED_WITH="XMLHttpRequest",
                 HTTP_ACCEPT="application/json",

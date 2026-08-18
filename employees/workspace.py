@@ -35,10 +35,10 @@ ROLE_PAGE_META = {
         "icon": "scan-barcode",
     },
     EmployeeRole.IT_SUPPORT: {
-        "title": "Marketing links",
-        "headline": "Marketing links",
-        "summary": "Copy and share each shop's public website.",
-        "icon": "megaphone",
+        "title": "IT Support",
+        "headline": "Support workspace",
+        "summary": "Your IT support workspace.",
+        "icon": "monitor-cog",
     },
 }
 
@@ -76,9 +76,9 @@ DASHBOARD_MODULES = (
     },
     {
         "slug": "whatsapp",
-        "label": "WhatsApp",
+        "label": "Communications",
         "icon": "messages-square",
-        "summary": "Choose what to send automatically and who receives it on WhatsApp.",
+        "summary": "Twilio credentials and WhatsApp automations, broadcasts, and item shares.",
     },
 )
 
@@ -193,14 +193,28 @@ def _workspace_parent_url(request, role):
     segment = role_url_segment(role)
     dashboard = reverse(role_home_url_name(role))
 
-    if view_name in {"employees:profile", "employees:settings", "employees:workspace_module"}:
+    if view_name in {
+        "employees:profile",
+        "employees:settings",
+        "employees:workspace_module",
+        "employees:marketing_links",
+    }:
         return dashboard
 
     if view_name == "employees:settings_section":
         section = kwargs.get("section")
         if section == "company-receipt":
             return settings_section_url("company-pos")
+        if section in {"twilio", "whatsapp"}:
+            return settings_section_url("communication-settings")
         return reverse("employees:settings")
+
+    if view_name in {
+        "employees:whatsapp_catalogue",
+        "employees:whatsapp_contacts",
+        "employees:marketing_activities",
+    }:
+        return marketing_links_url()
 
     if view_name == "employees:analytics_section":
         section = (kwargs.get("section") or "").strip().lower()
@@ -358,6 +372,24 @@ def _link(label, icon, *, url_name=None, href=None, active=False, danger=False, 
     return item
 
 
+def marketing_links_url():
+    return reverse("employees:marketing_links")
+
+
+def marketing_activities_url(role):
+    return reverse(
+        "employees:marketing_activities",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+
+
+def whatsapp_contacts_url(role):
+    return reverse(
+        "employees:whatsapp_contacts",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+
+
 def my_shop_url(*, switch=False):
     url = reverse("employees:my_shop")
     return f"{url}?switch=1" if switch else url
@@ -445,14 +477,17 @@ def _dashboard_analytics_section_links(role, *, active_slug=None, profile=None):
     return links
 
 
-def _module_sidebar_links(role, *, active_slug=None, profile=None):
+def _module_sidebar_links(role, *, active_slug=None, profile=None, skip_slugs=()):
     from .module_permissions import employee_may_any
 
     modules = get_dashboard_modules(role)
     if profile is not None:
         modules = [module for module in modules if employee_may_any(profile, module["slug"])]
+    skip = frozenset(skip_slugs or ())
     links = []
     for module in modules:
+        if module["slug"] in skip:
+            continue
         links.append(
             _link(
                 module["label"],
@@ -473,19 +508,19 @@ def _module_sidebar_links(role, *, active_slug=None, profile=None):
 def sidebar_for_role_dashboard(role, profile=None, *, active_slug=None):
     """Sidebar links for role home / dashboard pages."""
     dashboard_url = reverse(role_home_url_name(role))
-    primary = []
+    skip_slugs = ("whatsapp",) if role == EmployeeRole.IT_SUPPORT else ()
+    primary = _module_sidebar_links(
+        role, active_slug=active_slug, profile=profile, skip_slugs=skip_slugs
+    )
     if role == EmployeeRole.IT_SUPPORT:
         primary.append(
             _link(
                 "Marketing links",
                 "megaphone",
-                href=dashboard_url,
-                active=active_slug in (None, "marketing"),
+                href=marketing_links_url(),
+                active=active_slug == "marketing",
             )
         )
-    primary.extend(
-        _module_sidebar_links(role, active_slug=active_slug, profile=profile)
-    )
     return resolve_sidebar_hrefs(
         {
             "page": "role_dashboard",
@@ -1290,52 +1325,98 @@ def sidebar_for_client_credit_account(
     )
 
 
-def sidebar_for_communications(role, *, active_view="home", profile=None):
-    """Sidebar links for the WhatsApp module."""
+def sidebar_for_marketing_links(role, *, profile=None, active_view="marketing"):
+    """Sidebar for Marketing links: Communication settings, Share items, Contacts, and Activities."""
     from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
-    segment = role_url_segment(role)
-    whatsapp_url = reverse(
-        "employees:workspace_module",
-        kwargs={"role_segment": segment, "module_slug": "whatsapp"},
-    )
-    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-    if profile is None or employee_may(profile, "whatsapp", "view"):
+    primary = []
+    if active_view != "catalogue" and (
+        profile is None or employee_may(profile, "settings", "communication-settings")
+    ):
         primary.append(
             _link(
-                "WhatsApp",
+                "Communication settings",
                 "messages-square",
-                href=whatsapp_url,
-                active=active_view == "home",
+                href=settings_section_url("communication-settings"),
             )
         )
+    if profile is None or employee_may(profile, "whatsapp", "view"):
         primary.append(
             _link(
                 "Share items",
                 "images",
                 href=reverse(
                     "employees:whatsapp_catalogue",
-                    kwargs={"role_segment": segment},
+                    kwargs={"role_segment": role_url_segment(role)},
                 ),
                 active=active_view == "catalogue",
+            )
+        )
+        primary.append(
+            _link(
+                "Contacts",
+                "contact",
+                href=whatsapp_contacts_url(role),
+                active=active_view == "contacts",
+            )
+        )
+        primary.append(
+            _link(
+                "Activities",
+                "history",
+                href=marketing_activities_url(role),
+                active=active_view == "activities",
+            )
+        )
+    return resolve_sidebar_hrefs(
+        {
+            "page": "marketing_links",
+            "dashboard_url": dashboard_url,
+            "primary": primary,
+            "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
+def sidebar_for_communications(role, *, active_view="home", profile=None):
+    """Sidebar for Twilio settings and WhatsApp settings."""
+    from .module_permissions import employee_may
+
+    dashboard_url = reverse(role_home_url_name(role))
+    twilio_section = get_settings_section("twilio")
+    whatsapp_section = get_settings_section("whatsapp")
+    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+    if profile is None or employee_may(profile, "settings", "twilio"):
+        primary.append(
+            _link(
+                twilio_section["label"],
+                twilio_section["icon"],
+                href=twilio_section["href"],
+                active=active_view == "twilio",
             )
         )
     if profile is None or employee_may(profile, "settings", "whatsapp"):
         primary.append(
             _link(
-                "WhatsApp settings",
-                "settings-2",
-                href=settings_section_url("whatsapp"),
-                active=active_view == "settings",
+                whatsapp_section["label"],
+                whatsapp_section["icon"],
+                href=whatsapp_section["href"],
+                active=active_view == "whatsapp",
             )
         )
     return resolve_sidebar_hrefs(
         {
-            "page": "whatsapp",
+            "page": "communications",
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
+                settings_active=active_view in {"home", "twilio", "whatsapp"},
                 profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
@@ -1447,10 +1528,10 @@ SETTINGS_SECTIONS = (
         "summary": "Daraja STK Push and M-Pesa API settlement preferences.",
     },
     {
-        "slug": "whatsapp",
-        "label": "Twilio",
+        "slug": "communication-settings",
+        "label": "Communication settings",
         "icon": "messages-square",
-        "summary": "Twilio Account SID, Auth Token, and From number for SMS or WhatsApp.",
+        "summary": "Twilio credentials and WhatsApp automations, broadcasts, and item shares.",
     },
     {
         "slug": "working-hours",
@@ -1476,12 +1557,27 @@ SETTINGS_NESTED_SECTIONS = (
         "summary": "Safaricom Daraja STK Push credentials for sandbox and production.",
         "parent": "company-payments",
     },
+    {
+        "slug": "twilio",
+        "label": "Twilio settings",
+        "icon": "phone",
+        "summary": "Twilio Account SID, Auth Token, and From number for SMS or WhatsApp.",
+        "parent": "communication-settings",
+    },
+    {
+        "slug": "whatsapp",
+        "label": "WhatsApp settings",
+        "icon": "messages-square",
+        "summary": "Choose what to send automatically and who receives it on WhatsApp.",
+        "parent": "communication-settings",
+    },
 )
 
 SETTINGS_SECTION_BY_SLUG = {section["slug"]: section for section in SETTINGS_SECTIONS}
 SETTINGS_NESTED_BY_SLUG = {section["slug"]: section for section in SETTINGS_NESTED_SECTIONS}
 POS_SIDEBAR_SLUGS = frozenset({"company-pos", "company-receipt"})
 PAYMENTS_SIDEBAR_SLUGS = frozenset({"company-payments", "company-daraja"})
+COMMS_SIDEBAR_SLUGS = frozenset({"communication-settings", "twilio", "whatsapp"})
 
 
 def settings_section_url(section):
@@ -1516,6 +1612,7 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
     main System Settings home page — not on nested settings section pages.
     POS settings pages also show Receipt settings in the sidebar.
     Payments settings pages also show Daraja settings in the sidebar.
+    Communications settings pages show Twilio and WhatsApp settings.
     """
     from .module_permissions import employee_may
 
@@ -1588,30 +1685,11 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
                     active=active_view == "company-daraja",
                 )
             )
-    elif active_view == "whatsapp":
-        whatsapp_section = get_settings_section("whatsapp")
-        segment = role_url_segment(role)
-        whatsapp_url = reverse(
-            "employees:workspace_module",
-            kwargs={"role_segment": segment, "module_slug": "whatsapp"},
+    elif active_view in COMMS_SIDEBAR_SLUGS:
+        mapped = "home" if active_view == "communication-settings" else active_view
+        return sidebar_for_communications(
+            role, active_view=mapped, profile=profile
         )
-        if profile is None or employee_may(profile, "whatsapp", "view"):
-            primary.append(
-                _link(
-                    "WhatsApp",
-                    "messages-square",
-                    href=whatsapp_url,
-                )
-            )
-        if _allowed("whatsapp"):
-            primary.append(
-                _link(
-                    whatsapp_section["label"],
-                    whatsapp_section["icon"],
-                    href=whatsapp_section["href"],
-                    active=True,
-                )
-            )
     return resolve_sidebar_hrefs(
         {
             "page": "settings",

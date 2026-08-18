@@ -44,6 +44,8 @@ def is_auth_error(error: str) -> bool:
             "invalid username",
             "auth token",
             "account sid or auth token",
+            "daily messages limit",
+            "63038",
         )
     )
 
@@ -128,7 +130,7 @@ def friendly_send_error(error: str) -> str:
     if is_auth_error(raw):
         return (
             "Twilio rejected the Account SID or Auth Token. "
-            "Open WhatsApp settings and save the live credentials from console.twilio.com."
+            "Open Twilio settings and save the live credentials from console.twilio.com."
         )
     if "21408" in text or "region indicated" in text:
         return (
@@ -585,6 +587,7 @@ def _submit_twilio_message(
     to_value: str,
     text: str,
     media_path: str = "",
+    skip_poll: bool = False,
 ) -> dict[str, Any]:
     body = [
         ("To", to_value),
@@ -625,6 +628,7 @@ def _submit_twilio_message(
                 to_value=to_value,
                 text=text,
                 media_path="",
+                skip_poll=skip_poll,
             )
         logger.warning("Twilio send failed: %s", message)
         return {
@@ -646,7 +650,7 @@ def _submit_twilio_message(
     sid = str(payload.get("sid") or "")
     status = str(payload.get("status") or "")
     error_code = payload.get("error_code")
-    if sid and not error_code and status not in {"failed", "undelivered", "delivered", "read"}:
+    if sid and not skip_poll and not error_code and status not in {"failed", "undelivered", "delivered", "read"}:
         settled = _await_message_outcome(account_sid, auth_token, sid)
         if settled:
             status = str(settled.get("status") or status)
@@ -668,6 +672,7 @@ def _submit_twilio_message(
                 to_value=to_value,
                 text=text,
                 media_path="",
+                skip_poll=skip_poll,
             )
         logger.warning("Twilio send failed: %s", message)
         return {
@@ -692,6 +697,7 @@ def send_whatsapp_message(
     text: str,
     media_path: str | None = None,
     chat_id: str | None = None,
+    skip_poll: bool = False,
 ) -> dict[str, Any]:
     dest = _strip_whatsapp_prefix(phone or chat_id or "")
     if "@g.us" in dest:
@@ -743,6 +749,7 @@ def send_whatsapp_message(
         to_value=to_value,
         text=text,
         media_path=media_path or "",
+        skip_poll=skip_poll,
     )
     error_code = str(result.get("error_code") or "")
     if (
@@ -761,5 +768,6 @@ def send_whatsapp_message(
                 to_value=lid_to,
                 text=text,
                 media_path=media_path or "",
+                skip_poll=skip_poll,
             )
     return result

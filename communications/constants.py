@@ -66,6 +66,21 @@ LAST_PURCHASE_WINDOWS = {
     "365": "This year",
 }
 
+SHARE_PERIOD_CHOICES = (
+    ("1", "Today"),
+    ("7", "This week"),
+    ("14", "Two weeks"),
+    ("30", "This month"),
+)
+
+SHARE_REPEAT_CHOICES = (
+    ("1", "Once"),
+    ("2", "2 times"),
+    ("3", "3 times"),
+    ("4", "4 times"),
+    ("7", "Every day in the period"),
+)
+
 # Minimum number of shop receipts (transactions) a client must have.
 TRANSACTION_MIN_CHOICES = (
     ("", "Any"),
@@ -76,8 +91,9 @@ TRANSACTION_MIN_CHOICES = (
     ("10", "10+"),
 )
 
-SEND_DELAY_MIN_SECONDS = 5
-SEND_DELAY_MAX_SECONDS = 20
+SEND_DELAY_MIN_SECONDS = 1
+SEND_DELAY_MAX_SECONDS = 3
+SEND_CONCURRENCY = 3
 MAX_SEND_ATTEMPTS = 8
 SEND_RETRY_BACKOFF_SECONDS = (0.8, 1.6, 3.0, 5.0, 8.0, 12.0, 16.0)
 
@@ -88,6 +104,13 @@ PLACEHOLDERS = (
     "{last_product}",
     "{last_purchase_date}",
     "{lifetime_spend}",
+)
+
+CATALOGUE_MESSAGE_PLACEHOLDERS = (
+    ("{first_name}", "First name"),
+    ("{full_name}", "Full name"),
+    ("{items}", "Item list"),
+    ("{last_product}", "Last product"),
 )
 
 # Who should get this? — primary audience groups

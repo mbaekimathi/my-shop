@@ -84,6 +84,7 @@ from .workspace import (
     get_dashboard_module,
     get_settings_section,
     get_settings_sections,
+    sidebar_for_marketing_links,
     sidebar_for_module,
     sidebar_for_profile,
     sidebar_for_role_dashboard,
@@ -141,18 +142,14 @@ def _render_role_page(request, expected_role):
 
 @active_employee_required
 def legacy_communications_redirect(request, role_segment):
-    """Old /…/communications/ bookmarks → /…/whatsapp/."""
-    return redirect(
-        "employees:workspace_module",
-        role_segment=role_segment,
-        module_slug="whatsapp",
-    )
+    """Old /…/communications/ bookmarks → communication settings."""
+    return redirect("employees:settings_section", section="communication-settings")
 
 
 @active_employee_required
 def legacy_settings_communications_redirect(request):
-    """Old /settings/communications/ → /settings/whatsapp/."""
-    return redirect("employees:settings_section", section="whatsapp")
+    """Old /settings/communications/ → /settings/communication-settings/."""
+    return redirect("employees:settings_section", section="communication-settings")
 
 
 @active_employee_required
@@ -182,6 +179,9 @@ def workspace_module(request, role_segment, module_slug):
             message=f"You do not have permission to access {module['label']}.",
         )
 
+    if module_slug == "whatsapp":
+        return redirect("employees:settings_section", section="communication-settings")
+
     page_sidebar = sidebar_for_module(profile.role, module_slug, profile=profile)
     meta = {
         "title": module["label"],
@@ -204,9 +204,6 @@ def workspace_module(request, role_segment, module_slug):
 
     if module_slug == "analytics":
         return analytics_dashboard(request, profile, meta, module, page_sidebar)
-
-    if module_slug == "whatsapp":
-        return communications_dashboard(request, profile, meta, module, page_sidebar)
 
     return render(
         request,
@@ -720,28 +717,132 @@ def role_shop_cashier(request):
     return _render_role_page(request, EmployeeRole.SHOP_CASHIER)
 
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_DEFAULT_LOCAL_ORIGIN = "http://localhost:8000"
+
+
+def _is_local_origin(origin):
+    from urllib.parse import urlparse
+
+    host = (urlparse(origin or "").hostname or "").lower()
+    return host in _LOCAL_HOSTS or host.endswith(".local")
+
+
+def _request_origin(request):
+    return (request.build_absolute_uri("/") or "").rstrip("/")
+
+
+def _local_site_origin(request):
+    current = _request_origin(request)
+    if _is_local_origin(current):
+        from urllib.parse import urlparse, urlunparse
+
+        parsed = urlparse(current)
+        host = "localhost"
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return urlunparse((parsed.scheme or "http", host, "", "", "", "")).rstrip("/")
+    return _DEFAULT_LOCAL_ORIGIN
+
+
+def _hosted_site_origin(request):
+    from django.conf import settings as dj_settings
+
+    from shops.daraja_stk import detect_ngrok_public_base_url
+
+    env = (getattr(dj_settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip().rstrip("/")
+    if env and not _is_local_origin(env):
+        return env
+    current = _request_origin(request)
+    if current and not _is_local_origin(current):
+        return current
+    try:
+        ngrok = (detect_ngrok_public_base_url() or "").strip().rstrip("/")
+    except Exception:
+        ngrok = ""
+    if ngrok and not _is_local_origin(ngrok):
+        return ngrok
+    return ""
+
+
+def _qr_data_url(payload):
+    from shops.services import qr_code_data_url
+
+    text = (payload or "").strip()
+    if not text:
+        return ""
+    try:
+        return qr_code_data_url(text, box_size=6, border=2)
+    except ValidationError:
+        return ""
+
+
+def _marketing_is_hosted():
+    from django.conf import settings as dj_settings
+
+    return bool(getattr(dj_settings, "IS_HOSTED", False))
+
+
+def _shop_website_variants(request, shop_id):
+    path = reverse("employees:shop_website", kwargs={"shop_id": shop_id})
+    local_url = f"{_local_site_origin(request)}{path}"
+    hosted_origin = _hosted_site_origin(request)
+    hosted_url = f"{hosted_origin}{path}" if hosted_origin else ""
+    if _marketing_is_hosted():
+        variants = [
+            {
+                "key": "hosted",
+                "label": "Hosted",
+                "url": hosted_url,
+                "qr": _qr_data_url(hosted_url),
+            },
+        ]
+        return variants, "", hosted_url
+    variants = [
+        {
+            "key": "local",
+            "label": "Local",
+            "url": local_url,
+            "qr": _qr_data_url(local_url),
+        },
+    ]
+    return variants, local_url, ""
+
+
 @role_required(EmployeeRole.IT_SUPPORT)
 def role_it_support(request):
+    return _render_role_page(request, EmployeeRole.IT_SUPPORT)
+
+
+@role_required(EmployeeRole.IT_SUPPORT)
+def marketing_links(request):
     from shops.models import Shop
 
     profile = get_profile_for_request(request)
-    meta = ROLE_PAGE_META[EmployeeRole.IT_SUPPORT]
+    is_hosted = _marketing_is_hosted()
+    meta = {
+        "title": "Marketing links",
+        "headline": "Marketing links",
+        "summary": "Copy and share each shop's public website.",
+        "icon": "megaphone",
+    }
     shops = list(
         Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
     )
-    marketing_links = []
+    links = []
     for shop in shops:
-        url = request.build_absolute_uri(
-            reverse("employees:shop_website", kwargs={"shop_id": shop.pk})
-        )
-        marketing_links.append(
+        variants, local_url, hosted_url = _shop_website_variants(request, shop.pk)
+        links.append(
             {
                 "id": shop.pk,
                 "name": shop.name,
                 "location": shop.location,
                 "phone": shop.phone_number,
                 "image_url": shop.image.url if shop.image else "",
-                "url": url,
+                "url": hosted_url if is_hosted else local_url,
+                "local_url": local_url,
+                "hosted_url": hosted_url,
+                "variants": variants,
             }
         )
     return render(
@@ -752,10 +853,11 @@ def role_it_support(request):
             "meta": meta,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_role_dashboard(
-                EmployeeRole.IT_SUPPORT, profile=profile, active_slug="marketing"
+            "page_sidebar": sidebar_for_marketing_links(
+                EmployeeRole.IT_SUPPORT, profile=profile
             ),
-            "marketing_links": marketing_links,
+            "marketing_links": links,
+            "marketing_is_hosted": is_hosted,
         },
     )
 
@@ -866,8 +968,22 @@ def employee_settings_section(request, section):
     if settings_section["slug"] in ("company-payments", "company-daraja"):
         return _company_daraja_settings(request, context)
 
-    if settings_section["slug"] == "whatsapp":
+    if settings_section["slug"] == "communication-settings":
+        return _communications_settings_hub(request, context)
+
+    if settings_section["slug"] == "twilio":
         return _company_communications_settings(request, context)
+
+    if settings_section["slug"] == "whatsapp":
+        module = get_dashboard_module("whatsapp", profile.role) or {
+            "slug": "whatsapp",
+            "label": "WhatsApp",
+            "icon": "messages-square",
+            "summary": settings_section["summary"],
+        }
+        return communications_dashboard(
+            request, profile, meta, module, context["page_sidebar"]
+        )
 
     if settings_section["slug"] == "working-hours":
         return _company_working_hours_settings(request, context)
@@ -875,8 +991,24 @@ def employee_settings_section(request, section):
     return render(request, "employees/settings_section.html", context)
 
 
+def _communications_settings_hub(request, context):
+    from .module_permissions import employee_may
+
+    profile = context["profile"]
+    pages = []
+    for slug in ("twilio", "whatsapp"):
+        section = get_settings_section(slug)
+        if section is None:
+            continue
+        if employee_may(profile, "settings", slug):
+            pages.append(section)
+    context["comms_pages"] = pages
+    return render(request, "employees/settings_communications.html", context)
+
+
 def _company_communications_settings(request, context):
     from shops.models import SmsProvider
+    from communications.twilio import sandbox_join_info
 
     row = get_communications_settings()
     wants_json = (
@@ -984,9 +1116,10 @@ def _company_communications_settings(request, context):
         {
             "comms": communications_settings_as_dict(row),
             "sms_providers": SmsProvider.choices,
+            "sandbox_join": sandbox_join_info(row),
         }
     )
-    return render(request, "employees/settings_communications.html", context)
+    return render(request, "employees/settings_twilio.html", context)
 
 
 def _company_daraja_settings(request, context):

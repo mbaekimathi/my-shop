@@ -9,7 +9,7 @@
 {% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/shop-website.css' %}?v=13">
+<link rel="stylesheet" href="{% static 'css/shop-website.css' %}?v=14">
 {% endblock %}
 
 {% block body %}
@@ -85,43 +85,46 @@
           data-product-price="{{ product.price }}"
           data-product-image="{{ product.image_url }}"
           data-product-category="{{ product.category }}"
+          data-product-description="{{ product.description }}"
         >
-          <div class="storefront__product-image">
-            {% if product.image_url %}
-            <img
-              src="{{ product.image_url }}"
-              alt="{{ product.name }}"
-              loading="lazy"
-              onerror="this.onerror=null;const icon=document.createElement('i');icon.setAttribute('data-lucide','package');icon.setAttribute('aria-hidden','true');this.replaceWith(icon);window.lucide&&window.lucide.createIcons&&window.lucide.createIcons();"
-            >
-            {% else %}
-            <i data-lucide="package" aria-hidden="true"></i>
-            {% endif %}
-            {% if forloop.first and product.sold_quantity %}
-            <span class="storefront__popular">Popular</span>
-            {% endif %}
-          </div>
-          <div class="storefront__product-body">
-            <div>
-              <p class="storefront__product-category">{{ product.category }}</p>
-              <h4>{{ product.name }}</h4>
-              {% if product.description %}
-              <p class="storefront__product-description">{{ product.description }}</p>
+          <button
+            type="button"
+            class="storefront__product-open"
+            data-storefront-preview
+            aria-label="View {{ product.name }} and add to cart"
+          >
+            <div class="storefront__product-image">
+              {% if product.image_url %}
+              <img
+                src="{{ product.image_url }}"
+                alt=""
+                loading="lazy"
+                onerror="this.onerror=null;const icon=document.createElement('i');icon.setAttribute('data-lucide','package');icon.setAttribute('aria-hidden','true');this.replaceWith(icon);window.lucide&&window.lucide.createIcons&&window.lucide.createIcons();"
+              >
+              {% else %}
+              <i data-lucide="package" aria-hidden="true"></i>
+              {% endif %}
+              {% if forloop.first and product.sold_quantity %}
+              <span class="storefront__popular">Popular</span>
               {% endif %}
             </div>
-            <div class="storefront__product-footer">
-              <strong>KSh {{ product.price|floatformat:2 }}</strong>
-              <button
-                class="storefront__add"
-                type="button"
-                data-storefront-add
-                aria-label="Add {{ product.name }} to price list"
-              >
-                <i data-lucide="plus" aria-hidden="true"></i>
-                Add
-              </button>
+            <div class="storefront__product-body">
+              <div>
+                <p class="storefront__product-category">{{ product.category }}</p>
+                <h4>{{ product.name }}</h4>
+                {% if product.description %}
+                <p class="storefront__product-description">{{ product.description }}</p>
+                {% endif %}
+              </div>
+              <div class="storefront__product-footer">
+                <strong>KSh {{ product.price|floatformat:2 }}</strong>
+                <span class="storefront__add">
+                  <i data-lucide="plus" aria-hidden="true"></i>
+                  Add
+                </span>
+              </div>
             </div>
-          </div>
+          </button>
         </article>
         {% endfor %}
       </div>
@@ -169,7 +172,7 @@
   <ul class="storefront__cart-lines" data-storefront-cart-lines></ul>
   <div class="storefront__cart-empty" data-storefront-cart-empty>
     <i data-lucide="shopping-basket" aria-hidden="true"></i>
-    <p>Tap <strong>Add</strong> on an item to start your list.</p>
+    <p>Tap an item to open it and add it to your list.</p>
   </div>
   <section class="storefront__delivery" data-storefront-delivery hidden>
     <label class="storefront__delivery-toggle">
@@ -247,6 +250,53 @@
   </footer>
 </aside>
 
+<div class="storefront__product-modal" data-storefront-product-modal hidden aria-hidden="true">
+  <div class="storefront__product-backdrop" data-storefront-product-close></div>
+  <div
+    class="storefront__product-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="storefront-product-title"
+  >
+    <button
+      class="storefront__product-modal-close"
+      type="button"
+      data-storefront-product-close
+      aria-label="Close product"
+    >
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+    <div class="storefront__product-modal-media" data-storefront-product-media></div>
+    <div class="storefront__product-modal-panel">
+      <p class="storefront__product-modal-kicker" data-storefront-product-category></p>
+      <h2 id="storefront-product-title" data-storefront-product-name></h2>
+      <p class="storefront__product-modal-desc" data-storefront-product-description></p>
+      <strong class="storefront__product-modal-price" data-storefront-product-price></strong>
+      <div class="storefront__product-modal-actions">
+        <div class="storefront__product-qty">
+          <span class="storefront__product-qty-label">Quantity</span>
+          <div class="storefront__product-qty-controls">
+            <button type="button" data-storefront-product-qty="dec" aria-label="Decrease quantity">−</button>
+            <input
+              type="number"
+              min="1"
+              value="1"
+              inputmode="numeric"
+              data-storefront-product-qty-input
+              aria-label="Quantity"
+            >
+            <button type="button" data-storefront-product-qty="inc" aria-label="Increase quantity">+</button>
+          </div>
+        </div>
+        <button type="button" class="storefront__product-modal-add" data-storefront-product-add>
+          <i data-lucide="shopping-bag" aria-hidden="true"></i>
+          <span>Add to cart</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="storefront__pair-modal" data-storefront-pair-modal hidden aria-hidden="true">
   <div class="storefront__pair-backdrop" data-storefront-pair-close></div>
   <div
@@ -284,7 +334,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/shop-website.js' %}?v=16"></script>
+<script defer src="{% static 'js/shop-website.js' %}?v=17"></script>
 {% if google_maps_api_key %}
 <script>
   window.__storefrontMapsReady = function () {

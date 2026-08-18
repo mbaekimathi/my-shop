@@ -6,90 +6,154 @@
 {% block workspace_content %}
 {% csrf_token %}
 {% with can_send=module_permissions.send %}
-<section class="workspace-hero" data-animate="rise">
-  <p class="role-eyebrow">
-    <i data-lucide="images" aria-hidden="true"></i>
-    <span>WhatsApp · Share items</span>
-  </p>
-  <h2 class="workspace-hero-title">Share items</h2>
-  <p class="workspace-hero-copy">
-    Send item name, price, and photo to selected people. Turn on automatic share to WhatsApp new items when they are registered.
-  </p>
-</section>
-
-<section
-  class="wa-auto"
-  data-animate="rise"
-  data-delay="1"
-  data-wa-auto
-  data-twilio-ready="{% if bridge.status == 'connected' %}1{% else %}0{% endif %}"
-  data-automations-on="{% if comms.enable_automations %}1{% else %}0{% endif %}"
-  data-sends-empty="No sends yet. Pick items and people, then send."
->
-  <div class="wa-auto__status">
+<section class="workspace-hero wa-share-hero" data-animate="rise">
+  <div class="wa-share-hero__copy">
+    <p class="role-eyebrow">
+      <i data-lucide="images" aria-hidden="true"></i>
+      <span>WhatsApp · Share items</span>
+    </p>
+    <h2 class="workspace-hero-title">Share items</h2>
+    <p class="workspace-hero-copy">
+      Choose who to share with, pick items that match, then send now or over a period.
+    </p>
+  </div>
+  <div class="wa-share-hero__aside">
     <span class="wa-chip wa-chip--{% if bridge.status == 'connected' %}ok{% else %}warn{% endif %}" data-wa-ready-chip>
       <i data-lucide="{% if bridge.status == 'connected' %}check-circle-2{% else %}alert-circle{% endif %}" aria-hidden="true"></i>
       <strong data-wa-ready-label>{% if bridge.status == "connected" %}Ready{% else %}Setup needed{% endif %}</strong>
       <span>{% if bridge.wa_phone %}{{ bridge.wa_phone }}{% else %}Twilio{% endif %}</span>
     </span>
-    <span class="wa-chip">
-      <i data-lucide="package" aria-hidden="true"></i>
-      <strong data-wa-item-count>{{ catalogue_items|length }}</strong>
-      <span>items</span>
-    </span>
-    <span class="wa-chip">
-      <i data-lucide="users" aria-hidden="true"></i>
-      <strong data-wa-people-count>{{ recipient_count }}</strong>
-      <span>in audience</span>
-    </span>
-    <a class="wa-chip wa-chip--link" href="{{ whatsapp_url }}">
-      <i data-lucide="messages-square" aria-hidden="true"></i>
-      <span>WhatsApp</span>
-    </a>
-    <a class="wa-chip wa-chip--link" href="{{ settings_url }}">
-      <i data-lucide="settings-2" aria-hidden="true"></i>
-      <span>WhatsApp settings</span>
-    </a>
+    <nav class="wa-share-hero__links" aria-label="WhatsApp settings">
+      <a href="{{ whatsapp_url }}">WhatsApp settings</a>
+      <a href="{{ settings_url }}">Twilio settings</a>
+    </nav>
   </div>
+</section>
 
+<section
+  class="wa-auto wa-share"
+  data-animate="rise"
+  data-delay="1"
+  data-wa-auto
+  data-twilio-ready="{% if bridge.status == 'connected' %}1{% else %}0{% endif %}"
+  data-automations-on="{% if comms.enable_automations %}1{% else %}0{% endif %}"
+>
   {% if bridge.status != "connected" %}
   <p class="wa-auto__banner">
     Save Twilio in
-    <a href="{{ settings_url }}">WhatsApp settings</a>
+    <a href="{{ settings_url }}">Twilio settings</a>
     before item shares can send.
   </p>
   {% endif %}
 
-  <section class="wa-card wa-card--wide">
+  <section class="wa-card wa-share__pane">
     <header class="wa-card__head">
       <div>
-        <p class="wa-card__kicker">Automatic</p>
-        <h3>New items</h3>
-        <p>When a new item is registered, send it to the saved audience below — name, price, and photo when the image is on a public HTTPS / ngrok URL Twilio can fetch.</p>
+        <p class="wa-card__kicker">Step 1</p>
+        <h3>Who to share with</h3>
+        <p>Set audience, item, bought-in, and shop. Tick the people who should get this share.</p>
       </div>
-      <label class="perm-switch wa-card__master">
-        <input
-          type="checkbox"
-          class="perm-switch-input"
-          {% if comms.auto_item_catalogue %}checked{% endif %}
-          data-wa-toggle
-          data-field="auto_item_catalogue"
-          aria-label="Send new items automatically"
-        >
-        <span class="perm-switch-ui" aria-hidden="true"></span>
-        <span class="perm-switch-state">{% if comms.auto_item_catalogue %}On{% else %}Off{% endif %}</span>
-      </label>
+      <p class="wa-share__badge">
+        <strong data-wa-selected-count>{{ recipient_count }}</strong>
+        selected
+      </p>
     </header>
+
+    <form class="wa-auto__audience" id="wa-share-audience" data-wa-audience novalidate>
+      <input type="hidden" name="action" value="save_audience">
+      <div class="wa-auto__filters wa-share__filters">
+        <label class="wa-auto__field">
+          <span>Audience</span>
+          <select name="audience_type" aria-label="Audience">
+            {% for value, label in audience_types %}
+            <option value="{{ value }}" {% if comms.automation_audience_type == value %}selected{% endif %}>
+              {{ label }}{% for row in audience_summary %}{% if row.value == value and row.count is not None %} — {{ row.count }}{% endif %}{% endfor %}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="wa-auto__field">
+          <span>Item</span>
+          <select name="filter_item_id" aria-label="Item">
+            <option value="">Any item</option>
+            {% for item in filter_items %}
+            <option value="{{ item.id }}">{{ item.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="wa-auto__field">
+          <span>Bought in</span>
+          <select name="last_purchase_days" aria-label="Bought in">
+            {% for value, label in last_purchase_windows.items %}
+            <option value="{{ value }}" {% if comms.automation_last_purchase_days == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="wa-auto__field">
+          <span>Shop</span>
+          <select name="shop_id" aria-label="Shop">
+            <option value="" {% if not comms.automation_shop_id %}selected{% endif %}>All shops</option>
+            {% for shop in shops %}
+            <option value="{{ shop.pk }}" {% if comms.automation_shop_id == shop.pk %}selected{% endif %}>{{ shop.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+
+      <div class="wa-auto__pickbar">
+        <label class="wa-auto__search">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input type="search" placeholder="Search name or phone…" autocomplete="off" data-wa-people-search aria-label="Search audience">
+        </label>
+        <div class="wa-auto__pick-actions">
+          <button class="btn btn--ghost" type="button" data-wa-select-all>Select all</button>
+          <button class="btn btn--ghost" type="button" data-wa-select-none>Clear</button>
+        </div>
+      </div>
+
+      <div class="wa-auto__people" data-wa-people>
+        <ul class="wa-people" data-wa-people-body>
+          {% for person in recipients %}
+          <li class="wa-person is-checked" data-search="{{ person.full_name|lower }} {{ person.phone }}">
+            <input
+              class="wa-person__check"
+              type="checkbox"
+              name="client_ids"
+              value="{{ person.client_id }}"
+              checked
+              data-wa-pick
+              aria-label="Select {{ person.full_name }}"
+            >
+            <span class="wa-person__avatar" aria-hidden="true">{{ person.full_name|slice:":1" }}</span>
+            <span class="wa-person__meta">
+              <strong>{{ person.full_name }}</strong>
+              <em>{{ person.phone }}</em>
+            </span>
+          </li>
+          {% endfor %}
+        </ul>
+        <p class="wa-auto__people-empty" data-wa-people-empty {% if recipients %}hidden{% endif %}>
+          No matching customers with a phone number.
+        </p>
+        <p class="wa-auto__people-more" data-wa-people-more {% if recipient_count <= recipients|length %}hidden{% endif %}>
+          Showing {{ recipients|length }} of {{ recipient_count }}.
+        </p>
+      </div>
+    </form>
   </section>
 
-  <div class="wa-auto__layout">
-    <section class="wa-card">
+  <div class="wa-share__layout">
+    <section class="wa-card wa-share__pane">
       <header class="wa-card__head">
         <div>
-          <p class="wa-card__kicker">Manual</p>
+          <p class="wa-card__kicker">Step 2</p>
           <h3>Pick items</h3>
-          <p>Tick the items to WhatsApp now. Each person gets one message per item. Photos attach only from a public HTTPS / ngrok link, not localhost.</p>
+          <p>Selected items go in one WhatsApp, with photos when Twilio can fetch them.</p>
         </div>
+        <p class="wa-share__badge">
+          <strong data-wa-selected-item-count>0</strong>
+          selected
+        </p>
       </header>
 
       <div class="wa-auto__audience">
@@ -108,7 +172,7 @@
           <ul class="wa-people" data-wa-items-body>
             {% for item in catalogue_items %}
             <li
-              class="wa-item is-checked"
+              class="wa-item{% if item.checked %} is-checked{% endif %}"
               data-search="{{ item.name|lower }} {{ item.category|lower }}"
             >
               <input
@@ -116,7 +180,7 @@
                 type="checkbox"
                 name="item_ids"
                 value="{{ item.id }}"
-                checked
+                {% if item.checked %}checked{% endif %}
                 data-wa-item-pick
                 aria-label="Select {{ item.name }}"
               >
@@ -140,124 +204,134 @@
             Showing {{ catalogue_items|length }} of {{ catalogue_item_total }}.
           </p>
         </div>
+        <p class="wa-share__hint">One WhatsApp per person lists every selected item. Photos attach from a public HTTPS / ngrok link, not localhost.</p>
       </div>
     </section>
 
-    <section class="wa-card">
+    <section class="wa-card wa-share__pane">
       <header class="wa-card__head">
         <div>
-          <p class="wa-card__kicker">Audience</p>
-          <h3>Who to share with</h3>
-          <p>Same saved audience as WhatsApp automations. Tick who should get the selected items.</p>
+          <p class="wa-card__kicker">Goes with</p>
+          <h3>Add matching items</h3>
+          <p>Suggest items people often buy with the ones you picked.</p>
         </div>
+        <label class="perm-switch wa-card__master">
+          <input
+            type="checkbox"
+            class="perm-switch-input"
+            data-wa-companions-toggle
+            aria-label="Suggest items that go with the selection"
+          >
+          <span class="perm-switch-ui" aria-hidden="true"></span>
+          <span class="perm-switch-state">Off</span>
+        </label>
       </header>
-
-      <form class="wa-auto__audience" data-wa-audience novalidate>
-        <input type="hidden" name="action" value="save_audience">
-        <div class="wa-auto__filters">
-          <label class="wa-auto__field">
-            <span>Audience</span>
-            <select name="audience_type" aria-label="Audience">
-              {% for value, label in audience_types %}
-              <option value="{{ value }}" {% if comms.automation_audience_type == value %}selected{% endif %}>
-                {{ label }}{% for row in audience_summary %}{% if row.value == value and row.count is not None %} — {{ row.count }}{% endif %}{% endfor %}
-              </option>
-              {% endfor %}
-            </select>
-          </label>
-          <label class="wa-auto__field">
-            <span>Bought in</span>
-            <select name="last_purchase_days" aria-label="Bought in">
-              {% for value, label in last_purchase_windows.items %}
-              <option value="{{ value }}" {% if comms.automation_last_purchase_days == value %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <label class="wa-auto__field">
-            <span>Shop</span>
-            <select name="shop_id" aria-label="Shop">
-              <option value="" {% if not comms.automation_shop_id %}selected{% endif %}>All shops</option>
-              {% for shop in shops %}
-              <option value="{{ shop.pk }}" {% if comms.automation_shop_id == shop.pk %}selected{% endif %}>{{ shop.name }}</option>
-              {% endfor %}
-            </select>
-          </label>
-        </div>
-
-        <div class="wa-auto__pickbar">
-          <label class="wa-auto__search">
-            <i data-lucide="search" aria-hidden="true"></i>
-            <input type="search" placeholder="Search name or phone…" autocomplete="off" data-wa-people-search aria-label="Search audience">
-          </label>
-          <div class="wa-auto__pick-actions">
-            <button class="btn btn--ghost" type="button" data-wa-select-all>Select all</button>
-            <button class="btn btn--ghost" type="button" data-wa-select-none>Clear</button>
-          </div>
-        </div>
-
-        <div class="wa-auto__people" data-wa-people>
-          <ul class="wa-people" data-wa-people-body>
-            {% for person in recipients %}
-            <li class="wa-person is-checked" data-search="{{ person.full_name|lower }} {{ person.phone }}">
-              <input
-                class="wa-person__check"
-                type="checkbox"
-                name="client_ids"
-                value="{{ person.client_id }}"
-                checked
-                data-wa-pick
-                aria-label="Select {{ person.full_name }}"
-              >
-              <span class="wa-person__avatar" aria-hidden="true">{{ person.full_name|slice:":1" }}</span>
-              <span class="wa-person__meta">
-                <strong>{{ person.full_name }}</strong>
-                <em>{{ person.phone }}</em>
-              </span>
-            </li>
-            {% endfor %}
-          </ul>
-          <p class="wa-auto__people-empty" data-wa-people-empty {% if recipients %}hidden{% endif %}>
-            No matching customers with a phone number.
-          </p>
-          <p class="wa-auto__people-more" data-wa-people-more {% if recipient_count <= recipients|length %}hidden{% endif %}>
-            Showing {{ recipients|length }} of {{ recipient_count }}.
+      <div class="wa-auto__audience" data-wa-companions hidden>
+        <div class="wa-auto__people">
+          <ul class="wa-people" data-wa-companions-body></ul>
+          <p class="wa-auto__people-empty" data-wa-companions-empty>
+            Pick an item first to see what usually goes with it.
           </p>
         </div>
-
-        <div class="wa-auto__audience-actions">
-          <p class="wa-auto__count">
-            <strong data-wa-selected-item-count>{{ catalogue_items|length }}</strong> items ·
-            <strong data-wa-selected-count>{{ recipient_count }}</strong> people
-          </p>
-          <button class="btn btn--ghost" type="submit">Save audience</button>
-          {% if can_send != False %}
-          <button class="btn btn--primary" type="button" data-wa-send-catalogue>
-            <i data-lucide="send" aria-hidden="true"></i>
-            <span data-wa-send-label>Send selected items now</span>
-          </button>
-          {% endif %}
-        </div>
-        <p class="daraja-form-message" data-wa-message hidden></p>
-      </form>
+      </div>
     </section>
   </div>
 
-  <section class="wa-card wa-card--wide">
+  <section class="wa-card wa-share__pane">
     <header class="wa-card__head">
       <div>
-        <p class="wa-card__kicker">Activity</p>
-        <h3>Sent &amp; viewed</h3>
-        <p>Cancel a send while it is still queued. If a send stays failed, fix Twilio in Settings, then use Retry failed.</p>
+        <p class="wa-card__kicker">Step 3</p>
+        <h3>Edit message</h3>
+        <p>The product photo, name, and price appear on the card image. This text is the WhatsApp caption.</p>
       </div>
     </header>
-    {{ recent_sends|json_script:"wa-auto-sends-data" }}
-    <div class="wa-auto__sends" data-wa-sends></div>
+    <div class="wa-share-composer" data-wa-composer>
+      <div class="wa-share-composer__edit">
+        <div class="wa-share-composer__tokens" role="group" aria-label="Insert placeholder">
+          {% for token, label in catalogue_placeholders %}
+          <button class="wa-share-token" type="button" data-wa-insert-token="{{ token }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+        <label class="wa-share-composer__field">
+          <span class="visually-hidden">WhatsApp message</span>
+          <textarea
+            name="message_body"
+            form="wa-share-audience"
+            rows="8"
+            maxlength="4096"
+            spellcheck="true"
+            data-wa-message-body
+            aria-label="WhatsApp message"
+          >{{ catalogue_message_default }}</textarea>
+        </label>
+        <div class="wa-share-composer__meta">
+          <p data-wa-message-count>0 characters</p>
+          <button class="btn btn--ghost" type="button" data-wa-message-reset>Reset to default</button>
+        </div>
+      </div>
+      <aside class="wa-share-preview" aria-label="Message preview">
+        <p class="wa-share-preview__kicker">Preview</p>
+        <div class="wa-share-preview__bubble">
+          <div class="wa-share-preview__photos" data-wa-message-photos hidden></div>
+          <p class="wa-share-preview__text" data-wa-message-preview></p>
+        </div>
+        <p class="wa-share__hint" data-wa-message-preview-note>Shows the first selected person. Names fill when you send.</p>
+      </aside>
+    </div>
   </section>
+
+  <section class="wa-card wa-share__pane">
+    <header class="wa-card__head">
+      <div>
+        <p class="wa-card__kicker">Step 4</p>
+        <h3>When to send</h3>
+        <p>Send once now, or repeat across a time frame.</p>
+      </div>
+    </header>
+    <div class="wa-auto__audience">
+      <div class="wa-auto__filters wa-share__schedule">
+        <label class="wa-auto__field">
+          <span>Time frame</span>
+          <select name="schedule_period" form="wa-share-audience" data-wa-schedule-period aria-label="Time frame">
+            {% for value, label in share_periods %}
+            <option value="{{ value }}" {% if value == "1" %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="wa-auto__field">
+          <span>How many times</span>
+          <select name="schedule_times" form="wa-share-audience" data-wa-schedule-times aria-label="How many times">
+            {% for value, label in share_repeats %}
+            <option value="{{ value }}" {% if value == "1" %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <p class="wa-share__hint" data-wa-schedule-hint>Sends once now.</p>
+    </div>
+  </section>
+
+  <div class="wa-share__dock">
+    <p class="wa-auto__count">
+      <strong data-wa-selected-item-count>0</strong> items ·
+      <strong data-wa-selected-count>{{ recipient_count }}</strong> people
+    </p>
+    <div class="wa-share__dock-actions">
+      <button class="btn btn--ghost" type="submit" form="wa-share-audience">Save audience</button>
+      {% if can_send != False %}
+      <button class="btn btn--primary" type="button" data-wa-send-catalogue>
+        <i data-lucide="send" aria-hidden="true"></i>
+        <span data-wa-send-label>Send selected items now</span>
+      </button>
+      {% endif %}
+    </div>
+    <p class="daraja-form-message" data-wa-message hidden></p>
+  </div>
 </section>
 {% endwith %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/whatsapp-automations.js' %}?v=9"></script>
+<script defer src="{% static 'js/whatsapp-automations.js' %}?v=16"></script>
 {% endblock %}

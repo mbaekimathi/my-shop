@@ -16,6 +16,7 @@ from .constants import (
     BRIDGE_STATUS_CONNECTED,
     CAMPAIGN_CANCELLED,
     CAMPAIGN_DONE,
+    CAMPAIGN_DRAFT,
     CAMPAIGN_QUEUED,
     CAMPAIGN_SENDING,
     MSG_CANCELLED,
@@ -97,10 +98,15 @@ CATALOGUE_SEND_ITEM_LIMIT = 24
 
 def item_whatsapp_media_url(item, *, request=None) -> str:
     """Public https URL Twilio can fetch. Local file paths are ignored."""
-    if not getattr(item, "image", None):
+    return file_whatsapp_media_url(getattr(item, "image", None), request=request)
+
+
+def file_whatsapp_media_url(file_field, *, request=None) -> str:
+    """Public https URL Twilio can fetch from an ImageField / FileField."""
+    if not file_field:
         return ""
     try:
-        path = (item.image.url or "").strip()
+        path = (file_field.url or "").strip()
     except Exception:
         return ""
     if not path:
@@ -123,15 +129,89 @@ def item_whatsapp_media_url(item, *, request=None) -> str:
     return url
 
 
+def _cover_tile(image, size: int):
+    from PIL import Image as PILImage
+
+    src_w, src_h = image.size
+    if src_w <= 0 or src_h <= 0:
+        return image.resize((size, size), PILImage.Resampling.LANCZOS)
+    scale = max(size / src_w, size / src_h)
+    new_w = max(1, int(src_w * scale))
+    new_h = max(1, int(src_h * scale))
+    resized = image.resize((new_w, new_h), PILImage.Resampling.LANCZOS)
+    left = max(0, (new_w - size) // 2)
+    top = max(0, (new_h - size) // 2)
+    return resized.crop((left, top, left + size, top + size))
+
+
+def compose_catalogue_collage(items, *, max_tiles: int = 6):
+    """One JPEG of item photos so WhatsApp can attach every item in a single message."""
+    from io import BytesIO
+
+    from django.core.files.base import ContentFile
+    from PIL import Image as PILImage
+
+    opened = []
+    try:
+        for item in items or []:
+            image_field = getattr(item, "image", None)
+            if not image_field:
+                continue
+            try:
+                image_field.open("rb")
+                img = PILImage.open(image_field).convert("RGB")
+            except Exception:
+                logger.debug("Could not open catalogue image for collage", extra={"item": getattr(item, "pk", None)})
+                continue
+            opened.append(img)
+            if len(opened) >= max_tiles:
+                break
+        if len(opened) <= 1:
+            return None
+        tile = 480
+        gap = 12
+        cols = 2 if len(opened) <= 4 else 3
+        rows = (len(opened) + cols - 1) // cols
+        width = cols * tile + (cols + 1) * gap
+        height = rows * tile + (rows + 1) * gap
+        canvas = PILImage.new("RGB", (width, height), "#102226")
+        for index, img in enumerate(opened):
+            fitted = _cover_tile(img, tile)
+            x = gap + (index % cols) * (tile + gap)
+            y = gap + (index // cols) * (tile + gap)
+            canvas.paste(fitted, (x, y))
+            if fitted is not img:
+                fitted.close()
+        buf = BytesIO()
+        canvas.save(buf, format="JPEG", quality=86, optimize=True)
+        canvas.close()
+        return ContentFile(buf.getvalue(), name="catalogue-share.jpg")
+    except Exception:
+        logger.exception("Could not compose catalogue collage")
+        return None
+    finally:
+        for img in opened:
+            try:
+                img.close()
+            except Exception:
+                pass
+
+
 def create_catalogue_campaign(
     *,
     profile,
     items,
     filters: dict | None = None,
     request=None,
+    send_after=None,
+    schedule: dict | None = None,
+    body_template: str | None = None,
 ) -> BroadcastCampaign:
-    """One WhatsApp message per recipient × item (caption + public image when available)."""
-    from .automations import build_item_catalogue_caption
+    """One WhatsApp per recipient with a product-card image and short caption."""
+    from datetime import timedelta
+
+    from .automations import apply_catalogue_message_template, fit_whatsapp_caption
+    from .catalogue_card import compose_catalogue_card
 
     chosen = []
     seen = set()
@@ -163,33 +243,55 @@ def create_catalogue_campaign(
             raise ValueError("None of the selected contacts match this audience.")
         raise ValueError("No recipients match the selected audience.")
 
-    parts = []
-    for item in chosen:
-        caption = build_item_catalogue_caption(item)
-        if not caption:
-            continue
-        parts.append((item, caption, item_whatsapp_media_url(item, request=request)))
-    if not parts:
-        raise ValueError("Select at least one item to share.")
+    card = compose_catalogue_card(chosen)
+    caption = apply_catalogue_message_template(
+        body_template or "", chosen, card=bool(card)
+    )
+    if not caption:
+        raise ValueError("Write a message to send.")
 
-    if len(parts) == 1:
-        body_template = parts[0][1]
-    else:
-        names = ", ".join((item.name or "Item").strip() for item, _, _ in parts[:6])
-        extra = len(parts) - 6
-        if extra > 0:
-            names = f"{names} +{extra} more"
-        body_template = f"Share {len(parts)} items: {names}"
-
-    parsed = {**parsed, "item_ids": [item.pk for item, _, _ in parts]}
+    due_at = send_after or timezone.now()
+    if timezone.is_naive(due_at):
+        due_at = timezone.make_aware(due_at)
+    is_due = due_at <= timezone.now() + timedelta(seconds=15)
+    parsed = {
+        **parsed,
+        "item_ids": [item.pk for item in chosen],
+        "send_after": due_at.isoformat(),
+        "schedule": schedule or {},
+    }
     with transaction.atomic():
         campaign = BroadcastCampaign.objects.create(
             created_by=profile,
-            body_template=body_template,
+            body_template=caption,
             filters=parsed,
-            status=CAMPAIGN_QUEUED,
+            status=CAMPAIGN_QUEUED if is_due else CAMPAIGN_DRAFT,
             recipient_count=len(recipients),
         )
+        if card:
+            campaign.image.save(
+                f"catalogue-{campaign.pk}.jpg",
+                card,
+                save=True,
+            )
+        else:
+            collage = compose_catalogue_collage(chosen)
+            if collage:
+                campaign.image.save(
+                    f"catalogue-{campaign.pk}.jpg",
+                    collage,
+                    save=True,
+                )
+        media = file_whatsapp_media_url(campaign.image, request=request)
+        if not media:
+            for item in chosen:
+                media = item_whatsapp_media_url(item, request=request)
+                if media:
+                    break
+        body_template = fit_whatsapp_caption(caption, has_media=bool(media))
+        if body_template != campaign.body_template:
+            campaign.body_template = body_template
+            campaign.save(update_fields=["body_template"])
         OutboundMessage.objects.bulk_create(
             [
                 OutboundMessage(
@@ -197,17 +299,78 @@ def create_catalogue_campaign(
                     client_id=recipient.client_id,
                     client_name=recipient.full_name,
                     phone=(recipient.chat_id or recipient.phone),
-                    body=render_placeholders(caption, recipient),
+                    body=render_placeholders(body_template, recipient),
                     image_path=media,
                     status=MSG_PENDING,
                 )
                 for recipient in recipients
-                for _item, caption, media in parts
             ]
         )
 
-    enqueue_campaign(campaign.pk)
+    if is_due:
+        enqueue_campaign(campaign.pk)
+    else:
+        logger.info("Campaign %s scheduled for %s", campaign.pk, due_at.isoformat())
     return campaign
+
+
+def create_catalogue_campaign_series(
+    *,
+    profile,
+    items,
+    filters: dict | None = None,
+    request=None,
+    period_days: int = 1,
+    times: int = 1,
+    body_template: str | None = None,
+) -> list[BroadcastCampaign]:
+    """Queue the first send now and later waves evenly across the period."""
+    from datetime import timedelta
+
+    days = max(1, min(30, int(period_days or 1)))
+    waves = max(1, min(7, int(times or 1)))
+    start = timezone.now()
+    gap = timedelta(days=days) / (waves - 1) if waves > 1 else timedelta(0)
+    schedule = {"period_days": days, "times": waves}
+    created = []
+    for index in range(waves):
+        due = start + (gap * index)
+        campaign = create_catalogue_campaign(
+            profile=profile,
+            items=items,
+            filters=filters,
+            request=request,
+            send_after=due,
+            schedule={**schedule, "wave": index + 1},
+            body_template=body_template,
+        )
+        created.append(campaign)
+    return created
+
+
+def promote_due_campaigns() -> int:
+    """Move scheduled drafts whose send time has arrived onto the send queue."""
+    from datetime import datetime
+
+    now = timezone.now()
+    promoted = 0
+    for campaign in BroadcastCampaign.objects.filter(status=CAMPAIGN_DRAFT).order_by("id"):
+        raw = (campaign.filters or {}).get("send_after") or ""
+        if not raw:
+            continue
+        try:
+            due = datetime.fromisoformat(str(raw))
+        except ValueError:
+            continue
+        if timezone.is_naive(due):
+            due = timezone.make_aware(due)
+        if due > now:
+            continue
+        campaign.status = CAMPAIGN_QUEUED
+        campaign.save(update_fields=["status"])
+        enqueue_campaign(campaign.pk)
+        promoted += 1
+    return promoted
 
 
 def enqueue_campaign(campaign_id: int) -> None:
@@ -270,15 +433,6 @@ def enqueue_campaign(campaign_id: int) -> None:
     )
 
 
-def _run_campaign_inline(campaign_id: int) -> None:
-    from .tasks import process_campaign_sync
-
-    try:
-        process_campaign_sync(campaign_id)
-    except Exception:
-        logger.exception("Inline campaign %s failed", campaign_id)
-
-
 def outbound_display_status(
     *,
     status: str,
@@ -303,7 +457,7 @@ def cancel_campaign(campaign_id: int) -> BroadcastCampaign:
         campaign = BroadcastCampaign.objects.select_for_update().filter(pk=campaign_id).first()
         if campaign is None:
             raise ValueError("Send not found.")
-        if campaign.status not in {CAMPAIGN_QUEUED, CAMPAIGN_SENDING}:
+        if campaign.status not in {CAMPAIGN_QUEUED, CAMPAIGN_SENDING, CAMPAIGN_DRAFT}:
             raise ValueError("This send has already finished.")
         pending = campaign.messages.filter(status=MSG_PENDING)
         if not pending.exists():
@@ -351,6 +505,85 @@ def retry_failed_campaign(campaign_id: int) -> BroadcastCampaign:
     return campaign
 
 
+def _parse_send_after(raw: str):
+    from datetime import datetime
+
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        due = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if timezone.is_naive(due):
+        due = timezone.make_aware(due)
+    return due
+
+
+def _campaign_kind_label(filters: dict | None) -> str:
+    data = filters or {}
+    schedule = data.get("schedule") if isinstance(data.get("schedule"), dict) else {}
+    wave = schedule.get("wave")
+    total = schedule.get("times")
+    if data.get("item_ids"):
+        if wave and total and int(total) > 1:
+            return f"Item share · {wave} of {total}"
+        return "Item share"
+    return "WhatsApp broadcast"
+
+
+def _campaign_status_label(campaign: BroadcastCampaign, *, is_scheduled: bool) -> str:
+    if campaign.status == CAMPAIGN_DRAFT or is_scheduled:
+        return "Scheduled"
+    if campaign.status == CAMPAIGN_QUEUED:
+        return "Queued"
+    if campaign.status == CAMPAIGN_SENDING:
+        return "Sending"
+    if campaign.status == CAMPAIGN_CANCELLED:
+        return "Cancelled"
+    if campaign.status == CAMPAIGN_DONE:
+        return "Sent"
+    return (campaign.status or "").replace("_", " ").title()
+
+
+def _campaign_timing_label(
+    campaign: BroadcastCampaign,
+    *,
+    send_after_label: str,
+    is_pending: bool,
+    is_scheduled: bool,
+) -> str:
+    if is_scheduled and send_after_label:
+        return f"Sends {send_after_label}"
+    if is_pending and campaign.status == CAMPAIGN_SENDING:
+        return "Sending now"
+    if is_pending:
+        return "Waiting in queue"
+    if campaign.finished_at:
+        return _format_when(campaign.finished_at)
+    return _format_when(campaign.created_at)
+
+
+def _format_when(dt) -> str:
+    if not dt:
+        return ""
+    local = timezone.localtime(dt)
+    now = timezone.localtime(timezone.now())
+    if local.date() == now.date():
+        return f"Today {local.strftime('%H:%M')}"
+    if (now.date() - local.date()).days == 1:
+        return f"Yesterday {local.strftime('%H:%M')}"
+    return local.strftime("%d %b %Y · %H:%M")
+
+
+def _campaign_is_pending(campaign: BroadcastCampaign, *, pending_count: int) -> bool:
+    if campaign.status == CAMPAIGN_DRAFT:
+        return True
+    if campaign.status in {CAMPAIGN_QUEUED, CAMPAIGN_SENDING}:
+        return True
+    return pending_count > 0 and campaign.status not in {CAMPAIGN_CANCELLED, CAMPAIGN_DONE}
+
+
 def campaign_as_dict(campaign: BroadcastCampaign) -> dict[str, Any]:
     messages = list(
         campaign.messages.order_by("id")[:500].values(
@@ -380,12 +613,20 @@ def campaign_as_dict(campaign: BroadcastCampaign) -> dict[str, Any]:
     delivered_count = campaign.messages.filter(delivered_at__isnull=False).count()
     viewed_count = campaign.messages.filter(read_at__isnull=False).count()
     cancelled_count = campaign.messages.filter(status=MSG_CANCELLED).count()
+    filters = campaign.filters or {}
+    send_after = _parse_send_after(str(filters.get("send_after") or ""))
+    schedule = filters.get("schedule") if isinstance(filters.get("schedule"), dict) else {}
+    now = timezone.now()
+    is_scheduled = campaign.status == CAMPAIGN_DRAFT or (
+        send_after is not None and send_after > now and pending_count > 0
+    )
     return {
         "id": campaign.pk,
         "status": campaign.status,
+        "kind_label": _campaign_kind_label(filters),
         "body_template": campaign.body_template,
-        "body_preview": (campaign.body_template or "").replace("\n", " ")[:80],
-        "filters": campaign.filters or {},
+        "body_preview": (campaign.body_template or "").replace("\n", " ")[:120],
+        "filters": filters,
         "recipient_count": campaign.recipient_count,
         "sent_count": campaign.sent_count,
         "failed_count": campaign.failed_count,
@@ -393,13 +634,29 @@ def campaign_as_dict(campaign: BroadcastCampaign) -> dict[str, Any]:
         "delivered_count": delivered_count,
         "viewed_count": viewed_count,
         "cancelled_count": cancelled_count,
-        "can_cancel": campaign.status in {CAMPAIGN_QUEUED, CAMPAIGN_SENDING}
+        "status_label": _campaign_status_label(campaign, is_scheduled=is_scheduled),
+        "timing_label": _campaign_timing_label(
+            campaign,
+            send_after_label=_format_when(send_after) if send_after else "",
+            is_pending=_campaign_is_pending(campaign, pending_count=pending_count),
+            is_scheduled=is_scheduled,
+        ),
+        "item_count": len(filters.get("item_ids") or []) if isinstance(filters, dict) else 0,
+        "can_cancel": campaign.status
+        in {CAMPAIGN_QUEUED, CAMPAIGN_SENDING, CAMPAIGN_DRAFT}
         and pending_count > 0,
         "can_retry": campaign.messages.filter(
             status__in=[MSG_FAILED, MSG_MANUAL_REVIEW]
         ).exists(),
         "has_image": bool(campaign.image),
         "created_at": campaign.created_at.isoformat() if campaign.created_at else None,
+        "created_label": _format_when(campaign.created_at),
+        "send_after": send_after.isoformat() if send_after else None,
+        "send_after_label": _format_when(send_after) if send_after else "",
+        "is_scheduled": is_scheduled,
+        "is_pending": _campaign_is_pending(campaign, pending_count=pending_count),
+        "schedule_wave": schedule.get("wave"),
+        "schedule_total": schedule.get("times"),
         "started_at": campaign.started_at.isoformat() if campaign.started_at else None,
         "finished_at": campaign.finished_at.isoformat() if campaign.finished_at else None,
         "messages": messages,
@@ -410,6 +667,54 @@ def campaign_as_dict(campaign: BroadcastCampaign) -> dict[str, Any]:
 def recent_campaigns(limit: int = 10) -> list[dict[str, Any]]:
     rows = list(BroadcastCampaign.objects.order_by("-created_at")[:limit])
     return [campaign_as_dict(c) for c in rows]
+
+
+def activities_payload(*, limit: int = 50) -> dict[str, Any]:
+    """Split sends into waiting vs history for the Activities page."""
+    cap = max(1, limit)
+    waiting_qs = list(
+        BroadcastCampaign.objects.filter(
+            status__in=[CAMPAIGN_DRAFT, CAMPAIGN_QUEUED, CAMPAIGN_SENDING]
+        ).order_by("id")[:cap]
+    )
+    waiting_ids = {row.pk for row in waiting_qs}
+    history_qs = list(
+        BroadcastCampaign.objects.exclude(pk__in=waiting_ids).order_by("-created_at")[:cap]
+    )
+    pending = [campaign_as_dict(campaign) for campaign in waiting_qs]
+    history = [campaign_as_dict(campaign) for campaign in history_qs]
+
+    def _sort_key(row):
+        return row.get("send_after") or row.get("created_at") or ""
+
+    pending.sort(key=_sort_key)
+    scheduled = sum(1 for row in pending if row.get("is_scheduled"))
+    queued_now = sum(
+        1
+        for row in pending
+        if row.get("status") in {CAMPAIGN_QUEUED, CAMPAIGN_SENDING}
+    )
+    waiting_people = sum(int(row.get("pending_count") or 0) for row in pending)
+    return {
+        "pending": pending,
+        "history": history,
+        "summary": {
+            "pending_batches": len(pending),
+            "scheduled_batches": scheduled,
+            "queued_batches": queued_now,
+            "waiting_messages": waiting_people,
+            "history_batches": len(history),
+        },
+    }
+
+
+def _run_campaign_inline(campaign_id: int) -> None:
+    from .tasks import process_campaign_sync
+
+    try:
+        process_campaign_sync(campaign_id)
+    except Exception:
+        logger.exception("Inline campaign %s failed", campaign_id)
 
 
 def refresh_campaign_counts(campaign: BroadcastCampaign) -> None:

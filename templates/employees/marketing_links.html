@@ -11,7 +11,11 @@
   </p>
   <h2 class="workspace-hero-title">Marketing links</h2>
   <p class="workspace-hero-copy">
-    Public shop websites for ads and campaigns. Copy a link, then send it with Twilio.
+    {% if marketing_is_hosted %}
+    Public shop websites for ads and campaigns. Copy the hosted link, or scan the QR code.
+    {% else %}
+    Public shop websites for ads and campaigns. Copy the local link, or scan the QR code.
+    {% endif %}
   </p>
 </section>
 
@@ -20,7 +24,11 @@
     <div class="item-panel-head-top">
       <div>
         <h2>Shop websites</h2>
-        <p>Each branch has its own catalogue, prices, and WhatsApp enquiry.</p>
+        {% if marketing_is_hosted %}
+        <p>Each branch has its own catalogue, prices, WhatsApp enquiry, and a hosted QR code.</p>
+        {% else %}
+        <p>Each branch has its own catalogue, prices, WhatsApp enquiry, and a local QR code.</p>
+        {% endif %}
       </div>
       <div class="marketing-panel__head-actions">
         <p class="item-count" data-marketing-count>{{ marketing_links|length }} link{{ marketing_links|length|pluralize }}</p>
@@ -55,7 +63,7 @@
       class="marketing-card"
       data-marketing-card
       data-url="{{ link.url }}"
-      data-search="{{ link.name|lower }} {{ link.location|lower }}"
+      data-search="{{ link.name|lower }} {{ link.location|lower }} {{ link.url|lower }}"
     >
       <div class="marketing-card__media" aria-hidden="true">
         {% if link.image_url %}
@@ -69,19 +77,55 @@
           <h3>{{ link.name }}</h3>
           <p>{{ link.location }}{% if link.phone %} · {{ link.phone }}{% endif %}</p>
         </div>
-        <label class="marketing-card__url">
-          <span class="visually-hidden">Website URL for {{ link.name }}</span>
-          <input type="text" value="{{ link.url }}" readonly data-marketing-url>
-        </label>
-        <div class="marketing-card__actions">
-          <button class="btn btn--ghost marketing-copy-btn" type="button" data-copy-url="{{ link.url }}">
-            <i data-lucide="copy" aria-hidden="true"></i>
-            <span data-copy-label>Copy</span>
-          </button>
-          <a class="btn btn--ghost" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
-            <i data-lucide="external-link" aria-hidden="true"></i>
-            <span>Open</span>
-          </a>
+        <div class="marketing-card__variants">
+          {% for variant in link.variants %}
+          <article class="marketing-variant" data-marketing-variant>
+            <figure class="marketing-qr">
+              {% if variant.qr %}
+              <img src="{{ variant.qr }}" alt="QR code for {{ variant.label|lower }} {{ link.name }} website" width="148" height="148">
+              {% else %}
+              <span class="marketing-qr__empty">No QR</span>
+              {% endif %}
+              <figcaption>{{ variant.label }}</figcaption>
+            </figure>
+            <div class="marketing-variant__copy">
+              <label class="marketing-card__url">
+                <span class="visually-hidden">{{ variant.label }} website URL for {{ link.name }}</span>
+                <input
+                  type="text"
+                  value="{{ variant.url }}"
+                  readonly
+                  data-marketing-url
+                  {% if not variant.url %}placeholder="Open this site on a public domain or ngrok to generate the hosted link."{% endif %}
+                >
+              </label>
+              <div class="marketing-card__actions">
+                {% if variant.url %}
+                <button class="btn btn--ghost marketing-copy-btn" type="button" data-copy-url="{{ variant.url }}">
+                  <i data-lucide="copy" aria-hidden="true"></i>
+                  <span data-copy-label>Copy</span>
+                </button>
+                <a class="btn btn--ghost" href="{{ variant.url }}" target="_blank" rel="noopener noreferrer">
+                  <i data-lucide="external-link" aria-hidden="true"></i>
+                  <span>Open</span>
+                </a>
+                {% endif %}
+                {% if variant.qr %}
+                <button
+                  class="btn btn--ghost"
+                  type="button"
+                  data-download-qr
+                  data-qr-src="{{ variant.qr }}"
+                  data-qr-name="{{ link.name|slugify }}-{{ variant.key }}-qr.png"
+                >
+                  <i data-lucide="download" aria-hidden="true"></i>
+                  <span>Download QR</span>
+                </button>
+                {% endif %}
+              </div>
+            </div>
+          </article>
+          {% endfor %}
         </div>
       </div>
     </li>
@@ -102,5 +146,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/marketing-links.js' %}?v=1"></script>
+<script defer src="{% static 'js/marketing-links.js' %}?v=2"></script>
 {% endblock %}

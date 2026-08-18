@@ -1,0 +1,90 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section class="workspace-hero wa-share-hero" data-animate="rise">
+  <div class="wa-share-hero__copy">
+    <p class="role-eyebrow">
+      <i data-lucide="history" aria-hidden="true"></i>
+      <span>Marketing · Activities</span>
+    </p>
+    <h2 class="workspace-hero-title">Activities</h2>
+    <p class="workspace-hero-copy">
+      See WhatsApp shares that are still waiting, then what already went out.
+      Cancel a scheduled send before it leaves the queue. If something failed, fix Twilio in
+      <a href="{{ settings_url }}">Twilio settings</a>, then retry.
+    </p>
+  </div>
+  <div class="wa-share-hero__aside" data-wa-summary>
+    <span class="wa-chip wa-chip--warn">
+      <i data-lucide="clock" aria-hidden="true"></i>
+      <strong data-wa-summary-waiting>{{ activities.summary.waiting_messages|default:0 }}</strong>
+      <span>waiting to send</span>
+    </span>
+    <span class="wa-chip">
+      <i data-lucide="calendar-clock" aria-hidden="true"></i>
+      <strong data-wa-summary-scheduled>{{ activities.summary.scheduled_batches|default:0 }}</strong>
+      <span>scheduled</span>
+    </span>
+    <span class="wa-chip">
+      <i data-lucide="check" aria-hidden="true"></i>
+      <strong data-wa-summary-history>{{ activities.summary.history_batches|default:0 }}</strong>
+      <span>completed</span>
+    </span>
+  </div>
+</section>
+
+<section class="wa-activities" data-animate="rise" data-delay="1" data-wa-activities
+  data-pending-empty="Nothing waiting. Scheduled item shares and queued messages will show up here."
+  data-history-empty="No completed sends yet. Share items, then check back here."
+>
+  {{ activities|json_script:"wa-activities-data" }}
+  <p class="wa-auto__banner daraja-form-message" data-wa-message hidden></p>
+
+  <section class="item-panel item-panel--dense wa-act-panel">
+    <header class="item-panel-head">
+      <div class="item-panel-head-top">
+        <div>
+          <h2>Waiting to send</h2>
+          <p>Automated and scheduled messages that have not been sent yet. Open a row to see who is still in the queue.</p>
+        </div>
+        <p class="item-count" data-wa-pending-count>
+          {{ activities.summary.pending_batches|default:0 }} batch{{ activities.summary.pending_batches|default:0|pluralize }}
+        </p>
+      </div>
+    </header>
+    <div class="staff-table-wrap perm-table-scroll" data-wa-pending>
+      {% if not activities.pending %}
+      <p class="wa-act-empty">Nothing waiting. Scheduled item shares and queued messages will show up here.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="item-panel item-panel--dense wa-act-panel">
+    <header class="item-panel-head">
+      <div class="item-panel-head-top">
+        <div>
+          <h2>Sent history</h2>
+          <p>Messages that already left the queue — sent, viewed, cancelled, or failed.</p>
+        </div>
+        <p class="item-count" data-wa-history-count>
+          {{ activities.summary.history_batches|default:0 }} send{{ activities.summary.history_batches|default:0|pluralize }}
+        </p>
+      </div>
+    </header>
+    <div class="staff-table-wrap perm-table-scroll" data-wa-history>
+      {% if not activities.history %}
+      <p class="wa-act-empty">No completed sends yet. Share items, then check back here.</p>
+      {% endif %}
+    </div>
+  </section>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/whatsapp-activities.js' %}?v=1"></script>
+{% endblock %}

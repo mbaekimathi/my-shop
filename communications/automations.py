@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from decimal import Decimal, InvalidOperation
 
@@ -342,6 +343,78 @@ def build_item_catalogue_caption(item) -> str:
         parts.append(category)
     parts.append(_kes(price))
     return "\n".join(parts).strip()
+
+
+WHATSAPP_MEDIA_CAPTION_LIMIT = 1024
+WHATSAPP_TEXT_LIMIT = 4096
+DEFAULT_CATALOGUE_TEMPLATE = "Hi {first_name},"
+
+
+def _item_catalogue_line(item) -> str:
+    name = (getattr(item, "name", None) or "").strip() or "Item"
+    category = (getattr(item, "category", None) or "").strip()
+    price = Decimal("0")
+    try:
+        if hasattr(item, "resolve_list_price"):
+            price = item.resolve_list_price()
+        elif getattr(item, "shop_price", None) is not None:
+            price = item.shop_price
+    except (InvalidOperation, TypeError, ValueError):
+        price = Decimal("0")
+    if category:
+        return f"{name} · {category} · {_kes(price)}"
+    return f"{name} · {_kes(price)}"
+
+
+def build_catalogue_items_block(items) -> str:
+    """Item names and prices inserted when a template includes {items}."""
+    chosen = [item for item in (items or []) if item is not None]
+    if not chosen:
+        return ""
+    if len(chosen) == 1:
+        item = chosen[0]
+        name = (getattr(item, "name", None) or "").strip() or "Item"
+        category = (getattr(item, "category", None) or "").strip()
+        price = Decimal("0")
+        try:
+            if hasattr(item, "resolve_list_price"):
+                price = item.resolve_list_price()
+            elif getattr(item, "shop_price", None) is not None:
+                price = item.shop_price
+        except (InvalidOperation, TypeError, ValueError):
+            price = Decimal("0")
+        parts = [name]
+        if category:
+            parts.append(category)
+        parts.append(_kes(price))
+        return "\n".join(parts)
+    return "\n".join(_item_catalogue_line(item) for item in chosen)
+
+
+def apply_catalogue_message_template(
+    template: str, items, *, card: bool = False
+) -> str:
+    """Expand a custom share template. Item details go on the card image when card=True."""
+    chosen = [item for item in (items or []) if item is not None]
+    body = (template or "").strip() or DEFAULT_CATALOGUE_TEMPLATE
+    if "{items}" in body:
+        replacement = "" if card else build_catalogue_items_block(chosen)
+        body = body.replace("{items}", replacement)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    return body
+
+
+def build_catalogue_share_caption(items) -> str:
+    """One WhatsApp caption listing every selected item."""
+    return apply_catalogue_message_template(DEFAULT_CATALOGUE_TEMPLATE, items)
+
+
+def fit_whatsapp_caption(text: str, *, has_media: bool = False) -> str:
+    limit = WHATSAPP_MEDIA_CAPTION_LIMIT if has_media else WHATSAPP_TEXT_LIMIT
+    body = (text or "").strip()
+    if len(body) <= limit:
+        return body
+    return body[: max(0, limit - 1)].rstrip() + "…"
 
 
 def maybe_send_new_item_catalogue(item, *, request=None) -> None:

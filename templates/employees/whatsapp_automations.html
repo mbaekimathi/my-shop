@@ -5,16 +5,13 @@
 
 {% block workspace_content %}
 {% csrf_token %}
-{% with can_send=module_permissions.send %}
 <section class="workspace-hero" data-animate="rise">
   <p class="role-eyebrow">
-    <i data-lucide="messages-square" aria-hidden="true"></i>
-    <span>WhatsApp · Twilio</span>
+    <i data-lucide="{{ meta.icon }}" aria-hidden="true"></i>
+    <span>Settings</span>
   </p>
-  <h2 class="workspace-hero-title">Automate &amp; share</h2>
-  <p class="workspace-hero-copy">
-    Turn on what MY-SHOP should send, pick who gets shop-website broadcasts, then watch delivery.
-  </p>
+  <h2 class="workspace-hero-title">{{ meta.headline }}</h2>
+  <p class="workspace-hero-copy">{{ meta.summary }}</p>
 </section>
 
 <section
@@ -22,221 +19,59 @@
   data-animate="rise"
   data-delay="1"
   data-wa-auto
-  data-twilio-ready="{% if bridge.status == 'connected' %}1{% else %}0{% endif %}"
   data-automations-on="{% if comms.enable_automations %}1{% else %}0{% endif %}"
 >
-  <div class="wa-auto__status">
-    <span class="wa-chip wa-chip--{% if bridge.status == 'connected' %}ok{% else %}warn{% endif %}" data-wa-ready-chip>
-      <i data-lucide="{% if bridge.status == 'connected' %}check-circle-2{% else %}alert-circle{% endif %}" aria-hidden="true"></i>
-      <strong data-wa-ready-label>{% if bridge.status == "connected" %}Ready{% else %}Setup needed{% endif %}</strong>
-      <span>{% if bridge.wa_phone %}{{ bridge.wa_phone }}{% else %}Twilio{% endif %}</span>
-    </span>
-    <span class="wa-chip">
-      <i data-lucide="users" aria-hidden="true"></i>
-      <strong data-wa-people-count>{{ recipient_count }}</strong>
-      <span>in audience</span>
-    </span>
-    <a class="wa-chip wa-chip--link" href="{{ settings_url }}">
-      <i data-lucide="settings-2" aria-hidden="true"></i>
-      <span>WhatsApp settings</span>
-    </a>
-    <a class="wa-chip wa-chip--link" href="{{ catalogue_url }}">
-      <i data-lucide="images" aria-hidden="true"></i>
-      <span>Share items</span>
-    </a>
-  </div>
-
-  {% if bridge.status != "connected" %}
-  <p class="wa-auto__banner">
-    Save Twilio in
-    <a href="{{ settings_url }}">WhatsApp settings</a>
-    before automations or broadcasts can send.
-  </p>
-  {% else %}
-  <article class="wa-join">
-    <div>
-      <p class="wa-card__kicker">Required first</p>
-      <h3>Join Twilio sandbox on the customer phone</h3>
-      {% if sandbox_join.phrase %}
-      <p>WhatsApp this exact text to {{ sandbox_join.number }}. Wait for Twilio's confirmation, then Retry failed.</p>
-      <p class="wa-join__phrase"><code>{{ sandbox_join.phrase }}</code></p>
-      {% else %}
-      <p>
-        Copy the join code from
-        <a href="https://www.twilio.com/console/sms/whatsapp/sandbox" target="_blank" rel="noopener">Twilio Try WhatsApp</a>
-        (looks like <code>join something-something</code>), save it in
-        <a href="{{ settings_url }}">WhatsApp settings</a>,
-        then send it from the customer phone to {{ sandbox_join.number }}.
-      </p>
-      {% endif %}
-    </div>
-    <a class="btn btn--primary" href="{{ sandbox_join.wa_link }}" target="_blank" rel="noopener">
-      Open WhatsApp on this phone
-    </a>
-  </article>
-  {% endif %}
-
-  <div class="wa-auto__layout">
-    <section class="wa-card">
-      <header class="wa-card__head">
-        <div>
-          <p class="wa-card__kicker">Step 1</p>
-          <h3>What to send</h3>
-          <p>Automatic messages go to the customer phone on a sale, or the supplier phone on Buy stock and Register expense.</p>
-        </div>
-        <label class="perm-switch wa-card__master">
-          <input
-            type="checkbox"
-            class="perm-switch-input"
-            {% if comms.enable_automations %}checked{% endif %}
-            data-wa-toggle
-            data-field="enable_automations"
-            aria-label="Turn automations on"
-          >
-          <span class="perm-switch-ui" aria-hidden="true"></span>
-          <span class="perm-switch-state">{% if comms.enable_automations %}On{% else %}Off{% endif %}</span>
-        </label>
-      </header>
-
-      <ul class="wa-toggle-list" data-wa-depends>
-        {% for toggle in automation_toggles %}
-        <li class="wa-toggle">
-          <span class="wa-toggle__icon" aria-hidden="true">
-            <i data-lucide="{{ toggle.icon }}"></i>
-          </span>
-          <div class="wa-toggle__copy">
-            <strong>{{ toggle.label }}</strong>
-            <p>{{ toggle.summary }}</p>
-          </div>
-          <label class="perm-switch">
-            <input
-              type="checkbox"
-              class="perm-switch-input"
-              {% if toggle.enabled %}checked{% endif %}
-              data-wa-toggle
-              data-field="{{ toggle.field }}"
-              aria-label="{{ toggle.label }}"
-            >
-            <span class="perm-switch-ui" aria-hidden="true"></span>
-            <span class="perm-switch-state">{% if toggle.enabled %}On{% else %}Off{% endif %}</span>
-          </label>
-        </li>
-        {% endfor %}
-      </ul>
-    </section>
-
-    <section class="wa-card">
-      <header class="wa-card__head">
-        <div>
-          <p class="wa-card__kicker">Step 2</p>
-          <h3>Who to share with</h3>
-          <p>Tick the people who should get the shop website, then send.</p>
-        </div>
-      </header>
-
-      <form class="wa-auto__audience" data-wa-audience novalidate>
-        <input type="hidden" name="action" value="save_audience">
-        <div class="wa-auto__filters">
-          <label class="wa-auto__field">
-            <span>Audience</span>
-            <select name="audience_type" aria-label="Audience">
-              {% for value, label in audience_types %}
-              <option value="{{ value }}" {% if comms.automation_audience_type == value %}selected{% endif %}>
-                {{ label }}{% for row in audience_summary %}{% if row.value == value and row.count is not None %} — {{ row.count }}{% endif %}{% endfor %}
-              </option>
-              {% endfor %}
-            </select>
-          </label>
-          <label class="wa-auto__field">
-            <span>Bought in</span>
-            <select name="last_purchase_days" aria-label="Bought in">
-              {% for value, label in last_purchase_windows.items %}
-              <option value="{{ value }}" {% if comms.automation_last_purchase_days == value %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <label class="wa-auto__field">
-            <span>Shop</span>
-            <select name="shop_id" aria-label="Shop">
-              <option value="" {% if not comms.automation_shop_id %}selected{% endif %}>All shops</option>
-              {% for shop in shops %}
-              <option value="{{ shop.pk }}" {% if comms.automation_shop_id == shop.pk %}selected{% endif %}>{{ shop.name }}</option>
-              {% endfor %}
-            </select>
-          </label>
-        </div>
-
-        <div class="wa-auto__pickbar">
-          <label class="wa-auto__search">
-            <i data-lucide="search" aria-hidden="true"></i>
-            <input type="search" placeholder="Search name or phone…" autocomplete="off" data-wa-people-search aria-label="Search audience">
-          </label>
-          <div class="wa-auto__pick-actions">
-            <button class="btn btn--ghost" type="button" data-wa-select-all>Select all</button>
-            <button class="btn btn--ghost" type="button" data-wa-select-none>Clear</button>
-          </div>
-        </div>
-
-        <div class="wa-auto__people" data-wa-people>
-          <ul class="wa-people" data-wa-people-body>
-            {% for person in recipients %}
-            <li class="wa-person is-checked" data-search="{{ person.full_name|lower }} {{ person.phone }}">
-              <input
-                class="wa-person__check"
-                type="checkbox"
-                name="client_ids"
-                value="{{ person.client_id }}"
-                checked
-                data-wa-pick
-                aria-label="Select {{ person.full_name }}"
-              >
-              <span class="wa-person__avatar" aria-hidden="true">{{ person.full_name|slice:":1" }}</span>
-              <span class="wa-person__meta">
-                <strong>{{ person.full_name }}</strong>
-                <em>{{ person.phone }}</em>
-              </span>
-            </li>
-            {% endfor %}
-          </ul>
-          <p class="wa-auto__people-empty" data-wa-people-empty {% if recipients %}hidden{% endif %}>
-            No matching customers with a phone number.
-          </p>
-          <p class="wa-auto__people-more" data-wa-people-more {% if recipient_count <= recipients|length %}hidden{% endif %}>
-            Showing {{ recipients|length }} of {{ recipient_count }}.
-          </p>
-        </div>
-
-        <div class="wa-auto__audience-actions">
-          <p class="wa-auto__count"><strong data-wa-selected-count>{{ recipient_count }}</strong> selected · <span data-wa-people-count>{{ recipient_count }}</span> match</p>
-          <button class="btn btn--ghost" type="submit">Save audience</button>
-          {% if can_send != False %}
-          <button class="btn btn--primary" type="button" data-wa-send-website>
-            <i data-lucide="send" aria-hidden="true"></i>
-            <span data-wa-send-label>Send shop website now</span>
-          </button>
-          {% endif %}
-        </div>
-        <p class="daraja-form-message" data-wa-message hidden></p>
-      </form>
-    </section>
-  </div>
-
   <section class="wa-card wa-card--wide">
     <header class="wa-card__head">
       <div>
-        <p class="wa-card__kicker">Activity</p>
-        <h3>Sent &amp; viewed</h3>
-        <p>Cancel a send while it is still queued. Temporary failures retry on their own. If a send stays failed, fix Twilio in Settings, then use Retry failed.</p>
+        <h3>What to send</h3>
+        <p>Automatic messages go to the customer phone on a sale, or the supplier phone on Buy stock and Register expense.</p>
       </div>
+      <label class="perm-switch wa-card__master">
+        <input
+          type="checkbox"
+          class="perm-switch-input"
+          {% if comms.enable_automations %}checked{% endif %}
+          data-wa-toggle
+          data-field="enable_automations"
+          aria-label="Turn automations on"
+        >
+        <span class="perm-switch-ui" aria-hidden="true"></span>
+        <span class="perm-switch-state">{% if comms.enable_automations %}On{% else %}Off{% endif %}</span>
+      </label>
     </header>
-    {{ recent_sends|json_script:"wa-auto-sends-data" }}
-    <div class="wa-auto__sends" data-wa-sends></div>
+
+    <ul class="wa-toggle-list" data-wa-depends>
+      {% for toggle in automation_toggles %}
+      <li class="wa-toggle">
+        <span class="wa-toggle__icon" aria-hidden="true">
+          <i data-lucide="{{ toggle.icon }}"></i>
+        </span>
+        <div class="wa-toggle__copy">
+          <strong>{{ toggle.label }}</strong>
+          <p>{{ toggle.summary }}</p>
+        </div>
+        <label class="perm-switch">
+          <input
+            type="checkbox"
+            class="perm-switch-input"
+            {% if toggle.enabled %}checked{% endif %}
+            data-wa-toggle
+            data-field="{{ toggle.field }}"
+            aria-label="{{ toggle.label }}"
+          >
+          <span class="perm-switch-ui" aria-hidden="true"></span>
+          <span class="perm-switch-state">{% if toggle.enabled %}On{% else %}Off{% endif %}</span>
+        </label>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="daraja-form-message" data-wa-message hidden></p>
   </section>
 </section>
-{% endwith %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/whatsapp-automations.js' %}?v=9"></script>
+<script defer src="{% static 'js/whatsapp-automations.js' %}?v=10"></script>
 {% endblock %}

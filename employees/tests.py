@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from employees.analytics_services import ANALYTICS_SECTIONS, _build_clients
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
@@ -576,11 +576,69 @@ class MarketingLinksPageTests(TestCase):
 
     def test_it_support_home_lists_public_shop_website(self):
         self.client.force_login(self.user)
-        response = self.client.get("/it-support/")
+        home = self.client.get("/it-support/")
+        self.assertEqual(home.status_code, 200)
+        home_labels = [item["label"] for item in home.context["page_sidebar"]["primary"]]
+        self.assertEqual(
+            home_labels,
+            [
+                "Stock Management",
+                "Analytics",
+                "Credits",
+                "Suppliers",
+                "Clients",
+                "Item Management",
+                "HR Management",
+                "Shop Management",
+                "Marketing links",
+            ],
+        )
+        self.assertIn("/it-support/marketing/", home.context["page_sidebar"]["primary"][-1]["href"])
+
+        response = self.client.get("/it-support/marketing/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Marketing links")
         self.assertContains(response, "LIVE MARKET SHOP")
-        self.assertContains(response, f"/shop/{self.live.pk}/")
+        self.assertContains(response, f"http://localhost:8000/shop/{self.live.pk}/")
+        self.assertContains(response, "data:image/png;base64,")
+        self.assertContains(response, "Local")
+        self.assertNotContains(response, "Hosted")
         self.assertNotContains(response, "HIDDEN MARKET SHOP")
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
-        self.assertEqual(labels[0], "Marketing links")
+        self.assertEqual(labels, ["Communication settings", "Share items", "Contacts", "Activities"])
+        self.assertIn(
+            "/settings/communication-settings/",
+            response.context["page_sidebar"]["primary"][0]["href"],
+        )
+        self.assertIn(
+            "/it-support/whatsapp/catalogue/",
+            response.context["page_sidebar"]["primary"][1]["href"],
+        )
+        self.assertIn(
+            "/it-support/whatsapp/contacts/",
+            response.context["page_sidebar"]["primary"][2]["href"],
+        )
+        self.assertIn(
+            "/it-support/marketing/activities/",
+            response.context["page_sidebar"]["primary"][3]["href"],
+        )
+        shop = response.context["marketing_links"][0]
+        self.assertEqual(len(shop["variants"]), 1)
+        self.assertEqual(shop["variants"][0]["key"], "local")
+        self.assertTrue(shop["variants"][0]["qr"].startswith("data:image/png;base64,"))
+
+    @override_settings(IS_HOSTED=True, DARAJA_CALLBACK_BASE_URL="https://shops.example.com")
+    def test_marketing_links_include_hosted_qr(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/marketing/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, f"http://localhost:8000/shop/{self.live.pk}/")
+        self.assertContains(response, f"https://shops.example.com/shop/{self.live.pk}/")
+        self.assertContains(response, "Hosted")
+        self.assertNotContains(response, "Local")
+        shop = response.context["marketing_links"][0]
+        self.assertEqual(shop["local_url"], "")
+        self.assertEqual(shop["hosted_url"], f"https://shops.example.com/shop/{self.live.pk}/")
+        self.assertEqual(len(shop["variants"]), 1)
+        self.assertEqual(shop["variants"][0]["key"], "hosted")
+        self.assertTrue(shop["variants"][0]["qr"].startswith("data:image/png;base64,"))

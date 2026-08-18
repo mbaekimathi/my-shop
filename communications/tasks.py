@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from celery import shared_task
 from django.conf import settings
-from django.db import transaction
+from django.db import close_old_connections, transaction
 from django.utils import timezone
 
 from .twilio import (
@@ -18,7 +19,7 @@ from .twilio import (
     is_retryable_error,
     send_whatsapp_message,
 )
-from .campaigns import refresh_campaign_counts
+from .campaigns import promote_due_campaigns, refresh_campaign_counts
 from .constants import (
     CAMPAIGN_CANCELLED,
     CAMPAIGN_DONE,
@@ -28,6 +29,7 @@ from .constants import (
     MSG_FAILED,
     MSG_PENDING,
     MSG_SENT,
+    SEND_CONCURRENCY,
     SEND_DELAY_MAX_SECONDS,
     SEND_DELAY_MIN_SECONDS,
     SEND_RETRY_BACKOFF_SECONDS,
@@ -98,19 +100,55 @@ def process_campaign_sync(
     else:
         pending = list(pending_qs)
 
+    concurrency = max(1, int(getattr(settings, "COMMS_SEND_CONCURRENCY", SEND_CONCURRENCY) or SEND_CONCURRENCY))
     attempted = 0
-    for index, message in enumerate(pending):
-        campaign.refresh_from_db(fields=["status"])
-        if campaign.status == CAMPAIGN_CANCELLED:
-            return f"campaign {campaign_id} cancelled"
-        if index > 0:
+
+    def _is_cancelled() -> bool:
+        return (
+            BroadcastCampaign.objects.filter(pk=campaign_id)
+            .values_list("status", flat=True)
+            .first()
+            == CAMPAIGN_CANCELLED
+        )
+
+    def _worker(msg: OutboundMessage) -> None:
+        try:
+            close_old_connections()
             delay = random.uniform(SEND_DELAY_MIN_SECONDS, SEND_DELAY_MAX_SECONDS)
             time.sleep(delay)
-            campaign.refresh_from_db(fields=["status"])
-            if campaign.status == CAMPAIGN_CANCELLED:
+            if _is_cancelled():
+                return
+            _send_one(msg, skip_poll=True)
+        finally:
+            close_old_connections()
+
+    if concurrency <= 1:
+        for index, message in enumerate(pending):
+            if _is_cancelled():
                 return f"campaign {campaign_id} cancelled"
-        _send_one(message)
-        attempted += 1
+            if index > 0:
+                time.sleep(random.uniform(SEND_DELAY_MIN_SECONDS, SEND_DELAY_MAX_SECONDS))
+                if _is_cancelled():
+                    return f"campaign {campaign_id} cancelled"
+            _send_one(message, skip_poll=True)
+            attempted += 1
+    else:
+        pool = ThreadPoolExecutor(max_workers=concurrency)
+        try:
+            futures = {pool.submit(_worker, msg): msg for msg in pending}
+            for future in as_completed(futures):
+                attempted += 1
+                if _is_cancelled():
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    return f"campaign {campaign_id} cancelled"
+                exc = future.exception()
+                if exc:
+                    logger.warning("Send worker error: %s", exc)
+        except (KeyboardInterrupt, SystemExit):
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            pool.shutdown(wait=True)
 
     campaign = BroadcastCampaign.objects.get(pk=campaign_id)
     if _finish_campaign_if_complete(campaign):
@@ -127,6 +165,7 @@ def process_pending_queue(*, limit: int | None = None) -> dict[str, int | str]:
     if budget is None:
         budget = int(getattr(settings, "COMMS_CRON_BATCH_SIZE", 15) or 15)
     budget = max(1, int(budget))
+    promote_due_campaigns()
 
     campaigns = list(
         BroadcastCampaign.objects.filter(
@@ -162,7 +201,7 @@ def process_pending_queue(*, limit: int | None = None) -> dict[str, int | str]:
     }
 
 
-def _send_one(message: OutboundMessage) -> None:
+def _send_one(message: OutboundMessage, *, skip_poll: bool = False) -> None:
     """Retry a send until Twilio accepts it, or until the error cannot succeed."""
     last_error = ""
     for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
@@ -184,6 +223,7 @@ def _send_one(message: OutboundMessage) -> None:
         kwargs = {
             "text": message.body,
             "media_path": media,
+            "skip_poll": skip_poll,
         }
         if "@g.us" in dest or "@c.us" in dest or "@lid" in dest:
             kwargs["chat_id"] = dest

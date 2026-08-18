@@ -23,7 +23,11 @@ from employees.module_permissions import (
     permission_denied_response,
     require_module_permission,
 )
-from employees.workspace import get_dashboard_module, sidebar_for_communications
+from employees.workspace import (
+    get_dashboard_module,
+    sidebar_for_communications,
+    sidebar_for_marketing_links,
+)
 
 from .analytics import analytics_payload
 from .twilio import (
@@ -35,18 +39,24 @@ from .twilio import (
     sandbox_join_info,
     sync_outbound_delivery_status,
 )
+from .automations import DEFAULT_CATALOGUE_TEMPLATE, WHATSAPP_TEXT_LIMIT
 from .campaigns import (
+    activities_payload,
     campaign_as_dict,
     cancel_campaign,
     create_campaign,
     create_catalogue_campaign,
+    create_catalogue_campaign_series,
     recent_campaigns,
     retry_failed_campaign,
 )
 from .constants import (
     AUDIENCE_TYPE_CHOICES,
+    CATALOGUE_MESSAGE_PLACEHOLDERS,
     LAST_PURCHASE_WINDOWS,
     PLACEHOLDERS,
+    SHARE_PERIOD_CHOICES,
+    SHARE_REPEAT_CHOICES,
     SPEND_TIER_CHOICES,
     TRANSACTION_MIN_CHOICES,
 )
@@ -54,10 +64,18 @@ from .models import BroadcastCampaign
 from .replies import inbox_threads, unread_reply_count
 from .services import (
     audience_summary,
+    add_whatsapp_contact,
+    bought_item_ids_for_filters,
+    companion_item_ids,
     constrain_filters_to_profile,
+    create_whatsapp_group,
+    join_whatsapp_group,
     list_product_categories,
+    list_whatsapp_contacts,
+    list_whatsapp_groups,
     preview_message,
     recipients_payload,
+    WHATSAPP_WEB_URL,
 )
 from shops.services import (
     communications_settings_as_dict,
@@ -220,7 +238,7 @@ def _filters_from_request(request) -> dict:
 
 
 def communications_dashboard(request, profile, meta, module, page_sidebar=None):
-    """Main /…/whatsapp/ page: what to automate and who to share with."""
+    """WhatsApp settings: what to automate and who to share with."""
     denied = require_module_permission(request, profile, "whatsapp", "view")
     if denied:
         return denied
@@ -245,7 +263,7 @@ def communications_dashboard(request, profile, meta, module, page_sidebar=None):
         profile,
     )
     people = _people_payload(profile, audience_filters)
-    settings_url = reverse("employees:settings_section", kwargs={"section": "whatsapp"})
+    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
     catalogue_url = reverse(
         "employees:whatsapp_catalogue",
         kwargs={"role_segment": segment},
@@ -257,7 +275,9 @@ def communications_dashboard(request, profile, meta, module, page_sidebar=None):
         "role_label": profile.get_role_display(),
         "status_label": profile.get_status_display(),
         "page_sidebar": page_sidebar
-        or sidebar_for_communications(profile.role, active_view="home", profile=profile),
+        or sidebar_for_communications(
+            profile.role, active_view="whatsapp", profile=profile
+        ),
         "bridge": bridge,
         "comms": comms,
         "shops": shops,
@@ -284,7 +304,7 @@ def communications_dashboard(request, profile, meta, module, page_sidebar=None):
 @active_employee_required
 @require_http_methods(["GET", "POST"])
 def whatsapp_catalogue(request, role_segment):
-    """Manual item shares plus automatic send when a new item is registered."""
+    """Manual item shares: pick items and send them to a saved WhatsApp audience."""
     profile, deny = _guard(request, role_segment)
     if deny:
         return deny
@@ -299,7 +319,7 @@ def whatsapp_catalogue(request, role_segment):
     meta = {
         "title": "Share items",
         "headline": "Share items",
-        "summary": "Send item photos and prices on WhatsApp, or auto-share new items.",
+        "summary": "Send item photos and prices on WhatsApp.",
         "icon": "images",
     }
     try:
@@ -319,11 +339,12 @@ def whatsapp_catalogue(request, role_segment):
     )
     people = _people_payload(profile, audience_filters)
     scoped = constrain_filters_to_profile({}, profile)
-    items, item_total = _catalogue_item_rows()
-    settings_url = reverse("employees:settings_section", kwargs={"section": "whatsapp"})
+    items, item_total = _share_item_rows(audience_filters)
+    filter_items, _ = _catalogue_item_rows()
+    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
     whatsapp_url = reverse(
-        "employees:workspace_module",
-        kwargs={"role_segment": role_segment, "module_slug": "whatsapp"},
+        "employees:settings_section",
+        kwargs={"section": "whatsapp"},
     )
     context = {
         "profile": profile,
@@ -331,8 +352,8 @@ def whatsapp_catalogue(request, role_segment):
         "module": module,
         "role_label": profile.get_role_display(),
         "status_label": profile.get_status_display(),
-        "page_sidebar": sidebar_for_communications(
-            profile.role, active_view="catalogue", profile=profile
+        "page_sidebar": sidebar_for_marketing_links(
+            profile.role, profile=profile, active_view="catalogue"
         ),
         "bridge": bridge,
         "comms": comms,
@@ -344,17 +365,152 @@ def whatsapp_catalogue(request, role_segment):
             shop_scoped=scoped.get("shop_scoped"),
         ),
         "last_purchase_windows": LAST_PURCHASE_WINDOWS,
+        "share_periods": SHARE_PERIOD_CHOICES,
+        "share_repeats": SHARE_REPEAT_CHOICES,
+        "filter_items": filter_items,
         "recipient_count": people["recipient_count"],
         "recipients": people["recipients"],
         "catalogue_items": items,
         "catalogue_item_total": item_total,
-        "recent_sends": recent_campaigns(8),
         "settings_url": settings_url,
         "whatsapp_url": whatsapp_url,
         "module_permissions": module_capabilities(profile, "whatsapp"),
         "sandbox_join": sandbox_join_info(),
+        "catalogue_placeholders": CATALOGUE_MESSAGE_PLACEHOLDERS,
+        "catalogue_message_default": DEFAULT_CATALOGUE_TEMPLATE,
     }
     return render(request, "employees/whatsapp_catalogue.html", context)
+
+
+@active_employee_required
+@require_http_methods(["GET", "POST"])
+def whatsapp_contacts(request, role_segment):
+    """All saved contacts, plus create/join WhatsApp groups."""
+    from django.contrib import messages
+    from django.core.exceptions import ValidationError
+    from django.http import HttpResponseRedirect
+
+    profile, deny = _guard(request, role_segment)
+    if deny:
+        return deny
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        open_whatsapp = (request.POST.get("open_whatsapp") or "").strip() in {
+            "1",
+            "true",
+            "on",
+            "yes",
+        }
+        try:
+            if action == "add_contact":
+                add_whatsapp_contact(
+                    full_name=request.POST.get("full_name") or "",
+                    phone=request.POST.get("phone") or "",
+                    profile=profile,
+                )
+                messages.success(request, "Contact saved.")
+            elif action == "create_group":
+                group = create_whatsapp_group(
+                    name=request.POST.get("name") or "",
+                    invite_link=request.POST.get("invite_link") or "",
+                    member_ids=request.POST.getlist("member_ids"),
+                    profile=profile,
+                )
+                messages.success(request, "Group created.")
+                if open_whatsapp:
+                    return HttpResponseRedirect(group.invite_link or WHATSAPP_WEB_URL)
+            elif action == "join_group":
+                group = join_whatsapp_group(
+                    name=request.POST.get("name") or "",
+                    invite_link=request.POST.get("invite_link") or "",
+                    member_ids=request.POST.getlist("member_ids"),
+                    profile=profile,
+                )
+                messages.success(request, "Group saved. Open it in WhatsApp to join.")
+                if open_whatsapp:
+                    return HttpResponseRedirect(group.invite_link or WHATSAPP_WEB_URL)
+            else:
+                messages.error(request, "Unknown action.")
+        except ValidationError as exc:
+            messages.error(
+                request,
+                "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc),
+            )
+        return redirect(request.path)
+
+    module = get_dashboard_module("whatsapp", profile.role) or {
+        "label": "WhatsApp",
+        "summary": "Share items on WhatsApp.",
+        "icon": "messages-square",
+    }
+    meta = {
+        "title": "Contacts",
+        "headline": "Contacts",
+        "summary": "Every saved contact, plus WhatsApp groups you create or join.",
+        "icon": "contact",
+    }
+    contacts = list_whatsapp_contacts()
+    groups = list_whatsapp_groups()
+    context = {
+        "profile": profile,
+        "meta": meta,
+        "module": module,
+        "role_label": profile.get_role_display(),
+        "status_label": profile.get_status_display(),
+        "page_sidebar": sidebar_for_marketing_links(
+            profile.role, profile=profile, active_view="contacts"
+        ),
+        "contacts": contacts,
+        "contact_count": len(contacts),
+        "groups": groups,
+        "group_count": len(groups),
+        "whatsapp_web_url": WHATSAPP_WEB_URL,
+        "module_permissions": module_capabilities(profile, "whatsapp"),
+    }
+    return render(request, "employees/whatsapp_contacts.html", context)
+
+
+@active_employee_required
+@require_http_methods(["GET", "POST"])
+def marketing_activities(request, role_segment):
+    """WhatsApp send history: queued, delivered, viewed, cancel, and retry."""
+    profile, deny = _guard(request, role_segment)
+    if deny:
+        return deny
+    if request.method == "POST":
+        return _automation_post(request, profile)
+
+    module = get_dashboard_module("whatsapp", profile.role) or {
+        "label": "WhatsApp",
+        "summary": "Share items on WhatsApp.",
+        "icon": "messages-square",
+    }
+    meta = {
+        "title": "Activities",
+        "headline": "Activities",
+        "summary": "Track WhatsApp item shares: queued, sent, viewed, cancelled, and failed.",
+        "icon": "history",
+    }
+    try:
+        sync_outbound_delivery_status()
+    except Exception:
+        logger.exception("Twilio delivery sync failed")
+    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
+    context = {
+        "profile": profile,
+        "meta": meta,
+        "module": module,
+        "role_label": profile.get_role_display(),
+        "status_label": profile.get_status_display(),
+        "page_sidebar": sidebar_for_marketing_links(
+            profile.role, profile=profile, active_view="activities"
+        ),
+        "recent_sends": recent_campaigns(8),
+        "activities": activities_payload(),
+        "settings_url": settings_url,
+        "module_permissions": module_capabilities(profile, "whatsapp"),
+    }
+    return render(request, "employees/marketing_activities.html", context)
 
 
 def _automation_toggles(comms: dict) -> list[dict]:
@@ -447,10 +603,15 @@ def _selected_client_ids(request) -> list[int]:
 
 
 def _audience_filters_from_post(request) -> dict:
+    raw_item = (request.POST.get("filter_item_id") or "").strip()
+    item_ids = []
+    if raw_item.isdigit():
+        item_ids = [int(raw_item)]
     return {
         "audience_type": request.POST.get("audience_type") or "",
         "last_purchase_days": request.POST.get("last_purchase_days") or "",
         "shop_id": request.POST.get("shop_id") or "",
+        "item_ids": item_ids,
     }
 
 
@@ -536,9 +697,31 @@ def _automation_post(request, profile):
         return redirect(request.path)
 
     if action == "preview_audience":
-        people = _people_payload(profile, _audience_filters_from_post(request))
+        filters = _audience_filters_from_post(request)
+        people = _people_payload(profile, filters)
+        share_items, share_total = _share_item_rows(filters)
+        companion_rows = []
+        include_companions = (request.POST.get("include_companions") or "").strip().lower() in {
+            "1",
+            "true",
+            "on",
+            "yes",
+        }
+        if include_companions:
+            selected = _selected_item_ids(request, key="selected_item_ids")
+            if not selected:
+                selected = [row["id"] for row in share_items if row.get("checked")]
+            companion_rows = _companion_item_rows(selected, filters)
         if wants_json:
-            return JsonResponse({"ok": True, **people})
+            return JsonResponse(
+                {
+                    "ok": True,
+                    **people,
+                    "share_items": share_items,
+                    "share_item_total": share_total,
+                    "companion_items": companion_rows,
+                }
+            )
         return redirect(request.path)
 
     if action == "send_website":
@@ -568,22 +751,32 @@ def _automation_post(request, profile):
         if not can_send:
             return fail("You do not have permission to send.", status=403)
         try:
-            campaign = _send_catalogue_campaign(request, profile)
+            campaigns = _send_catalogue_campaign(request, profile)
         except ValueError as exc:
             return fail(str(exc))
         except RuntimeError as exc:
             return fail(str(exc), status=503)
+        campaign = campaigns[0]
         queued = campaign.messages.count()
+        extra = len(campaigns) - 1
+        if extra:
+            notice = (
+                f"Queued {queued} message(s) now. "
+                f"{extra} more send(s) are scheduled in this period."
+            )
+        else:
+            notice = f"Queued {queued} message(s)."
         if wants_json:
             return JsonResponse(
                 {
                     "ok": True,
-                    "message": f"Queued {queued} message(s).",
+                    "message": notice,
                     "campaign": campaign_as_dict(campaign),
+                    "scheduled_sends": extra,
                     "sends": recent_campaigns(8),
                 }
             )
-        messages.success(request, f"Queued {queued} item message(s).")
+        messages.success(request, notice)
         return redirect(request.path)
 
     if action == "refresh_sends":
@@ -592,7 +785,7 @@ def _automation_post(request, profile):
         except Exception:
             pass
         if wants_json:
-            return JsonResponse({"ok": True, "sends": recent_campaigns(8)})
+            return JsonResponse({"ok": True, "sends": recent_campaigns(8), "activities": activities_payload()})
         return redirect(request.path)
 
     if action == "cancel_campaign":
@@ -613,6 +806,7 @@ def _automation_post(request, profile):
                     "message": "Send cancelled. Messages already handed to Twilio cannot be recalled.",
                     "campaign": campaign_as_dict(campaign),
                     "sends": recent_campaigns(8),
+                    "activities": activities_payload(),
                 }
             )
         messages.success(request, "Send cancelled.")
@@ -636,6 +830,7 @@ def _automation_post(request, profile):
                     "message": "Retrying failed messages.",
                     "campaign": campaign_as_dict(campaign),
                     "sends": recent_campaigns(8),
+                    "activities": activities_payload(),
                 }
             )
         messages.success(request, "Retrying failed messages.")
@@ -683,10 +878,10 @@ def _send_shop_website_campaign(request, profile):
     )
 
 
-def _selected_item_ids(request) -> list[int]:
-    raw = request.POST.getlist("item_ids")
-    if not raw and request.POST.get("item_ids"):
-        raw = [request.POST.get("item_ids")]
+def _selected_item_ids(request, key: str = "item_ids") -> list[int]:
+    raw = request.POST.getlist(key)
+    if not raw and request.POST.get(key):
+        raw = [request.POST.get(key)]
     ids = []
     seen = set()
     for item in raw:
@@ -701,39 +896,112 @@ def _selected_item_ids(request) -> list[int]:
     return ids
 
 
-def _catalogue_item_rows(*, limit: int = 200) -> tuple[list[dict], int]:
+def _item_share_row(item, *, checked=False, source="bought") -> dict:
     from decimal import Decimal, InvalidOperation
 
+    try:
+        price = item.resolve_list_price()
+    except (InvalidOperation, TypeError, ValueError):
+        price = Decimal("0")
+    try:
+        amount = Decimal(price or 0).quantize(Decimal("1"))
+    except (InvalidOperation, TypeError, ValueError):
+        amount = Decimal("0")
+    image_url = ""
+    try:
+        if item.image:
+            image_url = item.image.url or ""
+    except Exception:
+        image_url = ""
+    return {
+        "id": item.pk,
+        "name": (item.name or "").strip() or "Item",
+        "category": (item.category or "").strip(),
+        "price_label": f"KSh {amount:,.0f}",
+        "image_url": image_url,
+        "checked": bool(checked),
+        "source": source,
+    }
+
+
+def _catalogue_item_rows(*, limit: int = 200, item_ids: list[int] | None = None) -> tuple[list[dict], int]:
     from items.models import Item
 
-    qs = Item.objects.filter(is_suspended=False).order_by("name", "id")
+    qs = Item.objects.filter(is_suspended=False)
+    if item_ids is not None:
+        wanted = [pk for pk in item_ids if pk]
+        qs = qs.filter(pk__in=wanted)
+        by_id = {item.pk: item for item in qs}
+        rows = [
+            _item_share_row(by_id[pk], checked=False, source="catalogue")
+            for pk in wanted
+            if pk in by_id
+        ]
+        return rows, len(rows)
+    qs = qs.order_by("name", "id")
     total = qs.count()
+    return [_item_share_row(item, source="catalogue") for item in qs[:limit]], total
+
+
+def _share_item_rows(filters: dict | None, *, limit: int = 80) -> tuple[list[dict], int]:
+    from items.models import Item
+
+    scoped = parse_filters_safe(filters)
+    wanted = bought_item_ids_for_filters(scoped, limit=limit)
+    filter_ids = set(scoped.get("item_ids") or [])
     rows = []
-    for item in qs[:limit]:
-        try:
-            price = item.resolve_list_price()
-        except (InvalidOperation, TypeError, ValueError):
-            price = Decimal("0")
-        try:
-            amount = Decimal(price or 0).quantize(Decimal("1"))
-        except (InvalidOperation, TypeError, ValueError):
-            amount = Decimal("0")
-        image_url = ""
-        try:
-            if item.image:
-                image_url = item.image.url or ""
-        except Exception:
-            image_url = ""
-        rows.append(
-            {
-                "id": item.pk,
-                "name": (item.name or "").strip() or "Item",
-                "category": (item.category or "").strip(),
-                "price_label": f"KSh {amount:,.0f}",
-                "image_url": image_url,
-            }
-        )
-    return rows, total
+    if wanted:
+        by_id = {
+            item.pk: item
+            for item in Item.objects.filter(pk__in=wanted, is_suspended=False)
+        }
+        for pk in wanted:
+            item = by_id.get(pk)
+            if not item:
+                continue
+            rows.append(
+                _item_share_row(
+                    item,
+                    checked=pk in filter_ids,
+                    source="filter" if pk in filter_ids else "bought",
+                )
+            )
+    if not rows:
+        rows, _ = _catalogue_item_rows(limit=limit)
+        for row in rows:
+            row["checked"] = row["id"] in filter_ids
+            row["source"] = "catalogue"
+    return rows, len(rows)
+
+
+def parse_filters_safe(filters: dict | None) -> dict:
+    from .services import parse_filters
+
+    return parse_filters(filters)
+
+
+def _companion_item_rows(item_ids: list[int], filters: dict | None) -> list[dict]:
+    from items.models import Item
+
+    scoped = parse_filters_safe(filters)
+    ids = companion_item_ids(
+        item_ids,
+        shop_id=scoped.get("shop_id"),
+        shop_ids=scoped.get("shop_ids"),
+        limit=8,
+    )
+    exclude = set(item_ids or [])
+    ids = [pk for pk in ids if pk not in exclude]
+    if not ids:
+        return []
+    by_id = {
+        item.pk: item for item in Item.objects.filter(pk__in=ids, is_suspended=False)
+    }
+    return [
+        _item_share_row(by_id[pk], checked=False, source="companion")
+        for pk in ids
+        if pk in by_id
+    ]
 
 
 def _send_catalogue_campaign(request, profile):
@@ -748,26 +1016,48 @@ def _send_catalogue_campaign(request, profile):
     selected_ids = _selected_client_ids(request)
     if not selected_ids:
         raise ValueError("Select at least one person to send to.")
+    body_template = (request.POST.get("message_body") or "").strip()
+    if len(body_template) > WHATSAPP_TEXT_LIMIT:
+        raise ValueError("That message is too long for WhatsApp.")
     items = list(
         Item.objects.filter(pk__in=item_ids, is_suspended=False).order_by("name", "id")
     )
     by_id = {item.pk: item for item in items}
     ordered = [by_id[pk] for pk in item_ids if pk in by_id]
+    audience = _audience_filters_from_post(request)
+    try:
+        period_days = int(request.POST.get("schedule_period") or 1)
+    except (TypeError, ValueError):
+        period_days = 1
+    try:
+        times = int(request.POST.get("schedule_times") or 1)
+    except (TypeError, ValueError):
+        times = 1
     filters = constrain_filters_to_profile(
         {
-            "audience_type": row.automation_audience_type or "sale",
-            "last_purchase_days": row.automation_last_purchase_days or "",
-            "shop_id": row.automation_shop_id or "",
+            "audience_type": audience.get("audience_type")
+            or row.automation_audience_type
+            or "sale",
+            "last_purchase_days": audience.get("last_purchase_days")
+            if audience.get("last_purchase_days") is not None
+            else row.automation_last_purchase_days or "",
+            "shop_id": audience.get("shop_id") or row.automation_shop_id or "",
             "client_ids": selected_ids,
         },
         profile,
     )
-    return create_catalogue_campaign(
+    campaigns = create_catalogue_campaign_series(
         profile=profile,
         items=ordered,
         filters=filters,
         request=request,
+        period_days=period_days,
+        times=times,
+        body_template=body_template,
     )
+    if not campaigns:
+        raise ValueError("Could not queue this share.")
+    return campaigns
 
 
 @active_employee_required

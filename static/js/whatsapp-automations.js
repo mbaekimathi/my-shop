@@ -21,15 +21,32 @@
   const peopleEmpty = root.querySelector("[data-wa-people-empty]");
   const peopleMore = root.querySelector("[data-wa-people-more]");
   const peopleSearch = root.querySelector("[data-wa-people-search]");
-  const selectedCountEl = root.querySelector("[data-wa-selected-count]");
+  const selectedCountEls = root.querySelectorAll("[data-wa-selected-count]");
   const sendBtn = root.querySelector("[data-wa-send-website]");
   const sendCatalogueBtn = root.querySelector("[data-wa-send-catalogue]");
   const itemSearch = root.querySelector("[data-wa-item-search]");
   const itemsBody = root.querySelector("[data-wa-items-body]");
   const itemsEmpty = root.querySelector("[data-wa-items-empty]");
-  const selectedItemCountEl = root.querySelector("[data-wa-selected-item-count]");
+  const selectedItemCountEls = root.querySelectorAll("[data-wa-selected-item-count]");
   const dependsEl = root.querySelector("[data-wa-depends]");
   const sendsEl = root.querySelector("[data-wa-sends]");
+  const companionsWrap = root.querySelector("[data-wa-companions]");
+  const companionsBody = root.querySelector("[data-wa-companions-body]");
+  const companionsEmpty = root.querySelector("[data-wa-companions-empty]");
+  const companionsToggle = root.querySelector("[data-wa-companions-toggle]");
+  const schedulePeriodEl = root.querySelector("[data-wa-schedule-period]");
+  const scheduleTimesEl = root.querySelector("[data-wa-schedule-times]");
+  const scheduleHintEl = root.querySelector("[data-wa-schedule-hint]");
+  const composerEl = root.querySelector("[data-wa-message-body]");
+  const previewEl = root.querySelector("[data-wa-message-preview]");
+  const previewNoteEl = root.querySelector("[data-wa-message-preview-note]");
+  const previewPhotosEl = root.querySelector("[data-wa-message-photos]");
+  const messageCountEl = root.querySelector("[data-wa-message-count]");
+  const defaultMessage = String(composerEl?.defaultValue || "Hi {first_name},\n\n{items}").replace(
+    /\r\n/g,
+    "\n"
+  );
+  let messageDirty = false;
   const twilioReady = root.dataset.twilioReady === "1";
   const campaignLabels = {
     queued: "Queued",
@@ -87,7 +104,8 @@
   }
 
   function selectedItemIds() {
-    return [...(itemsBody?.querySelectorAll("[data-wa-item-pick]:checked") || [])]
+    return [...root.querySelectorAll("[data-wa-item-pick]:checked")]
+      .filter((input) => !input.closest("[hidden]"))
       .map((input) => input.value)
       .filter(Boolean);
   }
@@ -110,8 +128,12 @@
     });
     const selected = selectedClientIds().length;
     const selectedItems = selectedItemIds().length;
-    if (selectedCountEl) selectedCountEl.textContent = String(selected);
-    if (selectedItemCountEl) selectedItemCountEl.textContent = String(selectedItems);
+    selectedCountEls.forEach((el) => {
+      el.textContent = String(selected);
+    });
+    selectedItemCountEls.forEach((el) => {
+      el.textContent = String(selectedItems);
+    });
     if (sendBtn) {
       const label = sendBtn.querySelector("span") || sendBtn;
       if (sendBtn.querySelector("span[data-wa-send-label]")) {
@@ -122,12 +144,17 @@
     if (sendCatalogueBtn) {
       const label = sendCatalogueBtn.querySelector("[data-wa-send-label]");
       if (label) {
-        label.textContent =
-          selectedItems && selected
-            ? `Send ${selectedItems} item(s) to ${selected}`
-            : "Send selected items now";
+        const times = Number(scheduleTimesEl?.value || 1);
+        if (selectedItems && selected && times > 1) {
+          label.textContent = `Schedule ${times} sends to ${selected}`;
+        } else if (selectedItems && selected) {
+          label.textContent = `Send ${selectedItems} item(s) to ${selected}`;
+        } else {
+          label.textContent = "Send selected items now";
+        }
       }
     }
+    updateMessagePreview();
   }
 
   function setVisibleSelection(checked) {
@@ -196,6 +223,226 @@
     </li>`;
   }
 
+  function itemRow(item, { companion = false } = {}) {
+    const name = item.name || "Item";
+    const category = item.category || "";
+    const price = item.price_label || "";
+    const checked = Boolean(item.checked);
+    const thumb = item.image_url
+      ? `<img class="wa-item__thumb" src="${escapeHtml(item.image_url)}" alt="" width="48" height="48">`
+      : `<span class="wa-item__thumb wa-item__thumb--empty" aria-hidden="true">${escapeHtml(
+          initials(name).slice(0, 1)
+        )}</span>`;
+    return `<li class="wa-item${checked ? " is-checked" : ""}" data-search="${escapeHtml(
+      `${name} ${category}`.toLowerCase()
+    )}">
+      <input class="wa-person__check" type="checkbox" name="${
+        companion ? "companion_item_ids" : "item_ids"
+      }" value="${escapeHtml(String(item.id || ""))}" ${
+      checked ? "checked" : ""
+    } data-wa-item-pick aria-label="Select ${escapeHtml(name)}">
+      ${thumb}
+      <span class="wa-person__meta">
+        <strong>${escapeHtml(name)}</strong>
+        <em>${escapeHtml(category)}</em>
+      </span>
+      <span class="wa-item__price">${escapeHtml(price)}</span>
+    </li>`;
+  }
+
+  function renderShareItems(items, total) {
+    if (!itemsBody) return;
+    const rows = Array.isArray(items) ? items : [];
+    itemsBody.innerHTML = rows.map((item) => itemRow(item)).join("");
+    if (itemsEmpty) {
+      itemsEmpty.hidden = rows.length > 0;
+      itemsEmpty.textContent = "No items to share yet. Register items in Item management.";
+    }
+    const more = root.querySelector("[data-wa-items-more]");
+    if (more) {
+      const count = total != null ? Number(total) : rows.length;
+      if (count > rows.length) {
+        more.hidden = false;
+        more.textContent = `Showing ${rows.length} of ${count}.`;
+      } else {
+        more.hidden = true;
+      }
+    }
+    filterItems();
+    refreshIcons();
+  }
+
+  function renderCompanions(items) {
+    if (!companionsBody) return;
+    const rows = Array.isArray(items) ? items : [];
+    companionsBody.innerHTML = rows.map((item) => itemRow(item, { companion: true })).join("");
+    if (companionsEmpty) {
+      companionsEmpty.hidden = rows.length > 0;
+      companionsEmpty.textContent = rows.length
+        ? ""
+        : "Pick an item first to see what usually goes with it.";
+    }
+    refreshIcons();
+    syncSelection();
+  }
+
+  function scheduleTimes() {
+    return Math.max(1, Number(scheduleTimesEl?.value || 1) || 1);
+  }
+
+  function schedulePeriodDays() {
+    return Math.max(1, Number(schedulePeriodEl?.value || 1) || 1);
+  }
+
+  function updateScheduleHint() {
+    if (!scheduleHintEl) return;
+    const times = scheduleTimes();
+    const days = schedulePeriodDays();
+    if (times <= 1) {
+      scheduleHintEl.textContent = "Sends once now.";
+      return;
+    }
+    const windowLabel =
+      days === 1 ? "today" : days === 7 ? "this week" : `the next ${days} days`;
+    scheduleHintEl.textContent = `First send goes now. ${times - 1} more send(s) are spaced through ${windowLabel}.`;
+  }
+
+  function selectedItemDetails() {
+    return [...root.querySelectorAll("[data-wa-item-pick]:checked")]
+      .filter((input) => !input.closest("[hidden]"))
+      .map((input) => {
+        const row = input.closest(".wa-item");
+        return {
+          name: (row?.querySelector("strong")?.textContent || "Item").trim(),
+          category: (row?.querySelector("em")?.textContent || "").trim(),
+          price: (row?.querySelector(".wa-item__price")?.textContent || "").trim(),
+          image: row?.querySelector("img.wa-item__thumb")?.getAttribute("src") || "",
+        };
+      });
+  }
+
+  function previewRecipient() {
+    const row = [...(peopleBody?.querySelectorAll(".wa-person") || [])].find((item) => {
+      const box = item.querySelector("[data-wa-pick]");
+      return box?.checked && !item.hidden;
+    });
+    const full = (row?.querySelector("strong")?.textContent || "there").trim();
+    const parts = full.split(/\s+/).filter(Boolean);
+    return {
+      first_name: parts[0] || "there",
+      last_name: parts.slice(1).join(" "),
+      full_name: full || "there",
+      last_product: "",
+    };
+  }
+
+  function itemsBlock(items) {
+    if (!items.length) return "";
+    if (items.length === 1) {
+      const item = items[0];
+      return [item.name, item.category, item.price].filter(Boolean).join("\n");
+    }
+    return items
+      .map((item) =>
+        [item.name, item.category, item.price].filter(Boolean).join(" · ")
+      )
+      .join("\n");
+  }
+
+  function expandMessage(template, items, person) {
+    let text = String(template || "").replace(/\r\n/g, "\n");
+    if (!text.trim()) text = defaultMessage;
+    if (text.includes("{items}")) {
+      text = text.split("{items}").join(itemsBlock(items));
+    }
+    const values = {
+      "{first_name}": person.first_name || "there",
+      "{last_name}": person.last_name || "",
+      "{full_name}": person.full_name || "there",
+      "{last_product}": person.last_product || "",
+      "{last_purchase_date}": "",
+      "{lifetime_spend}": "",
+    };
+    Object.entries(values).forEach(([token, value]) => {
+      text = text.split(token).join(value);
+    });
+    return text.trim();
+  }
+
+  function updateMessagePreview() {
+    if (!composerEl && !previewEl) return;
+    const items = selectedItemDetails();
+    const person = previewRecipient();
+    const expanded = expandMessage(composerEl?.value || "", items, person);
+    if (previewEl) {
+      previewEl.textContent = expanded || "Pick items to preview this WhatsApp.";
+    }
+    if (messageCountEl) {
+      const length = (composerEl?.value || "").length;
+      messageCountEl.textContent = `${length} character${length === 1 ? "" : "s"}`;
+    }
+    if (previewPhotosEl) {
+      const photos = items.filter((item) => item.image).slice(0, 1);
+      if (!items.length) {
+        previewPhotosEl.hidden = true;
+        previewPhotosEl.innerHTML = "";
+      } else if (photos.length) {
+        previewPhotosEl.hidden = false;
+        const item = items[0];
+        previewPhotosEl.innerHTML = `<div class="wa-share-preview__card">
+          <img src="${escapeHtml(photos[0].image)}" alt="" width="220" height="160">
+          <div class="wa-share-preview__card-copy">
+            <strong>${escapeHtml(item.name || "Item")}</strong>
+            <span>${escapeHtml(item.price || "")}</span>
+            ${item.category ? `<em>${escapeHtml(item.category)}</em>` : ""}
+          </div>
+        </div>`;
+      } else {
+        previewPhotosEl.hidden = false;
+        const item = items[0];
+        previewPhotosEl.innerHTML = `<div class="wa-share-preview__card wa-share-preview__card--empty">
+          <div class="wa-share-preview__card-copy">
+            <strong>${escapeHtml(item.name || "Item")}</strong>
+            <span>${escapeHtml(item.price || "")}</span>
+            ${item.category ? `<em>${escapeHtml(item.category)}</em>` : ""}
+          </div>
+        </div>`;
+      }
+    }
+    if (previewNoteEl) {
+      if (!items.length) {
+        previewNoteEl.textContent = "Select items to preview the product card.";
+      } else {
+        previewNoteEl.textContent = `Preview for ${person.first_name}. Product details go on the card image.`;
+      }
+    }
+    const resetBtn = root.querySelector("[data-wa-message-reset]");
+    if (resetBtn) resetBtn.disabled = !messageDirty;
+  }
+
+  function insertMessageToken(token) {
+    if (!composerEl || !token) return;
+    const start = composerEl.selectionStart ?? composerEl.value.length;
+    const end = composerEl.selectionEnd ?? start;
+    const before = composerEl.value.slice(0, start);
+    const after = composerEl.value.slice(end);
+    const needsSpace = Boolean(before) && !/\s$/.test(before);
+    const insert = `${needsSpace ? " " : ""}${token}`;
+    composerEl.value = `${before}${insert}${after}`;
+    messageDirty = composerEl.value.replace(/\r\n/g, "\n").trim() !== defaultMessage.trim();
+    const pos = start + insert.length;
+    composerEl.focus();
+    composerEl.setSelectionRange(pos, pos);
+    updateMessagePreview();
+  }
+
+  function resetMessageBody() {
+    if (!composerEl) return;
+    composerEl.value = defaultMessage;
+    messageDirty = false;
+    updateMessagePreview();
+  }
+
   function filterPeople() {
     const query = (peopleSearch?.value || "").trim().toLowerCase();
     const rows = peopleBody?.querySelectorAll(".wa-person") || [];
@@ -220,19 +467,27 @@
     syncSelection();
   }
 
+  let userDeselected = new Set();
+
   function renderPeople(data) {
     const recipients = Array.isArray(data.recipients) ? data.recipients : [];
     const count = data.recipient_count != null ? Number(data.recipient_count) : recipients.length;
     setCount(count);
     if (peopleBody) {
+      const prevSelected = new Set(selectedClientIds());
+      const hadPeople = peopleBody.querySelectorAll("[data-wa-pick]").length > 0;
       peopleBody.innerHTML = recipients
-        .map((person) =>
-          personRow(person.full_name, person.phone, "", {
+        .map((person) => {
+          const id = String(person.client_id || "");
+          const checked = hadPeople
+            ? prevSelected.has(id) && !userDeselected.has(id)
+            : !userDeselected.has(id);
+          return personRow(person.full_name, person.phone, "", {
             selectable: true,
             clientId: person.client_id,
-            checked: true,
-          })
-        )
+            checked,
+          });
+        })
         .join("");
     }
     if (peopleMore) {
@@ -412,17 +667,28 @@
   const audienceForm = root.querySelector("[data-wa-audience]");
   let previewTimer = 0;
 
-  async function previewAudience() {
+  async function previewAudience({ refreshItems = true } = {}) {
     if (!audienceForm) return;
     const params = new URLSearchParams(new FormData(audienceForm));
     params.set("action", "preview_audience");
     params.delete("client_ids");
+    params.delete("item_ids");
+    params.delete("companion_item_ids");
+    selectedItemIds().forEach((id) => params.append("selected_item_ids", id));
+    if (companionsToggle?.checked) params.set("include_companions", "1");
     const data = await post(params);
     renderPeople(data);
+    if (refreshItems && Array.isArray(data.share_items)) {
+      renderShareItems(data.share_items, data.share_item_total);
+    }
+    if (companionsToggle?.checked) {
+      renderCompanions(data.companion_items || []);
+    }
   }
 
   audienceForm?.querySelectorAll("select").forEach((select) => {
     select.addEventListener("change", () => {
+      userDeselected.clear();
       window.clearTimeout(previewTimer);
       previewTimer = window.setTimeout(() => {
         previewAudience().catch((error) => {
@@ -465,8 +731,21 @@
     syncSelection();
   }
 
+  function trackPersonPick(box) {
+    const id = box?.value || "";
+    if (!id) return;
+    if (box.checked) {
+      userDeselected.delete(id);
+    } else {
+      userDeselected.add(id);
+    }
+  }
+
   peopleBody?.addEventListener("change", (event) => {
-    if (event.target.matches("[data-wa-pick]")) syncSelection();
+    if (event.target.matches("[data-wa-pick]")) {
+      trackPersonPick(event.target);
+      syncSelection();
+    }
   });
 
   peopleBody?.addEventListener("click", (event) => {
@@ -476,20 +755,39 @@
     const box = row.querySelector("[data-wa-pick]");
     if (!box) return;
     box.checked = !box.checked;
+    trackPersonPick(box);
     syncSelection();
   });
 
   root.querySelector("[data-wa-select-all]")?.addEventListener("click", () => {
+    userDeselected.clear();
     setVisibleSelection(true);
   });
   root.querySelector("[data-wa-select-none]")?.addEventListener("click", () => {
+    visiblePickInputs().forEach((input) => {
+      if (input.value) userDeselected.add(input.value);
+    });
     setVisibleSelection(false);
   });
 
   itemSearch?.addEventListener("input", filterItems);
-  itemsBody?.addEventListener("change", (event) => {
-    if (event.target.matches("[data-wa-item-pick]")) syncSelection();
-  });
+  let companionTimer = 0;
+  function refreshCompanionsSoon() {
+    if (!companionsToggle?.checked) return;
+    window.clearTimeout(companionTimer);
+    companionTimer = window.setTimeout(() => {
+      previewAudience({ refreshItems: false }).catch((error) => {
+        showMessage(error.message || "Could not load matching items.", true);
+      });
+    }, 250);
+  }
+  function onItemPickChange(event) {
+    if (!event.target.matches("[data-wa-item-pick]")) return;
+    syncSelection();
+    refreshCompanionsSoon();
+  }
+  itemsBody?.addEventListener("change", onItemPickChange);
+  companionsBody?.addEventListener("change", onItemPickChange);
   itemsBody?.addEventListener("click", (event) => {
     const row = event.target.closest(".wa-item");
     if (!row || !itemsBody.contains(row)) return;
@@ -498,12 +796,58 @@
     if (!box) return;
     box.checked = !box.checked;
     syncSelection();
+    refreshCompanionsSoon();
+  });
+  companionsBody?.addEventListener("click", (event) => {
+    const row = event.target.closest(".wa-item");
+    if (!row || !companionsBody.contains(row)) return;
+    if (event.target.closest("[data-wa-item-pick], a, img")) return;
+    const box = row.querySelector("[data-wa-item-pick]");
+    if (!box) return;
+    box.checked = !box.checked;
+    syncSelection();
   });
   root.querySelector("[data-wa-items-all]")?.addEventListener("click", () => {
     setVisibleItems(true);
+    refreshCompanionsSoon();
   });
   root.querySelector("[data-wa-items-none]")?.addEventListener("click", () => {
     setVisibleItems(false);
+    refreshCompanionsSoon();
+  });
+  companionsToggle?.addEventListener("change", () => {
+    const on = Boolean(companionsToggle.checked);
+    setStateLabel(companionsToggle, on);
+    if (companionsWrap) companionsWrap.hidden = !on;
+    if (!on) {
+      renderCompanions([]);
+      return;
+    }
+    previewAudience({ refreshItems: false }).catch((error) => {
+      showMessage(error.message || "Could not load matching items.", true);
+    });
+  });
+  schedulePeriodEl?.addEventListener("change", () => {
+    updateScheduleHint();
+    syncSelection();
+  });
+  scheduleTimesEl?.addEventListener("change", () => {
+    updateScheduleHint();
+    syncSelection();
+  });
+  composerEl?.addEventListener("input", () => {
+    messageDirty =
+      composerEl.value.replace(/\r\n/g, "\n").trim() !== defaultMessage.trim();
+    updateMessagePreview();
+  });
+  root.querySelectorAll("[data-wa-insert-token]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      insertMessageToken(btn.getAttribute("data-wa-insert-token") || "");
+    });
+  });
+  root.querySelector("[data-wa-message-reset]")?.addEventListener("click", () => {
+    resetMessageBody();
+    composerEl?.focus();
   });
 
   audienceForm?.addEventListener("submit", async (event) => {
@@ -581,8 +925,17 @@
         await post(saveParams);
       }
       const sendParams = new URLSearchParams({ action: "send_catalogue" });
+      if (audienceForm) {
+        new URLSearchParams(new FormData(audienceForm)).forEach((value, key) => {
+          if (["action", "client_ids", "item_ids", "companion_item_ids"].includes(key)) return;
+          sendParams.append(key, value);
+        });
+      }
       ids.forEach((id) => sendParams.append("client_ids", id));
       itemIds.forEach((id) => sendParams.append("item_ids", id));
+      sendParams.set("schedule_period", String(schedulePeriodDays()));
+      sendParams.set("schedule_times", String(scheduleTimes()));
+      sendParams.set("message_body", composerEl?.value || "");
       const data = await post(sendParams);
       if (data.campaign?.id) openSendIds.add(String(data.campaign.id));
       if (data.sends) renderSends(data.sends);
@@ -663,5 +1016,6 @@
   filterPeople();
   filterItems();
   syncSelection();
+  updateScheduleHint();
   refreshIcons();
 })();

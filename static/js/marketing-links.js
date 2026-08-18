@@ -40,20 +40,43 @@
     if (btn) setCopied(btn);
   };
 
+  const cardUrls = (card) =>
+    [...card.querySelectorAll("[data-marketing-url]")]
+      .map((input) => input.value.trim())
+      .filter(Boolean);
+
+  const downloadQr = (src, name) => {
+    if (!src) return;
+    const link = document.createElement("a");
+    link.href = src;
+    link.download = name || "shop-qr.png";
+    document.body.append(link);
+    link.click();
+    link.remove();
+  };
+
   root.addEventListener("click", (event) => {
     const allBtn = event.target.closest("[data-copy-all]");
     if (allBtn && root.contains(allBtn)) {
       event.preventDefault();
-      const urls = visibleCards()
-        .map((card) => card.dataset.url || "")
-        .filter(Boolean);
-      copyText(urls.join("\n"), allBtn);
+      const blocks = visibleCards().map((card) => {
+        const title = card.querySelector("h3")?.textContent.trim() || "Shop";
+        const urls = cardUrls(card);
+        return [title, ...urls].join("\n");
+      });
+      copyText(blocks.join("\n\n"), allBtn);
       return;
     }
     const copyBtn = event.target.closest("[data-copy-url]");
     if (copyBtn && root.contains(copyBtn)) {
       event.preventDefault();
       copyText(copyBtn.dataset.copyUrl || "", copyBtn);
+      return;
+    }
+    const downloadBtn = event.target.closest("[data-download-qr]");
+    if (downloadBtn && root.contains(downloadBtn)) {
+      event.preventDefault();
+      downloadQr(downloadBtn.dataset.qrSrc || "", downloadBtn.dataset.qrName || "shop-qr.png");
     }
   });
 

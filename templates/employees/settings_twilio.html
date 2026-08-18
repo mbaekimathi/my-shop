@@ -1,0 +1,263 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section
+  class="item-panel item-panel--dense"
+  data-animate="rise"
+  data-comms-settings
+>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">Settings · Communication settings</p>
+        <h2>{{ meta.headline }}</h2>
+        <p>Set up Twilio and optional Message / SMS fallbacks.</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="pos-settings-groups daraja-settings-groups">
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Twilio</h3>
+        <p>HTTPS WhatsApp via Twilio. Works on shared hosting — no VPS helper.</p>
+      </div>
+      <article class="wa-join">
+        <div>
+          <p class="wa-card__kicker">Required first</p>
+          <h3>Join Twilio sandbox on the customer phone</h3>
+          {% if sandbox_join.phrase %}
+          <p>WhatsApp this exact text to {{ sandbox_join.number }}. Wait for Twilio's confirmation, then Retry failed.</p>
+          <p class="wa-join__phrase"><code>{{ sandbox_join.phrase }}</code></p>
+          {% else %}
+          <p>
+            Copy the join code from
+            <a href="https://www.twilio.com/console/sms/whatsapp/sandbox" target="_blank" rel="noopener">Twilio Try WhatsApp</a>
+            (looks like <code>join something-something</code>), save it below,
+            then send it from the customer phone to {{ sandbox_join.number }}.
+          </p>
+          {% endif %}
+        </div>
+        <a class="btn btn--primary" href="{{ sandbox_join.wa_link }}" target="_blank" rel="noopener">
+          Open WhatsApp on this phone
+        </a>
+      </article>
+      <form class="daraja-credentials-form" data-comms-form="twilio" novalidate>
+        <input type="hidden" name="action" value="save_twilio_settings">
+        <div class="daraja-status" data-comms-whatsapp-status>
+          {% if comms.has_twilio_credentials %}
+          <span class="daraja-status-pill is-ok">API configured</span>
+          {% else %}
+          <span class="daraja-status-pill">Not configured</span>
+          <em>Enter Account SID, Auth Token, and WhatsApp from, then save.</em>
+          {% endif %}
+        </div>
+        <div class="daraja-fields">
+          <label class="daraja-field">
+            <span>Account SID</span>
+            <input
+              type="text"
+              name="twilio_account_sid"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="ACxxxxxxxx"
+              value="{{ comms.twilio_account_sid }}"
+              required
+            >
+          </label>
+          <label class="daraja-field">
+            <span>WhatsApp from</span>
+            <input
+              type="text"
+              name="twilio_whatsapp_from"
+              autocomplete="off"
+              placeholder="whatsapp:+14155238886"
+              value="{{ comms.twilio_whatsapp_from }}"
+            >
+          </label>
+          <label class="daraja-field">
+            <span>From number (SMS fallback)</span>
+            <input
+              type="text"
+              name="twilio_from_number"
+              autocomplete="off"
+              inputmode="tel"
+              placeholder="e.g. +14155552671"
+              value="{{ comms.twilio_from_number }}"
+            >
+          </label>
+          <label class="daraja-field">
+            <span>Sandbox join code</span>
+            <input
+              type="text"
+              name="twilio_whatsapp_join_code"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="join something-something"
+              value="{{ comms.twilio_whatsapp_join_code }}"
+            >
+          </label>
+          <label class="daraja-field daraja-field--wide">
+            <span>Auth Token</span>
+            <input
+              type="password"
+              name="twilio_auth_token"
+              autocomplete="new-password"
+              spellcheck="false"
+              placeholder="{% if comms.twilio_auth_token_set %}Saved — enter a new token to replace{% else %}Twilio Auth Token{% endif %}"
+              {% if not comms.twilio_auth_token_set %}required{% endif %}
+            >
+          </label>
+        </div>
+        <p class="daraja-help">
+          Copy the sandbox number from Twilio Console → Messaging → Try it out → Send a WhatsApp message
+          (usually <code>whatsapp:+14155238886</code>). Recipients must send the join code to that number first.
+        </p>
+        <div class="daraja-form-actions">
+          <button type="submit" class="btn btn--primary">Save Twilio</button>
+          <p class="daraja-form-message" data-comms-message hidden></p>
+        </div>
+      </form>
+    </section>
+
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Message API</h3>
+        <p>Sender identity for the Message channel API.</p>
+      </div>
+      <form class="daraja-credentials-form" data-comms-form="message" novalidate>
+        <input type="hidden" name="action" value="save_message_settings">
+        <div class="daraja-status" data-comms-message-status>
+          {% if comms.message_from_name %}
+          <span class="daraja-status-pill is-ok">API configured</span>
+          {% else %}
+          <span class="daraja-status-pill">Not configured</span>
+          <em>Enter a sender name, then save.</em>
+          {% endif %}
+        </div>
+        <div class="daraja-fields">
+          <label class="daraja-field">
+            <span>Sender name</span>
+            <input
+              type="text"
+              name="message_from_name"
+              autocomplete="organization"
+              maxlength="120"
+              placeholder="e.g. {{ company_name|default:'MY-SHOP' }} Support"
+              value="{{ comms.message_from_name }}"
+              required
+            >
+          </label>
+          <label class="daraja-field">
+            <span>Reply-to email</span>
+            <input
+              type="email"
+              name="message_reply_to"
+              autocomplete="email"
+              placeholder="Optional"
+              value="{{ comms.message_reply_to }}"
+            >
+          </label>
+        </div>
+        <div class="daraja-form-actions">
+          <button type="submit" class="btn btn--primary">Save Message API</button>
+          <p class="daraja-form-message" data-comms-message hidden></p>
+        </div>
+      </form>
+    </section>
+
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Text (SMS) API</h3>
+        <p>SMS provider API credentials.</p>
+      </div>
+      <form class="daraja-credentials-form" data-comms-form="sms" novalidate>
+        <input type="hidden" name="action" value="save_sms_settings">
+        <div class="daraja-status" data-comms-sms-status>
+          {% if comms.has_sms_credentials %}
+          <span class="daraja-status-pill is-ok">API configured</span>
+          {% else %}
+          <span class="daraja-status-pill">Not configured</span>
+          <em>Enter API key and sender ID, then save.</em>
+          {% endif %}
+        </div>
+        <div class="daraja-env-picker" role="group" aria-label="SMS provider">
+          {% for value, label in sms_providers %}
+          <label class="daraja-env-option{% if comms.sms_provider == value %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="sms_provider"
+              value="{{ value }}"
+              data-comms-sms-provider
+              {% if comms.sms_provider == value %}checked{% endif %}
+            >
+            <span>
+              <strong>{{ label }}</strong>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+        <div class="daraja-fields">
+          <label class="daraja-field">
+            <span>Sender ID</span>
+            <input
+              type="text"
+              name="sms_sender_id"
+              autocomplete="off"
+              maxlength="32"
+              placeholder="Approved sender name / number"
+              value="{{ comms.sms_sender_id }}"
+              required
+            >
+          </label>
+          <label class="daraja-field">
+            <span>API key / username</span>
+            <input
+              type="text"
+              name="sms_api_key"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="{% if comms.sms_api_key_set %}Saved — enter a new key to replace{% else %}Provider API key{% endif %}"
+              {% if not comms.sms_api_key_set %}required{% endif %}
+            >
+          </label>
+          <label class="daraja-field">
+            <span>API secret / auth token</span>
+            <input
+              type="password"
+              name="sms_api_secret"
+              autocomplete="new-password"
+              spellcheck="false"
+              placeholder="{% if comms.sms_api_secret_set %}Saved — enter a new secret to replace{% else %}Optional for some providers{% endif %}"
+            >
+          </label>
+          <label class="daraja-field daraja-field--wide">
+            <span>Custom API base URL</span>
+            <input
+              type="url"
+              name="sms_api_base_url"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Only for Custom HTTP provider"
+              value="{{ comms.sms_api_base_url }}"
+            >
+          </label>
+        </div>
+        <div class="daraja-form-actions">
+          <button type="submit" class="btn btn--primary">Save Text API</button>
+          <p class="daraja-form-message" data-comms-message hidden></p>
+        </div>
+      </form>
+    </section>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/communications-settings.js' %}?v=3"></script>
+{% endblock %}
