@@ -9,6 +9,11 @@ from employees.workspace import (
     HR_SIDEBAR_SECTIONS,
     SETTINGS_NESTED_SECTIONS,
     SETTINGS_SECTIONS,
+    sidebar_for_marketing_links,
+    sidebar_for_my_shop,
+    sidebar_for_role_dashboard,
+    sidebar_for_settings,
+    sidebar_for_super_admin,
     sidebar_for_suppliers,
 )
 from items.services import actionable_shops_for_profile
@@ -19,9 +24,114 @@ class SupplierSidebarTests(TestCase):
     def test_suppliers_sidebar_only_has_all_suppliers(self):
         sidebar = sidebar_for_suppliers(EmployeeRole.IT_SUPPORT)
         labels = [item["label"] for item in sidebar["primary"]]
-        self.assertEqual(labels, ["All suppliers"])
-        self.assertTrue(sidebar["primary"][0]["active"])
-        self.assertIn("/analytics/suppliers/", sidebar["primary"][0]["href"])
+        self.assertEqual(labels, ["Dashboard", "All suppliers"])
+        self.assertTrue(sidebar["primary"][1]["active"])
+        self.assertIn("/analytics/suppliers/", sidebar["primary"][1]["href"])
+        self.assertEqual(sidebar["primary"][0]["href"], sidebar["dashboard_url"])
+
+
+class DashboardSidebarLinkTests(SimpleTestCase):
+    def test_role_dashboard_omits_dashboard_link(self):
+        sidebar = sidebar_for_role_dashboard(EmployeeRole.IT_SUPPORT)
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertNotIn("Dashboard", labels)
+        self.assertIn("Marketing links", labels)
+        self.assertIn("WhatsApp", labels)
+        whatsapp = next(item for item in sidebar["primary"] if item["label"] == "WhatsApp")
+        self.assertIn("/it-support/whatsapp/inbox/", whatsapp["href"])
+
+    def test_reused_dashboard_nav_on_other_pages_includes_dashboard(self):
+        sidebar = sidebar_for_role_dashboard(
+            EmployeeRole.IT_SUPPORT,
+            active_slug="clients",
+            omit_dashboard_link=False,
+        )
+        self.assertEqual(sidebar["primary"][0]["label"], "Dashboard")
+        self.assertEqual(sidebar["primary"][0]["href"], sidebar["dashboard_url"])
+
+    def test_super_admin_dashboard_omits_dashboard_link(self):
+        sidebar = sidebar_for_super_admin()
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertNotIn("Dashboard", labels)
+
+    def test_other_pages_start_with_dashboard(self):
+        cases = (
+            sidebar_for_suppliers(EmployeeRole.IT_SUPPORT),
+            sidebar_for_marketing_links(EmployeeRole.IT_SUPPORT),
+            sidebar_for_settings(EmployeeRole.IT_SUPPORT),
+            sidebar_for_my_shop(EmployeeRole.IT_SUPPORT),
+        )
+        for sidebar in cases:
+            primary = sidebar["primary"]
+            self.assertGreaterEqual(len(primary), 1, sidebar["page"])
+            self.assertEqual(primary[0]["label"], "Dashboard", sidebar["page"])
+            self.assertEqual(primary[0]["href"], sidebar["dashboard_url"], sidebar["page"])
+            self.assertEqual(
+                [item["label"] for item in primary].count("Dashboard"),
+                1,
+                sidebar["page"],
+            )
+
+
+class MyShopDashboardSidebarTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="860011",
+            password="shop-pass",
+            email="it-shop-nav@test.local",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="860011",
+            phone_country_code="+254",
+            phone_number="700000961",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="NAV SHOP",
+            location="NAIROBI",
+            email="nav-shop@test.local",
+            phone_number="0700000961",
+            login_code="860111",
+            password_hash="x",
+            created_by=self.it,
+        )
+
+    def test_employee_shop_floor_starts_with_dashboard(self):
+        sidebar = sidebar_for_my_shop(
+            EmployeeRole.IT_SUPPORT,
+            shop=self.shop,
+            shops=[self.shop],
+            profile=self.it,
+        )
+        self.assertEqual(sidebar["primary"][0]["label"], "Dashboard")
+        self.assertEqual(sidebar["primary"][0]["href"], sidebar["dashboard_url"])
+        self.assertIn("/it-support/", sidebar["dashboard_url"])
+
+    def test_portal_shop_floor_omits_dashboard(self):
+        sidebar = sidebar_for_my_shop(
+            EmployeeRole.SHOP_CASHIER,
+            shop=self.shop,
+            shops=[self.shop],
+            portal=True,
+            active="workspace",
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertNotIn("Dashboard", labels)
+
+    def test_portal_receipts_start_with_dashboard(self):
+        sidebar = sidebar_for_my_shop(
+            EmployeeRole.SHOP_CASHIER,
+            shop=self.shop,
+            shops=[self.shop],
+            portal=True,
+            active="receipts",
+        )
+        self.assertEqual(sidebar["primary"][0]["label"], "Dashboard")
+        self.assertEqual(sidebar["primary"][0]["href"], sidebar["dashboard_url"])
+        self.assertIn(f"/my-shop/{self.shop.pk}/", sidebar["dashboard_url"])
 
 
 class PermissionCatalogTests(SimpleTestCase):
@@ -510,29 +620,31 @@ class CreditsShopScopeTests(TestCase):
         request.session = {}
         return request
 
-    def test_it_support_credits_do_not_default_to_all_shops(self):
+    def test_it_support_credits_default_to_all_shops(self):
         from employees.analytics_services import _filters_context
 
-        filters = _filters_context(self.it, self._request(), shop_scope="allocated")
-        self.assertEqual(filters["active_shop_ids"], [])
-        self.assertTrue(filters["credits_require_shop_pick"])
+        filters = _filters_context(self.it, self._request())
+        self.assertEqual(filters["active_shop_ids"], [self.shop_a.pk, self.shop_b.pk])
+        self.assertEqual(filters["selected_shop_ids"], [])
+        self.assertFalse(filters["credits_require_shop_pick"])
 
-    def test_it_support_credits_use_allocated_shops(self):
+    def test_it_support_credits_ignore_allocated_shops_on_load(self):
         from employees.analytics_services import _filters_context
 
         self.it.assigned_shops.add(self.shop_a)
-        filters = _filters_context(self.it, self._request(), shop_scope="allocated")
-        self.assertEqual(filters["active_shop_ids"], [self.shop_a.pk])
-        self.assertEqual(filters["selected_shop_ids"], [self.shop_a.pk])
+        filters = _filters_context(self.it, self._request())
+        self.assertEqual(filters["active_shop_ids"], [self.shop_a.pk, self.shop_b.pk])
+        self.assertEqual(filters["selected_shop_ids"], [])
 
-    def test_it_support_credits_use_session_shop_when_unallocated(self):
+    def test_it_support_credits_ignore_session_shop_on_load(self):
         from employees.analytics_services import _filters_context
         from shops.session import SESSION_SHOP_KEY
 
         request = self._request()
         request.session[SESSION_SHOP_KEY] = str(self.shop_b.pk)
-        filters = _filters_context(self.it, request, shop_scope="allocated")
-        self.assertEqual(filters["active_shop_ids"], [self.shop_b.pk])
+        filters = _filters_context(self.it, request)
+        self.assertEqual(filters["active_shop_ids"], [self.shop_a.pk, self.shop_b.pk])
+        self.assertEqual(filters["selected_shop_ids"], [])
 
     def test_shop_manager_credits_keep_allocated_shops(self):
         from django.test import RequestFactory
@@ -557,9 +669,266 @@ class CreditsShopScopeTests(TestCase):
         request = RequestFactory().get("/shop-manager/analytics/credits/")
         request.user = manager_user
         request.session = {}
-        filters = _filters_context(manager, request, shop_scope="allocated")
+        filters = _filters_context(manager, request)
         self.assertEqual(filters["active_shop_ids"], [self.shop_a.pk])
         self.assertFalse(filters["credits_require_shop_pick"])
+
+    def test_it_support_credits_honour_explicit_shop_filter(self):
+        from employees.analytics_services import _filters_context
+
+        filters = _filters_context(
+            self.it, self._request(shop_id=str(self.shop_b.pk))
+        )
+        self.assertEqual(filters["active_shop_ids"], [self.shop_b.pk])
+        self.assertEqual(filters["selected_shop_ids"], [self.shop_b.pk])
+
+    def test_credits_page_renders_all_shops_filter_on_load(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/analytics/credits/")
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn(">All shops</option>", html)
+        self.assertNotIn(">Select a shop</option>", html)
+        self.assertEqual(response.context["selected_shop_ids"], [])
+        self.assertCountEqual(
+            response.context["active_shop_ids"],
+            [self.shop_a.pk, self.shop_b.pk],
+        )
+
+
+class CreditAuditsEventFilterTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="840021",
+            password="audit-pass",
+            email="it-audits@test.local",
+            first_name="IT",
+            last_name="AUDITS",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840021",
+            phone_country_code="+254",
+            phone_number="700000961",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="AUDIT SHOP",
+            location="NAIROBI",
+            email="audit-shop@test.local",
+            phone_number="0700000961",
+            login_code="840121",
+            password_hash="x",
+            created_by=self.it,
+        )
+        self.client_row = Client.objects.create(
+            full_name="AUDIT CLIENT",
+            phone_number="0700004001",
+            phone_normalized="254700004001",
+            created_by=self.it,
+        )
+        self.receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="CR-AUDIT-1",
+            kind=ShopReceiptKind.CREDIT,
+            total=120,
+            amount_paid=0,
+            created_by=self.it,
+            client=self.client_row,
+            client_name=self.client_row.full_name,
+            client_phone=self.client_row.phone_number,
+            status=ShopReceiptStatus.ACTIVE,
+        )
+
+    def _log(self, kind, *, amount=None, detail="", occurred_at=None):
+        from shops.credit_audit import log_client_credit_event
+
+        return log_client_credit_event(
+            client_id=self.client_row.pk,
+            kind=kind,
+            shop=self.shop,
+            receipt=self.receipt,
+            amount=amount,
+            detail=detail,
+            actor=self.it,
+            occurred_at=occurred_at,
+        )
+
+    def test_all_events_excludes_credit_issued(self):
+        from shops.credit_audit import build_credit_audits
+        from shops.models import ClientCreditAccountEventKind
+
+        self._log(ClientCreditAccountEventKind.PAYMENT_CASH, amount=40)
+        self._log(ClientCreditAccountEventKind.PAYMENT_MPESA, amount=20)
+        self._log(ClientCreditAccountEventKind.ITEMS_RETURNED)
+        page = build_credit_audits(profile=self.it)
+        kinds = [row["kind"] for row in page["rows"]]
+        self.assertNotIn(ClientCreditAccountEventKind.CREDIT_ISSUED, kinds)
+        self.assertCountEqual(
+            kinds,
+            [
+                ClientCreditAccountEventKind.PAYMENT_CASH,
+                ClientCreditAccountEventKind.PAYMENT_MPESA,
+                ClientCreditAccountEventKind.ITEMS_RETURNED,
+            ],
+        )
+        self.assertEqual(page["event_filter"], "")
+        labels = [option["label"] for option in page["event_options"]]
+        self.assertEqual(labels[0], "All events")
+        self.assertIn("Cash payment", labels)
+        self.assertIn("M-Pesa payment", labels)
+
+    def test_event_filter_returns_matching_kind_only(self):
+        from shops.credit_audit import build_credit_audits
+        from shops.models import ClientCreditAccountEventKind
+
+        self._log(ClientCreditAccountEventKind.PAYMENT_CASH, amount=40)
+        self._log(ClientCreditAccountEventKind.PAYMENT_MPESA, amount=20)
+        self._log(ClientCreditAccountEventKind.ITEMS_RETURNED)
+        page = build_credit_audits(
+            profile=self.it, event_kind=ClientCreditAccountEventKind.PAYMENT_CASH
+        )
+        self.assertEqual([row["kind"] for row in page["rows"]], ["payment_cash"])
+        self.assertEqual(page["event_filter"], "payment_cash")
+        self.assertEqual(page["event_filter_label"], "Cash payment")
+        self.assertEqual(page["payment_count"], 1)
+        self.assertEqual(page["change_count"], 0)
+
+    def test_unknown_event_filter_falls_back_to_all(self):
+        from shops.credit_audit import build_credit_audits
+        from shops.models import ClientCreditAccountEventKind
+
+        self._log(ClientCreditAccountEventKind.PAYMENT_CASH, amount=40)
+        self._log(ClientCreditAccountEventKind.ITEMS_RETURNED)
+        page = build_credit_audits(profile=self.it, event_kind="not-a-kind")
+        self.assertEqual(page["event_filter"], "")
+        self.assertEqual(len(page["rows"]), 2)
+
+    def test_audits_page_renders_event_filter(self):
+        from shops.models import ClientCreditAccountEventKind
+
+        self._log(ClientCreditAccountEventKind.PAYMENT_CASH, amount=40)
+        self._log(ClientCreditAccountEventKind.ITEMS_RETURNED)
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/analytics/credits/audits/")
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn('name="event"', html)
+        self.assertIn(">All events</option>", html)
+        self.assertIn(">Cash payment</option>", html)
+        self.assertIn(">Items returned</option>", html)
+        self.assertEqual(response.context["event_filter"], "")
+        self.assertEqual(len(response.context["rows"]), 2)
+        self.assertIn('name="range"', html)
+        self.assertIn(">Day</option>", html)
+        self.assertIn(">Period</option>", html)
+        self.assertIn(">Month</option>", html)
+        self.assertIn(">Year</option>", html)
+        self.assertEqual(response.context["report_range"], "day")
+
+    def test_audits_page_honours_event_query(self):
+        from shops.models import ClientCreditAccountEventKind
+
+        self._log(ClientCreditAccountEventKind.PAYMENT_CASH, amount=40)
+        self._log(ClientCreditAccountEventKind.ITEMS_RETURNED)
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/it-support/analytics/credits/audits/", {"event": "items_returned"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["event_filter"], "items_returned")
+        self.assertEqual(len(response.context["rows"]), 1)
+        self.assertEqual(response.context["rows"][0]["kind"], "items_returned")
+        html = response.content.decode()
+        self.assertIn('value="items_returned" selected', html)
+
+    def test_day_filter_excludes_other_days(self):
+        from datetime import datetime, time, timedelta
+
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from shops.credit_audit import build_credit_audits
+        from shops.models import ClientCreditAccountEventKind
+
+        today = timezone.localdate()
+        older = today - timedelta(days=3)
+        tz = timezone.get_current_timezone()
+        self._log(
+            ClientCreditAccountEventKind.PAYMENT_CASH,
+            amount=40,
+            occurred_at=timezone.make_aware(datetime.combine(older, time(12, 0)), tz),
+        )
+        self._log(
+            ClientCreditAccountEventKind.ITEMS_RETURNED,
+            occurred_at=timezone.make_aware(datetime.combine(today, time(12, 0)), tz),
+        )
+        request = RequestFactory().get(
+            "/it-support/analytics/credits/audits/",
+            {"range": "day", "date": today.isoformat()},
+        )
+        page = build_credit_audits(profile=self.it, request=request)
+        self.assertEqual([row["kind"] for row in page["rows"]], ["items_returned"])
+        self.assertEqual(page["report_range"], "day")
+
+    def test_year_filter_keeps_matching_events(self):
+        from datetime import datetime
+
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from shops.credit_audit import build_credit_audits
+        from shops.models import ClientCreditAccountEventKind
+
+        tz = timezone.get_current_timezone()
+        self._log(
+            ClientCreditAccountEventKind.PAYMENT_CASH,
+            amount=40,
+            occurred_at=timezone.make_aware(datetime(2024, 6, 15, 12, 0), tz),
+        )
+        self._log(
+            ClientCreditAccountEventKind.ITEMS_RETURNED,
+            occurred_at=timezone.make_aware(datetime(2026, 3, 1, 12, 0), tz),
+        )
+        request = RequestFactory().get(
+            "/it-support/analytics/credits/audits/",
+            {"range": "year", "year": "2024"},
+        )
+        page = build_credit_audits(profile=self.it, request=request)
+        self.assertEqual([row["kind"] for row in page["rows"]], ["payment_cash"])
+        self.assertEqual(page["report_range"], "year")
+        self.assertEqual(page["report_period_label"], "2024")
+
+    def test_audits_page_honours_date_query(self):
+        from datetime import datetime, time, timedelta
+
+        from django.utils import timezone
+
+        from shops.models import ClientCreditAccountEventKind
+
+        today = timezone.localdate()
+        older = today - timedelta(days=5)
+        tz = timezone.get_current_timezone()
+        self._log(
+            ClientCreditAccountEventKind.PAYMENT_CASH,
+            amount=40,
+            occurred_at=timezone.make_aware(datetime.combine(older, time(10, 0)), tz),
+        )
+        self._log(
+            ClientCreditAccountEventKind.ITEMS_RETURNED,
+            occurred_at=timezone.make_aware(datetime.combine(today, time(10, 0)), tz),
+        )
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/it-support/analytics/credits/audits/",
+            {"range": "day", "date": older.isoformat()},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["report_range"], "day")
+        self.assertEqual(len(response.context["rows"]), 1)
+        self.assertEqual(response.context["rows"][0]["kind"], "payment_cash")
 
 
 class MarketingLinksPageTests(TestCase):
@@ -617,9 +986,11 @@ class MarketingLinksPageTests(TestCase):
                 "HR Management",
                 "Shop Management",
                 "Marketing links",
+                "WhatsApp",
             ],
         )
-        self.assertIn("/it-support/marketing/", home.context["page_sidebar"]["primary"][-1]["href"])
+        self.assertIn("/it-support/marketing/", home.context["page_sidebar"]["primary"][-2]["href"])
+        self.assertIn("/it-support/whatsapp/inbox/", home.context["page_sidebar"]["primary"][-1]["href"])
 
         response = self.client.get("/it-support/marketing/")
         self.assertEqual(response.status_code, 200)
@@ -631,22 +1002,29 @@ class MarketingLinksPageTests(TestCase):
         self.assertNotContains(response, "Hosted")
         self.assertNotContains(response, "HIDDEN MARKET SHOP")
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
-        self.assertEqual(labels, ["Communication settings", "Share items", "Contacts", "Activities"])
-        self.assertIn(
-            "/settings/communication-settings/",
-            response.context["page_sidebar"]["primary"][0]["href"],
+        self.assertEqual(
+            labels,
+            ["Dashboard", "Communication settings", "Share items", "Contacts", "Inbox", "Activities"],
         )
         self.assertIn(
-            "/it-support/whatsapp/catalogue/",
+            "/settings/communication-settings/",
             response.context["page_sidebar"]["primary"][1]["href"],
         )
         self.assertIn(
-            "/it-support/whatsapp/contacts/",
+            "/it-support/whatsapp/catalogue/",
             response.context["page_sidebar"]["primary"][2]["href"],
         )
         self.assertIn(
-            "/it-support/marketing/activities/",
+            "/it-support/whatsapp/contacts/",
             response.context["page_sidebar"]["primary"][3]["href"],
+        )
+        self.assertIn(
+            "/it-support/whatsapp/inbox/",
+            response.context["page_sidebar"]["primary"][4]["href"],
+        )
+        self.assertIn(
+            "/it-support/marketing/activities/",
+            response.context["page_sidebar"]["primary"][5]["href"],
         )
         shop = response.context["marketing_links"][0]
         self.assertEqual(len(shop["variants"]), 1)

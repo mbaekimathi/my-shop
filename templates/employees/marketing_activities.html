@@ -49,7 +49,7 @@
       <div class="item-panel-head-top">
         <div>
           <h2>Waiting to send</h2>
-          <p>Automated and scheduled messages that have not been sent yet. Open a row to see who is still in the queue.</p>
+          <p>Automated and scheduled messages that have not been sent yet. Open a send to see the message, who it went to, and each person's status.</p>
         </div>
         <p class="item-count" data-wa-pending-count>
           {{ activities.summary.pending_batches|default:0 }} batch{{ activities.summary.pending_batches|default:0|pluralize }}
@@ -68,7 +68,7 @@
       <div class="item-panel-head-top">
         <div>
           <h2>Sent history</h2>
-          <p>Messages that already left the queue — sent, viewed, cancelled, or failed.</p>
+          <p>Messages that already left the queue — sent, viewed, cancelled, or failed. Open a send for the full message and each recipient.</p>
         </div>
         <p class="item-count" data-wa-history-count>
           {{ activities.summary.history_batches|default:0 }} send{{ activities.summary.history_batches|default:0|pluralize }}
@@ -86,5 +86,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/whatsapp-activities.js' %}?v=1"></script>
+<script defer src="{% static 'js/whatsapp-activities.js' %}?v=2"></script>
 {% endblock %}

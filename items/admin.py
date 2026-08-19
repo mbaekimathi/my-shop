@@ -56,7 +56,14 @@ class ShopItemPriceAdmin(admin.ModelAdmin):
 
 @admin.register(ShopStock)
 class ShopStockAdmin(admin.ModelAdmin):
-    list_display = ("item", "shop", "quantity", "updated_at")
+    list_display = (
+        "item",
+        "shop",
+        "quantity",
+        "low_stock_threshold",
+        "low_stock_manual",
+        "updated_at",
+    )
     list_filter = ("shop",)
     search_fields = ("item__name", "shop__name")
     autocomplete_fields = ("item", "shop")

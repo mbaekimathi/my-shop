@@ -151,8 +151,8 @@
       {% csrf_token %}
       <input type="hidden" name="action" value="edit">
       <input type="hidden" name="item_id" value="{% if edit_item %}{{ edit_item.pk }}{% endif %}" data-edit-item-id>
-      <div class="item-current-image" data-current-image-wrap {% if not open_edit_modal or not edit_item.image %}hidden{% endif %}>
-        <img src="{% if edit_item.image %}{{ edit_item.image.url }}{% endif %}" alt="" width="56" height="56" data-current-image>
+      <div class="item-current-image" data-current-image-wrap {% if not open_edit_modal or not edit_item or not edit_item.public_image_url %}hidden{% endif %}>
+        <img src="{% if edit_item %}{{ edit_item.public_image_url }}{% endif %}" alt="" width="56" height="56" data-current-image>
         <label class="field field--checkbox">
           <input type="checkbox" name="remove_image" value="1" data-remove-image>
           <span>Remove current image</span>

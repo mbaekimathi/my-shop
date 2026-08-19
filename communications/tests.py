@@ -22,6 +22,215 @@ class TwilioNumberTests(SimpleTestCase):
             "254795606115",
         )
 
+    def test_fake_message_sids_are_not_twilio_sids(self):
+        from communications.twilio import is_twilio_message_sid
+
+        self.assertTrue(is_twilio_message_sid("SM" + "a" * 32))
+        self.assertTrue(is_twilio_message_sid("MM" + "b" * 32))
+        self.assertFalse(is_twilio_message_sid("SM_FAKE_142570218000000"))
+        self.assertFalse(is_twilio_message_sid("SMTESTREAD1"))
+        self.assertFalse(is_twilio_message_sid(""))
+
+    def test_fetch_skips_fake_message_sids(self):
+        from unittest.mock import patch
+
+        from communications.twilio import fetch_twilio_message
+
+        with patch("communications.twilio.urlopen") as mocked:
+            self.assertIsNone(
+                fetch_twilio_message(
+                    "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "token",
+                    "SM_FAKE_142570218000000",
+                )
+            )
+            mocked.assert_not_called()
+
+
+class TwilioDeliverySyncTests(TestCase):
+    def test_sync_skips_fake_sids_and_updates_real_ones(self):
+        from unittest.mock import patch
+
+        from communications.constants import CAMPAIGN_QUEUED, MSG_SENT
+        from communications.models import BroadcastCampaign, OutboundMessage
+        from communications.twilio import sync_outbound_delivery_status
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+        from django.contrib.auth.models import User
+
+        user = User.objects.create_user(
+            username="860099",
+            password="wa-sync",
+            email="wa-sync@test.local",
+            is_active=True,
+        )
+        it = EmployeeProfile.objects.create(
+            user=user,
+            employee_id="860099",
+            phone_country_code="+254",
+            phone_number="700000999",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        campaign = BroadcastCampaign.objects.create(
+            created_by=it,
+            body_template="Hi",
+            status=CAMPAIGN_QUEUED,
+            recipient_count=2,
+        )
+        fake = OutboundMessage.objects.create(
+            campaign=campaign,
+            client_name="FAKE",
+            phone="254700000001",
+            body="Hi",
+            status=MSG_SENT,
+            wa_message_id="SM_FAKE_142570218000000",
+        )
+        real_sid = "SM" + "c" * 32
+        real = OutboundMessage.objects.create(
+            campaign=campaign,
+            client_name="REAL",
+            phone="254700000002",
+            body="Hi",
+            status=MSG_SENT,
+            wa_message_id=real_sid,
+        )
+
+        class DeliveredResponse:
+            def read(self):
+                return b'{"status":"delivered"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with patch("communications.twilio.urlopen", return_value=DeliveredResponse()):
+            updated = sync_outbound_delivery_status(force=True)
+        self.assertEqual(updated, 1)
+        fake.refresh_from_db()
+        real.refresh_from_db()
+        self.assertIsNone(fake.delivered_at)
+        self.assertIsNotNone(real.delivered_at)
+        self.assertEqual(fake.provider_status, "local")
+
+    def test_sync_marks_twilio_404_and_does_not_retry(self):
+        from io import BytesIO
+        from unittest.mock import patch
+        from urllib.error import HTTPError
+
+        from django.contrib.auth.models import User
+        from django.core.cache import cache
+
+        from communications.constants import CAMPAIGN_QUEUED, MSG_SENT
+        from communications.models import BroadcastCampaign, OutboundMessage
+        from communications.twilio import sync_outbound_delivery_status
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+
+        cache.clear()
+        user = User.objects.create_user(
+            username="860098",
+            password="wa-404",
+            email="wa-404@test.local",
+            is_active=True,
+        )
+        it = EmployeeProfile.objects.create(
+            user=user,
+            employee_id="860098",
+            phone_country_code="+254",
+            phone_number="700000998",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        campaign = BroadcastCampaign.objects.create(
+            created_by=it,
+            body_template="Hi",
+            status=CAMPAIGN_QUEUED,
+            recipient_count=1,
+        )
+        sid = "SM" + "d" * 32
+        row = OutboundMessage.objects.create(
+            campaign=campaign,
+            client_name="GONE",
+            phone="254700000003",
+            body="Hi",
+            status=MSG_SENT,
+            wa_message_id=sid,
+        )
+
+        def fake_urlopen(request, timeout=15):
+            raise HTTPError(request.full_url, 404, "Not Found", hdrs=None, fp=BytesIO())
+
+        with patch("communications.twilio.urlopen", side_effect=fake_urlopen) as mocked:
+            self.assertEqual(sync_outbound_delivery_status(force=True), 0)
+            self.assertEqual(mocked.call_count, 1)
+            row.refresh_from_db()
+            self.assertEqual(row.provider_status, "missing")
+            self.assertEqual(sync_outbound_delivery_status(force=True), 0)
+            self.assertEqual(mocked.call_count, 1)
+
+    def test_sync_cooldown_skips_repeat_fetch(self):
+        from unittest.mock import patch
+
+        from django.contrib.auth.models import User
+        from django.core.cache import cache
+
+        from communications.constants import CAMPAIGN_QUEUED, MSG_SENT
+        from communications.models import BroadcastCampaign, OutboundMessage
+        from communications.twilio import sync_outbound_delivery_status
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+
+        cache.clear()
+        user = User.objects.create_user(
+            username="860097",
+            password="wa-cool",
+            email="wa-cool@test.local",
+            is_active=True,
+        )
+        it = EmployeeProfile.objects.create(
+            user=user,
+            employee_id="860097",
+            phone_country_code="+254",
+            phone_number="700000997",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        campaign = BroadcastCampaign.objects.create(
+            created_by=it,
+            body_template="Hi",
+            status=CAMPAIGN_QUEUED,
+            recipient_count=1,
+        )
+        OutboundMessage.objects.create(
+            campaign=campaign,
+            client_name="REAL",
+            phone="254700000004",
+            body="Hi",
+            status=MSG_SENT,
+            wa_message_id="SM" + "e" * 32,
+        )
+        with patch("communications.twilio.urlopen") as mocked:
+            mocked.return_value.__enter__.return_value.read.return_value = b'{"status":"queued"}'
+            sync_outbound_delivery_status()
+            self.assertEqual(mocked.call_count, 1)
+            self.assertEqual(sync_outbound_delivery_status(), 0)
+            self.assertEqual(mocked.call_count, 1)
+
 
 class TwilioSendChannelTests(TestCase):
     def test_geo_permission_error_is_explained(self):
@@ -375,6 +584,7 @@ class WhatsAppAutomationsPageTests(TestCase):
         self.assertContains(response, "Save Twilio")
         self.assertContains(response, "Join Twilio sandbox on the customer phone")
         self.assertContains(response, "Open WhatsApp on this phone")
+        self.assertContains(response, "When a message comes in")
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
         self.assertNotIn("Marketing links", labels)
         self.assertNotIn("Communication settings", labels)
@@ -543,16 +753,20 @@ class WhatsAppCataloguePageTests(TestCase):
         response = self.client.get("/it-support/whatsapp/catalogue/")
         self.assertEqual(response.status_code, 200)
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
-        self.assertEqual(labels, ["Share items", "Contacts", "Activities"])
-        self.assertTrue(response.context["page_sidebar"]["primary"][0].get("active"))
-        self.assertFalse(response.context["page_sidebar"]["primary"][1].get("active"))
+        self.assertEqual(labels, ["Dashboard", "Share items", "Contacts", "Inbox", "Activities"])
+        self.assertTrue(response.context["page_sidebar"]["primary"][1].get("active"))
+        self.assertFalse(response.context["page_sidebar"]["primary"][2].get("active"))
         self.assertIn(
             "/it-support/whatsapp/contacts/",
-            response.context["page_sidebar"]["primary"][1]["href"],
+            response.context["page_sidebar"]["primary"][2]["href"],
+        )
+        self.assertIn(
+            "/it-support/whatsapp/inbox/",
+            response.context["page_sidebar"]["primary"][3]["href"],
         )
         self.assertIn(
             "/it-support/marketing/activities/",
-            response.context["page_sidebar"]["primary"][2]["href"],
+            response.context["page_sidebar"]["primary"][4]["href"],
         )
         self.assertContains(response, "Who to share with")
         self.assertContains(response, "Pick items")
@@ -571,13 +785,36 @@ class WhatsAppCataloguePageTests(TestCase):
         self.assertContains(response, "filter_item_id")
         self.assertContains(response, "Add matching items")
 
+    def test_missing_item_image_file_is_not_rendered(self):
+        self.item.image = "items/images/25.jpeg"
+        self.item.save(update_fields=["image"])
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/whatsapp/catalogue/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "/media/items/images/25.jpeg")
+        self.assertContains(response, "PIXEL 9")
+
+    def test_catalogue_get_does_not_poll_twilio(self):
+        from unittest.mock import patch
+
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        self.client.force_login(self.user)
+        with patch("communications.views.sync_outbound_delivery_status") as mocked:
+            response = self.client.get("/it-support/whatsapp/catalogue/")
+        self.assertEqual(response.status_code, 200)
+        mocked.assert_not_called()
+
     def test_activities_page_and_sidebar(self):
         self.client.force_login(self.user)
         response = self.client.get("/it-support/marketing/activities/")
         self.assertEqual(response.status_code, 200)
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
-        self.assertEqual(labels, ["Communication settings", "Share items", "Contacts", "Activities"])
-        self.assertTrue(response.context["page_sidebar"]["primary"][3].get("active"))
+        self.assertEqual(labels, ["Dashboard", "Communication settings", "Share items", "Contacts", "Inbox", "Activities"])
+        self.assertTrue(response.context["page_sidebar"]["primary"][5].get("active"))
         self.assertContains(response, "Waiting to send")
         self.assertContains(response, "Sent history")
         self.assertContains(response, "Nothing waiting. Scheduled item shares and queued messages will show up here.")
@@ -585,6 +822,7 @@ class WhatsAppCataloguePageTests(TestCase):
         self.assertContains(response, 'href="/it-support/whatsapp/contacts/"')
         self.assertIn("pending", response.context["activities"])
         self.assertIn("history", response.context["activities"])
+        self.assertContains(response, "Open a send to see the message")
 
     def test_caption_includes_name_and_price(self):
         from communications.automations import build_item_catalogue_caption
@@ -1054,9 +1292,9 @@ class WhatsAppContactsPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
         self.assertEqual(
-            labels, ["Communication settings", "Share items", "Contacts", "Activities"]
+            labels, ["Dashboard", "Communication settings", "Share items", "Contacts", "Inbox", "Activities"]
         )
-        self.assertTrue(response.context["page_sidebar"]["primary"][2].get("active"))
+        self.assertTrue(response.context["page_sidebar"]["primary"][3].get("active"))
         names = [row["full_name"] for row in response.context["contacts"]]
         self.assertEqual(response.context["contact_count"], 2)
         self.assertIn("JANE DOE", names)
@@ -1210,6 +1448,41 @@ class WhatsAppSendLogTests(TestCase):
             ),
             "viewed",
         )
+
+    def test_activity_detail_shows_message_recipients_and_status(self):
+        from communications.campaigns import campaign_as_dict
+
+        payload = campaign_as_dict(self.campaign)
+        self.assertEqual(payload["messages"][0]["body"], "Hi Jane")
+        self.assertEqual(payload["messages"][0]["status_label"], "Waiting")
+        self.assertEqual(payload["messages"][1]["body"], "Hi John")
+        self.assertEqual(payload["messages"][1]["status_label"], "Sent")
+
+        self.client.force_login(self.user)
+        url = f"/it-support/marketing/activities/{self.campaign.pk}/"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Hi {first_name}, browse our shop.")
+        self.assertContains(response, "JANE DOE")
+        self.assertContains(response, "JOHN DOE")
+        self.assertContains(response, "Hi Jane")
+        self.assertContains(response, "Hi John")
+        self.assertContains(response, "254712345678")
+        self.assertContains(response, "Waiting")
+        self.assertContains(response, "Sent")
+        self.assertContains(response, "Back to activities")
+        self.assertContains(response, 'href="/it-support/marketing/activities/"')
+        self.assertTrue(response.context["page_sidebar"]["primary"][4].get("active"))
+
+        json_page = self.client.get(url, HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+        self.assertEqual(json_page.status_code, 200)
+        body = json_page.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["campaign"]["id"], self.campaign.pk)
+        self.assertEqual(len(body["campaign"]["messages"]), 2)
+
+        missing = self.client.get("/it-support/marketing/activities/999999/")
+        self.assertEqual(missing.status_code, 404)
 
     def test_twilio_sandbox_failure_marks_failed(self):
         from communications.constants import MSG_FAILED
@@ -1874,4 +2147,161 @@ class SupplierAutomationTests(TestCase):
         ):
             maybe_send_stock_supplier_notice(self.movement)
         send.assert_not_called()
+
+
+class WhatsAppInboxTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+        from shops.models import Client
+
+        self.user = User.objects.create_user(
+            username="860088",
+            password="wa-inbox",
+            email="wa-inbox@test.local",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="860088",
+            phone_country_code="+254",
+            phone_number="700000888",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.customer = Client.objects.create(
+            full_name="JANE DOE",
+            phone_number="0712345678",
+            phone_normalized="254712345678",
+            created_by=self.it,
+        )
+
+    @override_settings(DEBUG=True)
+    def test_webhook_stores_reply_and_inbox_shows_it(self):
+        from communications.models import InboundReply
+
+        response = self.client.post(
+            "/twilio/incoming/",
+            {
+                "MessageSid": "SM" + "d" * 32,
+                "From": "whatsapp:+254712345678",
+                "WaId": "254712345678",
+                "Body": "I want the Pixel 9",
+                "ProfileName": "Jane",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        row = InboundReply.objects.get(wa_message_id="SM" + "d" * 32)
+        self.assertEqual(row.phone, "254712345678")
+        self.assertEqual(row.body, "I want the Pixel 9")
+        self.assertEqual(row.client_id, self.customer.pk)
+
+        self.client.force_login(self.user)
+        page = self.client.get("/it-support/whatsapp/inbox/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "I want the Pixel 9")
+        self.assertContains(page, "JANE DOE")
+        self.assertContains(page, "Type a message")
+        self.assertContains(page, "New chat")
+        self.assertContains(page, 'data-wa-app')
+        labels = [item["label"] for item in page.context["page_sidebar"]["primary"]]
+        self.assertEqual(
+            labels,
+            ["Dashboard", "Communication settings", "Share items", "Contacts", "Inbox", "Activities"],
+        )
+        self.assertTrue(page.context["page_sidebar"]["primary"][4].get("active"))
+        self.assertEqual(page.context["inbox"]["count"], 1)
+
+    def test_join_messages_are_not_stored(self):
+        from communications.models import InboundReply
+        from communications.replies import record_inbound_reply
+
+        self.assertIsNone(
+            record_inbound_reply(
+                message_sid="SM" + "e" * 32,
+                from_value="whatsapp:+254712345678",
+                body="join control-did",
+            )
+        )
+        self.assertEqual(InboundReply.objects.count(), 0)
+
+    def test_sync_pulls_inbound_from_twilio_list(self):
+        from unittest.mock import patch
+
+        from communications.models import InboundReply
+        from communications.twilio import sync_inbound_replies
+
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+
+        class ListResponse:
+            def read(self):
+                return (
+                    b'{"messages":[{"sid":"SM'
+                    + b"f" * 32
+                    + b'","direction":"inbound","from":"whatsapp:+254712345678",'
+                    + b'"body":"Is this in stock?","date_sent":"Wed, 19 Aug 2026 08:00:00 +0000"}]}'
+                )
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with patch("communications.twilio.urlopen", return_value=ListResponse()):
+            saved = sync_inbound_replies(force=True)
+        self.assertEqual(saved, 1)
+        row = InboundReply.objects.get(wa_message_id="SM" + "f" * 32)
+        self.assertEqual(row.body, "Is this in stock?")
+        self.assertEqual(row.client_id, self.customer.pk)
+
+    def test_send_reply_joins_the_same_chat(self):
+        from unittest.mock import patch
+
+        from communications.models import InboundReply, OutboundMessage
+        from communications.replies import record_inbound_reply
+        from django.utils import timezone
+
+        record_inbound_reply(
+            message_sid="SM" + "d" * 32,
+            from_value="whatsapp:+254712345678",
+            wa_id="254712345678",
+            body="Do you have stock?",
+            created_at=timezone.now(),
+        )
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+            whatsapp_from="whatsapp:+14155238886",
+        )
+        self.client.force_login(self.user)
+        with patch("communications.twilio.send_whatsapp_message") as send:
+            send.return_value = {
+                "ok": True,
+                "messageId": "SM" + "a" * 32,
+                "chatId": "whatsapp:+254712345678",
+                "status": "queued",
+            }
+            response = self.client.post(
+                "/it-support/whatsapp/api/inbox/",
+                data='{"action":"send","phone":"254712345678","body":"Yes, it is in stock"}',
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["count"], 1)
+        bodies = [msg["body"] for msg in payload["threads"][0]["messages"]]
+        self.assertIn("Do you have stock?", bodies)
+        self.assertIn("Yes, it is in stock", bodies)
+        self.assertTrue(
+            OutboundMessage.objects.filter(body="Yes, it is in stock").exists()
+        )
+        self.assertEqual(InboundReply.objects.count(), 1)
 

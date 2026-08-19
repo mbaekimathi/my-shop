@@ -137,6 +137,11 @@ urlpatterns = [
         name="twilio_status",
     ),
     path(
+        "twilio/incoming/",
+        communications_views.twilio_inbound_callback,
+        name="twilio_incoming",
+    ),
+    path(
         "my-shop/<int:shop_id>/print-relay/",
         shop_views.my_shop_print_relay,
         name="my_shop_print_relay",
@@ -333,9 +338,19 @@ urlpatterns = [
         name="whatsapp_contacts",
     ),
     path(
+        "<role_segment:role_segment>/whatsapp/inbox/",
+        communications_views.whatsapp_inbox,
+        name="whatsapp_inbox",
+    ),
+    path(
         "<role_segment:role_segment>/marketing/activities/",
         communications_views.marketing_activities,
         name="marketing_activities",
+    ),
+    path(
+        "<role_segment:role_segment>/marketing/activities/<int:campaign_id>/",
+        communications_views.marketing_activity_detail,
+        name="marketing_activity_detail",
     ),
     path(
         "<role_segment:role_segment>/whatsapp/api/status/",

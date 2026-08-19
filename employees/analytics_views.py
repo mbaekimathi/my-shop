@@ -169,6 +169,7 @@ def _render_analytics(request, profile, *, section_slug="overview"):
                     profile.role,
                     profile=profile,
                     active_slug=section["slug"],
+                    omit_dashboard_link=False,
                 )
                 if section["slug"] in ANALYTICS_DASHBOARD_SECTION_SLUGS
                 else sidebar_for_analytics(
@@ -477,7 +478,11 @@ def analytics_credit_audits(request, role_segment):
     if denied is not None:
         return denied
 
-    trail = build_credit_audits(profile=profile)
+    trail = build_credit_audits(
+        profile=profile,
+        request=request,
+        event_kind=request.GET.get("event") or "",
+    )
     return render(
         request,
         "employees/analytics_credit_audits.html",

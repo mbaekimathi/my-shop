@@ -124,7 +124,7 @@ class OutboundMessage(models.Model):
 
 
 class InboundReply(models.Model):
-    """A client reply captured from the personal WhatsApp bridge."""
+    """A client WhatsApp reply captured from Twilio."""
 
     wa_message_id = models.CharField(max_length=200, unique=True, db_index=True)
     chat_id = models.CharField(max_length=120, blank=True, default="")

@@ -1,0 +1,129 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/whatsapp-inbox.css' %}?v=3">
+{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+{% with can_send=module_permissions.send %}
+<section
+  class="comms wa-app"
+  data-wa-app
+  data-api-inbox="{{ comms_api.inbox }}"
+  data-can-send="{% if can_send != False %}1{% else %}0{% endif %}"
+  data-settings-url="{{ settings_url }}"
+  data-selected-phone="{{ selected_phone }}"
+  data-company-name="{{ company_name|default:'MY-SHOP' }}"
+>
+  {{ inbox|json_script:"wa-inbox-data" }}
+  {{ contacts|json_script:"wa-inbox-contacts" }}
+
+  <header class="wa-app__bar">
+    <div class="wa-app__brand">
+      <span class="wa-app__logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" focusable="false">
+          <path fill="currentColor" d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2zm.01 1.67c2.2 0 4.26.86 5.82 2.42a8.22 8.22 0 0 1 2.41 5.83c0 4.54-3.7 8.23-8.24 8.23-1.48 0-2.93-.39-4.19-1.15l-.3-.17-3.12.82.83-3.04-.2-.32a8.2 8.2 0 0 1-1.26-4.38c0-4.54 3.7-8.24 8.25-8.24zM8.68 7.53c-.17 0-.36.03-.55.09-.19.06-.47.23-.68.46-.21.24-.8.78-.8 1.9 0 1.12.82 2.2.93 2.35.12.15 1.58 2.52 3.9 3.43 1.95.77 2.34.61 2.76.58.42-.04 1.36-.56 1.55-1.09.19-.54.19-1 .13-1.09-.06-.1-.22-.15-.46-.27-.24-.12-1.36-.67-1.57-.75-.21-.08-.36-.12-.52.12-.15.24-.6.75-.74.9-.13.15-.27.17-.5.06-.24-.12-1-.37-1.9-1.17-.7-.63-1.18-1.4-1.32-1.64-.13-.24-.01-.37.1-.49.11-.11.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.32-.75-1.8-.19-.45-.4-.4-.55-.4z"/>
+        </svg>
+      </span>
+      <div>
+        <strong>WhatsApp</strong>
+        <span>{% if bridge.wa_phone %}+{{ bridge.wa_phone }}{% else %}Save Twilio in Settings{% endif %}</span>
+      </div>
+    </div>
+    <div class="wa-app__bar-actions">
+      <span class="comms-pill" data-status="{% if bridge.status == 'connected' %}connected{% else %}disconnected{% endif %}">
+        {% if bridge.status == "connected" %}Ready{% else %}Not configured{% endif %}
+      </span>
+      <a class="comms-icon-btn" href="{{ settings_url }}" title="Twilio settings" aria-label="Twilio settings">
+        <i data-lucide="settings" aria-hidden="true"></i>
+      </a>
+    </div>
+  </header>
+
+  <div class="wa-app__shell">
+    <aside class="wa-app__list" data-wa-list-pane>
+      <div class="wa-app__list-tools">
+        <button type="button" class="wa-app__new" data-wa-new title="New chat">
+          <i data-lucide="square-pen" aria-hidden="true"></i>
+          <span>New chat</span>
+        </button>
+        <label class="wa-app__search">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input type="search" placeholder="Search chats" autocomplete="off" data-wa-search aria-label="Search chats">
+        </label>
+      </div>
+      <div class="wa-app__chats" data-wa-chats role="list"></div>
+    </aside>
+
+    <section class="wa-app__chat" data-wa-chat-pane>
+      <div class="wa-app__empty" data-wa-empty>
+        <span class="wa-app__empty-icon" aria-hidden="true">
+          <i data-lucide="messages-square"></i>
+        </span>
+        <h2>WhatsApp for MY-SHOP</h2>
+        <p>Select a chat to read and reply. Messages send through Twilio to the customer’s WhatsApp.</p>
+      </div>
+
+      <div class="wa-app__thread" data-wa-thread hidden>
+        <header class="wa-app__chat-head">
+          <button type="button" class="comms-icon-btn wa-app__back" data-wa-back aria-label="Back to chats">
+            <i data-lucide="arrow-left" aria-hidden="true"></i>
+          </button>
+          <span class="comms-avatar" data-wa-head-avatar data-tone="1">?</span>
+          <div class="wa-app__chat-who">
+            <strong data-wa-head-name>Chat</strong>
+            <span data-wa-head-meta></span>
+          </div>
+        </header>
+        <div class="wa-app__stage" data-wa-stage></div>
+        {% if can_send != False %}
+        <form class="wa-app__composer" data-wa-composer>
+          <div class="wa-app__emoji-pop" data-wa-emoji-pop hidden></div>
+          <button type="button" class="comms-icon-btn" data-wa-emoji title="Emoji" aria-label="Emoji">
+            <i data-lucide="smile" aria-hidden="true"></i>
+          </button>
+          <label class="comms-attach" title="Attach a photo">
+            <input type="file" accept="image/*" hidden data-wa-file>
+            <span class="comms-attach-btn"><i data-lucide="plus" aria-hidden="true"></i></span>
+          </label>
+          <div class="comms-composer-box">
+            <textarea rows="1" placeholder="Type a message" data-wa-input></textarea>
+            <p class="comms-file-name" data-wa-file-name hidden></p>
+          </div>
+          <button type="submit" class="comms-send-fab" data-wa-send aria-label="Send">
+            <i data-lucide="send" aria-hidden="true"></i>
+          </button>
+        </form>
+        {% else %}
+        <p class="wa-app__readonly">You can read chats. Sending is turned off for this account.</p>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+
+  <div class="wa-app__contacts" data-wa-contacts hidden>
+    <div class="wa-app__contacts-head">
+      <button type="button" class="comms-icon-btn" data-wa-contacts-close aria-label="Close">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <strong>New chat</strong>
+    </div>
+    <label class="wa-app__search">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input type="search" placeholder="Search contacts" autocomplete="off" data-wa-contact-search aria-label="Search contacts">
+    </label>
+    <div class="wa-app__contact-list" data-wa-contact-list></div>
+  </div>
+</section>
+{% endwith %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/whatsapp-inbox.js' %}?v=3"></script>
+{% endblock %}

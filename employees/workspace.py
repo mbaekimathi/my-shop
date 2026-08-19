@@ -212,9 +212,13 @@ def _workspace_parent_url(request, role):
     if view_name in {
         "employees:whatsapp_catalogue",
         "employees:whatsapp_contacts",
+        "employees:whatsapp_inbox",
         "employees:marketing_activities",
     }:
         return marketing_links_url()
+
+    if view_name == "employees:marketing_activity_detail":
+        return marketing_activities_url(role)
 
     if view_name == "employees:analytics_section":
         section = (kwargs.get("section") or "").strip().lower()
@@ -383,9 +387,26 @@ def marketing_activities_url(role):
     )
 
 
+def marketing_activity_url(role, campaign_id):
+    return reverse(
+        "employees:marketing_activity_detail",
+        kwargs={
+            "role_segment": role_url_segment(role),
+            "campaign_id": campaign_id,
+        },
+    )
+
+
 def whatsapp_contacts_url(role):
     return reverse(
         "employees:whatsapp_contacts",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+
+
+def whatsapp_inbox_url(role):
+    return reverse(
+        "employees:whatsapp_inbox",
         kwargs={"role_segment": role_url_segment(role)},
     )
 
@@ -439,14 +460,26 @@ def _footer_site_links(
     return links
 
 
+def _has_dashboard_nav_link(primary):
+    return any(item.get("type") == "link" and item.get("label") == "Dashboard" for item in primary)
+
+
 def resolve_sidebar_hrefs(sidebar):
-    """Ensure every link item has a resolved href."""
+    """Ensure every link item has a resolved href, and a Dashboard link unless this is the dashboard."""
     if not sidebar:
         return sidebar
     for section in ("primary", "footer"):
         for item in sidebar.get(section, []):
             if item.get("type") == "link" and "href" not in item and item.get("url_name"):
                 item["href"] = reverse(item["url_name"])
+    dashboard_url = sidebar.get("dashboard_url")
+    if dashboard_url and not sidebar.get("omit_dashboard_link"):
+        primary = list(sidebar.get("primary") or [])
+        if not _has_dashboard_nav_link(primary):
+            sidebar["primary"] = [
+                _link("Dashboard", "layout-dashboard", href=dashboard_url),
+                *primary,
+            ]
     return sidebar
 
 
@@ -505,8 +538,12 @@ def _module_sidebar_links(role, *, active_slug=None, profile=None, skip_slugs=()
     return links
 
 
-def sidebar_for_role_dashboard(role, profile=None, *, active_slug=None):
+def sidebar_for_role_dashboard(
+    role, profile=None, *, active_slug=None, omit_dashboard_link=True
+):
     """Sidebar links for role home / dashboard pages."""
+    from .module_permissions import employee_may_any
+
     dashboard_url = reverse(role_home_url_name(role))
     skip_slugs = ("whatsapp",) if role == EmployeeRole.IT_SUPPORT else ()
     primary = _module_sidebar_links(
@@ -521,10 +558,29 @@ def sidebar_for_role_dashboard(role, profile=None, *, active_slug=None):
                 active=active_slug == "marketing",
             )
         )
+        unread = 0
+        if profile is None or employee_may_any(profile, "whatsapp"):
+            if profile is not None:
+                try:
+                    from communications.replies import unread_reply_count
+
+                    unread = unread_reply_count()
+                except Exception:
+                    unread = 0
+            primary.append(
+                _link(
+                    "WhatsApp",
+                    "messages-square",
+                    href=whatsapp_inbox_url(role),
+                    active=active_slug == "whatsapp-inbox",
+                    badge=unread,
+                )
+            )
     return resolve_sidebar_hrefs(
         {
             "page": "role_dashboard",
             "dashboard_url": dashboard_url,
+            "omit_dashboard_link": omit_dashboard_link,
             "primary": primary,
             "footer": _footer_site_links(
                 profile=profile,
@@ -559,17 +615,19 @@ def sidebar_for_my_shop(
 
     shops = shops or []
     print_channels = list(print_channels or [])
+    omit_dashboard_link = False
     if portal and shop is not None:
         dashboard_url = reverse(
             "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
         )
+        # Shop-portal floor *is* that session's home.
+        omit_dashboard_link = active == "workspace"
         primary = []
         sign_out = _link(
             "Sign out", "log-out", url_name="employees:shop_logout", danger=True
         )
     else:
         dashboard_url = reverse(role_home_url_name(role))
-        # MY-SHOP shop pages: no Dashboard link (shop links only).
         primary = []
         sign_out = _link("Sign out", "log-out", url_name="employees:logout", danger=True)
     if shop is not None:
@@ -686,6 +744,7 @@ def sidebar_for_my_shop(
         {
             "page": "my_shop",
             "dashboard_url": dashboard_url,
+            "omit_dashboard_link": omit_dashboard_link,
             "primary": primary,
             "footer": _footer_site_links(
                 employee_login=True,
@@ -1223,7 +1282,7 @@ def sidebar_for_stock(role, *, profile=None):
 
 
 def sidebar_for_suppliers(role, *, profile=None):
-    """Focused sidebar for the suppliers workspace — All suppliers only."""
+    """Focused sidebar for the suppliers workspace."""
     dashboard_url = reverse(role_home_url_name(role))
     return resolve_sidebar_hrefs(
         {
@@ -1326,7 +1385,7 @@ def sidebar_for_client_credit_account(
 
 
 def sidebar_for_marketing_links(role, *, profile=None, active_view="marketing"):
-    """Sidebar for Marketing links: Communication settings, Share items, Contacts, and Activities."""
+    """Sidebar for Marketing links: Communication settings, Share items, Contacts, Inbox, and Activities."""
     from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
@@ -1361,6 +1420,24 @@ def sidebar_for_marketing_links(role, *, profile=None, active_view="marketing"):
                 active=active_view == "contacts",
             )
         )
+        inbox_unread = 0
+        if profile is None or employee_may(profile, "whatsapp", "inbox"):
+            if profile is not None:
+                try:
+                    from communications.replies import unread_reply_count
+
+                    inbox_unread = unread_reply_count()
+                except Exception:
+                    inbox_unread = 0
+            primary.append(
+                _link(
+                    "Inbox",
+                    "inbox",
+                    href=whatsapp_inbox_url(role),
+                    active=active_view == "inbox",
+                    badge=inbox_unread,
+                )
+            )
         primary.append(
             _link(
                 "Activities",
@@ -1465,6 +1542,7 @@ def sidebar_for_super_admin():
         {
             "page": "super_admin_dashboard",
             "dashboard_url": dashboard_url,
+            "omit_dashboard_link": True,
             "primary": [
                 *_module_sidebar_links(EmployeeRole.SUPER_ADMIN),
                 _link(

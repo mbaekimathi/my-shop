@@ -4,7 +4,7 @@
 {% block body_class %}page-workspace{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260818-card1">
+<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260819-low-stock-look">
 {% endblock %}
 
 {% block body %}
@@ -69,6 +69,9 @@
 {% if shop_day_modal %}
 {% include "shops/partials/shop_day_modal.html" %}
 {% endif %}
+{% if low_stock_alerts %}
+{% include "shops/partials/shop_low_stock_modal.html" %}
+{% endif %}
 {% endblock %}
 {% endblock %}
 
@@ -77,6 +80,9 @@
 {{ block.super }}
 {% if shop_day_modal %}
 <script defer src="{% static 'js/my-shop-day-prompt.js' %}?v=4"></script>
+{% endif %}
+{% if low_stock_alerts %}
+<script defer src="{% static 'js/shop-low-stock-alert.js' %}?v=1"></script>
 {% endif %}
 <script defer src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
 <script>

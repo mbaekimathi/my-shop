@@ -37,6 +37,7 @@ from .twilio import (
     logout_bridge,
     request_signature_ok,
     sandbox_join_info,
+    sync_inbound_replies,
     sync_outbound_delivery_status,
 )
 from .automations import DEFAULT_CATALOGUE_TEMPLATE, WHATSAPP_TEXT_LIMIT
@@ -61,7 +62,13 @@ from .constants import (
     TRANSACTION_MIN_CHOICES,
 )
 from .models import BroadcastCampaign
-from .replies import inbox_threads, unread_reply_count
+from .replies import (
+    inbox_threads,
+    mark_phone_read,
+    record_inbound_reply,
+    send_inbox_reply,
+    unread_reply_count,
+)
 from .services import (
     audience_summary,
     add_whatsapp_contact,
@@ -322,10 +329,6 @@ def whatsapp_catalogue(request, role_segment):
         "summary": "Send item photos and prices on WhatsApp.",
         "icon": "images",
     }
-    try:
-        sync_outbound_delivery_status()
-    except Exception:
-        logger.exception("Twilio delivery sync failed")
     bridge = fetch_bridge_status()
     comms = communications_settings_as_dict()
     shops = actionable_shops_for_profile(profile)
@@ -472,6 +475,60 @@ def whatsapp_contacts(request, role_segment):
 
 @active_employee_required
 @require_http_methods(["GET", "POST"])
+def whatsapp_inbox(request, role_segment):
+    """Customer WhatsApp chats on the Twilio number."""
+    profile, deny = _guard(request, role_segment, submodule="inbox")
+    if deny:
+        return deny
+    if request.method == "POST":
+        return _automation_post(request, profile)
+
+    try:
+        sync_inbound_replies()
+    except Exception:
+        logger.exception("Twilio inbound sync failed")
+    try:
+        sync_outbound_delivery_status()
+    except Exception:
+        logger.exception("Twilio delivery sync failed")
+    inbox = inbox_threads(mark_read=False)
+    from .services import list_whatsapp_contacts
+
+    module = get_dashboard_module("whatsapp", profile.role) or {
+        "label": "WhatsApp",
+        "summary": "Share items on WhatsApp.",
+        "icon": "messages-square",
+    }
+    meta = {
+        "title": "WhatsApp",
+        "headline": "WhatsApp",
+        "summary": "Chats on the Twilio WhatsApp number.",
+        "icon": "messages-square",
+    }
+    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
+    bridge = fetch_bridge_status()
+    context = {
+        "profile": profile,
+        "meta": meta,
+        "module": module,
+        "role_label": profile.get_role_display(),
+        "status_label": profile.get_status_display(),
+        "page_sidebar": sidebar_for_marketing_links(
+            profile.role, profile=profile, active_view="inbox"
+        ),
+        "inbox": inbox,
+        "contacts": list_whatsapp_contacts()[:400],
+        "bridge": bridge,
+        "settings_url": settings_url,
+        "comms_api": _api_urls(role_segment),
+        "module_permissions": module_capabilities(profile, "whatsapp"),
+        "selected_phone": (request.GET.get("phone") or "").strip(),
+    }
+    return render(request, "employees/whatsapp_inbox.html", context)
+
+
+@active_employee_required
+@require_http_methods(["GET", "POST"])
 def marketing_activities(request, role_segment):
     """WhatsApp send history: queued, delivered, viewed, cancel, and retry."""
     profile, deny = _guard(request, role_segment)
@@ -511,6 +568,61 @@ def marketing_activities(request, role_segment):
         "module_permissions": module_capabilities(profile, "whatsapp"),
     }
     return render(request, "employees/marketing_activities.html", context)
+
+
+@active_employee_required
+@require_http_methods(["GET", "POST"])
+def marketing_activity_detail(request, role_segment, campaign_id):
+    """One WhatsApp send: the message, who it went to, and each person's status."""
+    profile, deny = _guard(request, role_segment)
+    if deny:
+        return deny
+    if request.method == "POST":
+        return _automation_post(request, profile)
+
+    campaign = BroadcastCampaign.objects.filter(pk=campaign_id).first()
+    if campaign is None:
+        raise Http404("Send not found.")
+    try:
+        sync_outbound_delivery_status()
+    except Exception:
+        logger.exception("Twilio delivery sync failed")
+    activity = campaign_as_dict(campaign)
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"ok": True, "campaign": activity})
+
+    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
+    activities_url = reverse(
+        "employees:marketing_activities",
+        kwargs={"role_segment": role_segment},
+    )
+    module = get_dashboard_module("whatsapp", profile.role) or {
+        "label": "WhatsApp",
+        "summary": "Share items on WhatsApp.",
+        "icon": "messages-square",
+    }
+    kind = activity.get("kind_label") or "WhatsApp send"
+    meta = {
+        "title": kind,
+        "headline": kind,
+        "summary": "Message, recipients, and delivery status for this send.",
+        "icon": "history",
+    }
+    context = {
+        "profile": profile,
+        "meta": meta,
+        "module": module,
+        "role_label": profile.get_role_display(),
+        "status_label": profile.get_status_display(),
+        "page_sidebar": sidebar_for_marketing_links(
+            profile.role, profile=profile, active_view="activities"
+        ),
+        "activity": activity,
+        "activities_url": activities_url,
+        "settings_url": settings_url,
+        "module_permissions": module_capabilities(profile, "whatsapp"),
+    }
+    return render(request, "employees/marketing_activity_detail.html", context)
 
 
 def _automation_toggles(comms: dict) -> list[dict]:
@@ -781,7 +893,7 @@ def _automation_post(request, profile):
 
     if action == "refresh_sends":
         try:
-            sync_outbound_delivery_status()
+            sync_outbound_delivery_status(force=True)
         except Exception:
             pass
         if wants_json:
@@ -907,12 +1019,7 @@ def _item_share_row(item, *, checked=False, source="bought") -> dict:
         amount = Decimal(price or 0).quantize(Decimal("1"))
     except (InvalidOperation, TypeError, ValueError):
         amount = Decimal("0")
-    image_url = ""
-    try:
-        if item.image:
-            image_url = item.image.url or ""
-    except Exception:
-        image_url = ""
+    image_url = item.public_image_url()
     return {
         "id": item.pk,
         "name": (item.name or "").strip() or "Item",
@@ -1082,12 +1189,63 @@ def communications_api_inbox(request, role_segment):
     profile, deny = _guard(request, role_segment, as_json=True, submodule="inbox")
     if deny:
         return deny
-    mark_read = request.method == "POST" or request.GET.get("mark_read") in {
-        "1",
-        "true",
-        "yes",
-    }
-    return JsonResponse(inbox_threads(mark_read=mark_read))
+
+    if request.method == "GET":
+        try:
+            sync_inbound_replies()
+        except Exception:
+            logger.exception("Twilio inbound sync failed")
+        payload = inbox_threads(mark_read=False)
+        phone = (request.GET.get("phone") or "").strip()
+        if phone:
+            mark_phone_read(phone)
+            payload = inbox_threads(mark_read=False)
+        return JsonResponse(payload)
+
+    action = ""
+    phone = ""
+    body = ""
+    image = None
+    if request.content_type and "multipart/form-data" in (request.content_type or ""):
+        action = (request.POST.get("action") or "send").strip()
+        phone = request.POST.get("phone") or ""
+        body = request.POST.get("body") or ""
+        image = request.FILES.get("image")
+    else:
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        action = str(payload.get("action") or "mark_read").strip()
+        phone = payload.get("phone") or ""
+        body = payload.get("body") or ""
+
+    if action == "send":
+        denied = require_module_permission(
+            request, profile, "whatsapp", "send", as_json=True
+        )
+        if denied:
+            return denied
+        try:
+            send_inbox_reply(
+                profile=profile,
+                phone=phone,
+                body=body,
+                image=image,
+                request=request,
+            )
+        except ValueError as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        mark_phone_read(phone)
+        payload = inbox_threads(mark_read=False)
+        payload["ok"] = True
+        return JsonResponse(payload)
+
+    if action in {"mark_read", "read"}:
+        mark_phone_read(phone)
+        return JsonResponse(inbox_threads(mark_read=False))
+
+    return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
 
 
 @active_employee_required
@@ -1252,3 +1410,28 @@ def twilio_status_callback(request):
         error_message=request.POST.get("ErrorMessage") or "",
     )
     return HttpResponse(status=204)
+
+
+@csrf_exempt
+@require_POST
+def twilio_inbound_callback(request):
+    """Public Twilio webhook for customer WhatsApp replies."""
+    from django.conf import settings
+
+    token = (get_communications_settings().twilio_auth_token or "").strip()
+    signature = request.headers.get("X-Twilio-Signature") or ""
+    if token and signature:
+        if not request_signature_ok(request, token, signature):
+            return HttpResponse(status=403)
+    elif token and not settings.DEBUG:
+        return HttpResponse(status=403)
+
+    record_inbound_reply(
+        message_sid=request.POST.get("MessageSid") or request.POST.get("SmsSid") or "",
+        from_value=request.POST.get("From") or "",
+        wa_id=request.POST.get("WaId") or "",
+        body=request.POST.get("Body") or "",
+        sender_name=request.POST.get("ProfileName") or "",
+        num_media=request.POST.get("NumMedia") or 0,
+    )
+    return HttpResponse("<Response></Response>", content_type="text/xml")

@@ -23,7 +23,13 @@ TWILIO_API = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
 TWILIO_ACCOUNT_API = "https://api.twilio.com/2010-04-01/Accounts/{sid}.json"
 TWILIO_MESSAGE_API = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages/{msid}.json"
 _ACCOUNT_SID_RE = re.compile(r"AC[0-9a-fA-F]{32}")
+_MESSAGE_SID_RE = re.compile(r"^(SM|MM)[0-9a-fA-F]{32}$")
 _WA_LID_RE = re.compile(r"^[A-Za-z]{2}\.\d{6,}$")
+TWILIO_SYNC_SKIP_STATUSES = frozenset({"local", "missing", "not-found"})
+TWILIO_SYNC_CACHE_KEY = "comms:twilio_delivery_sync"
+TWILIO_SYNC_COOLDOWN_SECONDS = 20
+TWILIO_INBOUND_SYNC_CACHE_KEY = "comms:twilio_inbound_sync"
+TWILIO_INBOUND_SYNC_COOLDOWN_SECONDS = 20
 
 
 def _clean_account_sid(value: str) -> str:
@@ -32,6 +38,11 @@ def _clean_account_sid(value: str) -> str:
     if match:
         return match.group(0)
     return raw.split()[0] if raw else ""
+
+
+def is_twilio_message_sid(message_sid: str) -> bool:
+    """True for a real Twilio Message SID (SM/MM + 32 hex). Skips test fakes like SM_FAKE_*."""
+    return bool(_MESSAGE_SID_RE.fullmatch((message_sid or "").strip()))
 
 
 def is_auth_error(error: str) -> bool:
@@ -302,8 +313,7 @@ def logout_bridge() -> dict[str, Any]:
     return {"ok": True}
 
 
-def status_callback_url() -> str:
-    """Public HTTPS URL Twilio can POST delivery/read updates to."""
+def _callback_base_url() -> str:
     try:
         from shops.daraja_stk import resolve_callback_base_url
 
@@ -312,9 +322,19 @@ def status_callback_url() -> str:
         base = ""
     if not base:
         base = (getattr(settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip().rstrip("/")
-    if not base:
-        return ""
-    return f"{base}/twilio/status/"
+    return base
+
+
+def status_callback_url() -> str:
+    """Public HTTPS URL Twilio can POST delivery/read updates to."""
+    base = _callback_base_url()
+    return f"{base}/twilio/status/" if base else ""
+
+
+def inbound_callback_url() -> str:
+    """Public HTTPS URL Twilio can POST customer WhatsApp replies to."""
+    base = _callback_base_url()
+    return f"{base}/twilio/incoming/" if base else ""
 
 
 def request_signature_ok(request, auth_token: str, signature: str) -> bool:
@@ -431,7 +451,7 @@ def fetch_twilio_message(account_sid: str, auth_token: str, message_sid: str) ->
     sid = _clean_account_sid(account_sid)
     token = (auth_token or "").strip()
     msid = (message_sid or "").strip()
-    if not sid or not token or not msid:
+    if not sid or not token or not is_twilio_message_sid(msid):
         return None
     request = Request(
         TWILIO_MESSAGE_API.format(sid=sid, msid=msid),
@@ -441,6 +461,11 @@ def fetch_twilio_message(account_sid: str, auth_token: str, message_sid: str) ->
     try:
         with urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8") or "{}")
+    except HTTPError as exc:
+        if exc.code == 404:
+            return {"_not_found": True}
+        logger.debug("Twilio message fetch failed for %s: HTTP %s", msid, exc.code)
+        return None
     except Exception:
         logger.debug("Twilio message fetch failed for %s", msid, exc_info=True)
         return None
@@ -454,19 +479,33 @@ def _await_message_outcome(
     attempts: int = 4,
     delay: float = 0.9,
 ) -> dict[str, Any]:
+    if not is_twilio_message_sid(message_sid):
+        return {}
     last: dict[str, Any] = {}
     for index in range(max(1, attempts)):
         if index:
             time.sleep(delay)
         last = fetch_twilio_message(account_sid, auth_token, message_sid) or last
+        if last.get("_not_found"):
+            return {}
         status = str(last.get("status") or "").lower()
         if last.get("error_code") or status in {"delivered", "read", "failed", "undelivered"}:
             return last
     return last
 
 
-def sync_outbound_delivery_status(*, limit: int = 25) -> int:
+def _abandon_delivery_poll(message, reason: str) -> None:
+    state = (reason or "missing")[:40]
+    if (message.provider_status or "") == state:
+        return
+    message.provider_status = state
+    message.save(update_fields=["provider_status", "updated_at"])
+
+
+def sync_outbound_delivery_status(*, limit: int = 25, force: bool = False) -> int:
     """Pull queued/sent Twilio outcomes. Needed on localhost where webhooks cannot arrive."""
+    from django.core.cache import cache
+
     from .constants import MSG_SENT
     from .models import OutboundMessage
 
@@ -475,16 +514,32 @@ def sync_outbound_delivery_status(*, limit: int = 25) -> int:
     token = (row.twilio_auth_token or "").strip()
     if not account_sid or not token:
         return 0
-    messages = list(
+    if force:
+        cache.set(TWILIO_SYNC_CACHE_KEY, "1", TWILIO_SYNC_COOLDOWN_SECONDS)
+    elif not cache.add(TWILIO_SYNC_CACHE_KEY, "1", TWILIO_SYNC_COOLDOWN_SECONDS):
+        return 0
+    candidates = list(
         OutboundMessage.objects.filter(status=MSG_SENT)
         .exclude(wa_message_id="")
+        .exclude(provider_status__in=sorted(TWILIO_SYNC_SKIP_STATUSES))
         .filter(delivered_at__isnull=True)
-        .order_by("-id")[:limit]
+        .order_by("-id")[: max(limit * 8, 50)]
     )
+    fetchable = []
+    for message in candidates:
+        if not is_twilio_message_sid(message.wa_message_id):
+            _abandon_delivery_poll(message, "local")
+            continue
+        fetchable.append(message)
+        if len(fetchable) >= limit:
+            break
     updated = 0
-    for message in messages:
+    for message in fetchable:
         info = fetch_twilio_message(account_sid, token, message.wa_message_id)
         if not info:
+            continue
+        if info.get("_not_found"):
+            _abandon_delivery_poll(message, "missing")
             continue
         if apply_message_status(
             message_sid=message.wa_message_id,
@@ -494,6 +549,62 @@ def sync_outbound_delivery_status(*, limit: int = 25) -> int:
         ):
             updated += 1
     return updated
+
+
+def list_recent_twilio_messages(*, page_size: int = 50) -> list[dict[str, Any]]:
+    row = get_communications_settings()
+    account_sid = _clean_account_sid(row.twilio_account_sid or "")
+    token = (row.twilio_auth_token or "").strip()
+    if not account_sid or not token:
+        return []
+    size = max(1, min(int(page_size or 50), 100))
+    request = Request(
+        TWILIO_API.format(sid=account_sid) + f"?PageSize={size}",
+        method="GET",
+        headers={"Authorization": _basic_auth_header(account_sid, token)},
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+    except Exception:
+        logger.debug("Could not list Twilio messages", exc_info=True)
+        return []
+    messages = payload.get("messages")
+    return messages if isinstance(messages, list) else []
+
+
+def sync_inbound_replies(*, force: bool = False, limit: int = 50) -> int:
+    """Pull recent inbound Twilio messages. Used on localhost where webhooks cannot arrive."""
+    from django.core.cache import cache
+
+    from .replies import record_inbound_reply
+
+    row = get_communications_settings()
+    if not row.has_twilio_credentials():
+        return 0
+    if force:
+        cache.set(TWILIO_INBOUND_SYNC_CACHE_KEY, "1", TWILIO_INBOUND_SYNC_COOLDOWN_SECONDS)
+    elif not cache.add(TWILIO_INBOUND_SYNC_CACHE_KEY, "1", TWILIO_INBOUND_SYNC_COOLDOWN_SECONDS):
+        return 0
+
+    saved = 0
+    for item in list_recent_twilio_messages(page_size=limit):
+        if str(item.get("direction") or "").lower() != "inbound":
+            continue
+        sid = str(item.get("sid") or item.get("message_sid") or "").strip()
+        if not sid:
+            continue
+        if record_inbound_reply(
+            message_sid=sid,
+            from_value=str(item.get("from") or ""),
+            wa_id=str(item.get("wa_id") or ""),
+            body=str(item.get("body") or ""),
+            sender_name="",
+            created_at=item.get("date_sent") or item.get("date_created"),
+            num_media=item.get("num_media") or 0,
+        ):
+            saved += 1
+    return saved
 
 
 def fetch_whatsapp_contacts(*, search: str = "", include_groups: bool = True) -> dict[str, Any]:

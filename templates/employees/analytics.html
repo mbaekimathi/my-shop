@@ -43,11 +43,7 @@
       {% if not page.hide_date_filters %}
       <form class="ax-filters" method="get" data-analytics-filters>
         <select name="shop_id" aria-label="Shop">
-          {% if credits_require_shop_pick %}
-          <option value="">{% if not selected_shop_ids %} selected{% endif %}>Select a shop</option>
-          {% else %}
-          <option value="">All shops</option>
-          {% endif %}
+          <option value=""{% if not selected_shop_ids %} selected{% endif %}>All shops</option>
           {% for shop in filter_shops %}
           <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
           {% endfor %}

@@ -401,23 +401,69 @@ def build_client_credit_audit_trail(*, profile, client_id: int) -> dict:
     }
 
 
-def build_credit_audits(*, profile) -> dict:
-    """Chronological non-sale audit feed for all accessible credit accounts."""
-    from employees.analytics_services import actionable_shops_for_profile
+CREDIT_AUDIT_EXCLUDED_KINDS = frozenset({ClientCreditAccountEventKind.CREDIT_ISSUED})
 
+
+def credit_audit_event_options() -> list[dict]:
+    """Filter choices for the credit audits page (credit sales stay hidden)."""
+    options = [{"slug": "", "label": "All events", "kinds": None}]
+    for value, label in ClientCreditAccountEventKind.choices:
+        if value in CREDIT_AUDIT_EXCLUDED_KINDS:
+            continue
+        options.append({"slug": value, "label": label, "kinds": [value]})
+    return options
+
+
+def parse_credit_audit_event_filter(raw) -> dict:
+    slug = (raw or "").strip().lower()
+    if slug in {"", "all"}:
+        return credit_audit_event_options()[0]
+    for option in credit_audit_event_options():
+        if option["slug"] == slug:
+            return option
+    return credit_audit_event_options()[0]
+
+
+def build_credit_audits(*, profile, request=None, event_kind: str = "") -> dict:
+    """Chronological non-sale audit feed for all accessible credit accounts."""
+    from employees.analytics_services import (
+        _date_filter_context,
+        _within_created_range,
+        actionable_shops_for_profile,
+    )
+
+    event_option = parse_credit_audit_event_filter(event_kind)
+    event_filter = event_option["slug"]
+    event_filter_label = event_option["label"]
+    event_kinds = event_option["kinds"]
+    date_filter = _date_filter_context(request)
+    start, end = date_filter.get("start"), date_filter.get("end")
     shop_ids = [shop.pk for shop in actionable_shops_for_profile(profile)]
+    period_bits = [date_filter.get("report_period_label") or ""]
+    if event_filter:
+        period_bits.append(event_filter_label)
+    period_label = " · ".join(bit for bit in period_bits if bit)
+    empty_message = (
+        "No matching credit events recorded yet."
+        if event_filter
+        else "No credit account changes recorded yet."
+    )
     empty = {
+        **date_filter,
         "headline": "Credit audits",
         "lead": (
             "Payments, due-date updates, returns, and cancellations on credit "
             "receipts. Initial credit sales are not shown."
         ),
-        "period_label": "All accessible shops",
+        "period_label": period_label,
+        "event_options": credit_audit_event_options(),
+        "event_filter": event_filter,
+        "event_filter_label": event_filter_label,
         "rows": [],
         "event_count": 0,
         "payment_count": 0,
         "change_count": 0,
-        "empty_message": "No credit account changes recorded yet.",
+        "empty_message": empty_message,
         "summary_board": {
             "hero": {
                 "label": "Recorded changes",
@@ -475,18 +521,23 @@ def build_credit_audits(*, profile) -> dict:
             shop_ids=shop_ids,
         )
 
+    events_qs = ClientCreditAccountEvent.objects.filter(
+        shop_id__in=shop_ids
+    ).exclude(kind__in=CREDIT_AUDIT_EXCLUDED_KINDS)
+    if event_kinds:
+        events_qs = events_qs.filter(kind__in=event_kinds)
+    events_qs = _within_created_range(
+        events_qs, start, end, lookup="occurred_at"
+    )
     events = list(
-        ClientCreditAccountEvent.objects.filter(shop_id__in=shop_ids)
-        .exclude(kind=ClientCreditAccountEventKind.CREDIT_ISSUED)
-        .select_related(
+        events_qs.select_related(
             "client",
             "shop",
             "receipt",
             "actor",
             "actor__user",
             "stk_payment",
-        )
-        .order_by("-occurred_at", "-pk")
+        ).order_by("-occurred_at", "-pk")
     )
 
     rows = []
@@ -514,6 +565,7 @@ def build_credit_audits(*, profile) -> dict:
                 "id": event.pk,
                 "when_label": when.strftime("%d %b %Y · %H:%M"),
                 "client": client_name,
+                "kind": kind,
                 "kind_label": event.get_kind_display(),
                 "tone": _event_tone(kind),
                 "icon": _event_icon(kind),
@@ -529,17 +581,21 @@ def build_credit_audits(*, profile) -> dict:
     event_count = len(rows)
     client_count = len(client_names)
     return {
+        **date_filter,
         "headline": "Credit audits",
         "lead": (
             "Payments, due-date updates, returns, and cancellations on credit "
             "receipts. Initial credit sales are not shown."
         ),
-        "period_label": "All accessible shops",
+        "period_label": period_label,
+        "event_options": credit_audit_event_options(),
+        "event_filter": event_filter,
+        "event_filter_label": event_filter_label,
         "rows": rows,
         "event_count": event_count,
         "payment_count": payment_count,
         "change_count": change_count,
-        "empty_message": "No credit account changes recorded yet.",
+        "empty_message": empty_message,
         "summary_board": {
             "hero": {
                 "label": "Recorded changes",

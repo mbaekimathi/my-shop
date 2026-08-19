@@ -8,73 +8,16 @@
   <header class="stock-panel-head">
     <div class="stock-panel-head-top">
       <div>
-        <p class="stock-kicker">{% if is_movements_page %}Stock movement{% else %}Stock report{% endif %} · {{ report_range_label }}</p>
         <h2>{% if is_movements_page %}Stock movement{% else %}Stock report{% endif %}</h2>
-        <p>
-          {% if is_movements_page %}
-          Movements for {{ report_period_label }}.
-          {% else %}
-          Item balances with activity for {{ report_period_label }}.
-          {% endif %}
-        </p>
-      </div>
-      <div class="stock-stats">
-        {% if is_movements_page %}
-        <p class="stock-stat">
-          <strong>{% if is_item_movement_summary %}{{ movement_item_count }}{% else %}{{ movement_count }}{% endif %}</strong>
-          <span>{% if is_item_movement_summary %}item{{ movement_item_count|pluralize }}{% else %}event{{ movement_count|pluralize }}{% endif %}</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_in }}</strong>
-          <span>units in</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_out }}</strong>
-          <span>units out</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_transfer_in }}</strong>
-          <span>transfer in</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_transfer_out }}</strong>
-          <span>transfer out</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_sale }}</strong>
-          <span>units sold</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_return }}</strong>
-          <span>returned</span>
-        </p>
-        {% else %}
-        <p class="stock-stat">
-          <strong>{{ item_count }}</strong>
-          <span>item{{ item_count|pluralize }}</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_in }}</strong>
-          <span>stock in</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_out }}</strong>
-          <span>stock out</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_sale }}</strong>
-          <span>stock sale</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ units_request }}</strong>
-          <span>stock request</span>
-        </p>
-        {% endif %}
+        <p>{{ report_range_label }} · {{ report_period_label }}</p>
       </div>
     </div>
 
     <form class="stock-report-filters" method="get" data-stock-report-filters>
       <input type="hidden" name="mode" value="{{ stock_mode }}">
+      {% if not is_movements_page %}
+      <input type="hidden" name="view_by" value="item">
+      {% endif %}
 
       <label class="stock-report-field">
         <span>Shop</span>
@@ -211,18 +154,14 @@
   </header>
 
   <div id="stock-movements" class="stock-report-movements">
+    {% if is_item_movement_detail and detail_item %}
     <header class="stock-report-movements-head">
-      <div>
-        <h3>{% if is_item_movement_detail %}Item movement{% elif is_item_movement_summary %}Items with movement{% else %}{% if is_movements_page %}Stock movement{% else %}Item stock report{% endif %}{% endif %}</h3>
-        <p>{{ report_period_label }}</p>
-      </div>
-      {% if is_item_movement_detail and detail_item %}
       <a class="stock-report-back-link" href="{{ movements_back_url }}">
         <i data-lucide="arrow-left" aria-hidden="true"></i>
         All items
       </a>
-      {% endif %}
     </header>
+    {% endif %}
 
     {% if is_item_movement_detail and detail_item %}
     <div class="stock-report-item-focus">
@@ -237,31 +176,53 @@
       {% if is_item_movement_summary %}
         {% if movement_item_rows %}
         <div class="staff-table-wrap stock-report-table-wrap">
-          <table class="staff-table stock-report-table stock-report-table--items-summary">
+          <table class="staff-table stock-report-table stock-report-table--items-summary{% if movement_item_group_by_shop %} stock-report-table--items-by-shop{% endif %}">
+            <colgroup>
+              <col class="stock-col-item">
+              {% if movement_item_group_by_shop %}
+              <col class="stock-col-shop">
+              {% endif %}
+              <col class="stock-col-num" span="8">
+              <col class="stock-col-time">
+              <col class="stock-col-action">
+            </colgroup>
             <thead>
               <tr>
                 <th scope="col">Item</th>
-                <th scope="col">Current stock</th>
+                {% if movement_item_group_by_shop %}
+                <th scope="col">Shop</th>
+                {% endif %}
+                <th scope="col" title="Current stock">Stock</th>
                 <th scope="col">Events</th>
-                <th scope="col">In</th>
-                <th scope="col">Out</th>
-                <th scope="col">Transfer in</th>
-                <th scope="col">Transfer out</th>
-                <th scope="col">Sold</th>
-                <th scope="col">Returned</th>
-                <th scope="col">Last activity</th>
+                <th scope="col" title="Stock in">In</th>
+                <th scope="col" title="Stock out">Out</th>
+                <th scope="col" title="Transfer in">T-in</th>
+                <th scope="col" title="Transfer out">T-out</th>
+                <th scope="col" title="Stock sale">Sale</th>
+                <th scope="col" title="Returned">Return</th>
+                <th scope="col">Last</th>
                 <th scope="col"><span class="visually-hidden">Actions</span></th>
               </tr>
             </thead>
             <tbody>
               {% for row in movement_item_rows %}
-              <tr data-stock-live-row data-search-text="{{ row.item_name|lower }} {{ row.item_category|lower }}">
+              <tr
+                data-stock-live-row
+                data-item-group="{{ row.item_id }}"
+                data-search-text="{{ row.item_name|lower }} {{ row.item_category|lower }} {{ row.shop_name|lower }}"
+                class="{% if movement_item_group_by_shop %}{% if row.is_item_total %}is-item-total{% elif row.is_item_start %}is-item-start{% else %}is-shop-follow{% endif %}{% endif %}"
+              >
                 <td data-label="Item">
+                  {% if not movement_item_group_by_shop or row.is_item_start %}
                   <strong>{{ row.item_name }}</strong>
                   {% if row.item_category %}
                   <span class="stock-report-from">{{ row.item_category }}</span>
                   {% endif %}
+                  {% endif %}
                 </td>
+                {% if movement_item_group_by_shop %}
+                <td data-label="Shop">{% if row.is_item_total %}<strong>Total</strong>{% else %}{{ row.shop_name }}{% endif %}</td>
+                {% endif %}
                 <td data-label="Current stock">
                   <span class="stock-matrix-qty stock-matrix-qty--total{% if row.current_stock == 0 %} is-empty{% endif %}">{{ row.current_stock }}</span>
                 </td>
@@ -273,10 +234,14 @@
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if row.units_sale == 0 %} is-empty{% endif %}">{{ row.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return{% if row.units_return == 0 %} is-empty{% endif %}">{{ row.units_return }}</span></td>
                 <td data-label="Last activity">
-                  {% if report_range == 'day' %}
-                  {{ row.last_at|time:"H:i" }}
+                  {% if row.last_at %}
+                    {% if report_range == 'day' %}
+                    {{ row.last_at|time:"H:i" }}
+                    {% else %}
+                    {{ row.last_at|date:"d M Y" }} · {{ row.last_at|time:"H:i" }}
+                    {% endif %}
                   {% else %}
-                  {{ row.last_at|date:"d M Y" }} · {{ row.last_at|time:"H:i" }}
+                  —
                   {% endif %}
                 </td>
                 <td data-label="Actions">
@@ -289,12 +254,32 @@
               </tr>
               {% endfor %}
             </tbody>
+            {% if movement_item_rows %}
+            <tfoot>
+              <tr>
+                <td data-label="Item"><strong>Total</strong></td>
+                {% if movement_item_group_by_shop %}
+                <td data-label="Shop"></td>
+                {% endif %}
+                <td data-label="Current stock"><span class="stock-matrix-qty stock-matrix-qty--total">{{ movement_item_totals.current_stock }}</span></td>
+                <td data-label="Events">{{ movement_item_totals.event_count }}</td>
+                <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in">{{ movement_item_totals.units_in }}</span></td>
+                <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out">{{ movement_item_totals.units_out }}</span></td>
+                <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--in">{{ movement_item_totals.units_transfer_in }}</span></td>
+                <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--out">{{ movement_item_totals.units_transfer_out }}</span></td>
+                <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale">{{ movement_item_totals.units_sale }}</span></td>
+                <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ movement_item_totals.units_return }}</span></td>
+                <td data-label="Last activity"></td>
+                <td data-label="Actions"></td>
+              </tr>
+            </tfoot>
+            {% endif %}
           </table>
         </div>
         {% else %}
         <div class="dashboard-placeholder">
           <i data-lucide="package" aria-hidden="true"></i>
-          <p>No items had stock movement in {{ report_period_label }} for these filters.</p>
+          <p>No shop stock or movement in {{ report_period_label }} for these filters.</p>
         </div>
         {% endif %}
       {% elif movement_events %}
@@ -374,43 +359,69 @@
     {% else %}
       {% if item_report_rows %}
       <div class="staff-table-wrap stock-report-table-wrap">
-        <table class="staff-table stock-report-table stock-report-table--items">
+        <table class="staff-table stock-report-table stock-report-table--items{% if item_report_group_by_shop %} stock-report-table--items-by-shop{% endif %}">
+          <colgroup>
+            <col class="stock-col-item">
+            {% if item_report_group_by_shop %}
+            <col class="stock-col-shop">
+            {% endif %}
+            <col class="stock-col-num" span="8">
+          </colgroup>
           <thead>
             <tr>
               <th scope="col">Item</th>
-              <th scope="col">Starting stock</th>
-              <th scope="col">Stock request</th>
-              <th scope="col">Stock in</th>
-              <th scope="col">Stock out</th>
-              <th scope="col">Stock sale</th>
-              <th scope="col">Closing stock</th>
+              {% if item_report_group_by_shop %}
+              <th scope="col">Shop</th>
+              {% endif %}
+              <th scope="col" title="Starting stock">Start</th>
+              <th scope="col" title="Stock in">In</th>
+              <th scope="col" title="Transfer in">T-in</th>
+              <th scope="col" title="Stock out">Out</th>
+              <th scope="col" title="Transfer out">T-out</th>
+              <th scope="col" title="Stock sale">Sale</th>
+              <th scope="col" title="Returned">Return</th>
+              <th scope="col" title="Closing stock">Close</th>
             </tr>
           </thead>
           <tbody>
             {% for row in item_report_rows %}
             <tr
               data-stock-live-row
-              data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }}"
-              {% if row.item.is_suspended %} class="is-suspended"{% endif %}
+              data-item-group="{{ row.item.pk }}"
+              data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }} {{ row.shop_name|lower }}"
+              class="{% if row.item.is_suspended %}is-suspended{% endif %}{% if item_report_group_by_shop %}{% if row.is_item_total %} is-item-total{% elif row.is_item_start %} is-item-start{% else %} is-shop-follow{% endif %}{% endif %}"
             >
               <td data-label="Item">
+                {% if not item_report_group_by_shop or row.is_item_start %}
                 <strong>{{ row.item.name }}</strong>
+                {% if row.item.category %}
                 <span class="stock-report-from">{{ row.item.category }}</span>
+                {% endif %}
+                {% endif %}
               </td>
+              {% if item_report_group_by_shop %}
+              <td data-label="Shop">{% if row.is_item_total %}<strong>Total</strong>{% else %}{{ row.shop_name }}{% endif %}</td>
+              {% endif %}
               <td data-label="Starting stock">
                 <span class="stock-matrix-qty{% if row.starting_stock == 0 %} is-empty{% endif %}">{{ row.starting_stock }}</span>
-              </td>
-              <td data-label="Stock request">
-                <span class="stock-matrix-qty stock-report-qty--request{% if row.stock_request == 0 %} is-empty{% endif %}">{{ row.stock_request }}</span>
               </td>
               <td data-label="Stock in">
                 <span class="stock-matrix-qty stock-report-qty--in{% if row.stock_in == 0 %} is-empty{% endif %}">{{ row.stock_in }}</span>
               </td>
+              <td data-label="Transfer in">
+                <span class="stock-matrix-qty stock-report-qty--transfer-in{% if row.stock_transfer_in == 0 %} is-empty{% endif %}">{{ row.stock_transfer_in }}</span>
+              </td>
               <td data-label="Stock out">
                 <span class="stock-matrix-qty stock-report-qty--out{% if row.stock_out == 0 %} is-empty{% endif %}">{{ row.stock_out }}</span>
               </td>
+              <td data-label="Transfer out">
+                <span class="stock-matrix-qty stock-report-qty--transfer-out{% if row.stock_transfer_out == 0 %} is-empty{% endif %}">{{ row.stock_transfer_out }}</span>
+              </td>
               <td data-label="Stock sale">
                 <span class="stock-matrix-qty stock-report-qty--sale{% if row.stock_sale == 0 %} is-empty{% endif %}">{{ row.stock_sale }}</span>
+              </td>
+              <td data-label="Returned">
+                <span class="stock-matrix-qty stock-report-qty--return{% if row.stock_return == 0 %} is-empty{% endif %}">{{ row.stock_return }}</span>
               </td>
               <td data-label="Closing stock">
                 <span class="stock-matrix-qty stock-matrix-qty--total{% if row.closing_stock == 0 %} is-empty{% endif %}">{{ row.closing_stock }}</span>
@@ -420,12 +431,17 @@
           </tbody>
           <tfoot>
             <tr>
-              <th scope="row" data-label="Item">Total</th>
+              <td data-label="Item"><strong>Total</strong></td>
+              {% if item_report_group_by_shop %}
+              <td data-label="Shop"></td>
+              {% endif %}
               <td data-label="Starting stock"><span class="stock-matrix-qty">{{ item_report_totals.starting_stock }}</span></td>
-              <td data-label="Stock request"><span class="stock-matrix-qty stock-report-qty--request">{{ item_report_totals.stock_request }}</span></td>
               <td data-label="Stock in"><span class="stock-matrix-qty stock-report-qty--in">{{ item_report_totals.stock_in }}</span></td>
+              <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--transfer-in">{{ item_report_totals.stock_transfer_in }}</span></td>
               <td data-label="Stock out"><span class="stock-matrix-qty stock-report-qty--out">{{ item_report_totals.stock_out }}</span></td>
+              <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--transfer-out">{{ item_report_totals.stock_transfer_out }}</span></td>
               <td data-label="Stock sale"><span class="stock-matrix-qty stock-report-qty--sale">{{ item_report_totals.stock_sale }}</span></td>
+              <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ item_report_totals.stock_return }}</span></td>
               <td data-label="Closing stock"><span class="stock-matrix-qty stock-matrix-qty--total">{{ item_report_totals.closing_stock }}</span></td>
             </tr>
           </tfoot>
@@ -434,7 +450,7 @@
       {% else %}
       <div class="dashboard-placeholder">
         <i data-lucide="bar-chart-3" aria-hidden="true"></i>
-        <p>No stock activity in {{ report_period_label }} for these filters.</p>
+        <p>No shop stock or movement in {{ report_period_label }} for these filters.</p>
       </div>
       {% endif %}
       <p class="stock-report-live-empty" data-stock-live-empty hidden>No rows match your search.</p>

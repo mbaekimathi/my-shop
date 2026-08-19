@@ -37,8 +37,10 @@ from items.services import (
     apply_stock_movement,
     build_stock_catalog_page,
     last_buying_prices_for_items,
+    list_shop_low_stock_alerts,
     respond_to_stock_request,
     search_suppliers,
+    shop_has_low_stock_alerts,
 )
 
 from .models import (
@@ -333,19 +335,39 @@ def _shop_day_all_shops_context(shops, profile):
     }
 
 
-def _shop_floor_chrome(shop, profile, shops, *, active, print_channels=None):
+def _low_stock_alert_force_key(shop):
+    return f"low_stock_alert_force_{shop.pk}"
+
+
+def _shop_floor_chrome(
+    shop, profile, shops, *, active, print_channels=None, request=None
+):
     portal = profile is None
     pending_request_count = 0
     stock_request_status_url = ""
     if shop is not None:
-        pending_request_count = StockMovement.objects.filter(
-            movement_type=StockMovementType.REQUEST,
-            requested_from_shop=shop,
-            request_status=StockRequestStatus.PENDING,
-        ).count()
+        pending_request_count = (
+            StockMovement.objects.filter(
+                movement_type=StockMovementType.REQUEST,
+                requested_from_shop=shop,
+                request_status=StockRequestStatus.PENDING,
+            )
+            .order_by()
+            .count()
+        )
         stock_request_status_url = reverse(
             "employees:my_shop_stock_request_status", kwargs={"shop_id": shop.pk}
         )
+    low_stock_alerts = []
+    low_stock_alert_force = False
+    if shop is not None:
+        force_key = _low_stock_alert_force_key(shop)
+        if request is not None:
+            low_stock_alert_force = bool(request.session.get(force_key))
+            if active == "workspace" and low_stock_alert_force:
+                request.session.pop(force_key, None)
+        if active == "workspace":
+            low_stock_alerts = list_shop_low_stock_alerts(shop)
     return {
         "profile": profile,
         "role_label": "Shop portal" if portal else profile.get_role_display(),
@@ -366,6 +388,10 @@ def _shop_floor_chrome(shop, profile, shops, *, active, print_channels=None):
         "shop_portal": portal,
         "stock_request_status_url": stock_request_status_url,
         "sidebar_pending_request_count": pending_request_count,
+        "low_stock_alerts": low_stock_alerts,
+        "low_stock_alert_count": len(low_stock_alerts),
+        "low_stock_alert_force": low_stock_alert_force,
+        "low_stock_alert_on_selling": active == "workspace",
         **_shop_day_prompt_context(shop, profile),
     }
 
@@ -639,15 +665,7 @@ def _catalog_rows_for_items(shop, items):
         description = (item.description or "").strip()
         if len(description) > 160:
             description = description[:157].rstrip() + "..."
-        image_url = ""
-        if item.image:
-            try:
-                # Skip broken DB paths so storefront/POS show placeholders
-                # instead of 404 image requests.
-                if item.image.storage.exists(item.image.name):
-                    image_url = item.image.url
-            except (ValueError, OSError):
-                image_url = ""
+        image_url = item.public_image_url()
         rows.append(
             {
                 "id": item.pk,
@@ -1170,6 +1188,7 @@ def my_shop_workspace(request, shop_id):
                 shops,
                 active="workspace",
                 print_channels=enabled_print_channels,
+                request=request,
             ),
             "meta": meta,
             "item_count": item_count,
@@ -1311,7 +1330,9 @@ def _render_my_shop_tool_page(
         "icon": icon,
     }
     context = {
-        **_shop_floor_chrome(shop, profile, shops, active=active),
+        **_shop_floor_chrome(
+            shop, profile, shops, active=active, request=request
+        ),
         "meta": meta,
     }
     if extra_context:
@@ -2158,6 +2179,8 @@ def my_shop_day_toggle(request, shop_id):
                         status=400,
                     )
             else:
+                if shop_has_low_stock_alerts(shop):
+                    request.session[_low_stock_alert_force_key(shop)] = True
                 if wants_json:
                     return JsonResponse(
                         {

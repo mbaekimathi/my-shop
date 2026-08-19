@@ -19,6 +19,15 @@
       <div class="ax-top-actions">
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">Back to credits</a>
       </div>
+      <form class="ax-filters" method="get" data-analytics-filters>
+        <select name="event" aria-label="Event">
+          {% for option in event_options %}
+          <option value="{{ option.slug }}"{% if option.slug == event_filter %} selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+        {% include "employees/partials/analytics_date_range_fields.html" %}
+        <button type="submit" class="ax-apply">Apply</button>
+      </form>
     </div>
     {% if lead %}<p class="ax-lead">{{ lead }}</p>{% endif %}
   </header>
@@ -50,7 +59,7 @@
       <header class="ax-card-head">
         <div class="ax-card-head-main">
           <h3>Credit activity</h3>
-          <span class="ax-card-hint">Newest first · sales excluded</span>
+          <span class="ax-card-hint">Newest first · sales excluded{% if event_filter %} · {{ event_filter_label }}{% endif %}</span>
         </div>
       </header>
       <div class="ax-table-wrap ax-table-wrap--scroll ax-table-wrap--list">
@@ -96,4 +105,27 @@
     </section>
   </div>
 </section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const form = document.querySelector("[data-analytics-filters]");
+    if (!form) return;
+    const rangeSelect = form.querySelector("[data-analytics-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const syncRange = () => {
+      const range = rangeSelect?.value || "day";
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.disabled = !match;
+        field.required = match;
+      });
+    };
+    rangeSelect?.addEventListener("change", syncRange);
+    syncRange();
+  })();
+</script>
 {% endblock %}

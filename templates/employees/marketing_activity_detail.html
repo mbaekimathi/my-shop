@@ -1,0 +1,125 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+{% with send=activity %}
+<section
+  class="workspace-hero wa-share-hero"
+  data-animate="rise"
+  data-wa-activity-detail
+  data-campaign-id="{{ send.id }}"
+>
+  {{ send|json_script:"wa-activity-data" }}
+  <div class="wa-share-hero__copy">
+    <p class="role-eyebrow">
+      <i data-lucide="history" aria-hidden="true"></i>
+      <span>Marketing · Activities</span>
+    </p>
+    <h2 class="workspace-hero-title" data-wa-kind>{{ send.kind_label|default:"WhatsApp send" }}</h2>
+    <p class="workspace-hero-copy">
+      <span data-wa-timing>{{ send.timing_label }}</span>
+      {% if send.progress_label %}
+      <span aria-hidden="true"> · </span>
+      <span data-wa-progress>{{ send.progress_label }}</span>
+      {% endif %}
+    </p>
+    <p class="wa-act-back">
+      <a href="{{ activities_url }}">Back to activities</a>
+    </p>
+  </div>
+  <div class="wa-share-hero__aside">
+    <span class="wa-chip" data-wa-status-chip>
+      <i data-lucide="send" aria-hidden="true"></i>
+      <strong data-wa-status data-status="{{ send.status }}">{{ send.status_label }}</strong>
+      <span data-wa-people-count>{{ send.recipient_count }} recipient{{ send.recipient_count|pluralize }}</span>
+    </span>
+  </div>
+</section>
+
+<section class="wa-activities wa-activity-detail" data-animate="rise" data-delay="1">
+  <p class="wa-auto__banner daraja-form-message" data-wa-message hidden></p>
+
+  <section class="item-panel item-panel--dense wa-act-panel">
+    <header class="item-panel-head">
+      <div class="item-panel-head-top">
+        <div>
+          <h2>Message</h2>
+          <p>What went out in this send, including any card image.</p>
+        </div>
+        <div class="wa-act-tools" data-wa-actions>
+          {% if send.can_cancel %}
+          <button class="btn btn--ghost" type="button" data-wa-cancel="{{ send.id }}">Cancel</button>
+          {% endif %}
+          {% if send.can_retry %}
+          <button class="btn btn--ghost" type="button" data-wa-retry="{{ send.id }}">Retry failed</button>
+          {% endif %}
+        </div>
+      </div>
+    </header>
+    <div class="wa-act-message-card">
+      {% if send.image_url %}
+      <img class="wa-act-message-card__image" src="{{ send.image_url }}" alt="" data-wa-image>
+      {% endif %}
+      <pre class="wa-act-message-card__body" data-wa-body>{% if send.body_template %}{{ send.body_template }}{% else %}No message text was saved.{% endif %}</pre>
+    </div>
+  </section>
+
+  <section class="item-panel item-panel--dense wa-act-panel">
+    <header class="item-panel-head">
+      <div class="item-panel-head-top">
+        <div>
+          <h2>Sent to</h2>
+          <p>Each person who was queued for this message, with their current status.</p>
+        </div>
+        <p class="item-count" data-wa-recipient-count>
+          {{ send.messages|length }} {{ send.messages|length|pluralize:"person,people" }}
+        </p>
+      </div>
+    </header>
+    <div class="staff-table-wrap perm-table-scroll" data-wa-people>
+      {% if send.messages %}
+      <table class="staff-table staff-table--dense wa-act-people">
+        <thead>
+          <tr>
+            <th>Person</th>
+            <th>Phone</th>
+            <th>Status</th>
+            <th>When</th>
+            <th>Message sent</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for person in send.messages %}
+          <tr>
+            <td data-label="Person"><strong>{{ person.client_name|default:"Contact" }}</strong></td>
+            <td data-label="Phone">{{ person.phone }}</td>
+            <td data-label="Status">
+              <span class="wa-auto__pill" data-status="{{ person.display_status }}">{{ person.status_label }}</span>
+              {% if person.error and person.display_status == "failed" %}
+              <em class="wa-person__error">{{ person.error }}</em>
+              {% endif %}
+            </td>
+            <td data-label="When">{{ person.when_label }}</td>
+            <td data-label="Message sent">
+              <pre class="wa-act-person-body">{{ person.body|default:send.body_template }}</pre>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="wa-act-empty">No recipients logged for this send.</p>
+      {% endif %}
+    </div>
+  </section>
+</section>
+{% endwith %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/whatsapp-activities.js' %}?v=2"></script>
+{% endblock %}

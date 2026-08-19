@@ -7,9 +7,9 @@ html[data-theme="dark"] {
   --ink-soft: #0c1f22;
   --surface: #10282c;
   --mist: #d7e6e2;
-  --mist-dim: rgba(215, 230, 226, 0.72);
-  --mist-soft: rgba(215, 230, 226, 0.55);
-  --line: rgba(215, 230, 226, 0.14);
+  --mist-dim: rgba(215, 230, 226, 0.84);
+  --mist-soft: rgba(215, 230, 226, 0.64);
+  --line: rgba(215, 230, 226, 0.22);
   --text-strong: #ffffff;
   --text: var(--mist);
   --accent: #f2b045;
@@ -27,17 +27,17 @@ html[data-theme="dark"] {
   --ok-bg: rgba(79, 209, 165, 0.1);
   --ok-border: rgba(79, 209, 165, 0.35);
   --ok-text: #c8f5e4;
-  --placeholder: rgba(215, 230, 226, 0.38);
+  --placeholder: rgba(215, 230, 226, 0.58);
   --header-bg: linear-gradient(180deg, rgba(6, 18, 20, 0.72), transparent);
   --header-bg-solid: rgba(6, 18, 20, 0.92);
   --chip-bg: rgba(255, 255, 255, 0.08);
   --chip-bg-hover: rgba(255, 255, 255, 0.14);
-  --input-bg: rgba(255, 255, 255, 0.04);
-  --input-bg-focus: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(255, 255, 255, 0.08);
+  --input-bg-focus: rgba(255, 255, 255, 0.12);
   --panel-muted: rgba(255, 255, 255, 0.03);
   --menu-bg: #0e2428;
   --mobile-nav-bg: rgba(6, 18, 20, 0.96);
-  --ghost-border: rgba(255, 255, 255, 0.28);
+  --ghost-border: rgba(255, 255, 255, 0.4);
   --shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.45);
   --accent-glow: 0 12px 30px rgba(242, 176, 69, 0.28);
   --accent-glow-strong: 0 16px 36px rgba(242, 176, 69, 0.36);
@@ -178,13 +178,116 @@ img {
   display: block;
 }
 
+/* Native controls follow the app theme so dropdowns, date pickers, and
+   autofill stay readable. Windows otherwise paints a light popup with the
+   page's light text (white-on-white / light-on-blue). */
+input,
+select,
+textarea,
+button {
+  color-scheme: inherit;
+  accent-color: var(--accent);
+}
+
+select option,
+select optgroup {
+  background-color: Canvas;
+  color: CanvasText;
+}
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  color-scheme: dark;
+}
+
+html[data-theme="light"] input,
+html[data-theme="light"] select,
+html[data-theme="light"] textarea {
+  color-scheme: light;
+}
+
+html[data-theme="dark"] input:-webkit-autofill,
+html[data-theme="dark"] textarea:-webkit-autofill,
+html[data-theme="dark"] select:-webkit-autofill {
+  -webkit-text-fill-color: var(--text-strong);
+  caret-color: var(--text-strong);
+  box-shadow: 0 0 0 1000px var(--surface) inset;
+  transition: background-color 99999s ease-out;
+}
+
+html[data-theme="light"] input:-webkit-autofill,
+html[data-theme="light"] textarea:-webkit-autofill,
+html[data-theme="light"] select:-webkit-autofill {
+  -webkit-text-fill-color: var(--text-strong);
+  caret-color: var(--text-strong);
+  box-shadow: 0 0 0 1000px var(--surface) inset;
+  transition: background-color 99999s ease-out;
+}
+
+html[data-theme="dark"] ::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.2);
+  opacity: 0.9;
+  cursor: pointer;
+}
+
+@supports (appearance: base-select) {
+  select,
+  select::picker(select) {
+    appearance: base-select;
+  }
+
+  select::picker(select) {
+    margin-top: 0.28rem;
+    padding: 0.28rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--menu-bg);
+    color: var(--text-strong);
+    box-shadow: var(--shadow-soft);
+  }
+
+  select option,
+  select optgroup {
+    background-color: var(--menu-bg);
+    color: var(--text-strong);
+  }
+
+  select option {
+    padding: 0.42rem 0.7rem;
+    border-radius: 8px;
+  }
+
+  select option:checked,
+  select option:hover {
+    background-color: color-mix(in srgb, var(--accent) 20%, var(--menu-bg));
+    color: var(--text-strong);
+  }
+
+  select option::checkmark {
+    color: var(--accent);
+  }
+
+  select::picker-icon {
+    color: var(--mist-dim);
+  }
+
+  select:disabled,
+  select:disabled option {
+    color: var(--mist-dim);
+    opacity: 0.72;
+  }
+}
+
 a {
   color: inherit;
   text-decoration: none;
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -967,7 +1070,9 @@ input {
   color: var(--mist-dim);
 }
 
-.field input {
+.field input,
+.field select,
+.field textarea {
   width: 100%;
   min-height: 3rem;
   padding: 0.7rem 0.95rem;
@@ -975,21 +1080,36 @@ input {
   border: 1px solid var(--line);
   background: var(--input-bg);
   color: var(--text-strong);
+  font: inherit;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
-.field input::placeholder {
+.field select {
+  cursor: pointer;
+}
+
+.field textarea {
+  min-height: 6.5rem;
+  resize: vertical;
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
   color: var(--placeholder);
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
   border-color: rgba(var(--accent-rgb), 0.55);
   box-shadow: var(--focus-ring);
   background: var(--input-bg-focus);
 }
 
-.field input.is-invalid {
+.field input.is-invalid,
+.field select.is-invalid,
+.field textarea.is-invalid {
   border-color: rgba(255, 107, 107, 0.55);
 }
 
@@ -1298,6 +1418,8 @@ html[data-theme="light"] .site-header--solid {
 }
 
 html[data-theme="light"] .field input,
+html[data-theme="light"] .field select,
+html[data-theme="light"] .field textarea,
 html[data-theme="light"] .phone-field > input[type="tel"],
 html[data-theme="light"] .country-trigger {
   border-color: rgba(22, 48, 54, 0.16);
@@ -1305,6 +1427,8 @@ html[data-theme="light"] .country-trigger {
 }
 
 html[data-theme="light"] .field input:focus,
+html[data-theme="light"] .field select:focus,
+html[data-theme="light"] .field textarea:focus,
 html[data-theme="light"] .phone-field > input[type="tel"]:focus,
 html[data-theme="light"] .country-trigger:focus-visible {
   border-color: rgba(var(--accent-rgb), 0.55);

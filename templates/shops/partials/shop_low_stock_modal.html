@@ -1,0 +1,62 @@
+{% if low_stock_alerts %}
+<div
+  class="workspace-modal shop-low-stock-modal"
+  data-modal="shop-low-stock"
+  data-shop-low-stock-modal
+  data-shop-id="{{ shop.id }}"
+  data-force="{% if low_stock_alert_force %}1{% else %}0{% endif %}"
+  data-selling-page="{% if low_stock_alert_on_selling %}1{% else %}0{% endif %}"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close="shop-low-stock"></div>
+  <div
+    class="workspace-modal-dialog shop-low-stock-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shop-low-stock-modal-title"
+  >
+    <div class="workspace-modal-head shop-day-modal-head">
+      <div>
+        <p class="shop-day-modal-kicker">{{ shop.name }} · Low stock</p>
+        <h2 id="shop-low-stock-modal-title">Low stock alerts</h2>
+        <p class="shop-day-modal-summary">
+          {{ low_stock_alert_count }} item{{ low_stock_alert_count|pluralize }}
+          at or below the alert quantity. Dismiss to keep selling; this returns after you submit opening or closing balances.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-modal-close="shop-low-stock"
+        aria-label="Dismiss low stock alerts"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="shop-low-stock-modal-body">
+      <ul class="shop-low-stock-list">
+        {% for row in low_stock_alerts %}
+        <li>
+          <div>
+            <strong>{{ row.name }}</strong>
+            {% if row.category %}
+            <span>{{ row.category }}</span>
+            {% endif %}
+          </div>
+          <p>
+            <strong>{{ row.quantity }}</strong>
+            <span>on hand · alert at {{ row.threshold }}</span>
+          </p>
+        </li>
+        {% endfor %}
+      </ul>
+      <div class="workspace-modal-actions shop-day-modal-actions">
+        <button type="button" class="btn btn--primary" data-modal-close="shop-low-stock">
+          Dismiss
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}

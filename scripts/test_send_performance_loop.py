@@ -82,8 +82,7 @@ def run_campaign(recipient_count: int, concurrency: int) -> dict:
     sent = OutboundMessage.objects.filter(campaign=campaign, status=MSG_SENT).count()
     failed = OutboundMessage.objects.filter(campaign=campaign, status=MSG_FAILED).count()
     pending = OutboundMessage.objects.filter(campaign=campaign, status=MSG_PENDING).count()
-
-    return {
+    payload = {
         "campaign_id": campaign.pk,
         "recipients": recipient_count,
         "concurrency": concurrency,
@@ -95,6 +94,8 @@ def run_campaign(recipient_count: int, concurrency: int) -> dict:
         "done": campaign.status == CAMPAIGN_DONE,
         "result": result,
     }
+    campaign.delete()
+    return payload
 
 
 def main() -> int:

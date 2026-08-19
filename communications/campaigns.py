@@ -106,6 +106,10 @@ def file_whatsapp_media_url(file_field, *, request=None) -> str:
     if not file_field:
         return ""
     try:
+        name = (getattr(file_field, "name", None) or "").strip()
+        storage = getattr(file_field, "storage", None)
+        if name and storage is not None and not storage.exists(name):
+            return ""
         path = (file_field.url or "").strip()
     except Exception:
         return ""
@@ -433,6 +437,17 @@ def enqueue_campaign(campaign_id: int) -> None:
     )
 
 
+MESSAGE_DISPLAY_LABELS = {
+    "queued": "Waiting",
+    "pending": "Waiting",
+    "sent": "Sent",
+    "delivered": "Delivered",
+    "viewed": "Viewed",
+    "failed": "Failed",
+    "cancelled": "Cancelled",
+}
+
+
 def outbound_display_status(
     *,
     status: str,
@@ -450,6 +465,11 @@ def outbound_display_status(
     if status == MSG_SENT:
         return "sent"
     return "queued"
+
+
+def outbound_status_label(display_status: str) -> str:
+    key = (display_status or "").strip().lower()
+    return MESSAGE_DISPLAY_LABELS.get(key, (display_status or "").replace("_", " ").title())
 
 
 def cancel_campaign(campaign_id: int) -> BroadcastCampaign:
@@ -584,31 +604,96 @@ def _campaign_is_pending(campaign: BroadcastCampaign, *, pending_count: int) -> 
     return pending_count > 0 and campaign.status not in {CAMPAIGN_CANCELLED, CAMPAIGN_DONE}
 
 
-def campaign_as_dict(campaign: BroadcastCampaign) -> dict[str, Any]:
-    messages = list(
-        campaign.messages.order_by("id")[:500].values(
-            "id",
-            "client_id",
-            "client_name",
-            "phone",
-            "status",
-            "error",
-            "sent_at",
-            "delivered_at",
-            "read_at",
-            "created_at",
-            "updated_at",
+def _campaign_image_url(campaign: BroadcastCampaign) -> str:
+    if not campaign.image:
+        return ""
+    try:
+        return campaign.image.url or ""
+    except ValueError:
+        return ""
+
+
+def _message_when_label(display_status: str, row: dict[str, Any]) -> str:
+    if display_status == "viewed":
+        return row.get("read_label") or ""
+    if display_status == "delivered":
+        return row.get("delivered_label") or row.get("sent_label") or ""
+    if display_status == "sent":
+        return row.get("sent_label") or ""
+    if display_status == "cancelled":
+        return row.get("updated_label") or ""
+    if display_status == "failed":
+        return row.get("updated_label") or ""
+    return row.get("created_label") or ""
+
+
+def _progress_label(
+    *,
+    pending_count: int,
+    viewed_count: int,
+    delivered_count: int,
+    sent_count: int,
+    failed_count: int,
+    cancelled_count: int,
+    recipient_count: int,
+) -> str:
+    parts = []
+    if pending_count:
+        parts.append(f"{pending_count} waiting")
+    if viewed_count:
+        parts.append(f"{viewed_count} viewed")
+    if delivered_count:
+        parts.append(f"{delivered_count} delivered")
+    if sent_count:
+        parts.append(f"{sent_count} sent")
+    if failed_count:
+        parts.append(f"{failed_count} failed")
+    if cancelled_count:
+        parts.append(f"{cancelled_count} cancelled")
+    if parts:
+        return " · ".join(parts)
+    count = int(recipient_count or 0)
+    return f"{count} {'person' if count == 1 else 'people'}"
+
+
+def campaign_as_dict(
+    campaign: BroadcastCampaign, *, include_messages: bool = True
+) -> dict[str, Any]:
+    messages: list[dict[str, Any]] = []
+    if include_messages:
+        messages = list(
+            campaign.messages.order_by("id")[:500].values(
+                "id",
+                "client_id",
+                "client_name",
+                "phone",
+                "body",
+                "status",
+                "error",
+                "sent_at",
+                "delivered_at",
+                "read_at",
+                "created_at",
+                "updated_at",
+            )
         )
-    )
-    for row in messages:
-        for key in ("sent_at", "delivered_at", "read_at", "created_at", "updated_at"):
-            if row.get(key):
-                row[key] = row[key].isoformat()
-        row["display_status"] = outbound_display_status(
-            status=row.get("status") or "",
-            read_at=row.get("read_at"),
-            delivered_at=row.get("delivered_at"),
-        )
+        for row in messages:
+            row["created_label"] = _format_when(row.get("created_at"))
+            row["sent_label"] = _format_when(row.get("sent_at"))
+            row["delivered_label"] = _format_when(row.get("delivered_at"))
+            row["read_label"] = _format_when(row.get("read_at"))
+            row["updated_label"] = _format_when(row.get("updated_at"))
+            display = outbound_display_status(
+                status=row.get("status") or "",
+                read_at=row.get("read_at"),
+                delivered_at=row.get("delivered_at"),
+            )
+            row["display_status"] = display
+            row["status_label"] = outbound_status_label(display)
+            row["when_label"] = _message_when_label(display, row)
+            for key in ("sent_at", "delivered_at", "read_at", "created_at", "updated_at"):
+                if row.get(key):
+                    row[key] = row[key].isoformat()
     pending_count = campaign.messages.filter(status=MSG_PENDING).count()
     delivered_count = campaign.messages.filter(delivered_at__isnull=False).count()
     viewed_count = campaign.messages.filter(read_at__isnull=False).count()
@@ -620,6 +705,7 @@ def campaign_as_dict(campaign: BroadcastCampaign) -> dict[str, Any]:
     is_scheduled = campaign.status == CAMPAIGN_DRAFT or (
         send_after is not None and send_after > now and pending_count > 0
     )
+    image_url = _campaign_image_url(campaign)
     return {
         "id": campaign.pk,
         "status": campaign.status,
@@ -634,6 +720,15 @@ def campaign_as_dict(campaign: BroadcastCampaign) -> dict[str, Any]:
         "delivered_count": delivered_count,
         "viewed_count": viewed_count,
         "cancelled_count": cancelled_count,
+        "progress_label": _progress_label(
+            pending_count=pending_count,
+            viewed_count=viewed_count,
+            delivered_count=delivered_count,
+            sent_count=campaign.sent_count,
+            failed_count=campaign.failed_count,
+            cancelled_count=cancelled_count,
+            recipient_count=campaign.recipient_count,
+        ),
         "status_label": _campaign_status_label(campaign, is_scheduled=is_scheduled),
         "timing_label": _campaign_timing_label(
             campaign,
@@ -648,7 +743,8 @@ def campaign_as_dict(campaign: BroadcastCampaign) -> dict[str, Any]:
         "can_retry": campaign.messages.filter(
             status__in=[MSG_FAILED, MSG_MANUAL_REVIEW]
         ).exists(),
-        "has_image": bool(campaign.image),
+        "has_image": bool(image_url or campaign.image),
+        "image_url": image_url,
         "created_at": campaign.created_at.isoformat() if campaign.created_at else None,
         "created_label": _format_when(campaign.created_at),
         "send_after": send_after.isoformat() if send_after else None,
@@ -681,8 +777,12 @@ def activities_payload(*, limit: int = 50) -> dict[str, Any]:
     history_qs = list(
         BroadcastCampaign.objects.exclude(pk__in=waiting_ids).order_by("-created_at")[:cap]
     )
-    pending = [campaign_as_dict(campaign) for campaign in waiting_qs]
-    history = [campaign_as_dict(campaign) for campaign in history_qs]
+    pending = [
+        campaign_as_dict(campaign, include_messages=False) for campaign in waiting_qs
+    ]
+    history = [
+        campaign_as_dict(campaign, include_messages=False) for campaign in history_qs
+    ]
 
     def _sort_key(row):
         return row.get("send_after") or row.get("created_at") or ""

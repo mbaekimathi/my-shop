@@ -117,6 +117,19 @@
           Copy the sandbox number from Twilio Console → Messaging → Try it out → Send a WhatsApp message
           (usually <code>whatsapp:+14155238886</code>). Recipients must send the join code to that number first.
         </p>
+        <p class="daraja-help">
+          To see customer replies in MY-SHOP, paste this URL in Twilio under
+          <strong>When a message comes in</strong>
+          (HTTP POST):
+        </p>
+        {% if inbound_webhook_url %}
+        <p class="daraja-help"><code>{{ inbound_webhook_url }}</code></p>
+        {% else %}
+        <p class="daraja-help">
+          On localhost Twilio cannot reach this app. Open
+          <strong>WhatsApp</strong> on IT Support to pull recent replies from Twilio.
+        </p>
+        {% endif %}
         <div class="daraja-form-actions">
           <button type="submit" class="btn btn--primary">Save Twilio</button>
           <p class="daraja-form-message" data-comms-message hidden></p>

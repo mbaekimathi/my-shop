@@ -14,6 +14,14 @@
     } catch (_err) {
       /* ignore storage failures */
     }
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) {
+      themeColor.setAttribute("content", next === "light" ? "#eef4f2" : "#10282c");
+    }
+    const colorScheme = document.querySelector('meta[name="color-scheme"]');
+    if (colorScheme) {
+      colorScheme.setAttribute("content", next === "light" ? "light dark" : "dark light");
+    }
     document.querySelectorAll("[data-theme-toggle]").forEach((btn) => {
       btn.setAttribute(
         "aria-label",

@@ -40,6 +40,22 @@ class Item(models.Model):
     def __str__(self):
         return f"{self.name} ({self.category})"
 
+    def public_image_url(self) -> str:
+        """Media URL when the file exists; empty when the DB path is broken."""
+        field = self.image
+        if not field:
+            return ""
+        try:
+            name = (getattr(field, "name", None) or "").strip()
+            if not name:
+                return ""
+            storage = getattr(field, "storage", None)
+            if storage is not None and not storage.exists(name):
+                return ""
+            return field.url or ""
+        except (ValueError, OSError, AttributeError):
+            return ""
+
     def resolve_list_price(self, shop_price_override=None):
         """Selling price for catalog/POS.
 
@@ -107,6 +123,14 @@ class ShopStock(models.Model):
         related_name="shop_stocks",
     )
     quantity = models.PositiveIntegerField(default=0)
+    low_stock_threshold = models.PositiveIntegerField(
+        default=0,
+        help_text="Alert when this shop's on-hand quantity is at or below this value.",
+    )
+    low_stock_manual = models.BooleanField(
+        default=False,
+        help_text="True when Alert at was typed for this shop. Otherwise the weekly average is used.",
+    )
     average_cost = models.DecimalField(
         max_digits=12,
         decimal_places=2,

@@ -144,6 +144,12 @@ class ShopReceipt(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["shop", "created_at"],
+                name="shopreceipt_shop_created_idx",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["shop", "receipt_number"],

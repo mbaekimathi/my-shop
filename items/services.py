@@ -3,7 +3,7 @@ import re
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import OuterRef, Subquery
+from django.db.models import F, OuterRef, Subquery
 
 from employees.countries import COUNTRY_DIAL_CODES
 
@@ -605,12 +605,7 @@ def build_item_management_catalog_page(
         shop_prices = {
             str(row["shop_id"]): row["price"] for row in shop_price_rows
         }
-        image_url = ""
-        try:
-            if item.image:
-                image_url = item.image.url
-        except Exception:
-            image_url = ""
+        image_url = item.public_image_url()
         rows.append(
             {
                 "id": item.pk,
@@ -1862,6 +1857,167 @@ def actionable_shops_for_profile(profile):
     if profile.role in SHOP_ASSIGNABLE_ROLES:
         return list(base.filter(assigned_employees=profile))
     return list(base)
+
+
+LOW_STOCK_USAGE_WEEKS = 13
+
+
+def threshold_from_weekly_avg(avg_week):
+    """Whole units from a weekly average.
+
+    Any usage above zero becomes at least 1, so a slow seller is not shown as 0.
+    """
+    try:
+        value = float(avg_week or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        return 0
+    return max(1, int(value + 0.5))
+
+
+def weekly_usage_avg_by_item_shop(item_ids, shop_ids, *, weeks=LOW_STOCK_USAGE_WEEKS):
+    """Typical weekly net sales over a long window, one whole number per item/shop."""
+    from datetime import timedelta
+
+    from django.db.models import Sum
+    from django.utils import timezone
+
+    from shops.models import (
+        ShopReceipt,
+        ShopReceiptKind,
+        ShopReceiptLine,
+        ShopReceiptStatus,
+    )
+
+    averages = {}
+    if not item_ids or not shop_ids or weeks < 1:
+        return averages
+
+    end = timezone.now()
+    start = end - timedelta(days=weeks * 7)
+    receipt_ids = ShopReceipt.objects.filter(
+        shop_id__in=shop_ids,
+        created_at__gte=start,
+        created_at__lt=end,
+        kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+    ).exclude(status=ShopReceiptStatus.CANCELLED)
+    rows = (
+        ShopReceiptLine.objects.filter(
+            item_id__in=item_ids,
+            receipt_id__in=receipt_ids,
+        )
+        .values("item_id", "receipt__shop_id")
+        .annotate(sold=Sum("quantity"), returned=Sum("returned_quantity"))
+    )
+    for row in rows:
+        net = max(0, int(row["sold"] or 0) - int(row["returned"] or 0))
+        averages[(row["item_id"], row["receipt__shop_id"])] = (
+            threshold_from_weekly_avg(net / weeks)
+        )
+    return averages
+
+
+def _shop_stock_alert_payload(stock, threshold):
+    return {
+        "item_id": stock.item_id,
+        "name": stock.item.name,
+        "category": stock.item.category,
+        "quantity": int(stock.quantity or 0),
+        "threshold": int(threshold or 0),
+    }
+
+
+def list_shop_low_stock_alerts(shop, *, limit=80):
+    """Items at this shop that are at or below their per-shop alert quantity.
+
+    Manual Alert at values are compared in SQL. Unset rows use the weekly
+    average, loaded only for this shop's auto items.
+    """
+    if shop is None:
+        return []
+    base = ShopStock.objects.filter(
+        shop=shop,
+        item__low_stock_notify=True,
+        item__is_suspended=False,
+    ).select_related("item").only(
+        "quantity",
+        "low_stock_threshold",
+        "low_stock_manual",
+        "item_id",
+        "item__name",
+        "item__category",
+        "item__low_stock_notify",
+        "item__is_suspended",
+    )
+    alerts = [
+        _shop_stock_alert_payload(stock, stock.low_stock_threshold)
+        for stock in base.filter(
+            low_stock_manual=True,
+            quantity__lte=F("low_stock_threshold"),
+        ).order_by("item__name", "item_id")[:limit]
+    ]
+    remaining = limit - len(alerts)
+    if remaining <= 0:
+        return alerts[:limit]
+
+    auto_rows = list(
+        base.filter(low_stock_manual=False).order_by("item__name", "item_id")
+    )
+    if not auto_rows:
+        return alerts
+    usage = weekly_usage_avg_by_item_shop(
+        [stock.item_id for stock in auto_rows],
+        [shop.pk],
+    )
+    seen = {row["item_id"] for row in alerts}
+    for stock in auto_rows:
+        if stock.item_id in seen:
+            continue
+        threshold = threshold_from_weekly_avg(
+            usage.get((stock.item_id, shop.pk), 0)
+        )
+        if int(stock.quantity or 0) > threshold:
+            continue
+        alerts.append(_shop_stock_alert_payload(stock, threshold))
+        seen.add(stock.item_id)
+        if len(alerts) >= limit:
+            break
+    alerts.sort(key=lambda row: ((row["name"] or "").lower(), row["item_id"]))
+    return alerts[:limit]
+
+
+def shop_has_low_stock_alerts(shop) -> bool:
+    """Cheap existence check used after open/close, not a full alert payload."""
+    if shop is None:
+        return False
+    base = ShopStock.objects.filter(
+        shop=shop,
+        item__low_stock_notify=True,
+        item__is_suspended=False,
+    )
+    if (
+        base.filter(low_stock_manual=True, quantity__lte=F("low_stock_threshold"))
+        .order_by()
+        .exists()
+    ):
+        return True
+    auto_rows = list(
+        base.filter(low_stock_manual=False)
+        .order_by()
+        .values_list("item_id", "quantity")
+    )
+    if not auto_rows:
+        return False
+    usage = weekly_usage_avg_by_item_shop(
+        [item_id for item_id, _qty in auto_rows],
+        [shop.pk],
+    )
+    for item_id, quantity in auto_rows:
+        threshold = threshold_from_weekly_avg(usage.get((item_id, shop.pk), 0))
+        if int(quantity or 0) <= threshold:
+            return True
+    return False
 
 
 def _assert_shop_allowed(profile, shop, *, label: str = "shop"):

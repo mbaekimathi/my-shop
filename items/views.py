@@ -26,10 +26,13 @@ from .services import (
     delete_item,
     estimate_stock_print_a4_pages,
     last_buying_prices_for_items,
+    LOW_STOCK_USAGE_WEEKS,
     search_available_serials,
     search_suppliers,
+    threshold_from_weekly_avg as _threshold_from_weekly_avg,
     toggle_item_suspended,
     update_item,
+    weekly_usage_avg_by_item_shop as _weekly_usage_avg_by_item_shop,
 )
 
 EMPTY_FORM = {
@@ -629,16 +632,28 @@ def _parse_id_list(raw_values):
     return ids
 
 
-def _movement_qty_by_item(item_ids, shop_ids, start, end):
-    """Sum movement line quantities by item and type for a window. Request is separate from in/out."""
+def _empty_item_shop_qty(item_ids, shop_ids, keys):
+    return {
+        (item_id, shop_id): {key: 0 for key in keys}
+        for item_id in item_ids
+        for shop_id in shop_ids
+    }
+
+
+def _add_item_shop_qty(totals, item_id, shop_id, key, quantity):
+    bucket = totals.get((item_id, shop_id))
+    if bucket is None:
+        return
+    bucket[key] = int(bucket.get(key) or 0) + int(quantity or 0)
+
+
+def _movement_qty_by_item_shop(item_ids, shop_ids, start, end):
+    """Stock in/out by (item, shop) for a window. Requests are counted as transfers."""
     from django.db.models import Sum
 
     from .models import StockMovementLine, StockMovementType
 
-    totals = {
-        item_id: {"in": 0, "out": 0, "request": 0}
-        for item_id in item_ids
-    }
+    totals = _empty_item_shop_qty(item_ids, shop_ids, ("in", "out"))
     if not item_ids or not shop_ids or start >= end:
         return totals
 
@@ -651,77 +666,69 @@ def _movement_qty_by_item(item_ids, shop_ids, start, end):
             movement__movement_type__in=[
                 StockMovementType.IN,
                 StockMovementType.OUT,
-                StockMovementType.REQUEST,
             ],
         )
-        .values("item_id", "movement__movement_type")
+        .values("item_id", "movement__shop_id", "movement__movement_type")
         .annotate(total=Sum("quantity"))
     )
     for row in rows:
-        bucket = totals.get(row["item_id"])
-        if bucket is None:
-            continue
-        movement_type = row["movement__movement_type"]
-        if movement_type in bucket:
-            bucket[movement_type] = int(row["total"] or 0)
+        _add_item_shop_qty(
+            totals,
+            row["item_id"],
+            row["movement__shop_id"],
+            row["movement__movement_type"],
+            row["total"],
+        )
     return totals
 
 
-def _sale_qty_by_item(items, shop_ids, start, end):
+def _transfer_qty_by_item_shop(item_ids, shop_ids, start, end):
     """
-    Sale quantities for stock items.
+    Fulfilled inter-shop transfers by (item, shop), counted when stock moved.
 
-    Prefer MY-SHOP receipt lines (item FK) — accurate and indexed.
-    Fall back to legacy POS SaleLine matching by product name.
+    Transfer in: selected shop is the destination (movement.shop).
+    Transfer out: selected shop is the source (movement.requested_from_shop).
     """
     from django.db.models import Sum
 
-    from pos.models import SaleLine
-    from shops.models import ShopReceiptKind, ShopReceiptLine
+    from .models import StockMovementLine, StockMovementType, StockRequestStatus
 
-    totals = {item.pk: 0 for item in items}
-    if not items or start >= end:
+    totals = _empty_item_shop_qty(item_ids, shop_ids, ("in", "out"))
+    if not item_ids or not shop_ids or start >= end:
         return totals
 
-    item_ids = [item.pk for item in items]
-    receipt_qs = ShopReceiptLine.objects.filter(
+    base = StockMovementLine.objects.filter(
         item_id__in=item_ids,
-        receipt__created_at__gte=start,
-        receipt__created_at__lt=end,
-        receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        movement__movement_type=StockMovementType.REQUEST,
+        movement__request_status=StockRequestStatus.FULFILLED,
+        movement__responded_at__gte=start,
+        movement__responded_at__lt=end,
+        quantity__gt=0,
     )
-    if shop_ids:
-        receipt_qs = receipt_qs.filter(receipt__shop_id__in=shop_ids)
 
-    for row in receipt_qs.values("item_id").annotate(total=Sum("quantity")):
-        item_id = row["item_id"]
-        if item_id in totals:
-            totals[item_id] += int(row["total"] or 0)
-
-    name_to_ids = {}
-    for item in items:
-        key = (item.name or "").strip().lower()
-        if key:
-            name_to_ids.setdefault(key, []).append(item.pk)
-    if not name_to_ids:
-        return totals
-
-    # Bound the POS scan to known item names instead of loading all sale lines.
-    names = [(item.name or "").strip() for item in items if (item.name or "").strip()]
-    sale_lines = SaleLine.objects.filter(
-        sale__sold_at__gte=start,
-        sale__sold_at__lt=end,
-        product_name__in=names,
+    in_rows = (
+        base.filter(movement__shop_id__in=shop_ids)
+        .values("item_id", "movement__shop_id")
+        .annotate(total=Sum("quantity"))
     )
-    if shop_ids:
-        sale_lines = sale_lines.filter(
-            sale__employee__assigned_shops__in=shop_ids
-        ).distinct()
+    for row in in_rows:
+        _add_item_shop_qty(
+            totals, row["item_id"], row["movement__shop_id"], "in", row["total"]
+        )
 
-    for row in sale_lines.values("product_name").annotate(total=Sum("quantity")):
-        key = (row["product_name"] or "").strip().lower()
-        for item_id in name_to_ids.get(key, []):
-            totals[item_id] += int(row["total"] or 0)
+    out_rows = (
+        base.filter(movement__requested_from_shop_id__in=shop_ids)
+        .values("item_id", "movement__requested_from_shop_id")
+        .annotate(total=Sum("quantity"))
+    )
+    for row in out_rows:
+        _add_item_shop_qty(
+            totals,
+            row["item_id"],
+            row["movement__requested_from_shop_id"],
+            "out",
+            row["total"],
+        )
     return totals
 
 
@@ -743,13 +750,457 @@ def _current_stock_by_item(item_ids, shop_ids):
     return totals
 
 
-def _build_item_report_rows(items, shop_ids, day_start, day_end):
+def _current_stock_by_item_shop(item_ids, shop_ids):
+    from django.db.models import Sum
+
+    from .models import ShopStock
+
+    totals = {(item_id, shop_id): 0 for item_id in item_ids for shop_id in shop_ids}
+    if not item_ids or not shop_ids:
+        return totals
+    rows = (
+        ShopStock.objects.filter(item_id__in=item_ids, shop_id__in=shop_ids)
+        .order_by()
+        .values("item_id", "shop_id")
+        .annotate(total=Sum("quantity"))
+    )
+    for row in rows:
+        key = (row["item_id"], row["shop_id"])
+        if key in totals:
+            totals[key] = int(row["total"] or 0)
+    return totals
+
+
+LOW_STOCK_ITEM_ONLY = (
+    "id",
+    "name",
+    "category",
+    "low_stock_notify",
+    "low_stock_threshold",
+    "is_suspended",
+)
+
+
+def _shop_low_stock_settings(item_ids, shop_ids):
+    from .models import ShopStock
+
+    settings = {}
+    if not item_ids or not shop_ids:
+        return settings
+    rows = (
+        ShopStock.objects.filter(item_id__in=item_ids, shop_id__in=shop_ids)
+        .order_by()
+        .values("item_id", "shop_id", "low_stock_threshold", "low_stock_manual")
+    )
+    for row in rows:
+        settings[(row["item_id"], row["shop_id"])] = {
+            "threshold": int(row["low_stock_threshold"] or 0),
+            "manual": bool(row["low_stock_manual"]),
+        }
+    return settings
+
+
+def _sync_shop_thresholds_from_usage(items, shops):
+    from .models import ShopStock
+
+    ordered_shops = list(shops)
+    item_ids = [item.pk for item in items]
+    shop_ids = [shop.pk for shop in ordered_shops]
+    usage = _weekly_usage_avg_by_item_shop(item_ids, shop_ids)
+    existing = {
+        (row.item_id, row.shop_id): row
+        for row in ShopStock.objects.filter(
+            item_id__in=item_ids, shop_id__in=shop_ids
+        ).order_by()
+    }
+    to_create = []
+    to_update = []
+    for item in items:
+        for shop in ordered_shops:
+            threshold = _threshold_from_weekly_avg(
+                usage.get((item.pk, shop.pk), 0)
+            )
+            row = existing.get((item.pk, shop.pk))
+            if row is None:
+                to_create.append(
+                    ShopStock(
+                        shop=shop,
+                        item=item,
+                        quantity=0,
+                        low_stock_threshold=threshold,
+                        low_stock_manual=True,
+                    )
+                )
+            elif (
+                int(row.low_stock_threshold or 0) != threshold
+                or not row.low_stock_manual
+            ):
+                row.low_stock_threshold = threshold
+                row.low_stock_manual = True
+                to_update.append(row)
+    if to_create:
+        ShopStock.objects.bulk_create(to_create, ignore_conflicts=True)
+    if to_update:
+        ShopStock.objects.bulk_update(
+            to_update, ["low_stock_threshold", "low_stock_manual"]
+        )
+    return len(items)
+
+
+def _set_shop_low_stock_threshold(item, shop, threshold, *, manual=True):
+    from .models import ShopStock
+
+    ShopStock.objects.update_or_create(
+        shop=shop,
+        item=item,
+        defaults={
+            "low_stock_threshold": max(0, int(threshold or 0)),
+            "low_stock_manual": bool(manual),
+        },
+    )
+
+
+def _low_stock_json(item, shops, *, include_usage=False):
+    snapshot = _low_stock_item_snapshot(item, shops, include_usage=include_usage)
+    return {
+        "ok": True,
+        "item_id": item.pk,
+        "notify": snapshot["notify"],
+        "total_units": snapshot["total_units"],
+        "is_low": snapshot["is_low"],
+        "shops": snapshot["shops"],
+    }
+
+
+def _low_stock_payloads_from_rows(rows):
+    """Split a bulk settings table into per-item JSON snapshots."""
+    payloads = []
+    current = None
+    for row in rows:
+        item_id = row["item"].pk
+        if current is None or current["item_id"] != item_id:
+            if current is not None:
+                payloads.append(current)
+            current = {
+                "ok": True,
+                "item_id": item_id,
+                "notify": bool(row["notify"]),
+                "total_units": 0,
+                "is_low": False,
+                "shops": [],
+            }
+        if row["is_item_total"]:
+            current["total_units"] = row["total_units"]
+            current["is_low"] = row["is_low"]
+            continue
+        current["shops"].append(
+            {
+                "shop_id": row["shop_id"],
+                "units": row["total_units"],
+                "is_low": row["is_low"],
+                "threshold": row["threshold"],
+                "manual": bool(row["threshold_manual"]),
+                "auto_threshold": row["auto_threshold"],
+            }
+        )
+        current["total_units"] += row["total_units"]
+        current["is_low"] = current["is_low"] or row["is_low"]
+    if current is not None:
+        payloads.append(current)
+    return payloads
+
+
+def _build_low_stock_rows(items, shops, *, include_usage=True):
+    """Item rows with one shop line each, plus a Total when several shops."""
+    ordered_shops = sorted(
+        shops,
+        key=lambda shop: ((shop.name or "").lower(), shop.pk),
+    )
+    shop_ids = [shop.pk for shop in ordered_shops]
+    item_ids = [item.pk for item in items]
+    stock = _current_stock_by_item_shop(item_ids, shop_ids)
+    usage = (
+        _weekly_usage_avg_by_item_shop(item_ids, shop_ids) if include_usage else {}
+    )
+    shop_settings = _shop_low_stock_settings(item_ids, shop_ids)
+    group_by_shop = len(ordered_shops) > 1
+    rows = []
+    notify_count = 0
+    for item in items:
+        notify = bool(item.low_stock_notify)
+        item_threshold = int(item.low_stock_threshold or 0)
+        if notify:
+            notify_count += 1
+        shop_rows = []
+        total_units = 0
+        any_low = False
+        shops_for_item = ordered_shops or [None]
+        for shop in shops_for_item:
+            units = (
+                stock.get((item.pk, shop.pk), 0) if shop is not None else 0
+            )
+            avg_week = (
+                usage.get((item.pk, shop.pk), 0) if shop is not None else 0
+            )
+            stored = (
+                shop_settings.get((item.pk, shop.pk)) if shop is not None else None
+            )
+            auto_threshold = _threshold_from_weekly_avg(avg_week)
+            if stored and stored["manual"]:
+                threshold = stored["threshold"]
+                threshold_manual = True
+            elif include_usage:
+                threshold = auto_threshold
+                threshold_manual = False
+            elif stored:
+                threshold = stored["threshold"]
+                threshold_manual = False
+            else:
+                threshold = item_threshold
+                threshold_manual = False
+            if not include_usage:
+                auto_threshold = threshold if not threshold_manual else auto_threshold
+            is_low = bool(notify and units <= threshold)
+            total_units += units
+            any_low = any_low or is_low
+            shop_rows.append(
+                {
+                    "item": item,
+                    "shop_id": shop.pk if shop is not None else None,
+                    "shop_name": shop.name if shop is not None else "—",
+                    "total_units": units,
+                    "avg_week": avg_week,
+                    "notify": notify,
+                    "threshold": threshold,
+                    "auto_threshold": auto_threshold,
+                    "threshold_manual": threshold_manual,
+                    "is_low": is_low,
+                    "is_item_start": False,
+                    "is_item_total": False,
+                    "show_threshold": shop is not None,
+                    "show_notify": False,
+                    "show_sync": False,
+                }
+            )
+        shop_rows[0]["is_item_start"] = True
+        shop_rows[0]["show_notify"] = True
+        shop_rows[0]["show_sync"] = True
+        total_avg_week = sum(int(row["avg_week"] or 0) for row in shop_rows)
+        rows.extend(shop_rows)
+        if group_by_shop:
+            rows.append(
+                {
+                    "item": item,
+                    "shop_id": None,
+                    "shop_name": "Total",
+                    "total_units": total_units,
+                    "avg_week": total_avg_week,
+                    "notify": notify,
+                    "threshold": None,
+                    "auto_threshold": None,
+                    "threshold_manual": False,
+                    "is_low": any_low,
+                    "is_item_start": False,
+                    "is_item_total": True,
+                    "show_threshold": False,
+                    "show_notify": False,
+                    "show_sync": False,
+                }
+            )
+    return rows, notify_count, group_by_shop
+
+
+def _low_stock_item_snapshot(item, shops, *, include_usage=False):
+    rows, _notify_count, _group = _build_low_stock_rows(
+        [item], shops, include_usage=include_usage
+    )
+    payload = _low_stock_payloads_from_rows(rows)
+    first = payload[0] if payload else {}
+    return {
+        "notify": bool(item.low_stock_notify),
+        "threshold": int(item.low_stock_threshold or 0),
+        "total_units": first.get("total_units", 0),
+        "is_low": bool(first.get("is_low")),
+        "shops": first.get("shops", []),
+    }
+
+
+def _receipt_sale_qty_by_item_shop(item_ids, shop_ids, start, end):
+    from django.db.models import Sum
+
+    from shops.models import ShopReceiptKind, ShopReceiptLine
+
+    totals = {(item_id, shop_id): 0 for item_id in item_ids for shop_id in shop_ids}
+    if not item_ids or not shop_ids or start >= end:
+        return totals
+    rows = (
+        ShopReceiptLine.objects.filter(
+            item_id__in=item_ids,
+            receipt__shop_id__in=shop_ids,
+            receipt__created_at__gte=start,
+            receipt__created_at__lt=end,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        )
+        .values("item_id", "receipt__shop_id")
+        .annotate(total=Sum("quantity"))
+    )
+    for row in rows:
+        key = (row["item_id"], row["receipt__shop_id"])
+        if key in totals:
+            totals[key] += int(row["total"] or 0)
+    return totals
+
+
+def _return_qty_by_item_shop(item_ids, shop_ids, start, end):
+    from django.db.models import Sum
+
+    from shops.models import ShopReceiptLine
+
+    totals = {(item_id, shop_id): 0 for item_id in item_ids for shop_id in shop_ids}
+    if not item_ids or not shop_ids or start >= end:
+        return totals
+    rows = (
+        ShopReceiptLine.objects.filter(
+            item_id__in=item_ids,
+            receipt__shop_id__in=shop_ids,
+            returned_quantity__gt=0,
+            receipt__last_returned_at__gte=start,
+            receipt__last_returned_at__lt=end,
+        )
+        .values("item_id", "receipt__shop_id")
+        .annotate(total=Sum("returned_quantity"))
+    )
+    for row in rows:
+        key = (row["item_id"], row["receipt__shop_id"])
+        if key in totals:
+            totals[key] += int(row["total"] or 0)
+    return totals
+
+
+def _pos_sale_qty_by_item(items, shop_ids, start, end):
+    """Legacy POS SaleLine quantities by item name (no shop on the sale)."""
+    from django.db.models import Sum
+
+    from pos.models import SaleLine
+
+    totals = {item.pk: 0 for item in items}
+    if not items or not shop_ids or start >= end:
+        return totals
+
+    name_to_ids = {}
+    for item in items:
+        key = (item.name or "").strip().lower()
+        if key:
+            name_to_ids.setdefault(key, []).append(item.pk)
+    if not name_to_ids:
+        return totals
+
+    names = [(item.name or "").strip() for item in items if (item.name or "").strip()]
+    sale_lines = SaleLine.objects.filter(
+        sale__sold_at__gte=start,
+        sale__sold_at__lt=end,
+        product_name__in=names,
+    )
+    if shop_ids:
+        sale_lines = sale_lines.filter(
+            sale__employee__assigned_shops__in=shop_ids
+        ).distinct()
+
+    for row in sale_lines.values("product_name").annotate(total=Sum("quantity")):
+        key = (row["product_name"] or "").strip().lower()
+        for item_id in name_to_ids.get(key, []):
+            totals[item_id] += int(row["total"] or 0)
+    return totals
+
+
+def _sale_qty_by_item(items, shop_ids, start, end):
     """
-    Build per-item report rows for a period.
+    Sale quantities for stock items.
+
+    Prefer MY-SHOP receipt lines (item FK) — accurate and indexed.
+    Fall back to legacy POS SaleLine matching by product name.
+    """
+    item_ids = [item.pk for item in items]
+    totals = {item.pk: 0 for item in items}
+    if not items:
+        return totals
+    receipt = _receipt_sale_qty_by_item_shop(item_ids, shop_ids, start, end)
+    for (item_id, _shop_id), quantity in receipt.items():
+        if item_id in totals:
+            totals[item_id] += quantity
+    pos = _pos_sale_qty_by_item(items, shop_ids, start, end)
+    for item_id, quantity in pos.items():
+        totals[item_id] += quantity
+    return totals
+
+
+def _collapse_item_shop_qty(keyed, item_ids, keys):
+    totals = {item_id: {key: 0 for key in keys} for item_id in item_ids}
+    for (item_id, _shop_id), bucket in keyed.items():
+        dest = totals.get(item_id)
+        if dest is None:
+            continue
+        if isinstance(bucket, dict):
+            for key in keys:
+                dest[key] += int(bucket.get(key) or 0)
+        else:
+            dest[keys[0]] += int(bucket or 0)
+    return totals
+
+
+def _item_report_closing_starting(
+    *,
+    current,
+    after_in,
+    after_out,
+    after_sale,
+    after_transfer_in,
+    after_transfer_out,
+    after_return,
+    stock_in,
+    stock_out,
+    stock_sale,
+    stock_transfer_in,
+    stock_transfer_out,
+    stock_return,
+):
+    closing = (
+        current
+        - after_in
+        + after_out
+        + after_sale
+        - after_transfer_in
+        + after_transfer_out
+        - after_return
+    )
+    starting = (
+        closing
+        - stock_in
+        + stock_out
+        + stock_sale
+        - stock_transfer_in
+        + stock_transfer_out
+        - stock_return
+    )
+    return starting, closing
+
+
+def _build_item_report_rows(
+    items,
+    shop_ids,
+    day_start,
+    day_end,
+    *,
+    group_by_shop=None,
+    shops_by_id=None,
+):
+    """
+    Build item report rows for a period, including shop transfer in/out.
 
     closing = current - after_in + after_out + after_sale
-    starting = closing - period_in + period_out + period_sale
-    Request is tracked separately and does not change starting/closing.
+              - after_transfer_in + after_transfer_out - after_return
+    starting = closing - in + out + sale - transfer_in + transfer_out - return
+    Transfers are shop-relative and counted at fulfillment (responded_at).
     """
     from datetime import timedelta
 
@@ -759,43 +1210,246 @@ def _build_item_report_rows(items, shop_ids, day_start, day_end):
     if not item_ids:
         return []
 
+    if group_by_shop is None:
+        group_by_shop = len(shop_ids) > 1
+
     now = timezone.now()
     far_future = now + timedelta(days=3650)
 
-    current = _current_stock_by_item(item_ids, shop_ids)
-    period_moves = _movement_qty_by_item(item_ids, shop_ids, day_start, day_end)
-    after_moves = _movement_qty_by_item(item_ids, shop_ids, day_end, far_future)
-    period_sales = _sale_qty_by_item(items, shop_ids, day_start, day_end)
-    after_sales = _sale_qty_by_item(items, shop_ids, day_end, far_future)
+    current_shop = _current_stock_by_item_shop(item_ids, shop_ids)
+    period_moves = _movement_qty_by_item_shop(item_ids, shop_ids, day_start, day_end)
+    after_moves = _movement_qty_by_item_shop(item_ids, shop_ids, day_end, far_future)
+    period_transfers = _transfer_qty_by_item_shop(
+        item_ids, shop_ids, day_start, day_end
+    )
+    after_transfers = _transfer_qty_by_item_shop(
+        item_ids, shop_ids, day_end, far_future
+    )
+    period_sales_shop = _receipt_sale_qty_by_item_shop(
+        item_ids, shop_ids, day_start, day_end
+    )
+    after_sales_shop = _receipt_sale_qty_by_item_shop(
+        item_ids, shop_ids, day_end, far_future
+    )
+    period_returns_shop = _return_qty_by_item_shop(
+        item_ids, shop_ids, day_start, day_end
+    )
+    after_returns_shop = _return_qty_by_item_shop(
+        item_ids, shop_ids, day_end, far_future
+    )
+
+    if shops_by_id is None and group_by_shop and shop_ids:
+        from shops.models import Shop
+
+        shops_by_id = {
+            shop.pk: shop for shop in Shop.objects.filter(pk__in=shop_ids)
+        }
+    shops_by_id = shops_by_id or {}
+
+    def row_payload(
+        item,
+        *,
+        shop=None,
+        starting,
+        stock_in,
+        stock_transfer_in,
+        stock_out,
+        stock_transfer_out,
+        stock_sale,
+        stock_return,
+        closing,
+    ):
+        return {
+            "item": item,
+            "shop": shop,
+            "shop_name": shop.name if shop is not None else "",
+            "is_item_start": False,
+            "is_item_total": False,
+            "starting_stock": starting,
+            "stock_in": stock_in,
+            "stock_transfer_in": stock_transfer_in,
+            "stock_out": stock_out,
+            "stock_transfer_out": stock_transfer_out,
+            "stock_sale": stock_sale,
+            "stock_return": stock_return,
+            "closing_stock": closing,
+        }
 
     rows = []
+    if group_by_shop:
+        ordered_shop_ids = sorted(
+            shop_ids,
+            key=lambda shop_id: (
+                (getattr(shops_by_id.get(shop_id), "name", None) or "").lower(),
+                shop_id,
+            ),
+        )
+        for item in items:
+            shop_rows = []
+            has_data = False
+            for shop_id in ordered_shop_ids:
+                key = (item.pk, shop_id)
+                period = period_moves.get(key) or {"in": 0, "out": 0}
+                after = after_moves.get(key) or {"in": 0, "out": 0}
+                transfer = period_transfers.get(key) or {"in": 0, "out": 0}
+                after_transfer = after_transfers.get(key) or {"in": 0, "out": 0}
+                stock_in = period["in"]
+                stock_out = period["out"]
+                stock_transfer_in = transfer["in"]
+                stock_transfer_out = transfer["out"]
+                stock_sale = period_sales_shop.get(key) or 0
+                stock_return = period_returns_shop.get(key) or 0
+                starting, closing = _item_report_closing_starting(
+                    current=current_shop.get(key) or 0,
+                    after_in=after["in"],
+                    after_out=after["out"],
+                    after_sale=after_sales_shop.get(key) or 0,
+                    after_transfer_in=after_transfer["in"],
+                    after_transfer_out=after_transfer["out"],
+                    after_return=after_returns_shop.get(key) or 0,
+                    stock_in=stock_in,
+                    stock_out=stock_out,
+                    stock_sale=stock_sale,
+                    stock_transfer_in=stock_transfer_in,
+                    stock_transfer_out=stock_transfer_out,
+                    stock_return=stock_return,
+                )
+                if (
+                    starting
+                    or closing
+                    or stock_in
+                    or stock_out
+                    or stock_sale
+                    or stock_transfer_in
+                    or stock_transfer_out
+                    or stock_return
+                ):
+                    has_data = True
+                shop_rows.append(
+                    row_payload(
+                        item,
+                        shop=shops_by_id.get(shop_id),
+                        starting=starting,
+                        stock_in=stock_in,
+                        stock_transfer_in=stock_transfer_in,
+                        stock_out=stock_out,
+                        stock_transfer_out=stock_transfer_out,
+                        stock_sale=stock_sale,
+                        stock_return=stock_return,
+                        closing=closing,
+                    )
+                )
+            if not has_data:
+                continue
+            shop_rows[0]["is_item_start"] = True
+            rows.extend(shop_rows)
+            total = row_payload(
+                item,
+                starting=sum(row["starting_stock"] for row in shop_rows),
+                stock_in=sum(row["stock_in"] for row in shop_rows),
+                stock_transfer_in=sum(row["stock_transfer_in"] for row in shop_rows),
+                stock_out=sum(row["stock_out"] for row in shop_rows),
+                stock_transfer_out=sum(row["stock_transfer_out"] for row in shop_rows),
+                stock_sale=sum(row["stock_sale"] for row in shop_rows),
+                stock_return=sum(row["stock_return"] for row in shop_rows),
+                closing=sum(row["closing_stock"] for row in shop_rows),
+            )
+            total["shop_name"] = "Total"
+            total["is_item_total"] = True
+            rows.append(total)
+        return rows
+
+    current = _collapse_item_shop_qty(
+        {k: {"qty": v} for k, v in current_shop.items()}, item_ids, ("qty",)
+    )
+    period_move_item = _collapse_item_shop_qty(period_moves, item_ids, ("in", "out"))
+    after_move_item = _collapse_item_shop_qty(after_moves, item_ids, ("in", "out"))
+    period_transfer_item = _collapse_item_shop_qty(
+        period_transfers, item_ids, ("in", "out")
+    )
+    after_transfer_item = _collapse_item_shop_qty(
+        after_transfers, item_ids, ("in", "out")
+    )
+    period_sale_item = {
+        item_id: qty["qty"]
+        for item_id, qty in _collapse_item_shop_qty(
+            {k: {"qty": v} for k, v in period_sales_shop.items()}, item_ids, ("qty",)
+        ).items()
+    }
+    after_sale_item = {
+        item_id: qty["qty"]
+        for item_id, qty in _collapse_item_shop_qty(
+            {k: {"qty": v} for k, v in after_sales_shop.items()}, item_ids, ("qty",)
+        ).items()
+    }
+    period_return_item = {
+        item_id: qty["qty"]
+        for item_id, qty in _collapse_item_shop_qty(
+            {k: {"qty": v} for k, v in period_returns_shop.items()}, item_ids, ("qty",)
+        ).items()
+    }
+    after_return_item = {
+        item_id: qty["qty"]
+        for item_id, qty in _collapse_item_shop_qty(
+            {k: {"qty": v} for k, v in after_returns_shop.items()}, item_ids, ("qty",)
+        ).items()
+    }
+    pos_period = _pos_sale_qty_by_item(items, shop_ids, day_start, day_end)
+    pos_after = _pos_sale_qty_by_item(items, shop_ids, day_end, far_future)
+    for item_id, quantity in pos_period.items():
+        period_sale_item[item_id] = period_sale_item.get(item_id, 0) + quantity
+    for item_id, quantity in pos_after.items():
+        after_sale_item[item_id] = after_sale_item.get(item_id, 0) + quantity
+
     for item in items:
-        period = period_moves[item.pk]
-        after = after_moves[item.pk]
+        period = period_move_item[item.pk]
+        after = after_move_item[item.pk]
+        transfer = period_transfer_item[item.pk]
+        after_transfer = after_transfer_item[item.pk]
         stock_in = period["in"]
         stock_out = period["out"]
-        stock_request = period["request"]
-        stock_sale = period_sales[item.pk]
-        closing = (
-            current[item.pk]
-            - after["in"]
-            + after["out"]
-            + after_sales[item.pk]
+        stock_transfer_in = transfer["in"]
+        stock_transfer_out = transfer["out"]
+        stock_sale = period_sale_item.get(item.pk, 0)
+        stock_return = period_return_item.get(item.pk, 0)
+        starting, closing = _item_report_closing_starting(
+            current=current[item.pk]["qty"],
+            after_in=after["in"],
+            after_out=after["out"],
+            after_sale=after_sale_item.get(item.pk, 0),
+            after_transfer_in=after_transfer["in"],
+            after_transfer_out=after_transfer["out"],
+            after_return=after_return_item.get(item.pk, 0),
+            stock_in=stock_in,
+            stock_out=stock_out,
+            stock_sale=stock_sale,
+            stock_transfer_in=stock_transfer_in,
+            stock_transfer_out=stock_transfer_out,
+            stock_return=stock_return,
         )
-        starting = closing - stock_in + stock_out + stock_sale
-        # Only include stocks that had activity in the filtered period.
-        if not (stock_in or stock_out or stock_request or stock_sale):
+        if not (
+            starting
+            or closing
+            or stock_in
+            or stock_out
+            or stock_sale
+            or stock_transfer_in
+            or stock_transfer_out
+            or stock_return
+        ):
             continue
         rows.append(
-            {
-                "item": item,
-                "starting_stock": starting,
-                "stock_request": stock_request,
-                "stock_in": stock_in,
-                "stock_out": stock_out,
-                "stock_sale": stock_sale,
-                "closing_stock": closing,
-            }
+            row_payload(
+                item,
+                starting=starting,
+                stock_in=stock_in,
+                stock_transfer_in=stock_transfer_in,
+                stock_out=stock_out,
+                stock_transfer_out=stock_transfer_out,
+                stock_sale=stock_sale,
+                stock_return=stock_return,
+                closing=closing,
+            )
         )
     return rows
 
@@ -860,6 +1514,8 @@ def _timeline_event_from_movement_line(
         "event_type": event_type,
         "event_label": event_label,
         "shop_name": movement.shop.name if movement.shop else "—",
+        "shop_id": movement.shop_id,
+        "source_shop_id": movement.requested_from_shop_id,
         "from_shop_name": (
             movement.requested_from_shop.name
             if movement.movement_type == StockMovementType.REQUEST
@@ -1095,6 +1751,8 @@ def _build_movement_timeline(
                 "shop_name": (
                     line.receipt.shop.name if line.receipt.shop_id else "—"
                 ),
+                "shop_id": line.receipt.shop_id,
+                "source_shop_id": None,
                 "from_shop_name": "",
                 "item_name": line.item_name or (matched.name if matched else "—"),
                 "item_category": (
@@ -1126,6 +1784,8 @@ def _build_movement_timeline(
                     "shop_name": (
                         line.receipt.shop.name if line.receipt.shop_id else "—"
                     ),
+                    "shop_id": line.receipt.shop_id,
+                    "source_shop_id": None,
                     "from_shop_name": "",
                     "item_name": line.item_name or (matched.name if matched else "—"),
                     "item_category": (
@@ -1199,6 +1859,8 @@ def _build_movement_timeline(
                 "event_type": "sale",
                 "event_label": "Stock sale",
                 "shop_name": "—",
+                "shop_id": None,
+                "source_shop_id": None,
                 "from_shop_name": "",
                 "item_name": line.product_name or (matched.name if matched else "—"),
                 "item_category": matched.category if matched else "",
@@ -1396,63 +2058,234 @@ def _parse_movement_view_by(raw):
     return view_by
 
 
-def _group_movement_events_by_item(events, shop_ids):
-    groups = {}
+def _blank_movement_item_row(
+    *,
+    item_id,
+    item_name,
+    item_category,
+    happened_at,
+    shop_id=None,
+    shop_name="",
+):
+    return {
+        "item_id": item_id,
+        "item_name": item_name,
+        "item_category": item_category,
+        "shop_id": shop_id,
+        "shop_name": shop_name,
+        "is_item_start": False,
+        "is_item_total": False,
+        "event_count": 0,
+        "units_in": 0,
+        "units_out": 0,
+        "units_transfer_in": 0,
+        "units_transfer_out": 0,
+        "units_sale": 0,
+        "units_return": 0,
+        "current_stock": 0,
+        "last_at": happened_at,
+        "detail_url": "",
+    }
+
+
+def _apply_movement_event_to_row(row, event, *, transfer_only=""):
+    quantity = int(event.get("quantity") or 0)
+    row["event_count"] += 1
+    event_type = event.get("event_type")
+    if transfer_only == "in":
+        row["units_transfer_in"] += quantity
+    elif transfer_only == "out":
+        row["units_transfer_out"] += quantity
+    elif event_type == "in":
+        row["units_in"] += quantity
+    elif event_type == "out":
+        row["units_out"] += quantity
+    elif event_type in ("request", "transfer_fulfilled"):
+        direction = event.get("transfer_direction")
+        if direction in ("in", "both"):
+            row["units_transfer_in"] += quantity
+        if direction in ("out", "both"):
+            row["units_transfer_out"] += quantity
+    elif event_type == "sale":
+        row["units_sale"] += quantity
+    elif event_type == "return":
+        row["units_return"] += quantity
+    if row["last_at"] is None or event["happened_at"] > row["last_at"]:
+        row["last_at"] = event["happened_at"]
+
+
+def _group_movement_events_by_item(
+    events,
+    shop_ids,
+    *,
+    shops_by_id=None,
+    group_by_shop=None,
+    extra_items=None,
+):
+    if group_by_shop is None:
+        group_by_shop = len(shop_ids) > 1
+    shops_by_id = shops_by_id or {}
+    shop_id_set = set(shop_ids)
+
+    if not group_by_shop:
+        groups = {}
+        for event in events:
+            item_id = event.get("item_id")
+            item_name = event.get("item_name") or "—"
+            item_category = event.get("item_category") or ""
+            key = item_id if item_id is not None else f"name:{item_name.strip().lower()}"
+            row = groups.get(key)
+            if row is None:
+                row = _blank_movement_item_row(
+                    item_id=item_id,
+                    item_name=item_name,
+                    item_category=item_category,
+                    happened_at=event["happened_at"],
+                )
+                groups[key] = row
+            _apply_movement_event_to_row(row, event)
+        item_ids = [row["item_id"] for row in groups.values() if row.get("item_id")]
+        stock_by_item = _current_stock_by_item(item_ids, shop_ids)
+        for row in groups.values():
+            item_id = row.get("item_id")
+            if item_id:
+                row["current_stock"] = stock_by_item.get(item_id, 0)
+        return sorted(
+            groups.values(),
+            key=lambda row: (row["item_name"].lower(), row.get("item_id") or 0),
+        )
+
+    if not shops_by_id and shop_ids:
+        from shops.models import Shop
+
+        shops_by_id = {
+            shop.pk: shop for shop in Shop.objects.filter(pk__in=shop_ids)
+        }
+
+    ordered_shop_ids = sorted(
+        shop_ids,
+        key=lambda shop_id: (
+            (getattr(shops_by_id.get(shop_id), "name", None) or "").lower(),
+            shop_id,
+        ),
+    )
+    items = {}
     for event in events:
         item_id = event.get("item_id")
         item_name = event.get("item_name") or "—"
         item_category = event.get("item_category") or ""
-        key = item_id if item_id is not None else f"name:{item_name.strip().lower()}"
-
-        row = groups.get(key)
-        if row is None:
-            row = {
+        item_key = item_id if item_id is not None else f"name:{item_name.strip().lower()}"
+        group = items.get(item_key)
+        if group is None:
+            group = {
                 "item_id": item_id,
                 "item_name": item_name,
                 "item_category": item_category,
-                "event_count": 0,
-                "units_in": 0,
-                "units_out": 0,
-                "units_transfer_in": 0,
-                "units_transfer_out": 0,
-                "units_sale": 0,
-                "units_return": 0,
-                "current_stock": 0,
-                "last_at": event["happened_at"],
+                "shops": {},
             }
-            groups[key] = row
+            items[item_key] = group
 
-        row["event_count"] += 1
         event_type = event.get("event_type")
-        quantity = int(event.get("quantity") or 0)
-        if event_type == "in":
-            row["units_in"] += quantity
-        elif event_type == "out":
-            row["units_out"] += quantity
-        elif event_type in ("request", "transfer_fulfilled"):
+        targets = []
+        if event_type in ("request", "transfer_fulfilled"):
             direction = event.get("transfer_direction")
-            if direction in ("in", "both"):
-                row["units_transfer_in"] += quantity
-            if direction in ("out", "both"):
-                row["units_transfer_out"] += quantity
-        elif event_type == "sale":
-            row["units_sale"] += quantity
-        elif event_type == "return":
-            row["units_return"] += quantity
-        if event["happened_at"] > row["last_at"]:
-            row["last_at"] = event["happened_at"]
+            dest_id = event.get("shop_id")
+            source_id = event.get("source_shop_id")
+            if direction in ("in", "both") and dest_id in shop_id_set:
+                targets.append((dest_id, "in"))
+            if direction in ("out", "both") and source_id in shop_id_set:
+                targets.append((source_id, "out"))
+            if not targets and dest_id in shop_id_set:
+                targets.append((dest_id, ""))
+        else:
+            dest_id = event.get("shop_id")
+            if dest_id in shop_id_set:
+                targets.append((dest_id, ""))
 
-    item_ids = [row["item_id"] for row in groups.values() if row.get("item_id")]
-    stock_by_item = _current_stock_by_item(item_ids, shop_ids)
-    for row in groups.values():
-        item_id = row.get("item_id")
-        if item_id:
-            row["current_stock"] = stock_by_item.get(item_id, 0)
+        for shop_id, transfer_only in targets:
+            row = group["shops"].get(shop_id)
+            if row is None:
+                shop = shops_by_id.get(shop_id)
+                row = _blank_movement_item_row(
+                    item_id=item_id,
+                    item_name=item_name,
+                    item_category=item_category,
+                    happened_at=event["happened_at"],
+                    shop_id=shop_id,
+                    shop_name=shop.name if shop is not None else "—",
+                )
+                group["shops"][shop_id] = row
+            _apply_movement_event_to_row(row, event, transfer_only=transfer_only)
 
-    return sorted(
-        groups.values(),
+    event_item_ids = [
+        group["item_id"] for group in items.values() if group.get("item_id")
+    ]
+    extra_item_ids = [item.pk for item in extra_items or [] if getattr(item, "pk", None)]
+    stock_item_ids = list({*event_item_ids, *extra_item_ids})
+    stock_by_shop = _current_stock_by_item_shop(stock_item_ids, shop_ids)
+    if extra_items:
+        for item in extra_items:
+            if item.pk in items:
+                continue
+            if not any(
+                stock_by_shop.get((item.pk, shop_id), 0) for shop_id in ordered_shop_ids
+            ):
+                continue
+            items[item.pk] = {
+                "item_id": item.pk,
+                "item_name": item.name,
+                "item_category": item.category,
+                "shops": {},
+            }
+
+    rows = []
+    for group in sorted(
+        items.values(),
         key=lambda row: (row["item_name"].lower(), row.get("item_id") or 0),
-    )
+    ):
+        shop_rows = []
+        for shop_id in ordered_shop_ids:
+            row = group["shops"].get(shop_id)
+            if row is None:
+                shop = shops_by_id.get(shop_id)
+                row = _blank_movement_item_row(
+                    item_id=group["item_id"],
+                    item_name=group["item_name"],
+                    item_category=group["item_category"],
+                    happened_at=None,
+                    shop_id=shop_id,
+                    shop_name=shop.name if shop is not None else "—",
+                )
+            if group["item_id"]:
+                row["current_stock"] = stock_by_shop.get(
+                    (group["item_id"], shop_id), 0
+                )
+            shop_rows.append(row)
+        if not any(
+            row["event_count"] or row["current_stock"] for row in shop_rows
+        ):
+            continue
+        shop_rows[0]["is_item_start"] = True
+        rows.extend(shop_rows)
+        last_times = [row["last_at"] for row in shop_rows if row.get("last_at")]
+        total = _blank_movement_item_row(
+            item_id=group["item_id"],
+            item_name=group["item_name"],
+            item_category=group["item_category"],
+            happened_at=max(last_times) if last_times else None,
+            shop_name="Total",
+        )
+        total["is_item_total"] = True
+        total["event_count"] = sum(row["event_count"] for row in shop_rows)
+        total["units_in"] = sum(row["units_in"] for row in shop_rows)
+        total["units_out"] = sum(row["units_out"] for row in shop_rows)
+        total["units_transfer_in"] = sum(row["units_transfer_in"] for row in shop_rows)
+        total["units_transfer_out"] = sum(row["units_transfer_out"] for row in shop_rows)
+        total["units_sale"] = sum(row["units_sale"] for row in shop_rows)
+        total["units_return"] = sum(row["units_return"] for row in shop_rows)
+        total["current_stock"] = sum(row["current_stock"] for row in shop_rows)
+        rows.append(total)
+    return rows
 
 
 def _movements_report_params(
@@ -1571,10 +2404,12 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     item_report_rows = []
     totals = {
         "starting_stock": 0,
-        "stock_request": 0,
         "stock_in": 0,
+        "stock_transfer_in": 0,
         "stock_out": 0,
+        "stock_transfer_out": 0,
         "stock_sale": 0,
+        "stock_return": 0,
         "closing_stock": 0,
     }
 
@@ -1583,7 +2418,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         request.GET.get("event_type") if is_movements else "all"
     )
     view_by = _parse_movement_view_by(
-        request.GET.get("view_by") if is_movements else "timeline"
+        request.GET.get("view_by") if is_movements else "item"
     )
     is_item_movement_detail = (
         is_movements
@@ -1595,6 +2430,16 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         is_movements and view_by == "item" and not is_item_movement_detail
     )
     movement_item_rows = []
+    movement_item_totals = {
+        "current_stock": 0,
+        "event_count": 0,
+        "units_in": 0,
+        "units_out": 0,
+        "units_transfer_in": 0,
+        "units_transfer_out": 0,
+        "units_sale": 0,
+        "units_return": 0,
+    }
 
     if is_movements:
         (
@@ -1626,24 +2471,52 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             units_return,
         ) = _summarize_movement_events(movement_events)
         if is_item_movement_summary:
-            movement_item_rows = _group_movement_events_by_item(
-                movement_events, shop_ids_for_query
+            extra_items = (
+                report_items if item_mode != "all" else all_items
             )
+            movement_item_rows = _group_movement_events_by_item(
+                movement_events,
+                shop_ids_for_query,
+                shops_by_id=shops_by_id,
+                extra_items=extra_items if len(shop_ids_for_query) > 1 else None,
+            )
+            for row in movement_item_rows:
+                if row.get("is_item_total"):
+                    continue
+                movement_item_totals["current_stock"] += row["current_stock"]
+                movement_item_totals["event_count"] += row["event_count"]
+                movement_item_totals["units_in"] += row["units_in"]
+                movement_item_totals["units_out"] += row["units_out"]
+                movement_item_totals["units_transfer_in"] += row["units_transfer_in"]
+                movement_item_totals["units_transfer_out"] += row["units_transfer_out"]
+                movement_item_totals["units_sale"] += row["units_sale"]
+                movement_item_totals["units_return"] += row["units_return"]
     else:
         item_report_rows = _build_item_report_rows(
-            report_items, shop_ids_for_query, day_start, day_end
+            report_items,
+            shop_ids_for_query,
+            day_start,
+            day_end,
+            shops_by_id=shops_by_id,
         )
         for row in item_report_rows:
+            if row.get("is_item_total"):
+                continue
             totals["starting_stock"] += row["starting_stock"]
-            totals["stock_request"] += row["stock_request"]
             totals["stock_in"] += row["stock_in"]
+            totals["stock_transfer_in"] += row["stock_transfer_in"]
             totals["stock_out"] += row["stock_out"]
+            totals["stock_transfer_out"] += row["stock_transfer_out"]
             totals["stock_sale"] += row["stock_sale"]
+            totals["stock_return"] += row["stock_return"]
             totals["closing_stock"] += row["closing_stock"]
         units_in = totals["stock_in"]
         units_out = totals["stock_out"]
-        units_request = totals["stock_request"]
+        units_request = totals["stock_transfer_in"] + totals["stock_transfer_out"]
         units_sale = totals["stock_sale"]
+        units_transfer_in = totals["stock_transfer_in"]
+        units_transfer_out = totals["stock_transfer_out"]
+        units_return = totals["stock_return"]
 
     from employees.workspace import sidebar_for_stock_management, stock_management_url
 
@@ -1652,7 +2525,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         filter_context=filter_context,
         item_mode=item_mode,
         event_filter=event_filter,
-        view_by=view_by if is_movements else "timeline",
+        view_by=view_by if is_movements else "item",
         selected_shop_ids=selected_shop_ids,
         selected_categories=selected_categories,
         selected_item_ids=selected_item_ids,
@@ -1677,13 +2550,16 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             if not row.get("item_id"):
                 row["detail_url"] = ""
                 continue
+            shop_filter = selected_shop_ids
+            if row.get("shop_id") and not row.get("is_item_total"):
+                shop_filter = [row["shop_id"]]
             detail_params = _movements_report_params(
                 range_type=range_type,
                 filter_context=filter_context,
                 item_mode="items",
                 event_filter=event_filter,
                 view_by="timeline",
-                selected_shop_ids=selected_shop_ids,
+                selected_shop_ids=shop_filter,
                 selected_categories=selected_categories,
                 selected_item_ids=[row["item_id"]],
                 item_id=row["item_id"],
@@ -1721,6 +2597,12 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "movement_events": movement_events,
             "item_report_rows": item_report_rows,
             "item_report_totals": totals,
+            "item_report_group_by_shop": (
+                not is_movements and len(shop_ids_for_query) > 1
+            ),
+            "movement_item_group_by_shop": (
+                is_item_movement_summary and len(shop_ids_for_query) > 1
+            ),
             "movement_count": len(movement_events),
             "item_count": len(item_report_rows),
             "units_in": units_in,
@@ -1745,6 +2627,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "is_item_movement_detail": is_item_movement_detail,
             "movement_item_rows": movement_item_rows,
             "movement_item_count": len(movement_item_rows),
+            "movement_item_totals": movement_item_totals,
             "detail_item": (
                 items_by_id.get(selected_item_ids[0])
                 if is_item_movement_detail
@@ -1758,12 +2641,10 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
 
 def stock_low_stock_settings(request, profile, meta, module):
     """Per-item low stock notification thresholds."""
-    from django.db.models import Sum
-
     from employees.module_permissions import employee_may
     from employees.workspace import sidebar_for_stock_management, stock_management_url
 
-    from .models import Item, ShopStock
+    from .models import Item
 
     page_sidebar = sidebar_for_stock_management(
         profile.role,
@@ -1788,12 +2669,18 @@ def stock_low_stock_settings(request, profile, meta, module):
             return redirect(stock_management_url(profile.role, "low-stock"))
 
         action = (request.POST.get("action") or "").strip()
-        if action == "save_low_stock":
+        shops = actionable_shops_for_profile(profile)
+        shops_by_id = {shop.pk: shop for shop in shops}
+
+        def _load_item():
             try:
-                item_id = int((request.POST.get("item_id") or "").strip())
+                parsed_id = int((request.POST.get("item_id") or "").strip())
             except (TypeError, ValueError):
-                item_id = 0
-            item = Item.objects.filter(pk=item_id).first()
+                parsed_id = 0
+            return Item.objects.filter(pk=parsed_id).first()
+
+        if action == "save_low_stock":
+            item = _load_item()
             if item is None:
                 if wants_json:
                     return JsonResponse(
@@ -1802,67 +2689,124 @@ def stock_low_stock_settings(request, profile, meta, module):
                 messages.error(request, "Item not found.")
                 return redirect(stock_management_url(profile.role, "low-stock"))
 
-            notify = (request.POST.get("notify") or "").strip() in (
+            if "notify" in request.POST:
+                notify = (request.POST.get("notify") or "").strip() in (
+                    "1",
+                    "true",
+                    "True",
+                    "on",
+                    "yes",
+                )
+                item.low_stock_notify = notify
+                item.save(update_fields=["low_stock_notify", "updated_at"])
+
+            if "threshold" in request.POST:
+                try:
+                    shop_id = int((request.POST.get("shop_id") or "").strip())
+                except (TypeError, ValueError):
+                    shop_id = 0
+                shop = shops_by_id.get(shop_id)
+                if shop is None:
+                    if wants_json:
+                        return JsonResponse(
+                            {"ok": False, "error": "Shop not found."}, status=404
+                        )
+                    messages.error(request, "Shop not found.")
+                    return redirect(stock_management_url(profile.role, "low-stock"))
+                raw_threshold = (request.POST.get("threshold") or "").strip()
+                if raw_threshold == "":
+                    usage = _weekly_usage_avg_by_item_shop([item.pk], [shop.pk])
+                    auto = _threshold_from_weekly_avg(
+                        usage.get((item.pk, shop.pk), 0)
+                    )
+                    _set_shop_low_stock_threshold(item, shop, auto, manual=False)
+                else:
+                    try:
+                        threshold = int(raw_threshold)
+                    except (TypeError, ValueError):
+                        if wants_json:
+                            return JsonResponse(
+                                {
+                                    "ok": False,
+                                    "error": "Threshold must be a whole number.",
+                                },
+                                status=400,
+                            )
+                        messages.error(request, "Threshold must be a whole number.")
+                        return redirect(
+                            stock_management_url(profile.role, "low-stock")
+                        )
+                    if threshold < 0:
+                        threshold = 0
+                    _set_shop_low_stock_threshold(item, shop, threshold, manual=True)
+
+            if wants_json:
+                return JsonResponse(_low_stock_json(item, shops, include_usage=True))
+            messages.success(request, f"Low stock settings saved for {item.name}.")
+            return redirect(stock_management_url(profile.role, "low-stock"))
+
+        if action == "sync_low_stock":
+            raw_item_id = (request.POST.get("item_id") or "").strip()
+            if raw_item_id:
+                item = _load_item()
+                if item is None:
+                    if wants_json:
+                        return JsonResponse(
+                            {"ok": False, "error": "Item not found."}, status=404
+                        )
+                    messages.error(request, "Item not found.")
+                    return redirect(stock_management_url(profile.role, "low-stock"))
+                items = [item]
+            else:
+                items = list(
+                    Item.objects.only(*LOW_STOCK_ITEM_ONLY).order_by("category", "name")
+                )
+            _sync_shop_thresholds_from_usage(items, shops)
+            if wants_json:
+                rows, _, _ = _build_low_stock_rows(items, shops)
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "synced": len(items),
+                        "items": _low_stock_payloads_from_rows(rows),
+                    }
+                )
+            if len(items) == 1:
+                messages.success(
+                    request,
+                    f"Alert at set from average for {items[0].name}.",
+                )
+            else:
+                messages.success(
+                    request,
+                    f"Alert at set from average for {len(items)} items.",
+                )
+            return redirect(stock_management_url(profile.role, "low-stock"))
+
+        if action == "notify_all_low_stock":
+            from django.utils import timezone
+
+            notify = (request.POST.get("notify") or "1").strip() in (
                 "1",
                 "true",
                 "True",
                 "on",
                 "yes",
             )
-            raw_threshold = (request.POST.get("threshold") or "").strip()
-            try:
-                threshold = int(raw_threshold or 0)
-            except (TypeError, ValueError):
-                if wants_json:
-                    return JsonResponse(
-                        {"ok": False, "error": "Threshold must be a whole number."},
-                        status=400,
-                    )
-                messages.error(request, "Threshold must be a whole number.")
-                return redirect(stock_management_url(profile.role, "low-stock"))
-            if threshold < 0:
-                threshold = 0
-            if notify and threshold < 1:
-                if wants_json:
-                    return JsonResponse(
-                        {
-                            "ok": False,
-                            "error": "Set a threshold of at least 1 to enable alerts.",
-                        },
-                        status=400,
-                    )
-                messages.error(
-                    request, "Set a threshold of at least 1 to enable alerts."
-                )
-                return redirect(stock_management_url(profile.role, "low-stock"))
-
-            item.low_stock_notify = notify
-            item.low_stock_threshold = threshold
-            item.save(
-                update_fields=["low_stock_notify", "low_stock_threshold", "updated_at"]
+            updated = Item.objects.update(
+                low_stock_notify=notify,
+                updated_at=timezone.now(),
             )
-            allocated_ids = [
-                shop.pk for shop in actionable_shops_for_profile(profile)
-            ]
-            stock_for_item = ShopStock.objects.filter(item=item)
-            if allocated_ids:
-                stock_for_item = stock_for_item.filter(shop_id__in=allocated_ids)
-            total_units = (
-                stock_for_item.aggregate(total=Sum("quantity"))["total"] or 0
-            )
-            is_low = bool(notify and total_units <= threshold)
             if wants_json:
                 return JsonResponse(
-                    {
-                        "ok": True,
-                        "item_id": item.pk,
-                        "notify": item.low_stock_notify,
-                        "threshold": item.low_stock_threshold,
-                        "total_units": int(total_units),
-                        "is_low": is_low,
-                    }
+                    {"ok": True, "notify": notify, "updated": updated}
                 )
-            messages.success(request, f"Low stock settings saved for {item.name}.")
+            messages.success(
+                request,
+                "Alerts turned on for all items."
+                if notify
+                else "Alerts turned off for all items.",
+            )
             return redirect(stock_management_url(profile.role, "low-stock"))
 
         if wants_json:
@@ -1870,36 +2814,13 @@ def stock_low_stock_settings(request, profile, meta, module):
         messages.error(request, "Unknown action.")
         return redirect(stock_management_url(profile.role, "low-stock"))
 
-    from employees.models import SHOP_ASSIGNABLE_ROLES
-
     allocated_shops = actionable_shops_for_profile(profile)
-    allocated_ids = [shop.pk for shop in allocated_shops]
-    stock_qs = ShopStock.objects.all()
-    if allocated_ids:
-        stock_qs = stock_qs.filter(shop_id__in=allocated_ids)
-    elif getattr(profile, "role", None) in SHOP_ASSIGNABLE_ROLES:
-        stock_qs = stock_qs.none()
-    stock_totals = {
-        row["item_id"]: int(row["total"] or 0)
-        for row in stock_qs.values("item_id").annotate(total=Sum("quantity"))
-    }
-    low_stock_items = []
-    notify_count = 0
-    for item in Item.objects.order_by("category", "name"):
-        total_units = stock_totals.get(item.pk, 0)
-        notify = bool(item.low_stock_notify)
-        threshold = int(item.low_stock_threshold or 0)
-        if notify:
-            notify_count += 1
-        low_stock_items.append(
-            {
-                "item": item,
-                "total_units": total_units,
-                "notify": notify,
-                "threshold": threshold,
-                "is_low": bool(notify and total_units <= threshold),
-            }
-        )
+    items = list(
+        Item.objects.only(*LOW_STOCK_ITEM_ONLY).order_by("category", "name")
+    )
+    low_stock_items, notify_count, group_by_shop = _build_low_stock_rows(
+        items, allocated_shops
+    )
 
     return render(
         request,
@@ -1911,8 +2832,10 @@ def stock_low_stock_settings(request, profile, meta, module):
             "stock_mode": "low-stock",
             "can_edit_low_stock": can_edit,
             "low_stock_items": low_stock_items,
-            "low_stock_item_count": len(low_stock_items),
+            "low_stock_item_count": len(items),
             "low_stock_notify_count": notify_count,
+            "low_stock_group_by_shop": group_by_shop,
+            "low_stock_usage_weeks": LOW_STOCK_USAGE_WEEKS,
             "stock_settings_url": stock_management_url(profile.role, "settings"),
         },
     )

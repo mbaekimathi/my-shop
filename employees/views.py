@@ -1015,7 +1015,7 @@ def _communications_settings_hub(request, context):
 
 def _company_communications_settings(request, context):
     from shops.models import SmsProvider
-    from communications.twilio import sandbox_join_info
+    from communications.twilio import inbound_callback_url, sandbox_join_info
 
     row = get_communications_settings()
     wants_json = (
@@ -1124,6 +1124,7 @@ def _company_communications_settings(request, context):
             "comms": communications_settings_as_dict(row),
             "sms_providers": SmsProvider.choices,
             "sandbox_join": sandbox_join_info(row),
+            "inbound_webhook_url": inbound_callback_url(),
         }
     )
     return render(request, "employees/settings_twilio.html", context)

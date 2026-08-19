@@ -17,10 +17,11 @@
       <div>
         <p class="stock-kicker">Stock settings</p>
         <h2>Low stock alerts</h2>
-        <p>
-          Turn on alerts per item and set the quantity that counts as low.
-          Alerts use total units across all shops.
-        </p>
+        <p>Turn alerts on per item. Each shop has its own Alert at.</p>
+        <div class="low-stock-legend" aria-hidden="true">
+          <span class="low-stock-chip">Blank uses the {{ low_stock_usage_weeks }}-week average</span>
+          <span class="low-stock-chip low-stock-chip--set">Sync writes the average into Alert at</span>
+        </div>
       </div>
       <div class="stock-settings-head-actions">
         <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ stock_settings_url }}">
@@ -47,92 +48,161 @@
   {% endif %}
 
   {% if low_stock_item_count %}
-  <div class="low-stock-toolbar">
-    <label class="item-search-field low-stock-search">
-      <i data-lucide="search" aria-hidden="true"></i>
-      <input
-        type="search"
-        placeholder="Search by name or category…"
-        autocomplete="off"
-        data-low-stock-search
-        aria-label="Search items"
-      >
-    </label>
-    <p class="low-stock-visible" data-low-stock-visible-count hidden></p>
-  </div>
-
-  <div class="low-stock-table-wrap">
-    <table class="low-stock-table">
-      <thead>
-        <tr>
-          <th scope="col">Item</th>
-          <th scope="col">On hand</th>
-          <th scope="col">Alert at</th>
-          <th scope="col">Notify</th>
-          <th scope="col">Status</th>
-        </tr>
-      </thead>
-      <tbody data-low-stock-list>
-        {% for row in low_stock_items %}
-        <tr
-          class="low-stock-row{% if row.is_low %} is-low{% endif %}"
-          data-low-stock-row
-          data-item-id="{{ row.item.pk }}"
-          data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }}"
-          data-notify="{% if row.notify %}1{% else %}0{% endif %}"
+  <div class="low-stock-shell">
+    <div class="low-stock-toolbar">
+      <label class="item-search-field low-stock-search">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input
+          type="search"
+          placeholder="Search items, shops, or categories…"
+          autocomplete="off"
+          data-low-stock-search
+          aria-label="Search items"
         >
-          <td class="low-stock-item">
-            <strong>{{ row.item.name }}</strong>
-            <span>{{ row.item.category }}</span>
-          </td>
-          <td class="low-stock-units">
-            <strong data-low-stock-units>{{ row.total_units }}</strong>
-            <span>units</span>
-          </td>
-          <td class="low-stock-threshold">
-            <label class="low-stock-threshold-field">
-              <span class="visually-hidden">Low stock threshold for {{ row.item.name }}</span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                inputmode="numeric"
-                value="{{ row.threshold }}"
-                {% if not can_edit_low_stock %}disabled{% endif %}
-                data-low-stock-threshold
-                aria-label="Alert when stock is at or below"
-              >
-            </label>
-          </td>
-          <td class="low-stock-notify">
-            <label class="perm-switch{% if not can_edit_low_stock %} is-disabled{% endif %}{% if not row.notify %} is-denied{% endif %}">
-              <input
-                type="checkbox"
-                class="perm-switch-input"
-                {% if row.notify %}checked{% endif %}
-                {% if not can_edit_low_stock %}disabled{% endif %}
-                data-low-stock-notify
-                aria-label="Notify when {{ row.item.name }} is low"
-              >
-              <span class="perm-switch-ui" aria-hidden="true"></span>
-              <span class="perm-switch-state">{% if row.notify %}On{% else %}Off{% endif %}</span>
-            </label>
-          </td>
-          <td class="low-stock-status">
-            <span class="low-stock-badge{% if row.is_low %} is-low{% elif row.notify %} is-ok{% else %} is-off{% endif %}" data-low-stock-badge>
-              {% if row.is_low %}
-              Low now
-              {% elif row.notify %}
-              Watching
-              {% else %}
-              Off
+      </label>
+      <p class="low-stock-visible" data-low-stock-visible-count hidden></p>
+      {% if can_edit_low_stock %}
+      <label class="perm-switch low-stock-notify-all{% if low_stock_notify_count != low_stock_item_count %} is-denied{% endif %}">
+        <input
+          type="checkbox"
+          class="perm-switch-input"
+          {% if low_stock_notify_count and low_stock_notify_count == low_stock_item_count %}checked{% endif %}
+          data-low-stock-notify-all
+          aria-label="Turn notify on for all items"
+        >
+        <span class="perm-switch-ui" aria-hidden="true"></span>
+        <span class="perm-switch-state">{% if low_stock_notify_count and low_stock_notify_count == low_stock_item_count %}All on{% else %}Notify all{% endif %}</span>
+      </label>
+      <button type="button" class="low-stock-sync-all" data-low-stock-sync-all>
+        <i data-lucide="refresh-cw" aria-hidden="true"></i>
+        Sync averages
+      </button>
+      {% endif %}
+    </div>
+
+    <div class="low-stock-table-wrap">
+      <table class="low-stock-table{% if low_stock_group_by_shop %} low-stock-table--by-shop{% endif %}">
+        <colgroup>
+          <col class="low-stock-col-item">
+          <col class="low-stock-col-shop">
+          <col class="low-stock-col-num">
+          <col class="low-stock-col-num">
+          <col class="low-stock-col-alert">
+          <col class="low-stock-col-notify">
+          <col class="low-stock-col-status">
+          {% if can_edit_low_stock %}
+          <col class="low-stock-col-action">
+          {% endif %}
+        </colgroup>
+        <thead>
+          <tr>
+            <th scope="col">Item</th>
+            <th scope="col">Shop</th>
+            <th scope="col" class="low-stock-num">On hand</th>
+            <th scope="col" class="low-stock-num" title="Weekly net sales over the last {{ low_stock_usage_weeks }} weeks">Avg / week</th>
+            <th scope="col" class="low-stock-num">Alert at</th>
+            <th scope="col">Notify</th>
+            <th scope="col">Status</th>
+            {% if can_edit_low_stock %}
+            <th scope="col"><span class="visually-hidden">Sync</span></th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody data-low-stock-list>
+          {% for row in low_stock_items %}
+          <tr
+            class="low-stock-row{% if row.is_low %} is-low{% endif %}{% if row.is_item_total %} is-item-total{% elif row.is_item_start %} is-item-start{% else %} is-shop-follow{% endif %}"
+            data-low-stock-row
+            data-item-id="{{ row.item.pk }}"
+            {% if row.shop_id %}data-shop-id="{{ row.shop_id }}"{% endif %}
+            data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }} {{ row.shop_name|lower }}"
+            data-notify="{% if row.notify %}1{% else %}0{% endif %}"
+            data-manual="{% if row.threshold_manual %}1{% else %}0{% endif %}"
+            data-effective-threshold="{{ row.threshold|default:0 }}"
+          >
+            <td class="low-stock-item">
+              {% if row.is_item_start %}
+              <strong>{{ row.item.name }}</strong>
+              <span>{{ row.item.category }}</span>
               {% endif %}
-            </span>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            </td>
+            <td class="low-stock-shop">
+              {% if row.is_item_total %}
+              <span class="low-stock-shop-total">Total</span>
+              {% else %}
+              <span class="low-stock-shop-name">{{ row.shop_name }}</span>
+              {% endif %}
+            </td>
+            <td class="low-stock-units low-stock-num">
+              <strong data-low-stock-units>{{ row.total_units }}</strong>
+            </td>
+            <td class="low-stock-avg low-stock-num">
+              {% if row.avg_week %}
+              <strong>{{ row.avg_week }}</strong>
+              {% else %}
+              <span class="low-stock-dash">—</span>
+              {% endif %}
+            </td>
+            <td class="low-stock-threshold low-stock-num">
+              {% if row.show_threshold %}
+              <label class="low-stock-threshold-field{% if row.threshold_manual %} is-manual{% else %} is-auto{% endif %}">
+                <span class="visually-hidden">Low stock threshold for {{ row.item.name }} at {{ row.shop_name }}</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputmode="numeric"
+                  value="{{ row.threshold }}"
+                  placeholder="{{ row.auto_threshold }}"
+                  {% if not can_edit_low_stock %}disabled{% endif %}
+                  data-low-stock-threshold
+                  aria-label="Notify when {{ row.shop_name }} stock is at or below this number"
+                >
+                <span class="low-stock-threshold-hint" data-low-stock-threshold-hint>{% if row.threshold_manual %}set{% else %}avg{% endif %}</span>
+              </label>
+              {% endif %}
+            </td>
+            <td class="low-stock-notify">
+              {% if row.show_notify %}
+              <label class="perm-switch{% if not can_edit_low_stock %} is-disabled{% endif %}{% if not row.notify %} is-denied{% endif %}">
+                <input
+                  type="checkbox"
+                  class="perm-switch-input"
+                  {% if row.notify %}checked{% endif %}
+                  {% if not can_edit_low_stock %}disabled{% endif %}
+                  data-low-stock-notify
+                  aria-label="Notify when {{ row.item.name }} is low"
+                >
+                <span class="perm-switch-ui" aria-hidden="true"></span>
+                <span class="perm-switch-state">{% if row.notify %}On{% else %}Off{% endif %}</span>
+              </label>
+              {% endif %}
+            </td>
+            <td class="low-stock-status">
+              <span class="low-stock-badge{% if row.is_low %} is-low{% elif row.notify %} is-ok{% else %} is-off{% endif %}" data-low-stock-badge>
+                {% if row.is_low %}
+                Low now
+                {% elif row.notify %}
+                Watching
+                {% else %}
+                Off
+                {% endif %}
+              </span>
+            </td>
+            {% if can_edit_low_stock %}
+            <td class="low-stock-sync-cell">
+              {% if row.show_sync %}
+              <button type="button" class="low-stock-sync" data-low-stock-sync title="Set Alert at from average" aria-label="Set Alert at from average for {{ row.item.name }}">
+                <i data-lucide="refresh-cw" aria-hidden="true"></i>
+              </button>
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
   <p class="item-search-empty low-stock-empty" data-low-stock-no-results hidden>
     <i data-lucide="search-x" aria-hidden="true"></i>
@@ -147,12 +217,12 @@
 
   <p class="stock-settings-footnote">
     <i data-lucide="bell" aria-hidden="true"></i>
-    <span>Changes save as you edit. An item is low when on-hand units are at or below its alert quantity.</span>
+    <span>Sync copies each shop’s weekly average into Alert at. That number is the low-stock notify point. You can still type a different number for a shop.</span>
   </p>
 </section>
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-low-stock.js' %}?v=1"></script>
+<script src="{% static 'js/stock-low-stock.js' %}?v=7"></script>
 {% endblock %}
