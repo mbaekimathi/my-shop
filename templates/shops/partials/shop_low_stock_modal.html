@@ -38,16 +38,16 @@
       <ul class="shop-low-stock-list">
         {% for row in low_stock_alerts %}
         <li>
-          <div>
+          <div class="shop-low-stock-item">
             <strong>{{ row.name }}</strong>
             {% if row.category %}
-            <span>{{ row.category }}</span>
+            <span class="shop-low-stock-meta">{{ row.category }}</span>
             {% endif %}
           </div>
-          <p>
+          <div class="shop-low-stock-qty">
             <strong>{{ row.quantity }}</strong>
-            <span>on hand · alert at {{ row.threshold }}</span>
-          </p>
+            <span class="shop-low-stock-meta">alert {{ row.threshold }}</span>
+          </div>
         </li>
         {% endfor %}
       </ul>

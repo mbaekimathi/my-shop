@@ -1218,38 +1218,54 @@ html[data-theme="light"] .staff-shop-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 0.45rem;
   max-height: min(50vh, 22rem);
   overflow: auto;
+  border-top: 1px solid var(--line);
 }
 
 .shop-low-stock-list li {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 0.85rem;
-  padding: 0.65rem 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: color-mix(in srgb, #c45c26 7%, var(--surface));
+  gap: 0.75rem 1rem;
+  padding: 0.55rem 0.15rem;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
 }
 
-.shop-low-stock-list strong {
+.shop-low-stock-item {
+  min-width: 0;
+  flex: 1;
+}
+
+.shop-low-stock-item strong {
   display: block;
-  font-size: 0.92rem;
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
-.shop-low-stock-list span {
-  font-size: 0.78rem;
-  color: var(--mist-dim);
-}
-
-.shop-low-stock-list p {
-  margin: 0;
+.shop-low-stock-qty {
+  flex-shrink: 0;
   text-align: right;
-  white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.shop-low-stock-qty strong {
+  display: block;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.shop-low-stock-meta {
+  display: block;
+  margin-top: 0.12rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
 }
 
 @media (max-width: 900px) {
