@@ -138,3 +138,16 @@ def resolve_bool(name: str, *, default: bool) -> bool:
     if flagged == "false":
         return False
     return default
+
+
+def resolve_mysql_host(*, is_hosted: bool) -> str:
+    """
+    cPanel/shared hosting MySQL usually listens on a Unix socket (localhost),
+    not TCP (127.0.0.1) — the latter often times out with error 2003.
+    """
+    raw = (os.getenv("MYSQL_HOST") or "").strip()
+    if not raw:
+        return "localhost" if is_hosted else "127.0.0.1"
+    if is_hosted and raw in {"127.0.0.1", "::1"}:
+        return "localhost"
+    return raw

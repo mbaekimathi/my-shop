@@ -23,6 +23,14 @@ def _company_brand_context():
 def employee_workspace(request):
     """Expose workspace chrome data — one profile load per request max."""
     context = _company_brand_context()
+    try:
+        from shops.services import developer_payment_prompt_for_request
+
+        prompt = developer_payment_prompt_for_request(request)
+        if prompt:
+            context["developer_payment_prompt"] = prompt
+    except Exception:
+        pass
     user = getattr(request, "user", None)
     if user and user.is_authenticated:
         meta = get_employee_meta_for_request(request) or request.session.get(

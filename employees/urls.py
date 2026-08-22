@@ -50,6 +50,21 @@ urlpatterns = [
         views.employee_settings_section,
         name="settings_section",
     ),
+    path(
+        "developer-payments/dismiss/",
+        views.developer_payment_dismiss,
+        name="developer_payment_dismiss",
+    ),
+    path(
+        "developer-payments/stk/",
+        views.developer_payment_stk_initiate,
+        name="developer_payment_stk_initiate",
+    ),
+    path(
+        "developer-payments/stk/<uuid:payment_id>/",
+        views.developer_payment_stk_status,
+        name="developer_payment_stk_status",
+    ),
     path("logout/", views.employee_logout, name="logout"),
     path(
         "to-employee-login/",

@@ -9,6 +9,7 @@ from django.db import IntegrityError
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods
 
@@ -25,12 +26,15 @@ from items.views import (
 from shops.services import (
     communications_settings_as_dict,
     daraja_settings_as_dict,
+    developer_payment_settings_as_dict,
     get_communications_settings,
     get_company_pos_settings,
     get_company_display_name,
     get_company_profile,
     get_company_working_hours_settings,
     get_daraja_settings,
+    get_developer_payment_settings,
+    mark_developer_subscription_paid,
     pos_settings_as_dict,
     preview_receipt_number,
     receipt_font_style,
@@ -46,6 +50,7 @@ from shops.services import (
     update_company_profile,
     save_working_hours_settings,
     update_daraja_settings,
+    update_developer_payment_settings,
     update_twilio_settings,
     update_message_channel_settings,
     update_sms_settings,
@@ -972,8 +977,14 @@ def employee_settings_section(request, section):
     if settings_section["slug"] == "company-profile":
         return _company_profile_settings(request, context)
 
-    if settings_section["slug"] in ("company-payments", "company-daraja"):
+    if settings_section["slug"] == "company-payments":
+        return _payments_settings_hub(request, context)
+
+    if settings_section["slug"] == "company-daraja":
         return _company_daraja_settings(request, context)
+
+    if settings_section["slug"] == "developer-payments":
+        return _developer_payment_settings(request, context)
 
     if settings_section["slug"] == "communication-settings":
         return _communications_settings_hub(request, context)
@@ -1011,6 +1022,21 @@ def _communications_settings_hub(request, context):
             pages.append(section)
     context["comms_pages"] = pages
     return render(request, "employees/settings_communications.html", context)
+
+
+def _payments_settings_hub(request, context):
+    from .module_permissions import employee_may
+
+    profile = context["profile"]
+    pages = []
+    for slug in ("company-daraja", "developer-payments"):
+        section = get_settings_section(slug)
+        if section is None:
+            continue
+        if employee_may(profile, "settings", slug):
+            pages.append(section)
+    context["payment_pages"] = pages
+    return render(request, "employees/settings_payments.html", context)
 
 
 def _company_communications_settings(request, context):
@@ -1255,6 +1281,196 @@ def _company_daraja_settings(request, context):
         }
     )
     return render(request, "employees/settings_daraja.html", context)
+
+
+def _developer_payment_settings(request, context):
+    """Daraja credentials plus developer subscription prompt settings."""
+    from shops.models import (
+        DarajaEnvironment,
+        DeveloperPaymentCadence,
+        DeveloperPaymentPopupLocation,
+    )
+
+    row = get_daraja_settings()
+    developer = get_developer_payment_settings()
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or "application/json" in (request.headers.get("Accept") or "")
+    )
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+
+        if action in ("toggle_stk_push", "save_daraja_credentials"):
+            return _company_daraja_settings(request, context)
+
+        if action == "save_developer_subscriptions":
+            enabled_raw = (request.POST.get("prompts_enabled") or "").strip().lower()
+            prompts_enabled = enabled_raw in ("1", "true", "on", "yes")
+            dismiss_raw = (request.POST.get("allow_dismiss") or "").strip().lower()
+            allow_dismiss = dismiss_raw in ("1", "true", "on", "yes")
+            try:
+                developer = update_developer_payment_settings(
+                    prompts_enabled=prompts_enabled,
+                    system_subscription_amount=request.POST.get(
+                        "system_subscription_amount"
+                    ),
+                    whatsapp_subscription_amount=request.POST.get(
+                        "whatsapp_subscription_amount"
+                    ),
+                    hosting_subscription_amount=request.POST.get(
+                        "hosting_subscription_amount"
+                    ),
+                    prompt_cadence=request.POST.get("prompt_cadence") or "",
+                    popup_location=request.POST.get("popup_location") or "",
+                    allow_dismiss=allow_dismiss,
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": message,
+                            **developer_payment_settings_as_dict(
+                                get_developer_payment_settings()
+                            ),
+                        },
+                        status=400,
+                    )
+                messages.error(request, message)
+                return redirect(request.path)
+            payload = developer_payment_settings_as_dict(developer)
+            if wants_json:
+                return JsonResponse(
+                    {"ok": True, "message": "Developer payment settings saved.", **payload}
+                )
+            messages.success(request, "Developer payment settings saved.")
+            return redirect(request.path)
+
+        if wants_json:
+            return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
+        messages.error(request, "Unknown action.")
+        return redirect(request.path)
+
+    context.update(
+        {
+            "daraja": daraja_settings_as_dict(row),
+            "daraja_environments": DarajaEnvironment.choices,
+            "form_data": {
+                "environment": row.environment,
+                "shortcode": row.shortcode,
+                "callback_base_url": row.callback_base_url
+                or (daraja_settings_as_dict(row).get("callback_base_url") or ""),
+                "enable_stk_push": row.enable_stk_push,
+            },
+            "show_developer_subscriptions": True,
+            "developer_payments": developer_payment_settings_as_dict(developer),
+            "developer_cadences": DeveloperPaymentCadence.choices,
+            "developer_popup_locations": DeveloperPaymentPopupLocation.choices,
+        }
+    )
+    return render(request, "employees/settings_daraja.html", context)
+
+
+@require_http_methods(["POST"])
+def developer_payment_dismiss(request):
+    """Snooze the developer payment popup when dismiss is allowed."""
+    from datetime import timedelta
+
+    from shops.session import resolve_portal_shop
+
+    profile = get_profile_for_request(request)
+    portal_shop = resolve_portal_shop(request)
+    if profile is None and portal_shop is None:
+        return JsonResponse({"ok": False, "error": "Sign in required."}, status=401)
+
+    row = get_developer_payment_settings()
+    if not row.allow_dismiss:
+        return JsonResponse(
+            {"ok": False, "error": "This payment prompt cannot be dismissed."},
+            status=400,
+        )
+    until = timezone.now() + timedelta(hours=24)
+    request.session["developer_payment_dismiss_until"] = until.isoformat()
+    return JsonResponse({"ok": True, "dismiss_until": until.isoformat()})
+
+
+@require_http_methods(["POST"])
+def developer_payment_stk_initiate(request):
+    """Start STK Push for the configured developer subscription total."""
+    from shops.daraja_stk import initiate_stk_push, stk_payment_payload, stk_ready
+    from shops.models import MpesaStkPurpose
+    from shops.session import resolve_portal_shop
+
+    profile = get_profile_for_request(request)
+    portal_shop = resolve_portal_shop(request)
+    if profile is None and portal_shop is None:
+        return JsonResponse({"ok": False, "error": "Sign in required."}, status=401)
+
+    row = get_developer_payment_settings()
+    total = row.total_amount()
+    if total <= 0:
+        return JsonResponse(
+            {"ok": False, "error": "Set subscription amounts before paying."},
+            status=400,
+        )
+    if not stk_ready():
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "STK Push is not ready. Check Developer Payments Daraja settings.",
+            },
+            status=400,
+        )
+
+    phone = (request.POST.get("phone") or "").strip()
+    try:
+        payment = initiate_stk_push(
+            purpose=MpesaStkPurpose.DEVELOPER,
+            amount=total,
+            phone=phone,
+            account_reference="DEVSUB",
+            description="Developer subscription",
+            shop=portal_shop,
+            profile=profile if profile and getattr(profile, "is_active_employee", False) else None,
+            request=request,
+        )
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        return JsonResponse({"ok": False, "error": message}, status=400)
+
+    return JsonResponse({"ok": True, **stk_payment_payload(payment)})
+
+
+@require_http_methods(["GET"])
+def developer_payment_stk_status(request, payment_id):
+    from shops.daraja_stk import get_stk_payment, stk_payment_payload
+    from shops.models import MpesaStkPurpose, MpesaStkStatus
+    from shops.session import resolve_portal_shop
+
+    profile = get_profile_for_request(request)
+    portal_shop = resolve_portal_shop(request)
+    if profile is None and portal_shop is None:
+        return JsonResponse({"ok": False, "error": "Sign in required."}, status=401)
+
+    payment = get_stk_payment(payment_id)
+    if payment is None or payment.purpose != MpesaStkPurpose.DEVELOPER:
+        return JsonResponse({"ok": False, "error": "STK payment not found."}, status=404)
+
+    if (
+        payment.status == MpesaStkStatus.SUCCESS
+        and not payment.applied
+    ):
+        mark_developer_subscription_paid(
+            mpesa_receipt=payment.mpesa_receipt_number or "",
+            paid_at=payment.completed_at,
+        )
+        payment.applied = True
+        payment.save(update_fields=["applied", "updated_at"])
+        request.session.pop("developer_payment_dismiss_until", None)
+
+    return JsonResponse({"ok": True, **stk_payment_payload(payment)})
 
 
 def _company_profile_settings(request, context):

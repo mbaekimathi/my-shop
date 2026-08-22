@@ -4,7 +4,7 @@
 {% block body_class %}page-workspace{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260821-low-stock-list">
+<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260821-dev-pay-2">
 {% endblock %}
 
 {% block body %}
@@ -72,6 +72,7 @@
 {% if low_stock_alerts %}
 {% include "shops/partials/shop_low_stock_modal.html" %}
 {% endif %}
+{% include "employees/partials/developer_payment_modal.html" %}
 {% endblock %}
 {% endblock %}
 
@@ -83,6 +84,9 @@
 {% endif %}
 {% if low_stock_alerts %}
 <script defer src="{% static 'js/shop-low-stock-alert.js' %}?v=1"></script>
+{% endif %}
+{% if developer_payment_prompt %}
+<script defer src="{% static 'js/developer-payment-prompt.js' %}?v=2"></script>
 {% endif %}
 <script defer src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
 <script>

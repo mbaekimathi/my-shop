@@ -12,8 +12,13 @@
       <div>
         <h2>{{ meta.headline }}</h2>
         <p>
+          {% if show_developer_subscriptions %}
+          Configure Daraja credentials for developer settlement, then set
+          subscription amounts, prompt schedule, popup location, and dismiss rules.
+          {% else %}
           Enable Lipa Na M-Pesa STK Push and store Safaricom Daraja credentials.
           Credentials are checked against Safaricom before they can be used.
+          {% endif %}
         </p>
       </div>
     </div>
@@ -194,10 +199,184 @@
       </form>
     </section>
   </div>
+
+  {% if show_developer_subscriptions %}
+  <div class="pos-settings-groups daraja-settings-groups developer-payment-groups">
+    <section class="pos-settings-group" data-developer-subscriptions>
+      <div class="pos-settings-group-head">
+        <h3>Developer subscription prompts</h3>
+        <p>
+          Set amounts users are prompted to pay, how often the popup appears,
+          where it shows, and whether they can dismiss it.
+        </p>
+      </div>
+
+      <form class="daraja-credentials-form" data-developer-form novalidate>
+        <input type="hidden" name="action" value="save_developer_subscriptions">
+
+        <ul class="pos-settings-list">
+          <li class="pos-settings-row">
+            <div class="pos-settings-copy">
+              <strong>Enable payment prompts</strong>
+              <p>Turn on to show the subscription popup when payment is due.</p>
+            </div>
+            <label class="perm-switch{% if not developer_payments.prompts_enabled %} is-denied{% endif %}">
+              <input
+                type="checkbox"
+                class="perm-switch-input"
+                name="prompts_enabled"
+                value="1"
+                {% if developer_payments.prompts_enabled %}checked{% endif %}
+                data-developer-prompts-enabled
+                aria-label="Enable payment prompts"
+              >
+              <span class="perm-switch-ui" aria-hidden="true"></span>
+              <span class="perm-switch-state">
+                {% if developer_payments.prompts_enabled %}Enabled{% else %}Disabled{% endif %}
+              </span>
+            </label>
+          </li>
+          <li class="pos-settings-row">
+            <div class="pos-settings-copy">
+              <strong>Allow dismiss</strong>
+              <p>
+                When off, the dismiss button is hidden and payment stays compulsory
+                until M-Pesa succeeds.
+              </p>
+            </div>
+            <label class="perm-switch{% if not developer_payments.allow_dismiss %} is-denied{% endif %}">
+              <input
+                type="checkbox"
+                class="perm-switch-input"
+                name="allow_dismiss"
+                value="1"
+                {% if developer_payments.allow_dismiss %}checked{% endif %}
+                data-developer-allow-dismiss
+                aria-label="Allow dismiss"
+              >
+              <span class="perm-switch-ui" aria-hidden="true"></span>
+              <span class="perm-switch-state">
+                {% if developer_payments.allow_dismiss %}Allowed{% else %}Hidden{% endif %}
+              </span>
+            </label>
+          </li>
+        </ul>
+
+        <div class="daraja-fields">
+          <label class="daraja-field">
+            <span>System subscription (KSh)</span>
+            <input
+              type="number"
+              name="system_subscription_amount"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              value="{{ developer_payments.system_subscription_amount }}"
+              data-developer-system-amount
+            >
+          </label>
+          <label class="daraja-field">
+            <span>WhatsApp subscription (KSh)</span>
+            <input
+              type="number"
+              name="whatsapp_subscription_amount"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              value="{{ developer_payments.whatsapp_subscription_amount }}"
+              data-developer-whatsapp-amount
+            >
+          </label>
+          <label class="daraja-field">
+            <span>Hosting subscription (KSh)</span>
+            <input
+              type="number"
+              name="hosting_subscription_amount"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              value="{{ developer_payments.hosting_subscription_amount }}"
+              data-developer-hosting-amount
+            >
+          </label>
+        </div>
+
+        <div class="daraja-env-picker developer-option-picker" role="group" aria-label="When to prompt">
+          {% for value, label in developer_cadences %}
+          <label class="daraja-env-option{% if developer_payments.prompt_cadence == value %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="prompt_cadence"
+              value="{{ value }}"
+              data-developer-cadence
+              {% if developer_payments.prompt_cadence == value %}checked{% endif %}
+            >
+            <span>
+              <strong>{{ label }}</strong>
+              <em>Prompt on this schedule after each successful payment</em>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+
+        <div class="daraja-env-picker developer-option-picker developer-option-picker--3" role="group" aria-label="Where popup appears">
+          {% for value, label in developer_popup_locations %}
+          <label class="daraja-env-option{% if developer_payments.popup_location == value %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="popup_location"
+              value="{{ value }}"
+              data-developer-location
+              {% if developer_payments.popup_location == value %}checked{% endif %}
+            >
+            <span>
+              <strong>{{ label }}</strong>
+              <em>
+                {% if value == "shop" %}
+                Shop floor / POS portal only
+                {% elif value == "employee" %}
+                Employee workspace pages only
+                {% else %}
+                Shop portal and employee pages
+                {% endif %}
+              </em>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+
+        {% if developer_payments.last_paid_at %}
+        <div class="daraja-status">
+          <span class="daraja-status-pill is-ok">Last paid</span>
+          <em>
+            {{ developer_payments.last_paid_at|date:"d M Y · H:i" }}
+            {% if developer_payments.last_mpesa_receipt %}
+            · {{ developer_payments.last_mpesa_receipt }}
+            {% endif %}
+            {% if developer_payments.next_due_at %}
+            · Next due {{ developer_payments.next_due_at|date:"d M Y" }}
+            {% endif %}
+          </em>
+        </div>
+        {% endif %}
+
+        <div class="daraja-form-actions">
+          <button type="submit" class="btn btn--primary" data-developer-save>
+            Save subscription settings
+          </button>
+          <p class="daraja-form-message" data-developer-message hidden></p>
+        </div>
+      </form>
+    </section>
+  </div>
+  {% endif %}
 </section>
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/daraja-settings.js' %}?v=6"></script>
+{% if show_developer_subscriptions %}
+<script src="{% static 'js/developer-payment-settings.js' %}?v=1"></script>
+{% endif %}
 {% endblock %}

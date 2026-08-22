@@ -653,6 +653,67 @@ class CompanyDarajaSettings(models.Model):
         return "STK not ready"
 
 
+class DeveloperPaymentCadence(models.TextChoices):
+    MONTHLY = "monthly", "Monthly"
+    QUARTERLY = "quarterly", "Quarterly"
+    SEMI_ANNUALLY = "semi_annually", "Semi-annually"
+    ANNUALLY = "annually", "Annually"
+
+
+class DeveloperPaymentPopupLocation(models.TextChoices):
+    SHOP = "shop", "Shop page"
+    EMPLOYEE = "employee", "Employee page"
+    BOTH = "both", "Both"
+
+
+class CompanyDeveloperPaymentSettings(models.Model):
+    """Developer / platform subscription prompts (singleton)."""
+
+    prompts_enabled = models.BooleanField(default=False)
+    system_subscription_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0
+    )
+    whatsapp_subscription_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0
+    )
+    hosting_subscription_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0
+    )
+    prompt_cadence = models.CharField(
+        max_length=20,
+        choices=DeveloperPaymentCadence.choices,
+        default=DeveloperPaymentCadence.MONTHLY,
+    )
+    popup_location = models.CharField(
+        max_length=16,
+        choices=DeveloperPaymentPopupLocation.choices,
+        default=DeveloperPaymentPopupLocation.BOTH,
+    )
+    allow_dismiss = models.BooleanField(
+        default=True,
+        help_text="When off, the dismiss control is hidden and payment is compulsory.",
+    )
+    last_paid_at = models.DateTimeField(null=True, blank=True)
+    last_mpesa_receipt = models.CharField(max_length=40, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company developer payment settings"
+        verbose_name_plural = "Company developer payment settings"
+
+    def __str__(self):
+        return "Company developer payment settings"
+
+    def total_amount(self):
+        from decimal import Decimal
+
+        return (
+            (self.system_subscription_amount or Decimal("0"))
+            + (self.whatsapp_subscription_amount or Decimal("0"))
+            + (self.hosting_subscription_amount or Decimal("0"))
+        )
+
+
 class SmsProvider(models.TextChoices):
     AFRICAS_TALKING = "africas_talking", "Africa's Talking"
     TWILIO = "twilio", "Twilio"
@@ -739,6 +800,7 @@ class CompanyCommunicationsSettings(models.Model):
 class MpesaStkPurpose(models.TextChoices):
     SALE = "sale", "Sale checkout"
     CREDIT = "credit", "Credit account pay"
+    DEVELOPER = "developer", "Developer subscription"
 
 
 class MpesaStkStatus(models.TextChoices):

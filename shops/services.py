@@ -14,11 +14,14 @@ from employees.countries import COUNTRY_DIAL_CODES
 from .models import (
     CompanyCommunicationsSettings,
     CompanyDarajaSettings,
+    CompanyDeveloperPaymentSettings,
     CompanyPosSettings,
     CompanyProfile,
     CompanyStockSettings,
     CompanyWorkingHoursSettings,
     DarajaEnvironment,
+    DeveloperPaymentCadence,
+    DeveloperPaymentPopupLocation,
     WORKING_DAY_FIELDS,
     ShopWorkingHoursSettings,
     Expense,
@@ -1014,6 +1017,245 @@ def update_daraja_settings(
     row.save(update_fields=update_fields)
     _invalidate_daraja_settings_cache()
     return get_daraja_settings()
+
+
+def get_developer_payment_settings() -> CompanyDeveloperPaymentSettings:
+    settings_row, _ = CompanyDeveloperPaymentSettings.objects.get_or_create(pk=1)
+    return settings_row
+
+
+def _money_amount(value, *, field_label: str) -> Decimal:
+    raw = str(value if value is not None else "").strip().replace(",", "")
+    if not raw:
+        return Decimal("0.00")
+    try:
+        amount = Decimal(raw)
+    except (InvalidOperation, TypeError) as exc:
+        raise ValidationError(f"Enter a valid {field_label} amount.") from exc
+    if amount < 0:
+        raise ValidationError(f"{field_label} cannot be negative.")
+    return amount.quantize(Decimal("0.01"))
+
+
+def _add_months(when, months: int):
+    import calendar
+
+    year = when.year + (when.month - 1 + months) // 12
+    month = (when.month - 1 + months) % 12 + 1
+    day = min(when.day, calendar.monthrange(year, month)[1])
+    return when.replace(year=year, month=month, day=day)
+
+
+def developer_payment_next_due_at(settings_row: CompanyDeveloperPaymentSettings | None = None):
+    row = settings_row or get_developer_payment_settings()
+    if row.last_paid_at is None:
+        return None
+    cadence = row.prompt_cadence or DeveloperPaymentCadence.MONTHLY
+    months = {
+        DeveloperPaymentCadence.MONTHLY: 1,
+        DeveloperPaymentCadence.QUARTERLY: 3,
+        DeveloperPaymentCadence.SEMI_ANNUALLY: 6,
+        DeveloperPaymentCadence.ANNUALLY: 12,
+    }.get(cadence, 1)
+    return _add_months(row.last_paid_at, months)
+
+
+def developer_payment_is_due(settings_row: CompanyDeveloperPaymentSettings | None = None) -> bool:
+    row = settings_row or get_developer_payment_settings()
+    if not row.prompts_enabled:
+        return False
+    if row.total_amount() <= 0:
+        return False
+    if row.last_paid_at is None:
+        return True
+    next_due = developer_payment_next_due_at(row)
+    if next_due is None:
+        return True
+    return timezone.now() >= next_due
+
+
+def developer_payment_line_items(settings_row: CompanyDeveloperPaymentSettings | None = None) -> list[dict]:
+    row = settings_row or get_developer_payment_settings()
+    items = [
+        {
+            "key": "system",
+            "label": "System subscription",
+            "amount": row.system_subscription_amount or Decimal("0"),
+        },
+        {
+            "key": "whatsapp",
+            "label": "WhatsApp subscription",
+            "amount": row.whatsapp_subscription_amount or Decimal("0"),
+        },
+        {
+            "key": "hosting",
+            "label": "Hosting subscription",
+            "amount": row.hosting_subscription_amount or Decimal("0"),
+        },
+    ]
+    return [item for item in items if item["amount"] > 0]
+
+
+def developer_payment_settings_as_dict(
+    settings_row: CompanyDeveloperPaymentSettings | None = None,
+) -> dict:
+    row = settings_row or get_developer_payment_settings()
+    total = row.total_amount()
+    next_due = developer_payment_next_due_at(row)
+    return {
+        "prompts_enabled": bool(row.prompts_enabled),
+        "system_subscription_amount": str(row.system_subscription_amount or Decimal("0")),
+        "whatsapp_subscription_amount": str(
+            row.whatsapp_subscription_amount or Decimal("0")
+        ),
+        "hosting_subscription_amount": str(
+            row.hosting_subscription_amount or Decimal("0")
+        ),
+        "prompt_cadence": row.prompt_cadence,
+        "prompt_cadence_label": row.get_prompt_cadence_display(),
+        "popup_location": row.popup_location,
+        "popup_location_label": row.get_popup_location_display(),
+        "allow_dismiss": bool(row.allow_dismiss),
+        "last_paid_at": row.last_paid_at,
+        "last_mpesa_receipt": row.last_mpesa_receipt or "",
+        "next_due_at": next_due,
+        "is_due": developer_payment_is_due(row),
+        "total_amount": str(total),
+        "line_items": [
+            {"key": item["key"], "label": item["label"], "amount": str(item["amount"])}
+            for item in developer_payment_line_items(row)
+        ],
+    }
+
+
+def update_developer_payment_settings(
+    *,
+    prompts_enabled: bool | None = None,
+    system_subscription_amount=None,
+    whatsapp_subscription_amount=None,
+    hosting_subscription_amount=None,
+    prompt_cadence: str = "",
+    popup_location: str = "",
+    allow_dismiss: bool | None = None,
+) -> CompanyDeveloperPaymentSettings:
+    row = get_developer_payment_settings()
+    update_fields = ["updated_at"]
+
+    if prompts_enabled is not None:
+        row.prompts_enabled = bool(prompts_enabled)
+        update_fields.append("prompts_enabled")
+
+    if system_subscription_amount is not None:
+        row.system_subscription_amount = _money_amount(
+            system_subscription_amount, field_label="System subscription"
+        )
+        update_fields.append("system_subscription_amount")
+    if whatsapp_subscription_amount is not None:
+        row.whatsapp_subscription_amount = _money_amount(
+            whatsapp_subscription_amount, field_label="WhatsApp subscription"
+        )
+        update_fields.append("whatsapp_subscription_amount")
+    if hosting_subscription_amount is not None:
+        row.hosting_subscription_amount = _money_amount(
+            hosting_subscription_amount, field_label="Hosting subscription"
+        )
+        update_fields.append("hosting_subscription_amount")
+
+    cadence = (prompt_cadence or "").strip()
+    if cadence:
+        valid = {choice.value for choice in DeveloperPaymentCadence}
+        if cadence not in valid:
+            raise ValidationError("Choose a valid payment prompt schedule.")
+        row.prompt_cadence = cadence
+        update_fields.append("prompt_cadence")
+
+    location = (popup_location or "").strip()
+    if location:
+        valid = {choice.value for choice in DeveloperPaymentPopupLocation}
+        if location not in valid:
+            raise ValidationError("Choose where the payment popup should appear.")
+        row.popup_location = location
+        update_fields.append("popup_location")
+
+    if allow_dismiss is not None:
+        row.allow_dismiss = bool(allow_dismiss)
+        update_fields.append("allow_dismiss")
+
+    row.save(update_fields=update_fields)
+    return get_developer_payment_settings()
+
+
+def mark_developer_subscription_paid(
+    *,
+    mpesa_receipt: str = "",
+    paid_at=None,
+) -> CompanyDeveloperPaymentSettings:
+    row = get_developer_payment_settings()
+    row.last_paid_at = paid_at or timezone.now()
+    row.last_mpesa_receipt = (mpesa_receipt or "").strip()[:40]
+    row.save(update_fields=["last_paid_at", "last_mpesa_receipt", "updated_at"])
+    return get_developer_payment_settings()
+
+
+def developer_payment_prompt_for_request(request) -> dict | None:
+    """Return popup payload when a developer subscription prompt should show."""
+    if request is None:
+        return None
+    path = getattr(request, "path", "") or ""
+    if path.startswith("/employees/settings"):
+        return None
+    if path.startswith("/employees/login") or path.startswith("/employees/register"):
+        return None
+
+    row = get_developer_payment_settings()
+    if not developer_payment_is_due(row):
+        return None
+
+    from employees.access import SESSION_PROFILE_KEY, get_employee_meta_for_request
+    from employees.models import EmployeeStatus
+    from shops.session import resolve_portal_shop
+
+    is_shop = resolve_portal_shop(request) is not None
+    meta = get_employee_meta_for_request(request) or request.session.get(
+        SESSION_PROFILE_KEY
+    ) or {}
+    is_employee = (
+        not is_shop
+        and meta.get("status") == EmployeeStatus.ACTIVE
+        and bool(meta.get("role"))
+    )
+
+    location = row.popup_location or DeveloperPaymentPopupLocation.BOTH
+    if location == DeveloperPaymentPopupLocation.SHOP and not is_shop:
+        return None
+    if location == DeveloperPaymentPopupLocation.EMPLOYEE and not is_employee:
+        return None
+    if location == DeveloperPaymentPopupLocation.BOTH and not (is_shop or is_employee):
+        return None
+
+    dismiss_until = request.session.get("developer_payment_dismiss_until")
+    if row.allow_dismiss and dismiss_until:
+        try:
+            from django.utils.dateparse import parse_datetime
+
+            until = parse_datetime(str(dismiss_until))
+            if until is not None and timezone.is_naive(until):
+                until = timezone.make_aware(until, timezone.get_current_timezone())
+            if until is not None and timezone.now() < until:
+                return None
+        except Exception:
+            pass
+
+    payload = developer_payment_settings_as_dict(row)
+    payload["auto_open"] = True
+    payload["stk_ready"] = False
+    try:
+        from shops.daraja_stk import stk_ready
+
+        payload["stk_ready"] = bool(stk_ready())
+    except Exception:
+        payload["stk_ready"] = False
+    return payload
 
 
 def get_company_profile() -> CompanyProfile:

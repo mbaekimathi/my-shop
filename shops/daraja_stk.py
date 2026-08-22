@@ -513,6 +513,14 @@ def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
         payment.status = MpesaStkStatus.SUCCESS
         payment.mpesa_receipt_number = receipt_number
         payment.completed_at = timezone.now()
+        if payment.purpose == MpesaStkPurpose.DEVELOPER and not payment.applied:
+            from shops.services import mark_developer_subscription_paid
+
+            mark_developer_subscription_paid(
+                mpesa_receipt=receipt_number,
+                paid_at=payment.completed_at,
+            )
+            payment.applied = True
     elif result_code in ("1032",):
         payment.status = MpesaStkStatus.CANCELLED
         payment.completed_at = timezone.now()
@@ -532,6 +540,7 @@ def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
             "merchant_request_id",
             "checkout_request_id",
             "completed_at",
+            "applied",
             "updated_at",
         ]
     )

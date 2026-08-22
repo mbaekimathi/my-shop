@@ -18,6 +18,7 @@ from myshop.auto_env import (
     resolve_allowed_hosts,
     resolve_bool,
     resolve_csrf_trusted_origins,
+    resolve_mysql_host,
     resolve_secret_key,
 )
 
@@ -114,7 +115,7 @@ if MYSQL_ENABLED:
             "NAME": os.getenv("MYSQL_DATABASE", "myshop"),
             "USER": os.getenv("MYSQL_USER", "root"),
             "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
-            "HOST": os.getenv("MYSQL_HOST", "127.0.0.1"),
+            "HOST": resolve_mysql_host(is_hosted=IS_HOSTED),
             "PORT": os.getenv("MYSQL_PORT", "3306"),
             "OPTIONS": {
                 "charset": "utf8mb4",

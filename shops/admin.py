@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     Client,
     CompanyCommunicationsSettings,
+    CompanyDeveloperPaymentSettings,
     CompanyPosSettings,
     CompanyProfile,
     CompanyStockSettings,
@@ -129,6 +130,23 @@ class CompanyCommunicationsSettingsAdmin(admin.ModelAdmin):
         "updated_at",
     )
     readonly_fields = ("updated_at",)
+
+
+@admin.register(CompanyDeveloperPaymentSettings)
+class CompanyDeveloperPaymentSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "prompts_enabled",
+        "system_subscription_amount",
+        "whatsapp_subscription_amount",
+        "hosting_subscription_amount",
+        "prompt_cadence",
+        "popup_location",
+        "allow_dismiss",
+        "last_paid_at",
+        "updated_at",
+    )
+    readonly_fields = ("last_paid_at", "last_mpesa_receipt", "updated_at")
 
 
 @admin.register(Client)

@@ -1,0 +1,128 @@
+{% if developer_payment_prompt %}
+<div
+  class="workspace-modal developer-payment-modal"
+  data-modal="developer-payment"
+  data-developer-payment-modal
+  data-allow-dismiss="{% if developer_payment_prompt.allow_dismiss %}1{% else %}0{% endif %}"
+  data-stk-ready="{% if developer_payment_prompt.stk_ready %}1{% else %}0{% endif %}"
+  data-dismiss-url="{% url 'employees:developer_payment_dismiss' %}"
+  data-stk-initiate-url="{% url 'employees:developer_payment_stk_initiate' %}"
+  data-stk-status-url-template="{% url 'employees:developer_payment_stk_status' payment_id='00000000-0000-0000-0000-000000000000' %}"
+  data-total="{{ developer_payment_prompt.total_amount }}"
+  {% if not developer_payment_prompt.auto_open %}hidden{% endif %}
+  aria-hidden="{% if developer_payment_prompt.auto_open %}false{% else %}true{% endif %}"
+>
+  <div
+    class="workspace-modal-backdrop developer-payment-backdrop"
+    {% if developer_payment_prompt.allow_dismiss %}data-developer-payment-dismiss{% endif %}
+  ></div>
+  <div
+    class="workspace-modal-dialog developer-payment-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="developer-payment-title"
+  >
+    <header class="developer-payment-hero">
+      <div class="developer-payment-hero-top">
+        <div class="developer-payment-mark" aria-hidden="true">
+          <i data-lucide="wallet"></i>
+        </div>
+        {% if developer_payment_prompt.allow_dismiss %}
+        <button
+          type="button"
+          class="developer-payment-close"
+          data-developer-payment-dismiss
+          aria-label="Remind me later"
+        >
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+        {% endif %}
+      </div>
+      <p class="developer-payment-eyebrow">Keep {{ company_name|default:"MY-SHOP" }} running</p>
+      <h2 id="developer-payment-title">Subscription due</h2>
+      <p class="developer-payment-lead">
+        A quick M-Pesa payment keeps your system, WhatsApp, and hosting active.
+        {% if not developer_payment_prompt.allow_dismiss %}
+        This step is required before you continue.
+        {% else %}
+        You can pay now or come back later.
+        {% endif %}
+      </p>
+      <span class="developer-payment-cadence">
+        <i data-lucide="calendar-clock" aria-hidden="true"></i>
+        {{ developer_payment_prompt.prompt_cadence_label }} plan
+      </span>
+    </header>
+
+    <div class="developer-payment-body">
+      <ul class="developer-payment-lines">
+        {% for item in developer_payment_prompt.line_items %}
+        <li>
+          <span class="developer-payment-line-icon" aria-hidden="true">
+            {% if item.key == "system" %}
+            <i data-lucide="monitor-smartphone"></i>
+            {% elif item.key == "whatsapp" %}
+            <i data-lucide="messages-square"></i>
+            {% else %}
+            <i data-lucide="cloud"></i>
+            {% endif %}
+          </span>
+          <span class="developer-payment-line-copy">{{ item.label }}</span>
+          <strong>KSh {{ item.amount }}</strong>
+        </li>
+        {% endfor %}
+      </ul>
+
+      <div class="developer-payment-total-card">
+        <span>Total due</span>
+        <strong>KSh {{ developer_payment_prompt.total_amount }}</strong>
+      </div>
+
+      <div class="form-alert developer-payment-alert" data-developer-payment-errors hidden role="alert"></div>
+
+      <form class="developer-payment-form" data-developer-payment-form novalidate>
+        {% csrf_token %}
+        <label class="developer-payment-phone">
+          <span>M-Pesa number</span>
+          <div class="developer-payment-phone-field">
+            <i data-lucide="smartphone" aria-hidden="true"></i>
+            <input
+              type="tel"
+              name="phone"
+              inputmode="tel"
+              autocomplete="tel"
+              required
+              placeholder="07XX XXX XXX"
+              data-developer-payment-phone
+            >
+          </div>
+        </label>
+
+        <div class="developer-payment-actions">
+          <button
+            type="submit"
+            class="btn btn--primary developer-payment-pay"
+            data-developer-payment-pay
+            {% if not developer_payment_prompt.stk_ready %}disabled{% endif %}
+          >
+            <i data-lucide="shield-check" aria-hidden="true"></i>
+            Pay securely with M-Pesa
+          </button>
+          {% if developer_payment_prompt.allow_dismiss %}
+          <button type="button" class="developer-payment-later" data-developer-payment-dismiss>
+            Remind me later
+          </button>
+          {% endif %}
+        </div>
+
+        {% if not developer_payment_prompt.stk_ready %}
+        <p class="developer-payment-hint developer-payment-hint--warn">
+          M-Pesa is not ready yet. Ask an admin to finish Daraja setup under Developer Payments.
+        </p>
+        {% endif %}
+        <p class="developer-payment-hint developer-payment-hint--status" data-developer-payment-status hidden></p>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}

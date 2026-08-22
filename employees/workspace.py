@@ -1603,7 +1603,7 @@ SETTINGS_SECTIONS = (
         "slug": "company-payments",
         "label": "Company payments settings",
         "icon": "credit-card",
-        "summary": "Daraja STK Push and M-Pesa API settlement preferences.",
+        "summary": "Daraja STK Push and developer payment preferences.",
     },
     {
         "slug": "communication-settings",
@@ -1636,6 +1636,13 @@ SETTINGS_NESTED_SECTIONS = (
         "parent": "company-payments",
     },
     {
+        "slug": "developer-payments",
+        "label": "Developer Payments",
+        "icon": "wallet",
+        "summary": "Daraja credentials, subscription amounts, and payment prompt rules.",
+        "parent": "company-payments",
+    },
+    {
         "slug": "twilio",
         "label": "Twilio settings",
         "icon": "phone",
@@ -1654,7 +1661,9 @@ SETTINGS_NESTED_SECTIONS = (
 SETTINGS_SECTION_BY_SLUG = {section["slug"]: section for section in SETTINGS_SECTIONS}
 SETTINGS_NESTED_BY_SLUG = {section["slug"]: section for section in SETTINGS_NESTED_SECTIONS}
 POS_SIDEBAR_SLUGS = frozenset({"company-pos", "company-receipt"})
-PAYMENTS_SIDEBAR_SLUGS = frozenset({"company-payments", "company-daraja"})
+PAYMENTS_SIDEBAR_SLUGS = frozenset(
+    {"company-payments", "company-daraja", "developer-payments"}
+)
 COMMS_SIDEBAR_SLUGS = frozenset({"communication-settings", "twilio", "whatsapp"})
 
 
@@ -1689,7 +1698,8 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
     Section links (Company profile, theme, POS, payments) only appear on the
     main System Settings home page — not on nested settings section pages.
     POS settings pages also show Receipt settings in the sidebar.
-    Payments settings pages also show Daraja settings in the sidebar.
+    Payments settings pages show Company payments, Daraja, and Developer
+    Payments in the sidebar.
     Communications settings pages show Twilio and WhatsApp settings.
     """
     from .module_permissions import employee_may
@@ -1745,6 +1755,7 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
     elif active_view in PAYMENTS_SIDEBAR_SLUGS:
         payments_section = get_settings_section("company-payments")
         daraja_section = get_settings_section("company-daraja")
+        developer_section = get_settings_section("developer-payments")
         if _allowed("company-payments"):
             primary.append(
                 _link(
@@ -1761,6 +1772,15 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
                     daraja_section["icon"],
                     href=daraja_section["href"],
                     active=active_view == "company-daraja",
+                )
+            )
+        if _allowed("developer-payments"):
+            primary.append(
+                _link(
+                    developer_section["label"],
+                    developer_section["icon"],
+                    href=developer_section["href"],
+                    active=active_view == "developer-payments",
                 )
             )
     elif active_view in COMMS_SIDEBAR_SLUGS:
