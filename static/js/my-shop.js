@@ -2920,6 +2920,21 @@
       const price = roundMoney(
         el?.getAttribute?.("data-item-price") || el?.dataset?.itemPrice || listPrice
       );
+      const discountMinQty = Math.max(
+        0,
+        Math.floor(
+          Number(
+            el?.getAttribute?.("data-item-discount-min-qty") ||
+              el?.dataset?.itemDiscountMinQty ||
+              0
+          )
+        )
+      );
+      const discountAmount = roundMoney(
+        el?.getAttribute?.("data-item-discount-amount") ||
+          el?.dataset?.itemDiscountAmount ||
+          0
+      );
       return {
         id,
         name:
@@ -2937,6 +2952,8 @@
         price,
         listPrice,
         minPrice,
+        discountMinQty,
+        discountAmount,
         stock: Math.max(
           0,
           Math.floor(
@@ -2994,6 +3011,11 @@
               : listPrice,
             listPrice,
             minPrice,
+            discountMinQty: Math.max(
+              0,
+              Math.floor(Number(line.discountMinQty) || 0)
+            ),
+            discountAmount: roundMoney(line.discountAmount || 0),
             stock: Math.max(0, Math.floor(Number(line.stock) || 0)),
             image: String(line.image || ""),
             qty: trackSerial && serials.length ? serials.length : qty,
@@ -3024,6 +3046,16 @@
       return next;
     };
 
+    const volumeUnitPrice = (listPrice, minPrice, qty, discountMinQty, discountAmount) => {
+      const list = roundMoney(listPrice);
+      const min = roundMoney(minPrice);
+      const threshold = Math.max(0, Math.floor(Number(discountMinQty) || 0));
+      const amount = roundMoney(discountAmount);
+      if (!discountEnabled || threshold <= 0 || amount <= 0) return list;
+      if (Math.floor(Number(qty) || 0) < threshold) return list;
+      return clampPrice(list - amount, min, list);
+    };
+
     const setQty = (id, qty, meta = null) => {
       if (!id) return;
       const existing = cart.get(id);
@@ -3043,11 +3075,34 @@
           price: 0,
           listPrice: 0,
           minPrice: 0,
+          discountMinQty: 0,
+          discountAmount: 0,
           image: "",
         };
       const listPrice = roundMoney(base.listPrice ?? base.price ?? 0);
       const minPrice = roundMoney(base.minPrice ?? 0);
-      const price = clampPrice(base.price ?? listPrice, minPrice, listPrice);
+      const discountMinQty = Math.max(
+        0,
+        Math.floor(
+          Number(meta?.discountMinQty ?? base.discountMinQty ?? 0)
+        )
+      );
+      const discountAmount = roundMoney(
+        meta?.discountAmount ?? base.discountAmount ?? 0
+      );
+      const volumePrice = volumeUnitPrice(
+        listPrice,
+        minPrice,
+        nextQty,
+        discountMinQty,
+        discountAmount
+      );
+      // Prefer volume pricing when configured; otherwise keep the current sale price.
+      const preferred =
+        discountMinQty > 0 && discountAmount > 0
+          ? volumePrice
+          : base.price ?? listPrice;
+      const price = clampPrice(preferred, minPrice, listPrice);
       const trackSerial = Boolean(base.trackSerial || meta?.trackSerial);
       let serials = Array.isArray(meta?.serials)
         ? meta.serials
@@ -3076,6 +3131,8 @@
         price,
         listPrice,
         minPrice,
+        discountMinQty,
+        discountAmount,
         stock,
         image: base.image || "",
         qty: trackSerial && serials.length ? serials.length : nextQty,
@@ -3415,6 +3472,9 @@
         priceHint.className = "shop-cart-price-hint";
         if (discountEnabled && line.minPrice > 0 && line.listPrice > 0) {
           let hint = `Min ${money(line.minPrice)} · List ${money(line.listPrice)}`;
+          if (line.discountMinQty > 0 && line.discountAmount > 0) {
+            hint += ` · From ${line.discountMinQty}+: −${money(line.discountAmount)}`;
+          }
           if (line.price + 0.0001 < line.listPrice) {
             hint += " · Discount applied";
             priceHint.classList.add("is-discount");
@@ -4199,6 +4259,8 @@
         price: existing ? existing.price : salePrice,
         listPrice: item.listPrice,
         minPrice: item.minPrice,
+        discountMinQty: item.discountMinQty,
+        discountAmount: item.discountAmount,
       });
       // If newly added from popup with discount, ensure price sticks.
       if (!existing) {

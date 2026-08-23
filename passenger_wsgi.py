@@ -27,7 +27,8 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "myshop.settings")
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(BASE_DIR / ".env")
+    # override=True so .env wins over stale cPanel "Environment variables".
+    load_dotenv(BASE_DIR / ".env", override=True)
 except Exception:
     pass
 

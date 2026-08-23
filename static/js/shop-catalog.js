@@ -143,6 +143,18 @@
     article.setAttribute("data-item-price", price);
     article.setAttribute("data-item-min-price", minPrice);
     article.setAttribute("data-item-list-price", price);
+    article.setAttribute(
+      "data-item-discount-min-qty",
+      String(Math.max(0, Math.floor(Number(item.discount_min_qty) || 0)))
+    );
+    article.setAttribute(
+      "data-item-discount-amount",
+      money(item.discount_amount)
+    );
+    article.setAttribute(
+      "data-item-avg-buy-qty",
+      String(Math.max(1, Math.floor(Number(item.avg_buy_qty) || 1)))
+    );
     article.setAttribute("data-item-stock", String(stock));
     article.setAttribute("data-item-track-serial", trackSerial);
     if (imageUrl) article.setAttribute("data-item-image", imageUrl);

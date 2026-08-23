@@ -15,6 +15,20 @@ class Item(models.Model):
     minimum_selling_price = models.DecimalField(max_digits=12, decimal_places=2)
     shop_price = models.DecimalField(max_digits=12, decimal_places=2)
     use_individual_shop_prices = models.BooleanField(default=False, db_index=True)
+    avg_buy_qty = models.PositiveIntegerField(
+        default=1,
+        help_text="Typical quantity a customer buys of this item.",
+    )
+    discount_min_qty = models.PositiveIntegerField(
+        default=0,
+        help_text="Buy this many or more to unlock the volume discount. 0 disables it.",
+    )
+    discount_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="KSh off the list price per unit when the volume quantity is met.",
+    )
     stock = models.PositiveIntegerField(default=0)
     low_stock_notify = models.BooleanField(default=False, db_index=True)
     low_stock_threshold = models.PositiveIntegerField(
@@ -82,6 +96,25 @@ class Item(models.Model):
             if row is not None:
                 override = row.price
         return self.resolve_list_price(override)
+
+    def volume_unit_price(self, list_price, qty):
+        """List price after volume discount when qty meets the threshold."""
+        from decimal import Decimal
+
+        list_price = list_price if list_price is not None else Decimal("0")
+        try:
+            qty = int(qty or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        amount = self.discount_amount or Decimal("0")
+        threshold = int(self.discount_min_qty or 0)
+        if threshold <= 0 or amount <= 0 or qty < threshold:
+            return list_price
+        discounted = list_price - amount
+        floor = self.minimum_selling_price or Decimal("0")
+        if discounted < floor:
+            return floor
+        return discounted
 
 
 class ShopItemPrice(models.Model):

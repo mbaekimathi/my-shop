@@ -767,13 +767,47 @@ def _action(label, icon, *, action, href=None):
     return item
 
 
-def sidebar_for_item_management(role, profile=None):
+def item_management_url(role, mode="view"):
+    """URL for item-management list or discounts matrix."""
+    from urllib.parse import urlencode
+
+    segment = role_url_segment(role)
+    base = reverse(
+        "employees:workspace_module",
+        kwargs={"role_segment": segment, "module_slug": "item-management"},
+    )
+    mode = (mode or "view").strip().lower()
+    if mode in {"", "view", "items"}:
+        return base
+    return f"{base}?{urlencode({'mode': mode})}"
+
+
+def sidebar_for_item_management(role, profile=None, *, active_mode="view"):
     """Sidebar links for the Item Management module."""
     from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
-    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-    if profile is None or employee_may(profile, "item-management", "register"):
+    mode = (active_mode or "view").strip().lower()
+    if mode not in {"view", "discounts"}:
+        mode = "view"
+    primary = [
+        _link("Dashboard", "layout-dashboard", href=dashboard_url),
+        _link(
+            "Registered items",
+            "tags",
+            href=item_management_url(role, "view"),
+            active=mode == "view",
+        ),
+        _link(
+            "Item discounts",
+            "badge-percent",
+            href=item_management_url(role, "discounts"),
+            active=mode == "discounts",
+        ),
+    ]
+    if mode == "view" and (
+        profile is None or employee_may(profile, "item-management", "register")
+    ):
         primary.append(_action("Register item", "plus", action="register-item"))
     return resolve_sidebar_hrefs(
         {

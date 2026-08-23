@@ -235,6 +235,13 @@ def item_management(request, profile, meta, module, page_sidebar):
         module_capabilities,
         require_module_permission,
     )
+    from employees.workspace import item_management_url
+
+    mode = (request.GET.get("mode") or "view").strip().lower()
+    if mode not in {"view", "discounts"}:
+        mode = "view"
+    if mode == "discounts":
+        return item_discounts(request, profile, meta, module)
 
     form_data = dict(EMPTY_FORM)
     form_errors = []
@@ -345,6 +352,315 @@ def item_management(request, profile, meta, module, page_sidebar):
             "open_edit_modal": open_edit_modal,
             "edit_item": edit_item,
             "module_permissions": caps,
+            "item_discounts_url": item_management_url(profile.role, "discounts"),
+        },
+    )
+
+
+@require_http_methods(["GET", "POST"])
+def item_discounts(request, profile, meta, module):
+    """List items with sale/credit qty advice and editable wholesale discounts."""
+    from decimal import Decimal, InvalidOperation
+
+    from employees.module_permissions import (
+        employee_may,
+        module_capabilities,
+        require_module_permission,
+    )
+    from employees.workspace import item_management_url, sidebar_for_item_management
+
+    from .services import (
+        item_wholesale_sale_advice,
+        session_average_buying_prices_for_items,
+        suggest_wholesale_unit_price,
+    )
+
+    denied = require_module_permission(request, profile, "item-management", "view")
+    if denied is not None:
+        return denied
+
+    can_edit = employee_may(profile, "item-management", "edit")
+    wants_json = (
+        "application/json" in (request.headers.get("Accept") or "").lower()
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or (request.POST.get("ajax") or "") == "1"
+    )
+
+    if request.method == "POST":
+        if not can_edit:
+            if wants_json:
+                return JsonResponse(
+                    {"ok": False, "error": "You cannot edit item discounts."},
+                    status=403,
+                )
+            messages.error(request, "You cannot edit item discounts.")
+            return redirect(item_management_url(profile.role, "discounts"))
+
+        action = (request.POST.get("action") or "save_discount").strip()
+        if action != "save_discount":
+            if wants_json:
+                return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
+            messages.error(request, "Unknown action.")
+            return redirect(item_management_url(profile.role, "discounts"))
+
+        item_id = (request.POST.get("item_id") or "").strip()
+        item = get_object_or_404(Item, pk=item_id)
+        list_price = item.shop_price or Decimal("0")
+        min_price = item.minimum_selling_price or Decimal("0")
+
+        def _parse_qty(raw, *, label, minimum=0):
+            try:
+                value = int(str(raw or "").strip() or "0")
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(f"{label} must be a whole number.") from exc
+            if value < minimum:
+                raise ValidationError(f"{label} must be at least {minimum}.")
+            return value
+
+        def _parse_amount(raw, *, label):
+            text = str(raw or "").strip() or "0"
+            try:
+                value = Decimal(text)
+            except (InvalidOperation, ValueError) as exc:
+                raise ValidationError(f"{label} must be a valid amount.") from exc
+            if value < 0:
+                raise ValidationError(f"{label} cannot be negative.")
+            return value.quantize(Decimal("0.01"))
+
+        try:
+            wholesale_from_qty = _parse_qty(
+                request.POST.get("wholesale_from_qty")
+                or request.POST.get("discount_min_qty"),
+                label="Wholesale from quantity",
+                minimum=0,
+            )
+            # Prefer absolute wholesale price; fall back to legacy amount-off.
+            raw_wholesale = (request.POST.get("wholesale_price") or "").strip()
+            if raw_wholesale != "":
+                wholesale_price = _parse_amount(
+                    raw_wholesale, label="Wholesale price"
+                )
+                if wholesale_from_qty <= 0 and wholesale_price > 0:
+                    raise ValidationError(
+                        "Enter the quantity from which wholesale price starts."
+                    )
+                if wholesale_from_qty > 0:
+                    if wholesale_price <= 0:
+                        raise ValidationError(
+                            "Enter the wholesale price after discount."
+                        )
+                    if list_price > 0 and wholesale_price >= list_price:
+                        raise ValidationError(
+                            "Wholesale price must be below the list selling price "
+                            f"(KSh {list_price})."
+                        )
+                    if wholesale_price < min_price:
+                        raise ValidationError(
+                            "Wholesale price cannot be below the minimum "
+                            f"selling price (KSh {min_price})."
+                        )
+                    avg_buy = session_average_buying_prices_for_items(
+                        [item.pk],
+                        shop_ids=[
+                            shop.pk for shop in _pricing_shops_for_profile(profile)
+                        ]
+                        or None,
+                    ).get(item.pk)
+                    if avg_buy and wholesale_price <= avg_buy:
+                        raise ValidationError(
+                            "Wholesale price must stay above the average buying "
+                            f"price (KSh {avg_buy})."
+                        )
+                    discount_amount = (
+                        (list_price - wholesale_price).quantize(Decimal("0.01"))
+                        if list_price > 0
+                        else Decimal("0.00")
+                    )
+                else:
+                    discount_amount = Decimal("0.00")
+                    wholesale_price = list_price
+            else:
+                discount_amount = _parse_amount(
+                    request.POST.get("discount_amount"),
+                    label="Discount amount",
+                )
+                if wholesale_from_qty > 0 and discount_amount <= 0:
+                    raise ValidationError(
+                        "Enter a wholesale price when a quantity threshold is set."
+                    )
+                if discount_amount > 0 and wholesale_from_qty <= 0:
+                    raise ValidationError(
+                        "Enter the quantity from which wholesale price starts."
+                    )
+                wholesale_price = (
+                    (list_price - discount_amount).quantize(Decimal("0.01"))
+                    if list_price > 0
+                    else Decimal("0.00")
+                )
+                if discount_amount > 0 and wholesale_price < min_price:
+                    raise ValidationError(
+                        f"Wholesale price would put “{item.name}” below the "
+                        f"minimum selling price (KSh {min_price})."
+                    )
+
+            # Keep avg_buy_qty aligned with live sale/credit average when available.
+            shops_for_advice = list(_pricing_shops_for_profile(profile))
+            advice = item_wholesale_sale_advice(
+                [item.pk],
+                shop_ids=[shop.pk for shop in shops_for_advice] or None,
+            ).get(item.pk) or {}
+            avg_sold = advice.get("avg_sold_qty") or 0
+            avg_buy_qty = max(1, int(float(avg_sold) + 0.5)) if avg_sold else max(
+                1, int(item.avg_buy_qty or 1)
+            )
+        except ValidationError as exc:
+            errors = [
+                str(message)
+                for message in (
+                    exc.messages if hasattr(exc, "messages") else [exc]
+                )
+            ]
+            if wants_json:
+                return JsonResponse(
+                    {"ok": False, "error": errors[0] if errors else "Invalid input."},
+                    status=400,
+                )
+            for error in errors:
+                messages.error(request, error)
+            return redirect(item_management_url(profile.role, "discounts"))
+
+        item.avg_buy_qty = avg_buy_qty
+        item.discount_min_qty = wholesale_from_qty
+        item.discount_amount = discount_amount
+        item.save(
+            update_fields=[
+                "avg_buy_qty",
+                "discount_min_qty",
+                "discount_amount",
+                "updated_at",
+            ]
+        )
+
+        payload = {
+            "ok": True,
+            "item_id": item.pk,
+            "avg_buy_qty": item.avg_buy_qty,
+            "wholesale_from_qty": item.discount_min_qty,
+            "discount_min_qty": item.discount_min_qty,
+            "discount_amount": f"{item.discount_amount:.2f}",
+            "wholesale_price": f"{wholesale_price:.2f}",
+            "volume_price": f"{item.volume_unit_price(list_price, item.discount_min_qty or 1):.2f}",
+        }
+        if wants_json:
+            return JsonResponse(payload)
+        messages.success(request, f"Wholesale discount saved for “{item.name}”.")
+        return redirect(item_management_url(profile.role, "discounts"))
+
+    shops = list(_pricing_shops_for_profile(profile))
+    items = list(
+        Item.objects.only(
+            "id",
+            "category",
+            "name",
+            "description",
+            "minimum_selling_price",
+            "shop_price",
+            "use_individual_shop_prices",
+            "avg_buy_qty",
+            "discount_min_qty",
+            "discount_amount",
+            "is_suspended",
+            "image",
+        ).order_by("category", "name")
+    )
+    item_ids = [item.pk for item in items]
+    allowed_shop_ids = {shop.pk for shop in shops}
+    sale_advice = item_wholesale_sale_advice(
+        item_ids,
+        shop_ids=list(allowed_shop_ids) or None,
+    )
+    avg_buy_prices = session_average_buying_prices_for_items(
+        item_ids,
+        shop_ids=list(allowed_shop_ids) or None,
+    )
+
+    discount_rows = []
+    for item in items:
+        advice = sale_advice.get(item.pk) or {}
+        list_price = item.shop_price or Decimal("0")
+        discount_amount = item.discount_amount or Decimal("0")
+        wholesale_price = (
+            (list_price - discount_amount).quantize(Decimal("0.01"))
+            if discount_amount > 0 and list_price > 0
+            else list_price
+        )
+        avg_buy = avg_buy_prices.get(item.pk)
+        suggested_from = int(advice.get("suggested_from_qty") or 0)
+        suggested_wholesale = suggest_wholesale_unit_price(
+            list_price=list_price,
+            minimum_selling_price=item.minimum_selling_price,
+            avg_buy_price=avg_buy,
+            historical_price=advice.get("suggested_wholesale_price"),
+        )
+        # Still advise a from-qty when we have a valid price band but no sales yet.
+        if suggested_wholesale is not None and suggested_from <= 0:
+            suggested_from = max(2, int(item.avg_buy_qty or 2))
+        buy_floor = f"{avg_buy:.2f}" if avg_buy else ""
+        sell_ceiling = f"{list_price:.2f}" if list_price else ""
+        discount_rows.append(
+            {
+                "item": item,
+                "avg_buy_price": buy_floor,
+                "avg_sold_qty": advice.get("avg_sold_qty") or 0,
+                "transaction_count": advice.get("transaction_count")
+                or advice.get("line_count")
+                or 0,
+                "suggested_from_qty": suggested_from,
+                "suggested_wholesale_price": (
+                    f"{suggested_wholesale:.2f}" if suggested_wholesale is not None else ""
+                ),
+                "advice_band_label": (
+                    f"KSh {buy_floor} – {sell_ceiling}"
+                    if buy_floor and sell_ceiling and suggested_wholesale is not None
+                    else ""
+                ),
+                "wholesale_from_qty": int(item.discount_min_qty or 0),
+                "wholesale_price": f"{wholesale_price:.2f}",
+                "list_price": f"{list_price:.2f}",
+                "has_volume_discount": bool(
+                    int(item.discount_min_qty or 0) > 0 and discount_amount > 0
+                ),
+            }
+        )
+
+    page_sidebar = sidebar_for_item_management(
+        profile.role, profile=profile, active_mode="discounts"
+    )
+    meta = {
+        **meta,
+        "title": "Item discounts",
+        "headline": "Item discounts",
+        "summary": (
+            "Sale and credit history advises wholesale quantity and price; "
+            "set where wholesale starts and the price after discount."
+        ),
+    }
+
+    return render(
+        request,
+        "items/item_discounts.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "discount_rows": discount_rows,
+            "item_count": len(discount_rows),
+            "item_management_url": item_management_url(profile.role, "view"),
+            "can_edit_discounts": can_edit,
+            "module_permissions": module_capabilities(profile, "item-management"),
         },
     )
 

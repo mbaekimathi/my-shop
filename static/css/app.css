@@ -5029,6 +5029,503 @@ html[data-theme="light"] .hr-auth-card {
   width: auto;
 }
 
+.item-discounts-head-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.item-discounts-intro {
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+
+.item-discounts-kicker {
+  margin: 0 0 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+}
+
+.item-discounts-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.15rem;
+}
+
+.item-discounts-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.55rem;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-muted) 70%, var(--surface));
+  color: var(--mist-dim);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.item-discounts-chip--advice {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: color-mix(in srgb, var(--accent-deep) 70%, var(--mist));
+}
+
+.item-discounts-chip--set {
+  border-color: color-mix(in srgb, #1f8a4c 28%, var(--line));
+  background: color-mix(in srgb, #1f8a4c 8%, var(--surface));
+  color: color-mix(in srgb, #1f8a4c 70%, var(--mist));
+}
+
+.item-discounts-search {
+  margin-top: 0.15rem;
+}
+
+.item-panel--discounts .item-table-wrap--discounts {
+  margin: 0 0.15rem 0.35rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.item-table--discounts {
+  width: 100%;
+  min-width: 58rem;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.item-table--discounts thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 88%, var(--surface));
+  color: var(--mist-dim);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.item-table--discounts .item-col--item,
+.item-table--discounts .item-cell--item {
+  width: 22rem;
+  min-width: 18rem;
+  max-width: none;
+  text-align: left;
+  vertical-align: top;
+}
+
+.item-table--discounts .item-person {
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.item-table--discounts .item-thumb,
+.item-table--discounts .item-thumb--empty {
+  width: 1.7rem;
+  height: 1.7rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.item-table--discounts .item-person-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.item-table--discounts .item-person-copy strong {
+  display: block;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+.item-table--discounts .item-person-copy small {
+  display: block;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.3;
+  margin-top: 0.15rem;
+}
+
+.item-table--discounts .item-col--range,
+.item-table--discounts .item-cell--range {
+  width: 8.5rem;
+  min-width: 8rem;
+}
+
+.item-table--discounts .item-col--discount-num,
+.item-table--discounts .item-cell--discount-num {
+  width: auto;
+  min-width: 5.75rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.item-table--discounts .item-col--advice,
+.item-table--discounts .item-cell--advice {
+  min-width: 7.75rem;
+}
+
+.item-table--discounts .item-col--settings,
+.item-table--discounts .item-cell--settings {
+  background: color-mix(in srgb, #1f8a4c 4%, transparent);
+}
+
+.item-table--discounts thead .item-col--settings {
+  background: color-mix(in srgb, #1f8a4c 8%, var(--panel-muted));
+}
+
+.item-table--discounts .item-col--discount-action,
+.item-table--discounts .item-cell--discount-action {
+  min-width: 5.75rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.item-table--discounts td {
+  padding: 0.75rem 0.7rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  vertical-align: middle;
+}
+
+.item-table--discounts tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.item-table--discounts tbody tr:hover td {
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+}
+
+.item-table--discounts tbody tr.is-volume-discount td {
+  background: color-mix(in srgb, #1f8a4c 5%, transparent);
+}
+
+.item-table--discounts tbody tr.is-volume-discount:hover td {
+  background: color-mix(in srgb, #1f8a4c 8%, transparent);
+}
+
+.item-discount-mode {
+  display: inline-flex;
+  margin-top: 0.2rem;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, #1f8a4c 12%, var(--surface));
+  color: color-mix(in srgb, #1f8a4c 78%, var(--mist-dim));
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.item-panel--discounts .item-search-empty {
+  margin: 1.25rem 1rem 1.5rem;
+}
+
+.item-sold-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.item-discount-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+  max-width: 7.5rem;
+  margin-inline: auto;
+}
+
+.item-discount-prefix {
+  flex: 0 0 auto;
+  color: var(--mist-dim);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.item-discount-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.15rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: var(--surface);
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.88rem;
+  text-align: right;
+}
+
+.item-discount-field input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.item-discount-field input:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.item-discount-save {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  min-height: 2.15rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--text-strong);
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 140ms ease, opacity 140ms ease;
+}
+
+.item-discount-save:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+
+.item-discount-save:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.item-discount-save.is-busy {
+  opacity: 0.7;
+}
+
+.item-discount-save i,
+.item-discount-save svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.item-discount-status {
+  display: block;
+  margin-top: 0.28rem;
+  font-size: 0.7rem;
+  color: var(--mist-dim);
+}
+
+.item-discount-status.is-ok {
+  color: color-mix(in srgb, #1f8a4c 80%, var(--text-strong));
+}
+
+.item-discount-status.is-error {
+  color: color-mix(in srgb, #c0392b 85%, var(--text-strong));
+}
+
+.item-sold-avg {
+  display: block;
+  font-size: 1rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+}
+
+.item-sold-avg--money {
+  font-size: 0.84rem;
+  letter-spacing: -0.01em;
+}
+
+.item-sold-meta,
+.item-sold-empty {
+  display: block;
+  color: var(--mist-dim);
+  font-size: 0.72rem;
+}
+
+.item-discount-advice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.22rem;
+  font-size: 0.8rem;
+  color: var(--text-strong);
+}
+
+.item-discount-advice span {
+  color: color-mix(in srgb, #1f8a4c 75%, var(--mist-dim));
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.item-discount-use-advice {
+  margin-top: 0.1rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--text-strong);
+  font-size: 0.68rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.item-discount-use-advice:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+
+@media (max-width: 900px) {
+  .item-table--discounts {
+    min-width: 0;
+  }
+
+  .item-panel--discounts .item-table-wrap--discounts {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .item-table--discounts thead {
+    display: none;
+  }
+
+  .item-table--discounts tbody {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.15rem 0.85rem 1rem;
+  }
+
+  .item-table--discounts tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.65rem 0.75rem;
+    padding: 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: 0 1px 0 rgba(16, 40, 44, 0.03), 0 10px 22px rgba(8, 28, 34, 0.04);
+  }
+
+  .item-table--discounts tbody tr:last-child {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .item-table--discounts td {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 0.35rem;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .item-table--discounts tbody tr:hover td,
+  .item-table--discounts tbody tr.is-volume-discount td,
+  .item-table--discounts tbody tr.is-volume-discount:hover td {
+    background: transparent;
+  }
+
+  .item-table--discounts .item-cell--item {
+    grid-column: 1 / -1;
+    display: block;
+  }
+
+  .item-table--discounts .item-cell--item::before,
+  .item-table--discounts td[data-label="Item"]::before {
+    display: none;
+  }
+
+  .item-table--discounts td::before {
+    content: attr(data-label);
+    font-weight: 700;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+  }
+
+  .item-table--discounts .item-cell--range {
+    grid-column: 1 / -1;
+  }
+
+  .item-table--discounts .item-price-range--stack,
+  .item-table--discounts .item-price-range {
+    flex-direction: column;
+    max-width: none;
+  }
+
+  .item-sold-stat,
+  .item-discount-advice {
+    align-items: flex-start;
+  }
+
+  .item-discount-field {
+    margin-inline: 0;
+    max-width: none;
+  }
+
+  .item-table--discounts .item-cell--settings {
+    background: color-mix(in srgb, #1f8a4c 6%, var(--surface));
+    padding: 0.55rem 0.6rem;
+    border-radius: 12px;
+  }
+
+  .item-table--discounts .item-cell--discount-action,
+  .item-table--discounts td[data-label="Save"] {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    padding-top: 0.15rem;
+  }
+
+  .item-table--discounts td[data-label="Save"]::before {
+    margin-right: auto;
+  }
+
+  .item-discount-status {
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .item-discounts-head-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .item-discounts-head-actions .stock-settings-jump {
+    flex: 1 1 auto;
+  }
+
+  .item-table--discounts tr {
+    grid-template-columns: 1fr;
+  }
+}
+
 .item-col--status {
   width: 4.25rem;
   text-align: center;
@@ -5066,6 +5563,54 @@ html[data-theme="light"] .hr-auth-card {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: color-mix(in srgb, var(--mist) 5%, var(--surface));
+}
+
+.item-price-range.item-price-range--stack,
+.item-table--discounts .item-price-range {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.28rem;
+  min-width: 0;
+  width: 100%;
+  max-width: 9.5rem;
+  padding: 0.35rem 0.45rem;
+}
+
+.item-price-range.item-price-range--stack .item-price-range-bound,
+.item-table--discounts .item-price-range-bound {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding: 0.1rem 0;
+  border-radius: 0;
+}
+
+.item-price-range.item-price-range--stack .item-price-range-bound + .item-price-range-bound,
+.item-table--discounts .item-price-range-bound + .item-price-range-bound {
+  padding-top: 0.28rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
+}
+
+.item-price-range.item-price-range--stack .item-price-range-label,
+.item-table--discounts .item-price-range-label {
+  flex: 0 0 auto;
+}
+
+.item-price-range.item-price-range--stack .item-price-range-amount,
+.item-table--discounts .item-price-range-amount {
+  flex: 1 1 auto;
+  text-align: right;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.item-table--discounts .item-col--range,
+.item-table--discounts .item-cell--range {
+  min-width: 8.5rem;
+  width: 9rem;
 }
 
 .item-price-range-bound {
@@ -5192,6 +5737,16 @@ html[data-theme="light"] .hr-auth-card {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Discounts: show full item names (override dense ellipsis). */
+.item-table--discounts.item-table--dense .item-person-copy strong,
+.item-table--discounts.item-table--dense .item-person-copy small {
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .item-table--dense .status-pill {
@@ -5870,6 +6425,123 @@ body.workspace-modal-open {
   .item-table .item-actions {
     width: 100%;
     justify-content: flex-end;
+  }
+
+  /* Keep discounts as cards; override generic item-table mobile stacking. */
+  .item-panel--discounts .item-table--discounts {
+    min-width: 0;
+  }
+
+  .item-panel--discounts .item-table-wrap--discounts {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .item-panel--discounts .item-table--discounts thead {
+    display: none;
+  }
+
+  .item-panel--discounts .item-table--discounts tbody {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.15rem 0.85rem 1rem;
+  }
+
+  .item-panel--discounts .item-table--discounts tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.65rem 0.75rem;
+    padding: 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: 0 1px 0 rgba(16, 40, 44, 0.03), 0 10px 22px rgba(8, 28, 34, 0.04);
+  }
+
+  .item-panel--discounts .item-table--discounts td {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 0.35rem;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .item-panel--discounts .item-table--discounts tbody tr:hover td,
+  .item-panel--discounts .item-table--discounts tbody tr.is-volume-discount td,
+  .item-panel--discounts .item-table--discounts tbody tr.is-volume-discount:hover td {
+    background: transparent;
+  }
+
+  .item-panel--discounts .item-table--discounts .item-cell--item {
+    grid-column: 1 / -1;
+    display: block;
+  }
+
+  .item-panel--discounts .item-table--discounts .item-cell--item::before,
+  .item-panel--discounts .item-table--discounts td[data-label="Item"]::before {
+    display: none;
+  }
+
+  .item-panel--discounts .item-table--discounts td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-weight: 700;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+  }
+
+  .item-panel--discounts .item-table--discounts .item-cell--range {
+    grid-column: 1 / -1;
+    display: flex;
+  }
+
+  .item-panel--discounts .item-price-range--stack,
+  .item-panel--discounts .item-price-range {
+    flex-direction: column;
+    max-width: none;
+  }
+
+  .item-panel--discounts .item-sold-stat,
+  .item-panel--discounts .item-discount-advice {
+    align-items: flex-start;
+  }
+
+  .item-panel--discounts .item-discount-field {
+    margin-inline: 0;
+    max-width: none;
+  }
+
+  .item-panel--discounts .item-table--discounts .item-cell--settings {
+    background: color-mix(in srgb, #1f8a4c 6%, var(--surface));
+    padding: 0.55rem 0.6rem;
+    border-radius: 12px;
+  }
+
+  .item-panel--discounts .item-table--discounts .item-cell--discount-action,
+  .item-panel--discounts .item-table--discounts td[data-label="Save"] {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    padding-top: 0.15rem;
+  }
+
+  .item-panel--discounts .item-table--discounts td[data-label="Save"]::before {
+    margin-right: auto;
+  }
+
+  .item-panel--discounts .item-discount-status {
+    margin-top: 0;
   }
 
   .staff-table {

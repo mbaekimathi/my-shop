@@ -1,0 +1,227 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Item discounts — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section
+  class="item-panel item-panel--dense item-panel--discounts"
+  data-animate="rise"
+  data-item-discounts
+  data-can-edit="{% if can_edit_discounts %}1{% else %}0{% endif %}"
+>
+  <header class="item-panel-head item-discounts-head">
+    <div class="item-panel-head-top">
+      <div class="item-discounts-intro">
+        <p class="item-discounts-kicker">Item management</p>
+        <h2>Item discounts</h2>
+        <p>
+          Set wholesale below <strong>list</strong> and above <strong>average buy</strong>,
+          using sale/credit averages when available.
+        </p>
+      </div>
+      <div class="item-discounts-head-actions">
+        <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ item_management_url }}">
+          <i data-lucide="tags" aria-hidden="true"></i>
+          <span>Registered items</span>
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+        </a>
+        <p class="item-count" data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</p>
+      </div>
+    </div>
+
+    <div class="item-discounts-legend" aria-hidden="true">
+      <span class="item-discounts-chip">Avg = qty per transaction</span>
+      <span class="item-discounts-chip item-discounts-chip--set">Wholesale: above buy, below list</span>
+    </div>
+
+    {% if item_count %}
+    <div class="item-search item-discounts-search">
+      <label class="item-search-field">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input
+          type="search"
+          placeholder="Search items…"
+          autocomplete="off"
+          data-item-discount-search
+          aria-label="Search items"
+        >
+      </label>
+    </div>
+    {% endif %}
+  </header>
+
+  {% if not can_edit_discounts %}
+  <p class="stock-settings-readonly">
+    <i data-lucide="lock" aria-hidden="true"></i>
+    <span>View only — you need edit permission on Item Management to change discounts.</span>
+  </p>
+  {% endif %}
+
+  {% if item_count %}
+  <div class="item-table-wrap item-table-wrap--discounts">
+    <table class="item-table item-table--dense item-table--discounts">
+      <thead>
+        <tr>
+          <th scope="col" class="item-col--item">Item</th>
+          <th scope="col" class="item-col--range">List / min</th>
+          <th
+            scope="col"
+            class="item-col--discount-num"
+            title="Quantity-weighted average buying cost of current on-hand stock"
+          >Avg buy</th>
+          <th
+            scope="col"
+            class="item-col--discount-num"
+            title="Average net quantity bought per sale or credit transaction"
+          >Avg / txn</th>
+          <th
+            scope="col"
+            class="item-col--discount-num item-col--settings"
+            title="Quantity from which wholesale price starts"
+          >From qty</th>
+          <th
+            scope="col"
+            class="item-col--discount-num item-col--settings"
+            title="Unit price after discount when wholesale qty is met"
+          >Wholesale</th>
+          {% if can_edit_discounts %}
+          <th scope="col" class="item-col--discount-action"><span class="visually-hidden">Save</span></th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in discount_rows %}
+        <tr
+          class="{% if row.item.is_suspended %}item-row--suspended{% endif %}{% if row.has_volume_discount %} is-volume-discount{% endif %}"
+          data-item-discount-row
+          data-item-id="{{ row.item.pk }}"
+          data-list-price="{{ row.list_price }}"
+          data-min-price="{{ row.item.minimum_selling_price }}"
+          data-suggested-from="{{ row.suggested_from_qty }}"
+          data-suggested-wholesale="{{ row.suggested_wholesale_price }}"
+          data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }} {{ row.item.description|lower }}"
+        >
+          <td class="item-cell--item" data-label="Item">
+            <div class="item-person">
+              {% if row.item.image %}
+              <img class="item-thumb" src="{{ row.item.image.url }}" alt="" width="32" height="32">
+              {% else %}
+              <span class="item-thumb item-thumb--empty" aria-hidden="true">
+                <i data-lucide="package"></i>
+              </span>
+              {% endif %}
+              <div class="item-person-copy">
+                <strong>{{ row.item.name }}</strong>
+                {% if row.item.description %}
+                <small>{{ row.item.description|truncatechars:56 }}</small>
+                {% endif %}
+                {% if row.has_volume_discount %}
+                <small class="item-discount-mode">Wholesale active</small>
+                {% endif %}
+              </div>
+            </div>
+          </td>
+          <td class="item-cell--range" data-label="List / min">
+            <span class="item-price-range item-price-range--stack">
+              <span class="item-price-range-bound">
+                <span class="item-price-range-label">List</span>
+                <span class="item-price-range-amount">KSh {{ row.list_price }}</span>
+              </span>
+              <span class="item-price-range-bound item-price-range-bound--min">
+                <span class="item-price-range-label">Min</span>
+                <span class="item-price-range-amount">KSh {{ row.item.minimum_selling_price|floatformat:2 }}</span>
+              </span>
+            </span>
+          </td>
+          <td class="item-cell--discount-num" data-label="Avg buy">
+            {% if row.avg_buy_price %}
+            <div class="item-sold-stat">
+              <strong class="item-sold-avg item-sold-avg--money">KSh {{ row.avg_buy_price }}</strong>
+              <small class="item-sold-meta">stock avg</small>
+            </div>
+            {% else %}
+            <span class="item-sold-empty">—</span>
+            {% endif %}
+          </td>
+          <td class="item-cell--discount-num" data-label="Avg / txn">
+            {% if row.transaction_count %}
+            <div class="item-sold-stat">
+              <strong class="item-sold-avg" data-discount-avg-sold>{{ row.avg_sold_qty }}</strong>
+              <small class="item-sold-meta">{{ row.transaction_count }} txn{{ row.transaction_count|pluralize }}</small>
+            </div>
+            {% else %}
+            <span class="item-sold-empty">No sales</span>
+            {% endif %}
+          </td>
+          <td class="item-cell--discount-num item-cell--settings" data-label="From qty">
+            <label class="item-discount-field">
+              <span class="visually-hidden">Wholesale from quantity for {{ row.item.name }}</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                inputmode="numeric"
+                value="{{ row.wholesale_from_qty }}"
+                placeholder="{{ row.suggested_from_qty|default:'' }}"
+                {% if not can_edit_discounts %}disabled{% endif %}
+                data-wholesale-from-qty
+                aria-label="Quantity from which wholesale price starts for {{ row.item.name }}"
+              >
+            </label>
+          </td>
+          <td class="item-cell--discount-num item-cell--settings" data-label="Wholesale">
+            <label class="item-discount-field">
+              <span class="visually-hidden">Wholesale price for {{ row.item.name }}</span>
+              <span class="item-discount-prefix" aria-hidden="true">KSh</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                value="{% if row.has_volume_discount %}{{ row.wholesale_price }}{% endif %}"
+                placeholder="{{ row.suggested_wholesale_price|default:row.list_price }}"
+                {% if not can_edit_discounts %}disabled{% endif %}
+                data-wholesale-price
+                aria-label="Wholesale unit price after discount for {{ row.item.name }}"
+              >
+            </label>
+          </td>
+          {% if can_edit_discounts %}
+          <td class="item-cell--discount-action" data-label="Save">
+            <button
+              type="button"
+              class="item-discount-save"
+              data-discount-save
+              disabled
+              aria-label="Save discount for {{ row.item.name }}"
+            >
+              <i data-lucide="check" aria-hidden="true"></i>
+              <span>Save</span>
+            </button>
+            <span class="item-discount-status" data-discount-status hidden></span>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="item-search-empty" data-item-discount-empty hidden>
+    <i data-lucide="search-x" aria-hidden="true"></i>
+    <p>No items match your search.</p>
+  </div>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="badge-percent" aria-hidden="true"></i>
+    <p>No items registered yet. Open <strong>Registered items</strong> to add your first item.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/item-discounts.js' %}?v=4"></script>
+{% endblock %}

@@ -22,7 +22,16 @@
         <h2>Registered items</h2>
         <p>Search, edit, and manage inventory items.</p>
       </div>
-      <p class="item-count" data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</p>
+      <div class="item-discounts-head-actions">
+        {% if item_discounts_url %}
+        <a class="stock-settings-jump" href="{{ item_discounts_url }}">
+          <i data-lucide="badge-percent" aria-hidden="true"></i>
+          <span>Item discounts</span>
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+        </a>
+        {% endif %}
+        <p class="item-count" data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</p>
+      </div>
     </div>
     <div class="item-search">
       <label class="item-search-field">

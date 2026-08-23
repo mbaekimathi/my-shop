@@ -312,6 +312,49 @@ def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
     return result
 
 
+def session_average_buying_prices_for_items(item_ids, shop_ids=None) -> dict:
+    """Qty-weighted average buying cost from on-hand shop stock.
+
+    Uses ``ShopStock.average_cost`` for the current inventory session. When no
+    positive stock average exists, falls back to the latest stock-in buying price.
+    """
+    from decimal import Decimal
+
+    ids = [int(pk) for pk in (item_ids or []) if pk]
+    if not ids:
+        return {}
+
+    stock_qs = ShopStock.objects.filter(item_id__in=ids, average_cost__gt=0)
+    if shop_ids:
+        stock_qs = stock_qs.filter(shop_id__in=list(shop_ids))
+
+    totals: dict[int, list] = {}
+    for item_id, qty, avg_cost in stock_qs.values_list(
+        "item_id", "quantity", "average_cost"
+    ):
+        units = max(0, int(qty or 0))
+        cost = _money_cost(avg_cost)
+        if cost <= 0:
+            continue
+        weight = units if units > 0 else 1
+        bucket = totals.setdefault(item_id, [Decimal("0"), 0])
+        bucket[0] += cost * weight
+        bucket[1] += weight
+
+    result = {}
+    for item_id, (cost_sum, weight_sum) in totals.items():
+        if weight_sum <= 0:
+            continue
+        result[item_id] = (cost_sum / Decimal(weight_sum)).quantize(Decimal("0.01"))
+
+    missing = [pk for pk in ids if pk not in result]
+    if missing:
+        for item_id, price in last_buying_prices_for_items(missing).items():
+            result[item_id] = _money_cost(price)
+
+    return result
+
+
 def build_stock_catalog_page(
     *,
     shop_id=None,
@@ -1916,6 +1959,153 @@ def weekly_usage_avg_by_item_shop(item_ids, shop_ids, *, weeks=LOW_STOCK_USAGE_W
             threshold_from_weekly_avg(net / weeks)
         )
     return averages
+
+
+def item_wholesale_sale_advice(item_ids, shop_ids=None):
+    """Advise wholesale thresholds from sale + credit transactions.
+
+    For each item returns:
+    - avg_sold_qty: average net units bought per sale/credit transaction
+    - transaction_count: number of sale/credit receipts that include the item
+    - suggested_from_qty: recommended wholesale-from quantity
+    - suggested_wholesale_price: average unit price on transactions at/above that qty
+    """
+    from decimal import Decimal
+    from statistics import mean
+
+    from django.db.models import Avg, F, IntegerField, Sum, Value
+    from django.db.models.functions import Greatest
+
+    from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
+
+    advice = {}
+    ids = [int(pk) for pk in (item_ids or []) if pk]
+    if not ids:
+        return advice
+
+    net_qty = Greatest(
+        F("quantity") - F("returned_quantity"),
+        Value(0),
+        output_field=IntegerField(),
+    )
+    lines = (
+        ShopReceiptLine.objects.filter(
+            item_id__in=ids,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+        )
+        .exclude(receipt__status=ShopReceiptStatus.CANCELLED)
+        .annotate(net_qty=net_qty)
+        .filter(net_qty__gt=0)
+    )
+    if shop_ids:
+        lines = lines.filter(receipt__shop_id__in=list(shop_ids))
+
+    # Sum qty per receipt first, then average across transactions.
+    per_txn = list(
+        lines.values("item_id", "receipt_id")
+        .annotate(
+            txn_qty=Sum("net_qty"),
+            txn_unit_price=Avg("unit_price"),
+        )
+        .order_by()
+    )
+
+    by_item: dict[int, list[dict]] = {}
+    for row in per_txn:
+        item_id = row["item_id"]
+        qty = int(row["txn_qty"] or 0)
+        if qty <= 0:
+            continue
+        by_item.setdefault(item_id, []).append(
+            {
+                "qty": qty,
+                "unit_price": row["txn_unit_price"],
+            }
+        )
+
+    for item_id, txns in by_item.items():
+        qtys = [row["qty"] for row in txns]
+        avg_qty = mean(qtys) if qtys else 0.0
+        suggested = max(1, int(avg_qty + 0.5)) if avg_qty > 0 else 0
+        volume_prices = [
+            Decimal(str(row["unit_price"]))
+            for row in txns
+            if row["unit_price"] is not None and row["qty"] >= suggested
+        ]
+        suggested_price = None
+        if volume_prices:
+            suggested_price = (
+                sum(volume_prices) / Decimal(len(volume_prices))
+            ).quantize(Decimal("0.01"))
+        advice[item_id] = {
+            "avg_sold_qty": round(avg_qty, 1) if avg_qty else 0,
+            "transaction_count": len(txns),
+            "line_count": len(txns),  # backwards-compatible alias
+            "suggested_from_qty": suggested,
+            "suggested_wholesale_price": suggested_price,
+        }
+
+    return advice
+
+
+def suggest_wholesale_unit_price(
+    *,
+    list_price,
+    minimum_selling_price,
+    avg_buy_price=None,
+    historical_price=None,
+):
+    """Suggest a wholesale unit price between buy cost and selling price.
+
+    Rules:
+    - above average buying cost (when known)
+    - at or above the minimum selling price
+    - below the list/selling price
+    Prefers a clamped historical volume price, otherwise the midpoint of the band.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+
+    list_p = _money_cost(list_price)
+    min_sell = _money_cost(minimum_selling_price)
+    buy = _money_cost(avg_buy_price) if avg_buy_price is not None else Decimal("0.00")
+    hist = (
+        _money_cost(historical_price) if historical_price is not None else Decimal("0.00")
+    )
+
+    if list_p <= 0:
+        return None
+
+    # Selling ceiling is strictly below list so there is a real discount.
+    ceiling = (list_p - Decimal("0.01")).quantize(Decimal("0.01"))
+    if ceiling <= 0:
+        return None
+
+    floor_candidates = [Decimal("0.01")]
+    if buy > 0:
+        # Stay above buy cost by at least 1 cent when possible.
+        floor_candidates.append((buy + Decimal("0.01")).quantize(Decimal("0.01")))
+    if min_sell > 0:
+        floor_candidates.append(min_sell)
+    floor = max(floor_candidates)
+
+    if floor >= ceiling:
+        # No profitable discount band between buy and list.
+        return None
+
+    if hist > 0:
+        suggested = min(max(hist, floor), ceiling)
+    else:
+        suggested = ((floor + ceiling) / Decimal("2")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+    if suggested <= buy:
+        suggested = floor
+    if suggested >= list_p:
+        suggested = ceiling
+    if suggested < floor or suggested > ceiling:
+        return None
+    return suggested
 
 
 def _shop_stock_alert_payload(stock, threshold):

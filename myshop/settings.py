@@ -22,9 +22,10 @@ from myshop.auto_env import (
     resolve_secret_key,
 )
 
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# On hosted installs, .env must override cPanel-injected MYSQL_* placeholders.
+load_dotenv(BASE_DIR / ".env", override=detect_is_hosted(BASE_DIR))
 
 IS_HOSTED = detect_is_hosted(BASE_DIR)
 DEBUG = detect_debug(BASE_DIR)
@@ -108,6 +109,18 @@ WSGI_APPLICATION = "myshop.wsgi.application"
 MYSQL_ENABLED = resolve_bool("MYSQL_ENABLED", default=True)
 
 if MYSQL_ENABLED:
+    _mysql_options: dict = {
+        "charset": "utf8mb4",
+        "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+        # Fail fast when MariaDB/XAMPP is down or wedged (handshake/query hangs).
+        "connect_timeout": int(os.getenv("MYSQL_CONNECT_TIMEOUT", "5")),
+        "read_timeout": int(os.getenv("MYSQL_READ_TIMEOUT", "30")),
+        "write_timeout": int(os.getenv("MYSQL_WRITE_TIMEOUT", "30")),
+    }
+    _mysql_unix_socket = (os.getenv("MYSQL_UNIX_SOCKET") or "").strip()
+    if _mysql_unix_socket:
+        _mysql_options["unix_socket"] = _mysql_unix_socket
+
     DATABASES = {
         "default": {
             # Custom backend: supports MariaDB 10.4+ (XAMPP) — Django default requires 10.11+
@@ -117,14 +130,7 @@ if MYSQL_ENABLED:
             "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
             "HOST": resolve_mysql_host(is_hosted=IS_HOSTED),
             "PORT": os.getenv("MYSQL_PORT", "3306"),
-            "OPTIONS": {
-                "charset": "utf8mb4",
-                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-                # Fail fast when MariaDB/XAMPP is down or wedged (handshake/query hangs).
-                "connect_timeout": int(os.getenv("MYSQL_CONNECT_TIMEOUT", "5")),
-                "read_timeout": int(os.getenv("MYSQL_READ_TIMEOUT", "30")),
-                "write_timeout": int(os.getenv("MYSQL_WRITE_TIMEOUT", "30")),
-            },
+            "OPTIONS": _mysql_options,
             "CONN_MAX_AGE": int(
                 os.getenv(
                     "MYSQL_CONN_MAX_AGE",
