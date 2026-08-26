@@ -156,7 +156,10 @@
     {% endfor %}
   </div>
   {% elif page.summary_board %}
-  <section class="ax-summary-board" aria-label="{{ page.headline|default:'Summary' }}">
+  <section
+    class="ax-summary-board{% if section_slug == 'sales' %} ax-summary-board--one{% endif %}"
+    aria-label="{{ page.headline|default:'Summary' }}"
+  >
     <article class="ax-summary-hero{% if page.summary_board.hero.tone %} is-{{ page.summary_board.hero.tone }}{% endif %}">
       <span class="ax-summary-hero-label">{{ page.summary_board.hero.label }}</span>
       <strong class="ax-summary-hero-value">{{ page.summary_board.hero.value }}</strong>
@@ -429,6 +432,8 @@
         <span class="ax-card-hint">En · entries · Bal · unpaid</span>
         {% elif table.shop_grid and section_slug == "expenses" %}
         <span class="ax-card-hint">Docs · entries · Amt · total</span>
+        {% elif table.shop_grid and section_slug == "sales" %}
+        <span class="ax-card-hint">Docs · Amt stay in each column</span>
         {% elif section_slug == "expenses" and page.expense_category %}
         <span class="ax-card-hint">Date · supplier · price</span>
         {% elif table.shop_grid %}
@@ -459,8 +464,8 @@
       <div class="ax-band-legend ax-band-legend--sales" aria-label="Column groups">
         <span class="is-cash">Cash</span>
         <span class="is-mpesa">M-Pesa</span>
-        <span class="is-credits">Paid credits</span>
-        <span class="is-unpaid">Unpaid credits</span>
+        <span class="is-credits">Paid</span>
+        <span class="is-unpaid">Unpaid</span>
         <span class="is-total">Total</span>
         <span class="is-result">Stock · Profit</span>
       </div>
@@ -505,13 +510,15 @@
               <th
                 {% if col.title %}title="{{ col.title }}"{% endif %}
                 {% if forloop.first or col.compact or col.pair or col.total or col.band %}
-                class="{% if forloop.first %}ax-th--item{% endif %}{% if col.compact %} ax-th--shop{% endif %}{% if col.pair %} ax-th--pair{% endif %}{% if col.total %} ax-th--total{% endif %}{% if col.band %} ax-th--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-th--band-start{% endif %}"
+                class="{% if forloop.first %}ax-th--item{% endif %}{% if col.compact %} ax-th--shop{% endif %}{% if col.pair %} ax-th--pair{% endif %}{% if col.pair_stack %} ax-th--pair-stack{% endif %}{% if col.money %} ax-th--money{% endif %}{% if col.total %} ax-th--total{% endif %}{% if col.band %} ax-th--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-th--band-start{% endif %}"
                 {% endif %}
               >
                 {% if col.pair %}
-                <span class="ax-th-pair">
+                <span class="ax-th-pair{% if col.pair_stack %} ax-th-pair--stack{% endif %}">
                   <span class="ax-th-pair-name">{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}</span>
+                  {% if not col.pair_stack %}
                   <span class="ax-th-pair-cols" aria-hidden="true"><span>{{ col.pair_qty|default:"Qty" }}</span><span>{{ col.pair_amt|default:"Amt" }}</span></span>
+                  {% endif %}
                 </span>
                 {% elif col.label %}
                 {{ col.label }}
@@ -539,7 +546,7 @@
               {% for col in table.columns %}
               {% if forloop.parentloop.counter0 == forloop.counter0 %}
               <td
-                class="{% if forloop.parentloop.first %}ax-cell--primary{% endif %}{% if col.compact or col.pair %} ax-cell--shop{% endif %}{% if cell.kind == 'qty_amount' or col.pair %} ax-cell--pair{% endif %}{% if cell.kind == 'money' or cell.kind == 'pct' %} ax-cell--money{% endif %}{% if col.total %} ax-cell--total{% endif %}{% if col.band %} ax-cell--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-cell--band-start{% endif %}"
+                class="{% if forloop.parentloop.first %}ax-cell--primary{% endif %}{% if col.compact or col.pair %} ax-cell--shop{% endif %}{% if cell.kind == 'qty_amount' or col.pair %} ax-cell--pair{% endif %}{% if col.pair_stack %} ax-cell--pair-stack{% endif %}{% if cell.kind == 'money' or cell.kind == 'pct' or col.money %} ax-cell--money{% endif %}{% if col.total %} ax-cell--total{% endif %}{% if col.band %} ax-cell--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-cell--band-start{% endif %}"
                 data-label="{% if col.label %}{{ col.title|default:col.label }}{% else %}{{ col }}{% endif %}"
               >
                 {% if cell.href %}
@@ -552,7 +559,7 @@
                   {% endif %}
                 </a>
                 {% elif cell.kind == "qty_amount" %}
-                <span class="ax-pair{% if cell.tone and cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}" title="{{ cell.title }}">
+                <span class="ax-pair{% if col.pair_stack %} ax-pair--stack{% endif %}{% if cell.tone and cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}" title="{{ cell.title }}">
                   <span class="ax-pair-qty">{{ cell.qty }}</span>
                   <span class="ax-pair-amt">{{ cell.amount }}</span>
                 </span>

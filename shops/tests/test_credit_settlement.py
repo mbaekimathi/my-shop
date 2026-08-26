@@ -292,8 +292,8 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         board = {tile["label"]: tile["value"] for tile in page["summary_board"]["tiles"]}
         self.assertEqual(board["Cash"], "KSh 100.00")
         self.assertEqual(board["M-Pesa"], "KSh 50.00")
-        self.assertEqual(board["Paid credits"], "KSh 80.00")
-        self.assertEqual(board["Unpaid credits"], "KSh 100.00")
+        self.assertEqual(board["Paid"], "KSh 80.00")
+        self.assertEqual(board["Unpaid"], "KSh 100.00")
         self.assertEqual(page["summary_board"]["hero"]["value"], "KSh 230.00")
 
         columns = [
@@ -302,11 +302,13 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         ]
         self.assertEqual(
             columns[:6],
-            ["Shop", "Cash", "M-Pesa", "Paid credits", "Unpaid credits", "Total"],
+            ["Shop", "Cash", "M-Pesa", "Paid", "Unpaid", "Total"],
         )
         shop_row = page["tables"][0]["rows"][0]
-        self.assertEqual(shop_row[1]["amount"], "100")
-        self.assertEqual(shop_row[2]["amount"], "50")
+        self.assertEqual(shop_row[1]["kind"], "money")
+        self.assertEqual(shop_row[1]["label"], "100")
+        self.assertEqual(shop_row[2]["kind"], "money")
+        self.assertEqual(shop_row[2]["label"], "50")
         self.assertEqual(shop_row[3]["amount"], "80")
         self.assertEqual(shop_row[3]["qty"], "1")
         self.assertEqual(shop_row[4]["amount"], "100")

@@ -1570,14 +1570,14 @@ def _sales_summary_board(
                 "tone": "mpesa",
             },
             {
-                "label": "Paid credits",
+                "label": "Paid",
                 "value": _money_ksh(paid_credit),
                 "hint": paid_credit_share,
                 "icon": "credit-card",
                 "tone": "credits",
             },
             {
-                "label": "Unpaid credits",
+                "label": "Unpaid",
                 "value": _money_ksh(unpaid_credit),
                 "hint": "Outstanding on open credits",
                 "icon": "clock",
@@ -4892,15 +4892,18 @@ def _build_sales(filters):
         profit_by_shop[shop.pk] = selling - stock
 
     metric_maps = [
-        ("Cash", cash_by_shop, "cash"),
-        ("M-Pesa", mpesa_by_shop, "mpesa"),
-        ("Paid credits", paid_credit_by_shop, "credits"),
-        ("Unpaid credits", unpaid_credit_by_shop, "unpaid"),
-        ("Total", total_by_shop, "total"),
+        ("Cash", cash_by_shop, "cash", "money"),
+        ("M-Pesa", mpesa_by_shop, "mpesa", "money"),
+        ("Paid", paid_credit_by_shop, "credits", "pair"),
+        ("Unpaid", unpaid_credit_by_shop, "unpaid", "pair"),
+        ("Total", total_by_shop, "total", "pair"),
     ]
     column_titles = {
-        "Paid credits": "Fully paid credit receipts converted to sales",
-        "Unpaid credits": "Outstanding balance on open credit receipts this period",
+        "Cash": "POS cash payments on sale receipts",
+        "M-Pesa": "POS M-Pesa payments on sale receipts",
+        "Paid": "Fully paid credit receipts converted to sales",
+        "Unpaid": "Outstanding balance on open credit receipts this period",
+        "Total": "Cash + M-Pesa + Paid credits",
     }
 
     shops_sorted = sorted(
@@ -4912,19 +4915,30 @@ def _build_sales(filters):
     )
 
     columns = ["Shop"]
-    for label, _by_shop, band in metric_maps:
-        columns.append(
-            {
-                "label": label,
-                "pair": True,
-                "pair_qty": "Docs",
-                "pair_amt": "Amt",
-                "total": label == "Total",
-                "band": band,
-                "band_start": True,
-                "title": column_titles.get(label, ""),
-            }
-        )
+    for label, _by_shop, band, cell_kind in metric_maps:
+        if cell_kind == "money":
+            columns.append(
+                {
+                    "label": label,
+                    "title": column_titles.get(label, ""),
+                    "band": band,
+                    "band_start": True,
+                    "money": True,
+                }
+            )
+        else:
+            columns.append(
+                {
+                    "label": label,
+                    "pair": True,
+                    "pair_qty": "Docs",
+                    "pair_amt": "Amt",
+                    "total": label == "Total",
+                    "band": band,
+                    "band_start": True,
+                    "title": column_titles.get(label, ""),
+                }
+            )
     columns.extend(
         [
             {
@@ -4941,18 +4955,21 @@ def _build_sales(filters):
         ]
     )
 
+    def _metric_cell(cell_kind: str, qty, amount):
+        if cell_kind == "money":
+            return _money_cell(amount, title=_money_ksh(amount))
+        return _qty_amount_cell(
+            qty,
+            amount,
+            title=f"{int(qty or 0)} receipts · {_money_ksh(amount)}",
+        )
+
     table_rows = []
     for shop in shops_sorted:
         cells = [shop.name]
-        for _label, by_shop, _band in metric_maps:
+        for _label, by_shop, _band, cell_kind in metric_maps:
             qty, amount = by_shop.get(shop.pk, (0, _zero()))
-            cells.append(
-                _qty_amount_cell(
-                    qty,
-                    amount,
-                    title=f"{int(qty or 0)} · {_money_ksh(amount)}",
-                )
-            )
+            cells.append(_metric_cell(cell_kind, qty, amount))
         stock = stock_by_shop.get(shop.pk, _zero())
         profit = profit_by_shop.get(shop.pk, _zero())
         revenue = selling_by_shop.get(shop.pk, _zero())
@@ -4998,20 +5015,14 @@ def _build_sales(filters):
 
     if shops_sorted:
         total_cells = ["Total"]
-        for _label, by_shop, _band in metric_maps:
+        for _label, by_shop, _band, cell_kind in metric_maps:
             total_qty = 0
             col_amount = _zero()
             for shop in shops_sorted:
                 qty, amount = by_shop.get(shop.pk, (0, _zero()))
                 total_qty += int(qty or 0)
                 col_amount += Decimal(amount or 0)
-            total_cells.append(
-                _qty_amount_cell(
-                    total_qty,
-                    col_amount,
-                    title=f"{total_qty} · {_money_ksh(col_amount)}",
-                )
-            )
+            total_cells.append(_metric_cell(cell_kind, total_qty, col_amount))
         total_cells.append(
             _money_cell(total_stock, title=f"Stock value {_money_ksh(total_stock)}")
         )
@@ -5059,13 +5070,11 @@ def _build_sales(filters):
                 empty="No sales for selected shops and period.",
                 shop_grid=True,
                 footnote=(
-                    "Cash and M-Pesa are POS sale payments in this period. "
-                    "Paid credits are fully settled credit receipts converted to sales "
-                    "(excluded from Cash / M-Pesa). Unpaid credits are outstanding "
-                    "balances on open credit receipts this period (not in Total). "
-                    "Total = Cash + M-Pesa + Paid credits. "
-                    "Stock and profit use ex-tax item value net of returns "
-                    "for sale receipts in this period. Profit = selling value − stock."
+                    "Cash and M-Pesa are POS sale payments. "
+                    "Paid = settled credits converted to sales (in Total). "
+                    "Unpaid = open credit balances this period (not in Total). "
+                    "Total = Cash + M-Pesa + Paid. "
+                    "Profit = selling value − stock."
                 ),
             )
         ],
