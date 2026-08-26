@@ -115,6 +115,11 @@ class ShopReceipt(models.Model):
     cash_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     mpesa_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     mpesa_receipt_number = models.CharField(max_length=40, blank=True, default="")
+    settled_from_credit = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="True when this sale was converted from a fully paid credit receipt.",
+    )
     share_whatsapp = models.BooleanField(default=False)
     status = models.CharField(
         max_length=20,

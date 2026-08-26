@@ -50,6 +50,7 @@ def convert_settled_credit_to_sale(receipt) -> bool:
         return False
     receipt.kind = ShopReceiptKind.SALE
     receipt.credit_due_date = None
+    receipt.settled_from_credit = True
     _sync_sale_payment_fields(receipt)
     return True
 
@@ -85,6 +86,7 @@ def record_credit_collection(
             "credit_due_date",
             "cash_amount",
             "mpesa_amount",
+            "settled_from_credit",
         ):
             if field not in update_fields:
                 update_fields.append(field)

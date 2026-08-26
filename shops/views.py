@@ -96,7 +96,6 @@ from .services import (
 )
 from .session import (
     clear_active_shop,
-    clear_shop_portal_session,
     get_shop_for_profile,
     resolve_active_shop,
     resolve_portal_shop,
@@ -287,12 +286,16 @@ def _shops_for_floor(profile, shop):
     return shops_for_profile(profile)
 
 
-def _shop_day_prompt_context(shop, profile):
+def _shop_day_prompt_context(shop, profile, *, active=None):
     if shop is None:
         return {}
     from employees.module_permissions import employee_may
 
-    if profile is not None and not employee_may(profile, "my-shop", "workspace"):
+    # Day toggle page already has the full open/close form — skip the popup there.
+    if active == "day_toggle":
+        return {}
+
+    if profile is not None and not employee_may(profile, "my-shop", "open_close"):
         return {}
 
     prompt = build_shop_day_prompt(shop=shop)
@@ -392,7 +395,7 @@ def _shop_floor_chrome(
         "low_stock_alert_count": len(low_stock_alerts),
         "low_stock_alert_force": low_stock_alert_force,
         "low_stock_alert_on_selling": active == "workspace",
-        **_shop_day_prompt_context(shop, profile),
+        **_shop_day_prompt_context(shop, profile, active=active),
     }
 
 
@@ -445,11 +448,20 @@ def _require_my_shop_permission(
 @require_http_methods(["GET", "POST"])
 def shop_portal_login(request):
     """Public shop portal: sign in with 6-digit shop code + password."""
-    from employees.portal_auth import begin_shop_portal_session, render_portal_login
+    from employees.portal_auth import (
+        begin_shop_portal_session,
+        clear_opposite_for_shop_login,
+        render_portal_login,
+    )
 
     portal_shop = resolve_portal_shop(request)
     if portal_shop is not None and request.method == "GET":
         return redirect(_shop_workspace_url(portal_shop))
+
+    # Opening shop login ends any employee session (do not flush on POST —
+    # that would invalidate the CSRF token on the submitted form).
+    if request.method == "GET":
+        clear_opposite_for_shop_login(request)
 
     error = None
     login_code = ""
@@ -478,8 +490,9 @@ def shop_portal_login(request):
 
 @require_http_methods(["GET", "POST"])
 def shop_portal_logout(request):
-    clear_shop_portal_session(request)
-    request.session.flush()
+    from employees.portal_auth import end_all_portal_sessions
+
+    end_all_portal_sessions(request)
     return redirect("employees:shop_login")
 
 
@@ -533,12 +546,9 @@ def _render_shop_login(
 @require_http_methods(["GET", "POST"])
 def my_shop_entry(request):
     """MY-SHOP sidebar: end employee session and open shop portal login."""
-    from django.contrib.auth import logout
+    from employees.portal_auth import end_all_portal_sessions
 
-    from employees.access import clear_profile_session
-
-    clear_profile_session(request)
-    logout(request)
+    end_all_portal_sessions(request)
     return redirect("employees:shop_login")
 
 

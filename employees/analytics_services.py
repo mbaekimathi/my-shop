@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum, Value
+from django.db.models import (
+    Case,
+    Count,
+    DecimalField,
+    ExpressionWrapper,
+    F,
+    Q,
+    Sum,
+    Value,
+    When,
+)
 from django.db.models.functions import Coalesce, Greatest
 from django.http import Http404
 
@@ -59,7 +69,7 @@ ANALYTICS_SECTIONS = (
         "slug": "sales",
         "label": "Sales",
         "icon": "shopping-bag",
-        "summary": "Sales receipts by shop — cash, M-Pesa, stock value, and profit.",
+        "summary": "Sales receipts by shop — cash, M-Pesa, paid/unpaid credits, stock, and profit.",
     },
     {
         "slug": "credits",
@@ -1503,6 +1513,8 @@ def _sales_summary_board(
     total_docs: int,
     cash_amount,
     mpesa_amount,
+    paid_credit_amount,
+    unpaid_credit_amount,
     stock_amount,
     profit_amount,
     active_shops: int,
@@ -1511,6 +1523,8 @@ def _sales_summary_board(
     total = Decimal(total_amount or 0)
     cash = Decimal(cash_amount or 0)
     mpesa = Decimal(mpesa_amount or 0)
+    paid_credit = Decimal(paid_credit_amount or 0)
+    unpaid_credit = Decimal(unpaid_credit_amount or 0)
     stock = Decimal(stock_amount or 0)
     profit = Decimal(profit_amount or 0)
     cash_share = (
@@ -1520,6 +1534,11 @@ def _sales_summary_board(
     )
     mpesa_share = (
         f"{((mpesa / total) * Decimal('100')).quantize(Decimal('0.1'))}% of total"
+        if total > 0
+        else "No sales yet"
+    )
+    paid_credit_share = (
+        f"{((paid_credit / total) * Decimal('100')).quantize(Decimal('0.1'))}% of total"
         if total > 0
         else "No sales yet"
     )
@@ -1549,6 +1568,20 @@ def _sales_summary_board(
                 "hint": mpesa_share,
                 "icon": "smartphone",
                 "tone": "mpesa",
+            },
+            {
+                "label": "Paid credits",
+                "value": _money_ksh(paid_credit),
+                "hint": paid_credit_share,
+                "icon": "credit-card",
+                "tone": "credits",
+            },
+            {
+                "label": "Unpaid credits",
+                "value": _money_ksh(unpaid_credit),
+                "hint": "Outstanding on open credits",
+                "icon": "clock",
+                "tone": "warn" if unpaid_credit > 0 else "good",
             },
             {
                 "label": "Stock",
@@ -4777,21 +4810,69 @@ def _build_sales(filters):
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     start, end = filters["start"], filters["end"]
-    sales, *_rest = _common_receipt_sets(filters)
+    sales, _prev, credits, *_rest = _common_receipt_sets(filters)
+
+    money_field = DecimalField(max_digits=14, decimal_places=2)
+    zero_money = Value(0, output_field=money_field)
+    cash_expr = Case(
+        When(settled_from_credit=False, then=F("cash_amount")),
+        default=zero_money,
+        output_field=money_field,
+    )
+    mpesa_expr = Case(
+        When(settled_from_credit=False, then=F("mpesa_amount")),
+        default=zero_money,
+        output_field=money_field,
+    )
+    paid_credit_expr = Case(
+        When(
+            settled_from_credit=True,
+            then=ExpressionWrapper(
+                F("cash_amount") + F("mpesa_amount"),
+                output_field=money_field,
+            ),
+        ),
+        default=zero_money,
+        output_field=money_field,
+    )
+    unpaid_due_expr = Greatest(
+        ExpressionWrapper(
+            F("total") - F("amount_paid"),
+            output_field=money_field,
+        ),
+        zero_money,
+    )
 
     total_by_shop: dict[int, tuple[int, Decimal]] = {}
     cash_by_shop: dict[int, tuple[int, Decimal]] = {}
     mpesa_by_shop: dict[int, tuple[int, Decimal]] = {}
+    paid_credit_by_shop: dict[int, tuple[int, Decimal]] = {}
+    unpaid_credit_by_shop: dict[int, tuple[int, Decimal]] = {}
     for row in sales.values("shop_id").annotate(
         docs=Count("id"),
         amount=Coalesce(Sum("total"), _zero()),
-        cash=Coalesce(Sum("cash_amount"), _zero()),
-        mpesa=Coalesce(Sum("mpesa_amount"), _zero()),
+        cash=Coalesce(Sum(cash_expr), _zero()),
+        mpesa=Coalesce(Sum(mpesa_expr), _zero()),
+        paid_credit_docs=Count("id", filter=Q(settled_from_credit=True)),
+        paid_credit=Coalesce(Sum(paid_credit_expr), _zero()),
     ):
         shop_id = row["shop_id"]
         total_by_shop[shop_id] = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
         cash_by_shop[shop_id] = (0, Decimal(row["cash"] or 0))
         mpesa_by_shop[shop_id] = (0, Decimal(row["mpesa"] or 0))
+        paid_credit_by_shop[shop_id] = (
+            int(row["paid_credit_docs"] or 0),
+            Decimal(row["paid_credit"] or 0),
+        )
+
+    for row in credits.values("shop_id").annotate(
+        unpaid_docs=Count("id", filter=Q(total__gt=F("amount_paid"))),
+        unpaid=Coalesce(Sum(unpaid_due_expr), _zero()),
+    ):
+        unpaid_credit_by_shop[row["shop_id"]] = (
+            int(row["unpaid_docs"] or 0),
+            Decimal(row["unpaid"] or 0),
+        )
 
     trading = _trading_by_shop_for_period(
         shop_ids=shop_ids,
@@ -4813,8 +4894,14 @@ def _build_sales(filters):
     metric_maps = [
         ("Cash", cash_by_shop, "cash"),
         ("M-Pesa", mpesa_by_shop, "mpesa"),
+        ("Paid credits", paid_credit_by_shop, "credits"),
+        ("Unpaid credits", unpaid_credit_by_shop, "unpaid"),
         ("Total", total_by_shop, "total"),
     ]
+    column_titles = {
+        "Paid credits": "Fully paid credit receipts converted to sales",
+        "Unpaid credits": "Outstanding balance on open credit receipts this period",
+    }
 
     shops_sorted = sorted(
         shops,
@@ -4835,6 +4922,7 @@ def _build_sales(filters):
                 "total": label == "Total",
                 "band": band,
                 "band_start": True,
+                "title": column_titles.get(label, ""),
             }
         )
     columns.extend(
@@ -4887,12 +4975,16 @@ def _build_sales(filters):
     total_amount = _zero()
     cash_amount = _zero()
     mpesa_amount = _zero()
+    paid_credit_amount = _zero()
+    unpaid_credit_amount = _zero()
     for shop in shops_sorted:
         qty, amount = total_by_shop.get(shop.pk, (0, _zero()))
         total_docs += int(qty or 0)
         total_amount += Decimal(amount or 0)
         cash_amount += cash_by_shop.get(shop.pk, (0, _zero()))[1]
         mpesa_amount += mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
+        paid_credit_amount += paid_credit_by_shop.get(shop.pk, (0, _zero()))[1]
+        unpaid_credit_amount += unpaid_credit_by_shop.get(shop.pk, (0, _zero()))[1]
     total_stock = sum((stock_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero())
     total_selling = sum(
         (selling_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero()
@@ -4933,18 +5025,26 @@ def _build_sales(filters):
         table_rows.append(total_cells)
 
     active_shops = sum(
-        1 for shop in shops_sorted if total_by_shop.get(shop.pk, (0, _zero()))[0] > 0
+        1
+        for shop in shops_sorted
+        if total_by_shop.get(shop.pk, (0, _zero()))[0] > 0
+        or unpaid_credit_by_shop.get(shop.pk, (0, _zero()))[0] > 0
     )
 
     return {
         "headline": "Sales",
-        "lead": "Sale receipts by shop — cash, M-Pesa, stock value, and profit.",
+        "lead": (
+            "Sale receipts by shop — cash, M-Pesa, paid and unpaid credits, "
+            "stock value, and profit."
+        ),
         "alerts": [],
         "summary_board": _sales_summary_board(
             total_amount=total_amount,
             total_docs=total_docs,
             cash_amount=cash_amount,
             mpesa_amount=mpesa_amount,
+            paid_credit_amount=paid_credit_amount,
+            unpaid_credit_amount=unpaid_credit_amount,
             stock_amount=total_stock,
             profit_amount=total_profit,
             active_shops=active_shops,
@@ -4959,9 +5059,13 @@ def _build_sales(filters):
                 empty="No sales for selected shops and period.",
                 shop_grid=True,
                 footnote=(
-                    "Cash, M-Pesa, and Total are receipt payments in this period. "
+                    "Cash and M-Pesa are POS sale payments in this period. "
+                    "Paid credits are fully settled credit receipts converted to sales "
+                    "(excluded from Cash / M-Pesa). Unpaid credits are outstanding "
+                    "balances on open credit receipts this period (not in Total). "
+                    "Total = Cash + M-Pesa + Paid credits. "
                     "Stock and profit use ex-tax item value net of returns "
-                    "for receipts in this period. Profit = selling value − stock."
+                    "for sale receipts in this period. Profit = selling value − stock."
                 ),
             )
         ],

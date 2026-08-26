@@ -47,12 +47,13 @@
       <label class="stock-report-field">
         <span>Type</span>
         <select data-receipts-kind aria-label="Receipt type">
-          <option value="all">All types</option>
-          <option value="sale" selected>Sales</option>
+          <option value="sales_credits" selected>Sales and credits</option>
+          <option value="sale">Sales</option>
           <option value="credit">Credits</option>
           <option value="quotation">Quotations</option>
           <option value="stock">Stock suppliers</option>
           <option value="expense">Expense suppliers</option>
+          <option value="all">All types</option>
         </select>
       </label>
 
@@ -170,5 +171,5 @@
 {{ block.super }}
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/my-shop-receipts.js' %}?v=7"></script>
+<script defer src="{% static 'js/my-shop-receipts.js' %}?v=8"></script>
 {% endblock %}

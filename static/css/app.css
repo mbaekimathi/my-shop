@@ -10083,6 +10083,10 @@ html[data-theme="light"] .low-stock-badge.is-low {
   color: var(--accent-deep);
 }
 
+.ax-summary-tile.is-credits i {
+  color: color-mix(in srgb, var(--ok) 70%, var(--accent-deep));
+}
+
 .ax-summary-tile.is-shops i {
   color: var(--mist-dim);
 }
@@ -10156,6 +10160,14 @@ html[data-theme="light"] .low-stock-badge.is-low {
   background: color-mix(in srgb, var(--accent-deep) 60%, transparent);
 }
 
+.ax-band-legend--sales .is-credits::before {
+  background: color-mix(in srgb, var(--ok) 55%, var(--accent-deep));
+}
+
+.ax-band-legend--sales .is-unpaid::before {
+  background: color-mix(in srgb, var(--accent-deep) 70%, transparent);
+}
+
 .ax-band-legend--sales .is-total::before {
   background: color-mix(in srgb, var(--ok) 55%, transparent);
 }
@@ -10174,12 +10186,30 @@ html[data-theme="light"] .low-stock-badge.is-low {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
+.ax-table--shops .ax-th--band-credits,
+.ax-table--shops .ax-cell--band-credits {
+  background: color-mix(in srgb, var(--ok) 6%, transparent);
+}
+
+.ax-table--shops .ax-th--band-unpaid,
+.ax-table--shops .ax-cell--band-unpaid {
+  background: color-mix(in srgb, var(--accent-deep) 5%, transparent);
+}
+
 .ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-cash {
   background: color-mix(in srgb, var(--teal) 7%, color-mix(in srgb, var(--line) 22%, transparent));
 }
 
 .ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-mpesa {
   background: color-mix(in srgb, var(--accent) 8%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-credits {
+  background: color-mix(in srgb, var(--ok) 9%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-unpaid {
+  background: color-mix(in srgb, var(--accent-deep) 8%, color-mix(in srgb, var(--line) 22%, transparent));
 }
 
 @media (max-width: 900px) {
@@ -11296,7 +11326,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 .ax--list-table[data-ax-section="sales"] .ax-summary-tiles {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .ax--list-table[data-ax-section="sales"] .ax-kpis {

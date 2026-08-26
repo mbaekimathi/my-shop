@@ -38,11 +38,13 @@ def render_portal_login(request, **kwargs):
 
 def clear_employee_auth(request):
     """End any employee session without depending on shop portal keys afterward."""
-    if getattr(request, "user", None) is not None and request.user.is_authenticated:
-        logout(request)
-        return
-
     from .access import SESSION_PROFILE_KEY, REQUEST_META_ATTR, REQUEST_PROFILE_ATTR
+
+    was_authenticated = bool(
+        getattr(request, "user", None) is not None and request.user.is_authenticated
+    )
+    if was_authenticated:
+        logout(request)
 
     if SESSION_PROFILE_KEY in request.session:
         del request.session[SESSION_PROFILE_KEY]
@@ -50,6 +52,27 @@ def clear_employee_auth(request):
         delattr(request, REQUEST_META_ATTR)
     if hasattr(request, REQUEST_PROFILE_ATTR):
         delattr(request, REQUEST_PROFILE_ATTR)
+
+
+def clear_opposite_for_shop_login(request):
+    """Drop employee auth when opening the shop portal login form (GET only)."""
+    clear_employee_auth(request)
+
+
+def clear_opposite_for_employee_login(request):
+    """Drop shop portal auth when opening the employee login form (GET only)."""
+    from shops.session import clear_shop_portal_session
+
+    clear_shop_portal_session(request)
+
+
+def end_all_portal_sessions(request):
+    """Fully end shop portal and employee sessions (switch / logout bridges)."""
+    from shops.session import clear_shop_portal_session
+
+    clear_shop_portal_session(request)
+    clear_employee_auth(request)
+    request.session.flush()
 
 
 def begin_shop_portal_session(request, shop):

@@ -59,7 +59,6 @@ from shops.views import shop_management
 
 from .access import (
     active_employee_required,
-    clear_profile_session,
     get_profile,
     get_profile_for_request,
     redirect_to_role_home,
@@ -421,7 +420,11 @@ def _safe_login_next(request, raw_next):
 @rate_limit("login", methods=("POST",))
 @require_http_methods(["GET", "POST"])
 def employee_login(request):
-    from .portal_auth import begin_employee_session, render_portal_login
+    from .portal_auth import (
+        begin_employee_session,
+        clear_opposite_for_employee_login,
+        render_portal_login,
+    )
 
     next_url = _safe_login_next(
         request,
@@ -437,6 +440,11 @@ def employee_login(request):
         if profile and profile.status == EmployeeStatus.PENDING_APPROVAL:
             return redirect("employees:pending")
         logout(request)
+
+    # Opening employee login ends any shop portal session (GET only — POST
+    # must keep the session so CSRF validation still succeeds).
+    if request.method == "GET":
+        clear_opposite_for_employee_login(request)
 
     error = None
     username = ""
@@ -2050,14 +2058,16 @@ def _company_pos_settings(
 
 
 def employee_logout(request):
-    clear_profile_session(request)
-    logout(request)
+    from .portal_auth import end_all_portal_sessions
+
+    end_all_portal_sessions(request)
     return redirect("core:landing")
 
 
 @require_http_methods(["GET", "POST"])
 def switch_to_employee_login(request):
     """End shop or employee session and open the employee login page."""
-    clear_profile_session(request)
-    logout(request)
+    from .portal_auth import end_all_portal_sessions
+
+    end_all_portal_sessions(request)
     return redirect("employees:login")

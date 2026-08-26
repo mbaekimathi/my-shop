@@ -399,6 +399,26 @@ def build_shop_day_prompt(*, shop: Shop) -> dict:
         "login_code": "",
     }
 
+    def _amount_str(value) -> str:
+        if value is None:
+            return ""
+        try:
+            return str(int(Decimal(value).quantize(Decimal("1"))))
+        except Exception:
+            return ""
+
+    if mode == "close" and open_session is not None:
+        summary = day_session_balance_summary(open_session)
+        form_data["cash_amount"] = _amount_str(summary.get("expected_cash"))
+        form_data["mpesa_amount"] = _amount_str(summary.get("expected_mpesa"))
+        form_data["credit_amount"] = _amount_str(summary.get("expected_credit"))
+    elif mode == "open":
+        last_closed = get_last_closed_shop_day(shop)
+        if last_closed is not None:
+            form_data["cash_amount"] = _amount_str(last_closed.closing_cash)
+            form_data["mpesa_amount"] = _amount_str(last_closed.closing_mpesa)
+            form_data["credit_amount"] = _amount_str(last_closed.closing_credit)
+
     return {
         "show": True,
         "mode": mode,
@@ -4482,6 +4502,14 @@ def list_shop_receipts(
     kind_key = (kind or "all").strip().lower()
     if kind_key in ("", "all", "any"):
         kind_key = "all"
+    elif kind_key in (
+        "sales_credits",
+        "sale_credit",
+        "sales-and-credits",
+        "sale_and_credit",
+        "sales-credits",
+    ):
+        kind_key = "sales_credits"
     elif kind_key in ("sales", "sale"):
         kind_key = "sale"
     elif kind_key in ("credits", "credit"):
@@ -4495,7 +4523,7 @@ def list_shop_receipts(
     else:
         raise ValidationError("Unknown receipt type filter.")
 
-    include_pos = kind_key in ("all", "sale", "credit", "quotation")
+    include_pos = kind_key in ("all", "sale", "credit", "quotation", "sales_credits")
     include_stock = kind_key in ("all", "stock")
     include_expense = kind_key in ("all", "expense")
 
@@ -4511,7 +4539,9 @@ def list_shop_receipts(
             .select_related("created_by__user")
             .order_by("-created_at", "-id")
         )
-        if kind_key in ("sale", "credit", "quotation"):
+        if kind_key == "sales_credits":
+            pos_qs = pos_qs.filter(kind__in=("sale", "credit"))
+        elif kind_key in ("sale", "credit", "quotation"):
             pos_qs = pos_qs.filter(kind=kind_key)
         if q:
             pos_qs = pos_qs.filter(
@@ -5215,6 +5245,7 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
                 "cash_amount",
                 "mpesa_amount",
                 "credit_due_date",
+                "settled_from_credit",
             ]
         )
 

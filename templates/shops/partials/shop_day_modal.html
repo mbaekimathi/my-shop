@@ -8,8 +8,8 @@
   data-day-toggle-url="{{ shop_day_toggle_url }}"
   data-verify-login-url="{{ shop_day_verify_url }}"
   data-shop-id="{{ shop.id }}"
-  {% if not shop_day_prompt.auto_open %}hidden{% endif %}
-  aria-hidden="{% if shop_day_prompt.auto_open %}false{% else %}true{% endif %}"
+  hidden
+  aria-hidden="true"
 >
   <div class="workspace-modal-backdrop" data-modal-close="shop-day"></div>
   <div
@@ -63,8 +63,9 @@
               step="1"
               inputmode="numeric"
               required
-              value=""
+              value="{{ shop_day_prompt.form_data.cash_amount }}"
               placeholder="0"
+              data-day-default-cash="{{ shop_day_prompt.form_data.cash_amount }}"
             >
           </label>
           <label class="shop-cart-input">
@@ -76,8 +77,9 @@
               step="1"
               inputmode="numeric"
               required
-              value=""
+              value="{{ shop_day_prompt.form_data.mpesa_amount }}"
               placeholder="0"
+              data-day-default-mpesa="{{ shop_day_prompt.form_data.mpesa_amount }}"
             >
           </label>
           <label class="shop-cart-input">
@@ -89,8 +91,9 @@
               step="1"
               inputmode="numeric"
               required
-              value=""
+              value="{{ shop_day_prompt.form_data.credit_amount }}"
               placeholder="0"
+              data-day-default-credit="{{ shop_day_prompt.form_data.credit_amount }}"
             >
           </label>
         </div>

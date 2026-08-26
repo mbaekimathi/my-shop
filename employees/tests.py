@@ -515,6 +515,7 @@ class ClientCreditAccountTableTests(TestCase):
         receipt.refresh_from_db()
         self.assertTrue(result["converted"])
         self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
+        self.assertTrue(receipt.settled_from_credit)
         self.assertEqual(str(receipt.amount_paid), "100.00")
         page = _build_clients(self._filters())
         self.assertIsNone(self._row_for(page, "CREDIT CLIENT"))

@@ -123,7 +123,7 @@
     const params = new URLSearchParams();
     const q = (searchInput?.value || "").trim();
     const mode = (filterMode?.value || "day").trim();
-    const kind = (kindFilter?.value || "all").trim();
+    const kind = (kindFilter?.value || "sales_credits").trim();
     params.set("filter", mode);
     if (kind && kind !== "all") params.set("kind", kind);
     if (q) params.set("q", q);

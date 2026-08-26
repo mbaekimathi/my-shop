@@ -12,11 +12,26 @@
   const statusEl = form.querySelector("[data-day-status]");
   const submitBtn = form.querySelector("[data-day-submit]");
   const errorsEl = modal.querySelector("[data-shop-day-errors]");
+  const cashInput = form.querySelector('[name="cash_amount"]');
+  const mpesaInput = form.querySelector('[name="mpesa_amount"]');
+  const creditInput = form.querySelector('[name="credit_amount"]');
 
   let verified = false;
   let timer = null;
   let reopenTimer = null;
   let seq = 0;
+
+  const storage = (() => {
+    try {
+      return window.localStorage;
+    } catch (_) {
+      try {
+        return window.sessionStorage;
+      } catch (__) {
+        return null;
+      }
+    }
+  })();
 
   const getCsrf = () =>
     form.querySelector("[name=csrfmiddlewaretoken]")?.value ||
@@ -37,8 +52,9 @@
   };
 
   const getDismissedAt = () => {
+    if (!storage) return null;
     try {
-      const raw = sessionStorage.getItem(dismissKey());
+      const raw = storage.getItem(dismissKey());
       if (!raw) return null;
       const ts = Number(raw);
       return Number.isFinite(ts) ? ts : null;
@@ -60,19 +76,30 @@
   };
 
   const clearDismiss = () => {
+    if (!storage) return;
     try {
-      sessionStorage.removeItem(dismissKey());
+      storage.removeItem(dismissKey());
     } catch (_) {
       /* ignore */
     }
   };
 
+  const syncBodyLock = () => {
+    const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+    document.body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+  };
+
   const resetForm = () => {
-    form.querySelectorAll(
-      '[name="cash_amount"], [name="mpesa_amount"], [name="credit_amount"]'
-    ).forEach((input) => {
-      input.value = "";
-    });
+    if (cashInput) {
+      cashInput.value = cashInput.getAttribute("data-day-default-cash") || "";
+    }
+    if (mpesaInput) {
+      mpesaInput.value = mpesaInput.getAttribute("data-day-default-mpesa") || "";
+    }
+    if (creditInput) {
+      creditInput.value =
+        creditInput.getAttribute("data-day-default-credit") || "";
+    }
     if (stockInput) stockInput.checked = false;
     if (codeInput) codeInput.value = "";
     verified = false;
@@ -84,7 +111,7 @@
   const setOpen = (open) => {
     modal.hidden = !open;
     modal.setAttribute("aria-hidden", open ? "false" : "true");
-    document.body.classList.toggle("workspace-modal-open", open);
+    syncBodyLock();
     if (open) {
       resetForm();
       if (window.lucide?.createIcons) window.lucide.createIcons();
@@ -198,16 +225,11 @@
   stockInput?.addEventListener("change", syncSubmit);
 
   const balanceFields = () =>
-    ["cash_amount", "mpesa_amount", "credit_amount"].map((name) => ({
-      name,
-      input: form.querySelector(`[name="${name}"]`),
-      label:
-        name === "cash_amount"
-          ? "cash"
-          : name === "mpesa_amount"
-            ? "M-Pesa"
-            : "credit",
-    }));
+    [
+      { name: "cash_amount", input: cashInput, label: "cash" },
+      { name: "mpesa_amount", input: mpesaInput, label: "M-Pesa" },
+      { name: "credit_amount", input: creditInput, label: "credit" },
+    ];
 
   const missingBalances = () =>
     balanceFields()
@@ -273,8 +295,12 @@
   });
 
   const dismissModal = () => {
+    if (!storage) {
+      setOpen(false);
+      return;
+    }
     try {
-      sessionStorage.setItem(dismissKey(), String(Date.now()));
+      storage.setItem(dismissKey(), String(Date.now()));
     } catch (_) {
       /* ignore */
     }
@@ -282,8 +308,18 @@
     scheduleReopen();
   };
 
-  document.querySelectorAll('[data-modal-close="shop-day"]').forEach((el) => {
-    el.addEventListener("click", dismissModal);
+  modal.querySelectorAll('[data-modal-close="shop-day"]').forEach((el) => {
+    el.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dismissModal();
+    });
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || modal.hidden) return;
+    event.preventDefault();
+    dismissModal();
   });
 
   const scheduleReopen = () => {
@@ -297,7 +333,7 @@
     }
 
     reopenTimer = window.setTimeout(() => {
-      if (modal.getAttribute("data-auto-open") === "1") {
+      if (modal.getAttribute("data-auto-open") === "1" && !isSnoozed()) {
         setOpen(true);
       }
     }, remaining);
@@ -313,6 +349,7 @@
   if (shouldAutoOpen()) {
     setOpen(true);
   } else {
+    setOpen(false);
     scheduleReopen();
   }
 })();
