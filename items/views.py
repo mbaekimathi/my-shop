@@ -967,7 +967,7 @@ def _movement_qty_by_item_shop(item_ids, shop_ids, start, end):
     """Stock in/out by (item, shop) for a window. Requests are counted as transfers."""
     from django.db.models import Sum
 
-    from .models import StockMovementLine, StockMovementType
+    from .models import StockEntrySource, StockMovementLine, StockMovementType
 
     totals = _empty_item_shop_qty(item_ids, shop_ids, ("in", "out"))
     if not item_ids or not shop_ids or start >= end:
@@ -984,6 +984,8 @@ def _movement_qty_by_item_shop(item_ids, shop_ids, start, end):
                 StockMovementType.OUT,
             ],
         )
+        # Customer returns are counted in stock_return, not stock_in.
+        .exclude(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
         .values("item_id", "movement__shop_id", "movement__movement_type")
         .annotate(total=Sum("quantity"))
     )
@@ -1367,29 +1369,65 @@ def _receipt_sale_qty_by_item_shop(item_ids, shop_ids, start, end):
     return totals
 
 
-def _return_qty_by_item_shop(item_ids, shop_ids, start, end):
-    from django.db.models import Sum
+def _parse_return_batch_at(raw):
+    from django.utils.dateparse import parse_datetime
 
+    if raw is None:
+        return None
+    if hasattr(raw, "tzinfo"):
+        return raw
+    text = str(raw).strip()
+    if not text:
+        return None
+    return parse_datetime(text)
+
+
+def _return_qty_by_item_shop(item_ids, shop_ids, start, end):
+    """
+    Customer return quantities by (item, shop) for a window.
+
+    Prefers per-return batches (accurate when a receipt is returned across days).
+    Falls back to last_returned_at + full returned_quantity for legacy rows.
+    """
     from shops.models import ShopReceiptLine
 
     totals = {(item_id, shop_id): 0 for item_id in item_ids for shop_id in shop_ids}
     if not item_ids or not shop_ids or start >= end:
         return totals
-    rows = (
-        ShopReceiptLine.objects.filter(
-            item_id__in=item_ids,
-            receipt__shop_id__in=shop_ids,
-            returned_quantity__gt=0,
-            receipt__last_returned_at__gte=start,
-            receipt__last_returned_at__lt=end,
-        )
-        .values("item_id", "receipt__shop_id")
-        .annotate(total=Sum("returned_quantity"))
+    rows = ShopReceiptLine.objects.filter(
+        item_id__in=item_ids,
+        receipt__shop_id__in=shop_ids,
+        returned_quantity__gt=0,
+    ).values(
+        "item_id",
+        "receipt__shop_id",
+        "returned_quantity",
+        "return_batches",
+        "receipt__last_returned_at",
     )
     for row in rows:
         key = (row["item_id"], row["receipt__shop_id"])
-        if key in totals:
-            totals[key] += int(row["total"] or 0)
+        if key not in totals:
+            continue
+        batches = row["return_batches"] or []
+        if isinstance(batches, list) and batches:
+            for batch in batches:
+                if not isinstance(batch, dict):
+                    continue
+                happened_at = _parse_return_batch_at(batch.get("at"))
+                if happened_at is None or happened_at < start or happened_at >= end:
+                    continue
+                try:
+                    qty = int(batch.get("qty") or 0)
+                except (TypeError, ValueError):
+                    qty = 0
+                if qty > 0:
+                    totals[key] += qty
+            continue
+        happened_at = row["receipt__last_returned_at"]
+        if happened_at is None or happened_at < start or happened_at >= end:
+            continue
+        totals[key] += int(row["returned_quantity"] or 0)
     return totals
 
 
@@ -1876,6 +1914,7 @@ def _build_movement_timeline(
     from django.db.models import Prefetch, Q
 
     from .models import (
+        StockEntrySource,
         StockMovement,
         StockMovementLine,
         StockMovementType,
@@ -1924,6 +1963,9 @@ def _build_movement_timeline(
     }
 
     for movement in movements:
+        is_customer_return = (
+            movement.entry_source == StockEntrySource.CUSTOMER_RETURN
+        )
         for line in movement.lines.all():
             counts_toward_transfer = False
             transfer_direction = ""
@@ -1932,34 +1974,53 @@ def _build_movement_timeline(
                     movement
                 )
                 transfer_direction = _transfer_direction(movement, shop_ids)
-            event_type = movement.movement_type
-            event_label = type_labels.get(
-                movement.movement_type, movement.get_movement_type_display()
-            )
+            if is_customer_return:
+                event_type = "return"
+                event_label = "Return"
+            else:
+                event_type = movement.movement_type
+                event_label = type_labels.get(
+                    movement.movement_type, movement.get_movement_type_display()
+                )
             if transfer_direction:
                 event_label = _transfer_event_label(
                     event_type=event_type,
                     direction=transfer_direction,
                 )
-            events.append(
-                _timeline_event_from_movement_line(
-                    movement=movement,
-                    line=line,
-                    happened_at=movement.created_at,
-                    event_type=event_type,
-                    event_label=event_label,
-                    actor=movement.created_by,
-                    counts_toward_transfer=counts_toward_transfer,
-                    transfer_direction=transfer_direction,
-                )
+            event = _timeline_event_from_movement_line(
+                movement=movement,
+                line=line,
+                happened_at=movement.created_at,
+                event_type=event_type,
+                event_label=event_label,
+                actor=movement.created_by,
+                counts_toward_transfer=counts_toward_transfer,
+                transfer_direction=transfer_direction,
             )
+            if is_customer_return:
+                note = (line.note or movement.notes or "").strip()
+                receipt_number = ""
+                for prefix in ("Return on ", "Customer return on "):
+                    if note.startswith(prefix):
+                        receipt_number = note[len(prefix) :].strip()
+                        break
+                event["receipt_number"] = receipt_number
+                event["reason"] = "Return"
+                event["note"] = note or (
+                    f"Return on {receipt_number}"
+                    if receipt_number
+                    else "Customer return"
+                )
+            events.append(event)
+            if is_customer_return:
+                continue
             if movement.movement_type == StockMovementType.IN:
                 units_in += line.quantity
             elif movement.movement_type == StockMovementType.OUT:
                 units_out += line.quantity
             elif (
                 movement.movement_type == StockMovementType.REQUEST
-                and _request_transfer_counts_toward_units(movement)
+                and counts_toward_transfer
             ):
                 units_request += line.quantity
 
@@ -2091,40 +2152,145 @@ def _build_movement_timeline(
         )
         units_sale += line.quantity
 
-        if line.returned_quantity and line.returned_quantity > 0:
-            events.append(
-                {
-                    "happened_at": line.receipt.last_returned_at or line.receipt.created_at,
-                    "event_type": "return",
-                    "event_label": "Return",
-                    "shop_name": (
-                        line.receipt.shop.name if line.receipt.shop_id else "—"
-                    ),
-                    "shop_id": line.receipt.shop_id,
-                    "source_shop_id": None,
-                    "from_shop_name": "",
-                    "item_name": line.item_name or (matched.name if matched else "—"),
-                    "item_category": (
-                        matched.category
-                        if matched
-                        else (line.item.category if line.item_id and line.item else "")
-                    ),
-                    "item_id": line.item_id or (matched.pk if matched else None),
-                    "quantity": line.returned_quantity,
-                    "reason": "Return",
-                    "payment_status": "",
-                    "note": f"Return on {line.receipt.receipt_number}",
-                    "by": _employee_display_name(line.receipt.last_returned_by or line.receipt.created_by),
-                    "serial_numbers": _movement_serial_numbers(line.returned_serial_numbers),
-                    "movement_id": None,
-                    "receipt_number": line.receipt.receipt_number,
-                    "receipt_status": receipt_status,
-                    "from_label": parties.get("to_label", "—"),
-                    "to_label": parties.get("from_label", "—"),
-                    "seller": parties.get("seller", "—"),
-                    "pay": "—",
-                }
-            )
+    # Legacy / non-stock returns by return date (not sale date).
+    # New restocked returns appear above as CUSTOMER_RETURN stock movements.
+    legacy_return_lines = (
+        ShopReceiptLine.objects.filter(
+            returned_quantity__gt=0,
+            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+            receipt__shop_id__in=shop_ids,
+        )
+        .select_related(
+            "receipt",
+            "receipt__shop",
+            "receipt__created_by__user",
+            "receipt__last_returned_by__user",
+            "receipt__client",
+            "item",
+        )
+        .order_by("receipt__last_returned_at", "id")
+    )
+    if item_mode == "category" and selected_categories:
+        legacy_return_lines = legacy_return_lines.filter(
+            item__category__in=selected_categories
+        )
+    elif item_mode == "items" and selected_item_ids:
+        legacy_return_lines = legacy_return_lines.filter(
+            item_id__in=selected_item_ids
+        )
+
+    for line in legacy_return_lines.iterator(chunk_size=500):
+        matched = item_by_id.get(line.item_id) or item_by_name.get(
+            (line.item_name or "").strip().lower()
+        )
+        parties = _movement_parties_for_receipt(receipt=line.receipt)
+        receipt_status = line.receipt.status
+        batches = line.return_batches or []
+        if isinstance(batches, list) and batches:
+            # Restocked returns with an item already appear via StockMovement.
+            if line.item_id:
+                continue
+            for batch in batches:
+                if not isinstance(batch, dict):
+                    continue
+                happened_at = _parse_return_batch_at(batch.get("at"))
+                if (
+                    happened_at is None
+                    or happened_at < day_start
+                    or happened_at >= day_end
+                ):
+                    continue
+                try:
+                    qty = int(batch.get("qty") or 0)
+                except (TypeError, ValueError):
+                    qty = 0
+                if qty <= 0:
+                    continue
+                events.append(
+                    {
+                        "happened_at": happened_at,
+                        "event_type": "return",
+                        "event_label": "Return",
+                        "shop_name": (
+                            line.receipt.shop.name if line.receipt.shop_id else "—"
+                        ),
+                        "shop_id": line.receipt.shop_id,
+                        "source_shop_id": None,
+                        "from_shop_name": "",
+                        "item_name": line.item_name
+                        or (matched.name if matched else "—"),
+                        "item_category": (
+                            matched.category
+                            if matched
+                            else (
+                                line.item.category
+                                if line.item_id and line.item
+                                else ""
+                            )
+                        ),
+                        "item_id": line.item_id
+                        or (matched.pk if matched else None),
+                        "quantity": qty,
+                        "reason": "Return",
+                        "payment_status": "",
+                        "note": f"Return on {line.receipt.receipt_number}",
+                        "by": _employee_display_name(
+                            line.receipt.last_returned_by or line.receipt.created_by
+                        ),
+                        "serial_numbers": _movement_serial_numbers(
+                            batch.get("serials") or []
+                        ),
+                        "movement_id": None,
+                        "receipt_number": line.receipt.receipt_number,
+                        "receipt_status": receipt_status,
+                        "from_label": parties.get("to_label", "—"),
+                        "to_label": parties.get("from_label", "—"),
+                        "seller": parties.get("seller", "—"),
+                        "pay": "—",
+                    }
+                )
+            continue
+
+        happened_at = line.receipt.last_returned_at or line.receipt.created_at
+        if happened_at is None or happened_at < day_start or happened_at >= day_end:
+            continue
+        events.append(
+            {
+                "happened_at": happened_at,
+                "event_type": "return",
+                "event_label": "Return",
+                "shop_name": (
+                    line.receipt.shop.name if line.receipt.shop_id else "—"
+                ),
+                "shop_id": line.receipt.shop_id,
+                "source_shop_id": None,
+                "from_shop_name": "",
+                "item_name": line.item_name or (matched.name if matched else "—"),
+                "item_category": (
+                    matched.category
+                    if matched
+                    else (line.item.category if line.item_id and line.item else "")
+                ),
+                "item_id": line.item_id or (matched.pk if matched else None),
+                "quantity": line.returned_quantity,
+                "reason": "Return",
+                "payment_status": "",
+                "note": f"Return on {line.receipt.receipt_number}",
+                "by": _employee_display_name(
+                    line.receipt.last_returned_by or line.receipt.created_by
+                ),
+                "serial_numbers": _movement_serial_numbers(
+                    line.returned_serial_numbers
+                ),
+                "movement_id": None,
+                "receipt_number": line.receipt.receipt_number,
+                "receipt_status": receipt_status,
+                "from_label": parties.get("to_label", "—"),
+                "to_label": parties.get("from_label", "—"),
+                "seller": parties.get("seller", "—"),
+                "pay": "—",
+            }
+        )
 
     if item_mode == "category" and selected_categories:
         allowed_names = {

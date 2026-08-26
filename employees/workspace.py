@@ -1619,7 +1619,7 @@ SETTINGS_SECTIONS = (
         "slug": "company-profile",
         "label": "Company profile",
         "icon": "building-2",
-        "summary": "Company name, contact details, and brand identity.",
+        "summary": "Company defaults and each shop’s branch profile details.",
     },
     {
         "slug": "company-theme",

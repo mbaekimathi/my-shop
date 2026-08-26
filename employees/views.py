@@ -47,7 +47,10 @@ from shops.services import (
     set_receipt_number_formats,
     set_receipt_paper_width,
     set_receipt_qr_settings,
-    update_company_profile,
+    update_company_and_shop_profiles,
+    list_shop_profile_rows,
+    list_active_shops,
+    active_shop_count,
     save_working_hours_settings,
     update_daraja_settings,
     update_developer_payment_settings,
@@ -1489,42 +1492,49 @@ def developer_payment_stk_status(request, payment_id):
     return JsonResponse({"ok": True, **stk_payment_payload(payment)})
 
 
+def _company_profile_form_context(company, *, post=None):
+    shops = list_active_shops()
+    if post is not None:
+        form_data = {
+            "name": (post.get("name") or "").strip().upper(),
+            "phone_number": (post.get("phone_number") or "").strip().upper(),
+            "email": (post.get("email") or "").strip().lower(),
+            "location": (post.get("location") or "").strip().upper(),
+        }
+        shop_profiles = list_shop_profile_rows(shops=shops, post=post)
+    else:
+        form_data = {
+            "name": company.name,
+            "phone_number": company.phone_number,
+            "email": company.email,
+            "location": company.location,
+        }
+        shop_profiles = list_shop_profile_rows(shops=shops)
+
+    return {
+        "company_profile": company,
+        "form_data": form_data,
+        "shop_profiles": shop_profiles,
+        "active_shop_count": active_shop_count(),
+    }
+
+
 def _company_profile_settings(request, context):
     company = get_company_profile()
 
     if request.method == "POST":
         try:
-            company = update_company_profile(request.POST, request.FILES)
+            company = update_company_and_shop_profiles(request.POST, request.FILES)
         except ValidationError as exc:
             message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
             messages.error(request, message)
-            context.update(
-                {
-                    "company_profile": company,
-                    "form_data": {
-                        "name": (request.POST.get("name") or "").strip().upper(),
-                        "phone_number": (request.POST.get("phone_number") or "").strip().upper(),
-                        "email": (request.POST.get("email") or "").strip().lower(),
-                        "location": (request.POST.get("location") or "").strip().upper(),
-                    },
-                }
-            )
+            context.update(_company_profile_form_context(company, post=request.POST))
             return render(request, "employees/settings_company_profile.html", context)
 
-        messages.success(request, "Company profile saved.")
+        messages.success(request, "Company and shop profiles saved.")
         return redirect(request.path)
 
-    context.update(
-        {
-            "company_profile": company,
-            "form_data": {
-                "name": company.name,
-                "phone_number": company.phone_number,
-                "email": company.email,
-                "location": company.location,
-            },
-        }
-    )
+    context.update(_company_profile_form_context(company))
     return render(request, "employees/settings_company_profile.html", context)
 
 

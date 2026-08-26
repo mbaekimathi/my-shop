@@ -887,7 +887,7 @@ html[data-theme="light"] .staff-shop-list {
   display: grid;
   gap: 0.75rem;
   padding: 0.7rem 0.85rem 0.95rem;
-  max-width: 44rem;
+  max-width: 52rem;
 }
 
 .item-panel--company-profile {
@@ -997,6 +997,47 @@ html[data-theme="light"] .staff-shop-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
+}
+
+.company-shop-profiles {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.15rem 0.75rem 0.85rem;
+}
+
+.company-shop-profile {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.55rem 0.65rem 0.7rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 85%, transparent);
+}
+
+.company-shop-profile-head {
+  padding: 0.2rem 0.1rem 0.35rem;
+}
+
+.company-shop-profile-head h4 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.company-shop-profile-head p {
+  margin: 0.15rem 0 0;
+  color: var(--mist-soft);
+  font-size: 0.72rem;
+}
+
+.company-shop-profile .company-logo-upload,
+.company-shop-profile .company-profile-fields {
+  padding: 0.45rem 0.1rem 0.35rem;
+}
+
+.company-shop-profiles-empty {
+  margin: 0.35rem 0.75rem 0.85rem;
 }
 
 .company-profile-actions {

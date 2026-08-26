@@ -146,6 +146,15 @@ class ShopReceipt(models.Model):
         blank=True,
         related_name="shop_receipts_returned",
     )
+    return_payment_events = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Till refund events for customer returns: "
+            "[{at, cash, mpesa, by_id}, ...]. "
+            "Sale-day till uses original tender; return-day till subtracts these."
+        ),
+    )
 
     class Meta:
         ordering = ["-created_at"]
@@ -198,6 +207,14 @@ class ShopReceiptLine(models.Model):
     )
     serial_numbers = models.JSONField(default=list, blank=True)
     returned_serial_numbers = models.JSONField(default=list, blank=True)
+    return_batches = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Per-return events: [{qty, at, by_id, serials}, ...]. "
+            "Used so stock reports attribute returns to the day they happened."
+        ),
+    )
 
     class Meta:
         ordering = ["id"]

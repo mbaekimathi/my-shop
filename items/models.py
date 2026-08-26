@@ -243,6 +243,7 @@ class StockEntrySource(models.TextChoices):
 
     BUY_ITEMS = "buy_items", "Buy items"
     STOCK_MANAGEMENT = "stock_management", "Stock management"
+    CUSTOMER_RETURN = "customer_return", "Customer return"
 
 
 class StockPaymentStatus(models.TextChoices):

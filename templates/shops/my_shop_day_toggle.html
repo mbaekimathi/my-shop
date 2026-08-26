@@ -65,6 +65,10 @@
         <li><span>Opened with</span><em>{{ open_summary.opening_total|floatformat:0 }}</em></li>
         <li><span>Cash sales</span><em>{{ open_summary.cash_sales|floatformat:0 }}</em></li>
         <li><span>M-Pesa sales</span><em>{{ open_summary.mpesa_sales|floatformat:0 }}</em></li>
+        {% if open_summary.cash_refunds or open_summary.mpesa_refunds %}
+        <li><span>Cash returns</span><em>−{{ open_summary.cash_refunds|floatformat:0 }}</em></li>
+        <li><span>M-Pesa returns</span><em>−{{ open_summary.mpesa_refunds|floatformat:0 }}</em></li>
+        {% endif %}
         <li><span>Expenses paid</span><em>{{ open_summary.expenses_paid|floatformat:0 }}</em></li>
         <li><span>Owner drawings</span><em>{{ open_summary.drawings_paid|floatformat:0 }}</em></li>
         <li><span>Suppliers paid</span><em>{{ open_summary.suppliers_paid|floatformat:0 }}</em></li>

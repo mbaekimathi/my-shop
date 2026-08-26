@@ -2218,31 +2218,42 @@ def my_shop_day_toggle(request, shop_id):
     )
     last_closed = None if is_open else get_last_closed_shop_day(shop)
 
-    # Suggest expected closing balances when closing (leave blank if user typed).
+    # Suggest expected closing balances when closing.
+    # Only fill empty fields — never overwrite amounts the user already typed.
     if is_open and open_summary and not form_errors:
-        if not form_data["cash_amount"]:
+        if not str(form_data.get("cash_amount") or "").strip():
             form_data["cash_amount"] = str(
                 int(open_summary["expected_cash"].quantize(Decimal("1")))
             )
-        if not form_data["mpesa_amount"]:
+        if not str(form_data.get("mpesa_amount") or "").strip():
             form_data["mpesa_amount"] = str(
                 int(open_summary["expected_mpesa"].quantize(Decimal("1")))
             )
-        if not form_data["credit_amount"]:
+        if not str(form_data.get("credit_amount") or "").strip():
             form_data["credit_amount"] = str(
                 int(open_summary["expected_credit"].quantize(Decimal("1")))
             )
     # Suggest last closing as opening balances when starting a new day.
+    # Same rule: do not overwrite user-entered values.
     elif not is_open and last_closed and not form_errors:
-        if not form_data["cash_amount"] and last_closed.closing_cash is not None:
+        if (
+            not str(form_data.get("cash_amount") or "").strip()
+            and last_closed.closing_cash is not None
+        ):
             form_data["cash_amount"] = str(
                 int(Decimal(last_closed.closing_cash).quantize(Decimal("1")))
             )
-        if not form_data["mpesa_amount"] and last_closed.closing_mpesa is not None:
+        if (
+            not str(form_data.get("mpesa_amount") or "").strip()
+            and last_closed.closing_mpesa is not None
+        ):
             form_data["mpesa_amount"] = str(
                 int(Decimal(last_closed.closing_mpesa).quantize(Decimal("1")))
             )
-        if not form_data["credit_amount"] and last_closed.closing_credit is not None:
+        if (
+            not str(form_data.get("credit_amount") or "").strip()
+            and last_closed.closing_credit is not None
+        ):
             form_data["credit_amount"] = str(
                 int(Decimal(last_closed.closing_credit).quantize(Decimal("1")))
             )

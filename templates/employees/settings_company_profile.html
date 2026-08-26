@@ -13,7 +13,7 @@
       <div>
         <p class="stock-kicker">Settings · Profile</p>
         <h2>{{ meta.headline }}</h2>
-        <p>{{ meta.summary }} Branding and contact details used on receipts and shop pages.</p>
+        <p>{{ meta.summary }} Company defaults first, then each shop’s branch profile.</p>
       </div>
       <div class="stock-stats">
         <p class="stock-stat">
@@ -21,8 +21,8 @@
           <span>logo</span>
         </p>
         <p class="stock-stat">
-          <strong>4</strong>
-          <span>fields</span>
+          <strong>{{ active_shop_count }}</strong>
+          <span>shop{{ active_shop_count|pluralize }}</span>
         </p>
       </div>
     </div>
@@ -38,8 +38,8 @@
 
     <section class="pos-settings-group company-profile-group">
       <div class="pos-settings-group-head">
-        <h3>Company logo</h3>
-        <p>Shown on receipts and the company brand mark.</p>
+        <h3>Company profile</h3>
+        <p>Default branding and contact details used company-wide on receipts and pages.</p>
       </div>
       <div class="company-logo-upload" data-logo-upload>
         <div class="company-logo-mark" data-logo-preview>
@@ -56,7 +56,7 @@
           {% endif %}
         </div>
         <div class="company-logo-actions">
-          <strong>Upload image</strong>
+          <strong>Company logo</strong>
           <p>PNG or JPG · transparent preferred · max 5 MB</p>
           <div class="company-logo-buttons">
             <label class="btn btn--ghost company-logo-btn">
@@ -79,13 +79,6 @@
             {% endif %}
           </div>
         </div>
-      </div>
-    </section>
-
-    <section class="pos-settings-group company-profile-group">
-      <div class="pos-settings-group-head">
-        <h3>Company details</h3>
-        <p>Name and contact info printed on receipts.</p>
       </div>
       <div class="company-profile-fields">
         <label class="field">
@@ -143,10 +136,139 @@
       </div>
     </section>
 
+    <section class="pos-settings-group company-profile-group company-profile-shops-group">
+      <div class="pos-settings-group-head">
+        <h3>Shop profiles</h3>
+        <p>Branch name, contact details, and image for each active shop.</p>
+      </div>
+
+      {% if shop_profiles %}
+      <div class="company-shop-profiles">
+        {% for row in shop_profiles %}
+        <article class="company-shop-profile" data-shop-profile>
+          <header class="company-shop-profile-head">
+            <div>
+              <h4>{{ row.name|default:row.shop.name }}</h4>
+              <p>Shop profile · code {{ row.shop.login_code }}</p>
+            </div>
+          </header>
+
+          <div class="company-logo-upload" data-logo-upload>
+            <div class="company-logo-mark" data-logo-preview>
+              {% if row.has_image %}
+              <img
+                src="{{ row.image_url }}"
+                alt="{{ row.name }} image"
+                data-logo-image
+              >
+              <i data-lucide="store" aria-hidden="true" data-logo-placeholder hidden></i>
+              {% else %}
+              <img src="" alt="" hidden data-logo-image>
+              <i data-lucide="store" aria-hidden="true" data-logo-placeholder></i>
+              {% endif %}
+            </div>
+            <div class="company-logo-actions">
+              <strong>Branch image</strong>
+              <p>Optional · JPG, PNG, WEBP, or GIF · max 5 MB</p>
+              <div class="company-logo-buttons">
+                <label class="btn btn--ghost company-logo-btn">
+                  <i data-lucide="upload" aria-hidden="true"></i>
+                  <span>Upload</span>
+                  <input
+                    type="file"
+                    name="shop_{{ row.shop_id }}_image"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    hidden
+                    data-logo-input
+                  >
+                </label>
+                {% if row.has_image or row.shop.image %}
+                <label class="btn btn--ghost company-logo-btn company-logo-btn--danger">
+                  <input
+                    type="checkbox"
+                    name="shop_{{ row.shop_id }}_remove_image"
+                    value="1"
+                    hidden
+                    data-logo-remove
+                    {% if row.remove_image %}checked{% endif %}
+                  >
+                  <i data-lucide="trash-2" aria-hidden="true"></i>
+                  <span>Remove</span>
+                </label>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="company-profile-fields">
+            <label class="field">
+              <span class="field-label">Branch name</span>
+              <input
+                type="text"
+                name="shop_{{ row.shop_id }}_name"
+                value="{{ row.name }}"
+                required
+                autocomplete="organization"
+                placeholder="RICHCOM CBD"
+                data-uppercase
+              >
+            </label>
+
+            <div class="field-row">
+              <label class="field">
+                <span class="field-label">Phone number</span>
+                <input
+                  type="tel"
+                  name="shop_{{ row.shop_id }}_phone_number"
+                  value="{{ row.phone_number }}"
+                  required
+                  autocomplete="tel"
+                  placeholder="+254 700 000 000"
+                  data-uppercase
+                >
+              </label>
+              <label class="field">
+                <span class="field-label">Email</span>
+                <input
+                  type="email"
+                  name="shop_{{ row.shop_id }}_email"
+                  value="{{ row.email }}"
+                  required
+                  autocomplete="email"
+                  placeholder="cbd@company.com"
+                  data-lowercase
+                >
+              </label>
+            </div>
+
+            <label class="field">
+              <span class="field-label">Location</span>
+              <input
+                type="text"
+                name="shop_{{ row.shop_id }}_location"
+                value="{{ row.location }}"
+                required
+                autocomplete="street-address"
+                placeholder="NAIROBI CBD"
+                data-uppercase
+              >
+            </label>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="dashboard-placeholder company-shop-profiles-empty">
+        <i data-lucide="store" aria-hidden="true"></i>
+        <p>No active shops yet. Register shops under Shop Management.</p>
+      </div>
+      {% endif %}
+    </section>
+
     <div class="company-profile-actions">
       <button type="submit" class="btn btn--primary">
         <i data-lucide="save" aria-hidden="true"></i>
-        <span>Save profile</span>
+        <span>Save profiles</span>
       </button>
     </div>
   </form>
@@ -156,5 +278,5 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/input-uppercase.js' %}"></script>
-<script src="{% static 'js/company-profile.js' %}?v=2"></script>
+<script src="{% static 'js/company-profile.js' %}?v=3"></script>
 {% endblock %}

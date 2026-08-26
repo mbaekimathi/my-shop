@@ -3010,6 +3010,8 @@ def _day_balance_data(filters) -> dict:
         "session_open_mpesa": _zero(),
         "cash_sales": _zero(),
         "mpesa_sales": _zero(),
+        "cash_refunds": _zero(),
+        "mpesa_refunds": _zero(),
         "expenses": _zero(),
         "expenses_paid": _zero(),
         "drawings_paid": _zero(),
@@ -3163,24 +3165,34 @@ def _day_balance_data(filters) -> dict:
 
     activity_sessions = list(closed_sessions) + list(open_now_sessions)
     sales_by_shop: dict[int, list] = defaultdict(list)
+    refunds_by_shop: dict[int, list] = defaultdict(list)
     expenses_by_shop: dict[int, list] = defaultdict(list)
     suppliers_by_shop: dict[int, list] = defaultdict(list)
     if activity_sessions:
+        from shops.services import _collect_return_payment_events
+
         min_opened = min(session.opened_at for session in activity_sessions)
         max_closed = max(
             (session.closed_at or now) for session in activity_sessions
         )
-        for row in (
-            ShopReceipt.objects.filter(
-                shop_id__in=shop_ids,
-                kind=ShopReceiptKind.SALE,
-                created_at__gte=min_opened,
-                created_at__lt=max_closed,
-            )
-            .exclude(status=ShopReceiptStatus.CANCELLED)
-            .values("shop_id", "created_at", "cash_amount", "mpesa_amount")
+        for row in ShopReceipt.objects.filter(
+            shop_id__in=shop_ids,
+            kind=ShopReceiptKind.SALE,
+            created_at__gte=min_opened,
+            created_at__lt=max_closed,
+        ).values(
+            "shop_id",
+            "created_at",
+            "cash_amount",
+            "mpesa_amount",
+            "return_payment_events",
         ):
             sales_by_shop[row["shop_id"]].append(row)
+        for shop_id in shop_ids:
+            for event in _collect_return_payment_events(
+                shop_id=shop_id, start=min_opened, end=max_closed
+            ):
+                refunds_by_shop[shop_id].append(event)
         for row in Expense.objects.filter(
             shop_id__in=shop_ids,
             created_at__gte=min_opened,
@@ -3197,13 +3209,28 @@ def _day_balance_data(filters) -> dict:
             suppliers_by_shop[row["shop_id"]].append(row)
 
     def _activity_for(session, *, window_end):
+        from shops.services import _receipt_original_tender
+
         cash_sales = _zero()
         mpesa_sales = _zero()
         for sale in sales_by_shop.get(session.shop_id, []):
             when = sale["created_at"]
             if session.opened_at <= when < window_end:
-                cash_sales += Decimal(sale["cash_amount"] or 0)
-                mpesa_sales += Decimal(sale["mpesa_amount"] or 0)
+                cash, mpesa = _receipt_original_tender(
+                    sale.get("cash_amount"),
+                    sale.get("mpesa_amount"),
+                    sale.get("return_payment_events"),
+                )
+                cash_sales += cash
+                mpesa_sales += mpesa
+
+        cash_refunds = _zero()
+        mpesa_refunds = _zero()
+        for event in refunds_by_shop.get(session.shop_id, []):
+            when = event.get("at")
+            if when is not None and session.opened_at <= when < window_end:
+                cash_refunds += Decimal(event.get("cash") or 0)
+                mpesa_refunds += Decimal(event.get("mpesa") or 0)
 
         expenses_paid = _zero()
         drawings_paid = _zero()
@@ -3230,14 +3257,17 @@ def _day_balance_data(filters) -> dict:
         expected_cash = (
             opening_cash
             + cash_sales
+            - cash_refunds
             - expenses_paid
             - drawings_paid
             - suppliers_paid
         )
-        expected_mpesa = opening_mpesa + mpesa_sales
+        expected_mpesa = opening_mpesa + mpesa_sales - mpesa_refunds
         return {
             "cash_sales": cash_sales,
             "mpesa_sales": mpesa_sales,
+            "cash_refunds": cash_refunds,
+            "mpesa_refunds": mpesa_refunds,
             "expenses_paid": expenses_paid,
             "drawings_paid": drawings_paid,
             "suppliers_paid": suppliers_paid,
@@ -3270,6 +3300,8 @@ def _day_balance_data(filters) -> dict:
 
         entry["cash_sales"] += cash_sales
         entry["mpesa_sales"] += mpesa_sales
+        entry["cash_refunds"] += activity["cash_refunds"]
+        entry["mpesa_refunds"] += activity["mpesa_refunds"]
         entry["expenses"] += expenses_paid
         entry["expenses_paid"] += expenses_paid
         entry["drawings_paid"] += drawings_paid
@@ -3312,6 +3344,8 @@ def _day_balance_data(filters) -> dict:
                 "closing_credit": Decimal(session.closing_credit or 0),
                 "cash_sales": cash_sales,
                 "mpesa_sales": mpesa_sales,
+                "cash_refunds": activity["cash_refunds"],
+                "mpesa_refunds": activity["mpesa_refunds"],
                 "expenses": expenses_paid,
                 "expenses_paid": expenses_paid,
                 "drawings_paid": drawings_paid,
@@ -3351,6 +3385,8 @@ def _day_balance_data(filters) -> dict:
             "opening_credit": opening_credit,
             "cash_sales": cash_sales,
             "mpesa_sales": mpesa_sales,
+            "cash_refunds": activity["cash_refunds"],
+            "mpesa_refunds": activity["mpesa_refunds"],
             "expenses_paid": expenses_paid,
             "drawings_paid": drawings_paid,
             "suppliers_paid": suppliers_paid,
@@ -3394,6 +3430,8 @@ def _day_balance_data(filters) -> dict:
                 "closing_credit": _zero(),
                 "cash_sales": cash_sales,
                 "mpesa_sales": mpesa_sales,
+                "cash_refunds": activity["cash_refunds"],
+                "mpesa_refunds": activity["mpesa_refunds"],
                 "expenses": expenses_paid,
                 "expenses_paid": expenses_paid,
                 "drawings_paid": drawings_paid,

@@ -1388,6 +1388,185 @@ def update_company_profile(data, files) -> CompanyProfile:
     return profile_row
 
 
+def _shop_profile_field(data, shop_id: int, field: str, default: str = "") -> str:
+    return (data.get(f"shop_{shop_id}_{field}") or default).strip()
+
+
+def list_shop_profile_rows(*, shops=None, post=None) -> list[dict]:
+    """Active shops with profile fields for the company profile settings page."""
+    shops = shops if shops is not None else list_active_shops()
+    rows = []
+    for shop in shops:
+        if post is not None:
+            name = _shop_profile_field(post, shop.pk, "name", shop.name)
+            location = _shop_profile_field(post, shop.pk, "location", shop.location)
+            email = _shop_profile_field(post, shop.pk, "email", shop.email).lower()
+            phone_number = _shop_profile_field(
+                post, shop.pk, "phone_number", shop.phone_number
+            ).upper()
+            remove_image = _shop_profile_field(post, shop.pk, "remove_image").lower() in (
+                "1",
+                "true",
+                "on",
+                "yes",
+            )
+        else:
+            name = shop.name
+            location = shop.location
+            email = shop.email
+            phone_number = shop.phone_number
+            remove_image = False
+
+        rows.append(
+            {
+                "shop": shop,
+                "shop_id": shop.pk,
+                "name": name,
+                "location": location,
+                "email": email,
+                "phone_number": phone_number,
+                "has_image": bool(shop.image) and not remove_image,
+                "image_url": shop.image.url if shop.image else "",
+                "remove_image": remove_image,
+            }
+        )
+    return rows
+
+
+def validate_shop_profile_payload(data, files, *, shop: Shop) -> dict:
+    """Validate branch contact/branding fields (no login code or password)."""
+    name = _shop_profile_field(data, shop.pk, "name")
+    location = _shop_profile_field(data, shop.pk, "location")
+    email = _shop_profile_field(data, shop.pk, "email")
+    phone_number = _shop_profile_field(data, shop.pk, "phone_number")
+    image = files.get(f"shop_{shop.pk}_image") if files is not None else None
+    remove_image = _shop_profile_field(data, shop.pk, "remove_image").lower() in (
+        "1",
+        "true",
+        "on",
+        "yes",
+    )
+
+    errors = []
+    cleaned = {"shop": shop}
+
+    if not name:
+        errors.append(f"{shop.name}: branch name is required.")
+    else:
+        cleaned["name"] = name.upper()
+
+    if not location:
+        errors.append(f"{shop.name}: branch location is required.")
+    else:
+        cleaned["location"] = location.upper()
+
+    if not email:
+        errors.append(f"{shop.name}: branch email is required.")
+    else:
+        email_value = email.lower()
+        try:
+            validate_email(email_value)
+        except ValidationError:
+            errors.append(f"{shop.name}: enter a valid branch email.")
+        else:
+            cleaned["email"] = email_value
+
+    if not phone_number:
+        errors.append(f"{shop.name}: branch phone number is required.")
+    elif not PHONE_RE.match(phone_number):
+        errors.append(f"{shop.name}: enter a valid branch phone number.")
+    else:
+        cleaned["phone_number"] = phone_number.upper()
+
+    if image:
+        if image.content_type not in ALLOWED_IMAGE_TYPES:
+            errors.append(f"{shop.name}: branch image must be JPG, PNG, WEBP, or GIF.")
+        elif image.size > MAX_IMAGE_BYTES:
+            errors.append(f"{shop.name}: branch image must be 5 MB or smaller.")
+        else:
+            cleaned["image"] = image
+    elif remove_image and shop.image:
+        cleaned["remove_image"] = True
+
+    if errors:
+        raise ValidationError(errors)
+
+    return cleaned
+
+
+def update_shop_profile(shop: Shop, cleaned: dict) -> Shop:
+    shop.name = cleaned["name"]
+    shop.location = cleaned["location"]
+    shop.email = cleaned["email"]
+    shop.phone_number = cleaned["phone_number"]
+
+    update_fields = ["name", "location", "email", "phone_number", "updated_at"]
+
+    if cleaned.get("image"):
+        if shop.image:
+            shop.image.delete(save=False)
+        shop.image = cleaned["image"]
+        update_fields.append("image")
+    elif cleaned.get("remove_image"):
+        if shop.image:
+            shop.image.delete(save=False)
+        shop.image = None
+        update_fields.append("image")
+
+    shop.save(update_fields=update_fields)
+    return shop
+
+
+def update_company_and_shop_profiles(data, files, *, shops=None) -> CompanyProfile:
+    """Save company profile defaults, then each active shop's profile."""
+    shops = shops if shops is not None else list_active_shops()
+    errors = []
+    company_cleaned = None
+    try:
+        company_cleaned = validate_company_profile_payload(
+            data, files, existing=get_company_profile()
+        )
+    except ValidationError as exc:
+        errors.extend(exc.messages if hasattr(exc, "messages") else [str(exc)])
+
+    shop_cleaned = []
+    for shop in shops:
+        try:
+            shop_cleaned.append(validate_shop_profile_payload(data, files, shop=shop))
+        except ValidationError as exc:
+            errors.extend(exc.messages if hasattr(exc, "messages") else [str(exc)])
+
+    if errors:
+        raise ValidationError(errors)
+
+    with transaction.atomic():
+        profile_row = get_company_profile()
+        profile_row.name = company_cleaned["name"]
+        profile_row.phone_number = company_cleaned["phone_number"]
+        profile_row.email = company_cleaned["email"]
+        profile_row.location = company_cleaned["location"]
+        update_fields = ["name", "phone_number", "email", "location", "updated_at"]
+
+        if company_cleaned.get("logo"):
+            if profile_row.logo:
+                profile_row.logo.delete(save=False)
+            profile_row.logo = company_cleaned["logo"]
+            update_fields.append("logo")
+        elif company_cleaned.get("remove_logo"):
+            if profile_row.logo:
+                profile_row.logo.delete(save=False)
+            profile_row.logo = None
+            update_fields.append("logo")
+
+        profile_row.save(update_fields=update_fields)
+        cache.delete(COMPANY_DISPLAY_NAME_CACHE_KEY)
+
+        for cleaned in shop_cleaned:
+            update_shop_profile(cleaned["shop"], cleaned)
+
+    return profile_row
+
+
 def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")
@@ -3490,24 +3669,124 @@ def get_last_closed_shop_day(shop: Shop):
     )
 
 
+def _money_or_zero(value) -> Decimal:
+    try:
+        return Decimal(str(value or 0)).quantize(Decimal("0.01"))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0.00")
+
+
+def _receipt_original_tender(cash_amount, mpesa_amount, return_payment_events):
+    """Rebuild cash/M-Pesa taken at sale time (current remaining + refunded)."""
+    cash = _money_or_zero(cash_amount)
+    mpesa = _money_or_zero(mpesa_amount)
+    for event in return_payment_events or []:
+        if not isinstance(event, dict):
+            continue
+        cash += _money_or_zero(event.get("cash"))
+        mpesa += _money_or_zero(event.get("mpesa"))
+    return cash, mpesa
+
+
+def _parse_return_payment_at(raw):
+    from django.utils.dateparse import parse_datetime
+
+    if raw is None:
+        return None
+    if hasattr(raw, "tzinfo"):
+        return raw
+    text = str(raw).strip()
+    if not text:
+        return None
+    return parse_datetime(text)
+
+
+def _iter_return_payment_events(return_payment_events):
+    for event in return_payment_events or []:
+        if not isinstance(event, dict):
+            continue
+        happened_at = _parse_return_payment_at(event.get("at"))
+        if happened_at is None:
+            continue
+        cash = _money_or_zero(event.get("cash"))
+        mpesa = _money_or_zero(event.get("mpesa"))
+        if cash <= 0 and mpesa <= 0:
+            continue
+        yield {
+            "at": happened_at,
+            "cash": cash,
+            "mpesa": mpesa,
+            "by_id": event.get("by_id"),
+        }
+
+
+def _append_return_payment_event(receipt, *, at, cash, mpesa, by_id) -> bool:
+    """Record a till refund for a customer return. Returns True if anything stored."""
+    cash = _money_or_zero(cash)
+    mpesa = _money_or_zero(mpesa)
+    if cash <= 0 and mpesa <= 0:
+        return False
+    events = [
+        event
+        for event in (receipt.return_payment_events or [])
+        if isinstance(event, dict)
+    ]
+    events.append(
+        {
+            "at": at.isoformat(),
+            "cash": str(cash),
+            "mpesa": str(mpesa),
+            "by_id": by_id,
+        }
+    )
+    receipt.return_payment_events = events
+    return True
+
+
+def _collect_return_payment_events(*, shop_id, start, end) -> list:
+    """Flat refund events for a shop whose timestamp falls in [start, end)."""
+    from .models import ShopReceipt
+
+    if start >= end:
+        return []
+    rows = (
+        ShopReceipt.objects.filter(
+            shop_id=shop_id,
+            kind=ShopReceiptKind.SALE,
+            last_returned_at__gte=start,
+        )
+        .exclude(return_payment_events=[])
+        .values("return_payment_events")
+    )
+    events = []
+    for row in rows:
+        for event in _iter_return_payment_events(row.get("return_payment_events")):
+            if start <= event["at"] < end:
+                events.append(event)
+    return events
+
+
 def _session_activity_totals(
-    session, *, sales=None, expenses=None, supplier_payments=None
+    session, *, sales=None, expenses=None, supplier_payments=None, refunds=None
 ) -> dict:
     """Cash/M-Pesa sales and paid outflows inside a day session window.
 
-    Cashbox expected cash = opening cash + cash sales − expenses paid
-    − owner drawings paid − suppliers paid.
-    M-Pesa expected = opening M-Pesa + M-Pesa sales (outflows are cash).
+    Cashbox expected cash = opening cash + cash sales − return refunds
+    − expenses paid − owner drawings paid − suppliers paid.
+    M-Pesa expected = opening M-Pesa + M-Pesa sales − M-Pesa return refunds.
     Owner drawings reduce cash but are equity, not operating expense.
-    """
-    from decimal import Decimal
 
+    Sales use original tender (including later-returned receipts). Refunds are
+    subtracted on the day the return happened.
+    """
     from .models import ExpenseCategory
 
     opened = session.opened_at
     closed = session.closed_at or timezone.now()
     cash_sales = Decimal("0.00")
     mpesa_sales = Decimal("0.00")
+    cash_refunds = Decimal("0.00")
+    mpesa_refunds = Decimal("0.00")
     expenses_paid = Decimal("0.00")
     drawings_paid = Decimal("0.00")
     suppliers_paid = Decimal("0.00")
@@ -3515,8 +3794,21 @@ def _session_activity_totals(
     for sale in sales or []:
         when = sale["created_at"]
         if opened <= when < closed:
-            cash_sales += Decimal(sale.get("cash_amount") or 0)
-            mpesa_sales += Decimal(sale.get("mpesa_amount") or 0)
+            cash, mpesa = _receipt_original_tender(
+                sale.get("cash_amount"),
+                sale.get("mpesa_amount"),
+                sale.get("return_payment_events"),
+            )
+            cash_sales += cash
+            mpesa_sales += mpesa
+
+    for event in refunds or []:
+        when = event.get("at")
+        if when is None:
+            continue
+        if opened <= when < closed:
+            cash_refunds += _money_or_zero(event.get("cash"))
+            mpesa_refunds += _money_or_zero(event.get("mpesa"))
 
     for expense in expenses or []:
         when = expense["created_at"]
@@ -3546,11 +3838,12 @@ def _session_activity_totals(
     expected_cash = (
         opening_cash
         + cash_sales
+        - cash_refunds
         - expenses_paid
         - drawings_paid
         - suppliers_paid
     )
-    expected_mpesa = opening_mpesa + mpesa_sales
+    expected_mpesa = opening_mpesa + mpesa_sales - mpesa_refunds
 
     closing_cash = (
         Decimal(session.closing_cash)
@@ -3583,6 +3876,8 @@ def _session_activity_totals(
         ),
         "cash_sales": cash_sales,
         "mpesa_sales": mpesa_sales,
+        "cash_refunds": cash_refunds,
+        "mpesa_refunds": mpesa_refunds,
         "sales_total": cash_sales + mpesa_sales,
         "expenses": expenses_paid,
         "expenses_paid": expenses_paid,
@@ -3639,9 +3934,15 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
             kind=ShopReceiptKind.SALE,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
+        ).values(
+            "created_at",
+            "cash_amount",
+            "mpesa_amount",
+            "return_payment_events",
         )
-        .exclude(status=ShopReceiptStatus.CANCELLED)
-        .values("created_at", "cash_amount", "mpesa_amount")
+    )
+    refunds = _collect_return_payment_events(
+        shop_id=shop.pk, start=min_opened, end=max_closed
     )
     expenses = list(
         Expense.objects.filter(
@@ -3667,6 +3968,7 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
             sales=sales,
             expenses=expenses,
             supplier_payments=supplier_payments,
+            refunds=refunds,
         )
         rows.append(
             {
@@ -3698,9 +4000,15 @@ def day_session_balance_summary(session) -> dict:
             kind=ShopReceiptKind.SALE,
             created_at__gte=session.opened_at,
             created_at__lt=closed,
+        ).values(
+            "created_at",
+            "cash_amount",
+            "mpesa_amount",
+            "return_payment_events",
         )
-        .exclude(status=ShopReceiptStatus.CANCELLED)
-        .values("created_at", "cash_amount", "mpesa_amount")
+    )
+    refunds = _collect_return_payment_events(
+        shop_id=session.shop_id, start=session.opened_at, end=closed
     )
     expenses = list(
         Expense.objects.filter(
@@ -3723,6 +4031,7 @@ def day_session_balance_summary(session) -> dict:
         sales=sales,
         expenses=expenses,
         supplier_payments=supplier_payments,
+        refunds=refunds,
     )
 
 
@@ -4879,6 +5188,80 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
     raise ValidationError("Unknown receipt source.")
 
 
+def _append_receipt_return_batch(line, *, qty: int, serials: list, at, by_id) -> None:
+    """Record one return event on the line for date-accurate stock reports."""
+    batches = [
+        batch
+        for batch in (line.return_batches or [])
+        if isinstance(batch, dict)
+    ]
+    batches.append(
+        {
+            "qty": int(qty),
+            "at": at.isoformat(),
+            "by_id": by_id,
+            "serials": [str(s).strip() for s in (serials or []) if str(s).strip()],
+        }
+    )
+    line.return_batches = batches
+
+
+def _create_customer_return_stock_movement(
+    *,
+    shop: Shop,
+    receipt,
+    actor,
+    occurred_at,
+    lines: list[dict],
+):
+    """
+    Ledger-only stock-in for a customer return.
+
+    Stock quantities are already updated by the caller; this creates the
+    StockMovement / StockMovementLine rows so returns appear in stock movement.
+    """
+    from items.models import (
+        StockEntrySource,
+        StockMovement,
+        StockMovementLine,
+        StockMovementType,
+    )
+
+    prepared = [row for row in lines if row.get("item") is not None and int(row.get("qty") or 0) > 0]
+    if not prepared:
+        return None
+
+    movement = StockMovement.objects.create(
+        movement_type=StockMovementType.IN,
+        entry_source=StockEntrySource.CUSTOMER_RETURN,
+        shop=shop,
+        created_by=actor,
+        notes=f"Customer return on {receipt.receipt_number}",
+        supplier_notified=True,
+    )
+    # Stamp created_at to the return moment (auto_now_add otherwise uses DB now).
+    StockMovement.objects.filter(pk=movement.pk).update(created_at=occurred_at)
+    movement.created_at = occurred_at
+
+    for row in prepared:
+        item = row["item"]
+        qty = int(row["qty"])
+        unit_cost = Decimal(row.get("unit_cost") or 0)
+        serials = [
+            str(s).strip() for s in (row.get("serial_numbers") or []) if str(s).strip()
+        ]
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=item,
+            quantity=qty,
+            buying_price=unit_cost,
+            unit_cost=unit_cost,
+            note=f"Return on {receipt.receipt_number}",
+            serial_numbers=serials,
+        )
+    return movement
+
+
 @transaction.atomic
 def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> dict:
     """
@@ -5059,6 +5442,7 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
     serials_to_update = []
     lines_to_update = []
     stock_updates = []
+    movement_lines = []
 
     for row in prepared:
         line = row["line"]
@@ -5076,6 +5460,13 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         line.line_total = (
             Decimal(line.unit_price or 0) * remaining_after
         ).quantize(Decimal("0.01"))
+        _append_receipt_return_batch(
+            line,
+            qty=qty,
+            serials=serials,
+            at=now,
+            by_id=authorising.pk if authorising else None,
+        )
         lines_to_update.append(line)
 
         item = items_by_id.get(line.item_id) if line.item_id else None
@@ -5097,6 +5488,14 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         stocks_to_update.append(stock)
         items_to_update.append(item)
         stock_updates.append({"id": item.pk, "quantity": int(stock.quantity)})
+        movement_lines.append(
+            {
+                "item": item,
+                "qty": qty,
+                "unit_cost": return_unit_cost,
+                "serial_numbers": serials,
+            }
+        )
 
         if serials:
             found = row.get("serial_objects") or {}
@@ -5118,7 +5517,12 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
 
     ShopReceiptLine.objects.bulk_update(
         lines_to_update,
-        ["returned_quantity", "returned_serial_numbers", "line_total"],
+        [
+            "returned_quantity",
+            "returned_serial_numbers",
+            "return_batches",
+            "line_total",
+        ],
     )
     if stocks_to_update:
         ShopStock.objects.bulk_update(
@@ -5130,6 +5534,14 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         ItemSerial.objects.bulk_update(
             serials_to_update, ["is_available", "shop", "updated_at"]
         )
+
+    _create_customer_return_stock_movement(
+        shop=shop,
+        receipt=receipt,
+        actor=authorising,
+        occurred_at=now,
+        lines=movement_lines,
+    )
 
     # Refresh remaining totals from all lines on this receipt.
     all_lines = list(ShopReceiptLine.objects.filter(receipt=receipt).order_by("id"))
@@ -5145,6 +5557,8 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
 
     # Preserve the original tax rate stored on the receipt.
     tax_percent = Decimal(receipt.tax_percent or 0)
+    prior_cash = Decimal(receipt.cash_amount or 0)
+    prior_mpesa = Decimal(receipt.mpesa_amount or 0)
     if remaining_subtotal <= 0:
         tax_amount = Decimal("0.00")
         total = Decimal("0.00")
@@ -5207,6 +5621,14 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         "last_returned_at",
         "last_returned_by",
     ]
+    if receipt.kind == ShopReceiptKind.SALE and _append_return_payment_event(
+        receipt,
+        at=now,
+        cash=prior_cash - Decimal(cash_amount or 0),
+        mpesa=prior_mpesa - Decimal(mpesa_amount or 0),
+        by_id=authorising.pk if authorising else None,
+    ):
+        return_update_fields.append("return_payment_events")
     paid = Decimal(receipt.amount_paid or 0)
     if paid > total:
         receipt.amount_paid = total

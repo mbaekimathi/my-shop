@@ -201,7 +201,7 @@ def recalc_shop_stock_average_costs(*, shop_id=None, item_ids=None) -> dict:
         buying_price__isnull=False,
         buying_price__gt=0,
         movement__movement_type=StockMovementType.IN,
-    )
+    ).exclude(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
     if shop_id is not None:
         stock_qs = stock_qs.filter(shop_id=shop_id)
     if item_ids is not None:
@@ -283,7 +283,7 @@ def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
             buying_price__isnull=False,
             buying_price__gt=0,
             movement__movement_type=StockMovementType.IN,
-        )
+        ).exclude(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
         if shop_id is not None:
             qs = qs.filter(movement__shop_id=shop_id)
         return qs.order_by("-movement__created_at", "-id").values("buying_price")[:1]
@@ -875,8 +875,26 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
     target.line_total = (
         Decimal(target.unit_price or 0) * remaining_after
     ).quantize(Decimal("0.01"))
+    from shops.services import (
+        _append_receipt_return_batch,
+        _append_return_payment_event,
+        _create_customer_return_stock_movement,
+    )
+
+    _append_receipt_return_batch(
+        target,
+        qty=1,
+        serials=[matched_serial],
+        at=now,
+        by_id=profile.pk if profile else None,
+    )
     target.save(
-        update_fields=["returned_serial_numbers", "returned_quantity", "line_total"]
+        update_fields=[
+            "returned_serial_numbers",
+            "returned_quantity",
+            "return_batches",
+            "line_total",
+        ]
     )
 
     if shop is not None and target.item_id:
@@ -896,6 +914,20 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
         if serial.shop_id != shop.pk:
             serial.shop = shop
             serial.save(update_fields=["shop", "updated_at"])
+        _create_customer_return_stock_movement(
+            shop=shop,
+            receipt=receipt,
+            actor=profile,
+            occurred_at=now,
+            lines=[
+                {
+                    "item": item,
+                    "qty": 1,
+                    "unit_cost": Decimal(target.unit_cost or 0),
+                    "serial_numbers": [matched_serial],
+                }
+            ],
+        )
 
     all_lines = list(receipt.lines.order_by("id"))
     remaining_subtotal = sum(
@@ -908,6 +940,8 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
         Decimal("0.00"),
     )
     tax_percent = Decimal(receipt.tax_percent or 0)
+    prior_cash = Decimal(receipt.cash_amount or 0)
+    prior_mpesa = Decimal(receipt.mpesa_amount or 0)
     if remaining_subtotal <= 0:
         tax_amount = Decimal("0.00")
         total = Decimal("0.00")
@@ -948,7 +982,7 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
             else:
                 cash_amount = Decimal("0.00")
                 mpesa_amount = Decimal("0.00")
-        else:
+        elif receipt.kind != ShopReceiptKind.CREDIT:
             cash_amount = Decimal("0.00")
             mpesa_amount = Decimal("0.00")
 
@@ -960,18 +994,56 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
     receipt.status = status
     receipt.last_returned_at = now
     receipt.last_returned_by = profile
-    receipt.save(
-        update_fields=[
-            "subtotal",
-            "tax_amount",
-            "total",
-            "cash_amount",
-            "mpesa_amount",
-            "status",
-            "last_returned_at",
-            "last_returned_by",
-        ]
-    )
+    return_update_fields = [
+        "subtotal",
+        "tax_amount",
+        "total",
+        "cash_amount",
+        "mpesa_amount",
+        "status",
+        "last_returned_at",
+        "last_returned_by",
+    ]
+    if receipt.kind == ShopReceiptKind.SALE and _append_return_payment_event(
+        receipt,
+        at=now,
+        cash=prior_cash - Decimal(cash_amount or 0),
+        mpesa=prior_mpesa - Decimal(mpesa_amount or 0),
+        by_id=profile.pk if profile else None,
+    ):
+        return_update_fields.append("return_payment_events")
+    paid = Decimal(receipt.amount_paid or 0)
+    if paid > total:
+        receipt.amount_paid = total
+        return_update_fields.append("amount_paid")
+    receipt.save(update_fields=return_update_fields)
+
+    if receipt.kind == ShopReceiptKind.CREDIT and receipt.client_id:
+        from shops.credit_audit import log_credit_return
+
+        log_credit_return(
+            receipt=receipt,
+            summary=(
+                f"Returned serial {matched_serial} on {receipt.receipt_number}. "
+                f"Remaining total KSh {total}."
+            ),
+            actor=profile,
+            occurred_at=now,
+        )
+
+    from shops.credit_settlement import convert_settled_credit_to_sale
+
+    if convert_settled_credit_to_sale(receipt):
+        receipt.save(
+            update_fields=[
+                "kind",
+                "payment_method",
+                "cash_amount",
+                "mpesa_amount",
+                "credit_due_date",
+                "settled_from_credit",
+            ]
+        )
     return True, receipt.receipt_number or ""
 
 
