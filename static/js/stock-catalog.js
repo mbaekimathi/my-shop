@@ -864,11 +864,17 @@
           <span class="visually-hidden">Remove</span>
         </div>
         ${entryWrap}
+        <div class="stock-serial-actions">
+          <button type="button" class="stock-serial-add" data-stock-serial-add>
+            <i data-lucide="plus" aria-hidden="true"></i>
+            <span>Add</span>
+          </button>
+        </div>
         <ul class="stock-serial-scanned" data-stock-serial-scanned aria-live="polite" hidden></ul>
         <small class="stock-serial-hint">${
           mode === "out"
-            ? "Scan or search serials — press Enter after each."
-            : "Scan continuously — press Enter after each serial."
+            ? "Scan or search serials — press Enter or Add after each."
+            : "Scan continuously — press Enter or Add after each serial."
         }</small>
         <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
       </div>`;

@@ -4033,8 +4033,14 @@
     const addBtn = event.target.closest("[data-stock-serial-add]");
     if (addBtn) {
       event.preventDefault();
+      event.stopPropagation();
       const row = findItemRowFromNode(addBtn);
-      if (row) focusInlineSerialEntry(row) || addSerialRow(row);
+      if (!row) return;
+      if (usesInlineSerialScanned(row)) {
+        commitInlineSerialEntry(row);
+      } else {
+        focusInlineSerialEntry(row) || addSerialRow(row);
+      }
       return;
     }
 

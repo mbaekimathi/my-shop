@@ -93,3 +93,15 @@ class ShopPortalSessionLifetimeTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertFalse(client.session.get("shop_portal_auth"))
         self.assertFalse(client.session.get("active_shop_id"))
+
+    def test_ping_keeps_shop_portal_session_from_expiring(self):
+        client = Client()
+        session = client.session
+        session["active_shop_id"] = str(self.shop.pk)
+        session["shop_portal_auth"] = True
+        session.set_expiry(60)
+        session.save()
+
+        response = client.get(reverse("employees:ping"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(client.session.get_expiry_age(), SHOP_PORTAL_SESSION_AGE)

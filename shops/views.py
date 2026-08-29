@@ -276,7 +276,10 @@ def _shop_select_url(*, shop_id=""):
 
 
 def _enter_shop(request, shop):
+    from shops.session import persist_shop_portal_session
+
     set_active_shop(request, shop)
+    persist_shop_portal_session(request)
     return redirect(_shop_workspace_url(shop))
 
 

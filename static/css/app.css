@@ -25018,12 +25018,35 @@ html[data-theme="dark"] .shop-serial-modal-media img {
   align-items: center;
 }
 
+.buy-stock-simple-parked .stock-serial-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.35rem;
+}
+
 .buy-stock-simple-parked .stock-serial-add {
-  padding: 0.28rem 0.55rem;
-  font-size: 0.74rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.76rem;
+  font-weight: 650;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid color-mix(in srgb, rgb(var(--teal-rgb)) 35%, var(--line));
+  background: color-mix(in srgb, rgb(var(--teal-rgb)) 10%, var(--surface));
+  color: var(--teal);
+}
+
+.buy-stock-simple-parked .stock-serial-add:hover {
+  border-color: color-mix(in srgb, rgb(var(--teal-rgb)) 55%, var(--line));
+  background: color-mix(in srgb, rgb(var(--teal-rgb)) 16%, var(--surface));
+}
+
+.buy-stock-simple-parked .stock-serial-add i,
+.buy-stock-simple-parked .stock-serial-add svg {
+  width: 0.85rem;
+  height: 0.85rem;
 }
 
 .buy-stock-simple-parked .stock-serial-hint {
