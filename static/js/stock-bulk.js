@@ -2917,9 +2917,17 @@
     });
   };
 
+  const shouldDetachItemRow = (row) =>
+    isParkedRow(row) || (simpleCatalog && row.classList.contains("is-selected"));
+
+  const notifyCatalogChange = () => {
+    document.dispatchEvent(new CustomEvent("stock-catalog:rendered"));
+  };
+
   const removeItemRow = (row, { silent = false } = {}) => {
     if (!row) return;
     const inputs = getInputsRow(row);
+    const detach = shouldDetachItemRow(row);
     if (tracksSerial(row)) resetSerialList(row);
     clearItemMeta(row);
     inputs?.querySelectorAll("[data-stock-field]").forEach((field) => {
@@ -2930,18 +2938,18 @@
     });
     const countEl = inputs?.querySelector("[data-stock-serial-count]");
     if (countEl) countEl.textContent = "0";
-    row.classList.remove("is-selected");
-    const wasParked = isParkedRow(row);
+    row.classList.remove("is-selected", "is-filled", "is-open");
     delete row.dataset.stockRowSynced;
     setRowOpen(row, false);
     syncFilled(row);
 
-    if (wasParked) {
+    if (detach) {
       row.remove();
-      if (inputs && inputs.parentElement !== null && !row.contains(inputs)) {
+      if (inputs && inputs.isConnected && !row.contains(inputs)) {
         inputs.remove();
       }
       syncParkedVisibility();
+      notifyCatalogChange();
     } else {
       syncItemRemoveControls(row);
     }
@@ -4007,7 +4015,7 @@
     renderSummary();
   };
 
-  panel.addEventListener("click", (event) => {
+  form.addEventListener("click", (event) => {
     const itemRemoveBtn = event.target.closest("[data-stock-item-remove]");
     if (itemRemoveBtn) {
       event.preventDefault();
@@ -4033,6 +4041,7 @@
     const scannedRemove = event.target.closest("[data-stock-serial-scanned-remove]");
     if (scannedRemove) {
       event.preventDefault();
+      event.stopPropagation();
       const row = findItemRowFromNode(scannedRemove);
       scannedRemove.closest("li")?.remove();
       const scanned = row ? getInlineSerialScanned(row) : null;
@@ -4789,6 +4798,9 @@
     // Keep parked/open state; only close brand-new unloaded rows.
     // Live search re-fires this — never steal focus from the search box.
     rows().forEach((row) => {
+      if (simpleCatalog && (isParkedRow(row) || row.classList.contains("is-selected"))) {
+        syncItemRemoveControls(row);
+      }
       // Rows are reused across renders, so each only needs one sync pass.
       // parkSelectedRow / removeItemRow clear the marker when state changes.
       if (row.dataset.stockRowSynced === "1") return;
@@ -4801,6 +4813,7 @@
       ) {
         if (simpleCatalog && (isParkedRow(row) || row.classList.contains("is-selected"))) {
           setRowOpen(row, true, { focus: false });
+          syncItemRemoveControls(row);
         }
         return;
       }

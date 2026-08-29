@@ -24854,6 +24854,9 @@ html[data-theme="dark"] .shop-serial-modal-media img {
   color: var(--danger-text, #b42318);
   justify-self: end;
   align-self: center;
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
 }
 
 .buy-stock-simple-parked .buy-stock-pick-remove:hover {
@@ -25040,6 +25043,12 @@ html[data-theme="dark"] .shop-serial-modal-media img {
 
 .buy-stock-simple-parked .stock-serial-scanned-item {
   border-radius: 8px;
+}
+
+.buy-stock-simple-parked .stock-serial-scanned-remove {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
 }
 
 .buy-stock-simple-parked .stock-serial-entry-wrap .stock-serial-row.has-serial-scan {
