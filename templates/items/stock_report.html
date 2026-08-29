@@ -377,7 +377,7 @@
               <th scope="col" title="Transfer in">T-in</th>
               <th scope="col" title="Stock out">Out</th>
               <th scope="col" title="Transfer out">T-out</th>
-              <th scope="col" title="Stock sale; shown in red when items were returned">Sale</th>
+              <th scope="col" title="Items sold net of returns; red when returns reduced sales">Sale</th>
               <th scope="col" title="Returned">Return</th>
               <th scope="col" title="Closing stock">Close</th>
             </tr>
@@ -417,7 +417,7 @@
                 <span class="stock-matrix-qty stock-report-qty--transfer-out{% if row.stock_transfer_out == 0 %} is-empty{% endif %}">{{ row.stock_transfer_out }}</span>
               </td>
               <td data-label="Stock sale">
-                <span class="stock-matrix-qty {% if row.stock_return %}stock-report-qty--sale-returned{% else %}stock-report-qty--sale{% endif %}{% if row.stock_sale == 0 %} is-empty{% endif %}">{{ row.stock_sale }}</span>
+                <span class="stock-matrix-qty {% if row.stock_return %}stock-report-qty--sale-returned{% else %}stock-report-qty--sale{% endif %}{% if row.net_sale == 0 %} is-empty{% endif %}">{{ row.net_sale }}</span>
               </td>
               <td data-label="Returned">
                 <span class="stock-matrix-qty stock-report-qty--return{% if row.stock_return == 0 %} is-empty{% endif %}">{{ row.stock_return }}</span>
@@ -440,7 +440,7 @@
               <td data-label="Stock out"><span class="stock-matrix-qty stock-report-qty--out">{{ item_report_totals.stock_out }}</span></td>
               <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--transfer-out">{{ item_report_totals.stock_transfer_out }}</span></td>
               <td data-label="Stock sale">
-                <span class="stock-matrix-qty {% if item_report_totals.stock_return %}stock-report-qty--sale-returned{% else %}stock-report-qty--sale{% endif %}{% if item_report_totals.stock_sale == 0 %} is-empty{% endif %}">{{ item_report_totals.stock_sale }}</span>
+                <span class="stock-matrix-qty {% if item_report_totals.stock_return %}stock-report-qty--sale-returned{% else %}stock-report-qty--sale{% endif %}{% if item_report_totals.net_sale == 0 %} is-empty{% endif %}">{{ item_report_totals.net_sale }}</span>
               </td>
               <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ item_report_totals.stock_return }}</span></td>
               <td data-label="Closing stock"><span class="stock-matrix-qty stock-matrix-qty--total">{{ item_report_totals.closing_stock }}</span></td>

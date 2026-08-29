@@ -1614,6 +1614,8 @@ def _build_item_report_rows(
         stock_return,
         closing,
     ):
+        sale_qty = int(stock_sale or 0)
+        return_qty = int(stock_return or 0)
         return {
             "item": item,
             "shop": shop,
@@ -1625,8 +1627,9 @@ def _build_item_report_rows(
             "stock_transfer_in": stock_transfer_in,
             "stock_out": stock_out,
             "stock_transfer_out": stock_transfer_out,
-            "stock_sale": stock_sale,
-            "stock_return": stock_return,
+            "stock_sale": sale_qty,
+            "stock_return": return_qty,
+            "net_sale": max(0, sale_qty - return_qty),
             "closing_stock": closing,
         }
 
@@ -2909,6 +2912,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         "stock_transfer_out": 0,
         "stock_sale": 0,
         "stock_return": 0,
+        "net_sale": 0,
         "closing_stock": 0,
     }
 
@@ -3007,11 +3011,12 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             totals["stock_transfer_out"] += row["stock_transfer_out"]
             totals["stock_sale"] += row["stock_sale"]
             totals["stock_return"] += row["stock_return"]
+            totals["net_sale"] += row["net_sale"]
             totals["closing_stock"] += row["closing_stock"]
         units_in = totals["stock_in"]
         units_out = totals["stock_out"]
         units_request = totals["stock_transfer_in"] + totals["stock_transfer_out"]
-        units_sale = totals["stock_sale"]
+        units_sale = totals["net_sale"]
         units_transfer_in = totals["stock_transfer_in"]
         units_transfer_out = totals["stock_transfer_out"]
         units_return = totals["stock_return"]

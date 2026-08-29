@@ -188,7 +188,7 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(rows[0]["stock_transfer_in"], 0)
         self.assertEqual(rows[0]["stock_transfer_out"], 0)
 
-    def test_report_row_marks_sale_when_returns_exist(self):
+    def test_report_row_net_sale_subtracts_returns(self):
         from decimal import Decimal
 
         from shops.models import (
@@ -240,6 +240,7 @@ class ItemStockReportRowsTests(TestCase):
         row = rows[0]
         self.assertEqual(row["stock_sale"], 5)
         self.assertEqual(row["stock_return"], 2)
+        self.assertEqual(row["net_sale"], 3)
 
     def test_pending_request_is_not_a_transfer(self):
         from items.models import (
