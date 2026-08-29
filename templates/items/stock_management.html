@@ -832,6 +832,60 @@
     {% endif %}
   </section>
 
+  {% if stock_mode == 'request' %}
+  <section class="stock-request-feed" aria-label="Stock requests">
+    <header class="stock-request-feed-head">
+      <div>
+        <h3>Requests</h3>
+        <p>Pending, approved, and declined transfers across your shops.</p>
+      </div>
+      <a class="btn btn--ghost stock-request-feed-audits" href="{{ stock_request_audits_url }}">
+        <i data-lucide="scroll-text" aria-hidden="true"></i>
+        <span>Request audits</span>
+      </a>
+    </header>
+
+    <div class="stock-request-feed-stats">
+      <p class="stock-stat">
+        <strong>{{ request_summary.pending }}</strong>
+        <span>pending</span>
+      </p>
+      <p class="stock-stat">
+        <strong>{{ request_summary.fulfilled }}</strong>
+        <span>approved</span>
+      </p>
+      <p class="stock-stat">
+        <strong>{{ request_summary.declined }}</strong>
+        <span>declined</span>
+      </p>
+    </div>
+
+    <section class="stock-request-history" aria-labelledby="pending-requests-title">
+      <div class="stock-request-history-head">
+        <h4 id="pending-requests-title">Pending</h4>
+        <p>Awaiting a response from the supplying shop.</p>
+      </div>
+      {% include "items/partials/stock_request_table.html" with requests=pending_stock_requests empty_message="No pending requests." %}
+    </section>
+
+    <section class="stock-request-history" aria-labelledby="approved-requests-title">
+      <div class="stock-request-history-head">
+        <h4 id="approved-requests-title">Approved</h4>
+        <p>Accepted transfers that moved stock between shops.</p>
+      </div>
+      {% include "items/partials/stock_request_table.html" with requests=approved_stock_requests empty_message="No approved requests yet." %}
+    </section>
+
+    <section class="stock-request-history" aria-labelledby="declined-requests-title">
+      <div class="stock-request-history-head">
+        <h4 id="declined-requests-title">Declined</h4>
+        <p>Requests that were not fulfilled.</p>
+      </div>
+      {% include "items/partials/stock_request_table.html" with requests=declined_stock_requests empty_message="No declined requests." %}
+    </section>
+  </section>
+  {% endif %}
+
   {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
   {% if shops %}
   <aside

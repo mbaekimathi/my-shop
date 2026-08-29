@@ -945,10 +945,28 @@ def sidebar_for_stock_management(
                     ]
                 )
         else:
-            view_shop_id = (
-                resolved_shop_ids[0] if len(resolved_shop_ids) == 1 else ""
-            )
-            candidates = [
+            if active_mode in ("request", "request-audits") and _allowed("request"):
+                primary.extend(
+                    [
+                        _link(
+                            "Request stock",
+                            "clipboard-list",
+                            href=stock_management_url(role, "request", **shop_kwargs),
+                            active=active_mode == "request",
+                        ),
+                        _link(
+                            "Request audits",
+                            "scroll-text",
+                            href=stock_management_url(role, "request-audits"),
+                            active=active_mode == "request-audits",
+                        ),
+                    ]
+                )
+            else:
+                view_shop_id = (
+                    resolved_shop_ids[0] if len(resolved_shop_ids) == 1 else ""
+                )
+                candidates = [
                 (
                     "view",
                     _link(
@@ -1034,12 +1052,12 @@ def sidebar_for_stock_management(
                         active=active_mode == "low-stock",
                     ),
                 ),
-            ]
-            primary.extend(link for mode, link in candidates if _allowed(mode))
-            if active_mode == "view" and _allowed("print"):
-                primary.append(
-                    _action("Print stock", "printer", action="print-stock")
-                )
+                ]
+                primary.extend(link for mode, link in candidates if _allowed(mode))
+                if active_mode == "view" and _allowed("print"):
+                    primary.append(
+                        _action("Print stock", "printer", action="print-stock")
+                    )
     else:
         primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
         if _allowed("view"):

@@ -1974,6 +1974,81 @@ def actionable_shops_for_profile(profile):
     return list(base)
 
 
+def _enrich_stock_request_movements(rows):
+    for movement in rows:
+        movement.units_total = sum(
+            int(line.quantity or 0) for line in movement.lines.all()
+        )
+    return rows
+
+
+def stock_request_qs_for_profile(profile):
+    """Stock requests involving shops this profile may access."""
+    from django.db.models import Q
+
+    shop_ids = [shop.pk for shop in actionable_shops_for_profile(profile)]
+    if not shop_ids:
+        return StockMovement.objects.none()
+    return (
+        StockMovement.objects.filter(movement_type=StockMovementType.REQUEST)
+        .filter(Q(shop_id__in=shop_ids) | Q(requested_from_shop_id__in=shop_ids))
+        .select_related(
+            "shop",
+            "requested_from_shop",
+            "created_by",
+            "created_by__user",
+            "responded_by",
+            "responded_by__user",
+        )
+        .prefetch_related("lines__item")
+    )
+
+
+def list_stock_requests_for_profile(
+    profile,
+    *,
+    status=None,
+    limit=None,
+    start=None,
+    end=None,
+    shop_id=None,
+):
+    from django.db.models import Q
+
+    qs = stock_request_qs_for_profile(profile)
+    if shop_id:
+        qs = qs.filter(Q(shop_id=shop_id) | Q(requested_from_shop_id=shop_id))
+    if status:
+        if status == "approved":
+            qs = qs.filter(request_status=StockRequestStatus.FULFILLED)
+        elif status in StockRequestStatus.values:
+            qs = qs.filter(request_status=status)
+    if start is not None:
+        qs = qs.filter(created_at__gte=start)
+    if end is not None:
+        qs = qs.filter(created_at__lt=end)
+    if status in (
+        StockRequestStatus.FULFILLED,
+        StockRequestStatus.DECLINED,
+        "approved",
+    ):
+        qs = qs.order_by("-responded_at", "-created_at")
+    else:
+        qs = qs.order_by("-created_at")
+    if limit:
+        qs = qs[:limit]
+    return _enrich_stock_request_movements(list(qs))
+
+
+def summarize_stock_requests_for_profile(profile):
+    qs = stock_request_qs_for_profile(profile)
+    return {
+        "pending": qs.filter(request_status=StockRequestStatus.PENDING).count(),
+        "fulfilled": qs.filter(request_status=StockRequestStatus.FULFILLED).count(),
+        "declined": qs.filter(request_status=StockRequestStatus.DECLINED).count(),
+    }
+
+
 LOW_STOCK_USAGE_WEEKS = 13
 
 

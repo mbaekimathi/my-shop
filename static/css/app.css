@@ -26571,6 +26571,60 @@ body.workspace-modal-open .stock-country-menu {
   font-size: 0.76rem;
 }
 
+.stock-request-feed {
+  margin: 0.65rem 0 0;
+  padding: 0.75rem 0.85rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--teal));
+  display: grid;
+  gap: 0.75rem;
+}
+
+.stock-request-feed-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.stock-request-feed-head h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.stock-request-feed-head p {
+  margin: 0.2rem 0 0;
+  color: var(--mist-soft);
+  font-size: 0.78rem;
+}
+
+.stock-request-feed-audits {
+  flex-shrink: 0;
+}
+
+.stock-request-feed-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+}
+
+.stock-request-history-head h4 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.stock-panel--request-audits .stock-request-history--audits {
+  padding: 0;
+}
+
 .stock-request-history-empty {
   margin: 0;
   padding: 0.85rem;

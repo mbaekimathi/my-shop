@@ -75,7 +75,7 @@
         <span>View by</span>
         <select name="view_by" aria-label="View movements by">
           <option value="timeline"{% if view_by == 'timeline' %} selected{% endif %}>Timeline</option>
-          <option value="item"{% if view_by == 'item' %} selected{% endif %}>Item</option>
+          <option value="item"{% if view_by == 'item' %} selected{% endif %}>Item summary</option>
         </select>
       </label>
       <label class="stock-report-field">
@@ -173,8 +173,7 @@
     {% endif %}
 
     {% if is_movements_page %}
-      {% if is_item_movement_summary %}
-        {% if movement_item_rows %}
+      {% if is_item_movement_summary and movement_item_rows %}
         <div class="staff-table-wrap stock-report-table-wrap">
           <table class="staff-table stock-report-table stock-report-table--items-summary{% if movement_item_group_by_shop %} stock-report-table--items-by-shop{% endif %}">
             <colgroup>
@@ -276,12 +275,6 @@
             {% endif %}
           </table>
         </div>
-        {% else %}
-        <div class="dashboard-placeholder">
-          <i data-lucide="package" aria-hidden="true"></i>
-          <p>No shop stock or movement in {{ report_period_label }} for these filters.</p>
-        </div>
-        {% endif %}
       {% elif movement_events %}
       <div class="staff-table-wrap stock-report-table-wrap">
         <table class="staff-table stock-report-table stock-report-table--timeline">
@@ -352,7 +345,13 @@
       {% else %}
       <div class="dashboard-placeholder">
         <i data-lucide="arrow-down-up" aria-hidden="true"></i>
-        <p>No stock movements happened in {{ report_period_label }} for these filters.</p>
+        <p>
+          {% if event_filter != 'all' %}
+          No {{ event_filter }} movements in {{ report_period_label }} for these filters.
+          {% else %}
+          No stock movements in {{ report_period_label }} for these filters.
+          {% endif %}
+        </p>
       </div>
       {% endif %}
       <p class="stock-report-live-empty" data-stock-live-empty hidden>No rows match your search.</p>

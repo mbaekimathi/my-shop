@@ -25,7 +25,8 @@ from .services import (
     create_item,
     delete_item,
     estimate_stock_print_a4_pages,
-    last_buying_prices_for_items,
+    list_stock_requests_for_profile,
+    summarize_stock_requests_for_profile,
     LOW_STOCK_USAGE_WEEKS,
     search_available_serials,
     search_suppliers,
@@ -2314,6 +2315,7 @@ def _build_movement_timeline(
             sale__sold_at__lt=day_end,
         )
         .select_related("sale", "sale__employee__user")
+        .prefetch_related("sale__employee__assigned_shops")
         .order_by("sale__sold_at", "id")
     )
     if shop_ids:
@@ -2334,14 +2336,24 @@ def _build_movement_timeline(
         if allowed_names and key not in allowed_names:
             continue
         matched = item_by_name.get(key)
+        sale_shop_id = None
+        sale_shop_name = "—"
+        if line.sale.employee_id:
+            assigned = list(
+                line.sale.employee.assigned_shops.filter(pk__in=shop_ids).values_list(
+                    "pk", "name"
+                )
+            )
+            if assigned:
+                sale_shop_id, sale_shop_name = assigned[0]
         parties = _movement_parties_for_pos_sale(sale=line.sale)
         events.append(
             {
                 "happened_at": line.sale.sold_at,
                 "event_type": "sale",
                 "event_label": "Stock sale",
-                "shop_name": "—",
-                "shop_id": None,
+                "shop_name": sale_shop_name,
+                "shop_id": sale_shop_id,
                 "source_shop_id": None,
                 "from_shop_name": "",
                 "item_name": line.product_name or (matched.name if matched else "—"),
@@ -2467,7 +2479,7 @@ MOVEMENT_EVENT_FILTER_TYPES = {
     "in": frozenset({"in"}),
     "out": frozenset({"out"}),
     "sale": frozenset({"sale"}),
-    "transfer": frozenset({"request", "transfer_fulfilled"}),
+    "transfer": frozenset({"transfer_fulfilled"}),
     "return": frozenset({"return"}),
 }
 
@@ -2487,18 +2499,15 @@ def _filter_movement_events(events, event_filter):
 
 
 def _filter_timeline_display_events(events):
-    """Timeline rows: show fulfilled transfer-in only (no pending requests or transfer-out)."""
-    kept = []
-    for event in events:
-        event_type = event.get("event_type")
-        if event_type == "request":
-            continue
-        if event_type == "transfer_fulfilled" and event.get(
-            "transfer_direction"
-        ) not in ("in", "both"):
-            continue
-        kept.append(event)
-    return kept
+    """Timeline: hide pending requests; show fulfilled transfers in and out."""
+    return [
+        event for event in events if event.get("event_type") != "request"
+    ]
+
+
+def _filter_item_summary_movement_events(events):
+    """Item summary: same as timeline — fulfilled transfers only, not pending requests."""
+    return _filter_timeline_display_events(events)
 
 
 def _summarize_movement_events(events):
@@ -2534,9 +2543,9 @@ MOVEMENT_VIEW_BY = frozenset({"timeline", "item"})
 
 
 def _parse_movement_view_by(raw):
-    view_by = (raw or "item").strip().lower()
+    view_by = (raw or "timeline").strip().lower()
     if view_by not in MOVEMENT_VIEW_BY:
-        return "item"
+        return "timeline"
     return view_by
 
 
@@ -2603,6 +2612,7 @@ def _group_movement_events_by_item(
     shops_by_id=None,
     group_by_shop=None,
     extra_items=None,
+    require_events=False,
 ):
     if group_by_shop is None:
         group_by_shop = len(shop_ids) > 1
@@ -2702,10 +2712,12 @@ def _group_movement_events_by_item(
     event_item_ids = [
         group["item_id"] for group in items.values() if group.get("item_id")
     ]
-    extra_item_ids = [item.pk for item in extra_items or [] if getattr(item, "pk", None)]
+    extra_item_ids = []
+    if extra_items and not require_events:
+        extra_item_ids = [item.pk for item in extra_items if getattr(item, "pk", None)]
     stock_item_ids = list({*event_item_ids, *extra_item_ids})
     stock_by_shop = _current_stock_by_item_shop(stock_item_ids, shop_ids)
-    if extra_items:
+    if extra_items and not require_events:
         for item in extra_items:
             if item.pk in items:
                 continue
@@ -2729,6 +2741,8 @@ def _group_movement_events_by_item(
         for shop_id in ordered_shop_ids:
             row = group["shops"].get(shop_id)
             if row is None:
+                if require_events:
+                    continue
                 shop = shops_by_id.get(shop_id)
                 row = _blank_movement_item_row(
                     item_id=group["item_id"],
@@ -2743,7 +2757,10 @@ def _group_movement_events_by_item(
                     (group["item_id"], shop_id), 0
                 )
             shop_rows.append(row)
-        if not any(
+        if require_events:
+            if not any(row["event_count"] for row in shop_rows):
+                continue
+        elif not any(
             row["event_count"] or row["current_stock"] for row in shop_rows
         ):
             continue
@@ -2943,6 +2960,8 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             movement_events = _filter_movement_events(movement_events, event_filter)
         if view_by == "timeline":
             movement_events = _filter_timeline_display_events(movement_events)
+        elif is_item_movement_summary:
+            movement_events = _filter_item_summary_movement_events(movement_events)
         (
             units_in,
             units_out,
@@ -2953,14 +2972,11 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             units_return,
         ) = _summarize_movement_events(movement_events)
         if is_item_movement_summary:
-            extra_items = (
-                report_items if item_mode != "all" else all_items
-            )
             movement_item_rows = _group_movement_events_by_item(
                 movement_events,
                 shop_ids_for_query,
                 shops_by_id=shops_by_id,
-                extra_items=extra_items if len(shop_ids_for_query) > 1 else None,
+                require_events=True,
             )
             for row in movement_item_rows:
                 if row.get("is_item_total"):
@@ -3505,6 +3521,95 @@ def stock_settings(request, profile, meta, module):
     )
 
 
+@require_http_methods(["GET"])
+def stock_request_audits(request, profile, meta, module):
+    from employees.models import EmployeeRole
+    from employees.module_permissions import require_module_permission
+    from employees.workspace import sidebar_for_stock_management, stock_management_url
+
+    from .models import StockRequestStatus
+
+    denied = require_module_permission(request, profile, "stock-management", "request")
+    if denied is not None:
+        return denied
+
+    if profile.role not in (
+        EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.IT_SUPPORT,
+    ):
+        return _stock_redirect(request.path, "view")
+
+    range_type, day_start, day_end, filter_context = _report_range_bounds(request)
+    filter_shops = actionable_shops_for_profile(profile)
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+
+    try:
+        shop_filter_id = int(request.GET.get("shop_id") or 0)
+    except (TypeError, ValueError):
+        shop_filter_id = 0
+    if shop_filter_id and shop_filter_id not in shops_by_id:
+        shop_filter_id = 0
+
+    status_filter = (request.GET.get("status") or "all").strip().lower()
+    if status_filter not in ("all", "pending", "fulfilled", "declined", "approved"):
+        status_filter = "all"
+
+    list_status = None if status_filter == "all" else status_filter
+    audit_requests = list_stock_requests_for_profile(
+        profile,
+        status=list_status,
+        start=day_start,
+        end=day_end,
+        shop_id=shop_filter_id or None,
+        limit=250,
+    )
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="request-audits",
+        profile=profile,
+    )
+
+    range_labels = {
+        "day": "Single day",
+        "period": "Period",
+        "month": "Month",
+        "year": "Year",
+    }
+    summary = summarize_stock_requests_for_profile(profile)
+
+    return render(
+        request,
+        "items/stock_request_audits.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "stock_mode": "request-audits",
+            "audit_requests": audit_requests,
+            "audit_request_count": len(audit_requests),
+            "request_summary": summary,
+            "filter_shops": filter_shops,
+            "selected_shop_id": shop_filter_id,
+            "status_filter": status_filter,
+            "report_range": filter_context["report_range"],
+            "report_range_label": range_labels.get(
+                filter_context["report_range"], "Single day"
+            ),
+            "report_period_label": filter_context.get("report_period_label", ""),
+            "report_date_value": filter_context["report_date_value"],
+            "report_date_from": filter_context["report_date_from"],
+            "report_date_to": filter_context["report_date_to"],
+            "report_month_value": filter_context["report_month_value"],
+            "report_year_value": filter_context["report_year_value"],
+            "stock_request_url": stock_management_url(profile.role, "request"),
+        },
+    )
+
+
 @require_http_methods(["GET", "POST"])
 def stock_management(request, profile, meta, module, page_sidebar):
     from employees.models import EmployeeRole
@@ -3525,6 +3630,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         "return-clients",
         "settings",
         "low-stock",
+        "request-audits",
     ):
         mode = "view"
 
@@ -3547,6 +3653,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if mode == "low-stock":
         return stock_low_stock_settings(request, profile, meta, module)
+
+    if mode == "request-audits":
+        return stock_request_audits(request, profile, meta, module)
 
     if mode in ("report", "movements"):
         return stock_report(request, profile, meta, module, page_mode=mode)
@@ -3849,6 +3958,28 @@ def stock_management(request, profile, meta, module, page_sidebar):
     else:
         shop_filter_label = "All shops"
 
+    from .models import StockRequestStatus
+
+    request_context = {}
+    if mode == "request":
+        from employees.workspace import stock_management_url
+
+        request_context = {
+            "pending_stock_requests": list_stock_requests_for_profile(
+                profile, status=StockRequestStatus.PENDING, limit=25
+            ),
+            "approved_stock_requests": list_stock_requests_for_profile(
+                profile, status=StockRequestStatus.FULFILLED, limit=25
+            ),
+            "declined_stock_requests": list_stock_requests_for_profile(
+                profile, status=StockRequestStatus.DECLINED, limit=25
+            ),
+            "request_summary": summarize_stock_requests_for_profile(profile),
+            "stock_request_audits_url": stock_management_url(
+                profile.role, "request-audits"
+            ),
+        }
+
     return render(
         request,
         "items/stock_management.html",
@@ -3893,6 +4024,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
                 kwargs={"role_segment": role_url_segment(profile.role)},
             ),
             "can_print_stock": employee_may(profile, "stock-management", "print"),
+            **request_context,
         },
     )
 

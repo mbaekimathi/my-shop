@@ -28,7 +28,10 @@ def normalize_submodule(module_slug: str, submodule_slug: str) -> str:
     if module_slug == "stock-management" and slug in {
         "serial-movements",
         "return-clients",
+        "request-audits",
     }:
+        if slug == "request-audits":
+            return "request"
         return "serials"
     return slug
 

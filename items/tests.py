@@ -265,6 +265,63 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(rows[-1]["units_transfer_out"], 2)
         self.assertTrue(rows[-1]["is_item_total"])
 
+    def test_movements_item_view_does_not_double_count_same_day_transfer(self):
+        from items.views import (
+            _build_movement_timeline,
+            _filter_item_summary_movement_events,
+            _group_movement_events_by_item,
+            _transfer_qty_by_item_shop,
+        )
+
+        qty = 2
+        self._fulfill_transfer(qty=qty)
+        shop_ids = [self.shop_a.pk, self.shop_b.pk]
+        events, *_ = _build_movement_timeline(
+            shop_ids=shop_ids,
+            day_start=self.day_start,
+            day_end=self.day_end,
+            item_mode="all",
+            selected_categories=[],
+            selected_item_ids=[],
+            report_items=[],
+        )
+        self.assertGreaterEqual(
+            sum(
+                1
+                for event in events
+                if event.get("event_type") == "request"
+                and event.get("movement_id")
+            ),
+            1,
+        )
+        filtered = _filter_item_summary_movement_events(events)
+        rows = _group_movement_events_by_item(
+            filtered,
+            shop_ids,
+            shops_by_id={self.shop_a.pk: self.shop_a, self.shop_b.pk: self.shop_b},
+        )
+        by_shop = {
+            row["shop_name"]: row
+            for row in rows
+            if not row.get("is_item_total")
+        }
+        truth = _transfer_qty_by_item_shop(
+            [self.item.pk],
+            shop_ids,
+            self.day_start,
+            self.day_end,
+        )
+        self.assertEqual(
+            by_shop[self.shop_a.name]["units_transfer_in"],
+            truth[(self.item.pk, self.shop_a.pk)]["in"],
+        )
+        self.assertEqual(
+            by_shop[self.shop_b.name]["units_transfer_out"],
+            truth[(self.item.pk, self.shop_b.pk)]["out"],
+        )
+        self.assertEqual(by_shop[self.shop_a.name]["units_transfer_in"], qty)
+        self.assertEqual(by_shop[self.shop_b.name]["units_transfer_out"], qty)
+
     def test_movements_item_view_lists_idle_stock_for_all_shops(self):
         from items.models import Item, ShopStock
         from items.views import _group_movement_events_by_item
@@ -292,6 +349,66 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(rows[1]["current_stock"], 0)
         self.assertEqual(rows[-1]["current_stock"], 4)
         self.assertTrue(rows[-1]["is_item_total"])
+
+    def test_movements_item_view_require_events_skips_idle_stock(self):
+        from items.models import Item, ShopStock
+        from items.views import _group_movement_events_by_item
+
+        idle = Item.objects.create(
+            category="CABLES",
+            name="FILTER IDLE CABLE",
+            minimum_selling_price=Decimal("100.00"),
+            shop_price=Decimal("150.00"),
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(shop=self.shop_a, item=idle, quantity=4)
+
+        rows = _group_movement_events_by_item(
+            [],
+            [self.shop_a.pk, self.shop_b.pk],
+            shops_by_id={self.shop_a.pk: self.shop_a, self.shop_b.pk: self.shop_b},
+            extra_items=[idle],
+            require_events=True,
+        )
+        self.assertEqual(rows, [])
+
+    def test_transfer_event_filter_matches_fulfilled_only(self):
+        from items.views import MOVEMENT_EVENT_FILTER_TYPES, _filter_movement_events
+
+        events = [
+            {"event_type": "request", "quantity": 2},
+            {"event_type": "transfer_fulfilled", "quantity": 3},
+        ]
+        filtered = _filter_movement_events(events, "transfer")
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["event_type"], "transfer_fulfilled")
+        self.assertEqual(
+            MOVEMENT_EVENT_FILTER_TYPES["transfer"],
+            frozenset({"transfer_fulfilled"}),
+        )
+
+    def test_timeline_display_keeps_transfer_out(self):
+        from items.views import _filter_timeline_display_events
+
+        events = [
+            {"event_type": "request", "quantity": 1},
+            {
+                "event_type": "transfer_fulfilled",
+                "quantity": 2,
+                "transfer_direction": "out",
+            },
+            {
+                "event_type": "transfer_fulfilled",
+                "quantity": 3,
+                "transfer_direction": "in",
+            },
+        ]
+        kept = _filter_timeline_display_events(events)
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(
+            {row["transfer_direction"] for row in kept},
+            {"in", "out"},
+        )
 
     def test_low_stock_rows_are_per_shop_not_company_total(self):
         from items.views import _build_low_stock_rows

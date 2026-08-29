@@ -1,0 +1,83 @@
+{% if requests %}
+<div class="item-table-wrap stock-request-table-wrap">
+  <table class="stock-request-table">
+    <thead>
+      <tr>
+        <th>Status</th>
+        <th>Requesting shop</th>
+        <th>From shop</th>
+        <th>By</th>
+        <th>Items</th>
+        <th>Units</th>
+        <th>When</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for req in requests %}
+      <tr>
+        <td data-label="Status">
+          {% if req.request_status == "fulfilled" %}
+          <span class="stock-request-status is-accepted">Approved</span>
+          {% elif req.request_status == "declined" %}
+          <span class="stock-request-status is-declined">Declined</span>
+          {% else %}
+          <span class="stock-request-status is-pending">Pending</span>
+          {% endif %}
+        </td>
+        <td data-label="Requesting shop">
+          <strong>{% if req.shop %}{{ req.shop.name }}{% else %}—{% endif %}</strong>
+        </td>
+        <td data-label="From shop">
+          <strong>
+            {% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}—{% endif %}
+          </strong>
+        </td>
+        <td class="stock-request-table-by" data-label="By">
+          {% if req.request_status == "pending" and req.created_by %}
+          <strong>
+            {{ req.created_by.user.get_full_name|default:req.created_by.user.username }}
+          </strong>
+          {% elif req.responded_by %}
+          <strong>
+            {{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}
+          </strong>
+          <span class="stock-request-table-sub">
+            {% if req.request_status == "fulfilled" %}Approved{% else %}Declined{% endif %}
+          </span>
+          {% elif req.created_by %}
+          <strong>
+            {{ req.created_by.user.get_full_name|default:req.created_by.user.username }}
+          </strong>
+          {% else %}
+          <span class="stock-request-table-sub">—</span>
+          {% endif %}
+        </td>
+        <td class="stock-request-table-items" data-label="Items">
+          {% for line in req.lines.all %}
+          <span>{{ line.item.name }} <em>×{{ line.quantity }}</em></span>{% if not forloop.last %}, {% endif %}
+          {% empty %}
+          <span class="stock-request-table-sub">No line items</span>
+          {% endfor %}
+        </td>
+        <td class="stock-request-table-units" data-label="Units">{{ req.units_total }}</td>
+        <td class="stock-request-table-when" data-label="When">
+          {% if req.responded_at %}
+          {{ req.responded_at|date:"d M Y · H:i" }}
+          {% else %}
+          {{ req.created_at|date:"d M Y · H:i" }}
+          {% endif %}
+        </td>
+        <td class="stock-request-table-note" data-label="Note">
+          {% if req.notes %}{{ req.notes }}{% else %}
+          <span class="stock-request-table-sub">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="stock-request-history-empty">{{ empty_message }}</p>
+{% endif %}
