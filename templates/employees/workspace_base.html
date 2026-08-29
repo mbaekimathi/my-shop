@@ -120,6 +120,9 @@
       if (!modal || modal.hidden) return;
       modal.hidden = true;
       modal.setAttribute("aria-hidden", "true");
+      modal.dispatchEvent(
+        new CustomEvent(`${name}-modal:close`, { bubbles: true })
+      );
       const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
       document.body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
     };
@@ -155,8 +158,12 @@
         });
       });
 
-      document.querySelectorAll(`[data-modal-close="${name}"]`).forEach((el) => {
-        el.addEventListener("click", () => closeWorkspaceActionModal(name));
+      const modal = document.querySelector(`[data-modal="${name}"]`);
+      modal?.addEventListener("click", (event) => {
+        const closer = event.target.closest(`[data-modal-close="${name}"]`);
+        if (!closer) return;
+        event.preventDefault();
+        closeWorkspaceActionModal(name);
       });
     });
 

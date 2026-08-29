@@ -6094,6 +6094,7 @@ body.workspace-modal-open {
 
 .workspace-modal-dialog {
   position: relative;
+  z-index: 1;
   width: min(520px, 100%);
   max-height: calc(100vh - 2rem);
   overflow: auto;
@@ -17754,6 +17755,11 @@ html[data-theme="light"] .low-stock-badge.is-low {
   color: #2a5f8f;
 }
 
+.stock-report-qty--sale-returned:not(.is-empty) {
+  background: rgba(196, 74, 58, 0.12);
+  color: #a33a2c;
+}
+
 .stock-report-type {
   display: inline-flex;
   align-items: center;
@@ -24406,6 +24412,12 @@ html[data-theme="dark"] .shop-serial-modal-media img {
   background:
     linear-gradient(180deg, rgba(var(--teal-rgb), 0.05), transparent 70%),
     var(--surface);
+}
+
+.buy-stock-modal-head .workspace-icon-btn {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .buy-stock-modal-head-copy {

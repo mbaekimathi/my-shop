@@ -188,6 +188,59 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(rows[0]["stock_transfer_in"], 0)
         self.assertEqual(rows[0]["stock_transfer_out"], 0)
 
+    def test_report_row_marks_sale_when_returns_exist(self):
+        from decimal import Decimal
+
+        from shops.models import (
+            ShopPaymentMethod,
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptLine,
+            ShopReceiptStatus,
+        )
+        from items.views import _build_item_report_rows
+
+        receipt = ShopReceipt.objects.create(
+            shop=self.shop_a,
+            receipt_number="REP-SALE-1",
+            kind=ShopReceiptKind.SALE,
+            payment_method=ShopPaymentMethod.CASH,
+            subtotal=Decimal("500.00"),
+            total=Decimal("500.00"),
+            amount_paid=Decimal("500.00"),
+            cash_amount=Decimal("500.00"),
+            created_by=self.profile,
+            status=ShopReceiptStatus.PARTIAL_RETURN,
+            last_returned_at=self.now,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item=self.item,
+            item_name=self.item.name,
+            quantity=5,
+            returned_quantity=2,
+            unit_price=Decimal("100.00"),
+            line_total=Decimal("300.00"),
+            return_batches=[
+                {
+                    "qty": 2,
+                    "at": self.now.isoformat(),
+                    "by_id": self.profile.pk,
+                    "serials": [],
+                }
+            ],
+        )
+        rows = _build_item_report_rows(
+            [self.item],
+            [self.shop_a.pk],
+            self.day_start,
+            self.day_end,
+        )
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["stock_sale"], 5)
+        self.assertEqual(row["stock_return"], 2)
+
     def test_pending_request_is_not_a_transfer(self):
         from items.models import (
             StockMovement,

@@ -5099,5 +5099,17 @@
     if (countryMenu && !countryMenu.hidden) closeCountryMenu();
   }, true);
 
+  const buyStockModal = form.closest('[data-modal="buy-stock"]');
+  if (buyStockModal) {
+    buyStockModal.addEventListener("buy-stock-modal:close", () => {
+      clearAll();
+      const searchInput = panel.querySelector("[data-item-search]");
+      if (searchInput) searchInput.value = "";
+      closeCountryMenu();
+      hideSupplierSuggest();
+      hideSerialSuggest();
+    });
+  }
+
   renderSummary();
 })();
