@@ -1270,6 +1270,10 @@ def my_shop_workspace(request, shop_id):
             "pos_flags": pos_flags,
             "stk_ready": stk_ready(),
             "stk_off_label": get_daraja_settings().stk_not_ready_reason() or "STK unavailable",
+            "stk_blocker_message": get_daraja_settings().stk_blocker_message(),
+            "stk_settings_url": reverse(
+                "employees:settings_section", kwargs={"section": "company-daraja"}
+            ),
             "cart_kinds": cart_kinds,
             "checkout_enabled": checkout_enabled,
             "show_document_picker": show_document_picker,

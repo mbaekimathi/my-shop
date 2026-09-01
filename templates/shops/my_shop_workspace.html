@@ -17,7 +17,8 @@
   data-stk-initiate-url="{{ stk_initiate_url }}"
   data-stk-status-url-template="{{ stk_status_url_template }}"
   data-stk-ready="{% if stk_ready %}1{% else %}0{% endif %}"
-  data-stk-off-label="{{ stk_off_label }}"
+  data-stk-off-label="{{ stk_off_label|escapejs }}"
+  data-stk-blocker-message="{{ stk_blocker_message|escapejs }}"
   data-verify-login-url="{{ verify_login_code_url }}"
   data-client-lookup-url="{{ client_lookup_url }}"
   data-serial-search-url="{{ serial_search_url }}"
@@ -366,15 +367,34 @@
       <p class="shop-cart-client-hint" data-cart-client-hint></p>
 
       <div class="shop-cart-stk" data-cart-stk-panel hidden>
+        <div
+          class="shop-cart-stk-error"
+          data-cart-stk-error
+          role="alert"
+          {% if stk_ready %}hidden{% endif %}
+        >
+          <i data-lucide="alert-circle" aria-hidden="true"></i>
+          <div class="shop-cart-stk-error-copy">
+            <strong>M-Pesa STK cannot prompt yet</strong>
+            <p data-cart-stk-error-text>
+              {{ stk_blocker_message|default:stk_off_label }}
+            </p>
+            {% if stk_settings_url and not stk_ready %}
+            <a class="shop-cart-stk-error-link" href="{{ stk_settings_url }}" target="_blank" rel="noopener">
+              Open Daraja settings
+            </a>
+            {% endif %}
+          </div>
+        </div>
         <button
           type="button"
-          class="btn btn--primary shop-cart-stk-send"
+          class="btn btn--primary shop-cart-stk-send{% if not stk_ready %} is-blocked{% endif %}"
           data-cart-stk-send
-          {% if not stk_ready %}disabled title="{{ stk_off_label }}"{% endif %}
+          title="{% if not stk_ready %}{{ stk_blocker_message|default:stk_off_label }}{% endif %}"
         >
           Send STK prompt (optional)
         </button>
-        <p class="shop-cart-stk-hint" data-cart-stk-hint{% if stk_ready %} hidden{% endif %}>
+        <p class="shop-cart-stk-hint" data-cart-stk-hint hidden>
           {{ stk_off_label }}
         </p>
         <div class="shop-cart-stk-wait" data-cart-stk-wait hidden>
@@ -630,10 +650,10 @@
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=67"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=69"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=35"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/stock-bulk.js' %}?v=matrix49"></script>
+<script defer src="{% static 'js/stock-bulk.js' %}?v=matrix50"></script>
 <script defer src="{% static 'js/my-shop-expense.js' %}?v=10"></script>
 <script
   defer

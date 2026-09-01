@@ -448,6 +448,154 @@
   };
   const stockReq = readStockRequirements();
 
+  const wrongShopModal = document.querySelector("[data-wrong-shop-modal]");
+  const wrongShopModalTitle = wrongShopModal?.querySelector("#wrong-shop-modal-title");
+  const wrongShopModalMessage = wrongShopModal?.querySelector("[data-wrong-shop-message]");
+  const wrongShopModalDetail = wrongShopModal?.querySelector("[data-wrong-shop-detail]");
+  const wrongShopModalCancelBtn = wrongShopModal?.querySelector(
+    "[data-wrong-shop-cancel].btn"
+  );
+  const wrongShopModalConfirmBtn = wrongShopModal?.querySelector("[data-wrong-shop-confirm]");
+  let wrongShopModalDefaults = null;
+
+  const getCsrf = () =>
+    form.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+    document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+    document.cookie
+      .split("; ")
+      .find((row) => row.startsWith("csrftoken="))
+      ?.split("=")[1] ||
+    "";
+
+  const rememberWrongShopModalDefaults = () => {
+    if (wrongShopModalDefaults || !wrongShopModal) return;
+    wrongShopModalDefaults = {
+      title: wrongShopModalTitle?.textContent || "",
+      cancel: wrongShopModalCancelBtn?.textContent || "",
+      confirm: wrongShopModalConfirmBtn?.textContent || "",
+    };
+  };
+
+  const restoreWrongShopModalDefaults = () => {
+    if (!wrongShopModalDefaults) return;
+    if (wrongShopModalTitle) wrongShopModalTitle.textContent = wrongShopModalDefaults.title;
+    if (wrongShopModalCancelBtn) {
+      wrongShopModalCancelBtn.textContent = wrongShopModalDefaults.cancel;
+    }
+    if (wrongShopModalConfirmBtn) {
+      wrongShopModalConfirmBtn.textContent = wrongShopModalDefaults.confirm;
+    }
+  };
+
+  const setWrongShopModalOpen = (open) => {
+    if (!wrongShopModal) return;
+    wrongShopModal.hidden = !open;
+    const buyStockOpen = document.querySelector('[data-modal="buy-stock"]:not([hidden])');
+    document.body.classList.toggle(
+      "workspace-modal-open",
+      open || Boolean(buyStockOpen)
+    );
+  };
+
+  const confirmWrongShopAction = ({
+    staffName = "",
+    shopName = "this shop",
+    allocatedShopNames = [],
+    action = "buy",
+  } = {}) =>
+    new Promise((resolve) => {
+      const staffLabel = staffName || "This staff member";
+      const labels =
+        action === "buy"
+          ? {
+              title: "Buying at the wrong shop",
+              cancel: "Cancel purchase",
+              confirm: "Confirm purchase",
+            }
+          : {
+              title: "Selling at the wrong shop",
+              cancel: "Cancel sale",
+              confirm: "Confirm sale",
+            };
+
+      if (!wrongShopModal) {
+        resolve(
+          window.confirm(
+            `${staffLabel} is not allocated to ${shopName}. Continue anyway?`
+          )
+        );
+        return;
+      }
+
+      rememberWrongShopModalDefaults();
+      if (wrongShopModalTitle) wrongShopModalTitle.textContent = labels.title;
+      if (wrongShopModalCancelBtn) wrongShopModalCancelBtn.textContent = labels.cancel;
+      if (wrongShopModalConfirmBtn) {
+        wrongShopModalConfirmBtn.textContent = labels.confirm;
+      }
+      if (wrongShopModalMessage) {
+        wrongShopModalMessage.innerHTML = `${staffLabel} is not allocated to <strong>${shopName}</strong>.`;
+      }
+      if (wrongShopModalDetail) {
+        if (allocatedShopNames.length) {
+          wrongShopModalDetail.hidden = false;
+          wrongShopModalDetail.textContent = `Allocated shop${
+            allocatedShopNames.length === 1 ? "" : "s"
+          }: ${allocatedShopNames.join(", ")}.`;
+        } else {
+          wrongShopModalDetail.hidden = true;
+          wrongShopModalDetail.textContent = "";
+        }
+      }
+
+      const finish = (confirmed) => {
+        setWrongShopModalOpen(false);
+        restoreWrongShopModalDefaults();
+        wrongShopModal.removeEventListener("click", onClick);
+        window.removeEventListener("keydown", onKeydown);
+        resolve(confirmed);
+      };
+
+      const onClick = (event) => {
+        if (event.target.closest("[data-wrong-shop-confirm]")) {
+          event.preventDefault();
+          finish(true);
+          return;
+        }
+        if (event.target.closest("[data-wrong-shop-cancel]")) {
+          event.preventDefault();
+          finish(false);
+        }
+      };
+
+      const onKeydown = (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          finish(false);
+        }
+      };
+
+      setWrongShopModalOpen(true);
+      if (window.lucide?.createIcons) window.lucide.createIcons();
+      wrongShopModalConfirmBtn?.focus();
+      wrongShopModal.addEventListener("click", onClick);
+      window.addEventListener("keydown", onKeydown);
+    });
+
+  const ensureStaffShopAllocationConfirmed = async ({
+    staffName,
+    shopName,
+    allocatedShopNames,
+    action = "buy",
+  }) => {
+    return confirmWrongShopAction({
+      staffName,
+      shopName,
+      allocatedShopNames,
+      action,
+    });
+  };
+
   let submitToastTimer = null;
   const pushStockSubmitToast = (text) => {
     if (!text) return;
@@ -2078,6 +2226,9 @@
 
     let submitInFlight = false;
 
+    const matrixLoginCodeInput = floatRoot?.querySelector("[data-stock-float-login-code]");
+    const matrixVerifyLoginUrl = form.getAttribute("data-verify-login-url") || "";
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (submitInFlight) return;
@@ -2086,6 +2237,46 @@
       if (!(await confirmHighUnitBuyingPrices(ready))) return;
       if (mode === "request" && requestingShopInput) {
         requestingShopInput.value = requestingShopId;
+      }
+
+      if (mode === "in" && matrixLoginCodeInput && matrixVerifyLoginUrl) {
+        const code = (matrixLoginCodeInput.value || "").trim();
+        if (/^\d{6}$/.test(code)) {
+          try {
+            const response = await fetch(matrixVerifyLoginUrl, {
+              method: "POST",
+              headers: {
+                Accept: "application/json",
+                "X-CSRFToken": getCsrf(),
+              },
+              credentials: "same-origin",
+              body: new URLSearchParams({ login_code: code }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data.ok) {
+              setApplyStatus(data.error || "Enter a valid active staff 6-digit ID.", true);
+              return;
+            }
+            if (data.allocated_to_shop === false) {
+              const confirmed = await ensureStaffShopAllocationConfirmed({
+                staffName: data.name || "",
+                shopName:
+                  data.shop_name || panel.dataset.stockCatalogShopName || "this shop",
+                allocatedShopNames: Array.isArray(data.allocated_shop_names)
+                  ? data.allocated_shop_names.filter(Boolean)
+                  : [],
+                action: "buy",
+              });
+              if (!confirmed) {
+                setApplyStatus("Purchase cancelled — staff member is not allocated to this shop.");
+                return;
+              }
+            }
+          } catch (_error) {
+            setApplyStatus("Could not verify staff allocation. Try again.", true);
+            return;
+          }
+        }
       }
 
       submitInFlight = true;
@@ -2216,6 +2407,10 @@
   };
   let appliedDetails = null;
   let loginVerified = false;
+  let staffAllocatedToShop = null;
+  let staffName = "";
+  let staffAllocatedShopNames = [];
+  let activeShopName = panel.dataset.stockCatalogShopName || "";
   let loginVerifyTimer = null;
   let loginVerifySeq = 0;
   let autoStockInFlight = false;
@@ -3595,6 +3790,20 @@
         return false;
       }
       loginVerified = true;
+      staffAllocatedToShop = data.allocated_to_shop !== false;
+      staffName = data.name || "";
+      staffAllocatedShopNames = Array.isArray(data.allocated_shop_names)
+        ? data.allocated_shop_names.filter(Boolean)
+        : [];
+      activeShopName = data.shop_name || activeShopName || "this shop";
+      if (staffAllocatedToShop === false) {
+        setLoginStatus(
+          `${staffName || "Staff member"} is not allocated to ${activeShopName}. Confirm purchase to continue.`,
+          { error: true }
+        );
+        renderSummary();
+        return true;
+      }
       setLoginStatus(
         `Verified: ${data.name || "staff"} (${data.employee_id || code}).`,
         { ok: true }
@@ -3706,6 +3915,11 @@
       } else if (!ready.every((item) => rowHasBuyingPrice(item.row))) {
         setApplyStatus(
           simpleCatalog ? "Enter a buying price on each item." : "Enter unit buying price on every stocked item.",
+          true
+        );
+      } else if (requiresLoginCode && loginVerified && staffAllocatedToShop === false) {
+        setApplyStatus(
+          `${staffName || "Staff member"} is not allocated to ${activeShopName}. Confirm purchase to continue.`,
           true
         );
       } else if (requiresLoginCode && !loginVerified) {
@@ -3850,10 +4064,26 @@
     }, 280);
   };
 
+  const confirmStaffShopAllocationIfNeeded = async () => {
+    if (!requiresLoginCode || staffAllocatedToShop !== false) return true;
+    const confirmed = await ensureStaffShopAllocationConfirmed({
+      staffName,
+      shopName: activeShopName,
+      allocatedShopNames: staffAllocatedShopNames,
+      action: "buy",
+    });
+    if (!confirmed) {
+      setApplyStatus("Purchase cancelled — staff member is not allocated to this shop.");
+      return false;
+    }
+    return true;
+  };
+
   const submitStockInWithPrint = async () => {
     if (!form.hasAttribute("data-supplier-print") || mode !== "in") return false;
     if (autoStockInFlight || isCatalogBusy()) return false;
     if (requiresLoginCode && !loginVerified) return false;
+    if (!(await confirmStaffShopAllocationIfNeeded())) return false;
 
     const ready = prepareStockInRows();
     if (!ready.length || !canSubmitStockIn(ready)) return false;
@@ -4275,7 +4505,7 @@
         if (target.matches("[data-supplier-search]")) queueSupplierSearch(target);
       }
       renderSummary();
-      if (loginVerified) queueAutoStockInAndPrint();
+      if (loginVerified && staffAllocatedToShop !== false) queueAutoStockInAndPrint();
       return;
     }
 
@@ -4320,7 +4550,7 @@
         if (/[\r\n]/.test(raw)) {
           target.value = raw.replace(/[\r\n]+/g, "").trim().toUpperCase();
           commitInlineSerialEntry(itemRow);
-          if (loginVerified) queueAutoStockInAndPrint();
+          if (loginVerified && staffAllocatedToShop !== false) queueAutoStockInAndPrint();
           return;
         }
         const start = target.selectionStart;
@@ -4354,7 +4584,7 @@
         });
       }
       refreshRowState(itemRow);
-      if (loginVerified) queueAutoStockInAndPrint();
+      if (loginVerified && staffAllocatedToShop !== false) queueAutoStockInAndPrint();
       return;
     }
     syncFilled(itemRow);
@@ -4850,16 +5080,19 @@
 
   loginCodeInput?.addEventListener("input", () => {
     loginVerified = false;
+    staffAllocatedToShop = null;
+    staffName = "";
+    staffAllocatedShopNames = [];
     if (submitBtn) submitBtn.disabled = true;
     window.clearTimeout(loginVerifyTimer);
     loginVerifyTimer = window.setTimeout(async () => {
       const ok = await verifyLoginCode();
-      if (ok) queueAutoStockInAndPrint();
+      if (ok && staffAllocatedToShop !== false) queueAutoStockInAndPrint();
     }, 220);
   });
   loginCodeInput?.addEventListener("blur", async () => {
     const ok = await verifyLoginCode();
-    if (ok) queueAutoStockInAndPrint();
+    if (ok && staffAllocatedToShop !== false) queueAutoStockInAndPrint();
   });
 
   form.addEventListener("submit", async (event) => {
@@ -4911,6 +5144,10 @@
         blockSubmit("Enter staff ID first — 6-digit verification below.", loginCodeInput);
         return;
       }
+    }
+    if (!(await confirmStaffShopAllocationIfNeeded())) {
+      event.preventDefault();
+      return;
     }
 
     if (printSupplier) {

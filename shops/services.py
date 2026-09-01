@@ -841,6 +841,7 @@ def daraja_settings_as_dict(settings_row: CompanyDarajaSettings | None = None) -
         "has_callback_base": row.has_usable_callback_base(),
         "is_ready_for_stk": row.is_ready_for_stk(),
         "stk_not_ready_reason": row.stk_not_ready_reason(),
+        "stk_blocker_message": row.stk_blocker_message(),
     }
 
 

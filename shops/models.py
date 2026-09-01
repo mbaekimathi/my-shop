@@ -650,15 +650,12 @@ class CompanyDarajaSettings(models.Model):
 
     def has_usable_callback_base(self) -> bool:
         """True when a Safaricom-reachable (public HTTPS) callback base is available."""
-        from django.conf import settings as dj_settings
-
-        from shops.daraja_stk import is_safaricom_callback_base
+        from shops.daraja_stk import is_safaricom_callback_base, resolve_callback_base_url
 
         if is_safaricom_callback_base(self.callback_base_url or ""):
             return True
-        return is_safaricom_callback_base(
-            getattr(dj_settings, "DARAJA_CALLBACK_BASE_URL", "") or ""
-        )
+        resolved = resolve_callback_base_url(request=None, persist=False)
+        return is_safaricom_callback_base(resolved)
 
     def is_ready_for_stk(self) -> bool:
         return bool(
@@ -673,12 +670,41 @@ class CompanyDarajaSettings(models.Model):
         if self.is_ready_for_stk():
             return ""
         if not self.has_credentials() or not self.credentials_valid:
-            return "verify Daraja credentials"
+            return "Open Settings → Daraja and verify credentials"
         if not self.has_usable_callback_base():
-            return "open via public HTTPS / ngrok"
+            return "Set DARAJA_CALLBACK_BASE_URL in .env, use ngrok, or open via public HTTPS"
         if not self.enable_stk_push:
-            return "STK disabled"
+            return "Enable STK Push in Daraja settings"
         return "STK not ready"
+
+    def stk_blocker_message(self) -> str:
+        """Full explanation when STK cannot prompt the customer."""
+        if self.is_ready_for_stk():
+            return ""
+        issues: list[str] = []
+        if not self.has_credentials():
+            issues.append("Daraja credentials are not saved.")
+        elif not self.credentials_valid:
+            issues.append("Daraja credentials are not verified.")
+        if not self.has_usable_callback_base():
+            issues.append(
+                "No public HTTPS callback URL. Set DARAJA_CALLBACK_BASE_URL in .env, "
+                "run ngrok, or open the app via your live domain."
+            )
+        if (
+            self.has_credentials()
+            and self.credentials_valid
+            and self.has_usable_callback_base()
+            and not self.enable_stk_push
+        ):
+            issues.append("STK Push is turned off in Daraja settings.")
+        if not issues:
+            issues.append("STK Push is not configured.")
+        message = " ".join(issues)
+        last = (self.last_error or "").strip()
+        if last:
+            message = f"{message} Last error: {last}"
+        return message
 
 
 class DeveloperPaymentCadence(models.TextChoices):

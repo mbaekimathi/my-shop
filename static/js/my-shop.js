@@ -1500,7 +1500,11 @@
       cartRoot.getAttribute("data-stk-status-url-template") || "";
     const stkReady = cartRoot.getAttribute("data-stk-ready") === "1";
     const stkOffLabel = cartRoot.getAttribute("data-stk-off-label") || "STK unavailable";
-    const stkHintEl = cartRoot.querySelector("[data-cart-stk-hint]");
+    const stkBlockerMessage =
+      cartRoot.getAttribute("data-stk-blocker-message") || stkOffLabel;
+    const stkHintEl = checkoutForm?.querySelector("[data-cart-stk-hint]");
+    const stkErrorEl = checkoutForm?.querySelector("[data-cart-stk-error]");
+    const stkErrorTextEl = checkoutForm?.querySelector("[data-cart-stk-error-text]");
     const cartVerifyUrl = cartRoot.getAttribute("data-verify-login-url") || "";
     const clientLookupUrl = cartRoot.getAttribute("data-client-lookup-url") || "";
     const serialSearchUrl =
@@ -1724,13 +1728,14 @@
       splitSyncing = false;
     };
 
-    const saleNeedsStk = () =>
+    const saleUsesMpesa = () =>
       Boolean(
-        stkReady &&
-          selectedKind() === "sale" &&
+        selectedKind() === "sale" &&
           paymentsEnabled &&
           (selectedPayment() === "mpesa" || selectedPayment() === "both")
       );
+
+    const saleNeedsStk = () => Boolean(saleUsesMpesa() && stkReady);
 
     const mpesaPromptAmount = () => {
       if (selectedPayment() === "both") {
@@ -1743,6 +1748,18 @@
     const setStkStatus = (message = "", { error = false, ok = false } = {}) => {
       if (!message) return;
       setCartStatus(message, { error, ok });
+    };
+
+    const setStkError = (message = "", { show = true } = {}) => {
+      const text = String(message || "").trim();
+      if (!stkErrorEl) return;
+      if (!show || !text) {
+        stkErrorEl.hidden = true;
+        return;
+      }
+      if (stkErrorTextEl) stkErrorTextEl.textContent = text;
+      stkErrorEl.hidden = false;
+      refreshIcons();
     };
 
     const setStkWaiting = (waiting, message = "") => {
@@ -1769,6 +1786,7 @@
       stkSendBtn.textContent = label;
       stkSendBtn.disabled = Boolean(disabled);
       stkSendBtn.classList.toggle("is-retry", Boolean(retry));
+      stkSendBtn.classList.toggle("is-blocked", !stkReady && !retry);
     };
 
     const clearStkConfirmation = ({ keepStatus = false, keepFailed = false } = {}) => {
@@ -1803,14 +1821,14 @@
     };
 
     const syncStkPanel = () => {
-      const needs = saleNeedsStk();
-      if (stkPanel) stkPanel.hidden = !needs;
-      if (stkHintEl) stkHintEl.hidden = stkReady || !needs;
+      const usesMpesa = saleUsesMpesa();
+      if (stkPanel) stkPanel.hidden = !usesMpesa;
 
       const amount = mpesaPromptAmount();
       setStaffCodeLocked(false);
 
-      if (!needs) {
+      if (!usesMpesa) {
+        setStkError("", { show: false });
         clearStkConfirmation();
         return;
       }
@@ -1826,6 +1844,7 @@
       }
 
       if (stkConfirmed) {
+        setStkError("", { show: false });
         setStkWaiting(false);
         setStkReceiptVisible(
           stkConfirmed.mpesa_receipt_number || "Payment confirmed"
@@ -1842,43 +1861,72 @@
 
       setStkReceiptVisible("");
       if (stkSending) {
+        setStkError("", { show: false });
         setStkButtonLabel("Waiting…", { disabled: true });
         setStkWaiting(true, "Waiting for customer to confirm on their phone…");
         return;
       }
 
       setStkWaiting(false);
+      if (!stkReady) {
+        const blocker =
+          stkBlockerMessage ||
+          stkOffLabel ||
+          "STK Push is not ready. Finish with staff ID or fix Daraja settings.";
+        setStkError(blocker);
+        if (stkHintEl) {
+          stkHintEl.hidden = false;
+          stkHintEl.textContent = blocker;
+        }
+        setStkButtonLabel("Send STK prompt (optional)", {
+          disabled: false,
+        });
+        setCartStatus(blocker, { error: true });
+        return;
+      }
+
+      if (!stkFailed) {
+        setStkError("", { show: false });
+        if (stkHintEl) stkHintEl.hidden = true;
+      }
       if (stkFailed) {
         setStkButtonLabel("Try again", {
           retry: true,
-          disabled: !stkReady || amount < 1,
+          disabled: amount < 1,
         });
-      } else {
-        setStkButtonLabel("Send STK prompt (optional)", {
-          disabled: !stkReady || amount < 1,
-        });
+        return;
       }
+      setStkButtonLabel("Send STK prompt (optional)", {
+        disabled: amount < 1,
+      });
       setCartStatus(
         "Optional: send STK prompt, or enter staff ID to finish without it."
       );
     };
 
     const sendStkPrompt = async () => {
-      if (!saleNeedsStk() || stkSending || stkConfirmed) return;
+      if (!saleUsesMpesa() || stkSending || stkConfirmed) return;
+      if (!stkReady) {
+        const blocker = stkBlockerMessage || stkOffLabel || "STK Push is not ready.";
+        setStkError(blocker);
+        setStkStatus(blocker, { error: true });
+        syncStkPanel();
+        return;
+      }
       if (!stkInitiateUrl || !stkStatusTemplate) {
+        const unavailableMsg = "STK Push is unavailable. Refresh and try again.";
         stkFailed = true;
-        setStkStatus("STK Push is unavailable. Refresh and try again.", {
-          error: true,
-        });
+        setStkError(unavailableMsg);
+        setStkStatus(unavailableMsg, { error: true });
         syncStkPanel();
         return;
       }
       const phoneRaw = normalizeClientPhoneField({ force: true });
       const phoneDigits = String(phoneRaw || "").replace(/\D/g, "");
       if (!phoneDigits.startsWith("254") || phoneDigits.length !== 12) {
-        setStkStatus("Enter a valid Kenyan phone number for M-Pesa STK Push.", {
-          error: true,
-        });
+        const phoneMsg = "Enter a valid Kenyan phone number for M-Pesa STK Push.";
+        setStkError(phoneMsg);
+        setStkStatus(phoneMsg, { error: true });
         focusCartClientFields();
         return;
       }
@@ -1887,9 +1935,13 @@
       }
       const amount = mpesaPromptAmount();
       if (amount < 1) {
-        setStkStatus("M-Pesa amount must be at least KSh 1.", { error: true });
+        const amountMsg = "M-Pesa amount must be at least KSh 1.";
+        setStkError(amountMsg);
+        setStkStatus(amountMsg, { error: true });
         return;
       }
+
+      setStkError("", { show: false });
 
       stkFailed = false;
       stkSending = true;
@@ -1990,6 +2042,7 @@
         setStkReceiptVisible("");
         const failMsg = err?.message || "STK Push failed.";
         setStkButtonLabel("Try again", { retry: true, disabled: false });
+        setStkError(failMsg);
         setStkStatus(failMsg, { error: true });
         if (stkHintEl) {
           stkHintEl.hidden = false;
