@@ -64,13 +64,22 @@ def _resolve_stk_config(row: CompanyDarajaSettings, pos) -> dict:
     """Map POS M-Pesa collection settings to Daraja STK fields."""
     collection = (pos.mpesa_collection_type or "").strip().lower()
     shortcode = (row.shortcode or "").strip()
+    till = (pos.mpesa_till_number or "").strip()
+    paybill_business = (pos.mpesa_business_number or "").strip()
+
+    # When receipt M-Pesa type is unset, infer from configured numbers.
+    if not collection:
+        if paybill_business:
+            collection = "paybill"
+        else:
+            collection = "buy_goods"
+
     if collection == "buy_goods":
-        till = (pos.mpesa_till_number or "").strip()
         business_shortcode = shortcode
         party_b = till if till else shortcode
         transaction_type = "CustomerBuyGoodsOnline"
     else:
-        paybill = (pos.mpesa_business_number or "").strip() or shortcode
+        paybill = paybill_business or shortcode
         business_shortcode = paybill
         party_b = paybill
         transaction_type = "CustomerPayBillOnline"
@@ -148,9 +157,47 @@ def _daraja_json_request(
 
 def _daraja_http_error_detail(exc: urllib.error.HTTPError) -> str:
     try:
-        return exc.read().decode("utf-8", errors="ignore")[:220]
+        raw = exc.read().decode("utf-8", errors="ignore")
     except Exception:
         return ""
+    return _safaricom_error_message(raw)
+
+
+def _safaricom_error_message(payload) -> str:
+    """Extract a human-readable message from Safaricom JSON or plain text."""
+    if payload is None:
+        return ""
+    if isinstance(payload, bytes):
+        payload = payload.decode("utf-8", errors="ignore")
+    if isinstance(payload, str):
+        text = payload.strip()
+        if not text:
+            return ""
+        if text.startswith("{") or text.startswith("["):
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                return text[:220]
+        else:
+            return text[:220]
+    if not isinstance(payload, dict):
+        return ""
+    for key in (
+        "errorMessage",
+        "error_message",
+        "ResponseDescription",
+        "CustomerMessage",
+        "ResultDesc",
+        "error",
+    ):
+        value = payload.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()[:220]
+    request_id = (payload.get("requestId") or "").strip()
+    error_code = (payload.get("errorCode") or "").strip()
+    if error_code:
+        return f"{error_code} ({request_id})" if request_id else error_code
+    return ""
 
 
 def _build_stk_security(business_shortcode: str, passkey: str) -> tuple[str, str]:
@@ -487,11 +534,19 @@ def initiate_stk_push(
         sync_callback_base_from_request(request, persist=True)
     row = get_daraja_settings()
     if not row.is_ready_for_stk():
+        reason = row.stk_not_ready_reason()
         if row.enable_stk_push and row.credentials_valid and not row.has_usable_callback_base():
             raise ValidationError(
-                "Open MY-SHOP via your public HTTPS domain or ngrok link so the "
-                "callback URL updates, then try M-Pesa again."
+                "Open MY-SHOP via your public HTTPS domain so the M-Pesa callback "
+                "URL updates, then try again."
             )
+        if reason == "STK disabled":
+            raise ValidationError(
+                "STK Push is disabled. Open Company Daraja settings and turn on "
+                "Enable STK Push."
+            )
+        if reason:
+            raise ValidationError(f"STK Push is not ready: {reason}.")
         raise ValidationError(
             "STK Push is not enabled or Daraja credentials are not verified."
         )
@@ -612,7 +667,11 @@ def initiate_stk_push(
                 "updated_at",
             ]
         )
-        raise ValidationError(payment.result_desc)
+        raise ValidationError(
+            payment.result_desc
+            or _safaricom_error_message(payload)
+            or "Safaricom rejected the STK Push request."
+        )
 
     payment.merchant_request_id = merchant_id
     payment.checkout_request_id = checkout_id

@@ -17,6 +17,7 @@
   data-stk-initiate-url="{{ stk_initiate_url }}"
   data-stk-status-url-template="{{ stk_status_url_template }}"
   data-stk-ready="{% if stk_ready %}1{% else %}0{% endif %}"
+  data-stk-off-label="{{ stk_off_label }}"
   data-verify-login-url="{{ verify_login_code_url }}"
   data-client-lookup-url="{{ client_lookup_url }}"
   data-serial-search-url="{{ serial_search_url }}"
@@ -369,10 +370,13 @@
           type="button"
           class="btn btn--primary shop-cart-stk-send"
           data-cart-stk-send
-          {% if not stk_ready %}disabled{% endif %}
+          {% if not stk_ready %}disabled title="{{ stk_off_label }}"{% endif %}
         >
           Send STK prompt (optional)
         </button>
+        <p class="shop-cart-stk-hint" data-cart-stk-hint{% if stk_ready %} hidden{% endif %}>
+          {{ stk_off_label }}
+        </p>
         <div class="shop-cart-stk-wait" data-cart-stk-wait hidden>
           <span class="shop-cart-stk-spinner" aria-hidden="true">
             <i data-lucide="loader-circle"></i>

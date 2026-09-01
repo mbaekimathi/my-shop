@@ -966,6 +966,7 @@ def update_daraja_settings(
     env_callback = (getattr(dj_settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip()
 
     row = get_daraja_settings()
+    was_credentials_valid = bool(row.credentials_valid)
     key = (consumer_key or "").strip() or (row.consumer_key or "").strip()
     secret = (consumer_secret or "").strip() or (row.consumer_secret or "").strip()
     lipa_passkey = (passkey or "").strip() or (row.passkey or "").strip()
@@ -1039,6 +1040,9 @@ def update_daraja_settings(
                 "then enable STK Push."
             )
         row.enable_stk_push = bool(enable_stk_push)
+        update_fields.append("enable_stk_push")
+    elif enable_stk_push is None and public_callback and not was_credentials_valid:
+        row.enable_stk_push = True
         update_fields.append("enable_stk_push")
     elif row.enable_stk_push and not public_callback:
         # Still allow credentials save on localhost; just keep STK toggle honest.

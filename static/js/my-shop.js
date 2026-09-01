@@ -1499,6 +1499,8 @@
     const stkStatusTemplate =
       cartRoot.getAttribute("data-stk-status-url-template") || "";
     const stkReady = cartRoot.getAttribute("data-stk-ready") === "1";
+    const stkOffLabel = cartRoot.getAttribute("data-stk-off-label") || "STK unavailable";
+    const stkHintEl = cartRoot.querySelector("[data-cart-stk-hint]");
     const cartVerifyUrl = cartRoot.getAttribute("data-verify-login-url") || "";
     const clientLookupUrl = cartRoot.getAttribute("data-client-lookup-url") || "";
     const serialSearchUrl =
@@ -1803,6 +1805,7 @@
     const syncStkPanel = () => {
       const needs = saleNeedsStk();
       if (stkPanel) stkPanel.hidden = !needs;
+      if (stkHintEl) stkHintEl.hidden = stkReady || !needs;
 
       const amount = mpesaPromptAmount();
       setStaffCodeLocked(false);
@@ -1870,9 +1873,10 @@
         syncStkPanel();
         return;
       }
-      const phone = normalizeClientPhoneField({ force: true });
-      if (!phone) {
-        setStkStatus("Enter the client phone number for M-Pesa STK Push.", {
+      const phoneRaw = normalizeClientPhoneField({ force: true });
+      const phoneDigits = String(phoneRaw || "").replace(/\D/g, "");
+      if (!phoneDigits.startsWith("254") || phoneDigits.length !== 12) {
+        setStkStatus("Enter a valid Kenyan phone number for M-Pesa STK Push.", {
           error: true,
         });
         focusCartClientFields();
@@ -1907,7 +1911,7 @@
           credentials: "same-origin",
           body: JSON.stringify({
             amount: String(amount),
-            phone,
+            phone: phoneDigits,
             description: "Sale payment",
           }),
         });
@@ -1961,7 +1965,7 @@
           id: confirmed.id,
           mpesa_receipt_number: confirmed.mpesa_receipt_number || "",
           amount,
-          phone,
+          phone: phoneDigits,
         };
         stkFailed = false;
         stkSending = false;
@@ -1984,8 +1988,13 @@
         stkSending = false;
         setStkWaiting(false);
         setStkReceiptVisible("");
+        const failMsg = err?.message || "STK Push failed.";
         setStkButtonLabel("Try again", { retry: true, disabled: false });
-        setCartStatus(err?.message || "STK Push failed.", { error: true });
+        setStkStatus(failMsg, { error: true });
+        if (stkHintEl) {
+          stkHintEl.hidden = false;
+          stkHintEl.textContent = failMsg;
+        }
         syncStkPanel();
       } finally {
         if (pollToken === stkPollToken) {

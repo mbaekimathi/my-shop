@@ -22817,6 +22817,17 @@ html[data-theme="dark"] .shop-cart-fab-count {
   border: 1px solid rgba(var(--teal-rgb), 0.35);
 }
 
+.shop-cart-stk-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.shop-cart-stk-hint[hidden] {
+  display: none !important;
+}
+
 .shop-cart-stk-wait {
   display: flex;
   align-items: center;

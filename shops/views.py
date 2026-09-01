@@ -78,6 +78,7 @@ from .services import (
     get_company_pos_settings,
     get_company_stock_settings,
     get_company_working_hours_settings,
+    get_daraja_settings,
     get_last_closed_shop_day,
     get_open_shop_day,
     get_shop_receipt_detail,
@@ -1268,6 +1269,7 @@ def my_shop_workspace(request, shop_id):
             "pos_settings": pos_settings,
             "pos_flags": pos_flags,
             "stk_ready": stk_ready(),
+            "stk_off_label": get_daraja_settings().stk_not_ready_reason() or "STK unavailable",
             "cart_kinds": cart_kinds,
             "checkout_enabled": checkout_enabled,
             "show_document_picker": show_document_picker,
@@ -2443,10 +2445,18 @@ def my_shop_stk_initiate(request, shop_id):
         return denied
     sync_callback_base_from_request(request, persist=True)
     if not stk_ready():
-        return JsonResponse(
-            {"ok": False, "error": "STK Push is not enabled in Daraja settings."},
-            status=400,
-        )
+        row = get_daraja_settings()
+        reason = row.stk_not_ready_reason()
+        if reason == "STK disabled":
+            error = (
+                "STK Push is disabled. Open Company Daraja settings and turn on "
+                "Enable STK Push."
+            )
+        elif reason:
+            error = f"STK Push is not ready: {reason}."
+        else:
+            error = "STK Push is not enabled in Daraja settings."
+        return JsonResponse({"ok": False, "error": error}, status=400)
 
     try:
         if request.content_type and "application/json" in request.content_type:

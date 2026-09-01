@@ -39,6 +39,18 @@ class DarajaStkConfigTests(TestCase):
         CompanyDarajaSettings.objects.get_or_create(pk=1)
         CompanyPosSettings.objects.get_or_create(pk=1)
 
+    def test_resolve_buy_goods_when_collection_not_set(self):
+        row = get_daraja_settings()
+        row.shortcode = "4161700"
+        pos = get_company_pos_settings()
+        pos.mpesa_collection_type = ""
+        pos.mpesa_business_number = ""
+        pos.mpesa_till_number = ""
+        config = _resolve_stk_config(row, pos)
+        self.assertEqual(config["transaction_type"], "CustomerBuyGoodsOnline")
+        self.assertEqual(config["business_shortcode"], "4161700")
+        self.assertEqual(config["party_b"], "4161700")
+
     def test_resolve_paybill_uses_business_number(self):
         row = get_daraja_settings()
         row.shortcode = "600000"
