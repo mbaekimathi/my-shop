@@ -619,6 +619,12 @@ class CompanyDarajaSettings(models.Model):
         default="",
         help_text="Public HTTPS base URL for STK callbacks (e.g. https://xxxx.ngrok-free.app).",
     )
+    callback_secret = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Secret token embedded in the Safaricom STK callback URL.",
+    )
     credentials_valid = models.BooleanField(default=False)
     credentials_checked_at = models.DateTimeField(null=True, blank=True)
     last_error = models.CharField(max_length=255, blank=True, default="")
@@ -871,6 +877,12 @@ class MpesaStkPayment(models.Model):
     description = models.CharField(max_length=80, blank=True, default="")
     merchant_request_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
     checkout_request_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    stk_business_shortcode = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text="BusinessShortCode used when this STK was initiated (for status queries).",
+    )
     mpesa_receipt_number = models.CharField(max_length=40, blank=True, default="", db_index=True)
     result_code = models.CharField(max_length=16, blank=True, default="")
     result_desc = models.CharField(max_length=255, blank=True, default="")
@@ -893,6 +905,7 @@ class MpesaStkPayment(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
+    last_status_query_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

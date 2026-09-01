@@ -25,25 +25,35 @@ class AutoHostMiddleware:
     def __call__(self, request):
         from django.conf import settings
 
+        from shops.daraja_stk import detect_request_base_url, is_safaricom_callback_base
+
         host = (request.get_host() or "").strip()
         if host:
-            scheme = "https" if request.is_secure() else "http"
-            # Honor proxy TLS termination.
-            forwarded = (request.META.get("HTTP_X_FORWARDED_PROTO") or "").split(",")[0].strip()
-            if forwarded in {"http", "https"}:
-                scheme = forwarded
-            origin = f"{scheme}://{host}".rstrip("/")
+            origin = detect_request_base_url(request) or ""
+            if not origin:
+                scheme = "https" if request.is_secure() else "http"
+                forwarded = (request.META.get("HTTP_X_FORWARDED_PROTO") or "").split(",")[0].strip()
+                if forwarded in {"http", "https"}:
+                    scheme = forwarded
+                origin = f"{scheme}://{host}".rstrip("/")
+
             trusted = list(getattr(settings, "CSRF_TRUSTED_ORIGINS", []) or [])
-            if origin not in trusted:
+            if origin and origin not in trusted:
                 trusted.append(origin)
                 settings.CSRF_TRUSTED_ORIGINS = trusted
 
-            # Persist public HTTPS origin for Daraja when not manually set.
-            if scheme == "https" and not (getattr(settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip():
-                hostname = host.split(":")[0].lower()
-                if hostname not in {"localhost", "127.0.0.1", "::1"} and not hostname.endswith(
-                    ".local"
-                ):
+            # Always track the current public HTTPS domain for Daraja callbacks.
+            if origin and is_safaricom_callback_base(origin):
+                current = (
+                    getattr(settings, "DARAJA_CALLBACK_BASE_URL", "") or ""
+                ).strip().rstrip("/")
+                if current != origin.rstrip("/"):
                     settings.DARAJA_CALLBACK_BASE_URL = origin
+                    try:
+                        from shops.daraja_stk import persist_public_callback_base
+
+                        persist_public_callback_base(origin)
+                    except Exception:
+                        pass
 
         return self.get_response(request)

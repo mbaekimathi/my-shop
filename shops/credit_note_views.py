@@ -14,6 +14,7 @@ from shops.credit_note import (
 from shops.daraja_stk import (
     get_stk_payment,
     initiate_stk_push,
+    refresh_stk_payment_if_pending,
     stk_payment_payload,
     stk_ready,
     sync_callback_base_from_request,
@@ -115,6 +116,7 @@ def credit_note_stk_status(request, token, payment_id):
     payment = get_stk_payment(payment_id)
     if not _stk_belongs_to_client(payment, client.pk):
         return JsonResponse({"ok": False, "error": "Payment not found."}, status=404)
+    payment = refresh_stk_payment_if_pending(payment)
     return JsonResponse({"ok": True, **stk_payment_payload(payment)})
 
 

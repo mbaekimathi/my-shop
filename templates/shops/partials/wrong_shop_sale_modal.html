@@ -1,0 +1,42 @@
+<div
+  class="workspace-modal shop-wrong-shop-modal"
+  data-wrong-shop-modal
+  hidden
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="wrong-shop-modal-title"
+>
+  <div class="workspace-modal-backdrop" data-wrong-shop-cancel></div>
+  <div class="workspace-modal-dialog shop-wrong-shop-dialog">
+    <div class="workspace-modal-head">
+      <div>
+        <p class="shop-wrong-shop-kicker">Allocation warning</p>
+        <h2 id="wrong-shop-modal-title">Selling at the wrong shop</h2>
+      </div>
+      <button
+        type="button"
+        class="btn btn--ghost btn--sm"
+        data-wrong-shop-cancel
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="shop-wrong-shop-body">
+      <p class="shop-wrong-shop-lead" data-wrong-shop-message>
+        This staff member is not allocated to <strong>{{ shop.name }}</strong>.
+      </p>
+      <p class="shop-wrong-shop-detail" data-wrong-shop-detail hidden></p>
+    </div>
+
+    <div class="workspace-modal-actions">
+      <button type="button" class="btn btn--ghost" data-wrong-shop-cancel>
+        Cancel sale
+      </button>
+      <button type="button" class="btn btn--primary" data-wrong-shop-confirm>
+        Confirm sale
+      </button>
+    </div>
+  </div>
+</div>

@@ -28,6 +28,9 @@ export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
       cached: true,
       employee_id: employeeId,
       name,
+      allocated_to_shop: cached.allocated_to_shop,
+      allocated_shop_names: cached.allocated_shop_names || [],
+      shop_name: cached.shop_name || "",
       message: `Offline (saved): ${name} (${employeeId}).`,
     };
   };
@@ -86,6 +89,9 @@ export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
         ok: true,
         employee_id: employeeId,
         name,
+        allocated_to_shop: data.allocated_to_shop,
+        allocated_shop_names: data.allocated_shop_names || [],
+        shop_name: data.shop_name || "",
       });
     } catch (_cacheErr) {
       /* cache optional */
@@ -96,6 +102,9 @@ export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
       cached: false,
       employee_id: employeeId,
       name,
+      allocated_to_shop: data.allocated_to_shop,
+      allocated_shop_names: data.allocated_shop_names || [],
+      shop_name: data.shop_name || "",
     };
   } catch (_err) {
     return offlineFallback();

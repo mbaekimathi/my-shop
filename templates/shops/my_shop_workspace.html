@@ -9,6 +9,7 @@
   data-item-total="{{ item_count }}"
   data-shop-cart
   data-shop-id="{{ shop.id }}"
+  data-shop-name="{{ shop.name }}"
   data-shop-view="cards"
   data-catalog-api="{{ catalog_url }}"
   data-catalog-page-size="120"
@@ -430,6 +431,8 @@
 </p>
 {% endif %}
 
+{% include "shops/partials/wrong_shop_sale_modal.html" %}
+
 <div
   class="shop-product-modal"
   data-product-modal
@@ -623,7 +626,7 @@
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=66"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=67"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=35"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=matrix49"></script>

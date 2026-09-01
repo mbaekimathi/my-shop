@@ -27,7 +27,7 @@
         </h2>
         <p class="shop-select-lead">
           {% if multi_shop %}
-          Choose an authorised shop, then enter its password to open the floor.
+          Choose a shop, then enter its password to open the floor.
           {% else %}
           Enter the shop password to open this workspace.
           {% endif %}
@@ -75,7 +75,7 @@
 
       {% if multi_shop %}
       <fieldset class="shop-select-fieldset">
-        <legend class="field-label">Authorised shops</legend>
+        <legend class="field-label">Shops</legend>
         <div class="shop-select-grid" data-shop-picker>
           {% for row in shop_login_rows %}
           {% with shop=row.shop shop_hours_status=row.hours_status %}

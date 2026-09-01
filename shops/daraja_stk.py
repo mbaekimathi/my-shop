@@ -29,10 +29,24 @@ from .services import (
     verify_daraja_oauth,
 )
 
-STK_URLS = {
-    DarajaEnvironment.SANDBOX: "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
-    DarajaEnvironment.PRODUCTION: "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+STK_PUSH_URLS = {
+    DarajaEnvironment.SANDBOX: (
+        "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
+    ),
+    DarajaEnvironment.PRODUCTION: (
+        "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
+    ),
 }
+STK_QUERY_URLS = {
+    DarajaEnvironment.SANDBOX: (
+        "https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query"
+    ),
+    DarajaEnvironment.PRODUCTION: (
+        "https://api.safaricom.co.ke/mpesa/stkpushquery/v1/query"
+    ),
+}
+DARAJA_TOKEN_CACHE_PREFIX = "daraja_oauth_token:v1"
+STK_QUERY_MIN_INTERVAL_SECONDS = 12
 
 
 def _stk_password(shortcode: str, passkey: str, timestamp: str) -> str:
@@ -40,6 +54,109 @@ def _stk_password(shortcode: str, passkey: str, timestamp: str) -> str:
 
     raw = f"{shortcode}{passkey}{timestamp}".encode("utf-8")
     return base64.b64encode(raw).decode("ascii")
+
+
+def _stk_timestamp() -> str:
+    return datetime.now().strftime("%Y%m%d%H%M%S")
+
+
+def _resolve_stk_config(row: CompanyDarajaSettings, pos) -> dict:
+    """Map POS M-Pesa collection settings to Daraja STK fields."""
+    collection = (pos.mpesa_collection_type or "").strip().lower()
+    shortcode = (row.shortcode or "").strip()
+    if collection == "buy_goods":
+        till = (pos.mpesa_till_number or "").strip()
+        business_shortcode = shortcode
+        party_b = till if till else shortcode
+        transaction_type = "CustomerBuyGoodsOnline"
+    else:
+        paybill = (pos.mpesa_business_number or "").strip() or shortcode
+        business_shortcode = paybill
+        party_b = paybill
+        transaction_type = "CustomerPayBillOnline"
+    if not business_shortcode:
+        raise ValidationError("Daraja shortcode is required for STK Push.")
+    if not party_b:
+        raise ValidationError(
+            "Configure M-Pesa paybill or till number in receipt settings before STK Push."
+        )
+    return {
+        "transaction_type": transaction_type,
+        "business_shortcode": business_shortcode,
+        "party_b": party_b,
+    }
+
+
+def _daraja_token_cache_key(row: CompanyDarajaSettings) -> str:
+    env = row.environment or DarajaEnvironment.SANDBOX
+    key_hint = (row.consumer_key or "")[:24]
+    return f"{DARAJA_TOKEN_CACHE_PREFIX}:{env}:{key_hint}"
+
+
+def get_daraja_access_token(row: CompanyDarajaSettings | None = None) -> str:
+    """OAuth access token with short-lived cache to avoid hammering Safaricom."""
+    from django.core.cache import cache
+
+    settings_row = row or get_daraja_settings()
+    cache_key = _daraja_token_cache_key(settings_row)
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    token_data = verify_daraja_oauth(
+        consumer_key=settings_row.consumer_key,
+        consumer_secret=settings_row.consumer_secret,
+        environment=settings_row.environment,
+    )
+    access_token = token_data["access_token"]
+    expires_in = token_data.get("expires_in")
+    try:
+        ttl = int(expires_in) - 60
+    except (TypeError, ValueError):
+        ttl = 3500
+    cache.set(cache_key, access_token, max(ttl, 60))
+    return access_token
+
+
+def invalidate_daraja_access_token_cache() -> None:
+    from django.core.cache import cache
+
+    row = get_daraja_settings()
+    cache.delete(_daraja_token_cache_key(row))
+
+
+def _daraja_json_request(
+    url: str,
+    *,
+    access_token: str,
+    body: dict,
+    timeout: float = 20,
+) -> dict:
+    request_obj = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request_obj, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def _daraja_http_error_detail(exc: urllib.error.HTTPError) -> str:
+    try:
+        return exc.read().decode("utf-8", errors="ignore")[:220]
+    except Exception:
+        return ""
+
+
+def _build_stk_security(business_shortcode: str, passkey: str) -> tuple[str, str]:
+    timestamp = _stk_timestamp()
+    password = _stk_password(business_shortcode, passkey, timestamp)
+    return timestamp, password
 
 
 def _is_local_or_private_host(host: str) -> bool:
@@ -132,6 +249,8 @@ def detect_ngrok_public_base_url() -> str:
     Read the local ngrok agent API for an active HTTPS tunnel.
     Lets STK work even when the admin is still browsing localhost.
     """
+    if getattr(settings, "IS_HOSTED", False):
+        return ""
     api = (
         getattr(settings, "DARAJA_NGROK_API_URL", "") or "http://127.0.0.1:4040/api/tunnels"
     ).strip()
@@ -156,94 +275,158 @@ def detect_ngrok_public_base_url() -> str:
         return ""
 
 
-def sync_callback_base_from_request(request, *, persist: bool = True) -> str:
-    """
-    Auto-pick the best callback base URL:
-    - public HTTPS from the browser (hosted / ngrok tab)
-    - else active ngrok tunnel from local agent API
-    - else env override
-    - else current request (including localhost) so local still updates
-    """
+def ensure_callback_secret(row: CompanyDarajaSettings | None = None) -> str:
+    """Return the Daraja callback URL secret, generating one when missing."""
+    import secrets
+
     from shops.services import _invalidate_daraja_settings_cache
 
-    env_base = (getattr(settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip()
-    detected = detect_request_base_url(request) if request is not None else ""
-    ngrok_base = ""
+    settings_row = row or get_daraja_settings()
+    secret = (settings_row.callback_secret or "").strip()
+    if secret:
+        return secret
+    secret = secrets.token_urlsafe(32)
+    settings_row.callback_secret = secret
+    settings_row.save(update_fields=["callback_secret", "updated_at"])
+    _invalidate_daraja_settings_cache()
+    return secret
 
-    candidates = []
-    if detected and is_safaricom_callback_base(detected):
-        candidates.append(detected)
-    else:
-        ngrok_base = detect_ngrok_public_base_url()
-        if ngrok_base:
-            candidates.append(ngrok_base)
-        if env_base and is_safaricom_callback_base(env_base):
-            candidates.append(env_base)
-        if detected:
-            candidates.append(detected)
-        elif env_base:
-            candidates.append(env_base)
 
-    chosen = ""
-    for candidate in candidates:
-        try:
-            chosen = normalize_callback_base_url(candidate, allow_local=True)
-        except ValidationError:
-            continue
-        if chosen:
-            break
+def callback_secret_matches(value: str) -> bool:
+    expected = ensure_callback_secret()
+    provided = (value or "").strip()
+    if not expected or not provided:
+        return False
+    import hmac
 
-    if not chosen:
-        row = get_daraja_settings()
-        return (row.callback_base_url or "").strip()
+    return hmac.compare_digest(expected, provided)
 
-    if not persist:
-        return chosen
 
+def detect_settings_callback_base() -> str:
+    """Public HTTPS base learned by AutoHostMiddleware or set in .env."""
+    base = (getattr(settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip().rstrip("/")
+    if is_safaricom_callback_base(base):
+        return base
+    return ""
+
+
+def persist_public_callback_base(base: str) -> str:
+    """Save a public HTTPS callback base when it changes (no-op if same)."""
+    from shops.services import _invalidate_daraja_settings_cache
+
+    raw = (base or "").strip().rstrip("/")
+    if not raw or not is_safaricom_callback_base(raw):
+        return ""
+    try:
+        normalized = normalize_callback_base_url(raw, allow_local=False)
+    except ValidationError:
+        return ""
     row = get_daraja_settings()
     current = (row.callback_base_url or "").strip().rstrip("/")
-    # Prefer upgrading localhost → public ngrok when the tunnel appears.
-    if current != chosen:
-        row.callback_base_url = chosen
+    if current != normalized:
+        row.callback_base_url = normalized
         row.save(update_fields=["callback_base_url", "updated_at"])
         _invalidate_daraja_settings_cache()
+    return normalized
+
+
+def _callback_base_candidates(*, request=None) -> list[str]:
+    """Ordered callback bases: live domain first, then learned env, DB, ngrok."""
+    env_base = (getattr(settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip()
+    row = get_daraja_settings()
+    saved = (row.callback_base_url or "").strip()
+
+    candidates: list[str] = []
+    if request is not None:
+        detected = detect_request_base_url(request)
+        if detected:
+            candidates.append(detected)
+    settings_base = detect_settings_callback_base()
+    if settings_base:
+        candidates.append(settings_base)
+    if saved:
+        candidates.append(saved)
+    ngrok_base = detect_ngrok_public_base_url()
+    if ngrok_base:
+        candidates.append(ngrok_base)
+    if env_base and env_base not in candidates:
+        candidates.append(env_base)
+    return candidates
+
+
+def sync_callback_base_from_request(request, *, persist: bool = True) -> str:
+    """
+    Auto-pick callback base from the domain in the address bar (or proxy headers).
+    Public HTTPS wins; localhost/ngrok fallbacks only when needed.
+    """
+    public_chosen = ""
+    local_chosen = ""
+    for candidate in _callback_base_candidates(request=request):
+        try:
+            if is_safaricom_callback_base(candidate):
+                public_chosen = normalize_callback_base_url(candidate, allow_local=False)
+                break
+            normalized = normalize_callback_base_url(candidate, allow_local=True)
+            if normalized and not local_chosen:
+                local_chosen = normalized
+        except ValidationError:
+            continue
+
+    chosen = public_chosen or local_chosen
+    if not chosen:
+        return (get_daraja_settings().callback_base_url or "").strip()
+
+    if public_chosen and persist:
+        persist_public_callback_base(public_chosen)
+    elif persist and chosen and is_safaricom_callback_base(chosen):
+        persist_public_callback_base(chosen)
+
     return chosen
 
 
-def resolve_callback_base_url(*, request=None) -> str:
-    """Best available callback base: request/ngrok → saved → env."""
+def resolve_callback_base_url(*, request=None, persist: bool = False) -> str:
+    """Best callback base: current domain → middleware/.env → saved → ngrok."""
     if request is not None:
-        synced = sync_callback_base_from_request(request, persist=True)
+        synced = sync_callback_base_from_request(request, persist=persist)
+        if synced and is_safaricom_callback_base(synced):
+            return normalize_callback_base_url(synced, allow_local=False)
         if synced:
             return synced
-    row = get_daraja_settings()
-    base = (row.callback_base_url or "").strip().rstrip("/")
-    if is_safaricom_callback_base(base):
-        return base
+
+    for candidate in _callback_base_candidates(request=None):
+        if is_safaricom_callback_base(candidate):
+            try:
+                return normalize_callback_base_url(candidate, allow_local=False)
+            except ValidationError:
+                continue
+
     ngrok_base = detect_ngrok_public_base_url()
     if ngrok_base:
         return ngrok_base
-    if base:
-        return base
+
+    saved = (get_daraja_settings().callback_base_url or "").strip().rstrip("/")
+    if saved:
+        return saved
     return (getattr(settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip().rstrip("/")
 
 
 def _callback_url(*, request=None) -> str:
-    """Build a Safaricom-accepted HTTPS callback URL (never localhost)."""
-    base = resolve_callback_base_url(request=request)
+    """Build Safaricom callback URL from the live domain (never stale localhost)."""
+    base = resolve_callback_base_url(request=request, persist=bool(request))
     if not base:
         raise ValidationError(
             "No site URL detected for M-Pesa callbacks. Open the app via your "
-            "public HTTPS domain or ngrok link, then try again."
+            "public HTTPS domain, then try again."
         )
     if not is_safaricom_callback_base(base):
         raise ValidationError(
             "Safaricom cannot reach this site URL "
-            f"({base}). Open MY-SHOP through your hosted HTTPS domain or an "
-            "ngrok HTTPS URL so the callback address updates automatically."
+            f"({base}). Use your hosted HTTPS domain so the callback updates "
+            "automatically from the address bar."
         )
     public = normalize_callback_base_url(base, allow_local=False)
-    return f"{public}/mpesa/daraja/callback/"
+    secret = ensure_callback_secret()
+    return f"{public}/mpesa/daraja/callback/{secret}/"
 
 
 def validate_callback_base_url(value: str) -> str:
@@ -329,33 +512,27 @@ def initiate_stk_push(
     env = row.environment or DarajaEnvironment.SANDBOX
     callback = _callback_url(request=request)
 
-    token_data = verify_daraja_oauth(
-        consumer_key=row.consumer_key,
-        consumer_secret=row.consumer_secret,
-        environment=env,
-    )
-    access_token = token_data["access_token"]
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    password = _stk_password(shortcode, passkey, timestamp)
-
+    access_token = get_daraja_access_token(row)
     pos = get_company_pos_settings()
-    collection = (pos.mpesa_collection_type or "").strip().lower()
-    if collection == "buy_goods":
-        transaction_type = "CustomerBuyGoodsOnline"
-    else:
-        transaction_type = "CustomerPayBillOnline"
+    stk_config = _resolve_stk_config(row, pos)
+    business_shortcode = stk_config["business_shortcode"]
+    timestamp, password = _build_stk_security(business_shortcode, passkey)
 
     reference = (account_reference or "MYSHOP").strip()[:12] or "MYSHOP"
+    if stk_config["transaction_type"] == "CustomerPayBillOnline":
+        paybill_account = (pos.mpesa_account_number or "").strip()
+        if paybill_account and reference == "MYSHOP":
+            reference = paybill_account[:12]
     desc = (description or "Payment").strip()[:40] or "Payment"
 
     body = {
-        "BusinessShortCode": shortcode,
+        "BusinessShortCode": business_shortcode,
         "Password": password,
         "Timestamp": timestamp,
-        "TransactionType": transaction_type,
+        "TransactionType": stk_config["transaction_type"],
         "Amount": amount_int,
         "PartyA": party,
-        "PartyB": shortcode,
+        "PartyB": stk_config["party_b"],
         "PhoneNumber": party,
         "CallBackURL": callback,
         "AccountReference": reference,
@@ -374,10 +551,11 @@ def initiate_stk_push(
         receipt=receipt,
         created_by=profile,
         status=MpesaStkStatus.PENDING,
+        stk_business_shortcode=business_shortcode,
     )
 
     request_obj = urllib.request.Request(
-        STK_URLS[env],
+        STK_PUSH_URLS[env],
         data=json.dumps(body).encode("utf-8"),
         method="POST",
         headers={
@@ -390,11 +568,7 @@ def initiate_stk_push(
         with urllib.request.urlopen(request_obj, timeout=20) as response:
             payload = json.loads(response.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            detail = exc.read().decode("utf-8", errors="ignore")[:220]
-        except Exception:
-            detail = ""
+        detail = _daraja_http_error_detail(exc)
         payment.status = MpesaStkStatus.FAILED
         payment.result_desc = detail or "STK Push request failed."
         payment.completed_at = timezone.now()
@@ -464,6 +638,188 @@ def get_stk_payment(public_id) -> MpesaStkPayment | None:
 
 
 @transaction.atomic
+def _apply_stk_outcome(
+    payment: MpesaStkPayment,
+    *,
+    result_code: str,
+    result_desc: str = "",
+    receipt_number: str = "",
+    merchant_id: str = "",
+    checkout_id: str = "",
+) -> MpesaStkPayment:
+    """Update one STK payment from callback or STK Push Query."""
+    if payment.status == MpesaStkStatus.SUCCESS and payment.mpesa_receipt_number:
+        return payment
+
+    payment.result_code = result_code
+    if result_desc:
+        payment.result_desc = result_desc
+    if merchant_id and not payment.merchant_request_id:
+        payment.merchant_request_id = merchant_id
+    if checkout_id and not payment.checkout_request_id:
+        payment.checkout_request_id = checkout_id
+
+    if result_code in ("0", "00"):
+        payment.status = MpesaStkStatus.SUCCESS
+        if receipt_number:
+            payment.mpesa_receipt_number = receipt_number
+        payment.completed_at = timezone.now()
+        if payment.purpose == MpesaStkPurpose.DEVELOPER and not payment.applied:
+            from shops.services import mark_developer_subscription_paid
+
+            mark_developer_subscription_paid(
+                mpesa_receipt=payment.mpesa_receipt_number or receipt_number,
+                paid_at=payment.completed_at,
+            )
+            payment.applied = True
+    elif result_code in ("1032",):
+        payment.status = MpesaStkStatus.CANCELLED
+        payment.completed_at = timezone.now()
+    elif result_code in ("1037",):
+        payment.status = MpesaStkStatus.EXPIRED
+        payment.completed_at = timezone.now()
+    elif result_code:
+        payment.status = MpesaStkStatus.FAILED
+        payment.completed_at = timezone.now()
+
+    payment.save(
+        update_fields=[
+            "status",
+            "result_code",
+            "result_desc",
+            "mpesa_receipt_number",
+            "merchant_request_id",
+            "checkout_request_id",
+            "completed_at",
+            "applied",
+            "updated_at",
+        ]
+    )
+    return payment
+
+
+def _stk_query_allowed(payment: MpesaStkPayment) -> bool:
+    if payment.last_status_query_at is None:
+        return True
+    elapsed = (timezone.now() - payment.last_status_query_at).total_seconds()
+    return elapsed >= STK_QUERY_MIN_INTERVAL_SECONDS
+
+
+def query_stk_push_status(payment: MpesaStkPayment) -> MpesaStkPayment:
+    """Ask Safaricom for the latest STK result when the callback may be delayed."""
+    checkout_id = (payment.checkout_request_id or "").strip()
+    if not checkout_id:
+        raise ValidationError("STK payment has no checkout request id.")
+
+    row = get_daraja_settings()
+    if not row.has_credentials():
+        raise ValidationError("Daraja credentials are incomplete.")
+
+    business_shortcode = (payment.stk_business_shortcode or "").strip()
+    if not business_shortcode:
+        pos = get_company_pos_settings()
+        stk_config = _resolve_stk_config(row, pos)
+        business_shortcode = stk_config["business_shortcode"]
+
+    passkey = (row.passkey or "").strip()
+    env = row.environment or DarajaEnvironment.SANDBOX
+    access_token = get_daraja_access_token(row)
+    timestamp, password = _build_stk_security(business_shortcode, passkey)
+
+    body = {
+        "BusinessShortCode": business_shortcode,
+        "Password": password,
+        "Timestamp": timestamp,
+        "CheckoutRequestID": checkout_id,
+    }
+
+    payment.last_status_query_at = timezone.now()
+    payment.save(update_fields=["last_status_query_at", "updated_at"])
+
+    try:
+        payload = _daraja_json_request(
+            STK_QUERY_URLS[env],
+            access_token=access_token,
+            body=body,
+            timeout=15,
+        )
+    except urllib.error.HTTPError as exc:
+        detail = _daraja_http_error_detail(exc)
+        raise ValidationError(
+            detail or "Safaricom rejected the STK status query."
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise ValidationError(
+            "Could not reach Safaricom Daraja to check STK status."
+        ) from exc
+
+    response_code = str(payload.get("ResponseCode") or "").strip()
+    if response_code not in ("0", "00"):
+        response_desc = (
+            payload.get("ResponseDescription")
+            or payload.get("errorMessage")
+            or "STK status query was not accepted."
+        )
+        raise ValidationError(str(response_desc).strip())
+
+    result_code = str(payload.get("ResultCode") if payload.get("ResultCode") is not None else "").strip()
+    result_desc = (payload.get("ResultDesc") or "").strip()
+    merchant_id = (payload.get("MerchantRequestID") or payment.merchant_request_id or "").strip()
+    checkout_from_api = (payload.get("CheckoutRequestID") or checkout_id).strip()
+
+    # ResultCode empty means still processing on Safaricom's side.
+    if not result_code:
+        if result_desc:
+            payment.result_desc = result_desc
+            payment.save(update_fields=["result_desc", "updated_at"])
+        return payment
+
+    with transaction.atomic():
+        locked = (
+            MpesaStkPayment.objects.select_for_update()
+            .filter(pk=payment.pk)
+            .first()
+        )
+        if locked is None:
+            return payment
+        return _apply_stk_outcome(
+            locked,
+            result_code=result_code,
+            result_desc=result_desc,
+            merchant_id=merchant_id,
+            checkout_id=checkout_from_api,
+        )
+
+
+def refresh_stk_payment_if_pending(
+    payment: MpesaStkPayment | None,
+    *,
+    min_age_seconds: float = 3,
+    force_safaricom: bool = False,
+) -> MpesaStkPayment | None:
+    """Poll Safaricom when a payment is still pending (callback fallback)."""
+    if payment is None:
+        return None
+    if payment.status != MpesaStkStatus.PENDING:
+        return payment
+    if not (payment.checkout_request_id or "").strip():
+        return payment
+    age = (timezone.now() - payment.created_at).total_seconds()
+    if age < min_age_seconds:
+        return payment
+    if not force_safaricom and not _stk_query_allowed(payment):
+        return payment
+    try:
+        payment = query_stk_push_status(payment)
+    except ValidationError:
+        return payment
+    except Exception:
+        return payment
+    payment.refresh_from_db()
+    return payment
+
+
+@transaction.atomic
 def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
     """Process Safaricom STK callback body and update the matching payment."""
     body = (payload or {}).get("Body") or payload or {}
@@ -489,9 +845,6 @@ def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
     if payment is None:
         return None
 
-    if payment.status == MpesaStkStatus.SUCCESS and payment.mpesa_receipt_number:
-        return payment
-
     receipt_number = ""
     metadata = callback.get("CallbackMetadata") or {}
     items = metadata.get("Item") or metadata.get("item") or []
@@ -502,49 +855,14 @@ def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
             if name == "MpesaReceiptNumber" and value is not None:
                 receipt_number = str(value).strip()
 
-    payment.result_code = result_code
-    payment.result_desc = result_desc or payment.result_desc
-    if merchant_id and not payment.merchant_request_id:
-        payment.merchant_request_id = merchant_id
-    if checkout_id and not payment.checkout_request_id:
-        payment.checkout_request_id = checkout_id
-
-    if result_code in ("0", "00"):
-        payment.status = MpesaStkStatus.SUCCESS
-        payment.mpesa_receipt_number = receipt_number
-        payment.completed_at = timezone.now()
-        if payment.purpose == MpesaStkPurpose.DEVELOPER and not payment.applied:
-            from shops.services import mark_developer_subscription_paid
-
-            mark_developer_subscription_paid(
-                mpesa_receipt=receipt_number,
-                paid_at=payment.completed_at,
-            )
-            payment.applied = True
-    elif result_code in ("1032",):
-        payment.status = MpesaStkStatus.CANCELLED
-        payment.completed_at = timezone.now()
-    elif result_code in ("1037",):
-        payment.status = MpesaStkStatus.EXPIRED
-        payment.completed_at = timezone.now()
-    else:
-        payment.status = MpesaStkStatus.FAILED
-        payment.completed_at = timezone.now()
-
-    payment.save(
-        update_fields=[
-            "status",
-            "result_code",
-            "result_desc",
-            "mpesa_receipt_number",
-            "merchant_request_id",
-            "checkout_request_id",
-            "completed_at",
-            "applied",
-            "updated_at",
-        ]
+    return _apply_stk_outcome(
+        payment,
+        result_code=result_code,
+        result_desc=result_desc or payment.result_desc,
+        receipt_number=receipt_number,
+        merchant_id=merchant_id,
+        checkout_id=checkout_id,
     )
-    return payment
 
 
 def require_successful_stk(
@@ -563,6 +881,8 @@ def require_successful_stk(
         raise ValidationError(
             payment.result_desc or "M-Pesa payment is not confirmed yet."
         )
+    if payment.applied:
+        raise ValidationError("This M-Pesa payment was already applied.")
     if Decimal(payment.amount).quantize(Decimal("0.01")) != Decimal(
         expected_amount
     ).quantize(Decimal("0.01")):

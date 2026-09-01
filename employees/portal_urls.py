@@ -127,9 +127,14 @@ urlpatterns = [
         name="my_shop_stk_status",
     ),
     path(
-        "mpesa/daraja/callback/",
+        "mpesa/daraja/callback/<str:callback_secret>/",
         shop_views.daraja_stk_callback,
         name="daraja_stk_callback",
+    ),
+    path(
+        "mpesa/daraja/callback/",
+        shop_views.daraja_stk_callback_legacy,
+        name="daraja_stk_callback_legacy",
     ),
     path(
         "twilio/status/",

@@ -129,9 +129,8 @@ def _sync_complete_shop_checkout(
     from django.core.cache import cache
     from django.core.exceptions import ValidationError
 
-    from shops.models import Shop
     from shops.services import complete_shop_checkout
-    from shops.session import get_shop_for_profile
+    from shops.session import resolve_shop_for_floor
 
     client_id = (payload.get("client_id") or "").strip()
     if not client_id:
@@ -169,17 +168,11 @@ def _sync_complete_shop_checkout(
                 "Your role cannot complete shop checkout.", "forbidden"
             )
 
-        shop = get_shop_for_profile(employee, shop_id)
+        shop = resolve_shop_for_floor(employee, shop_id)
         if shop is None:
-            shop = Shop.objects.filter(pk=shop_id, is_hidden=False).first()
-            if shop is None or employee.role not in (
-                EmployeeRole.SUPER_ADMIN,
-                EmployeeRole.COMPANY_MANAGER,
-                EmployeeRole.IT_SUPPORT,
-            ):
-                raise SyncOperationError(
-                    "You are not authorised for that shop.", "forbidden"
-                )
+            raise SyncOperationError(
+                "You are not authorised for that shop.", "forbidden"
+            )
 
     checkout_payload = dict(payload.get("checkout") or payload)
     checkout_payload.pop("shop_id", None)

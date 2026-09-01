@@ -1469,6 +1469,10 @@
     const cartStatus = checkoutForm?.querySelector("[data-cart-status]");
     const cartSubmit = checkoutForm?.querySelector("[data-cart-submit]");
     const cartLoginCode = checkoutForm?.querySelector("[data-cart-login-code]");
+    const wrongShopModal = document.querySelector("[data-wrong-shop-modal]");
+    const wrongShopMessage = wrongShopModal?.querySelector("[data-wrong-shop-message]");
+    const wrongShopDetail = wrongShopModal?.querySelector("[data-wrong-shop-detail]");
+    const shopName = cartRoot.getAttribute("data-shop-name") || "this shop";
     const staffWrap = checkoutForm?.querySelector("[data-cart-staff-wrap]");
     const staffLockHint = checkoutForm?.querySelector("[data-cart-staff-lock]");
     const stkPanel = checkoutForm?.querySelector("[data-cart-stk-panel]");
@@ -1522,6 +1526,9 @@
       return "Enter the seller’s personal 6-digit employee ID (not the shop code) to complete the receipt.";
     })();
     let cartCodeVerified = false;
+    let cartStaffAllocatedToShop = null;
+    let cartStaffName = "";
+    let cartStaffAllocatedShopNames = [];
     let cartVerifyTimer = null;
     let cartVerifySeq = 0;
     let checkoutInFlight = false;
@@ -1556,7 +1563,7 @@
     let stkSending = false;
     let stkFailed = false;
 
-    [fab, overlay, drawer, productModal, serialSaleModal].forEach((el) => {
+    [fab, overlay, drawer, productModal, serialSaleModal, wrongShopModal].forEach((el) => {
       if (el && el.parentElement !== document.body) {
         document.body.appendChild(el);
       }
@@ -1596,6 +1603,11 @@
 
     const setCartVerified = (verified, message = "") => {
       cartCodeVerified = Boolean(verified);
+      if (!verified) {
+        cartStaffAllocatedToShop = null;
+        cartStaffName = "";
+        cartStaffAllocatedShopNames = [];
+      }
       syncCheckoutMode();
       setCartStatus(
         message ||
@@ -2360,6 +2372,11 @@
           setCartVerified(false, data.error || "Not a valid active staff ID.");
           return false;
         }
+        cartStaffAllocatedToShop = data.allocated_to_shop !== false;
+        cartStaffName = data.name || "";
+        cartStaffAllocatedShopNames = Array.isArray(data.allocated_shop_names)
+          ? data.allocated_shop_names.filter(Boolean)
+          : [];
         setCartVerified(
           true,
           data.message ||
@@ -2375,6 +2392,64 @@
         return false;
       }
     };
+
+    const confirmWrongShopSale = () =>
+      new Promise((resolve) => {
+        if (!wrongShopModal) {
+          resolve(true);
+          return;
+        }
+
+        const staffLabel = cartStaffName || "This staff member";
+        if (wrongShopMessage) {
+          wrongShopMessage.innerHTML = `${staffLabel} is not allocated to <strong>${shopName}</strong>.`;
+        }
+        if (wrongShopDetail) {
+          if (cartStaffAllocatedShopNames.length) {
+            wrongShopDetail.hidden = false;
+            wrongShopDetail.textContent = `Allocated shop${
+              cartStaffAllocatedShopNames.length === 1 ? "" : "s"
+            }: ${cartStaffAllocatedShopNames.join(", ")}.`;
+          } else {
+            wrongShopDetail.hidden = true;
+            wrongShopDetail.textContent = "";
+          }
+        }
+
+        const finish = (confirmed) => {
+          wrongShopModal.hidden = true;
+          syncModalOpen();
+          wrongShopModal.removeEventListener("click", onClick);
+          window.removeEventListener("keydown", onKeydown);
+          resolve(confirmed);
+        };
+
+        const onClick = (event) => {
+          if (event.target.closest("[data-wrong-shop-confirm]")) {
+            event.preventDefault();
+            finish(true);
+            return;
+          }
+          if (event.target.closest("[data-wrong-shop-cancel]")) {
+            event.preventDefault();
+            finish(false);
+          }
+        };
+
+        const onKeydown = (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            finish(false);
+          }
+        };
+
+        wrongShopModal.hidden = false;
+        syncModalOpen();
+        if (window.lucide?.createIcons) window.lucide.createIcons();
+        wrongShopModal.querySelector("[data-wrong-shop-confirm]")?.focus();
+        wrongShopModal.addEventListener("click", onClick);
+        window.addEventListener("keydown", onKeydown);
+      });
 
     const queueCartVerify = () => {
       window.clearTimeout(cartVerifyTimer);
@@ -2597,6 +2672,14 @@
         }
       }
       if (printVia && hasPrintChannels) payload.print_via = printVia;
+
+      if (cartStaffAllocatedToShop === false) {
+        const confirmed = await confirmWrongShopSale();
+        if (!confirmed) {
+          setCartStatus("Sale cancelled.", { ok: false, error: false });
+          return;
+        }
+      }
 
       checkoutInFlight = true;
       if (cartSubmit) cartSubmit.disabled = true;

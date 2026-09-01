@@ -779,7 +779,7 @@ def analytics_account_pay_stk(request, role_segment):
 @require_GET
 def analytics_account_pay_stk_status(request, role_segment, payment_id):
     """Poll STK status for analytics account payments."""
-    from shops.daraja_stk import get_stk_payment, stk_payment_payload
+    from shops.daraja_stk import get_stk_payment, refresh_stk_payment_if_pending, stk_payment_payload
 
     profile = get_profile_for_request(request)
     if role_from_url_segment(role_segment) is None:
@@ -793,6 +793,7 @@ def analytics_account_pay_stk_status(request, role_segment, payment_id):
     payment = get_stk_payment(payment_id)
     if payment is None:
         return JsonResponse({"ok": False, "error": "STK payment not found."}, status=404)
+    payment = refresh_stk_payment_if_pending(payment)
     return JsonResponse({"ok": True, **stk_payment_payload(payment)})
 
 

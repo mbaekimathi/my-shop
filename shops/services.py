@@ -801,18 +801,25 @@ def update_message_channel_settings(
 
 def daraja_settings_as_dict(settings_row: CompanyDarajaSettings | None = None) -> dict:
     row = settings_row or get_daraja_settings()
-    from django.conf import settings as dj_settings
-    from shops.daraja_stk import _callback_url, is_safaricom_callback_base
+    from shops.daraja_stk import (
+        _callback_url,
+        ensure_callback_secret,
+        is_safaricom_callback_base,
+        resolve_callback_base_url,
+    )
 
-    callback_base = (row.callback_base_url or "").strip() or (
-        getattr(dj_settings, "DARAJA_CALLBACK_BASE_URL", "") or ""
-    ).strip()
+    callback_base = resolve_callback_base_url() or (
+        (row.callback_base_url or "").strip()
+    )
     callback_full = ""
     try:
         if is_safaricom_callback_base(callback_base):
             callback_full = _callback_url()
         elif callback_base:
-            callback_full = f"{callback_base.rstrip('/')}/mpesa/daraja/callback/"
+            secret = ensure_callback_secret(row)
+            callback_full = (
+                f"{callback_base.rstrip('/')}/mpesa/daraja/callback/{secret}/"
+            )
     except Exception:
         callback_full = ""
     return {
@@ -931,6 +938,7 @@ def update_daraja_settings(
     from django.conf import settings as dj_settings
 
     from shops.daraja_stk import (
+        invalidate_daraja_access_token_cache,
         is_safaricom_callback_base,
         sync_callback_base_from_request,
         validate_callback_base_url,
@@ -948,14 +956,14 @@ def update_daraja_settings(
     if len(code) < 5 or len(code) > 10:
         raise ValidationError("Enter a valid shortcode (5–10 digits).")
 
-    # Prefer the URL the browser is actually using (hosted or local/ngrok).
+    # Callback URL is always derived from the live domain — never from a manual field.
     if request is not None:
-        callback = sync_callback_base_from_request(request, persist=False)
+        callback = sync_callback_base_from_request(request, persist=True)
     else:
-        callback = validate_callback_base_url(callback_base_url)
+        callback = sync_callback_base_from_request(None, persist=False)
+        if not callback:
+            callback = validate_callback_base_url(callback_base_url) or ""
     env_callback = (getattr(dj_settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip()
-    if not callback:
-        callback = validate_callback_base_url(callback_base_url) or ""
 
     row = get_daraja_settings()
     key = (consumer_key or "").strip() or (row.consumer_key or "").strip()
@@ -991,6 +999,7 @@ def update_daraja_settings(
             ]
         )
         _invalidate_daraja_settings_cache()
+        invalidate_daraja_access_token_cache()
         raise
 
     row.environment = env
@@ -1036,6 +1045,7 @@ def update_daraja_settings(
         pass
     row.save(update_fields=update_fields)
     _invalidate_daraja_settings_cache()
+    invalidate_daraja_access_token_cache()
     return get_daraja_settings()
 
 

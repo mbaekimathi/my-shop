@@ -55,6 +55,7 @@ from .daraja_stk import (
     get_stk_payment,
     handle_stk_callback,
     initiate_stk_push,
+    refresh_stk_payment_if_pending,
     stk_payment_payload,
     stk_ready,
     sync_callback_base_from_request,
@@ -95,10 +96,13 @@ from .services import (
     verify_shop_password,
 )
 from .session import (
+    allocated_shop_names_for_profile,
     clear_active_shop,
     get_shop_for_profile,
+    profile_allocated_to_shop,
     resolve_active_shop,
     resolve_portal_shop,
+    resolve_shop_for_floor,
     set_active_shop,
     shop_floor_required,
     shops_for_profile,
@@ -287,6 +291,15 @@ def _shops_for_floor(profile, shop):
     if profile is None:
         return [shop]
     return shops_for_profile(profile)
+
+
+def _shops_for_login(profile):
+    """Shops shown on MY-SHOP login — includes unallocated shops for shop-scoped staff."""
+    from shops.models import Shop
+
+    if getattr(profile, "role", None) not in SHOP_ASSIGNABLE_ROLES:
+        return shops_for_profile(profile)
+    return list(Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name"))
 
 
 def _shop_day_prompt_context(shop, profile, *, active=None):
@@ -570,24 +583,24 @@ def my_shop_select(request):
             profile,
             message=f"You do not have permission to access {get_company_display_name()}.",
         )
-    shops = shops_for_profile(profile)
+    shops = _shops_for_login(profile)
 
     if not shops:
         messages.info(
             request,
-            "No active shops are assigned to your account yet. Contact HR for shop access.",
+            "No active shops are available yet. Contact HR for shop access.",
         )
         return redirect(role_home_url_name(profile.role))
 
     if request.method == "POST":
-        shop = get_shop_for_profile(profile, request.POST.get("shop_id"))
+        shop = resolve_shop_for_floor(profile, request.POST.get("shop_id"))
         password = request.POST.get("password") or ""
         if shop is None:
             return _render_shop_login(
                 request,
                 profile=profile,
                 shops=shops,
-                form_error="Select a shop you are authorised to access.",
+                form_error="Select a shop to open.",
             )
         if not verify_shop_password(shop, password):
             return _render_shop_login(
@@ -599,7 +612,7 @@ def my_shop_select(request):
             )
         return _enter_shop(request, shop)
 
-    preferred = get_shop_for_profile(profile, request.GET.get("shop_id"))
+    preferred = resolve_shop_for_floor(profile, request.GET.get("shop_id"))
     active = resolve_active_shop(request, profile)
     # Resume unlocked shop unless the user is switching to a different shop.
     if active is not None and (preferred is None or str(preferred.pk) == str(active.pk)):
@@ -1080,7 +1093,7 @@ def _require_active_shop_session(request, shop_id):
         messages.info(request, "Sign in with the shop code to open this workspace.")
         return None, None, redirect("employees:shop_login")
 
-    shop = get_shop_for_profile(profile, shop_id)
+    shop = resolve_shop_for_floor(profile, shop_id)
     if shop is None:
         messages.error(
             request,
@@ -1131,6 +1144,10 @@ def _require_shop_read_access(request, shop_id):
             shop = Shop.objects.filter(
                 pk=shop_id, is_hidden=False, is_suspended=False
             ).first()
+        elif profile.role in SHOP_ASSIGNABLE_ROLES:
+            active = resolve_active_shop(request, profile)
+            if active is not None and str(active.pk) == str(shop_id):
+                shop = active
         if shop is None:
             return None, None, JsonResponse(
                 {"ok": False, "error": "Shop session required."}, status=403
@@ -1259,6 +1276,7 @@ def my_shop_workspace(request, shop_id):
             "default_payment": default_payment,
             "default_print_via": default_print_via,
             "credit_whatsapp": credit_whatsapp,
+            "profile_allocated_to_shop": profile_allocated_to_shop(profile, shop),
             "buy_stock_modal": True,
             "buy_stock_next": reverse(
                 "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
@@ -2316,12 +2334,18 @@ def my_shop_verify_login_code(request, shop_id):
     from employees.module_permissions import my_shop_capabilities
 
     name = authorising.user.get_full_name() or authorising.user.username
+    allocated = profile_allocated_to_shop(authorising, shop)
     return JsonResponse(
         {
             "ok": True,
             "employee_id": authorising.employee_id,
             "name": name,
             "capabilities": my_shop_capabilities(authorising),
+            "allocated_to_shop": allocated,
+            "allocated_shop_names": (
+                [] if allocated else allocated_shop_names_for_profile(authorising)
+            ),
+            "shop_name": shop.name,
         }
     )
 
@@ -2471,6 +2495,8 @@ def my_shop_stk_status(request, shop_id, payment_id):
     if payment is None or (payment.shop_id and payment.shop_id != shop.pk):
         return JsonResponse({"ok": False, "error": "STK payment not found."}, status=404)
 
+    payment = refresh_stk_payment_if_pending(payment)
+
     return JsonResponse({"ok": True, **stk_payment_payload(payment)})
 
 
@@ -2479,9 +2505,14 @@ from django.views.decorators.csrf import csrf_exempt
 
 @csrf_exempt
 @require_POST
-def daraja_stk_callback(request):
-    """Public Safaricom STK callback."""
+def daraja_stk_callback(request, callback_secret):
+    """Public Safaricom STK callback (requires per-company secret in URL)."""
     import json
+
+    from shops.daraja_stk import callback_secret_matches, handle_stk_callback
+
+    if not callback_secret_matches(callback_secret):
+        return JsonResponse({"ResultCode": 1, "ResultDesc": "Forbidden"}, status=403)
 
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
@@ -2489,6 +2520,16 @@ def daraja_stk_callback(request):
         payload = {}
     handle_stk_callback(payload)
     return JsonResponse({"ResultCode": 0, "ResultDesc": "Accepted"})
+
+
+@csrf_exempt
+@require_POST
+def daraja_stk_callback_legacy(request):
+    """Deprecated callback URL without secret — rejected for security."""
+    return JsonResponse(
+        {"ResultCode": 1, "ResultDesc": "Callback URL requires secret token."},
+        status=410,
+    )
 
 
 def _is_lan_printer_host(host: str) -> bool:

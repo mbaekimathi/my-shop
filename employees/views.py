@@ -1176,10 +1176,11 @@ def _company_communications_settings(request, context):
 
 
 def _company_daraja_settings(request, context):
-    from shops.daraja_stk import sync_callback_base_from_request
+    from shops.daraja_stk import resolve_callback_base_url, sync_callback_base_from_request
     from shops.models import DarajaEnvironment
 
-    # Avoid ngrok/network probes on every GET — only sync when mutating.
+    # Avoid ngrok/network probes on every GET — sync callback from current domain on load.
+    sync_callback_base_from_request(request, persist=True)
     row = get_daraja_settings()
     wants_json = (
         request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -1286,6 +1287,9 @@ def _company_daraja_settings(request, context):
         messages.error(request, "Unknown action.")
         return redirect(request.path)
 
+    resolved_callback = resolve_callback_base_url(request=request) or (
+        daraja_settings_as_dict(row).get("callback_base_url") or ""
+    )
     context.update(
         {
             "daraja": daraja_settings_as_dict(row),
@@ -1293,8 +1297,7 @@ def _company_daraja_settings(request, context):
             "form_data": {
                 "environment": row.environment,
                 "shortcode": row.shortcode,
-                "callback_base_url": row.callback_base_url
-                or (daraja_settings_as_dict(row).get("callback_base_url") or ""),
+                "callback_base_url": resolved_callback,
                 "enable_stk_push": row.enable_stk_push,
             },
         }
@@ -1464,7 +1467,11 @@ def developer_payment_stk_initiate(request):
 
 @require_http_methods(["GET"])
 def developer_payment_stk_status(request, payment_id):
-    from shops.daraja_stk import get_stk_payment, stk_payment_payload
+    from shops.daraja_stk import (
+        get_stk_payment,
+        refresh_stk_payment_if_pending,
+        stk_payment_payload,
+    )
     from shops.models import MpesaStkPurpose, MpesaStkStatus
     from shops.session import resolve_portal_shop
 
@@ -1476,6 +1483,8 @@ def developer_payment_stk_status(request, payment_id):
     payment = get_stk_payment(payment_id)
     if payment is None or payment.purpose != MpesaStkPurpose.DEVELOPER:
         return JsonResponse({"ok": False, "error": "STK payment not found."}, status=404)
+
+    payment = refresh_stk_payment_if_pending(payment)
 
     if (
         payment.status == MpesaStkStatus.SUCCESS

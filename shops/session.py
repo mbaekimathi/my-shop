@@ -76,14 +76,59 @@ def resolve_portal_shop(request):
     return shop
 
 
+def profile_allocated_to_shop(profile, shop) -> bool:
+    """True when a shop-scoped employee is assigned to the shop."""
+    if profile is None or shop is None:
+        return True
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+
+    if profile.role not in SHOP_ASSIGNABLE_ROLES:
+        return True
+    return profile.assigned_shops.filter(pk=shop.pk).exists()
+
+
+def allocated_shop_names_for_profile(profile):
+    if profile is None:
+        return []
+    return list(
+        profile.assigned_shops.filter(is_hidden=False, is_suspended=False)
+        .order_by("name")
+        .values_list("name", flat=True)
+    )
+
+
+def resolve_shop_for_floor(profile, shop_id):
+    """
+    Load a shop for MY-SHOP floor access.
+
+    Shop-scoped staff may open any active shop after password unlock; allocation
+    is enforced at checkout with a wrong-shop warning instead of blocking entry.
+    """
+    shop = get_shop_for_profile(profile, shop_id)
+    if shop is not None:
+        return shop
+    if profile is None:
+        return None
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+    from shops.models import Shop
+
+    if profile.role not in SHOP_ASSIGNABLE_ROLES:
+        return None
+    shop_id = str(shop_id or "").strip()
+    if not shop_id:
+        return None
+    return Shop.objects.filter(
+        pk=shop_id, is_hidden=False, is_suspended=False
+    ).first()
+
+
 def resolve_active_shop(request, profile):
     """Return the session shop if it is still allowed for this profile."""
     shop_id = get_active_shop_id(request)
     if not shop_id:
         return None
 
-    allowed = {str(shop.pk): shop for shop in shops_for_profile(profile)}
-    shop = allowed.get(shop_id)
+    shop = resolve_shop_for_floor(profile, shop_id)
     if shop is None:
         clear_active_shop(request)
         return None
