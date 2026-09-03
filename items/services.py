@@ -186,6 +186,19 @@ def _effective_in_unit_cost(buying_price, qty, sell_ceiling=None) -> Decimal:
     return buy
 
 
+def _stock_movement_has_entry_source_column() -> bool:
+    """True when items_stockmovement.entry_source exists (after migration 0029)."""
+    from django.db import connection
+
+    table = StockMovement._meta.db_table
+    with connection.cursor() as cursor:
+        columns = {
+            col.name
+            for col in connection.introspection.get_table_description(cursor, table)
+        }
+    return "entry_source" in columns
+
+
 def recalc_shop_stock_average_costs(*, shop_id=None, item_ids=None) -> dict:
     """
     Rebuild ShopStock.average_cost from non-zero stock-in unit buying prices.
@@ -201,7 +214,12 @@ def recalc_shop_stock_average_costs(*, shop_id=None, item_ids=None) -> dict:
         buying_price__isnull=False,
         buying_price__gt=0,
         movement__movement_type=StockMovementType.IN,
-    ).exclude(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
+    )
+    # entry_source is added in items.0029 — skip the exclude on older schemas.
+    if _stock_movement_has_entry_source_column():
+        line_qs = line_qs.exclude(
+            movement__entry_source=StockEntrySource.CUSTOMER_RETURN
+        )
     if shop_id is not None:
         stock_qs = stock_qs.filter(shop_id=shop_id)
     if item_ids is not None:
@@ -283,7 +301,11 @@ def last_buying_prices_for_items(item_ids, *, prefer_shop_id=None) -> dict:
             buying_price__isnull=False,
             buying_price__gt=0,
             movement__movement_type=StockMovementType.IN,
-        ).exclude(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
+        )
+        if _stock_movement_has_entry_source_column():
+            qs = qs.exclude(
+                movement__entry_source=StockEntrySource.CUSTOMER_RETURN
+            )
         if shop_id is not None:
             qs = qs.filter(movement__shop_id=shop_id)
         return qs.order_by("-movement__created_at", "-id").values("buying_price")[:1]
