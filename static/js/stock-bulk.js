@@ -1117,14 +1117,6 @@
       return true;
     };
 
-    const getCsrf = () =>
-      form.querySelector("[name=csrfmiddlewaretoken]")?.value ||
-      document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
-      document.cookie
-        .split("; ")
-        .find((row) => row.startsWith("csrftoken="))
-        ?.split("=")[1] ||
-      "";
 
     const setLoginStatus = (message, { ok = false, error = false } = {}) => {
       if (!loginStatusEl) return;
