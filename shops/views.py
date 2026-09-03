@@ -1431,7 +1431,14 @@ def my_shop_buy_stock(request, shop_id):
     if denied:
         if _wants_json_response(request):
             return JsonResponse(
-                {"ok": False, "error": "Shop session required."}, status=403
+                {
+                    "ok": False,
+                    "error": (
+                        "Shop session expired. Re-open this shop from MY-SHOP "
+                        "with the shop password, then try again."
+                    ),
+                },
+                status=403,
             )
         return denied
     denied = _require_my_shop_permission(

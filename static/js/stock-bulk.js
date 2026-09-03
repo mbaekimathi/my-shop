@@ -517,6 +517,13 @@
     const floatRefundAmountWrap = floatRoot?.querySelector(
       "[data-stock-float-refund-amount-wrap]"
     );
+    const loginCodeInput = floatRoot?.querySelector("[data-stock-float-login-code]");
+    const loginStatusEl = floatRoot?.querySelector("[data-stock-float-login-status]");
+    const verifyLoginUrl = form.getAttribute("data-verify-login-url") || "";
+    const requiresLoginCode = Boolean(loginCodeInput);
+    let loginVerified = false;
+    let loginVerifySeq = 0;
+    let loginVerifyTimer = null;
     markOptionalLabel(floatSupplierPhone, stockReq.in.supplier);
     markOptionalLabel(floatSupplierName, stockReq.in.supplier);
     markOptionalLabel(floatPayment, stockReq.in.payment_status);
@@ -962,6 +969,84 @@
       return true;
     };
 
+    const getCsrf = () =>
+      document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+      document.cookie
+        .split(";")
+        .map((part) => part.trim())
+        .find((part) => part.startsWith("csrftoken="))
+        ?.split("=")[1] ||
+      "";
+
+    const setLoginStatus = (message, { ok = false, error = false } = {}) => {
+      if (!loginStatusEl) return;
+      loginStatusEl.textContent =
+        message || "Enter an active staff member’s 6-digit ID to stock in.";
+      loginStatusEl.classList.toggle("is-ok", ok);
+      loginStatusEl.classList.toggle("is-error", error);
+    };
+
+    const verifyLoginCode = async () => {
+      if (!requiresLoginCode) return true;
+      const code = (loginCodeInput?.value || "").trim();
+      const current = ++loginVerifySeq;
+      if (code.length < 6) {
+        loginVerified = false;
+        setLoginStatus(
+          code.length
+            ? `Enter ${6 - code.length} more digit${6 - code.length === 1 ? "" : "s"}.`
+            : ""
+        );
+        return false;
+      }
+      if (!/^\d{6}$/.test(code)) {
+        loginVerified = false;
+        setLoginStatus("Staff ID must be exactly 6 digits.", { error: true });
+        return false;
+      }
+      if (!verifyLoginUrl) {
+        loginVerified = false;
+        setLoginStatus("Verification is unavailable. Refresh and try again.", {
+          error: true,
+        });
+        return false;
+      }
+
+      try {
+        const body = new URLSearchParams({ login_code: code });
+        const response = await fetch(verifyLoginUrl, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "X-CSRFToken": getCsrf(),
+          },
+          credentials: "same-origin",
+          body,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (current !== loginVerifySeq) return false;
+        if (!response.ok || !data.ok) {
+          loginVerified = false;
+          setLoginStatus(data.error || "Not a valid active staff ID.", {
+            error: true,
+          });
+          return false;
+        }
+        loginVerified = true;
+        setLoginStatus(
+          `Verified: ${data.name || "staff"} (${data.employee_id || code}).`,
+          { ok: true }
+        );
+        renderSummary();
+        return true;
+      } catch (_error) {
+        if (current !== loginVerifySeq) return false;
+        loginVerified = false;
+        setLoginStatus("Could not verify staff ID. Try again.", { error: true });
+        return false;
+      }
+    };
+
     const cellSerialCount = (cell) =>
       String(cell.querySelector("[data-stock-serials]")?.value || "")
         .split(/[\n,]+/)
@@ -1074,6 +1159,12 @@
             floatReason
           );
         }
+      }
+      if (mode === "in" && requiresLoginCode && !loginVerified) {
+        return blockSubmit(
+          "Enter staff ID first — 6-digit verification in the submit panel.",
+          loginCodeInput
+        );
       }
       return false;
     };
@@ -2078,11 +2169,32 @@
 
     let submitInFlight = false;
 
+    loginCodeInput?.addEventListener("input", () => {
+      loginVerified = false;
+      window.clearTimeout(loginVerifyTimer);
+      loginVerifyTimer = window.setTimeout(() => {
+        verifyLoginCode();
+      }, 220);
+    });
+    loginCodeInput?.addEventListener("blur", () => {
+      verifyLoginCode();
+    });
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (submitInFlight) return;
       const ready = collectReady();
       if (focusFirstIncomplete(ready)) return;
+      if (requiresLoginCode && !loginVerified) {
+        const ok = await verifyLoginCode();
+        if (!ok) {
+          blockSubmit(
+            "Enter staff ID first — 6-digit verification below.",
+            loginCodeInput
+          );
+          return;
+        }
+      }
       if (!(await confirmHighUnitBuyingPrices(ready))) return;
       if (mode === "request" && requestingShopInput) {
         requestingShopInput.value = requestingShopId;
