@@ -1,3 +1,4 @@
+import re
 import uuid
 
 from django.db import models
@@ -344,6 +345,8 @@ class CompanyPosSettings(models.Model):
         choices=(
             ("paybill", "Paybill"),
             ("buy_goods", "Buy Goods"),
+            ("send_money", "Send Money"),
+            ("pochi", "Pochi la Biashara"),
         ),
         blank=True,
         default="",
@@ -351,6 +354,7 @@ class CompanyPosSettings(models.Model):
     mpesa_business_number = models.CharField(max_length=20, blank=True, default="")
     mpesa_account_number = models.CharField(max_length=40, blank=True, default="")
     mpesa_till_number = models.CharField(max_length=20, blank=True, default="")
+    mpesa_phone_number = models.CharField(max_length=40, blank=True, default="")
     receipt_font_size = models.CharField(
         max_length=16,
         choices=(
@@ -460,11 +464,20 @@ class CompanyPosSettings(models.Model):
     def mpesa_payment_details(self) -> dict:
         """Structured M-Pesa collection details for receipts and settings."""
         kind = (self.mpesa_collection_type or "").strip().lower()
+        empty = {
+            "type": "",
+            "label": "",
+            "business_number": "",
+            "account_number": "",
+            "till_number": "",
+            "phone_number": "",
+            "lines": [],
+        }
         if kind == "paybill":
             business = (self.mpesa_business_number or "").strip()
             account = (self.mpesa_account_number or "").strip()
             if len(business) < 5:
-                return {"type": "", "label": "", "lines": []}
+                return empty
             lines = [f"Business No: {business}"]
             if account:
                 lines.append(f"Account No: {account}")
@@ -474,21 +487,49 @@ class CompanyPosSettings(models.Model):
                 "business_number": business,
                 "account_number": account,
                 "till_number": "",
+                "phone_number": "",
                 "lines": lines,
             }
         if kind == "buy_goods":
             till = (self.mpesa_till_number or "").strip()
             if len(till) < 5:
-                return {"type": "", "label": "", "lines": []}
+                return empty
             return {
                 "type": "buy_goods",
                 "label": "Buy Goods",
                 "business_number": "",
                 "account_number": "",
                 "till_number": till,
+                "phone_number": "",
                 "lines": [f"Till No: {till}"],
             }
-        return {"type": "", "label": "", "lines": []}
+        if kind == "send_money":
+            phone = (self.mpesa_phone_number or "").strip()
+            if len(re.sub(r"\D", "", phone)) < 9:
+                return empty
+            return {
+                "type": "send_money",
+                "label": "Send Money",
+                "business_number": "",
+                "account_number": "",
+                "till_number": "",
+                "phone_number": phone,
+                "lines": [f"Phone: {phone}"],
+            }
+        if kind == "pochi":
+            phone = (self.mpesa_phone_number or "").strip()
+            if len(re.sub(r"\D", "", phone)) < 9:
+                return empty
+            return {
+                "type": "pochi",
+                "label": "Pochi la Biashara",
+                "business_number": "",
+                "account_number": "",
+                "till_number": "",
+                "phone_number": phone,
+                "lines": [f"Phone: {phone}"],
+            }
+        return empty
 
 
 class ShopPosSettings(models.Model):
@@ -541,6 +582,8 @@ class ShopPosSettings(models.Model):
         choices=(
             ("paybill", "Paybill"),
             ("buy_goods", "Buy Goods"),
+            ("send_money", "Send Money"),
+            ("pochi", "Pochi la Biashara"),
         ),
         blank=True,
         default="",
@@ -548,6 +591,7 @@ class ShopPosSettings(models.Model):
     mpesa_business_number = models.CharField(max_length=20, blank=True, default="")
     mpesa_account_number = models.CharField(max_length=40, blank=True, default="")
     mpesa_till_number = models.CharField(max_length=20, blank=True, default="")
+    mpesa_phone_number = models.CharField(max_length=40, blank=True, default="")
     receipt_font_size = models.CharField(
         max_length=16,
         choices=(

@@ -3159,6 +3159,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                 business_number=request.POST.get("mpesa_business_number") or "",
                 account_number=request.POST.get("mpesa_account_number") or "",
                 till_number=request.POST.get("mpesa_till_number") or "",
+                phone_number=request.POST.get("mpesa_phone_number") or "",
             )
         except ValidationError as exc:
             message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -3172,6 +3173,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "mpesa_business_number": row.mpesa_business_number,
                     "mpesa_account_number": row.mpesa_account_number,
                     "mpesa_till_number": row.mpesa_till_number,
+                    "mpesa_phone_number": row.mpesa_phone_number,
                     "mpesa_payment_details": details,
                 }
             )
@@ -3324,6 +3326,7 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
         "mpesa_business_number": pos.mpesa_business_number or "",
         "mpesa_account_number": pos.mpesa_account_number or "",
         "mpesa_till_number": pos.mpesa_till_number or "",
+        "mpesa_phone_number": getattr(pos, "mpesa_phone_number", "") or "",
         "mpesa_payment_details": pos.mpesa_payment_details(),
         "enable_receipt_qr": bool(pos.enable_receipt_qr),
         "receipt_qr_content": pos.receipt_qr_content or "website",

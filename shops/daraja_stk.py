@@ -75,7 +75,13 @@ def _resolve_stk_config(row: CompanyDarajaSettings, pos) -> dict:
         else:
             collection = "buy_goods"
 
-    if collection == "buy_goods":
+    # Send Money / Pochi are phone-based receipt options; STK still uses Daraja
+    # shortcode credentials (till/paybill API), not the printed phone number.
+    if collection in ("send_money", "pochi"):
+        business_shortcode = shortcode
+        party_b = shortcode
+        transaction_type = "CustomerBuyGoodsOnline"
+    elif collection == "buy_goods":
         business_shortcode = shortcode
         party_b = till if till else shortcode
         transaction_type = "CustomerBuyGoodsOnline"

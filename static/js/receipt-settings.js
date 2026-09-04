@@ -198,12 +198,22 @@
   const fieldBusiness = root.querySelector('[data-mpesa-field="business_number"]');
   const fieldAccount = root.querySelector('[data-mpesa-field="account_number"]');
   const fieldTill = root.querySelector('[data-mpesa-field="till_number"]');
+  const fieldPhones = [...root.querySelectorAll('[data-mpesa-field="phone_number"]')];
   const paymentBlocks = root.querySelectorAll("[data-receipt-payment-block]");
   const paymentTitles = root.querySelectorAll("[data-receipt-payment-title]");
   const paymentLines = root.querySelectorAll("[data-receipt-payment-lines]");
 
   function selectedMpesaType() {
     return root.querySelector("[data-mpesa-type]:checked")?.value || "";
+  }
+
+  function activePhoneField() {
+    const type = selectedMpesaType();
+    return (
+      root.querySelector(
+        `[data-mpesa-field="phone_number"][data-mpesa-phone-for="${type}"]`
+      ) || fieldPhones[0] || null
+    );
   }
 
   function syncMpesaFields(type) {
@@ -230,6 +240,15 @@
       const till = (fieldTill?.value || "").trim();
       if (till.length < 5) return { label: "", lines: [] };
       return { label: "Buy Goods", lines: [`Till No: ${till}`] };
+    }
+    if (type === "send_money" || type === "pochi") {
+      const phone = (activePhoneField()?.value || "").trim();
+      const digits = phone.replace(/\D/g, "");
+      if (digits.length < 9) return { label: "", lines: [] };
+      return {
+        label: type === "pochi" ? "Pochi la Biashara" : "Send Money",
+        lines: [`Phone: ${phone}`],
+      };
     }
     return { label: "", lines: [] };
   }
@@ -284,34 +303,32 @@
 
     const savePaymentDetails = async () => {
       const type = selectedMpesaType();
+      const phoneInput = activePhoneField();
       const body = new URLSearchParams({
         action: "set_mpesa_payment_details",
         mpesa_collection_type: type,
         mpesa_business_number: fieldBusiness?.value || "",
         mpesa_account_number: fieldAccount?.value || "",
         mpesa_till_number: fieldTill?.value || "",
+        mpesa_phone_number: phoneInput?.value || "",
       });
-      [fieldBusiness, fieldAccount, fieldTill].forEach((input) =>
-        input?.classList.add("is-saving")
-      );
+      const savingInputs = [fieldBusiness, fieldAccount, fieldTill, ...fieldPhones];
+      savingInputs.forEach((input) => input?.classList.add("is-saving"));
       try {
         const data = await postSettings(body);
         if (fieldBusiness) fieldBusiness.value = data.mpesa_business_number || "";
         if (fieldAccount) fieldAccount.value = data.mpesa_account_number || "";
         if (fieldTill) fieldTill.value = data.mpesa_till_number || "";
-        [fieldBusiness, fieldAccount, fieldTill].forEach((input) =>
-          input?.classList.remove("is-error")
-        );
+        fieldPhones.forEach((input) => {
+          input.value = data.mpesa_phone_number || "";
+        });
+        savingInputs.forEach((input) => input?.classList.remove("is-error"));
         renderPaymentPreview(data.mpesa_payment_details || buildPaymentPreview());
       } catch (error) {
-        [fieldBusiness, fieldAccount, fieldTill].forEach((input) =>
-          input?.classList.add("is-error")
-        );
+        savingInputs.forEach((input) => input?.classList.add("is-error"));
         window.alert(error.message || "Could not save payment details.");
       } finally {
-        [fieldBusiness, fieldAccount, fieldTill].forEach((input) =>
-          input?.classList.remove("is-saving")
-        );
+        savingInputs.forEach((input) => input?.classList.remove("is-saving"));
       }
     };
 
@@ -341,7 +358,17 @@
       fieldAccount.value = fieldAccount.value.toUpperCase().slice(0, 40);
       queuePaymentSave();
     });
-    [fieldBusiness, fieldAccount, fieldTill].forEach((input) => {
+    fieldPhones.forEach((input) => {
+      input.addEventListener("input", () => {
+        // Keep both phone inputs in sync (shared stored value).
+        const value = input.value.slice(0, 40);
+        fieldPhones.forEach((other) => {
+          if (other !== input) other.value = value;
+        });
+        queuePaymentSave();
+      });
+    });
+    [fieldBusiness, fieldAccount, fieldTill, ...fieldPhones].forEach((input) => {
       input?.addEventListener("change", savePaymentDetails);
       input?.addEventListener("blur", savePaymentDetails);
     });

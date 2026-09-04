@@ -1903,8 +1903,14 @@ html[data-theme="light"] .staff-shop-list {
 }
 
 .receipt-paper-group .receipt-paper-picker,
-.receipt-payment-type.receipt-paper-picker,
 .receipt-qr-content.receipt-paper-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  padding: 0.55rem 0.75rem 0.7rem;
+}
+
+.receipt-payment-type.receipt-paper-picker {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.45rem;

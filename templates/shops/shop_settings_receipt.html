@@ -198,6 +198,32 @@
               <em>Till only</em>
             </span>
           </label>
+          <label class="receipt-paper-option{% if mpesa_collection_type == 'send_money' %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="mpesa_collection_type"
+              value="send_money"
+              data-mpesa-type
+              {% if mpesa_collection_type == "send_money" %}checked{% endif %}
+            >
+            <span class="receipt-paper-option-copy">
+              <strong>Send Money</strong>
+              <em>Phone number</em>
+            </span>
+          </label>
+          <label class="receipt-paper-option{% if mpesa_collection_type == 'pochi' %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="mpesa_collection_type"
+              value="pochi"
+              data-mpesa-type
+              {% if mpesa_collection_type == "pochi" %}checked{% endif %}
+            >
+            <span class="receipt-paper-option-copy">
+              <strong>Pochi la Biashara</strong>
+              <em>Business phone</em>
+            </span>
+          </label>
         </div>
 
         <ul class="pos-settings-list">
@@ -248,6 +274,44 @@
                 value="{{ mpesa_till_number }}"
                 data-mpesa-field="till_number"
                 aria-label="Buy Goods till number"
+              >
+            </label>
+          </li>
+          <li class="pos-settings-row pos-settings-row--format" data-mpesa-fields="send_money"{% if mpesa_collection_type != "send_money" %} hidden{% endif %}>
+            <div class="pos-settings-copy">
+              <strong>Phone number</strong>
+              <p>Number customers send money to.</p>
+            </div>
+            <label class="receipt-format-field receipt-format-field--wide">
+              <input
+                type="text"
+                inputmode="tel"
+                maxlength="40"
+                autocomplete="tel"
+                placeholder="07XX XXX XXX"
+                value="{{ mpesa_phone_number }}"
+                data-mpesa-field="phone_number"
+                data-mpesa-phone-for="send_money"
+                aria-label="Send Money phone number"
+              >
+            </label>
+          </li>
+          <li class="pos-settings-row pos-settings-row--format" data-mpesa-fields="pochi"{% if mpesa_collection_type != "pochi" %} hidden{% endif %}>
+            <div class="pos-settings-copy">
+              <strong>Phone number</strong>
+              <p>Pochi la Biashara number customers pay to.</p>
+            </div>
+            <label class="receipt-format-field receipt-format-field--wide">
+              <input
+                type="text"
+                inputmode="tel"
+                maxlength="40"
+                autocomplete="tel"
+                placeholder="07XX XXX XXX"
+                value="{{ mpesa_phone_number }}"
+                data-mpesa-field="phone_number"
+                data-mpesa-phone-for="pochi"
+                aria-label="Pochi la Biashara phone number"
               >
             </label>
           </li>
@@ -434,6 +498,6 @@
 {{ block.super }}
 <script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/receipt-settings.js' %}?v=6"></script>
+<script defer src="{% static 'js/receipt-settings.js' %}?v=7"></script>
 <script defer src="{% static 'js/shop-settings.js' %}?v=1"></script>
 {% endblock %}

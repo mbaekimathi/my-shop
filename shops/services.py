@@ -99,6 +99,7 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "mpesa_business_number",
         "mpesa_account_number",
         "mpesa_till_number",
+        "mpesa_phone_number",
         "receipt_font_size",
         "receipt_font_weight",
         "enable_receipt_qr",
@@ -394,56 +395,29 @@ def set_shop_mpesa_payment_details(
     business_number: str = "",
     account_number: str = "",
     till_number: str = "",
+    phone_number: str = "",
 ) -> ShopPosSettings:
     row = get_shop_pos_settings(shop)
     if not row.override_receipt:
         raise ValidationError(
             "Turn on custom shop receipt settings before changing payment details."
         )
-    # Reuse company validator by writing through a temporary path: call company
-    # cleaner then apply to shop row.
-    kind = (collection_type or "").strip().lower()
-    if kind and kind not in MPESA_COLLECTION_TYPES:
-        raise ValidationError("Choose Paybill or Buy Goods.")
-
-    business = (business_number or "").strip()
-    account = (account_number or "").strip().upper()
-    till = (till_number or "").strip()
-
-    if kind == "paybill":
-        if business:
-            if not DIGITS_RE.match(business):
-                raise ValidationError("Business number must be digits only.")
-            if len(business) > 8:
-                raise ValidationError("Business number must be at most 8 digits.")
-            if len(business) >= 5 and not (5 <= len(business) <= 8):
-                raise ValidationError("Business number must be 5–8 digits.")
-        if account and len(account) > 40:
-            raise ValidationError("Account number is too long.")
-        till = ""
-    elif kind == "buy_goods":
-        if till:
-            if not DIGITS_RE.match(till):
-                raise ValidationError("Till number must be digits only.")
-            if len(till) > 8:
-                raise ValidationError("Till number must be at most 8 digits.")
-        business = ""
-        account = ""
-    else:
-        business = ""
-        account = ""
-        till = ""
-
-    row.mpesa_collection_type = kind
-    row.mpesa_business_number = business
-    row.mpesa_account_number = account
-    row.mpesa_till_number = till
+    cleaned = _clean_mpesa_payment_payload(
+        collection_type=collection_type,
+        business_number=business_number,
+        account_number=account_number,
+        till_number=till_number,
+        phone_number=phone_number,
+    )
+    for field, value in cleaned.items():
+        setattr(row, field, value)
     row.save(
         update_fields=[
             "mpesa_collection_type",
             "mpesa_business_number",
             "mpesa_account_number",
             "mpesa_till_number",
+            "mpesa_phone_number",
             "updated_at",
         ]
     )
@@ -2346,23 +2320,28 @@ def _next_receipt_number(shop: Shop, *, kind: str) -> str:
 
 
 DIGITS_RE = re.compile(r"^\d+$")
-MPESA_COLLECTION_TYPES = ("paybill", "buy_goods")
+MPESA_COLLECTION_TYPES = ("paybill", "buy_goods", "send_money", "pochi")
+MPESA_PHONE_DIGITS_RE = re.compile(r"^\d{9,12}$")
 
 
-def set_mpesa_payment_details(
+def _clean_mpesa_payment_payload(
     *,
     collection_type: str,
     business_number: str = "",
     account_number: str = "",
     till_number: str = "",
-) -> CompanyPosSettings:
+    phone_number: str = "",
+) -> dict:
     kind = (collection_type or "").strip().lower()
     if kind and kind not in MPESA_COLLECTION_TYPES:
-        raise ValidationError("Choose Paybill or Buy Goods.")
+        raise ValidationError(
+            "Choose Paybill, Buy Goods, Send Money, or Pochi la Biashara."
+        )
 
     business = (business_number or "").strip()
     account = (account_number or "").strip().upper()
     till = (till_number or "").strip()
+    phone = (phone_number or "").strip()
 
     if kind == "paybill":
         if business:
@@ -2375,6 +2354,7 @@ def set_mpesa_payment_details(
         if account and len(account) > 40:
             raise ValidationError("Account number is too long.")
         till = ""
+        phone = ""
     elif kind == "buy_goods":
         if till:
             if not DIGITS_RE.match(till):
@@ -2383,22 +2363,62 @@ def set_mpesa_payment_details(
                 raise ValidationError("Till number must be at most 8 digits.")
         business = ""
         account = ""
+        phone = ""
+    elif kind in ("send_money", "pochi"):
+        if phone:
+            digits = re.sub(r"\D", "", phone)
+            if not MPESA_PHONE_DIGITS_RE.match(digits):
+                raise ValidationError(
+                    "Enter a valid M-Pesa phone number (e.g. 07XX XXX XXX)."
+                )
+            # Prefer display format when we can normalize.
+            formatted = format_kenya_phone(phone)
+            phone = formatted or phone
+            if len(phone) > 40:
+                raise ValidationError("Phone number is too long.")
+        business = ""
+        account = ""
+        till = ""
     else:
         business = ""
         account = ""
         till = ""
+        phone = ""
 
+    return {
+        "mpesa_collection_type": kind,
+        "mpesa_business_number": business,
+        "mpesa_account_number": account,
+        "mpesa_till_number": till,
+        "mpesa_phone_number": phone,
+    }
+
+
+def set_mpesa_payment_details(
+    *,
+    collection_type: str,
+    business_number: str = "",
+    account_number: str = "",
+    till_number: str = "",
+    phone_number: str = "",
+) -> CompanyPosSettings:
+    cleaned = _clean_mpesa_payment_payload(
+        collection_type=collection_type,
+        business_number=business_number,
+        account_number=account_number,
+        till_number=till_number,
+        phone_number=phone_number,
+    )
     settings_row = get_company_pos_settings()
-    settings_row.mpesa_collection_type = kind
-    settings_row.mpesa_business_number = business
-    settings_row.mpesa_account_number = account
-    settings_row.mpesa_till_number = till
+    for field, value in cleaned.items():
+        setattr(settings_row, field, value)
     settings_row.save(
         update_fields=[
             "mpesa_collection_type",
             "mpesa_business_number",
             "mpesa_account_number",
             "mpesa_till_number",
+            "mpesa_phone_number",
             "updated_at",
         ]
     )
@@ -2445,6 +2465,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "mpesa_business_number": row.mpesa_business_number or "",
         "mpesa_account_number": row.mpesa_account_number or "",
         "mpesa_till_number": row.mpesa_till_number or "",
+        "mpesa_phone_number": getattr(row, "mpesa_phone_number", "") or "",
         "mpesa_payment_details": payment,
         "enable_receipt_qr": bool(row.enable_receipt_qr),
         "receipt_qr_content": (
