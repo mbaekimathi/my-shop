@@ -75,22 +75,35 @@ from .services import (
     delete_shop,
     find_client_by_phone,
     format_kenya_phone,
-    get_company_pos_settings,
+    get_company_profile,
     get_company_stock_settings,
     get_company_working_hours_settings,
     get_daraja_settings,
+    get_effective_pos_settings,
     get_last_closed_shop_day,
     get_open_shop_day,
+    get_shop_pos_settings,
     get_shop_receipt_detail,
     list_shop_day_sessions,
     list_shop_receipts,
     open_shop_day,
     pos_settings_as_dict,
+    preview_receipt_number,
+    receipt_font_style,
+    receipt_qr_for_settings,
     register_owner_drawing,
     register_shop_expense,
     return_shop_receipt_items,
     search_clients_by_name,
     search_expense_suppliers,
+    set_shop_mpesa_payment_details,
+    set_shop_pos_override,
+    set_shop_pos_setting,
+    set_shop_receipt_font_style,
+    set_shop_receipt_number_formats,
+    set_shop_receipt_paper_width,
+    set_shop_receipt_qr_settings,
+    set_shop_tax_percent,
     toggle_shop_hidden,
     toggle_shop_suspended,
     update_shop,
@@ -1178,7 +1191,7 @@ def my_shop_workspace(request, shop_id):
     )
     pending_requests = _pending_stock_requests_for_shop(shop)
     request_decisions = _stock_request_decisions_for_shop(shop)
-    pos_settings = get_company_pos_settings()
+    pos_settings = get_effective_pos_settings(shop)
     pos_flags = pos_settings_as_dict(pos_settings)
     from communications.automations import credit_whatsapp_required
 
@@ -1967,7 +1980,7 @@ def my_shop_receipts(request, shop_id):
         return denied
 
     shops = _shops_for_floor(profile, shop)
-    pos_settings = get_company_pos_settings()
+    pos_settings = get_effective_pos_settings(shop)
     pos_flags = pos_settings_as_dict(pos_settings)
     return _render_my_shop_tool_page(
         request,
@@ -2594,7 +2607,7 @@ def my_shop_print_relay(request, shop_id):
     if denied:
         return denied
 
-    pos = get_company_pos_settings()
+    pos = get_effective_pos_settings(shop)
     if not pos.print_channel_enabled("wifi"):
         return JsonResponse(
             {"ok": False, "error": "Wi‑Fi printing is disabled in POS settings."},
@@ -2696,7 +2709,7 @@ def my_shop_wifi_printer_scan(request, shop_id):
     if denied:
         return denied
 
-    pos = get_company_pos_settings()
+    pos = get_effective_pos_settings(shop)
     if not pos.print_channel_enabled("wifi"):
         return JsonResponse(
             {"ok": False, "error": "Wi‑Fi printing is disabled in POS settings."},
@@ -2942,3 +2955,622 @@ def my_shop_stock_request_results_ack_all(request, shop_id):
         requester_notified=False,
     ).update(requester_notified=True)
     return redirect("employees:my_shop_workspace", shop_id=shop.pk)
+
+
+SHOP_POS_SETTING_GROUPS = (
+    {
+        "title": "Transaction types",
+        "summary": "Choose which document types appear on this shop’s checkout.",
+        "toggles": (
+            ("enable_sale", "Sale"),
+            ("enable_credit", "Credit"),
+            ("enable_quotation", "Quotation"),
+        ),
+    },
+    {
+        "title": "Payment methods",
+        "summary": "Choose which payment options appear for cash sale checkout.",
+        "toggles": (
+            ("enable_cash", "Cash"),
+            ("enable_mpesa", "M-Pesa"),
+            ("enable_cash_mpesa", "Cash + M-Pesa"),
+        ),
+    },
+    {
+        "title": "Discounts",
+        "summary": "Allow staff to lower sale prices on this shop page.",
+        "toggles": (("enable_discount", "Activate discount"),),
+    },
+    {
+        "title": "Tax",
+        "summary": "Add a tax percentage on top of the items subtotal at checkout.",
+        "toggles": (("enable_tax", "Activate tax"),),
+        "show_tax_percent": True,
+    },
+)
+
+SHOP_RECEIPT_SETTING_GROUPS = (
+    {
+        "title": "Printing",
+        "summary": "Require printing on sales and choose available print channels.",
+        "toggles": (
+            ("compulsory_print_on_sale", "Compulsory printing on sale"),
+            ("enable_print_bluetooth", "Print via Bluetooth"),
+            ("enable_print_usb", "Print via USB"),
+            ("enable_print_wifi", "Print via Wi‑Fi"),
+            ("enable_receipt_payment_methods", "Show payment methods on receipt"),
+        ),
+    },
+)
+
+
+def _shop_settings_wants_json(request) -> bool:
+    return (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or "application/json" in (request.headers.get("Accept") or "")
+    )
+
+
+def _shop_settings_error(request, message, *, status=400):
+    if _shop_settings_wants_json(request):
+        return JsonResponse({"ok": False, "error": message}, status=status)
+    messages.error(request, message)
+    return redirect(request.path)
+
+
+def _shop_settings_section_context(shop, profile, shops, *, active, section):
+    shop_row = get_shop_pos_settings(shop)
+    override = (
+        shop_row.override_pos if section == "pos" else shop_row.override_receipt
+    )
+    return {
+        **_shop_floor_chrome(
+            shop,
+            profile,
+            shops,
+            active=active,
+            print_channels=None,
+            request=None,
+        ),
+        "shop_settings_section": section,
+        "shop_override_enabled": bool(override),
+        "shop_pos_row": shop_row,
+        "using_company_defaults": not bool(override),
+    }
+
+
+def _handle_shop_settings_post(request, shop, *, section: str):
+    action = (request.POST.get("action") or "").strip()
+    wants_json = _shop_settings_wants_json(request)
+
+    if action == "set_shop_override":
+        enabled = (request.POST.get("enabled") or "").strip().lower() in (
+            "1",
+            "true",
+            "on",
+            "yes",
+        )
+        try:
+            row = set_shop_pos_override(shop=shop, section=section, enabled=enabled)
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        flag = row.override_pos if section == "pos" else row.override_receipt
+        if wants_json:
+            return JsonResponse({"ok": True, "override_enabled": bool(flag)})
+        messages.success(
+            request,
+            "Custom shop settings on." if flag else "Using company defaults.",
+        )
+        return redirect(request.path)
+
+    if action == "toggle_pos_setting":
+        field = (request.POST.get("field") or "").strip()
+        enabled = (request.POST.get("enabled") or "").strip() in (
+            "1",
+            "true",
+            "on",
+            "yes",
+        )
+        try:
+            row = set_shop_pos_setting(shop=shop, field=field, enabled=enabled)
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        if wants_json:
+            return JsonResponse(
+                {"ok": True, "field": field, "enabled": getattr(row, field)}
+            )
+        messages.success(request, "Setting updated.")
+        return redirect(request.path)
+
+    if action == "set_tax_percent":
+        try:
+            row = set_shop_tax_percent(
+                shop=shop, percent=request.POST.get("tax_percent") or ""
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "tax_percent": str(row.tax_percent),
+                    "enable_tax": row.enable_tax,
+                }
+            )
+        messages.success(request, "Tax percentage updated.")
+        return redirect(request.path)
+
+    if action == "set_receipt_paper_width":
+        try:
+            row = set_shop_receipt_paper_width(
+                shop=shop, width=request.POST.get("receipt_paper_width") or ""
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        if wants_json:
+            return JsonResponse(
+                {"ok": True, "receipt_paper_width": row.receipt_paper_width}
+            )
+        messages.success(request, "Receipt paper size updated.")
+        return redirect(request.path)
+
+    if action == "set_receipt_number_formats":
+        try:
+            row = set_shop_receipt_number_formats(
+                shop=shop,
+                sale=request.POST.get("receipt_format_sale"),
+                credit=request.POST.get("receipt_format_credit"),
+                quotation=request.POST.get("receipt_format_quotation"),
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        effective = get_effective_pos_settings(shop)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "receipt_format_sale": row.receipt_format_sale,
+                    "receipt_format_credit": row.receipt_format_credit,
+                    "receipt_format_quotation": row.receipt_format_quotation,
+                    "preview_sale": preview_receipt_number(
+                        kind="sale", settings_row=effective
+                    ),
+                    "preview_credit": preview_receipt_number(
+                        kind="credit", settings_row=effective
+                    ),
+                    "preview_quotation": preview_receipt_number(
+                        kind="quotation", settings_row=effective
+                    ),
+                }
+            )
+        messages.success(request, "Receipt number formats updated.")
+        return redirect(request.path)
+
+    if action == "set_mpesa_payment_details":
+        try:
+            row = set_shop_mpesa_payment_details(
+                shop=shop,
+                collection_type=request.POST.get("mpesa_collection_type") or "",
+                business_number=request.POST.get("mpesa_business_number") or "",
+                account_number=request.POST.get("mpesa_account_number") or "",
+                till_number=request.POST.get("mpesa_till_number") or "",
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        details = get_effective_pos_settings(shop).mpesa_payment_details()
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "mpesa_collection_type": row.mpesa_collection_type,
+                    "mpesa_business_number": row.mpesa_business_number,
+                    "mpesa_account_number": row.mpesa_account_number,
+                    "mpesa_till_number": row.mpesa_till_number,
+                    "mpesa_payment_details": details,
+                }
+            )
+        messages.success(request, "Payment details updated.")
+        return redirect(request.path)
+
+    if action == "set_receipt_font_style":
+        try:
+            row = set_shop_receipt_font_style(
+                shop=shop,
+                size=request.POST.get("receipt_font_size") or "",
+                weight=request.POST.get("receipt_font_weight") or "",
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        font = receipt_font_style(get_effective_pos_settings(shop))
+        if wants_json:
+            return JsonResponse({"ok": True, **font})
+        messages.success(request, "Receipt font style updated.")
+        return redirect(request.path)
+
+    if action == "set_receipt_qr_settings":
+        enabled = (request.POST.get("enable_receipt_qr") or "").strip().lower() in (
+            "1",
+            "true",
+            "on",
+            "yes",
+        )
+        try:
+            row = set_shop_receipt_qr_settings(
+                shop=shop,
+                enabled=enabled,
+                content=request.POST.get("receipt_qr_content") or "",
+                website=request.POST.get("receipt_qr_website") or "",
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        effective = get_effective_pos_settings(shop)
+        qr = receipt_qr_for_settings(
+            effective,
+            preview={
+                "receipt_number": preview_receipt_number(
+                    kind="sale", settings_row=effective
+                ),
+                "kind": "Sale",
+                "shop_name": shop.name,
+                "client": "JANE WAMBUI",
+                "total": "3,700.00",
+                "date": "07 Aug 2026 · 09:15",
+                "payment": "Cash",
+            },
+        )
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "enable_receipt_qr": row.enable_receipt_qr,
+                    "receipt_qr_content": row.receipt_qr_content,
+                    "receipt_qr_website": row.receipt_qr_website,
+                    "receipt_qr": qr,
+                }
+            )
+        messages.success(request, "Receipt QR settings updated.")
+        return redirect(request.path)
+
+    if wants_json:
+        return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
+    messages.error(request, "Unknown action.")
+    return redirect(request.path)
+
+
+def _shop_pos_settings_page_context(shop, *, setting_groups):
+    pos = get_effective_pos_settings(shop)
+    shop_row = get_shop_pos_settings(shop)
+    groups = []
+    enabled_count = 0
+    toggle_count = 0
+    for group in setting_groups:
+        toggles = []
+        for field, label in group["toggles"]:
+            enabled = bool(getattr(pos, field))
+            toggle_count += 1
+            if enabled:
+                enabled_count += 1
+            toggles.append(
+                {"field": field, "label": label, "enabled": enabled}
+            )
+        groups.append(
+            {
+                "title": group["title"],
+                "summary": group["summary"],
+                "show_tax_percent": bool(group.get("show_tax_percent")),
+                "toggles": toggles,
+            }
+        )
+    paper_width = (
+        pos.receipt_paper_width if pos.receipt_paper_width in ("80", "58") else "80"
+    )
+    company = get_company_profile()
+    font = receipt_font_style(pos)
+    preview_subtotal = Decimal("3700.00")
+    preview_tax = Decimal("0.00")
+    preview_tax_percent = Decimal(pos.tax_percent or 0).quantize(Decimal("0.01"))
+    if pos.enable_tax and preview_tax_percent > 0:
+        preview_tax = (
+            preview_subtotal * preview_tax_percent / Decimal("100")
+        ).quantize(Decimal("0.01"))
+    preview_total = (preview_subtotal + preview_tax).quantize(Decimal("0.01"))
+
+    def _money(value: Decimal) -> str:
+        return f"{value:,.0f}"
+
+    return {
+        "pos_settings": pos,
+        "shop_pos_row": shop_row,
+        "pos_setting_groups": groups,
+        "pos_settings_flags": pos_settings_as_dict(pos),
+        "pos_enabled_count": enabled_count,
+        "pos_toggle_count": toggle_count,
+        "tax_percent_value": f"{pos.tax_percent:.0f}",
+        "receipt_paper_width": paper_width,
+        "receipt_font_size": font["size"],
+        "receipt_font_weight": font["weight"],
+        "receipt_font_size_px_80": font["size_px_80"],
+        "receipt_font_size_px_58": font["size_px_58"],
+        "receipt_font_weight_css": font["weight_css"],
+        "receipt_font_size_choices": (
+            ("small", "Small"),
+            ("medium", "Medium"),
+            ("large", "Large"),
+            ("xlarge", "Extra large"),
+        ),
+        "receipt_font_weight_choices": (
+            ("regular", "Regular"),
+            ("medium", "Medium"),
+            ("bold", "Bold"),
+            ("extrabold", "Extra bold"),
+        ),
+        "receipt_format_sale": pos.receipt_format_sale or "SAL",
+        "receipt_format_credit": pos.receipt_format_credit or "CRD",
+        "receipt_format_quotation": pos.receipt_format_quotation or "QTN",
+        "receipt_format_previews": {
+            "sale": preview_receipt_number(kind="sale", settings_row=pos),
+            "credit": preview_receipt_number(kind="credit", settings_row=pos),
+            "quotation": preview_receipt_number(kind="quotation", settings_row=pos),
+        },
+        "mpesa_collection_type": pos.mpesa_collection_type or "",
+        "mpesa_business_number": pos.mpesa_business_number or "",
+        "mpesa_account_number": pos.mpesa_account_number or "",
+        "mpesa_till_number": pos.mpesa_till_number or "",
+        "mpesa_payment_details": pos.mpesa_payment_details(),
+        "enable_receipt_qr": bool(pos.enable_receipt_qr),
+        "receipt_qr_content": pos.receipt_qr_content or "website",
+        "receipt_qr_website": pos.receipt_qr_website or "",
+        "receipt_qr_content_choices": (
+            ("website", "Company website"),
+            ("receipt_details", "Receipt details"),
+        ),
+        "receipt_preview": {
+            "logo_url": "",
+            "shop_name": shop.name,
+            "shop_location": shop.location or company.location or "",
+            "shop_phone": shop.phone_number or company.phone_number or "",
+            "shop_branch": "",
+            "receipt_number": preview_receipt_number(kind="sale", settings_row=pos),
+            "kind": "Sale",
+            "doc_type": "sale",
+            "document_title": "Sales invoice / receipt",
+            "doc_number_label": "Invoice No.",
+            "party_label": "Customer",
+            "authorised_label": "Cashier",
+            "date": "07 Aug 2026 · 09:15",
+            "client": "JANE WAMBUI",
+            "party_phone": "+254 712 555 010",
+            "cashier": "Staff 104822",
+            "status": "",
+            "lines": (
+                {
+                    "name": "HDMI Cable 2M",
+                    "detail": "",
+                    "qty": 1,
+                    "price": "850",
+                    "total": "850",
+                    "serials": (),
+                },
+                {
+                    "name": "USB-C Hub",
+                    "detail": "",
+                    "qty": 2,
+                    "price": "1,200",
+                    "total": "2,400",
+                    "serials": (),
+                },
+                {
+                    "name": "Mouse Pad XL",
+                    "detail": "",
+                    "qty": 1,
+                    "price": "450",
+                    "total": "450",
+                    "serials": (),
+                },
+            ),
+            "cancelled": False,
+            "subtotal": _money(preview_subtotal),
+            "tax_percent": f"{preview_tax_percent:.0f}",
+            "tax_amount": _money(preview_tax),
+            "show_tax": bool(pos.enable_tax and preview_tax_percent > 0),
+            "total": _money(preview_total),
+            "payment": "Cash" if pos.enable_receipt_payment_methods else "",
+            "payment_details": (
+                pos.mpesa_payment_details()
+                if pos.enable_receipt_payment_methods
+                else {"type": "", "label": "", "lines": []}
+            ),
+            "footer": "Thank you for shopping with us",
+        },
+    }
+
+
+@shop_floor_required
+@require_http_methods(["GET"])
+def my_shop_settings(request, shop_id):
+    """Shop settings hub: POS and receipt overrides for this shop."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "shop_settings", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    shops = _shops_for_floor(profile, shop)
+    shop_row = get_shop_pos_settings(shop)
+    return render(
+        request,
+        "shops/shop_settings.html",
+        {
+            **_shop_floor_chrome(
+                shop, profile, shops, active="settings", request=request
+            ),
+            "meta": {
+                "title": f"Shop settings — {shop.name}",
+                "headline": "Shop settings",
+                "summary": (
+                    f"Override company POS and receipt defaults for {shop.name}, "
+                    "or leave them unset to use the company defaults."
+                ),
+                "icon": "settings",
+            },
+            "shop_pos_override": shop_row.override_pos,
+            "shop_receipt_override": shop_row.override_receipt,
+            "shop_settings_pos_url": reverse(
+                "employees:my_shop_settings_pos", kwargs={"shop_id": shop.pk}
+            ),
+            "shop_settings_receipt_url": reverse(
+                "employees:my_shop_settings_receipt", kwargs={"shop_id": shop.pk}
+            ),
+        },
+    )
+
+
+@shop_floor_required
+@require_http_methods(["GET", "POST"])
+def my_shop_settings_pos(request, shop_id):
+    """Per-shop POS settings (overrides company defaults when enabled)."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "shop_settings", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    if request.method == "POST":
+        return _handle_shop_settings_post(request, shop, section="pos")
+
+    shops = _shops_for_floor(profile, shop)
+    shop_row = get_shop_pos_settings(shop)
+    context = {
+        **_shop_floor_chrome(
+            shop, profile, shops, active="settings_pos", request=request
+        ),
+        "meta": {
+            "title": f"Shop POS — {shop.name}",
+            "headline": "Shop POS settings",
+            "summary": f"Checkout options for {shop.name}",
+            "icon": "monitor-smartphone",
+        },
+        "shop_settings_section": "pos",
+        "shop_override_enabled": bool(shop_row.override_pos),
+        "using_company_defaults": not bool(shop_row.override_pos),
+        **_shop_pos_settings_page_context(shop, setting_groups=SHOP_POS_SETTING_GROUPS),
+    }
+    return render(request, "shops/shop_settings_pos.html", context)
+
+
+@shop_floor_required
+@require_http_methods(["GET", "POST"])
+def my_shop_settings_receipt(request, shop_id):
+    """Per-shop receipt settings (overrides company defaults when enabled)."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "shop_settings", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    if request.method == "POST":
+        return _handle_shop_settings_post(request, shop, section="receipt")
+
+    shops = _shops_for_floor(profile, shop)
+    shop_row = get_shop_pos_settings(shop)
+    context = {
+        **_shop_floor_chrome(
+            shop, profile, shops, active="settings_receipt", request=request
+        ),
+        "meta": {
+            "title": f"Shop receipt — {shop.name}",
+            "headline": "Shop receipt settings",
+            "summary": f"Print and receipt look for {shop.name}",
+            "icon": "receipt",
+        },
+        "shop_settings_section": "receipt",
+        "shop_override_enabled": bool(shop_row.override_receipt),
+        "using_company_defaults": not bool(shop_row.override_receipt),
+        **_shop_pos_settings_page_context(
+            shop, setting_groups=SHOP_RECEIPT_SETTING_GROUPS
+        ),
+    }
+    qr = receipt_qr_for_settings(
+        context["pos_settings"], preview=context["receipt_preview"]
+    )
+    context["receipt_qr"] = qr
+    context["receipt_preview"]["qr"] = qr
+    company = get_company_profile()
+    logo_url = ""
+    try:
+        if company.logo:
+            logo_url = company.logo.url
+    except (ValueError, AttributeError):
+        logo_url = ""
+    context["receipt_preview"]["logo_url"] = logo_url
+    preview_lines = []
+    for line in context["receipt_preview"]["lines"]:
+        preview_lines.append(
+            {
+                "name": line["name"],
+                "detail": line.get("detail") or "",
+                "qty": line["qty"],
+                "price": line["price"],
+                "total": line["total"],
+                "serials": list(line.get("serials") or []),
+                "serials_extra": int(line.get("serials_extra") or 0),
+            }
+        )
+    from shops.services import get_company_display_name
+
+    context["receipt_sample"] = {
+        "ticket": {
+            "mark": get_company_display_name(),
+            "shop_name": context["receipt_preview"]["shop_name"],
+            "shop_location": context["receipt_preview"]["shop_location"],
+            "shop_phone": context["receipt_preview"]["shop_phone"],
+            "shop_branch": context["receipt_preview"].get("shop_branch") or "",
+            "logo_url": logo_url,
+            "receipt_number": context["receipt_preview"]["receipt_number"],
+            "kind": context["receipt_preview"]["kind"],
+            "doc_type": context["receipt_preview"].get("doc_type") or "sale",
+            "document_title": context["receipt_preview"].get("document_title")
+            or "Sales invoice / receipt",
+            "doc_number_label": context["receipt_preview"].get("doc_number_label")
+            or "Invoice No.",
+            "party_label": context["receipt_preview"].get("party_label") or "Customer",
+            "authorised_label": context["receipt_preview"].get("authorised_label")
+            or "Cashier",
+            "date": context["receipt_preview"]["date"],
+            "client": context["receipt_preview"]["client"],
+            "party_phone": context["receipt_preview"].get("party_phone") or "",
+            "cashier": context["receipt_preview"]["cashier"],
+            "status": context["receipt_preview"].get("status") or "",
+            "lines": preview_lines,
+            "cancelled": False,
+            "subtotal": context["receipt_preview"]["subtotal"],
+            "tax_percent": context["receipt_preview"]["tax_percent"],
+            "tax_amount": context["receipt_preview"]["tax_amount"],
+            "show_tax": context["receipt_preview"]["show_tax"],
+            "total": context["receipt_preview"]["total"],
+            "payment": context["receipt_preview"]["payment"],
+            "payment_details": context["receipt_preview"]["payment_details"],
+            "footer": context["receipt_preview"]["footer"],
+            "qr": qr,
+        },
+        "receipt_paper_width": context["receipt_paper_width"],
+        "receipt_font": receipt_font_style(context["pos_settings"]),
+    }
+    return render(request, "shops/shop_settings_receipt.html", context)

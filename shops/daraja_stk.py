@@ -25,6 +25,7 @@ from .services import (
     _money,
     format_kenya_phone,
     get_company_pos_settings,
+    get_effective_pos_settings,
     get_daraja_settings,
     verify_daraja_oauth,
 )
@@ -568,7 +569,7 @@ def initiate_stk_push(
     callback = _callback_url(request=request)
 
     access_token = get_daraja_access_token(row)
-    pos = get_company_pos_settings()
+    pos = get_effective_pos_settings(shop)
     stk_config = _resolve_stk_config(row, pos)
     business_shortcode = stk_config["business_shortcode"]
     timestamp, password = _build_stk_security(business_shortcode, passkey)

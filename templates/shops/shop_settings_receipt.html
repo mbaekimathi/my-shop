@@ -6,15 +6,17 @@
 {% block workspace_content %}
 {% csrf_token %}
 <section
-  class="item-panel item-panel--dense item-panel--receipt-settings"
+  class="item-panel item-panel--dense item-panel--receipt-settings{% if using_company_defaults %} is-using-defaults{% endif %}"
   data-animate="rise"
   data-pos-settings
   data-receipt-settings
+  data-shop-settings
+  data-section="receipt"
 >
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
-        <p class="stock-kicker">Settings · Receipt</p>
+        <p class="stock-kicker">{{ shop.name }} · Receipt</p>
         <h2>{{ meta.headline }}</h2>
         <p>{{ meta.summary }} Choose print channels and the thermal paper size used at checkout.</p>
       </div>
@@ -24,14 +26,17 @@
           <span>of {{ pos_toggle_count }} on</span>
         </p>
         <p class="stock-stat">
-          <strong data-receipt-paper-stat>{% if receipt_paper_width == "58" %}58{% else %}80{% endif %} mm</strong>
-          <span>paper</span>
+          <strong data-shop-mode-label>{% if shop_override_enabled %}Custom{% else %}Default{% endif %}</strong>
+          <span>mode</span>
         </p>
       </div>
     </div>
   </header>
 
   <div class="pos-settings-groups">
+    {% include "shops/partials/shop_settings_override.html" %}
+
+    <div class="shop-settings-body" data-shop-settings-body{% if using_company_defaults %} inert{% endif %}>
     {% for group in pos_setting_groups %}
     <section class="pos-settings-group">
       <div class="pos-settings-group-head">
@@ -52,6 +57,7 @@
               data-pos-toggle
               data-field="{{ toggle.field }}"
               aria-label="{{ toggle.label }}"
+              {% if using_company_defaults %}disabled{% endif %}
             >
             <span class="perm-switch-ui" aria-hidden="true"></span>
             <span class="perm-switch-state">
@@ -361,6 +367,7 @@
         </ul>
       </div>
     </section>
+    </div>
   </div>
 
   <section class="receipt-design-panel">
@@ -428,4 +435,5 @@
 <script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
 <script defer src="{% static 'js/receipt-settings.js' %}?v=6"></script>
+<script defer src="{% static 'js/shop-settings.js' %}?v=1"></script>
 {% endblock %}

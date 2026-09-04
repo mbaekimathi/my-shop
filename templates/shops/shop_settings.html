@@ -1,0 +1,39 @@
+{% extends "employees/workspace_base.html" %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="workspace-hero" data-animate="rise">
+  <p class="role-eyebrow">
+    <i data-lucide="settings" aria-hidden="true"></i>
+    <span>{{ shop.name }}</span>
+  </p>
+  <h2 class="workspace-hero-title">{{ meta.headline }}</h2>
+  <p class="workspace-hero-copy">{{ meta.summary }}</p>
+</section>
+
+<div class="workspace-grid workspace-grid--modules" data-animate="rise" data-delay="1">
+  <a class="workspace-card workspace-module-link" href="{{ shop_settings_pos_url }}">
+    <i data-lucide="monitor-smartphone" aria-hidden="true"></i>
+    <h3>Shop POS</h3>
+    <p>
+      {% if shop_pos_override %}
+      Custom checkout options for this shop.
+      {% else %}
+      Using company POS defaults. Open to customize.
+      {% endif %}
+    </p>
+  </a>
+  <a class="workspace-card workspace-module-link" href="{{ shop_settings_receipt_url }}">
+    <i data-lucide="receipt" aria-hidden="true"></i>
+    <h3>Shop receipt</h3>
+    <p>
+      {% if shop_receipt_override %}
+      Custom print and receipt look for this shop.
+      {% else %}
+      Using company receipt defaults. Open to customize.
+      {% endif %}
+    </p>
+  </a>
+</div>
+{% endblock %}

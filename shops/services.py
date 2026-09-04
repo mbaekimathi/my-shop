@@ -23,6 +23,7 @@ from .models import (
     DeveloperPaymentCadence,
     DeveloperPaymentPopupLocation,
     WORKING_DAY_FIELDS,
+    ShopPosSettings,
     ShopWorkingHoursSettings,
     Expense,
     ExpenseCategory,
@@ -66,7 +67,46 @@ POS_SETTING_FIELDS = {
     "enable_print_bluetooth",
     "enable_print_usb",
     "enable_print_wifi",
+    "enable_receipt_payment_methods",
 }
+
+# Shop override sections (POS page vs Receipt page).
+SHOP_POS_FIELD_NAMES = frozenset(
+    {
+        "enable_sale",
+        "enable_credit",
+        "enable_quotation",
+        "enable_cash",
+        "enable_mpesa",
+        "enable_cash_mpesa",
+        "enable_discount",
+        "enable_tax",
+        "tax_percent",
+    }
+)
+SHOP_RECEIPT_FIELD_NAMES = frozenset(
+    {
+        "compulsory_print_on_sale",
+        "enable_print_bluetooth",
+        "enable_print_usb",
+        "enable_print_wifi",
+        "enable_receipt_payment_methods",
+        "receipt_paper_width",
+        "receipt_format_sale",
+        "receipt_format_credit",
+        "receipt_format_quotation",
+        "mpesa_collection_type",
+        "mpesa_business_number",
+        "mpesa_account_number",
+        "mpesa_till_number",
+        "receipt_font_size",
+        "receipt_font_weight",
+        "enable_receipt_qr",
+        "receipt_qr_content",
+        "receipt_qr_website",
+    }
+)
+SHOP_POS_COPY_FIELDS = tuple(SHOP_POS_FIELD_NAMES | SHOP_RECEIPT_FIELD_NAMES)
 
 PRINT_CHANNELS = ("bluetooth", "usb", "wifi")
 RECEIPT_PAPER_WIDTHS = ("80", "58")
@@ -104,6 +144,7 @@ RECEIPT_QR_CONTENTS = ("website", "receipt_details")
 WEBSITE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 
 POS_SETTINGS_CACHE_KEY = "company_pos_settings:v1"
+SHOP_POS_SETTINGS_CACHE_KEY = "shop_pos_settings:v1:{shop_id}"
 POS_SETTINGS_CACHE_TTL = 300
 DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v1"
 COMMUNICATIONS_SETTINGS_CACHE_KEY = "company_communications_settings:v1"
@@ -137,9 +178,11 @@ DARAJA_OAUTH_URLS = {
 }
 
 
-def _invalidate_pos_settings_cache() -> None:
+def _invalidate_pos_settings_cache(*, shop_id: int | None = None) -> None:
     cache.delete(POS_SETTINGS_CACHE_KEY)
     cache.delete(RECEIPT_QR_PREVIEW_CACHE_KEY)
+    if shop_id is not None:
+        cache.delete(SHOP_POS_SETTINGS_CACHE_KEY.format(shop_id=shop_id))
 
 
 def _invalidate_daraja_settings_cache() -> None:
@@ -157,6 +200,294 @@ def get_company_pos_settings() -> CompanyPosSettings:
     settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
     cache.set(POS_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
     return settings_row
+
+
+def _shop_pos_defaults_from_company(company: CompanyPosSettings | None = None) -> dict:
+    company = company or get_company_pos_settings()
+    return {name: getattr(company, name) for name in SHOP_POS_COPY_FIELDS}
+
+
+def get_shop_pos_settings(shop: Shop) -> ShopPosSettings:
+    """Return (and lazily create) the shop override row, seeded from company defaults."""
+    cache_key = SHOP_POS_SETTINGS_CACHE_KEY.format(shop_id=shop.pk)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    defaults = _shop_pos_defaults_from_company()
+    settings_row, _ = ShopPosSettings.objects.get_or_create(shop=shop, defaults=defaults)
+    cache.set(cache_key, settings_row, POS_SETTINGS_CACHE_TTL)
+    return settings_row
+
+
+def get_effective_pos_settings(shop: Shop | None = None) -> CompanyPosSettings:
+    """
+    Company POS/receipt settings with optional per-shop overrides applied.
+
+    Returns a CompanyPosSettings instance. When shop overrides are active the
+    returned row is an unsaved merge — callers must not persist it.
+    """
+    company = get_company_pos_settings()
+    if shop is None:
+        return company
+    shop_row = ShopPosSettings.objects.filter(shop_id=shop.pk).first()
+    if shop_row is None or (
+        not shop_row.override_pos and not shop_row.override_receipt
+    ):
+        return company
+
+    values = {}
+    for field in company._meta.concrete_fields:
+        name = field.attname if field.attname else field.name
+        if name in ("id", "pk"):
+            continue
+        if shop_row.override_pos and name in SHOP_POS_FIELD_NAMES:
+            values[name] = getattr(shop_row, name)
+        elif shop_row.override_receipt and name in SHOP_RECEIPT_FIELD_NAMES:
+            values[name] = getattr(shop_row, name)
+        else:
+            values[name] = getattr(company, name)
+    merged = CompanyPosSettings(**values)
+    merged.pk = company.pk
+    merged._is_effective_merge = True  # noqa: SLF001 — marker for callers
+    return merged
+
+
+def set_shop_pos_override(*, shop: Shop, section: str, enabled: bool) -> ShopPosSettings:
+    """Enable or disable shop POS/receipt overrides. Enabling seeds from company."""
+    section_key = (section or "").strip().lower()
+    if section_key not in ("pos", "receipt"):
+        raise ValidationError("Unknown shop settings section.")
+    row = get_shop_pos_settings(shop)
+    company = get_company_pos_settings()
+    flag = "override_pos" if section_key == "pos" else "override_receipt"
+    fields_to_copy = (
+        SHOP_POS_FIELD_NAMES if section_key == "pos" else SHOP_RECEIPT_FIELD_NAMES
+    )
+    turning_on = bool(enabled) and not getattr(row, flag)
+    setattr(row, flag, bool(enabled))
+    update_fields = [flag, "updated_at"]
+    if turning_on:
+        for name in fields_to_copy:
+            setattr(row, name, getattr(company, name))
+            update_fields.append(name)
+    row.save(update_fields=update_fields)
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
+def _require_shop_override_for_field(shop_row: ShopPosSettings, field: str) -> None:
+    if field in SHOP_POS_FIELD_NAMES:
+        if not shop_row.override_pos:
+            raise ValidationError(
+                "Turn on custom shop POS settings before changing this value."
+            )
+        return
+    if field in SHOP_RECEIPT_FIELD_NAMES:
+        if not shop_row.override_receipt:
+            raise ValidationError(
+                "Turn on custom shop receipt settings before changing this value."
+            )
+        return
+    raise ValidationError("Unknown shop setting.")
+
+
+def set_shop_pos_setting(*, shop: Shop, field: str, enabled: bool) -> ShopPosSettings:
+    if field not in POS_SETTING_FIELDS:
+        raise ValidationError("Unknown POS setting.")
+    row = get_shop_pos_settings(shop)
+    _require_shop_override_for_field(row, field)
+    setattr(row, field, bool(enabled))
+    row.save(update_fields=[field, "updated_at"])
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
+def set_shop_tax_percent(*, shop: Shop, percent) -> ShopPosSettings:
+    try:
+        rate = Decimal(str(percent).strip())
+    except (InvalidOperation, AttributeError, TypeError, ValueError) as exc:
+        raise ValidationError("Enter a valid tax percentage.") from exc
+    if rate < 0 or rate > Decimal("100"):
+        raise ValidationError("Tax percentage must be between 0 and 100.")
+    row = get_shop_pos_settings(shop)
+    if not row.override_pos:
+        raise ValidationError(
+            "Turn on custom shop POS settings before changing tax percentage."
+        )
+    row.tax_percent = rate.quantize(Decimal("0.01"))
+    row.save(update_fields=["tax_percent", "updated_at"])
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
+def set_shop_receipt_paper_width(*, shop: Shop, width: str) -> ShopPosSettings:
+    value = (width or "").strip()
+    if value not in RECEIPT_PAPER_WIDTHS:
+        raise ValidationError("Choose 80 mm or 58 mm receipt paper.")
+    row = get_shop_pos_settings(shop)
+    if not row.override_receipt:
+        raise ValidationError(
+            "Turn on custom shop receipt settings before changing paper size."
+        )
+    row.receipt_paper_width = value
+    row.save(update_fields=["receipt_paper_width", "updated_at"])
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
+def set_shop_receipt_font_style(*, shop: Shop, size: str, weight: str) -> ShopPosSettings:
+    size_value = (size or "").strip().lower()
+    weight_value = (weight or "").strip().lower()
+    if size_value not in RECEIPT_FONT_SIZES:
+        raise ValidationError("Choose a valid receipt font size.")
+    if weight_value not in RECEIPT_FONT_WEIGHTS:
+        raise ValidationError("Choose a valid receipt font boldness.")
+    row = get_shop_pos_settings(shop)
+    if not row.override_receipt:
+        raise ValidationError(
+            "Turn on custom shop receipt settings before changing font style."
+        )
+    row.receipt_font_size = size_value
+    row.receipt_font_weight = weight_value
+    row.save(
+        update_fields=["receipt_font_size", "receipt_font_weight", "updated_at"]
+    )
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
+def set_shop_receipt_number_formats(
+    *,
+    shop: Shop,
+    sale: str | None = None,
+    credit: str | None = None,
+    quotation: str | None = None,
+) -> ShopPosSettings:
+    row = get_shop_pos_settings(shop)
+    if not row.override_receipt:
+        raise ValidationError(
+            "Turn on custom shop receipt settings before changing number formats."
+        )
+    updates = []
+    if sale is not None:
+        row.receipt_format_sale = _clean_receipt_format(sale, label="Sale")
+        updates.append("receipt_format_sale")
+    if credit is not None:
+        row.receipt_format_credit = _clean_receipt_format(credit, label="Credit")
+        updates.append("receipt_format_credit")
+    if quotation is not None:
+        row.receipt_format_quotation = _clean_receipt_format(
+            quotation, label="Quotation"
+        )
+        updates.append("receipt_format_quotation")
+    if not updates:
+        raise ValidationError("No receipt formats to update.")
+    row.save(update_fields=[*updates, "updated_at"])
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
+def set_shop_mpesa_payment_details(
+    *,
+    shop: Shop,
+    collection_type: str,
+    business_number: str = "",
+    account_number: str = "",
+    till_number: str = "",
+) -> ShopPosSettings:
+    row = get_shop_pos_settings(shop)
+    if not row.override_receipt:
+        raise ValidationError(
+            "Turn on custom shop receipt settings before changing payment details."
+        )
+    # Reuse company validator by writing through a temporary path: call company
+    # cleaner then apply to shop row.
+    kind = (collection_type or "").strip().lower()
+    if kind and kind not in MPESA_COLLECTION_TYPES:
+        raise ValidationError("Choose Paybill or Buy Goods.")
+
+    business = (business_number or "").strip()
+    account = (account_number or "").strip().upper()
+    till = (till_number or "").strip()
+
+    if kind == "paybill":
+        if business:
+            if not DIGITS_RE.match(business):
+                raise ValidationError("Business number must be digits only.")
+            if len(business) > 8:
+                raise ValidationError("Business number must be at most 8 digits.")
+            if len(business) >= 5 and not (5 <= len(business) <= 8):
+                raise ValidationError("Business number must be 5–8 digits.")
+        if account and len(account) > 40:
+            raise ValidationError("Account number is too long.")
+        till = ""
+    elif kind == "buy_goods":
+        if till:
+            if not DIGITS_RE.match(till):
+                raise ValidationError("Till number must be digits only.")
+            if len(till) > 8:
+                raise ValidationError("Till number must be at most 8 digits.")
+        business = ""
+        account = ""
+    else:
+        business = ""
+        account = ""
+        till = ""
+
+    row.mpesa_collection_type = kind
+    row.mpesa_business_number = business
+    row.mpesa_account_number = account
+    row.mpesa_till_number = till
+    row.save(
+        update_fields=[
+            "mpesa_collection_type",
+            "mpesa_business_number",
+            "mpesa_account_number",
+            "mpesa_till_number",
+            "updated_at",
+        ]
+    )
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
+def set_shop_receipt_qr_settings(
+    *,
+    shop: Shop,
+    enabled: bool,
+    content: str = "website",
+    website: str = "",
+) -> ShopPosSettings:
+    row = get_shop_pos_settings(shop)
+    if not row.override_receipt:
+        raise ValidationError(
+            "Turn on custom shop receipt settings before changing QR settings."
+        )
+    content_value = (content or "").strip().lower() or "website"
+    if content_value not in RECEIPT_QR_CONTENTS:
+        raise ValidationError("Choose company website or receipt details for the QR code.")
+
+    website_value = (row.receipt_qr_website or "").strip()
+    if enabled and content_value == "website":
+        website_value = _normalize_website_url(website)
+        if not website_value:
+            raise ValidationError("Enter the company website URL for the QR code.")
+    elif (website or "").strip():
+        website_value = _normalize_website_url(website)
+
+    row.enable_receipt_qr = bool(enabled)
+    row.receipt_qr_content = content_value
+    row.receipt_qr_website = website_value
+    row.save(
+        update_fields=[
+            "enable_receipt_qr",
+            "receipt_qr_content",
+            "receipt_qr_website",
+            "updated_at",
+        ]
+    )
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
 
 
 STOCK_SETTINGS_CACHE_KEY = "company_stock_settings:v2"
@@ -1999,7 +2330,7 @@ def _next_receipt_number(shop: Shop, *, kind: str) -> str:
     """Next short receipt code for this shop + kind (e.g. S0001)."""
     from .models import ShopReceipt
 
-    prefix = receipt_format_for_kind(kind)
+    prefix = receipt_format_for_kind(kind, get_effective_pos_settings(shop))
     cache_key = f"receipt_seq:v1:{shop.pk}:{kind}:{prefix}"
     seq = _next_receipt_sequence(shop=shop, kind=kind, prefix=prefix)
     # Guard against rare collisions (manual imports / format changes).
@@ -2098,6 +2429,9 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_print_bluetooth": row.enable_print_bluetooth,
         "enable_print_usb": row.enable_print_usb,
         "enable_print_wifi": row.enable_print_wifi,
+        "enable_receipt_payment_methods": bool(
+            getattr(row, "enable_receipt_payment_methods", True)
+        ),
         "receipt_paper_width": paper,
         "receipt_font_size": font["size"],
         "receipt_font_weight": font["weight"],
@@ -2236,6 +2570,10 @@ def create_shop(profile, data, files) -> Shop:
         shop=shop,
         start_time=company_hours.start_time,
         end_time=company_hours.end_time,
+    )
+    ShopPosSettings.objects.create(
+        shop=shop,
+        **_shop_pos_defaults_from_company(),
     )
     return shop
 
@@ -2517,11 +2855,11 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
 
     Used for browser/HTML print and as the source for plain-text ESC/POS.
     """
-    pos = get_company_pos_settings()
+    shop = receipt.shop
+    pos = get_effective_pos_settings(shop)
     company = get_company_profile()
     kind = receipt.get_kind_display()
     doc_meta = _sales_ticket_document_meta(receipt)
-    shop = receipt.shop
     company_name = (company.name or "").strip() or (shop.name if shop else DEFAULT_COMPANY_NAME)
     company_location = (company.location or "").strip()
     company_phone = (company.phone_number or "").strip()
@@ -2583,7 +2921,14 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         )
 
     payment = ""
-    if receipt.kind == ShopReceiptKind.SALE and receipt.total > 0:
+    show_payment_methods = bool(
+        getattr(pos, "enable_receipt_payment_methods", True)
+    )
+    if (
+        show_payment_methods
+        and receipt.kind == ShopReceiptKind.SALE
+        and receipt.total > 0
+    ):
         if receipt.payment_method == ShopPaymentMethod.BOTH:
             payment = (
                 f"Cash {_receipt_money(receipt.cash_amount)}"
@@ -2602,7 +2947,11 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
     tax_pct = (
         f"{receipt.tax_percent.quantize(Decimal('1')):.0f}" if show_tax else "0"
     )
-    payment_details = pos.mpesa_payment_details()
+    payment_details = (
+        pos.mpesa_payment_details()
+        if show_payment_methods
+        else {"type": "", "label": "", "lines": []}
+    )
     logo_url = ""
     try:
         if company.logo:
@@ -2872,7 +3221,7 @@ def build_stock_in_supplier_receipt(movement, *, shop: Shop, authorised_by=None)
     """Build a supplier copy receipt after buying / stocking in items."""
     from items.models import StockPaymentStatus
 
-    pos = get_company_pos_settings()
+    pos = get_effective_pos_settings(shop)
     lines = list(movement.lines.select_related("item").all())
     first = lines[0] if lines else None
     supplier_name = (getattr(first, "supplier_name", None) or "").strip() or "—"
@@ -2968,7 +3317,7 @@ def build_stock_request_delivery_note(
     movement, *, shop: Shop, authorised_by=None
 ) -> dict:
     """Build a delivery note after accepting an inter-shop stock request."""
-    pos = get_company_pos_settings()
+    pos = get_effective_pos_settings(shop)
     lines = list(movement.lines.select_related("item").all())
     from_shop = movement.requested_from_shop or shop
     to_shop = movement.shop
@@ -3060,7 +3409,7 @@ def build_expense_supplier_receipt(
     if not rows and expense is not None:
         rows = [expense]
     first = rows[0] if rows else expense
-    pos = get_company_pos_settings()
+    pos = get_effective_pos_settings(shop)
     supplier_name = ((first.supplier_name if first else "") or "").strip() or "—"
     dial = ((first.supplier_phone_country_code if first else "") or "").strip()
     phone = ((first.supplier_phone_number if first else "") or "").strip()
@@ -3171,7 +3520,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     if kind not in ShopReceiptKind.values:
         raise ValidationError("Choose sale, credit, or quotation.")
 
-    pos_settings = get_company_pos_settings()
+    pos_settings = get_effective_pos_settings(shop)
     if not pos_settings.kind_enabled(kind):
         raise ValidationError("That transaction type is disabled in POS settings.")
 
@@ -5075,7 +5424,7 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
 
         lines = list(receipt.lines.all())
         sold_serials_by_item = _sold_serials_by_item_for_lines(lines)
-        pos_settings = get_company_pos_settings()
+        pos_settings = get_effective_pos_settings(shop)
         ticket = _build_receipt_ticket_data(receipt, lines)
         message = _render_receipt_text(ticket)
         item = _receipt_list_item(receipt)

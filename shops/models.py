@@ -324,6 +324,10 @@ class CompanyPosSettings(models.Model):
     enable_print_bluetooth = models.BooleanField(default=True)
     enable_print_usb = models.BooleanField(default=True)
     enable_print_wifi = models.BooleanField(default=True)
+    enable_receipt_payment_methods = models.BooleanField(
+        default=True,
+        help_text="Show how the customer paid and M-Pesa collection details on receipts.",
+    )
     receipt_paper_width = models.CharField(
         max_length=8,
         choices=(
@@ -487,7 +491,105 @@ class CompanyPosSettings(models.Model):
         return {"type": "", "label": "", "lines": []}
 
 
+class ShopPosSettings(models.Model):
+    """Per-shop POS and receipt overrides. When override flags are off, company defaults apply."""
+
+    shop = models.OneToOneField(
+        Shop,
+        on_delete=models.CASCADE,
+        related_name="pos_settings",
+    )
+    override_pos = models.BooleanField(
+        default=False,
+        help_text="When on, shop POS values replace company POS defaults.",
+    )
+    override_receipt = models.BooleanField(
+        default=False,
+        help_text="When on, shop receipt values replace company receipt defaults.",
+    )
+    enable_sale = models.BooleanField(default=True)
+    enable_credit = models.BooleanField(default=True)
+    enable_quotation = models.BooleanField(default=True)
+    enable_cash_sale_checkout = models.BooleanField(default=True)
+    enable_cash = models.BooleanField(default=True)
+    enable_mpesa = models.BooleanField(default=True)
+    enable_cash_mpesa = models.BooleanField(default=True)
+    enable_discount = models.BooleanField(default=True)
+    enable_tax = models.BooleanField(default=False)
+    tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    compulsory_print_on_sale = models.BooleanField(default=False)
+    enable_print_bluetooth = models.BooleanField(default=True)
+    enable_print_usb = models.BooleanField(default=True)
+    enable_print_wifi = models.BooleanField(default=True)
+    enable_receipt_payment_methods = models.BooleanField(
+        default=True,
+        help_text="Show how the customer paid and M-Pesa collection details on receipts.",
+    )
+    receipt_paper_width = models.CharField(
+        max_length=8,
+        choices=(
+            ("80", "80 mm"),
+            ("58", "58 mm"),
+        ),
+        default="80",
+    )
+    receipt_format_sale = models.CharField(max_length=8, default="S")
+    receipt_format_credit = models.CharField(max_length=8, default="C")
+    receipt_format_quotation = models.CharField(max_length=8, default="Q")
+    mpesa_collection_type = models.CharField(
+        max_length=16,
+        choices=(
+            ("paybill", "Paybill"),
+            ("buy_goods", "Buy Goods"),
+        ),
+        blank=True,
+        default="",
+    )
+    mpesa_business_number = models.CharField(max_length=20, blank=True, default="")
+    mpesa_account_number = models.CharField(max_length=40, blank=True, default="")
+    mpesa_till_number = models.CharField(max_length=20, blank=True, default="")
+    receipt_font_size = models.CharField(
+        max_length=16,
+        choices=(
+            ("small", "Small"),
+            ("medium", "Medium"),
+            ("large", "Large"),
+            ("xlarge", "Extra large"),
+        ),
+        default="medium",
+    )
+    receipt_font_weight = models.CharField(
+        max_length=16,
+        choices=(
+            ("regular", "Regular"),
+            ("medium", "Medium"),
+            ("bold", "Bold"),
+            ("extrabold", "Extra bold"),
+        ),
+        default="regular",
+    )
+    enable_receipt_qr = models.BooleanField(default=False)
+    receipt_qr_content = models.CharField(
+        max_length=32,
+        choices=(
+            ("website", "Company website"),
+            ("receipt_details", "Receipt details"),
+        ),
+        default="website",
+    )
+    receipt_qr_website = models.CharField(max_length=255, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Shop POS settings"
+        verbose_name_plural = "Shop POS settings"
+
+    def __str__(self):
+        return f"POS settings — {self.shop.name}"
+
+
 class CompanyStockSettings(models.Model):
+
     """Company-wide compulsory fields for stock in/out/request (singleton row)."""
 
     # Stock in

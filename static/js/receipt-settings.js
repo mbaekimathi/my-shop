@@ -234,7 +234,34 @@
     return { label: "", lines: [] };
   }
 
+  function paymentMethodsEnabled() {
+    const toggle = root.querySelector(
+      '[data-pos-toggle][data-field="enable_receipt_payment_methods"]'
+    );
+    return toggle ? toggle.checked : true;
+  }
+
+  function syncPaidRowPreview(enabled) {
+    const show = Boolean(enabled);
+    root.querySelectorAll("[data-receipt-paid-row]").forEach((row) => {
+      const valueEl = row.querySelector("[data-receipt-paid-value]");
+      if (show) {
+        if (valueEl && !(valueEl.textContent || "").trim()) {
+          valueEl.textContent = "Cash";
+        }
+        row.hidden = false;
+      } else {
+        row.hidden = true;
+      }
+    });
+  }
+
   function renderPaymentPreview(details) {
+    const showMethods = paymentMethodsEnabled();
+    syncPaidRowPreview(showMethods);
+    if (!showMethods) {
+      details = { label: "", lines: [] };
+    }
     const hasLines = Boolean(details?.lines?.length);
     paymentBlocks.forEach((block) => {
       block.hidden = !hasLines;
@@ -596,4 +623,16 @@
       printSampleBtn.disabled = false;
     }
   });
+
+  const paymentMethodToggle = root.querySelector(
+    '[data-pos-toggle][data-field="enable_receipt_payment_methods"]'
+  );
+  if (paymentMethodToggle) {
+    paymentMethodToggle.addEventListener("change", () => {
+      window.setTimeout(() => {
+        renderPaymentPreview(buildPaymentPreview());
+      }, 0);
+    });
+    renderPaymentPreview(buildPaymentPreview());
+  }
 })();

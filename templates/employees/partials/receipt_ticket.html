@@ -125,9 +125,14 @@
       <strong>KSh {{ p.total }}</strong>
     </div>
     {% if p.payment %}
-    <div>
+    <div data-receipt-paid-row>
       <span>Paid</span>
-      <strong>{{ p.payment }}</strong>
+      <strong data-receipt-paid-value>{{ p.payment }}</strong>
+    </div>
+    {% else %}
+    <div data-receipt-paid-row hidden>
+      <span>Paid</span>
+      <strong data-receipt-paid-value></strong>
     </div>
     {% endif %}
     {% endif %}

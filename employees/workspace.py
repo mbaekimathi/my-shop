@@ -438,12 +438,15 @@ def _footer_site_links(
     employee_login=False,
     profile=None,
     tail,
+    settings_link=None,
 ):
-    """System settings, MY-SHOP (or Employee Login), then page-specific footer links."""
+    """System settings (or custom settings_link), MY-SHOP (or Employee Login), then page-specific footer links."""
     from .module_permissions import employee_may_any
 
     links = []
-    if profile is None or employee_may_any(profile, "settings"):
+    if settings_link is not None:
+        links.append(settings_link)
+    elif profile is None or employee_may_any(profile, "settings"):
         links.append(
             _link(
                 "System settings",
@@ -616,6 +619,7 @@ def sidebar_for_my_shop(
     shops = shops or []
     print_channels = list(print_channels or [])
     omit_dashboard_link = False
+    settings_actives = frozenset({"settings", "settings_pos", "settings_receipt"})
     if portal and shop is not None:
         dashboard_url = reverse(
             "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
@@ -719,6 +723,38 @@ def sidebar_for_my_shop(
                         active=active == "website",
                     )
                 )
+        elif active in settings_actives and _allowed("shop_settings"):
+            primary.append(
+                _link(
+                    "Shop settings",
+                    "settings",
+                    href=reverse(
+                        "employees:my_shop_settings", kwargs={"shop_id": shop.pk}
+                    ),
+                    active=active == "settings",
+                )
+            )
+            primary.append(
+                _link(
+                    "Shop POS",
+                    "monitor-smartphone",
+                    href=reverse(
+                        "employees:my_shop_settings_pos", kwargs={"shop_id": shop.pk}
+                    ),
+                    active=active == "settings_pos",
+                )
+            )
+            primary.append(
+                _link(
+                    "Shop receipt",
+                    "receipt",
+                    href=reverse(
+                        "employees:my_shop_settings_receipt",
+                        kwargs={"shop_id": shop.pk},
+                    ),
+                    active=active == "settings_receipt",
+                )
+            )
         elif active == "stock_requests" and _allowed("stock_requests"):
             primary.append(
                 _action(
@@ -740,6 +776,15 @@ def sidebar_for_my_shop(
             _link("Choose shop", "store", href=my_shop_url(), active=True)
         )
 
+    shop_settings_link = None
+    if shop is not None and _allowed("shop_settings"):
+        shop_settings_link = _link(
+            "Shop settings",
+            "settings",
+            href=reverse("employees:my_shop_settings", kwargs={"shop_id": shop.pk}),
+            active=active in settings_actives,
+        )
+
     return resolve_sidebar_hrefs(
         {
             "page": "my_shop",
@@ -749,6 +794,8 @@ def sidebar_for_my_shop(
             "footer": _footer_site_links(
                 employee_login=True,
                 profile=None if portal else profile,
+                settings_link=shop_settings_link,
+                settings_active=active in settings_actives,
                 tail=[sign_out],
             ),
         }

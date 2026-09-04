@@ -27,6 +27,21 @@ urlpatterns = [
         name="my_shop_workspace",
     ),
     path(
+        "my-shop/<int:shop_id>/settings/",
+        shop_views.my_shop_settings,
+        name="my_shop_settings",
+    ),
+    path(
+        "my-shop/<int:shop_id>/settings/pos/",
+        shop_views.my_shop_settings_pos,
+        name="my_shop_settings_pos",
+    ),
+    path(
+        "my-shop/<int:shop_id>/settings/receipt/",
+        shop_views.my_shop_settings_receipt,
+        name="my_shop_settings_receipt",
+    ),
+    path(
         "my-shop/<int:shop_id>/catalog/",
         shop_views.my_shop_catalog,
         name="my_shop_catalog",

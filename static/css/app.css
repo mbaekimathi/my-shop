@@ -883,6 +883,14 @@ html[data-theme="light"] .staff-shop-list {
   font-size: 1.15rem;
 }
 
+.item-panel.is-using-defaults [data-shop-settings-body] {
+  opacity: 0.72;
+}
+
+.shop-settings-override {
+  border: 1px solid color-mix(in srgb, var(--border, #d8dde6) 80%, transparent);
+}
+
 .company-profile-form {
   display: grid;
   gap: 0.75rem;
@@ -25795,9 +25803,92 @@ body.workspace-modal-open .stock-country-menu {
     min-height: 0;
   }
 
+  /* Supplier + Staff ID: room to type, footer stays reachable */
+  .buy-stock-simple-confirm {
+    flex: 0 1 auto;
+    max-height: min(58dvh, 32rem);
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
   .buy-stock-simple-confirm-card {
     max-height: none;
+    gap: 0.85rem;
+    padding: 0.75rem 0.9rem 0;
+  }
+
+  .buy-stock-simple-supplier {
+    gap: 0.85rem;
+    padding: 0.95rem;
+    border-radius: 14px;
+  }
+
+  .buy-stock-simple-supplier .stock-float-field {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .buy-stock-simple-supplier .stock-phone-field {
+    gap: 0.4rem;
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .buy-stock-simple-supplier .stock-country-trigger {
+    width: 2.75rem;
+    min-height: 2.85rem;
+    border-radius: 12px;
+  }
+
+  .buy-stock-simple-supplier .stock-phone-dial {
+    min-height: 2.85rem;
+    padding: 0 0.5rem;
+    border-radius: 12px;
+    font-size: 0.9rem;
+  }
+
+  .buy-stock-simple-supplier .stock-phone-field > input[type="tel"],
+  .buy-stock-simple-supplier .stock-float-field input,
+  .buy-stock-simple-supplier .stock-float-field select,
+  .buy-stock-simple-supplier .stock-supplier-name-wrap > input {
+    min-height: 2.85rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 12px;
+    font-size: 16px; /* avoid iOS zoom on focus */
+  }
+
+  .buy-stock-simple-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 6;
+    gap: 0.55rem;
+    margin: 0 -0.9rem;
     padding: 0.75rem 0.9rem calc(0.9rem + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--line);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface) 88%, transparent), var(--surface) 28%),
+      var(--surface);
+    box-shadow: 0 -8px 20px rgba(8, 28, 34, 0.06);
+  }
+
+  .buy-stock-simple-footer .stock-float-field--login {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .buy-stock-simple-footer .stock-float-field--login input {
+    min-height: 3rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: 12px;
+    font-size: 16px; /* avoid iOS zoom on focus */
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.28em;
+    text-align: center;
+  }
+
+  .buy-stock-simple-submit {
+    min-height: 3.05rem;
+    font-size: 1rem;
   }
 
   .buy-stock-pick-stack .buy-stock-pick:not(.is-selected):not(.is-open) .buy-stock-pick-head {
@@ -25850,8 +25941,36 @@ body.workspace-modal-open .stock-country-menu {
 }
 
 @media (max-width: 480px) {
-  .buy-stock-simple-confirm-card {
-    max-height: min(42vh, 22rem);
+  .buy-stock-simple-confirm {
+    max-height: min(62dvh, 34rem);
+  }
+
+  .buy-stock-simple-supplier .stock-phone-field {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "flag dial"
+      "phone phone";
+    gap: 0.45rem;
+  }
+
+  .buy-stock-simple-supplier .stock-country-trigger {
+    grid-area: flag;
+    width: 3rem;
+  }
+
+  .buy-stock-simple-supplier .stock-phone-dial {
+    grid-area: dial;
+    justify-self: stretch;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .buy-stock-simple-supplier .stock-phone-field > input[type="tel"] {
+    grid-area: phone;
+  }
+
+  .buy-stock-simple-supplier .stock-phone-field > [data-supplier-suggest] {
+    grid-column: 1 / -1;
   }
 
   .buy-stock-pick-title .buy-stock-pick-name strong {
@@ -26153,10 +26272,17 @@ body.workspace-modal-open .stock-country-menu {
     min-width: 0;
   }
 
+  .shop-expense-composer .shop-cart-input select,
+  .shop-expense-composer .shop-cart-input input {
+    min-height: 2.85rem;
+    font-size: 16px; /* avoid iOS zoom on focus */
+  }
+
   .shop-expense-add {
     grid-column: 2 / -1;
     min-width: 0;
     width: 100%;
+    min-height: 2.85rem;
   }
 
   .shop-expense-parked .buy-stock-pick {
@@ -26170,16 +26296,24 @@ body.workspace-modal-open .stock-country-menu {
 
 @media (max-width: 480px) {
   .shop-expense-composer {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+
+  .shop-expense-composer .shop-cart-input:first-child,
+  .shop-expense-composer-name,
+  .shop-expense-composer-amount,
+  .shop-expense-add {
+    grid-column: 1 / -1;
   }
 
   .shop-expense-composer-amount {
-    grid-column: 1 / 2;
+    min-width: 0;
   }
 
   .shop-expense-add {
-    grid-column: 2 / 3;
-    align-self: end;
+    width: 100%;
+    justify-content: center;
   }
 
   .shop-expense-parked .buy-stock-pick {

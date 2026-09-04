@@ -1652,6 +1652,7 @@ RECEIPT_SETTING_GROUPS = (
             ("enable_print_bluetooth", "Print via Bluetooth"),
             ("enable_print_usb", "Print via USB"),
             ("enable_print_wifi", "Print via Wi‑Fi"),
+            ("enable_receipt_payment_methods", "Show payment methods on receipt"),
         ),
     },
 )
@@ -1998,8 +1999,12 @@ def _company_pos_settings(
                 "tax_amount": _money(preview_tax),
                 "show_tax": bool(pos.enable_tax and preview_tax_percent > 0),
                 "total": _money(preview_total),
-                "payment": "Cash",
-                "payment_details": pos.mpesa_payment_details(),
+                "payment": "Cash" if pos.enable_receipt_payment_methods else "",
+                "payment_details": (
+                    pos.mpesa_payment_details()
+                    if pos.enable_receipt_payment_methods
+                    else {"type": "", "label": "", "lines": []}
+                ),
                 "footer": "Thank you for shopping with us",
             },
         }

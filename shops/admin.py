@@ -12,6 +12,7 @@ from .models import (
     ExpenseSupplier,
     Shop,
     ShopDaySession,
+    ShopPosSettings,
     ShopWorkingHoursSettings,
     ShopReceipt,
     ShopReceiptLine,
@@ -113,6 +114,23 @@ class CompanyWorkingHoursSettingsAdmin(admin.ModelAdmin):
 @admin.register(ShopWorkingHoursSettings)
 class ShopWorkingHoursSettingsAdmin(admin.ModelAdmin):
     list_display = ("shop", "start_time", "end_time", "updated_at")
+    search_fields = ("shop__name", "shop__login_code")
+    readonly_fields = ("updated_at",)
+
+
+@admin.register(ShopPosSettings)
+class ShopPosSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "shop",
+        "override_pos",
+        "override_receipt",
+        "enable_sale",
+        "enable_credit",
+        "enable_quotation",
+        "receipt_paper_width",
+        "updated_at",
+    )
+    list_filter = ("override_pos", "override_receipt")
     search_fields = ("shop__name", "shop__login_code")
     readonly_fields = ("updated_at",)
 

@@ -1,0 +1,46 @@
+<section class="pos-settings-group shop-settings-override">
+  <div class="pos-settings-group-head">
+    <h3>Custom for this shop</h3>
+    <p>
+      {% if shop_settings_section == "pos" %}
+      Off uses company POS defaults. On lets this shop set its own checkout options.
+      {% else %}
+      Off uses company receipt defaults. On lets this shop set its own print and receipt look.
+      {% endif %}
+    </p>
+  </div>
+  <ul class="pos-settings-list">
+    <li class="pos-settings-row">
+      <div class="pos-settings-copy">
+        <strong>
+          {% if shop_settings_section == "pos" %}
+          Use custom shop POS settings
+          {% else %}
+          Use custom shop receipt settings
+          {% endif %}
+        </strong>
+        <p data-shop-override-status>
+          {% if shop_override_enabled %}
+          Custom settings are active for {{ shop.name }}.
+          {% else %}
+          Using company defaults.
+          {% endif %}
+        </p>
+      </div>
+      <label class="perm-switch">
+        <input
+          type="checkbox"
+          class="perm-switch-input"
+          {% if shop_override_enabled %}checked{% endif %}
+          data-shop-override
+          data-section="{{ shop_settings_section }}"
+          aria-label="Use custom shop settings"
+        >
+        <span class="perm-switch-ui" aria-hidden="true"></span>
+        <span class="perm-switch-state">
+          {% if shop_override_enabled %}On{% else %}Off{% endif %}
+        </span>
+      </label>
+    </li>
+  </ul>
+</section>

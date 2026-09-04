@@ -125,6 +125,7 @@ PERMISSION_MODULES = (
             {"slug": "return_receipt", "label": "Return / cancel receipt"},
             {"slug": "open_close", "label": "Open / close shop"},
             {"slug": "print", "label": "Print / connect printer"},
+            {"slug": "shop_settings", "label": "Shop settings"},
         ),
     },
     {
