@@ -63,7 +63,7 @@
           <option value="partial-returns"{% if page.receipt_kind == 'partial-returns' %} selected{% endif %}>Partial returns</option>
         </select>
         {% endif %}
-        {% if section_slug == "suppliers" or section_slug == "expenses" %}
+        {% if section_slug == "suppliers" or section_slug == "expenses" or section_slug == "credits" %}
         {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
         {% else %}
         <select name="range" data-analytics-range aria-label="Time range">
@@ -104,7 +104,11 @@
         <strong>{{ alert.title }}</strong>
         <p>{{ alert.detail }}</p>
       </div>
-      {% if alert.action %}
+      {% if alert.href %}
+      <p class="ax-alert-action">
+        <a class="ax-alert-link" href="{{ alert.href }}">{{ alert.href_label|default:"View" }}</a>
+      </p>
+      {% elif alert.action %}
       <p class="ax-alert-action"><span>Do next</span> {{ alert.action }}</p>
       {% endif %}
     </article>

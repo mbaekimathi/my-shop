@@ -575,6 +575,93 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertIn("/analytics/credits/clients/", row[0]["href"])
         self.assertIn("all-time", page["tables"][0]["footnote"])
 
+    def test_credits_period_filter_scopes_client_rows_and_alerts(self):
+        from datetime import datetime, time, timedelta
+
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        older = today - timedelta(days=4)
+        tz = timezone.get_current_timezone()
+        in_period = self._make_receipt(self.client, total=100, amount_paid=0)
+        out_period = self._make_receipt(self.client, total=80, amount_paid=0)
+        ShopReceipt.objects.filter(pk=in_period.pk).update(
+            created_at=timezone.make_aware(datetime.combine(today, time(11, 0)), tz)
+        )
+        ShopReceipt.objects.filter(pk=out_period.pk).update(
+            created_at=timezone.make_aware(datetime.combine(older, time(11, 0)), tz)
+        )
+
+        start = timezone.make_aware(datetime.combine(today, time.min), tz)
+        end = start + timedelta(days=1)
+        page = _build_clients(
+            self._filters(
+                from_credits=True,
+                start=start,
+                end=end,
+                report_period_label=today.strftime("%d %b %Y"),
+                query=f"shop_id={self.shop.pk}&range=day&date={today.isoformat()}",
+            )
+        )
+        row = self._row_for(page, "CREDIT CLIENT")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[-1]["qty"], "1")
+        self.assertEqual(row[-1]["amount"], "100")
+        self.assertIn("this period", page["tables"][0]["footnote"])
+        self.assertEqual(len(page["alerts"]), 1)
+        self.assertEqual(page["alerts"][0]["href_label"], "View other credits")
+        self.assertIn("range=all", page["alerts"][0]["href"])
+        self.assertIn(f"shop_id={self.shop.pk}", page["alerts"][0]["href"])
+
+    def test_client_account_filters_by_period_and_notifies_other_credits(self):
+        from datetime import datetime, time, timedelta
+
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from employees.analytics_services import build_client_credit_account
+
+        today = timezone.localdate()
+        older = today - timedelta(days=2)
+        tz = timezone.get_current_timezone()
+        in_period = self._make_receipt(self.client, total=120, amount_paid=20)
+        out_period = self._make_receipt(self.client, total=50, amount_paid=0)
+        ShopReceipt.objects.filter(pk=in_period.pk).update(
+            created_at=timezone.make_aware(datetime.combine(today, time(9, 0)), tz)
+        )
+        ShopReceipt.objects.filter(pk=out_period.pk).update(
+            created_at=timezone.make_aware(datetime.combine(older, time(9, 0)), tz)
+        )
+
+        request = RequestFactory().get(
+            f"/shop-cashier/analytics/credits/clients/{self.client.pk}/",
+            {
+                "shop_id": str(self.shop.pk),
+                "range": "day",
+                "date": today.isoformat(),
+            },
+        )
+        account = build_client_credit_account(
+            profile=self.cashier, client_id=self.client.pk, request=request
+        )
+        self.assertEqual(account["receipt_count"], 1)
+        self.assertEqual(account["balance_raw"], "100.00")
+        self.assertEqual(account["other_credits_count"], 1)
+        self.assertIsNotNone(account["other_credits_alert"])
+        self.assertIn("range=all", account["all_credits_href"])
+        self.assertIn("View other credits", account["other_credits_alert"]["href_label"])
+
+        all_request = RequestFactory().get(
+            f"/shop-cashier/analytics/credits/clients/{self.client.pk}/",
+            {"shop_id": str(self.shop.pk), "range": "all"},
+        )
+        all_account = build_client_credit_account(
+            profile=self.cashier, client_id=self.client.pk, request=all_request
+        )
+        self.assertEqual(all_account["receipt_count"], 2)
+        self.assertEqual(all_account["other_credits_count"], 0)
+        self.assertIsNone(all_account["other_credits_alert"])
+
 
 class CreditsShopScopeTests(TestCase):
     def setUp(self):

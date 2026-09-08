@@ -314,7 +314,9 @@ def analytics_client_credit(request, role_segment, client_id):
     if denied is not None:
         return denied
 
-    account = build_client_credit_account(profile=profile, client_id=client_id)
+    account = build_client_credit_account(
+        profile=profile, client_id=client_id, request=request
+    )
     from shops.credit_note import credit_note_share_context
     from shops.credit_audit import build_client_credit_audit_trail
 
@@ -325,7 +327,7 @@ def analytics_client_credit(request, role_segment, client_id):
         balance=account["balance"],
     )
     audit_trail = build_client_credit_audit_trail(
-        profile=profile, client_id=client_id
+        profile=profile, client_id=client_id, request=request
     )
     query = request.GET.urlencode()
     back_href = analytics_section_url(profile.role, back_section)
@@ -416,7 +418,9 @@ def analytics_client_credit_audit(request, role_segment, client_id):
     if denied is not None:
         return denied
 
-    trail = build_client_credit_audit_trail(profile=profile, client_id=client_id)
+    trail = build_client_credit_audit_trail(
+        profile=profile, client_id=client_id, request=request
+    )
     query = request.GET.urlencode()
     back_href = analytics_section_url(profile.role, back_section)
     if query:
@@ -641,11 +645,7 @@ def analytics_account_pay(request, role_segment):
                 shop_ids=request.POST.getlist("shop_id"),
             )
         else:
-            date_filter = (
-                _date_filter_context(request, allow_all_time=True)
-                if kind in ("expense", "stock")
-                else {}
-            )
+            date_filter = _date_filter_context(request, allow_all_time=True)
             result = apply_account_payment(
                 profile=profile,
                 kind=kind,

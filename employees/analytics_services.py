@@ -432,11 +432,14 @@ def apply_account_payment(
                 mpesa_receipt_number = stk_payment.mpesa_receipt_number or ""
 
             receipts = list(
-                ShopReceipt.objects.select_for_update()
-                .filter(
-                    client_id=client.pk,
-                    kind=ShopReceiptKind.CREDIT,
-                    shop_id__in=shop_ids,
+                _within_created_range(
+                    ShopReceipt.objects.select_for_update().filter(
+                        client_id=client.pk,
+                        kind=ShopReceiptKind.CREDIT,
+                        shop_id__in=shop_ids,
+                    ),
+                    start,
+                    end,
                 )
                 .exclude(status=ShopReceiptStatus.CANCELLED)
                 .order_by("created_at", "pk")
@@ -1454,13 +1457,27 @@ def _sum_total(qs):
     return qs.aggregate(total=Coalesce(Sum("total"), _zero()))["total"] or _zero()
 
 
-def _alert(level, title, detail, action=""):
+def _alert(level, title, detail, action="", *, href="", href_label=""):
     return {
         "level": level,
         "title": title,
         "detail": detail,
         "action": action,
+        "href": href,
+        "href_label": href_label,
     }
+
+
+def _query_with_all_time(query: str = "") -> str:
+    """Rewrite a filter query string to all-time (drop day/period/month/year fields)."""
+    from urllib.parse import parse_qs, urlencode
+
+    params = parse_qs(query, keep_blank_values=True) if query else {}
+    flat = {key: values[0] for key, values in params.items()}
+    for key in ("date", "date_from", "date_to", "month", "year"):
+        flat.pop(key, None)
+    flat["range"] = "all"
+    return urlencode(flat)
 
 
 def _metric(label, value, hint="", tone="neutral"):
@@ -1727,12 +1744,15 @@ def _client_account_summary_board(
     receipt_count: int,
     total_paid,
     shop_count: int,
+    period_label: str = "",
 ) -> dict:
     due = Decimal(balance or 0) if not isinstance(balance, Decimal) else balance
     paid_total = Decimal(total_paid or 0) if not isinstance(total_paid, Decimal) else total_paid
     open_n = int(open_count or 0)
     receipts = int(receipt_count or 0)
     shops = int(shop_count or 0)
+    period = (period_label or "").strip()
+    scoped = bool(period) and period.lower() != "all time"
     return {
         "hero": {
             "label": "Outstanding balance",
@@ -1740,6 +1760,7 @@ def _client_account_summary_board(
             "hint": (
                 f"{open_n} open credit{'s' if open_n != 1 else ''} · "
                 f"{receipts} receipt{'s' if receipts != 1 else ''}"
+                + (f" · {period}" if scoped else "")
             ),
             "tone": "warn" if due > 0 else "good",
         },
@@ -1747,14 +1768,14 @@ def _client_account_summary_board(
             {
                 "label": "Open credits",
                 "value": str(open_n),
-                "hint": "Still owing",
+                "hint": "Still owing" + (f" · {period}" if scoped else ""),
                 "icon": "credit-card",
                 "tone": "warn" if open_n else "good",
             },
             {
                 "label": "Paid so far",
                 "value": _money_ksh(paid_total),
-                "hint": "Across all receipts",
+                "hint": period if scoped else "Across all receipts",
                 "icon": "wallet",
                 "tone": "cash",
             },
@@ -2047,8 +2068,10 @@ def _opex_and_drawings_by_shop(expenses_qs) -> tuple[dict, dict]:
     return opex_by_shop, drawings_by_shop
 
 
-def _date_filter_context(request=None, *, data=None, allow_all_time=False) -> dict:
-    """Parse day / period / month / year filters. All-time when range is missing."""
+def _date_filter_context(
+    request=None, *, data=None, allow_all_time=False, default_all_time=None
+) -> dict:
+    """Parse day / period / month / year filters. Optionally support all-time."""
     from django.utils import timezone
     from items.views import _report_range_bounds
 
@@ -2063,7 +2086,13 @@ def _date_filter_context(request=None, *, data=None, allow_all_time=False) -> di
     if getter is not None and hasattr(getter, "get"):
         range_raw = (getter.get("range") or "").strip().lower()
     today = timezone.localdate()
-    if allow_all_time and range_raw not in ("day", "period", "month", "year"):
+    if default_all_time is None:
+        default_all_time = allow_all_time
+    use_all_time = allow_all_time and (
+        range_raw == "all"
+        or (default_all_time and range_raw not in ("day", "period", "month", "year"))
+    )
+    if use_all_time:
         return {
             "report_range": "all",
             "report_date_value": today.isoformat(),
@@ -2083,7 +2112,9 @@ def _date_filter_context(request=None, *, data=None, allow_all_time=False) -> di
         GET = getter or {}
 
     range_type, start, end, filter_context = _report_range_bounds(
-        request if request is not None and not allow_all_time and data is None else _QueryRequest()
+        request
+        if request is not None and not allow_all_time and data is None
+        else _QueryRequest()
     )
     delta = end - start
     return {
@@ -2102,8 +2133,19 @@ def _within_created_range(qs, start, end, *, lookup: str = "created_at"):
     return qs
 
 
-def _filters_context(profile, request, *, allow_all_time=False, shop_scope: str = "default"):
-    date_filter = _date_filter_context(request, allow_all_time=allow_all_time)
+def _filters_context(
+    profile,
+    request,
+    *,
+    allow_all_time=False,
+    default_all_time=None,
+    shop_scope: str = "default",
+):
+    date_filter = _date_filter_context(
+        request,
+        allow_all_time=allow_all_time,
+        default_all_time=default_all_time,
+    )
     filter_shops = actionable_shops_for_profile(profile)
     shops_by_id = {shop.pk: shop for shop in filter_shops}
     selected_shop_ids = _parse_shop_ids(request.GET.getlist("shop_id"), shops_by_id)
@@ -2135,10 +2177,14 @@ def get_analytics_section(slug: str) -> dict:
 
 def build_analytics_page(*, profile, request, section_slug: str = "overview") -> dict:
     section = get_analytics_section(section_slug)
+    allow_all_time = section["slug"] in ("suppliers", "expenses", "supply", "credits")
+    # Credits keeps the usual day default; suppliers/expenses/supply default to all-time.
+    default_all_time = section["slug"] != "credits"
     filters = _filters_context(
         profile,
         request,
-        allow_all_time=section["slug"] in ("suppliers", "expenses", "supply"),
+        allow_all_time=allow_all_time,
+        default_all_time=default_all_time if allow_all_time else False,
     )
     filters["role"] = profile.role
     filters["query"] = request.GET.urlencode()
@@ -2575,9 +2621,19 @@ def client_credit_account_url(
     return href
 
 
-def build_client_credit_account(*, profile, client_id: int) -> dict:
-    """Full credit ledger and outstanding balance for one client."""
-    shop_ids = [shop.pk for shop in actionable_shops_for_profile(profile)]
+def build_client_credit_account(*, profile, client_id: int, request=None) -> dict:
+    """Credit ledger and outstanding balance for one client (optionally period-scoped)."""
+    shop_filter = _allocated_shop_filter(profile, request)
+    shop_ids = shop_filter["active_shop_ids"]
+    date_filter = _date_filter_context(request, allow_all_time=True)
+    start, end = date_filter["start"], date_filter["end"]
+    period_label = date_filter.get("report_period_label") or "All time"
+    scope_hint = (
+        shop_filter["selected_shops"][0].name
+        if len(shop_filter["selected_shops"]) == 1
+        else shop_filter["shop_filter_label"]
+    )
+
     client = Client.objects.filter(pk=client_id).first()
     if client is None or not shop_ids:
         raise Http404("Client not found.")
@@ -2588,13 +2644,17 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
     ):
         raise Http404("Client not found.")
 
-    receipts = list(
+    all_credit_qs = (
         ShopReceipt.objects.filter(
             client_id=client.pk,
             kind=ShopReceiptKind.CREDIT,
             shop_id__in=shop_ids,
-        )
-        .exclude(status=ShopReceiptStatus.CANCELLED)
+        ).exclude(status=ShopReceiptStatus.CANCELLED)
+    )
+
+    all_count = all_credit_qs.count()
+    receipts = list(
+        _within_created_range(all_credit_qs, start, end)
         .select_related("shop", "created_by", "created_by__user")
         .prefetch_related("lines")
         .order_by("-created_at")
@@ -2669,6 +2729,47 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
                 "lines": lines,
             }
         )
+
+    # Open balances first (newest → oldest), then paid/zero-due at the bottom.
+    rows.sort(
+        key=lambda item: (
+            Decimal(item.get("due_raw") or 0) <= 0,
+            -(item["when"].timestamp() if item.get("when") else 0),
+        )
+    )
+
+    other_count = max(0, all_count - len(rows))
+    other_credits_alert = None
+    all_credits_href = ""
+    if start is not None and end is not None and other_count > 0:
+        query = ""
+        from_credits = False
+        if request is not None:
+            getter = getattr(request, "GET", None)
+            query = getter.urlencode() if getter is not None else ""
+            from_credits = "/analytics/credits/" in (getattr(request, "path", "") or "")
+        all_query = _query_with_all_time(query)
+        all_credits_href = client_credit_account_url(
+            profile.role,
+            client.pk,
+            query=all_query,
+            from_credits=from_credits,
+        )
+        other_credits_alert = _alert(
+            "info",
+            "Other credits outside this period",
+            (
+                f"{other_count} more credit receipt"
+                f"{'' if other_count == 1 else 's'} for this client "
+                f"outside {period_label}."
+            ),
+            href=all_credits_href,
+            href_label="View other credits",
+        )
+
+    empty_scope = (
+        f"at {scope_hint}" if shop_filter["selected_shop_ids"] else "in your shops"
+    )
     return {
         "client": client,
         "balance": _money_ksh(balance),
@@ -2681,13 +2782,22 @@ def build_client_credit_account(*, profile, client_id: int) -> dict:
             receipt_count=len(rows),
             total_paid=total_paid,
             shop_count=len(shop_ids_seen),
+            period_label=period_label,
         ),
         "rows": rows,
         "ledger_title": "Credit receipts",
-        "empty_message": "No credit receipts for this client in your shops.",
+        "empty_message": (
+            f"No credit receipts for this client {empty_scope} ({period_label})."
+        ),
         "account_kind": "credit",
         "account_id": client.pk,
         "can_pay": balance > 0,
+        "scope_hint": scope_hint,
+        "other_credits_count": other_count,
+        "other_credits_alert": other_credits_alert,
+        "all_credits_href": all_credits_href,
+        **shop_filter,
+        **date_filter,
     }
 
 
@@ -5896,13 +6006,16 @@ def _build_credits(filters):
         1 for shop in shops_sorted if total_by_shop.get(shop.pk, (0, _zero()))[0] > 0
     )
 
+    clients_page = _build_clients({**filters, "from_credits": True})
+    period_label = filters.get("report_period_label") or "selected period"
+
     return {
         "headline": "Credits",
         "lead": (
-            "Credit performance by shop for the selected period, followed by "
-            "all-time client credit accounts and outstanding balances."
+            f"Credit performance by shop and client credit accounts for "
+            f"{period_label}."
         ),
-        "alerts": [],
+        "alerts": list(clients_page.get("alerts") or []),
         "summary_board": _credits_summary_board(
             total_amount=total_amount,
             total_docs=total_docs,
@@ -5932,7 +6045,7 @@ def _build_credits(filters):
                 ),
             )
         ]
-        + _build_clients({**filters, "from_credits": True})["tables"],
+        + clients_page["tables"],
     }
 
 
@@ -5942,6 +6055,11 @@ def _build_clients(filters):
     role = filters["role"]
     query = filters.get("query") or ""
     from_credits = bool(filters.get("from_credits"))
+    start = filters.get("start")
+    end = filters.get("end")
+    period_label = filters.get("report_period_label") or "selected period"
+    # Credits page is period-scoped; standalone Clients stays all-time.
+    period_scoped = from_credits and start is not None and end is not None
     outstanding_due = Greatest(
         ExpressionWrapper(
             F("total") - F("amount_paid"),
@@ -5950,13 +6068,18 @@ def _build_clients(filters):
         Value(0, output_field=DecimalField(max_digits=12, decimal_places=2)),
     )
 
-    credit_receipts = (
+    all_credit_receipts = (
         ShopReceipt.objects.filter(
             shop_id__in=shop_ids,
             kind=ShopReceiptKind.CREDIT,
         )
         .exclude(status=ShopReceiptStatus.CANCELLED)
         .exclude(client_id=None)
+    )
+    credit_receipts = (
+        _within_created_range(all_credit_receipts, start, end)
+        if period_scoped
+        else all_credit_receipts
     )
 
     # client_id -> {shop_id: (credit transactions, outstanding balance)}
@@ -5982,16 +6105,12 @@ def _build_clients(filters):
             total_balance + balance,
         )
 
-    client_ids_in_scope = set(
-        ShopReceipt.objects.filter(
-            shop_id__in=shop_ids,
-            kind=ShopReceiptKind.CREDIT,
+    if period_scoped:
+        client_ids_in_scope = set(totals_by_client.keys())
+    else:
+        client_ids_in_scope = set(
+            all_credit_receipts.values_list("client_id", flat=True).distinct()
         )
-        .exclude(status=ShopReceiptStatus.CANCELLED)
-        .exclude(client_id=None)
-        .values_list("client_id", flat=True)
-        .distinct()
-    )
     ranked = []
     for client in Client.objects.filter(pk__in=client_ids_in_scope).order_by(
         "full_name", "id"
@@ -6061,10 +6180,61 @@ def _build_clients(filters):
         )
     columns.append(_pair_total_col(pair_qty="Txns", pair_amt="Owed"))
 
+    alerts = []
+    if period_scoped:
+        period_count = credit_receipts.count()
+        all_count = all_credit_receipts.count()
+        other_count = max(0, all_count - period_count)
+        if other_count > 0:
+            from employees.workspace import analytics_section_url
+
+            all_query = _query_with_all_time(query)
+            all_href = analytics_section_url(role, "credits")
+            if all_query:
+                all_href = f"{all_href}?{all_query}"
+            alerts.append(
+                _alert(
+                    "info",
+                    "Other credits outside this period",
+                    (
+                        f"{other_count} credit receipt"
+                        f"{'' if other_count == 1 else 's'} in the selected shops "
+                        f"fall outside {period_label}."
+                    ),
+                    href=all_href,
+                    href_label="View other credits",
+                )
+            )
+
+    if period_scoped:
+        footnote = (
+            "Each client row opens the account ledger for the same period. "
+            "Txns and Owed are credit receipts created in this period for the "
+            "selected shops. Txns = non-cancelled credit receipts; "
+            "Owed = unpaid balance per receipt, never below zero."
+        )
+        empty = (
+            "Select a shop to view credit clients."
+            if not shop_ids
+            else f"No credit clients for the selected shops in {period_label}."
+        )
+    else:
+        footnote = (
+            "Each client row opens the account ledger. "
+            "Txns and Owed are all-time for the selected shops. "
+            "Txns = non-cancelled credit receipts; "
+            "Owed = unpaid balance per receipt, never below zero."
+        )
+        empty = (
+            "Select a shop to view credit clients."
+            if not shop_ids
+            else "No credit clients in the selected shops."
+        )
+
     return {
         "headline": "Clients",
         "lead": "",
-        "alerts": [],
+        "alerts": alerts,
         "metrics": [],
         "insights": [],
         "tables": [
@@ -6072,17 +6242,8 @@ def _build_clients(filters):
                 "Client credit accounts by shop",
                 columns,
                 client_rows,
-                empty=(
-                    "Select a shop to view credit clients."
-                    if not shop_ids
-                    else "No credit clients in the selected shops."
-                ),
-                footnote=(
-                    "Each client row opens the account ledger. "
-                    "Txns and Owed are all-time for the selected shops, not the "
-                    "date filter above. Txns = non-cancelled credit receipts; "
-                    "Owed = unpaid balance per receipt, never below zero."
-                ),
+                empty=empty,
+                footnote=footnote,
                 shop_grid=True,
             )
         ],

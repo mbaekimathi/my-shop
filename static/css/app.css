@@ -8551,6 +8551,11 @@ html[data-theme="light"] .low-stock-badge.is-low {
   border-left-color: var(--teal);
 }
 
+.ax-alert.is-info {
+  border-left-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
 .ax-alert.is-warn {
   border-left-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
@@ -8591,6 +8596,17 @@ html[data-theme="light"] .low-stock-badge.is-low {
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.ax-alert-link {
+  color: var(--accent-deep);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.ax-alert-link:hover {
+  color: var(--text-strong);
 }
 
 .ax-insights {

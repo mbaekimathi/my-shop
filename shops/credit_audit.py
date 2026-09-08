@@ -322,11 +322,23 @@ def ensure_client_credit_audit_backfill(*, client_id: int, shop_ids: list[int]) 
                 )
 
 
-def build_client_credit_audit_trail(*, profile, client_id: int) -> dict:
-    """Chronological audit feed for one client credit account."""
-    from employees.analytics_services import actionable_shops_for_profile
+def build_client_credit_audit_trail(*, profile, client_id: int, request=None) -> dict:
+    """Chronological audit feed for one client credit account (optionally period-scoped)."""
+    from employees.analytics_services import (
+        _allocated_shop_filter,
+        _date_filter_context,
+        _within_created_range,
+        actionable_shops_for_profile,
+    )
 
-    shop_ids = [shop.pk for shop in actionable_shops_for_profile(profile)]
+    shop_filter = _allocated_shop_filter(profile, request)
+    shop_ids = shop_filter["active_shop_ids"]
+    if not shop_ids:
+        shop_ids = [shop.pk for shop in actionable_shops_for_profile(profile)]
+    date_filter = _date_filter_context(request, allow_all_time=True)
+    start, end = date_filter.get("start"), date_filter.get("end")
+    period_label = date_filter.get("report_period_label") or "All time"
+
     client = Client.objects.filter(pk=client_id).first()
     if client is None or not shop_ids:
         raise Http404("Client not found.")
@@ -340,19 +352,34 @@ def build_client_credit_audit_trail(*, profile, client_id: int) -> dict:
 
     ensure_client_credit_audit_backfill(client_id=client.pk, shop_ids=shop_ids)
 
+    period_receipt_ids = list(
+        _within_created_range(
+            ShopReceipt.objects.filter(
+                client_id=client.pk,
+                kind=ShopReceiptKind.CREDIT,
+                shop_id__in=shop_ids,
+            ).exclude(status=ShopReceiptStatus.CANCELLED),
+            start,
+            end,
+        ).values_list("pk", flat=True)
+    )
+
+    events_qs = ClientCreditAccountEvent.objects.filter(
+        client_id=client.pk,
+        shop_id__in=shop_ids,
+    )
+    if start is not None and end is not None:
+        # Only activity for credit receipts in the filtered period — never
+        # surface transactions tied to credits outside the date filter.
+        events_qs = events_qs.filter(receipt_id__in=period_receipt_ids)
     events = list(
-        ClientCreditAccountEvent.objects.filter(
-            client_id=client.pk,
-            shop_id__in=shop_ids,
-        )
-        .select_related(
+        events_qs.select_related(
             "shop",
             "receipt",
             "actor",
             "actor__user",
             "stk_payment",
-        )
-        .order_by("-occurred_at", "-pk")
+        ).order_by("-occurred_at", "-pk")
     )
 
     rows = []
@@ -391,13 +418,21 @@ def build_client_credit_audit_trail(*, profile, client_id: int) -> dict:
             }
         )
 
+    scoped = start is not None and end is not None
+    empty_message = (
+        f"No credit payments or account changes for receipts in {period_label}."
+        if scoped
+        else "No credit payments or account changes recorded yet."
+    )
+
     return {
         "client": client,
         "rows": rows,
         "event_count": len(rows),
         "payment_count": payment_count,
         "change_count": change_count,
-        "empty_message": "No credit payments or account changes recorded yet.",
+        "empty_message": empty_message,
+        **date_filter,
     }
 
 

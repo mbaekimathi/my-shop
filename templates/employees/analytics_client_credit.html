@@ -16,7 +16,11 @@
       <div class="ax-title ax-title--stack">
         <span class="ax-account-kicker">Client account</span>
         <h2>{{ client.full_name }}</h2>
-        <span class="ax-period">{{ client.phone_number }}</span>
+        <span class="ax-period">
+          {{ client.phone_number }}
+          · {{ shop_filter_label|default:"All shops" }}
+          · {{ report_period_label|default:"All time" }}
+        </span>
       </div>
       <div class="ax-top-actions">
         {% if credit_note_url %}
@@ -34,10 +38,47 @@
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back" }}</a>
       </div>
     </div>
+    <form class="ax-filters" method="get" data-analytics-filters>
+      {% for key, values in request.GET.lists %}
+        {% if key != "shop_id" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" %}
+          {% for value in values %}
+          <input type="hidden" name="{{ key }}" value="{{ value }}">
+          {% endfor %}
+        {% endif %}
+      {% endfor %}
+      <select name="shop_id" aria-label="Shop">
+        <option value="">All shops</option>
+        {% for shop in filter_shops %}
+        <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+        {% endfor %}
+      </select>
+      {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
+      <button type="submit" class="ax-apply">Apply</button>
+    </form>
     <p class="ax-lead">
-      Open credit receipts and outstanding balance for this client across your shops.
+      Credit receipts and outstanding balance for this client
+      · {{ scope_hint|default:"All shops" }}
+      · {{ report_period_label|default:"All time" }}.
     </p>
   </header>
+
+  {% if other_credits_alert %}
+  <div class="ax-alerts" aria-label="Other credits">
+    <article class="ax-alert is-{{ other_credits_alert.level }}">
+      <div class="ax-alert-main">
+        <strong>{{ other_credits_alert.title }}</strong>
+        <p>{{ other_credits_alert.detail }}</p>
+      </div>
+      {% if other_credits_alert.href %}
+      <p class="ax-alert-action">
+        <a class="ax-alert-link" href="{{ other_credits_alert.href }}">
+          {{ other_credits_alert.href_label|default:"View other credits" }}
+        </a>
+      </p>
+      {% endif %}
+    </article>
+  </div>
+  {% endif %}
 
   {% if summary_board %}
   <section class="ax-summary-board" aria-label="Account summary">
@@ -67,7 +108,13 @@
     <header class="ax-ledger-head">
       <div>
         <h3>Transactions</h3>
-        <p class="ax-ledger-lead">Payments, due-date changes, returns, and cancellations</p>
+        <p class="ax-ledger-lead">
+          {% if report_range and report_range != "all" %}
+          Payments and changes for credit receipts in {{ report_period_label|default:"this period" }}
+          {% else %}
+          Payments, due-date changes, returns, and cancellations
+          {% endif %}
+        </p>
       </div>
       {% if transaction_count %}
       <span class="ax-card-meta">{{ transaction_count }} transaction{{ transaction_count|pluralize }}</span>
@@ -144,4 +191,23 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/analytics-receipt-ledger.js' %}?v=15"></script>
+<script>
+  (() => {
+    const form = document.querySelector("[data-analytics-filters]");
+    if (!form) return;
+    const rangeSelect = form.querySelector("[data-analytics-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const syncRange = () => {
+      const range = rangeSelect?.value || "day";
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.disabled = !match;
+        field.required = match;
+      });
+    };
+    rangeSelect?.addEventListener("change", syncRange);
+    syncRange();
+  })();
+</script>
 {% endblock %}
