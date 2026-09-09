@@ -19,6 +19,12 @@ class Shop(models.Model):
     location = models.CharField(max_length=255)
     email = models.EmailField()
     phone_number = models.CharField(max_length=40)
+    receipt_phone_number = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        help_text="Phone printed on this shop's receipts. Blank uses the company phone.",
+    )
     login_code = models.CharField(max_length=6, unique=True, db_index=True)
     password_hash = models.CharField(max_length=128)
     image = models.ImageField(upload_to=shop_image_path, blank=True, null=True)

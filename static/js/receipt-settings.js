@@ -662,4 +662,69 @@
     });
     renderPaymentPreview(buildPaymentPreview());
   }
+
+  const receiptPhoneInput = root.querySelector("[data-receipt-phone]");
+  if (receiptPhoneInput) {
+    const phoneHint = root.querySelector("[data-receipt-phone-hint]");
+    let phoneTimer = 0;
+    let savedPhone = receiptPhoneInput.value || "";
+
+    function syncTicketPhone(displayPhone) {
+      const value = String(displayPhone || "").trim();
+      root.querySelectorAll("[data-receipt-ticket-phone]").forEach((el) => {
+        el.textContent = value;
+        el.hidden = !value;
+      });
+    }
+
+    function syncPhoneHint(usingCompany, companyPhone) {
+      if (!phoneHint) return;
+      if (!usingCompany) {
+        phoneHint.textContent = "Using this shop’s phone on receipts.";
+        return;
+      }
+      const company = String(companyPhone || receiptPhoneInput.dataset.companyPhone || "").trim();
+      phoneHint.textContent = company
+        ? `Currently using company phone: ${company}`
+        : "No company phone set yet — add one here or in company profile.";
+    }
+
+    const saveReceiptPhone = async () => {
+      const next = (receiptPhoneInput.value || "").trim();
+      if (next === savedPhone) return;
+      receiptPhoneInput.classList.add("is-saving");
+      try {
+        const data = await postSettings(
+          new URLSearchParams({
+            action: "set_shop_receipt_phone",
+            receipt_phone_number: next,
+          })
+        );
+        savedPhone = data.receipt_phone_number || "";
+        receiptPhoneInput.value = savedPhone;
+        if (data.company_phone) {
+          receiptPhoneInput.dataset.companyPhone = data.company_phone;
+          if (!receiptPhoneInput.placeholder) {
+            receiptPhoneInput.placeholder = data.company_phone;
+          }
+        }
+        receiptPhoneInput.classList.remove("is-error");
+        syncTicketPhone(data.shop_phone || "");
+        syncPhoneHint(Boolean(data.using_company_phone), data.company_phone || "");
+      } catch (error) {
+        receiptPhoneInput.classList.add("is-error");
+        receiptPhoneInput.value = savedPhone;
+        window.alert(error.message || "Could not save shop phone.");
+      } finally {
+        receiptPhoneInput.classList.remove("is-saving");
+      }
+    };
+
+    receiptPhoneInput.addEventListener("input", () => {
+      window.clearTimeout(phoneTimer);
+      phoneTimer = window.setTimeout(saveReceiptPhone, 700);
+    });
+    receiptPhoneInput.addEventListener("change", saveReceiptPhone);
+    receiptPhoneInput.addEventListener("blur", saveReceiptPhone);
+  }
 })();

@@ -90,6 +90,7 @@ from .services import (
     pos_settings_as_dict,
     preview_receipt_number,
     receipt_font_style,
+    receipt_phone_for_shop,
     receipt_qr_for_settings,
     register_owner_drawing,
     register_shop_expense,
@@ -102,6 +103,7 @@ from .services import (
     set_shop_receipt_font_style,
     set_shop_receipt_number_formats,
     set_shop_receipt_paper_width,
+    set_shop_receipt_phone,
     set_shop_receipt_qr_settings,
     set_shop_tax_percent,
     toggle_shop_hidden,
@@ -3180,6 +3182,33 @@ def _handle_shop_settings_post(request, shop, *, section: str):
         messages.success(request, "Payment details updated.")
         return redirect(request.path)
 
+    if action == "set_shop_receipt_phone" and section == "receipt":
+        try:
+            set_shop_receipt_phone(
+                shop=shop,
+                phone_number=request.POST.get("receipt_phone_number") or "",
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        shop.refresh_from_db(fields=["receipt_phone_number"])
+        display_phone = receipt_phone_for_shop(shop)
+        company_phone = (get_company_profile().phone_number or "").strip()
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "receipt_phone_number": shop.receipt_phone_number or "",
+                    "shop_phone": display_phone,
+                    "company_phone": company_phone,
+                    "using_company_phone": not bool(
+                        (shop.receipt_phone_number or "").strip()
+                    ),
+                }
+            )
+        messages.success(request, "Shop receipt phone updated.")
+        return redirect(request.path)
+
     if action == "set_receipt_font_style":
         try:
             row = set_shop_receipt_font_style(
@@ -3335,11 +3364,13 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
             ("website", "Company website"),
             ("receipt_details", "Receipt details"),
         ),
+        "receipt_phone_number": (getattr(shop, "receipt_phone_number", None) or ""),
+        "company_phone_number": (company.phone_number or "").strip(),
         "receipt_preview": {
             "logo_url": "",
             "shop_name": shop.name,
             "shop_location": shop.location or company.location or "",
-            "shop_phone": shop.phone_number or company.phone_number or "",
+            "shop_phone": receipt_phone_for_shop(shop),
             "shop_branch": "",
             "receipt_number": preview_receipt_number(kind="sale", settings_row=pos),
             "kind": "Sale",

@@ -9,7 +9,7 @@
     {% endif %}
     <h4>{{ p.shop_name }}</h4>
     {% if p.shop_location %}<p>{{ p.shop_location }}</p>{% endif %}
-    {% if p.shop_phone %}<p>{{ p.shop_phone }}</p>{% endif %}
+    {% if p.shop_phone %}<p data-receipt-ticket-phone>{{ p.shop_phone }}</p>{% else %}<p data-receipt-ticket-phone hidden></p>{% endif %}
     {% if p.shop_branch %}<p class="receipt-ticket-branch">{{ p.shop_branch }}</p>{% endif %}
   </div>
 

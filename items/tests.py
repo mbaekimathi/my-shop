@@ -736,3 +736,135 @@ class ItemImageUrlTests(TestCase):
         rows = [row for row in payload["items"] if row["id"] == self.item.pk]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["image_url"], "")
+
+
+class ShopPriceIsolationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="840031",
+            password="price-pass",
+            email="price-isolation@test.local",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840031",
+            phone_country_code="+254",
+            phone_number="700000961",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop_a = Shop.objects.create(
+            name="PRICE SHOP A",
+            location="NAIROBI",
+            email="price-a@test.local",
+            phone_number="0700000961",
+            login_code="840131",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.shop_b = Shop.objects.create(
+            name="PRICE SHOP B",
+            location="MOMBASA",
+            email="price-b@test.local",
+            phone_number="0700000962",
+            login_code="840132",
+            password_hash="x",
+            created_by=self.profile,
+        )
+
+    def test_create_single_mode_writes_per_shop_prices(self):
+        from items.models import ShopItemPrice
+        from items.services import create_item
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "SODA 500ML",
+                "description": "",
+                "minimum_selling_price": "100",
+                "shop_price": "150",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        self.assertTrue(item.use_individual_shop_prices)
+        prices = {
+            row.shop_id: row.price
+            for row in ShopItemPrice.objects.filter(item=item)
+        }
+        self.assertEqual(prices[self.shop_a.pk], Decimal("150.00"))
+        self.assertEqual(prices[self.shop_b.pk], Decimal("150.00"))
+        self.assertEqual(item.price_for_shop(self.shop_a), Decimal("150.00"))
+        self.assertEqual(item.price_for_shop(self.shop_b), Decimal("150.00"))
+
+    def test_limited_single_edit_does_not_change_other_shop(self):
+        from items.models import Item, ShopItemPrice
+        from items.services import update_item
+
+        item = Item.objects.create(
+            category="DRINKS",
+            name="JUICE 1L",
+            minimum_selling_price=Decimal("100.00"),
+            shop_price=Decimal("150.00"),
+            use_individual_shop_prices=False,
+            created_by=self.profile,
+        )
+        ShopItemPrice.objects.create(shop=self.shop_a, item=item, price=Decimal("150.00"))
+        ShopItemPrice.objects.create(shop=self.shop_b, item=item, price=Decimal("180.00"))
+
+        update_item(
+            item,
+            {
+                "category": "DRINKS",
+                "name": "JUICE 1L",
+                "description": "",
+                "minimum_selling_price": "100",
+                "shop_price": "200",
+                "pricing_mode": "single",
+            },
+            {},
+            editable_shop_ids={self.shop_a.pk},
+        )
+        item.refresh_from_db()
+        self.assertTrue(item.use_individual_shop_prices)
+        self.assertEqual(item.price_for_shop(self.shop_a), Decimal("200.00"))
+        self.assertEqual(item.price_for_shop(self.shop_b), Decimal("180.00"))
+        self.assertEqual(
+            ShopItemPrice.objects.get(item=item, shop=self.shop_b).price,
+            Decimal("180.00"),
+        )
+
+    def test_limited_individual_edit_preserves_other_shop_override(self):
+        from items.models import Item, ShopItemPrice
+        from items.services import update_item
+
+        item = Item.objects.create(
+            category="DRINKS",
+            name="WATER 1L",
+            minimum_selling_price=Decimal("50.00"),
+            shop_price=Decimal("80.00"),
+            use_individual_shop_prices=True,
+            created_by=self.profile,
+        )
+        ShopItemPrice.objects.create(shop=self.shop_a, item=item, price=Decimal("80.00"))
+        ShopItemPrice.objects.create(shop=self.shop_b, item=item, price=Decimal("95.00"))
+
+        update_item(
+            item,
+            {
+                "category": "DRINKS",
+                "name": "WATER 1L",
+                "description": "",
+                "minimum_selling_price": "50",
+                "pricing_mode": "individual",
+                f"shop_price_{self.shop_a.pk}": "120",
+            },
+            {},
+            editable_shop_ids={self.shop_a.pk},
+        )
+        item.refresh_from_db()
+        self.assertEqual(item.price_for_shop(self.shop_a), Decimal("120.00"))
+        self.assertEqual(item.price_for_shop(self.shop_b), Decimal("95.00"))
+        self.assertEqual(ShopItemPrice.objects.filter(item=item).count(), 2)

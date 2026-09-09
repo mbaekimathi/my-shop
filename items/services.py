@@ -1319,11 +1319,39 @@ def _active_shops():
     return list(Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name"))
 
 
+def _fallback_list_price(item: Item) -> Decimal:
+    """Global list price used when a shop has no ShopItemPrice row yet."""
+    if item.shop_price is not None and item.shop_price > 0:
+        return item.shop_price.quantize(Decimal("0.01"))
+    return (item.minimum_selling_price or Decimal("0")).quantize(Decimal("0.01"))
+
+
+def _materialized_shop_prices(item: Item, shops) -> dict:
+    """Per-shop prices with missing shops seeded from the item's global price.
+
+    Ensures a later edit for one shop never relies on mutating shared
+    Item.shop_price for shops that do not yet have their own row.
+    """
+    existing = _existing_shop_prices(item)
+    seed = _fallback_list_price(item)
+    prices = {}
+    for shop in shops:
+        if shop.pk in existing:
+            prices[shop.pk] = existing[shop.pk]
+        else:
+            prices[shop.pk] = seed
+    return prices
+
+
 def _pricing_mode_from_data(data) -> str:
     mode = (data.get("pricing_mode") or "single").strip().lower()
     if mode not in ("single", "individual"):
         return "single"
     return mode
+
+
+def _can_edit_shop_price(shop_id, editable_shop_ids) -> bool:
+    return editable_shop_ids is None or shop_id in editable_shop_ids
 
 
 def _parse_individual_shop_prices(
@@ -1337,10 +1365,10 @@ def _parse_individual_shop_prices(
 ):
     """Parse per-shop prices from POST fields shop_price_<id>.
 
-    On create, every shop price is required and must be at least the minimum
-    selling price. On update, blank or unchanged prices keep the current shop
-    price and are raised to min when the floor increases. Shops outside
-    editable_shop_ids always keep their stored price (clamped to min).
+    On create, every editable shop price is required and must be at least the
+    minimum selling price. On update, blank or unchanged prices keep the
+    current shop price and are raised to min when the floor increases. Shops
+    outside editable_shop_ids always keep their stored (or materialized) price.
     """
     errors = []
     prices_by_shop = {}
@@ -1350,18 +1378,18 @@ def _parse_individual_shop_prices(
         return prices_by_shop, errors
 
     if existing_item is not None:
-        existing_shop_prices = existing_shop_prices or _existing_shop_prices(existing_item)
+        existing_shop_prices = existing_shop_prices or _materialized_shop_prices(
+            existing_item, shops
+        )
 
     for shop in shops:
         raw = data.get(f"shop_price_{shop.pk}")
         raw_str = str(raw).strip() if raw is not None else ""
-        existing = existing_shop_prices.get(shop.pk) if existing_item is not None else None
+        existing = (
+            existing_shop_prices.get(shop.pk) if existing_shop_prices is not None else None
+        )
 
-        if (
-            existing_item is not None
-            and editable_shop_ids is not None
-            and shop.pk not in editable_shop_ids
-        ):
+        if not _can_edit_shop_price(shop.pk, editable_shop_ids):
             if existing is not None:
                 prices_by_shop[shop.pk] = _clamp_price(existing, minimum_price)
             continue
@@ -1410,9 +1438,118 @@ def _parse_individual_shop_prices(
     return prices_by_shop, errors
 
 
+def _parse_single_shop_price(
+    data,
+    *,
+    existing_item=None,
+    minimum_price=None,
+):
+    """Parse the shared “Set shop price” field into one Decimal (or None)."""
+    errors = []
+    raw_shop_price = data.get("shop_price")
+    raw_shop_price_str = str(raw_shop_price).strip() if raw_shop_price is not None else ""
+    existing_single_price = (
+        existing_item.shop_price.quantize(Decimal("0.01"))
+        if existing_item is not None and existing_item.shop_price is not None
+        else None
+    )
+    shop_price = None
+
+    if existing_item is not None and existing_single_price is not None:
+        if not raw_shop_price_str:
+            shop_price = _clamp_price(existing_single_price, minimum_price)
+        else:
+            try:
+                submitted = _parse_price(raw_shop_price_str, "Shop price")
+            except ValidationError as exc:
+                errors.append(exc.message)
+                submitted = None
+            if submitted is not None:
+                if submitted <= 0:
+                    errors.append("Shop price must be greater than zero.")
+                elif submitted == existing_single_price:
+                    shop_price = _clamp_price(existing_single_price, minimum_price)
+                elif minimum_price is not None and submitted < minimum_price:
+                    errors.append(
+                        "Shop price cannot be below the minimum selling price."
+                    )
+                else:
+                    shop_price = submitted
+    elif raw_shop_price_str == "":
+        errors.append("Shop price is required.")
+    else:
+        try:
+            shop_price = _parse_price(raw_shop_price_str, "Shop price")
+        except ValidationError as exc:
+            errors.append(exc.message)
+            shop_price = None
+
+        if shop_price is not None and shop_price <= 0:
+            errors.append("Shop price must be greater than zero.")
+            shop_price = None
+
+        if (
+            minimum_price is not None
+            and shop_price is not None
+            and shop_price < minimum_price
+        ):
+            errors.append("Shop price cannot be below the minimum selling price.")
+            shop_price = None
+
+    return shop_price, errors
+
+
+def _expand_single_price_to_shops(
+    single_price,
+    shops,
+    *,
+    existing_item=None,
+    editable_shop_ids=None,
+    minimum_price=None,
+) -> dict:
+    """Map a single submitted price onto per-shop rows without touching others.
+
+    Editable shops receive ``single_price``. Non-editable shops keep their
+    existing/materialized price so one shop's edit never changes another.
+    On create, non-editable shops are also seeded with ``single_price`` so
+    every active shop starts with an isolated row.
+    """
+    prices_by_shop = {}
+    if not shops or single_price is None:
+        return prices_by_shop
+
+    existing = (
+        _materialized_shop_prices(existing_item, shops)
+        if existing_item is not None
+        else {}
+    )
+    applied = _clamp_price(single_price, minimum_price)
+
+    for shop in shops:
+        if _can_edit_shop_price(shop.pk, editable_shop_ids):
+            prices_by_shop[shop.pk] = applied
+        elif shop.pk in existing:
+            prices_by_shop[shop.pk] = _clamp_price(existing[shop.pk], minimum_price)
+        else:
+            # New item / shop with no prior price: seed so later edits stay isolated.
+            prices_by_shop[shop.pk] = applied
+
+    return prices_by_shop
+
+
+def _seed_missing_shop_prices(prices_by_shop: dict, shops, seed_price, minimum_price) -> dict:
+    """Fill any shop still missing a price (e.g. create + limited editor)."""
+    if seed_price is None:
+        return prices_by_shop
+    seeded = _clamp_price(seed_price, minimum_price)
+    for shop in shops:
+        if shop.pk not in prices_by_shop:
+            prices_by_shop[shop.pk] = seeded
+    return prices_by_shop
+
+
 def _sync_shop_item_prices(item: Item, prices_by_shop: dict) -> None:
-    """Replace ShopItemPrice rows for an item with the given shop→price map."""
-    ShopItemPrice.objects.filter(item=item).exclude(shop_id__in=prices_by_shop.keys()).delete()
+    """Upsert ShopItemPrice rows. Never delete other shops' prices."""
     for shop_id, price in prices_by_shop.items():
         ShopItemPrice.objects.update_or_create(
             item=item,
@@ -1450,7 +1587,8 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
         "yes",
     )
     cleaned["pricing_mode"] = pricing_mode
-    cleaned["use_individual_shop_prices"] = pricing_mode == "individual"
+    # Prices are always stored per shop so one shop's edit cannot change others.
+    cleaned["use_individual_shop_prices"] = True
 
     try:
         minimum_price = _parse_price(data.get("minimum_selling_price"), "Minimum selling price")
@@ -1458,14 +1596,11 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
         errors.append(exc.message)
         minimum_price = None
 
+    shops = _active_shops()
     shop_price = None
     shop_prices = {}
 
     if pricing_mode == "individual":
-        shops = _active_shops()
-        if editable_shop_ids is not None:
-            allowed = set(editable_shop_ids)
-            shops = [shop for shop in shops if shop.pk in allowed]
         shop_prices, price_errors = _parse_individual_shop_prices(
             data,
             shops,
@@ -1474,60 +1609,30 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
             editable_shop_ids=editable_shop_ids,
         )
         errors.extend(price_errors)
+        seed = min(shop_prices.values()) if shop_prices else None
+        shop_prices = _seed_missing_shop_prices(
+            shop_prices, shops, seed, minimum_price
+        )
         if shop_prices:
             shop_price = min(shop_prices.values())
     else:
-        raw_shop_price = data.get("shop_price")
-        raw_shop_price_str = (
-            str(raw_shop_price).strip() if raw_shop_price is not None else ""
+        shop_price, price_errors = _parse_single_shop_price(
+            data,
+            existing_item=existing_item,
+            minimum_price=minimum_price,
         )
-        existing_single_price = (
-            existing_item.shop_price.quantize(Decimal("0.01"))
-            if existing_item is not None
-            else None
-        )
-
-        if existing_item is not None and existing_single_price is not None:
-            if not raw_shop_price_str:
-                shop_price = _clamp_price(existing_single_price, minimum_price)
-            else:
-                try:
-                    submitted = _parse_price(raw_shop_price_str, "Shop price")
-                except ValidationError as exc:
-                    errors.append(exc.message)
-                    submitted = None
-                if submitted is not None:
-                    if submitted <= 0:
-                        errors.append("Shop price must be greater than zero.")
-                        shop_price = None
-                    elif submitted == existing_single_price:
-                        shop_price = _clamp_price(existing_single_price, minimum_price)
-                    elif minimum_price is not None and submitted < minimum_price:
-                        errors.append(
-                            "Shop price cannot be below the minimum selling price."
-                        )
-                        shop_price = None
-                    else:
-                        shop_price = submitted
-        elif raw_shop_price_str == "":
-            errors.append("Shop price is required.")
-        else:
-            try:
-                shop_price = _parse_price(raw_shop_price_str, "Shop price")
-            except ValidationError as exc:
-                errors.append(exc.message)
-                shop_price = None
-
-            if shop_price is not None and shop_price <= 0:
-                errors.append("Shop price must be greater than zero.")
-                shop_price = None
-
-            if (
-                minimum_price is not None
-                and shop_price is not None
-                and shop_price < minimum_price
-            ):
-                errors.append("Shop price cannot be below the minimum selling price.")
+        errors.extend(price_errors)
+        if shop_price is not None:
+            shop_prices = _expand_single_price_to_shops(
+                shop_price,
+                shops,
+                existing_item=existing_item,
+                editable_shop_ids=editable_shop_ids,
+                minimum_price=minimum_price,
+            )
+            # Keep Item.shop_price as the lowest per-shop list price (display/fallback).
+            if shop_prices:
+                shop_price = min(shop_prices.values())
 
     if image:
         if image.content_type not in ALLOWED_IMAGE_TYPES:
@@ -1557,13 +1662,12 @@ def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
             description=cleaned["description"],
             minimum_selling_price=cleaned["minimum_selling_price"],
             shop_price=cleaned["shop_price"],
-            use_individual_shop_prices=cleaned["use_individual_shop_prices"],
+            use_individual_shop_prices=True,
             image=cleaned.get("image"),
             track_serial_number=cleaned["track_serial_number"],
             created_by=profile,
         )
-        if cleaned["use_individual_shop_prices"]:
-            _sync_shop_item_prices(item, cleaned["shop_prices"])
+        _sync_shop_item_prices(item, cleaned["shop_prices"])
     from communications.automations import maybe_send_new_item_catalogue
 
     maybe_send_new_item_catalogue(item)
@@ -1577,14 +1681,13 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
         existing_item=item,
         editable_shop_ids=editable_shop_ids,
     )
-    was_individual = item.use_individual_shop_prices
     with transaction.atomic():
         item.category = cleaned["category"]
         item.name = cleaned["name"]
         item.description = cleaned["description"]
         item.minimum_selling_price = cleaned["minimum_selling_price"]
         item.shop_price = cleaned["shop_price"]
-        item.use_individual_shop_prices = cleaned["use_individual_shop_prices"]
+        item.use_individual_shop_prices = True
         item.track_serial_number = cleaned["track_serial_number"]
 
         if cleaned.get("image"):
@@ -1597,12 +1700,7 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
             item.image = None
 
         item.save()
-
-        if cleaned["use_individual_shop_prices"]:
-            _sync_shop_item_prices(item, cleaned["shop_prices"])
-        elif was_individual:
-            ShopItemPrice.objects.filter(item=item).delete()
-
+        _sync_shop_item_prices(item, cleaned["shop_prices"])
         return item
 
 

@@ -425,6 +425,26 @@ def set_shop_mpesa_payment_details(
     return row
 
 
+def receipt_phone_for_shop(shop: Shop | None = None) -> str:
+    """Phone printed on shop receipts: shop override, else company phone."""
+    if shop is not None:
+        shop_phone = (getattr(shop, "receipt_phone_number", None) or "").strip()
+        if shop_phone:
+            return shop_phone
+    company = get_company_profile()
+    return (company.phone_number or "").strip()
+
+
+def set_shop_receipt_phone(*, shop: Shop, phone_number: str = "") -> Shop:
+    """Set optional receipt contact phone for a shop (blank → company phone)."""
+    raw = (phone_number or "").strip()
+    if raw and not PHONE_RE.match(raw):
+        raise ValidationError("Enter a valid shop phone number.")
+    shop.receipt_phone_number = raw
+    shop.save(update_fields=["receipt_phone_number", "updated_at"])
+    return shop
+
+
 def set_shop_receipt_qr_settings(
     *,
     shop: Shop,
@@ -2883,11 +2903,9 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
     doc_meta = _sales_ticket_document_meta(receipt)
     company_name = (company.name or "").strip() or (shop.name if shop else DEFAULT_COMPANY_NAME)
     company_location = (company.location or "").strip()
-    company_phone = (company.phone_number or "").strip()
+    company_phone = receipt_phone_for_shop(shop)
     if not company_location and shop:
         company_location = (shop.location or "").strip()
-    if not company_phone and shop:
-        company_phone = (shop.phone_number or "").strip()
 
     shop_branch = ""
     if shop and shop.name and shop.name.strip().upper() != company_name.upper():
@@ -3197,11 +3215,9 @@ def _supplier_receipt_shop_header(shop: Shop) -> dict:
     company = get_company_profile()
     company_name = (company.name or "").strip() or (shop.name if shop else DEFAULT_COMPANY_NAME)
     company_location = (company.location or "").strip()
-    company_phone = (company.phone_number or "").strip()
+    company_phone = receipt_phone_for_shop(shop)
     if not company_location and shop:
         company_location = (shop.location or "").strip()
-    if not company_phone and shop:
-        company_phone = (shop.phone_number or "").strip()
     shop_branch = ""
     if shop and shop.name and shop.name.strip().upper() != company_name.upper():
         shop_branch = shop.name.strip()

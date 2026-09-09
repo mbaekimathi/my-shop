@@ -36,6 +36,42 @@
   <div class="pos-settings-groups">
     {% include "shops/partials/shop_settings_override.html" %}
 
+    <section class="pos-settings-group receipt-phone-group">
+      <div class="pos-settings-group-head">
+        <h3>Shop phone on receipts</h3>
+        <p>Shown under the shop name on printed receipts. Leave blank to use the company phone.</p>
+      </div>
+      <ul class="pos-settings-list">
+        <li class="pos-settings-row pos-settings-row--format">
+          <div class="pos-settings-copy">
+            <strong>Phone number</strong>
+            <p data-receipt-phone-hint>
+              {% if receipt_phone_number %}
+              Using this shop’s phone on receipts.
+              {% elif company_phone_number %}
+              Currently using company phone: {{ company_phone_number }}
+              {% else %}
+              No company phone set yet — add one here or in company profile.
+              {% endif %}
+            </p>
+          </div>
+          <label class="receipt-format-field receipt-format-field--wide">
+            <input
+              type="text"
+              inputmode="tel"
+              maxlength="40"
+              autocomplete="tel"
+              placeholder="{{ company_phone_number|default:'07XX XXX XXX' }}"
+              value="{{ receipt_phone_number }}"
+              data-receipt-phone
+              data-company-phone="{{ company_phone_number }}"
+              aria-label="Shop phone number for receipts"
+            >
+          </label>
+        </li>
+      </ul>
+    </section>
+
     <div class="shop-settings-body" data-shop-settings-body{% if using_company_defaults %} inert{% endif %}>
     {% for group in pos_setting_groups %}
     <section class="pos-settings-group">
@@ -498,6 +534,6 @@
 {{ block.super }}
 <script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/receipt-settings.js' %}?v=7"></script>
+<script defer src="{% static 'js/receipt-settings.js' %}?v=8"></script>
 <script defer src="{% static 'js/shop-settings.js' %}?v=1"></script>
 {% endblock %}
