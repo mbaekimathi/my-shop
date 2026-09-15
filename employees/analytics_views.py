@@ -333,7 +333,7 @@ def analytics_confirm_receipts(request, role_segment):
             "meta": {
                 "title": "Confirm receipts · Analytics",
                 "headline": "Confirm receipts",
-                "summary": "Confirm or cancel pending receipts across shops.",
+                "summary": "Confirm or cancel pending sales receipts across shops.",
                 "icon": "badge-check",
             },
             "module": module,

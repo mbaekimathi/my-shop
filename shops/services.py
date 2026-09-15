@@ -5025,8 +5025,14 @@ def _receipt_list_item(receipt) -> dict:
             receipt.kind in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}
             and receipt.status != ShopReceiptStatus.CANCELLED
         ),
-        "can_confirm": receipt.status == ShopReceiptStatus.ACTIVE,
-        "can_cancel": receipt.status == ShopReceiptStatus.ACTIVE,
+        "can_confirm": (
+            receipt.kind == ShopReceiptKind.SALE
+            and receipt.status == ShopReceiptStatus.ACTIVE
+        ),
+        "can_cancel": (
+            receipt.kind == ShopReceiptKind.SALE
+            and receipt.status == ShopReceiptStatus.ACTIVE
+        ),
     }
 
 
@@ -6100,7 +6106,7 @@ def return_shop_receipt_items(
 
 @transaction.atomic
 def confirm_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
-    """Mark a pending POS receipt as confirmed."""
+    """Mark a pending sales receipt as confirmed (credits/quotations not allowed)."""
     from .models import ShopReceipt
 
     if actor is None:
@@ -6114,6 +6120,9 @@ def confirm_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
         )
     except ShopReceipt.DoesNotExist as exc:
         raise ValidationError("Receipt not found for this shop.") from exc
+
+    if receipt.kind != ShopReceiptKind.SALE:
+        raise ValidationError("Only sales receipts can be confirmed.")
 
     if receipt.status != ShopReceiptStatus.ACTIVE:
         raise ValidationError("Only pending receipts can be confirmed.")
@@ -6133,7 +6142,7 @@ def confirm_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
 
 @transaction.atomic
 def cancel_pending_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
-    """Cancel a pending receipt (restock sale/credit lines; void quotations)."""
+    """Cancel a pending sales receipt from confirm-receipts (restock sale lines)."""
     from .models import ShopReceipt
 
     if actor is None:
@@ -6149,27 +6158,11 @@ def cancel_pending_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
     except ShopReceipt.DoesNotExist as exc:
         raise ValidationError("Receipt not found for this shop.") from exc
 
+    if receipt.kind != ShopReceiptKind.SALE:
+        raise ValidationError("Only sales receipts can be cancelled here.")
+
     if receipt.status != ShopReceiptStatus.ACTIVE:
         raise ValidationError("Only pending receipts can be cancelled here.")
-
-    if receipt.kind == ShopReceiptKind.QUOTATION:
-        receipt.status = ShopReceiptStatus.CANCELLED
-        receipt.last_returned_at = timezone.now()
-        receipt.last_returned_by = actor
-        receipt.save(
-            update_fields=["status", "last_returned_at", "last_returned_by"]
-        )
-        detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
-        return {
-            **detail,
-            "ok": True,
-            "message": f"Quotation {receipt.receipt_number} cancelled.",
-            "status": receipt.status,
-            "status_label": receipt.get_status_display(),
-        }
-
-    if receipt.kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
-        raise ValidationError("This receipt type cannot be cancelled here.")
 
     lines_payload = []
     for line in receipt.lines.all():

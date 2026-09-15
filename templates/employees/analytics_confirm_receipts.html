@@ -45,11 +45,6 @@
           <option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
-        <select name="kind" aria-label="Receipt type">
-          {% for value, label in kind_options %}
-          <option value="{{ value }}"{% if kind_filter == value %} selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
         {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
         <button type="submit" class="ax-apply">Apply</button>
       </form>
@@ -58,7 +53,7 @@
   </header>
 
   <p class="ax-footnote">
-    Showing {{ total_count }} receipt{{ total_count|pluralize }}
+    Showing {{ total_count }} sales receipt{{ total_count|pluralize }}
     · pending first, then partial return, cancelled, confirmed
   </p>
 

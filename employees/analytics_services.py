@@ -130,7 +130,7 @@ ANALYTICS_SECTIONS = (
         "slug": "receipts",
         "label": "Receipts",
         "icon": "receipt",
-        "summary": "Confirm pending receipts across shops.",
+        "summary": "Confirm pending sales receipts across shops.",
     },
 )
 
@@ -2611,16 +2611,9 @@ CONFIRM_RECEIPT_STATUS_FILTERS = (
     ("confirmed", "Confirmed"),
 )
 
-CONFIRM_RECEIPT_KIND_FILTERS = (
-    ("", "All types"),
-    ("sale", "Sales"),
-    ("credit", "Credits"),
-    ("quotation", "Quotations"),
-)
-
 
 def build_confirm_receipts_page(*, profile, request) -> dict:
-    """List POS receipts for confirmation, ordered pending → partial → cancelled → confirmed."""
+    """List sales receipts for confirmation only (not credits or quotations)."""
     from django.urls import reverse
 
     from employees.access import role_url_segment
@@ -2630,7 +2623,6 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
     start, end = filters["start"], filters["end"]
     search = (request.GET.get("q") or "").strip()
     status_key = (request.GET.get("status") or "").strip().lower()
-    kind_key = (request.GET.get("kind") or "").strip().lower()
 
     status_map = {
         "pending": ShopReceiptStatus.ACTIVE,
@@ -2642,18 +2634,10 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
         "cancelled": ShopReceiptStatus.CANCELLED,
         "cancel": ShopReceiptStatus.CANCELLED,
     }
-    kind_map = {
-        "sale": ShopReceiptKind.SALE,
-        "sales": ShopReceiptKind.SALE,
-        "credit": ShopReceiptKind.CREDIT,
-        "credits": ShopReceiptKind.CREDIT,
-        "quotation": ShopReceiptKind.QUOTATION,
-        "quotations": ShopReceiptKind.QUOTATION,
-        "quote": ShopReceiptKind.QUOTATION,
-    }
 
-    qs = ShopReceipt.objects.filter(shop_id__in=shop_ids).select_related(
-        "shop", "created_by", "created_by__user"
+    qs = (
+        ShopReceipt.objects.filter(shop_id__in=shop_ids, kind=ShopReceiptKind.SALE)
+        .select_related("shop", "created_by", "created_by__user")
     )
     if start is not None:
         qs = qs.filter(created_at__gte=start)
@@ -2661,8 +2645,6 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
         qs = qs.filter(created_at__lt=end)
     if status_key in status_map:
         qs = qs.filter(status=status_map[status_key])
-    if kind_key in kind_map:
-        qs = qs.filter(kind=kind_map[kind_key])
     if search:
         qs = qs.filter(
             Q(receipt_number__icontains=search)
@@ -2685,6 +2667,7 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
     rows = []
     for row in qs:
         client = row.client_name or "Walk-in"
+        is_pending = row.status == ShopReceiptStatus.ACTIVE
         rows.append(
             {
                 "receipt_id": row.pk,
@@ -2701,8 +2684,8 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
                 "payment_label": row.get_payment_method_display(),
                 "when": row.created_at.strftime("%d %b %Y · %H:%M"),
                 "cashier": _cashier_label(row.created_by) or "—",
-                "can_confirm": row.status == ShopReceiptStatus.ACTIVE,
-                "can_cancel": row.status == ShopReceiptStatus.ACTIVE,
+                "can_confirm": is_pending,
+                "can_cancel": is_pending,
             }
         )
 
@@ -2736,16 +2719,14 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
         **filters,
         "search": search,
         "status_filter": status_key,
-        "kind_filter": kind_key,
         "status_options": CONFIRM_RECEIPT_STATUS_FILTERS,
-        "kind_options": CONFIRM_RECEIPT_KIND_FILTERS,
         "rows": rows,
         "total_count": len(rows),
         "page": {
             "headline": "Confirm receipts",
             "lead": (
-                "Review pending receipts first. Open a row to confirm or cancel; "
-                "partial returns, cancelled, and confirmed follow below."
+                "Sales receipts only — credits and quotations are not confirmed here. "
+                "Review pending sales first; open a row to confirm or cancel."
             ),
             "detail_url_template": detail_template,
             "confirm_url_template": confirm_template,
@@ -7273,9 +7254,9 @@ def _build_receipts(filters):
                 icon="badge-check",
                 href=confirm_href,
                 value="Open",
-                hint="Review, confirm, or cancel pending receipts",
+                hint="Confirm or cancel pending sales receipts",
                 body=(
-                    "Pending receipts first, then partial returns, cancelled, "
+                    "Sales only — pending first, then partial returns, cancelled, "
                     "and confirmed."
                 ),
             ),

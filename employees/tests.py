@@ -64,6 +64,88 @@ class AnalyticsSidebarTests(SimpleTestCase):
         self.assertTrue(sidebar["primary"][3]["active"])
 
 
+class ConfirmSalesReceiptTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="870011",
+            password="confirm-pass",
+            email="confirm@test.local",
+            is_active=True,
+        )
+        self.staff = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="870011",
+            phone_country_code="+254",
+            phone_number="700001101",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="CONFIRM SHOP",
+            location="NAIROBI",
+            email="confirm-shop@test.local",
+            phone_number="0700001101",
+            login_code="870111",
+            password_hash="x",
+            created_by=self.staff,
+        )
+        self.staff.assigned_shops.add(self.shop)
+
+    def _receipt(self, *, kind, number):
+        return ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=kind,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number=number,
+            client_name="Walk-in",
+            subtotal=100,
+            tax_percent=0,
+            tax_amount=0,
+            total=100,
+            amount_paid=100,
+            payment_method="cash",
+            created_by=self.staff,
+        )
+
+    def test_confirm_rejects_credit_and_quotation(self):
+        from django.core.exceptions import ValidationError
+
+        from shops.services import confirm_shop_receipt
+
+        credit = self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-1")
+        quote = self._receipt(kind=ShopReceiptKind.QUOTATION, number="QT-1")
+        with self.assertRaisesMessage(ValidationError, "Only sales receipts can be confirmed."):
+            confirm_shop_receipt(shop=self.shop, receipt_id=credit.pk, actor=self.staff)
+        with self.assertRaisesMessage(ValidationError, "Only sales receipts can be confirmed."):
+            confirm_shop_receipt(shop=self.shop, receipt_id=quote.pk, actor=self.staff)
+
+    def test_confirm_accepts_pending_sale(self):
+        from shops.services import confirm_shop_receipt
+
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-1")
+        result = confirm_shop_receipt(
+            shop=self.shop, receipt_id=sale.pk, actor=self.staff
+        )
+        sale.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+
+    def test_confirm_page_lists_sales_only(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_confirm_receipts_page
+
+        self._receipt(kind=ShopReceiptKind.SALE, number="SL-2")
+        self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-2")
+        self._receipt(kind=ShopReceiptKind.QUOTATION, number="QT-2")
+        request = RequestFactory().get("/it-support/analytics/confirm-receipts/")
+        request.user = self.user
+        context = build_confirm_receipts_page(profile=self.staff, request=request)
+        kinds = {row["kind"] for row in context["rows"]}
+        self.assertEqual(kinds, {ShopReceiptKind.SALE})
+        self.assertNotIn("kind_options", context)
+
+
 class DashboardSidebarLinkTests(SimpleTestCase):
     def test_role_dashboard_omits_dashboard_link(self):
         sidebar = sidebar_for_role_dashboard(EmployeeRole.IT_SUPPORT)
