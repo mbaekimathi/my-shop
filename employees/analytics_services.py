@@ -10,6 +10,7 @@ from django.db.models import (
     DecimalField,
     ExpressionWrapper,
     F,
+    IntegerField,
     Q,
     Sum,
     Value,
@@ -129,10 +130,7 @@ ANALYTICS_SECTIONS = (
         "slug": "receipts",
         "label": "Receipts",
         "icon": "receipt",
-        "summary": (
-            "Sales, credits, quotations, stock supplier, and expense supplier "
-            "receipts by shop — count, value, and totals."
-        ),
+        "summary": "Confirm pending receipts across shops.",
     },
 )
 
@@ -293,6 +291,13 @@ def _due_amount(total, paid) -> Decimal:
     if due < 0:
         return _zero()
     return due.quantize(Decimal("0.01"))
+
+
+def _credit_account_receipts_q() -> Q:
+    """Open credits plus cleared credits that were converted to sales."""
+    return Q(kind=ShopReceiptKind.CREDIT) | Q(
+        kind=ShopReceiptKind.SALE, settled_from_credit=True
+    )
 
 
 def _payment_status_for_due(due: Decimal, paid: Decimal) -> str:
@@ -2598,6 +2603,157 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
     }
 
 
+CONFIRM_RECEIPT_STATUS_FILTERS = (
+    ("", "All statuses"),
+    ("pending", "Pending"),
+    ("partial_return", "Partial return"),
+    ("cancelled", "Cancelled"),
+    ("confirmed", "Confirmed"),
+)
+
+CONFIRM_RECEIPT_KIND_FILTERS = (
+    ("", "All types"),
+    ("sale", "Sales"),
+    ("credit", "Credits"),
+    ("quotation", "Quotations"),
+)
+
+
+def build_confirm_receipts_page(*, profile, request) -> dict:
+    """List POS receipts for confirmation, ordered pending → partial → cancelled → confirmed."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    filters = _filters_context(profile, request, allow_all_time=True, default_all_time=True)
+    shop_ids = filters["active_shop_ids"]
+    start, end = filters["start"], filters["end"]
+    search = (request.GET.get("q") or "").strip()
+    status_key = (request.GET.get("status") or "").strip().lower()
+    kind_key = (request.GET.get("kind") or "").strip().lower()
+
+    status_map = {
+        "pending": ShopReceiptStatus.ACTIVE,
+        "active": ShopReceiptStatus.ACTIVE,
+        "confirmed": ShopReceiptStatus.CONFIRMED,
+        "partial_return": ShopReceiptStatus.PARTIAL_RETURN,
+        "partial-returns": ShopReceiptStatus.PARTIAL_RETURN,
+        "partial": ShopReceiptStatus.PARTIAL_RETURN,
+        "cancelled": ShopReceiptStatus.CANCELLED,
+        "cancel": ShopReceiptStatus.CANCELLED,
+    }
+    kind_map = {
+        "sale": ShopReceiptKind.SALE,
+        "sales": ShopReceiptKind.SALE,
+        "credit": ShopReceiptKind.CREDIT,
+        "credits": ShopReceiptKind.CREDIT,
+        "quotation": ShopReceiptKind.QUOTATION,
+        "quotations": ShopReceiptKind.QUOTATION,
+        "quote": ShopReceiptKind.QUOTATION,
+    }
+
+    qs = ShopReceipt.objects.filter(shop_id__in=shop_ids).select_related(
+        "shop", "created_by", "created_by__user"
+    )
+    if start is not None:
+        qs = qs.filter(created_at__gte=start)
+    if end is not None:
+        qs = qs.filter(created_at__lt=end)
+    if status_key in status_map:
+        qs = qs.filter(status=status_map[status_key])
+    if kind_key in kind_map:
+        qs = qs.filter(kind=kind_map[kind_key])
+    if search:
+        qs = qs.filter(
+            Q(receipt_number__icontains=search)
+            | Q(client_name__icontains=search)
+            | Q(client_phone__icontains=search)
+            | Q(shop__name__icontains=search)
+        )
+
+    qs = qs.annotate(
+        status_rank=Case(
+            When(status=ShopReceiptStatus.ACTIVE, then=Value(0)),
+            When(status=ShopReceiptStatus.PARTIAL_RETURN, then=Value(1)),
+            When(status=ShopReceiptStatus.CANCELLED, then=Value(2)),
+            When(status=ShopReceiptStatus.CONFIRMED, then=Value(3)),
+            default=Value(9),
+            output_field=IntegerField(),
+        )
+    ).order_by("status_rank", "-created_at", "-id")[:500]
+
+    rows = []
+    for row in qs:
+        client = row.client_name or "Walk-in"
+        rows.append(
+            {
+                "receipt_id": row.pk,
+                "shop_id": row.shop_id,
+                "number": row.receipt_number,
+                "shop": row.shop.name if row.shop else "—",
+                "client": client,
+                "client_phone": row.client_phone or "",
+                "total": _money_ksh(row.total),
+                "status": row.status,
+                "status_label": row.get_status_display(),
+                "kind": row.kind,
+                "kind_label": row.get_kind_display(),
+                "payment_label": row.get_payment_method_display(),
+                "when": row.created_at.strftime("%d %b %Y · %H:%M"),
+                "cashier": _cashier_label(row.created_by) or "—",
+                "can_confirm": row.status == ShopReceiptStatus.ACTIVE,
+                "can_cancel": row.status == ShopReceiptStatus.ACTIVE,
+            }
+        )
+
+    segment = role_url_segment(profile.role)
+    detail_template = reverse(
+        "employees:analytics_receipt_detail",
+        kwargs={
+            "role_segment": segment,
+            "shop_id": 0,
+            "receipt_id": 0,
+        },
+    )
+    confirm_template = reverse(
+        "employees:analytics_receipt_confirm",
+        kwargs={
+            "role_segment": segment,
+            "shop_id": 0,
+            "receipt_id": 0,
+        },
+    )
+    cancel_template = reverse(
+        "employees:analytics_receipt_cancel",
+        kwargs={
+            "role_segment": segment,
+            "shop_id": 0,
+            "receipt_id": 0,
+        },
+    )
+
+    return {
+        **filters,
+        "search": search,
+        "status_filter": status_key,
+        "kind_filter": kind_key,
+        "status_options": CONFIRM_RECEIPT_STATUS_FILTERS,
+        "kind_options": CONFIRM_RECEIPT_KIND_FILTERS,
+        "rows": rows,
+        "total_count": len(rows),
+        "page": {
+            "headline": "Confirm receipts",
+            "lead": (
+                "Review pending receipts first. Open a row to confirm or cancel; "
+                "partial returns, cancelled, and confirmed follow below."
+            ),
+            "detail_url_template": detail_template,
+            "confirm_url_template": confirm_template,
+            "cancel_url_template": cancel_template,
+        },
+    }
+
+
 def client_credit_account_url(
     role, client_id, *, query: str = "", from_credits: bool = False
 ) -> str:
@@ -2647,9 +2803,10 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
     all_credit_qs = (
         ShopReceipt.objects.filter(
             client_id=client.pk,
-            kind=ShopReceiptKind.CREDIT,
             shop_id__in=shop_ids,
-        ).exclude(status=ShopReceiptStatus.CANCELLED)
+        )
+        .filter(_credit_account_receipts_q())
+        .exclude(status=ShopReceiptStatus.CANCELLED)
     )
 
     all_count = all_credit_qs.count()
@@ -6016,6 +6173,13 @@ def _build_credits(filters):
             f"{period_label}."
         ),
         "alerts": list(clients_page.get("alerts") or []),
+        "show_search": True,
+        "search_placeholder": clients_page.get(
+            "search_placeholder", "Search clients by name or phone…"
+        ),
+        "search_empty": clients_page.get(
+            "search_empty", "No clients match that search."
+        ),
         "summary_board": _credits_summary_board(
             total_amount=total_amount,
             total_docs=total_docs,
@@ -6069,10 +6233,8 @@ def _build_clients(filters):
     )
 
     all_credit_receipts = (
-        ShopReceipt.objects.filter(
-            shop_id__in=shop_ids,
-            kind=ShopReceiptKind.CREDIT,
-        )
+        ShopReceipt.objects.filter(shop_id__in=shop_ids)
+        .filter(_credit_account_receipts_q())
         .exclude(status=ShopReceiptStatus.CANCELLED)
         .exclude(client_id=None)
     )
@@ -6129,7 +6291,8 @@ def _build_clients(filters):
             )
         )
 
-    ranked.sort(key=lambda row: (-row[0], row[1].lower()))
+    # Open balances first (highest owed), then cleared clients (owed 0) at the bottom.
+    ranked.sort(key=lambda row: (Decimal(row[0] or 0) <= 0, -Decimal(row[0] or 0), row[1].lower()))
     client_rows = []
     for (
         _balance,
@@ -6210,8 +6373,9 @@ def _build_clients(filters):
         footnote = (
             "Each client row opens the account ledger for the same period. "
             "Txns and Owed are credit receipts created in this period for the "
-            "selected shops. Txns = non-cancelled credit receipts; "
-            "Owed = unpaid balance per receipt, never below zero."
+            "selected shops (including cleared credits). Txns = non-cancelled "
+            "credit receipts; Owed = unpaid balance per receipt, never below "
+            "zero. Cleared clients (owed 0) are listed last."
         )
         empty = (
             "Select a shop to view credit clients."
@@ -6221,9 +6385,10 @@ def _build_clients(filters):
     else:
         footnote = (
             "Each client row opens the account ledger. "
-            "Txns and Owed are all-time for the selected shops. "
-            "Txns = non-cancelled credit receipts; "
-            "Owed = unpaid balance per receipt, never below zero."
+            "Txns and Owed are all-time for the selected shops (including "
+            "cleared credits). Txns = non-cancelled credit receipts; "
+            "Owed = unpaid balance per receipt, never below zero. "
+            "Cleared clients (owed 0) are listed last."
         )
         empty = (
             "Select a shop to view credit clients."
@@ -6237,6 +6402,9 @@ def _build_clients(filters):
         "alerts": alerts,
         "metrics": [],
         "insights": [],
+        "show_search": True,
+        "search_placeholder": "Search clients by name or phone…",
+        "search_empty": "No clients match that search.",
         "tables": [
             _table(
                 "Client credit accounts by shop",
@@ -6245,6 +6413,7 @@ def _build_clients(filters):
                 empty=empty,
                 footnote=footnote,
                 shop_grid=True,
+                searchable=True,
             )
         ],
     }
@@ -7066,10 +7235,92 @@ def _build_expense_category_suppliers(
 
 
 def _build_receipts(filters):
+    """Receipts hub — Confirm and Return links only."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    role = filters["role"]
+    query = filters.get("query") or ""
+    segment = role_url_segment(role)
+
+    confirm_href = reverse(
+        "employees:analytics_confirm_receipts",
+        kwargs={"role_segment": segment},
+    )
+    return_href = reverse(
+        "employees:analytics_return_receipts",
+        kwargs={"role_segment": segment},
+    )
+    if query:
+        confirm_href = f"{confirm_href}?{query}"
+        return_href = f"{return_href}?{query}"
+
+    return {
+        "headline": "Receipts",
+        "lead": "Choose a receipts tool below.",
+        "hide_date_filters": True,
+        "alerts": [],
+        "metrics": [],
+        "trends": [],
+        "charts": [],
+        "insights": [],
+        "tables": [],
+        "sections": [
+            _overview_section(
+                slug="confirm-receipts",
+                title="Confirm receipts",
+                icon="badge-check",
+                href=confirm_href,
+                value="Open",
+                hint="Review, confirm, or cancel pending receipts",
+                body=(
+                    "Pending receipts first, then partial returns, cancelled, "
+                    "and confirmed."
+                ),
+            ),
+            _overview_section(
+                slug="return-receipts",
+                title="Return receipt",
+                icon="undo-2",
+                href=return_href,
+                value="Open",
+                hint="Return items or cancel sales and credits",
+                body="Open a receipt to return stock and update the sale.",
+            ),
+        ],
+    }
+
+def build_return_receipts_page(*, profile, request) -> dict:
+    """Return / cancel receipts ledger across shops."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    filters = _filters_context(profile, request)
+    filters["role"] = profile.role
+    filters["query"] = request.GET.urlencode()
+    filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
+    page = _build_return_receipts(filters)
+    page["back_href"] = reverse(
+        "employees:analytics_section",
+        kwargs={
+            "role_segment": role_url_segment(profile.role),
+            "section": "receipts",
+        },
+    )
+    page["back_label"] = "Back to receipts"
+    return {
+        **filters,
+        "section_slug": "return-receipts",
+        "page": page,
+    }
+
+
+def _build_return_receipts(filters):
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     start, end = filters["start"], filters["end"]
-    query = filters.get("query") or ""
     role = filters["role"]
     receipt_kind = (filters.get("receipt_kind") or "").strip().lower()
     if receipt_kind in ("", "all", "any"):
@@ -7151,12 +7402,7 @@ def _build_receipts(filters):
                 )
         total_docs = 0
         total_amount = _zero()
-        cells = [
-            {
-                "href": analytics_receipts_list_url(role, kind_slug, query=query),
-                "label": label,
-            }
-        ]
+        cells = [label]
         for shop in shops:
             docs, amount = by_shop.get(shop.pk, (0, _zero()))
             total_docs += docs
@@ -7321,10 +7567,9 @@ def _build_receipts(filters):
     )
 
     return {
-        "headline": "Receipts",
+        "headline": "Return receipt",
         "lead": (
-            "Every printed receipt for the selected shops and period — "
-            "sales, credits, quotations, stock suppliers, and expense suppliers."
+            "Open a receipt to return items or cancel a sale or credit."
         ),
         "ledger_layout": True,
         "show_search": True,
@@ -7384,10 +7629,8 @@ def _build_receipts(filters):
                 columns,
                 table_rows,
                 empty="No receipts for selected shops and period.",
-                footnote=(
-                    "Docs = receipt count · Amt = document total. "
-                    "Open a type for a filtered list."
-                ),
+                footnote="Docs = receipt count · Amt = document total.",
             ),
         ],
     }
+

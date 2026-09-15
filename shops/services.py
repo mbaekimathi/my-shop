@@ -5016,6 +5016,7 @@ def _receipt_list_item(receipt) -> dict:
         "payment_label": receipt.get_payment_method_display(),
         "client_name": receipt.client_name or "",
         "client_phone": receipt.client_phone or "",
+        "shop_name": receipt.shop.name if getattr(receipt, "shop", None) else "",
         "total": str(receipt.total),
         "created_at": created.isoformat(),
         "created_label": created.strftime("%d %b %Y · %H:%M"),
@@ -5024,6 +5025,8 @@ def _receipt_list_item(receipt) -> dict:
             receipt.kind in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}
             and receipt.status != ShopReceiptStatus.CANCELLED
         ),
+        "can_confirm": receipt.status == ShopReceiptStatus.ACTIVE,
+        "can_cancel": receipt.status == ShopReceiptStatus.ACTIVE,
     }
 
 
@@ -5664,12 +5667,16 @@ def _create_customer_return_stock_movement(
 
 
 @transaction.atomic
-def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> dict:
+def return_shop_receipt_items(
+    *, shop: Shop, receipt_id: int, payload: dict, actor=None
+) -> dict:
     """
     Return one or more lines from a sale/credit receipt.
 
     Restocks shop + global inventory, reactivates returned serials, and
     recalculates (or cancels) the receipt totals.
+
+    Pass ``actor`` to skip login-code verification (trusted portal callers).
     """
     from employees.services import verify_active_employee_code
     from items.models import Item, ItemSerial, ShopStock
@@ -5677,19 +5684,22 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
 
     from .models import ShopReceipt, ShopReceiptLine
 
-    login_code = (payload.get("login_code") or "").strip()
-    authorising = verify_active_employee_code(login_code)
-    if authorising is None:
-        raise ValidationError("Enter a valid active staff 6-digit ID.")
+    if actor is not None:
+        authorising = actor
+    else:
+        login_code = (payload.get("login_code") or "").strip()
+        authorising = verify_active_employee_code(login_code)
+        if authorising is None:
+            raise ValidationError("Enter a valid active staff 6-digit ID.")
 
-    from employees.module_permissions import ensure_employee_may
+        from employees.module_permissions import ensure_employee_may
 
-    ensure_employee_may(
-        authorising,
-        "my-shop",
-        "return_receipt",
-        message="You do not have permission to return receipts.",
-    )
+        ensure_employee_may(
+            authorising,
+            "my-shop",
+            "return_receipt",
+            message="You do not have permission to return receipts.",
+        )
 
     try:
         receipt = (
@@ -5972,11 +5982,12 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         )
         total = (remaining_subtotal + tax_amount).quantize(Decimal("0.01"))
         any_returned = any(int(line.returned_quantity or 0) > 0 for line in all_lines)
-        status = (
-            ShopReceiptStatus.PARTIAL_RETURN
-            if any_returned
-            else ShopReceiptStatus.ACTIVE
-        )
+        if any_returned:
+            status = ShopReceiptStatus.PARTIAL_RETURN
+        elif receipt.status == ShopReceiptStatus.CONFIRMED:
+            status = ShopReceiptStatus.CONFIRMED
+        else:
+            status = ShopReceiptStatus.ACTIVE
         cash_amount = receipt.cash_amount
         mpesa_amount = receipt.mpesa_amount
         if receipt.kind == ShopReceiptKind.SALE:
@@ -6085,4 +6096,115 @@ def return_shop_receipt_items(*, shop: Shop, receipt_id: int, payload: dict) -> 
         "status_label": receipt.get_status_display(),
         "total": str(total),
     }
+
+
+@transaction.atomic
+def confirm_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
+    """Mark a pending POS receipt as confirmed."""
+    from .models import ShopReceipt
+
+    if actor is None:
+        raise ValidationError("Sign in to confirm receipts.")
+
+    try:
+        receipt = (
+            ShopReceipt.objects.select_for_update()
+            .select_related("created_by__user", "client", "shop")
+            .get(pk=receipt_id, shop=shop)
+        )
+    except ShopReceipt.DoesNotExist as exc:
+        raise ValidationError("Receipt not found for this shop.") from exc
+
+    if receipt.status != ShopReceiptStatus.ACTIVE:
+        raise ValidationError("Only pending receipts can be confirmed.")
+
+    receipt.status = ShopReceiptStatus.CONFIRMED
+    receipt.save(update_fields=["status"])
+
+    detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+    return {
+        **detail,
+        "ok": True,
+        "message": f"Receipt {receipt.receipt_number} confirmed.",
+        "status": receipt.status,
+        "status_label": receipt.get_status_display(),
+    }
+
+
+@transaction.atomic
+def cancel_pending_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
+    """Cancel a pending receipt (restock sale/credit lines; void quotations)."""
+    from .models import ShopReceipt
+
+    if actor is None:
+        raise ValidationError("Sign in to cancel receipts.")
+
+    try:
+        receipt = (
+            ShopReceipt.objects.select_for_update()
+            .select_related("shop")
+            .prefetch_related("lines")
+            .get(pk=receipt_id, shop=shop)
+        )
+    except ShopReceipt.DoesNotExist as exc:
+        raise ValidationError("Receipt not found for this shop.") from exc
+
+    if receipt.status != ShopReceiptStatus.ACTIVE:
+        raise ValidationError("Only pending receipts can be cancelled here.")
+
+    if receipt.kind == ShopReceiptKind.QUOTATION:
+        receipt.status = ShopReceiptStatus.CANCELLED
+        receipt.last_returned_at = timezone.now()
+        receipt.last_returned_by = actor
+        receipt.save(
+            update_fields=["status", "last_returned_at", "last_returned_by"]
+        )
+        detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+        return {
+            **detail,
+            "ok": True,
+            "message": f"Quotation {receipt.receipt_number} cancelled.",
+            "status": receipt.status,
+            "status_label": receipt.get_status_display(),
+        }
+
+    if receipt.kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
+        raise ValidationError("This receipt type cannot be cancelled here.")
+
+    lines_payload = []
+    for line in receipt.lines.all():
+        remaining = line.remaining_quantity
+        if remaining <= 0:
+            continue
+        serials = list(line.remaining_serial_numbers or [])
+        entry = {"line_id": line.pk, "quantity": remaining}
+        if serials:
+            entry["serial_numbers"] = serials
+        lines_payload.append(entry)
+
+    if not lines_payload:
+        receipt.status = ShopReceiptStatus.CANCELLED
+        receipt.last_returned_at = timezone.now()
+        receipt.last_returned_by = actor
+        receipt.save(
+            update_fields=["status", "last_returned_at", "last_returned_by"]
+        )
+        detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+        return {
+            **detail,
+            "ok": True,
+            "message": f"Receipt {receipt.receipt_number} cancelled.",
+            "status": receipt.status,
+            "status_label": receipt.get_status_display(),
+        }
+
+    # Release the lock before the nested return path re-locks the same row.
+    receipt_pk = receipt.pk
+    del receipt
+    return return_shop_receipt_items(
+        shop=shop,
+        receipt_id=receipt_pk,
+        payload={"lines": lines_payload},
+        actor=actor,
+    )
 

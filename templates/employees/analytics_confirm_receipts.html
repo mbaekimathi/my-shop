@@ -1,0 +1,172 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="ax ax--ledger"
+  data-animate="rise"
+  data-analytics
+  data-ax-section="confirm-receipts"
+  data-ax-confirm-receipts
+  data-receipt-detail-url="{{ page.detail_url_template }}"
+  data-receipt-confirm-url="{{ page.confirm_url_template }}"
+  data-receipt-cancel-url="{{ page.cancel_url_template }}"
+>
+  {% csrf_token %}
+  <header class="ax-top">
+    <div class="ax-top-main">
+      <div class="ax-title">
+        <h2>{{ page.headline }}</h2>
+        <span class="ax-period">{{ report_period_label }}</span>
+      </div>
+      {% if page.back_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ page.back_href }}">{{ page.back_label|default:"Back" }}</a>
+      </div>
+      {% endif %}
+      <form class="ax-filters" method="get" data-analytics-filters>
+        <input
+          type="search"
+          name="q"
+          value="{{ search }}"
+          placeholder="Search receipt, client, phone, shop…"
+          aria-label="Search"
+        >
+        <select name="shop_id" aria-label="Shop">
+          <option value=""{% if not selected_shop_ids %} selected{% endif %}>All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="status" aria-label="Status">
+          {% for value, label in status_options %}
+          <option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <select name="kind" aria-label="Receipt type">
+          {% for value, label in kind_options %}
+          <option value="{{ value }}"{% if kind_filter == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
+        <button type="submit" class="ax-apply">Apply</button>
+      </form>
+    </div>
+    {% if page.lead %}<p class="ax-lead">{{ page.lead }}</p>{% endif %}
+  </header>
+
+  <p class="ax-footnote">
+    Showing {{ total_count }} receipt{{ total_count|pluralize }}
+    · pending first, then partial return, cancelled, confirmed
+  </p>
+
+  <div class="ax-grid ax-grid--tables">
+    <section class="ax-card ax-card--wide">
+      <header class="ax-card-head">
+        <div class="ax-card-head-main">
+          <h3>Receipts</h3>
+        </div>
+      </header>
+      <div class="ax-table-wrap ax-table-wrap--scroll">
+        {% if rows %}
+        <table class="ax-table">
+          <thead>
+            <tr>
+              <th>Receipt</th>
+              <th>Status</th>
+              <th>Type</th>
+              <th>Shop</th>
+              <th>When</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr
+              class="ax-receipt-row"
+              data-receipt-id="{{ row.receipt_id }}"
+              data-shop-id="{{ row.shop_id }}"
+              tabindex="0"
+            >
+              <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
+              <td data-label="Status">
+                <span class="shop-receipt-status {% if row.status == 'cancelled' %}is-cancelled{% elif row.status == 'partial_return' %}is-partial{% elif row.status == 'confirmed' %}is-confirmed{% else %}is-pending{% endif %}">
+                  {{ row.status_label }}
+                </span>
+              </td>
+              <td data-label="Type">{{ row.kind_label }}</td>
+              <td data-label="Shop">{{ row.shop }}</td>
+              <td data-label="When">{{ row.when }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="ax-empty">No receipts match these filters.</p>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+</section>
+{% endblock %}
+
+{% block workspace_overlays %}
+{{ block.super }}
+<div class="workspace-modal shop-receipt-modal" data-confirm-receipt-modal hidden>
+  <div class="workspace-modal-backdrop" data-confirm-receipt-modal-close></div>
+  <div
+    class="workspace-modal-dialog shop-receipt-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-confirm-receipt-title"
+  >
+    <div class="workspace-modal-head shop-receipt-modal-head">
+      <div>
+        <p class="shop-receipt-modal-kicker">Analytics · Confirm receipt</p>
+        <h2 id="ax-confirm-receipt-title" data-confirm-receipt-modal-title>Receipt</h2>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-confirm-receipt-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="shop-receipt-modal-body" data-confirm-receipt-modal-body>
+      <p class="shop-receipts-status">Loading receipt…</p>
+    </div>
+
+    <div class="workspace-modal-actions shop-receipt-modal-actions" data-confirm-receipt-modal-actions hidden>
+      <button type="button" class="btn btn--ghost" data-confirm-receipt-cancel hidden>
+        Cancel receipt
+      </button>
+      <button type="button" class="btn btn--primary" data-confirm-receipt-confirm hidden>
+        Confirm receipt
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=1"></script>
+<script>
+  (() => {
+    const form = document.querySelector("[data-analytics-filters]");
+    if (!form) return;
+    const rangeSelect = form.querySelector("[data-analytics-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const syncRange = () => {
+      const range = rangeSelect?.value || "all";
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.disabled = !match;
+        field.required = match;
+      });
+    };
+    rangeSelect?.addEventListener("change", syncRange);
+    syncRange();
+  })();
+</script>
+{% endblock %}

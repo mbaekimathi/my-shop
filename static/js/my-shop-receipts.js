@@ -142,7 +142,8 @@
     if (status === "partial_return" || status === "partial" || status === "unpaid") {
       return "is-partial";
     }
-    return "is-active";
+    if (status === "confirmed") return "is-confirmed";
+    return "is-pending";
   };
 
   const renderList = (receipts, count) => {

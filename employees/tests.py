@@ -9,6 +9,8 @@ from employees.workspace import (
     HR_SIDEBAR_SECTIONS,
     SETTINGS_NESTED_SECTIONS,
     SETTINGS_SECTIONS,
+    sidebar_for_analytics,
+    sidebar_for_analytics_section,
     sidebar_for_marketing_links,
     sidebar_for_my_shop,
     sidebar_for_role_dashboard,
@@ -28,6 +30,38 @@ class SupplierSidebarTests(TestCase):
         self.assertTrue(sidebar["primary"][1]["active"])
         self.assertIn("/analytics/suppliers/", sidebar["primary"][1]["href"])
         self.assertEqual(sidebar["primary"][0]["href"], sidebar["dashboard_url"])
+
+
+class AnalyticsSidebarTests(SimpleTestCase):
+    def test_overview_sidebar_lists_section_hub_links(self):
+        sidebar = sidebar_for_analytics(EmployeeRole.IT_SUPPORT, active_view="overview")
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertEqual(labels[0], "Dashboard")
+        self.assertEqual(labels[1], "Overview")
+        self.assertTrue(sidebar["primary"][1]["active"])
+        self.assertIn("Revenue", labels)
+        self.assertIn("Receipts", labels)
+        self.assertNotIn("Clients", labels)
+        self.assertNotIn("Suppliers", labels)
+
+    def test_section_sidebar_is_focused_to_one_page(self):
+        sidebar = sidebar_for_analytics_section(
+            EmployeeRole.IT_SUPPORT, active_view="revenue"
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertEqual(labels, ["Dashboard", "Overview", "Revenue"])
+        self.assertTrue(sidebar["primary"][2]["active"])
+        self.assertFalse(sidebar["primary"][1]["active"])
+
+    def test_confirm_receipts_sidebar_is_focused(self):
+        sidebar = sidebar_for_analytics_section(
+            EmployeeRole.IT_SUPPORT, active_view="confirm-receipts"
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertEqual(
+            labels, ["Dashboard", "Overview", "Receipts", "Confirm receipts"]
+        )
+        self.assertTrue(sidebar["primary"][3]["active"])
 
 
 class DashboardSidebarLinkTests(SimpleTestCase):
@@ -518,7 +552,36 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertTrue(receipt.settled_from_credit)
         self.assertEqual(str(receipt.amount_paid), "100.00")
         page = _build_clients(self._filters())
-        self.assertIsNone(self._row_for(page, "CREDIT CLIENT"))
+        row = self._row_for(page, "CREDIT CLIENT")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[-1]["qty"], "1")
+        self.assertEqual(row[-1]["amount"], "0")
+
+    def test_cleared_clients_sort_after_open_balances(self):
+        from employees.analytics_services import apply_credit_receipt_payment
+
+        open_client = self._make_client("OPEN CLIENT", "011")
+        cleared_client = self._make_client("CLEARED CLIENT", "012")
+        self._make_receipt(open_client, total=80, amount_paid=0)
+        cleared_receipt = self._make_receipt(cleared_client, total=50, amount_paid=0)
+        apply_credit_receipt_payment(
+            profile=self.cashier,
+            receipt_id=cleared_receipt.pk,
+            amount="50",
+        )
+        page = _build_clients(self._filters(from_credits=True))
+        labels = [
+            row[0]["label"]
+            for row in page["tables"][0]["rows"]
+            if isinstance(row[0], dict)
+        ]
+        open_idx = next(i for i, label in enumerate(labels) if "OPEN CLIENT" in label)
+        cleared_idx = next(
+            i for i, label in enumerate(labels) if "CLEARED CLIENT" in label
+        )
+        self.assertLess(open_idx, cleared_idx)
+        cleared_row = self._row_for(page, "CLEARED CLIENT")
+        self.assertEqual(cleared_row[-1]["amount"], "0")
 
     def test_partial_credit_stays_credit_with_balance_due(self):
         from employees.analytics_services import apply_credit_receipt_payment
@@ -574,6 +637,7 @@ class ClientCreditAccountTableTests(TestCase):
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIn("/analytics/credits/clients/", row[0]["href"])
         self.assertIn("all-time", page["tables"][0]["footnote"])
+        self.assertIn("Cleared clients", page["tables"][0]["footnote"])
 
     def test_credits_period_filter_scopes_client_rows_and_alerts(self):
         from datetime import datetime, time, timedelta

@@ -50,6 +50,7 @@ from .models import (
     ShopReceiptKind,
     ShopReceiptLine,
     ShopReceiptStatus,
+    COUNTED_RECEIPT_STATUSES,
 )
 from .daraja_stk import (
     get_stk_payment,
@@ -743,10 +744,7 @@ def shop_website(request, shop_id):
             ShopReceiptKind.SALE,
             ShopReceiptKind.CREDIT,
         ),
-        shop_receipt_lines__receipt__status__in=(
-            ShopReceiptStatus.ACTIVE,
-            ShopReceiptStatus.PARTIAL_RETURN,
-        ),
+        shop_receipt_lines__receipt__status__in=COUNTED_RECEIPT_STATUSES,
     )
     items = list(
         _catalog_base_qs()
@@ -807,10 +805,7 @@ def shop_website_suggestions(request, shop_id, item_id):
     valid_receipts = Q(
         receipt__shop=shop,
         receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
-        receipt__status__in=(
-            ShopReceiptStatus.ACTIVE,
-            ShopReceiptStatus.PARTIAL_RETURN,
-        ),
+        receipt__status__in=COUNTED_RECEIPT_STATUSES,
     )
     receipt_ids = ShopReceiptLine.objects.filter(
         valid_receipts, item=item
@@ -838,10 +833,7 @@ def shop_website_suggestions(request, shop_id, item_id):
                 ShopReceiptKind.SALE,
                 ShopReceiptKind.CREDIT,
             ),
-            shop_receipt_lines__receipt__status__in=(
-                ShopReceiptStatus.ACTIVE,
-                ShopReceiptStatus.PARTIAL_RETURN,
-            ),
+            shop_receipt_lines__receipt__status__in=COUNTED_RECEIPT_STATUSES,
         )
         suggested_items = list(
             Item.objects.filter(is_suspended=False, category=item.category)

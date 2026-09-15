@@ -545,6 +545,9 @@
               {% elif table.shop_grid and forloop.last %}
               class="ax-row--total"
               {% endif %}
+              {% if table.searchable %}
+              data-search-text="{% if row.search_text %}{{ row.search_text }}{% elif cells.0.label %}{{ cells.0.label }}{% elif cells.0 %}{{ cells.0 }}{% endif %}"
+              {% endif %}
             >
               {% for cell in cells %}
               {% for col in table.columns %}
@@ -676,16 +679,31 @@
     const emptyNote = scope.querySelector(".ax-empty-search");
     const filterRows = () => {
       const q = (search.value || "").trim().toLowerCase();
+      const tokens = q.split(/\s+/).filter(Boolean);
       let visible = 0;
       rows.forEach((row) => {
-        const label = (row.textContent || "").toLowerCase();
-        const match = !q || label.includes(q);
+        if (row.classList.contains("ax-row--total")) {
+          row.hidden = false;
+          return;
+        }
+        const haystack = (
+          row.getAttribute("data-search-text") ||
+          row.textContent ||
+          ""
+        ).toLowerCase();
+        const match =
+          !tokens.length || tokens.every((token) => haystack.includes(token));
         row.hidden = !match;
         if (match) visible += 1;
       });
       if (emptyNote) emptyNote.hidden = visible > 0 || !q;
     };
-    search.addEventListener("input", filterRows);
+    let timer = 0;
+    search.addEventListener("input", () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(filterRows, 80);
+    });
+    search.addEventListener("search", filterRows);
     search.addEventListener("keydown", (event) => {
       if (event.key === "Enter") event.preventDefault();
     });

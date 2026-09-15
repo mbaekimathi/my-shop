@@ -21,6 +21,8 @@ from .analytics_services import (
     build_analytics_page,
     build_analytics_receipts_list,
     build_client_credit_account,
+    build_confirm_receipts_page,
+    build_return_receipts_page,
     build_supplier_account,
     client_credit_account_url,
     get_analytics_receipt_kind,
@@ -31,6 +33,7 @@ from shops.credit_audit import client_credit_audit_url
 from .workspace import (
     get_dashboard_module,
     sidebar_for_analytics,
+    sidebar_for_analytics_section,
     sidebar_for_client_credit_account,
     sidebar_for_credits,
     sidebar_for_role_dashboard,
@@ -173,6 +176,10 @@ def _render_analytics(request, profile, *, section_slug="overview"):
                 )
                 if section["slug"] in ANALYTICS_DASHBOARD_SECTION_SLUGS
                 else sidebar_for_analytics(
+                    profile.role, active_view="overview", profile=profile
+                )
+                if section["slug"] == "overview"
+                else sidebar_for_analytics_section(
                     profile.role, active_view=section["slug"], profile=profile
                 )
             ),
@@ -268,12 +275,127 @@ def analytics_receipts_list(request, role_segment, kind):
             "module": module,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_analytics(
+            "page_sidebar": sidebar_for_analytics_section(
                 profile.role, active_view="receipts", profile=profile
             ),
             "back_href": back_href,
             "back_label": "Back to receipts",
             "kind_options": list(ANALYTICS_RECEIPT_KINDS.values()),
+            **context,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_confirm_receipts(request, role_segment):
+    """Confirm / cancel pending POS receipts across shops."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_confirm_receipts",
+            role_segment=expected,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(
+        request, profile, "analytics", "confirm-receipts"
+    )
+    if denied is not None:
+        return denied
+
+    context = build_confirm_receipts_page(profile=profile, request=request)
+    from .workspace import analytics_section_url
+
+    back_href = analytics_section_url(profile.role, "receipts")
+    page = dict(context.get("page") or {})
+    page["back_href"] = back_href
+    page["back_label"] = "Back to receipts"
+    context["page"] = page
+    return render(
+        request,
+        "employees/analytics_confirm_receipts.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Confirm receipts · Analytics",
+                "headline": "Confirm receipts",
+                "summary": "Confirm or cancel pending receipts across shops.",
+                "icon": "badge-check",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_analytics_section(
+                profile.role, active_view="confirm-receipts", profile=profile
+            ),
+            **context,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_return_receipts(request, role_segment):
+    """Return / cancel receipts ledger across shops."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_return_receipts",
+            role_segment=expected,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(
+        request, profile, "analytics", "return-receipts"
+    )
+    if denied is not None:
+        return denied
+
+    context = build_return_receipts_page(profile=profile, request=request)
+    return render(
+        request,
+        "employees/analytics.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Return receipt · Analytics",
+                "headline": "Return receipt",
+                "summary": "Return items or cancel sales and credits across shops.",
+                "icon": "undo-2",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_analytics_section(
+                profile.role, active_view="return-receipts", profile=profile
+            ),
             **context,
         },
     )
@@ -578,7 +700,7 @@ def analytics_supplier_account(request, role_segment, kind, supplier_id):
             "page_sidebar": (
                 sidebar_for_suppliers(profile.role, profile=profile)
                 if back_section == "suppliers"
-                else sidebar_for_analytics(
+                else sidebar_for_analytics_section(
                     profile.role, active_view=back_section, profile=profile
                 )
             ),
@@ -881,7 +1003,13 @@ def analytics_receipt_detail(request, role_segment, shop_id, receipt_id):
         request, profile, "analytics", "receipts", as_json=True
     )
     if denied is not None:
-        return denied
+        from .module_permissions import employee_may
+
+        if not (
+            employee_may(profile, "analytics", "confirm-receipts")
+            or employee_may(profile, "analytics", "return-receipts")
+        ):
+            return denied
 
     shop = _analytics_receipt_shop_access(profile, shop_id)
     if shop is None:
@@ -897,6 +1025,68 @@ def analytics_receipt_detail(request, role_segment, shop_id, receipt_id):
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
         return JsonResponse({"ok": False, "error": message}, status=404)
     return JsonResponse(payload)
+
+
+@active_employee_required
+@require_POST
+def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
+    """Confirm a pending receipt from the confirm-receipts page."""
+    from .module_permissions import require_module_permission
+    from shops.services import confirm_shop_receipt
+
+    profile, err = _analytics_role_or_error(request, role_segment, as_json=True)
+    if err is not None:
+        return err
+
+    denied = require_module_permission(
+        request, profile, "analytics", "confirm-receipts", as_json=True
+    )
+    if denied is not None:
+        return denied
+
+    shop = _analytics_receipt_shop_access(profile, shop_id)
+    if shop is None:
+        return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
+
+    try:
+        result = confirm_shop_receipt(
+            shop=shop, receipt_id=receipt_id, actor=profile
+        )
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        return JsonResponse({"ok": False, "error": message}, status=400)
+    return JsonResponse(result)
+
+
+@active_employee_required
+@require_POST
+def analytics_receipt_cancel(request, role_segment, shop_id, receipt_id):
+    """Cancel a pending receipt from the confirm-receipts page."""
+    from .module_permissions import require_module_permission
+    from shops.services import cancel_pending_shop_receipt
+
+    profile, err = _analytics_role_or_error(request, role_segment, as_json=True)
+    if err is not None:
+        return err
+
+    denied = require_module_permission(
+        request, profile, "analytics", "confirm-receipts", as_json=True
+    )
+    if denied is not None:
+        return denied
+
+    shop = _analytics_receipt_shop_access(profile, shop_id)
+    if shop is None:
+        return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
+
+    try:
+        result = cancel_pending_shop_receipt(
+            shop=shop, receipt_id=receipt_id, actor=profile
+        )
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        return JsonResponse({"ok": False, "error": message}, status=400)
+    return JsonResponse(result)
 
 
 @active_employee_required

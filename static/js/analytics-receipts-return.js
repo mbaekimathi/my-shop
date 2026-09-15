@@ -65,7 +65,8 @@
   const statusClass = (status) => {
     if (status === "cancelled") return "is-cancelled";
     if (status === "partial_return") return "is-partial";
-    return "is-active";
+    if (status === "confirmed") return "is-confirmed";
+    return "is-pending";
   };
 
   const closeModal = () => {

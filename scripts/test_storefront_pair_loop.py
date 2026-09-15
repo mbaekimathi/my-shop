@@ -95,7 +95,11 @@ def find_pair_seed_items(shop):
         ShopReceipt.objects.filter(
             shop=shop,
             kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
-            status__in=(ShopReceiptStatus.ACTIVE, ShopReceiptStatus.PARTIAL_RETURN),
+            status__in=(
+                ShopReceiptStatus.ACTIVE,
+                ShopReceiptStatus.CONFIRMED,
+                ShopReceiptStatus.PARTIAL_RETURN,
+            ),
         )
         .prefetch_related("lines")
         .order_by("-created_at")[:300]

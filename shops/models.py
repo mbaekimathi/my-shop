@@ -54,9 +54,18 @@ class ShopReceiptKind(models.TextChoices):
 
 
 class ShopReceiptStatus(models.TextChoices):
-    ACTIVE = "active", "Active"
+    ACTIVE = "active", "Pending"
+    CONFIRMED = "confirmed", "Confirmed"
     PARTIAL_RETURN = "partial_return", "Partially returned"
     CANCELLED = "cancelled", "Cancelled"
+
+
+# Receipts that still count toward sales / catalogue (not fully cancelled).
+COUNTED_RECEIPT_STATUSES = (
+    ShopReceiptStatus.ACTIVE,
+    ShopReceiptStatus.CONFIRMED,
+    ShopReceiptStatus.PARTIAL_RETURN,
+)
 
 
 class ShopPaymentMethod(models.TextChoices):

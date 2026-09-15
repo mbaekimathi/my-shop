@@ -20200,7 +20200,8 @@ html[data-theme="light"] .low-stock-badge.is-low {
   color: #b45309;
 }
 
-.shop-receipt-status.is-active {
+.shop-receipt-status.is-active,
+.shop-receipt-status.is-pending {
   background: color-mix(in srgb, var(--teal) 12%, var(--surface));
   color: var(--teal);
 }
@@ -20208,6 +20209,11 @@ html[data-theme="light"] .low-stock-badge.is-low {
 .shop-receipt-status.is-partial {
   background: color-mix(in srgb, var(--accent) 14%, var(--surface));
   color: color-mix(in srgb, var(--accent) 75%, #000);
+}
+
+.shop-receipt-status.is-confirmed {
+  background: color-mix(in srgb, #2f6fed 12%, var(--surface));
+  color: #2f6fed;
 }
 
 .shop-receipt-status.is-cancelled {

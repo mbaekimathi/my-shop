@@ -328,6 +328,16 @@ urlpatterns = [
         name="analytics_receipts_list",
     ),
     path(
+        "<role_segment:role_segment>/analytics/confirm-receipts/",
+        analytics_views.analytics_confirm_receipts,
+        name="analytics_confirm_receipts",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/return-receipts/",
+        analytics_views.analytics_return_receipts,
+        name="analytics_return_receipts",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/api/receipts/verify-login/",
         analytics_views.analytics_receipt_verify_login,
         name="analytics_receipt_verify_login",
@@ -336,6 +346,16 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/",
         analytics_views.analytics_receipt_detail,
         name="analytics_receipt_detail",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/confirm/",
+        analytics_views.analytics_receipt_confirm,
+        name="analytics_receipt_confirm",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/cancel/",
+        analytics_views.analytics_receipt_cancel,
+        name="analytics_receipt_cancel",
     ),
     path(
         "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/return/",

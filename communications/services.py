@@ -171,6 +171,7 @@ def companion_item_ids(
         receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
         receipt__status__in=(
             ShopReceiptStatus.ACTIVE,
+            ShopReceiptStatus.CONFIRMED,
             ShopReceiptStatus.PARTIAL_RETURN,
         ),
         item_id__in=ids,

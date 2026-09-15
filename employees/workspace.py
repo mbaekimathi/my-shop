@@ -1290,26 +1290,46 @@ def analytics_section_url(role, section):
     )
 
 
+def analytics_confirm_receipts_url(role):
+    return reverse(
+        "employees:analytics_confirm_receipts",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+
+
+def analytics_return_receipts_url(role):
+    return reverse(
+        "employees:analytics_return_receipts",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+
+
 def sidebar_for_analytics(role, *, active_view="overview", profile=None):
-    """Sidebar links for Analytics — each section is its own page."""
+    """Sidebar for the Analytics overview hub only — not shared with section pages."""
     from .analytics_services import ANALYTICS_DASHBOARD_SECTION_SLUGS, ANALYTICS_SECTIONS
     from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
     home_url = analytics_url(role)
     active_view = (active_view or "overview").strip().lower()
-    section_links = [
-        _link(
-            section["label"],
-            section["icon"],
-            href=analytics_section_url(role, section["slug"]),
-            active=active_view == section["slug"],
+    section_links = []
+    for section in ANALYTICS_SECTIONS:
+        if section["slug"] == "overview":
+            continue
+        if section["slug"] in ANALYTICS_DASHBOARD_SECTION_SLUGS:
+            continue
+        if profile is not None and not employee_may(
+            profile, "analytics", section["slug"]
+        ):
+            continue
+        section_links.append(
+            _link(
+                section["label"],
+                section["icon"],
+                href=analytics_section_url(role, section["slug"]),
+                active=False,
+            )
         )
-        for section in ANALYTICS_SECTIONS
-        if section["slug"] != "overview"
-        and section["slug"] not in ANALYTICS_DASHBOARD_SECTION_SLUGS
-        and (profile is None or employee_may(profile, "analytics", section["slug"]))
-    ]
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
     if profile is None or employee_may(profile, "analytics", "view"):
         primary.append(
@@ -1327,6 +1347,75 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
+def sidebar_for_analytics_section(role, *, active_view, profile=None):
+    """Focused sidebar for one analytics section page — Overview + this page."""
+    from .analytics_services import ANALYTICS_SECTION_BY_SLUG
+    from .module_permissions import employee_may
+
+    dashboard_url = reverse(role_home_url_name(role))
+    home_url = analytics_url(role)
+    active_view = (active_view or "").strip().lower()
+    section_slug = active_view
+    special_labels = {
+        "confirm-receipts": ("Confirm receipts", "badge-check"),
+        "return-receipts": ("Return receipt", "undo-2"),
+    }
+
+    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+    if profile is None or employee_may(profile, "analytics", "view"):
+        primary.append(
+            _link("Overview", "layout-grid", href=home_url, active=False)
+        )
+
+    if active_view in special_labels:
+        if profile is None or employee_may(profile, "analytics", "receipts"):
+            primary.append(
+                _link(
+                    "Receipts",
+                    "receipt",
+                    href=analytics_section_url(role, "receipts"),
+                    active=False,
+                )
+            )
+        label, icon = special_labels[active_view]
+        perm = active_view
+        if profile is None or employee_may(profile, "analytics", perm):
+            href = (
+                analytics_confirm_receipts_url(role)
+                if active_view == "confirm-receipts"
+                else analytics_return_receipts_url(role)
+            )
+            primary.append(_link(label, icon, href=href, active=True))
+    else:
+        section = ANALYTICS_SECTION_BY_SLUG.get(section_slug)
+        if section is not None and (
+            profile is None or employee_may(profile, "analytics", section_slug)
+        ):
+            primary.append(
+                _link(
+                    section["label"],
+                    section["icon"],
+                    href=analytics_section_url(role, section_slug),
+                    active=True,
+                )
+            )
+
+    return resolve_sidebar_hrefs(
+        {
+            "page": "analytics",
+            "dashboard_url": dashboard_url,
+            "primary": primary,
+            "footer": _footer_site_links(
+                profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],

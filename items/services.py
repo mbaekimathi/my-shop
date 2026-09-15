@@ -979,7 +979,11 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
         status = (
             ShopReceiptStatus.PARTIAL_RETURN
             if any_returned
-            else ShopReceiptStatus.ACTIVE
+            else (
+                ShopReceiptStatus.CONFIRMED
+                if receipt.status == ShopReceiptStatus.CONFIRMED
+                else ShopReceiptStatus.ACTIVE
+            )
         )
         cash_amount = receipt.cash_amount
         mpesa_amount = receipt.mpesa_amount
