@@ -2135,8 +2135,9 @@
       const kind = selectedKind();
       const required = kind !== "sale";
       const phoneRequired = kind === "credit" && creditWhatsapp;
+      const nameRequired = kind === "trade_out";
       if (clientPhoneInput) clientPhoneInput.required = phoneRequired;
-      if (clientNameInput) clientNameInput.required = false;
+      if (clientNameInput) clientNameInput.required = nameRequired;
       if (clientBlock) clientBlock.classList.toggle("is-required", required);
       if (clientHeading) {
         clientHeading.innerHTML = required
@@ -2148,6 +2149,9 @@
         if (kind === "credit" && creditWhatsapp) {
           clientNote.textContent =
             "Enter the client phone number. A credit sale notice is sent on WhatsApp.";
+        } else if (kind === "trade_out") {
+          clientNote.textContent =
+            "Capture the client who is taking stock on trade. Name is required.";
         } else if (required) {
           clientNote.textContent = "Enter a name, a phone number, or both.";
         } else if (hasSerials) {
@@ -2164,7 +2168,9 @@
           : "Client phone <em>(optional)</em>";
       }
       if (clientNameLabel) {
-        clientNameLabel.innerHTML = "Client full name <em>(optional)</em>";
+        clientNameLabel.innerHTML = nameRequired
+          ? 'Client full name <span class="shop-serial-required" aria-hidden="true">*</span>'
+          : "Client full name <em>(optional)</em>";
       }
     };
 
@@ -2601,7 +2607,7 @@
             return;
           }
         }
-        if (kind === "credit" || kind === "quotation") {
+        if (kind === "credit" || kind === "quotation" || kind === "trade_out") {
           const phone = normalizeClientPhoneField({ force: true });
           const name = (clientNameInput?.value || "").trim();
           if (kind === "credit" && creditWhatsapp && !phone) {
@@ -2612,9 +2618,17 @@
             focusCartClientFields();
             return;
           }
+          if (kind === "trade_out" && !name) {
+            setCartStatus(
+              "Enter the client full name for a trade out.",
+              { error: true }
+            );
+            focusCartClientFields();
+            return;
+          }
           if (!phone && !name) {
             setCartStatus(
-              "Enter a client name, a phone number, or both for credit and quotation.",
+              "Enter a client name, a phone number, or both for credit, quotation, and trade out.",
               { error: true }
             );
             focusCartClientFields();
@@ -2808,7 +2822,8 @@
             (Boolean(data.print_required) ||
               kind === "sale" ||
               kind === "credit" ||
-              kind === "quotation");
+              kind === "quotation" ||
+              kind === "trade_out");
           if (shouldPrint) {
             await printReceiptText(
               data.receipt_text,

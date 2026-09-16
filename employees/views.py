@@ -1619,6 +1619,7 @@ POS_SETTING_GROUPS = (
             ("enable_sale", "Sale"),
             ("enable_credit", "Credit"),
             ("enable_quotation", "Quotation"),
+            ("enable_trade_out", "Trade out"),
         ),
     },
     {
@@ -1742,6 +1743,7 @@ def _company_pos_settings(
                     sale=request.POST.get("receipt_format_sale"),
                     credit=request.POST.get("receipt_format_credit"),
                     quotation=request.POST.get("receipt_format_quotation"),
+                    trade_out=request.POST.get("receipt_format_trade_out"),
                 )
             except ValidationError as exc:
                 message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -1756,12 +1758,16 @@ def _company_pos_settings(
                         "receipt_format_sale": row.receipt_format_sale,
                         "receipt_format_credit": row.receipt_format_credit,
                         "receipt_format_quotation": row.receipt_format_quotation,
+                        "receipt_format_trade_out": row.receipt_format_trade_out,
                         "preview_sale": preview_receipt_number(kind="sale", settings_row=row),
                         "preview_credit": preview_receipt_number(
                             kind="credit", settings_row=row
                         ),
                         "preview_quotation": preview_receipt_number(
                             kind="quotation", settings_row=row
+                        ),
+                        "preview_trade_out": preview_receipt_number(
+                            kind="trade_out", settings_row=row
                         ),
                     }
                 )
@@ -1934,10 +1940,13 @@ def _company_pos_settings(
             "receipt_format_sale": pos.receipt_format_sale or "SAL",
             "receipt_format_credit": pos.receipt_format_credit or "CRD",
             "receipt_format_quotation": pos.receipt_format_quotation or "QTN",
+            "receipt_format_trade_out": getattr(pos, "receipt_format_trade_out", None)
+            or "T",
             "receipt_format_previews": {
                 "sale": preview_receipt_number(kind="sale", settings_row=pos),
                 "credit": preview_receipt_number(kind="credit", settings_row=pos),
                 "quotation": preview_receipt_number(kind="quotation", settings_row=pos),
+                "trade_out": preview_receipt_number(kind="trade_out", settings_row=pos),
             },
             "mpesa_collection_type": pos.mpesa_collection_type or "",
             "mpesa_business_number": pos.mpesa_business_number or "",

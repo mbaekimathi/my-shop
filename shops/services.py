@@ -58,6 +58,7 @@ POS_SETTING_FIELDS = {
     "enable_sale",
     "enable_credit",
     "enable_quotation",
+    "enable_trade_out",
     "enable_cash",
     "enable_mpesa",
     "enable_cash_mpesa",
@@ -76,6 +77,7 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_sale",
         "enable_credit",
         "enable_quotation",
+        "enable_trade_out",
         "enable_cash",
         "enable_mpesa",
         "enable_cash_mpesa",
@@ -95,6 +97,7 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "receipt_format_sale",
         "receipt_format_credit",
         "receipt_format_quotation",
+        "receipt_format_trade_out",
         "mpesa_collection_type",
         "mpesa_business_number",
         "mpesa_account_number",
@@ -129,11 +132,13 @@ RECEIPT_FORMAT_FIELDS = {
     "sale": "receipt_format_sale",
     "credit": "receipt_format_credit",
     "quotation": "receipt_format_quotation",
+    "trade_out": "receipt_format_trade_out",
 }
 RECEIPT_FORMAT_DEFAULTS = {
     "sale": "S",
     "credit": "C",
     "quotation": "Q",
+    "trade_out": "T",
 }
 DOC_NUMBER_PREFIX = {
     "stock_in": "I",
@@ -363,6 +368,7 @@ def set_shop_receipt_number_formats(
     sale: str | None = None,
     credit: str | None = None,
     quotation: str | None = None,
+    trade_out: str | None = None,
 ) -> ShopPosSettings:
     row = get_shop_pos_settings(shop)
     if not row.override_receipt:
@@ -381,6 +387,11 @@ def set_shop_receipt_number_formats(
             quotation, label="Quotation"
         )
         updates.append("receipt_format_quotation")
+    if trade_out is not None:
+        row.receipt_format_trade_out = _clean_receipt_format(
+            trade_out, label="Trade out"
+        )
+        updates.append("receipt_format_trade_out")
     if not updates:
         raise ValidationError("No receipt formats to update.")
     row.save(update_fields=[*updates, "updated_at"])
@@ -2228,6 +2239,7 @@ def set_receipt_number_formats(
     sale: str | None = None,
     credit: str | None = None,
     quotation: str | None = None,
+    trade_out: str | None = None,
 ) -> CompanyPosSettings:
     settings_row = get_company_pos_settings()
     updates = []
@@ -2242,6 +2254,11 @@ def set_receipt_number_formats(
             quotation, label="Quotation"
         )
         updates.append("receipt_format_quotation")
+    if trade_out is not None:
+        settings_row.receipt_format_trade_out = _clean_receipt_format(
+            trade_out, label="Trade out"
+        )
+        updates.append("receipt_format_trade_out")
     if not updates:
         raise ValidationError("No receipt formats to update.")
     settings_row.save(update_fields=[*updates, "updated_at"])
@@ -2458,6 +2475,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_sale": row.enable_sale,
         "enable_credit": row.enable_credit,
         "enable_quotation": row.enable_quotation,
+        "enable_trade_out": getattr(row, "enable_trade_out", True),
         "enable_cash": row.enable_cash,
         "enable_mpesa": row.enable_mpesa,
         "enable_cash_mpesa": row.enable_cash_mpesa,
@@ -2481,6 +2499,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "receipt_format_sale": receipt_format_for_kind("sale", row),
         "receipt_format_credit": receipt_format_for_kind("credit", row),
         "receipt_format_quotation": receipt_format_for_kind("quotation", row),
+        "receipt_format_trade_out": receipt_format_for_kind("trade_out", row),
         "mpesa_collection_type": payment.get("type") or row.mpesa_collection_type or "",
         "mpesa_business_number": row.mpesa_business_number or "",
         "mpesa_account_number": row.mpesa_account_number or "",
@@ -2860,7 +2879,7 @@ def _receipt_center(text: str, width: int) -> str:
 
 
 def _sales_ticket_document_meta(receipt) -> dict:
-    """Professional document labels for sale / credit / quotation tickets."""
+    """Professional document labels for sale / credit / quotation / trade tickets."""
     kind = receipt.kind
     if kind == ShopReceiptKind.CREDIT:
         return {
@@ -2879,6 +2898,15 @@ def _sales_ticket_document_meta(receipt) -> dict:
             "party_label": "Customer",
             "authorised_label": "Prepared by",
             "footer": "This quotation is not a tax invoice",
+        }
+    if kind == ShopReceiptKind.TRADE_OUT:
+        return {
+            "doc_type": "trade_out",
+            "document_title": "Trade out note",
+            "doc_number_label": "Trade No.",
+            "party_label": "Client",
+            "authorised_label": "Cashier",
+            "footer": "Items released on trade — settle by payment or exchange",
         }
     return {
         "doc_type": "sale",
@@ -3585,7 +3613,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
 
     kind = (payload.get("kind") or ShopReceiptKind.SALE).strip().lower()
     if kind not in ShopReceiptKind.values:
-        raise ValidationError("Choose sale, credit, or quotation.")
+        raise ValidationError("Choose sale, credit, quotation, or trade out.")
 
     pos_settings = get_effective_pos_settings(shop)
     if not pos_settings.kind_enabled(kind):
@@ -3824,10 +3852,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         requires_client = kind in {
             ShopReceiptKind.CREDIT,
             ShopReceiptKind.QUOTATION,
+            ShopReceiptKind.TRADE_OUT,
         }
         if requires_client and not client_name and not client_phone_raw:
             raise ValidationError(
-                "Enter a client name, a phone number, or both for credit and quotation."
+                "Enter a client name, a phone number, or both for credit, quotation, and trade out."
             )
         if kind == ShopReceiptKind.CREDIT:
             from communications.automations import credit_whatsapp_required
@@ -3836,6 +3865,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 raise ValidationError(
                     "Enter the client phone number so the credit sale can be sent on WhatsApp."
                 )
+        if kind == ShopReceiptKind.TRADE_OUT and not client_name:
+            raise ValidationError(
+                "Enter the client full name for a trade out."
+            )
 
         if client_phone_raw:
             normalized = _normalize_phone(client_phone_raw)
@@ -3935,14 +3968,17 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 phone=client_phone,
                 profile=authorising,
             )
-        elif kind == ShopReceiptKind.CREDIT and client_phone:
+        elif kind in {ShopReceiptKind.CREDIT, ShopReceiptKind.TRADE_OUT} and client_phone:
             client = find_client_by_phone(client_phone)
             if client is None:
                 client = upsert_client(
-                    full_name="CUSTOMER",
+                    full_name=client_name or "CUSTOMER",
                     phone=client_phone,
                     profile=authorising,
                 )
+        elif kind == ShopReceiptKind.TRADE_OUT and client_name and not client_phone:
+            # Name-only trade outs stay as free-text on the receipt.
+            client = None
 
         receipt = ShopReceipt.objects.create(
             shop=shop,
@@ -4032,6 +4068,14 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             if serials_to_update:
                 ItemSerial.objects.bulk_update(
                     serials_to_update, ["is_available", "updated_at"]
+                )
+
+            if kind == ShopReceiptKind.TRADE_OUT:
+                _create_trade_out_stock_movement(
+                    shop=shop,
+                    receipt=receipt,
+                    actor=authorising,
+                    lines=prepared,
                 )
 
     ticket = _build_receipt_ticket_data(receipt, line_rows)
@@ -5052,7 +5096,12 @@ def _receipt_list_item(receipt) -> dict:
         "created_label": created.strftime("%d %b %Y · %H:%M"),
         "cashier": cashier,
         "can_return": (
-            receipt.kind in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}
+            receipt.kind
+            in {
+                ShopReceiptKind.SALE,
+                ShopReceiptKind.CREDIT,
+                ShopReceiptKind.TRADE_OUT,
+            }
             and receipt.status != ShopReceiptStatus.CANCELLED
         ),
         "can_confirm": (
@@ -5265,6 +5314,8 @@ def list_shop_receipts(
         kind_key = "credit"
     elif kind_key in ("quotations", "quotation", "quote"):
         kind_key = "quotation"
+    elif kind_key in ("trade_out", "trade-out", "trades", "tradings", "trade"):
+        kind_key = "trade_out"
     elif kind_key in ("stock", "stock-suppliers", "stock_suppliers"):
         kind_key = "stock"
     elif kind_key in ("expense", "expenses", "expense-suppliers", "expense_suppliers"):
@@ -5272,7 +5323,14 @@ def list_shop_receipts(
     else:
         raise ValidationError("Unknown receipt type filter.")
 
-    include_pos = kind_key in ("all", "sale", "credit", "quotation", "sales_credits")
+    include_pos = kind_key in (
+        "all",
+        "sale",
+        "credit",
+        "quotation",
+        "trade_out",
+        "sales_credits",
+    )
     include_stock = kind_key in ("all", "stock")
     include_expense = kind_key in ("all", "expense")
 
@@ -5290,7 +5348,7 @@ def list_shop_receipts(
         )
         if kind_key == "sales_credits":
             pos_qs = pos_qs.filter(kind__in=("sale", "credit"))
-        elif kind_key in ("sale", "credit", "quotation"):
+        elif kind_key in ("sale", "credit", "quotation", "trade_out"):
             pos_qs = pos_qs.filter(kind=kind_key)
         if q:
             pos_qs = pos_qs.filter(
@@ -5512,7 +5570,11 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
         for line, payload in zip(lines, line_payloads):
             if line.remaining_quantity <= 0:
                 continue
-            if receipt.kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
+            if receipt.kind not in {
+                ShopReceiptKind.SALE,
+                ShopReceiptKind.CREDIT,
+                ShopReceiptKind.TRADE_OUT,
+            }:
                 continue
             if receipt.status == ShopReceiptStatus.CANCELLED:
                 continue
@@ -5644,6 +5706,54 @@ def _append_receipt_return_batch(line, *, qty: int, serials: list, at, by_id) ->
         }
     )
     line.return_batches = batches
+
+
+def _create_trade_out_stock_movement(*, shop: Shop, receipt, actor, lines: list[dict]):
+    """
+    Ledger-only stock-out for a trade-out checkout.
+
+    Stock quantities are already updated by the caller; this creates movement
+    rows so trade outs appear in stock movement and reports.
+    """
+    from items.models import (
+        StockEntrySource,
+        StockMovement,
+        StockMovementLine,
+        StockMovementType,
+        StockOutReason,
+    )
+
+    prepared = [
+        row for row in lines if row.get("item") is not None and int(row.get("qty") or 0) > 0
+    ]
+    if not prepared:
+        return None
+
+    movement = StockMovement.objects.create(
+        movement_type=StockMovementType.OUT,
+        entry_source=StockEntrySource.TRADE_OUT,
+        shop=shop,
+        created_by=actor,
+        notes=f"Trade out {receipt.receipt_number}",
+        supplier_notified=True,
+    )
+    for row in prepared:
+        item = row["item"]
+        qty = int(row["qty"])
+        unit_cost = Decimal(row.get("unit_cost") or 0)
+        serials = [
+            str(s).strip() for s in (row.get("serial_numbers") or []) if str(s).strip()
+        ]
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=item,
+            quantity=qty,
+            unit_cost=unit_cost,
+            reason=StockOutReason.TRADE_OUT,
+            note=f"Trade out · {receipt.receipt_number}",
+            serial_numbers=serials,
+        )
+    return movement
 
 
 def _create_customer_return_stock_movement(

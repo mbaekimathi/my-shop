@@ -156,6 +156,23 @@
             >
           </label>
         </li>
+        <li class="pos-settings-row pos-settings-row--format">
+          <div class="pos-settings-copy">
+            <strong>Trade out</strong>
+            <p data-receipt-format-preview="trade_out">Example: {{ receipt_format_previews.trade_out }}</p>
+          </div>
+          <label class="receipt-format-field">
+            <input
+              type="text"
+              maxlength="8"
+              spellcheck="false"
+              autocomplete="off"
+              value="{{ receipt_format_trade_out }}"
+              data-receipt-format="trade_out"
+              aria-label="Trade out receipt number format"
+            >
+          </label>
+        </li>
       </ul>
     </section>
 

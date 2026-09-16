@@ -69,7 +69,7 @@
   }
 
   function updateFormatPreviews(map) {
-    ["sale", "credit", "quotation"].forEach((kind) => {
+    ["sale", "credit", "quotation", "trade_out"].forEach((kind) => {
       const el = root.querySelector(`[data-receipt-format-preview="${kind}"]`);
       if (!el) return;
       const value = map?.[kind] || localPreview(
@@ -138,11 +138,14 @@
           root.querySelector('[data-receipt-format="credit"]')?.value || "",
         receipt_format_quotation:
           root.querySelector('[data-receipt-format="quotation"]')?.value || "",
+        receipt_format_trade_out:
+          root.querySelector('[data-receipt-format="trade_out"]')?.value || "",
       };
       const unchanged =
         payload.receipt_format_sale === saved.sale &&
         payload.receipt_format_credit === saved.credit &&
-        payload.receipt_format_quotation === saved.quotation;
+        payload.receipt_format_quotation === saved.quotation &&
+        payload.receipt_format_trade_out === saved.trade_out;
       if (unchanged) return;
 
       formatInputs.forEach((input) => input.classList.add("is-saving"));
@@ -151,19 +154,25 @@
         saved.sale = data.receipt_format_sale;
         saved.credit = data.receipt_format_credit;
         saved.quotation = data.receipt_format_quotation;
+        saved.trade_out = data.receipt_format_trade_out;
         const saleInput = root.querySelector('[data-receipt-format="sale"]');
         const creditInput = root.querySelector('[data-receipt-format="credit"]');
         const quotationInput = root.querySelector(
           '[data-receipt-format="quotation"]'
         );
+        const tradeOutInput = root.querySelector(
+          '[data-receipt-format="trade_out"]'
+        );
         if (saleInput) saleInput.value = saved.sale;
         if (creditInput) creditInput.value = saved.credit;
         if (quotationInput) quotationInput.value = saved.quotation;
+        if (tradeOutInput) tradeOutInput.value = saved.trade_out;
         formatInputs.forEach((input) => input.classList.remove("is-error"));
         updateFormatPreviews({
           sale: data.preview_sale,
           credit: data.preview_credit,
           quotation: data.preview_quotation,
+          trade_out: data.preview_trade_out,
         });
       } catch (error) {
         formatInputs.forEach((input) => {
@@ -174,6 +183,7 @@
           sale: localPreview(saved.sale),
           credit: localPreview(saved.credit),
           quotation: localPreview(saved.quotation),
+          trade_out: localPreview(saved.trade_out),
         });
         window.alert(error.message || "Could not save receipt formats.");
       } finally {

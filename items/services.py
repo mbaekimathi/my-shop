@@ -2015,7 +2015,7 @@ def _parse_movement_lines(data, movement_type: str):
             if stock_req.require_reason_on_out:
                 if reason not in valid_reasons:
                     errors.append(
-                        f"{line_label}: choose a reason (waste, transfer, display, or supplier return)."
+                        f"{line_label}: choose a reason (waste, transfer, display, supplier return, or trade out)."
                     )
                     continue
             elif reason not in valid_reasons:

@@ -51,6 +51,7 @@ class ShopReceiptKind(models.TextChoices):
     SALE = "sale", "Sale"
     CREDIT = "credit", "Credit"
     QUOTATION = "quotation", "Quotation"
+    TRADE_OUT = "trade_out", "Trade out"
 
 
 class ShopReceiptStatus(models.TextChoices):
@@ -135,6 +136,26 @@ class ShopReceipt(models.Model):
         default=False,
         db_index=True,
         help_text="True when this sale was converted from a fully paid credit receipt.",
+    )
+    settled_from_trade = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="True when this sale was converted from a cleared trade-out receipt.",
+    )
+    trade_exchange_value = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Cumulative buying value of items stocked in to clear a trade-out.",
+    )
+    trade_settlements = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Trade-out settlement events: "
+            "[{type, amount|value, method?, item_id?, item_name?, qty?, "
+            "buying_price?, stock_movement_id?, at, by_id}, ...]."
+        ),
     )
     share_whatsapp = models.BooleanField(default=False)
     status = models.CharField(
@@ -329,6 +350,7 @@ class CompanyPosSettings(models.Model):
     enable_sale = models.BooleanField(default=True)
     enable_credit = models.BooleanField(default=True)
     enable_quotation = models.BooleanField(default=True)
+    enable_trade_out = models.BooleanField(default=True)
     enable_cash_sale_checkout = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
@@ -355,6 +377,7 @@ class CompanyPosSettings(models.Model):
     receipt_format_sale = models.CharField(max_length=8, default="S")
     receipt_format_credit = models.CharField(max_length=8, default="C")
     receipt_format_quotation = models.CharField(max_length=8, default="Q")
+    receipt_format_trade_out = models.CharField(max_length=8, default="T")
     mpesa_collection_type = models.CharField(
         max_length=16,
         choices=(
@@ -417,6 +440,8 @@ class CompanyPosSettings(models.Model):
             kinds.append(ShopReceiptKind.CREDIT)
         if self.enable_quotation:
             kinds.append(ShopReceiptKind.QUOTATION)
+        if getattr(self, "enable_trade_out", True):
+            kinds.append(ShopReceiptKind.TRADE_OUT)
         return kinds
 
     def enabled_payment_methods(self):
@@ -566,6 +591,7 @@ class ShopPosSettings(models.Model):
     enable_sale = models.BooleanField(default=True)
     enable_credit = models.BooleanField(default=True)
     enable_quotation = models.BooleanField(default=True)
+    enable_trade_out = models.BooleanField(default=True)
     enable_cash_sale_checkout = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
@@ -592,6 +618,7 @@ class ShopPosSettings(models.Model):
     receipt_format_sale = models.CharField(max_length=8, default="S")
     receipt_format_credit = models.CharField(max_length=8, default="C")
     receipt_format_quotation = models.CharField(max_length=8, default="Q")
+    receipt_format_trade_out = models.CharField(max_length=8, default="T")
     mpesa_collection_type = models.CharField(
         max_length=16,
         choices=(

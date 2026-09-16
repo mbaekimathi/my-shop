@@ -1,0 +1,212 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="ax ax--trade-detail"
+  data-animate="rise"
+  data-ax-section="trade-detail"
+  data-trade-settle
+  data-settle-url="{{ settle_url }}"
+  data-catalog-url="{{ catalog_url }}"
+  data-balance="{{ balance_raw }}"
+  data-can-settle="{% if can_settle %}1{% else %}0{% endif %}"
+>
+  <header class="td-head">
+    <a class="td-back" href="{{ back_href }}">
+      <i data-lucide="arrow-left" aria-hidden="true"></i>
+      <span>Tradings</span>
+    </a>
+    <div class="td-head-main">
+      <div class="td-head-copy">
+        <p class="td-kicker">Trade out</p>
+        <h1>{{ receipt_number }}</h1>
+        <p class="td-meta">
+          <span>{{ client_name }}</span>
+          {% if client_phone %}<span>{{ client_phone }}</span>{% endif %}
+          <span>{{ shop_name }}</span>
+          <span>{{ created_label }}</span>
+        </p>
+      </div>
+      <span class="td-badge{% if can_settle %} is-open{% else %} is-clear{% endif %}">
+        {% if can_settle %}Open{% else %}{{ status_label }}{% endif %}
+      </span>
+    </div>
+  </header>
+
+  <div class="td-balance{% if can_settle %} is-due{% else %} is-clear{% endif %}">
+    <div class="td-balance-main">
+      <span>Balance left</span>
+      <strong data-trade-balance>{{ balance }}</strong>
+    </div>
+    <dl class="td-balance-side">
+      <div>
+        <dt>Trade value</dt>
+        <dd>{{ total }}</dd>
+      </div>
+      <div>
+        <dt>Paid</dt>
+        <dd data-trade-paid>{{ paid }}</dd>
+      </div>
+      <div>
+        <dt>Exchange</dt>
+        <dd data-trade-exchange>{{ exchange_value }}</dd>
+      </div>
+    </dl>
+  </div>
+
+  <div class="td-layout{% if not can_settle %} td-layout--single{% endif %}">
+    <div class="td-main">
+      <section class="td-card">
+        <header class="td-card-head">
+          <h2>Items taken</h2>
+          <span>{{ lines|length }} line{{ lines|length|pluralize }}</span>
+        </header>
+        <ul class="td-items">
+          {% for line in lines %}
+          <li>
+            <div class="td-item-copy">
+              <strong>{{ line.name }}</strong>
+              <span>{{ line.remaining }} of {{ line.qty }} · {{ line.unit_price }} each</span>
+            </div>
+            <em>{{ line.line_total }}</em>
+          </li>
+          {% empty %}
+          <li class="td-empty">No items on this trade.</li>
+          {% endfor %}
+        </ul>
+      </section>
+
+      {% if settlements %}
+      <section class="td-card">
+        <header class="td-card-head">
+          <h2>History</h2>
+        </header>
+        <ul class="td-history" data-trade-settlements>
+          {% for row in settlements %}
+          <li>
+            <div>
+              <strong>{{ row.label }}</strong>
+              {% if row.when %}<time>{{ row.when|slice:":16" }}</time>{% endif %}
+            </div>
+            <span>{{ row.detail }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </section>
+      {% endif %}
+
+      {% if not can_settle %}
+      <p class="td-cleared">This trade is fully cleared.</p>
+      {% endif %}
+    </div>
+
+    {% if can_settle %}
+    <aside class="td-side" data-trade-settle-panel>
+      <section class="td-card td-card--settle">
+        <header class="td-card-head">
+          <h2>Clear trade</h2>
+        </header>
+
+        <div class="td-tabs" role="tablist" aria-label="Settle mode">
+          <label class="td-tab">
+            <input type="radio" name="settle_mode" value="payment" data-trade-mode checked>
+            <span>Pay &amp; convert</span>
+          </label>
+          <label class="td-tab">
+            <input type="radio" name="settle_mode" value="exchange" data-trade-mode>
+            <span>Exchange item</span>
+          </label>
+        </div>
+
+        <form class="td-form" data-trade-payment-form>
+          {% csrf_token %}
+          <input type="hidden" name="mode" value="payment">
+          <div class="td-methods" role="group" aria-label="Payment method">
+            <label class="td-method">
+              <input type="radio" name="payment_method" value="cash" checked>
+              <span>Cash</span>
+            </label>
+            <label class="td-method">
+              <input type="radio" name="payment_method" value="mpesa">
+              <span>M-Pesa</span>
+            </label>
+          </div>
+          <label class="td-field">
+            <span>Amount paid</span>
+            <input
+              type="number"
+              name="amount"
+              min="0.01"
+              step="0.01"
+              inputmode="decimal"
+              required
+              value="{{ balance_raw }}"
+              data-trade-pay-amount
+            >
+          </label>
+          <button type="submit" class="td-submit">Record payment</button>
+        </form>
+
+        <form class="td-form" data-trade-exchange-form hidden>
+          {% csrf_token %}
+          <input type="hidden" name="mode" value="exchange">
+          <input type="hidden" name="item_id" value="" data-trade-item-id>
+          <label class="td-field td-field--suggest">
+            <span>Item to stock in</span>
+            <input
+              type="search"
+              autocomplete="off"
+              placeholder="Search item…"
+              data-trade-item-search
+            >
+            <ul class="td-suggest" data-trade-item-suggest hidden></ul>
+          </label>
+          <p class="td-selected" data-trade-item-label hidden></p>
+          <div class="td-fields">
+            <label class="td-field">
+              <span>Qty</span>
+              <input
+                type="number"
+                name="quantity"
+                min="1"
+                step="1"
+                value="1"
+                required
+                data-trade-exchange-qty
+              >
+            </label>
+            <label class="td-field">
+              <span>Buying price</span>
+              <input
+                type="number"
+                name="buying_price"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                required
+                data-trade-exchange-price
+              >
+            </label>
+          </div>
+          <p class="td-preview">
+            Worth <strong data-trade-exchange-value>KSh 0.00</strong>
+            · left <strong data-trade-exchange-balance>{{ balance }}</strong>
+          </p>
+          <button type="submit" class="td-submit">Stock in &amp; deduct</button>
+        </form>
+
+        <p class="td-status" data-trade-status hidden></p>
+      </section>
+    </aside>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/analytics-trade-settle.js' %}?v=3"></script>
+{% endblock %}

@@ -24,6 +24,7 @@ from .analytics_services import (
     build_confirm_receipts_page,
     build_return_receipts_page,
     build_supplier_account,
+    build_trade_out_detail,
     client_credit_account_url,
     get_analytics_receipt_kind,
     get_analytics_section,
@@ -502,6 +503,192 @@ def analytics_client_credit(request, role_segment, client_id):
             **account,
         },
     )
+
+
+@active_employee_required
+@require_GET
+def analytics_trade_detail(request, role_segment, receipt_id):
+    """Trade-out detail and settle page (/…/analytics/tradings/<id>/)."""
+    from django.http import Http404
+
+    from .module_permissions import require_module_permission
+    from .workspace import sidebar_for_analytics_section
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_trade_detail",
+            role_segment=expected,
+            receipt_id=receipt_id,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        raise Http404("Module not found.")
+
+    denied = require_module_permission(request, profile, "analytics", "tradings")
+    if denied is not None:
+        return denied
+
+    detail = build_trade_out_detail(
+        profile=profile, receipt_id=receipt_id, request=request
+    )
+    return render(
+        request,
+        "employees/analytics_trade_detail.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": f"Trade {detail['receipt_number']}",
+                "headline": detail["receipt_number"],
+                "summary": "Clear this trade by payment or exchange stock-in.",
+                "icon": "repeat",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_analytics_section(
+                profile.role, active_view="tradings", profile=profile
+            ),
+            **detail,
+        },
+    )
+
+
+@active_employee_required
+@require_POST
+def analytics_trade_settle(request, role_segment, receipt_id):
+    """Settle a trade-out via payment or item exchange."""
+    from django.http import Http404
+
+    from .module_permissions import require_module_permission
+    from shops.models import ShopReceipt, ShopReceiptKind, ShopReceiptStatus
+    from shops.trade_settlement import record_trade_exchange, record_trade_payment
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return JsonResponse(
+            {"ok": False, "error": "Wrong role portal."}, status=403
+        )
+
+    denied = require_module_permission(
+        request, profile, "analytics", "tradings", as_json=True
+    )
+    if denied is not None:
+        return denied
+
+    from .analytics_services import _filters_context
+
+    filters = _filters_context(profile, request, allow_all_time=True, default_all_time=True)
+    receipt = (
+        ShopReceipt.objects.filter(
+            pk=receipt_id,
+            shop_id__in=filters["active_shop_ids"],
+            kind=ShopReceiptKind.TRADE_OUT,
+        )
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .select_related("shop")
+        .first()
+    )
+    if receipt is None:
+        return JsonResponse({"ok": False, "error": "Trade out not found."}, status=404)
+
+    mode = (request.POST.get("mode") or request.POST.get("settle_mode") or "").strip().lower()
+    try:
+        if mode == "payment":
+            result = record_trade_payment(
+                receipt,
+                amount=request.POST.get("amount"),
+                payment_method=request.POST.get("payment_method") or "cash",
+                mpesa_receipt_number=request.POST.get("mpesa_receipt_number") or "",
+                actor=profile,
+            )
+            message = (
+                "Trade converted to a sale."
+                if result["converted"]
+                else f"Payment recorded. Balance left {_money_ksh_safe(result['balance'])}."
+            )
+        elif mode == "exchange":
+            try:
+                item_id = int(request.POST.get("item_id") or 0)
+            except (TypeError, ValueError):
+                item_id = 0
+            try:
+                quantity = int(request.POST.get("quantity") or request.POST.get("qty") or 0)
+            except (TypeError, ValueError):
+                quantity = 0
+            serials_raw = request.POST.get("serial_numbers") or request.POST.get("serials") or ""
+            if isinstance(serials_raw, str) and serials_raw.strip().startswith("["):
+                import json
+
+                try:
+                    serials = json.loads(serials_raw)
+                except json.JSONDecodeError:
+                    serials = [s.strip() for s in serials_raw.split(",") if s.strip()]
+            else:
+                serials = [
+                    s.strip()
+                    for s in str(serials_raw).replace("\n", ",").split(",")
+                    if s.strip()
+                ]
+            result = record_trade_exchange(
+                receipt,
+                item_id=item_id,
+                quantity=quantity,
+                buying_price=request.POST.get("buying_price"),
+                serial_numbers=serials,
+                actor=profile,
+            )
+            if result["converted"]:
+                message = "Trade cleared and converted to a sale."
+            elif result["confirmed"]:
+                message = "Trade cleared by exchange."
+            else:
+                message = (
+                    f"Exchange recorded for {result['item_name']}. "
+                    f"Balance left {_money_ksh_safe(result['balance'])}."
+                )
+        else:
+            return JsonResponse(
+                {"ok": False, "error": "Choose payment or exchange."}, status=400
+            )
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        return JsonResponse({"ok": False, "error": message}, status=400)
+
+    receipt.refresh_from_db()
+    return JsonResponse(
+        {
+            "ok": True,
+            "message": message,
+            "converted": bool(result.get("converted")),
+            "confirmed": bool(result.get("confirmed")),
+            "balance": str(result.get("balance") or 0),
+            "balance_label": _money_ksh_safe(result.get("balance")),
+            "amount_paid": str(result.get("amount_paid") or receipt.amount_paid or 0),
+            "exchange_value": str(
+                result.get("exchange_value") or receipt.trade_exchange_value or 0
+            ),
+            "kind": receipt.kind,
+            "status": receipt.status,
+            "stock_updates": result.get("stock_updates") or [],
+        }
+    )
+
+
+def _money_ksh_safe(value) -> str:
+    from decimal import Decimal
+
+    amount = Decimal(value or 0).quantize(Decimal("0.01"))
+    return f"KSh {amount:,.2f}"
 
 
 @active_employee_required

@@ -241,6 +241,12 @@
             <span>Quotation</span>
           </label>
           {% endif %}
+          {% if "trade_out" in cart_kinds %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="kind" value="trade_out" data-cart-kind{% if default_kind == "trade_out" %} checked{% endif %}>
+            <span>Trade out</span>
+          </label>
+          {% endif %}
         </div>
       </div>
       {% elif default_kind %}

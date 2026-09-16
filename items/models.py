@@ -244,6 +244,8 @@ class StockEntrySource(models.TextChoices):
     BUY_ITEMS = "buy_items", "Buy items"
     STOCK_MANAGEMENT = "stock_management", "Stock management"
     CUSTOMER_RETURN = "customer_return", "Customer return"
+    TRADE_OUT = "trade_out", "Trade out"
+    TRADE_EXCHANGE = "trade_exchange", "Trade exchange"
 
 
 class StockPaymentStatus(models.TextChoices):
@@ -257,6 +259,7 @@ class StockOutReason(models.TextChoices):
     TRANSFER = "transfer", "Transfer"
     DISPLAY = "display", "Display"
     RETURN = "return", "Supplier return"
+    TRADE_OUT = "trade_out", "Trade out"
 
 
 class StockRequestStatus(models.TextChoices):

@@ -323,6 +323,16 @@ urlpatterns = [
         name="analytics_client_credit",
     ),
     path(
+        "<role_segment:role_segment>/analytics/tradings/<int:receipt_id>/settle/",
+        analytics_views.analytics_trade_settle,
+        name="analytics_trade_settle",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/tradings/<int:receipt_id>/",
+        analytics_views.analytics_trade_detail,
+        name="analytics_trade_detail",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/receipts/<slug:kind>/",
         analytics_views.analytics_receipts_list,
         name="analytics_receipts_list",
