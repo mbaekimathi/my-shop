@@ -884,7 +884,12 @@
     const rows = campaign.messages || [];
     els.logBody.innerHTML = rows
       .map((m) => {
-        const when = m.sent_at || m.updated_at || m.created_at || "";
+        const when =
+          m.when_label ||
+          m.sent_label ||
+          m.updated_label ||
+          m.created_label ||
+          "";
         return `<tr>
           <td>${escapeHtml(m.client_name || "—")}</td>
           <td>${escapeHtml(m.phone || "")}</td>
@@ -892,7 +897,7 @@
             humanStatus(m.status)
           )}</span></td>
           <td class="comms-advanced-only">${m.attempt_count || 0}</td>
-          <td>${escapeHtml(when ? when.replace("T", " ").slice(0, 19) : "")}</td>
+          <td>${escapeHtml(when)}</td>
         </tr>`;
       })
       .join("");

@@ -18,6 +18,7 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce, Greatest
 from django.http import Http404
+from django.utils import timezone
 
 from employees.models import EmployeeProfile, EmployeeStatus
 from items.models import (
@@ -2432,7 +2433,9 @@ def _list_stock_supplier_receipt_rows(*, shop_ids, start, end, search="", limit=
                 "total_raw": total,
                 "status": status_label,
                 "kind": "Stock purchase",
-                "when": movement.created_at.strftime("%d %b %Y · %H:%M"),
+                "when": timezone.localtime(movement.created_at).strftime(
+                    "%d %b %Y · %H:%M"
+                ),
                 "when_dt": movement.created_at,
                 "cashier": cashier or "—",
                 "sort_id": movement.pk,
@@ -2490,7 +2493,9 @@ def _list_expense_supplier_receipt_rows(*, shop_ids, start, end, search="", limi
                 "total_raw": Decimal(expense.amount or 0),
                 "status": expense.get_payment_status_display(),
                 "kind": "Expense",
-                "when": expense.created_at.strftime("%d %b %Y · %H:%M"),
+                "when": timezone.localtime(expense.created_at).strftime(
+                    "%d %b %Y · %H:%M"
+                ),
                 "when_dt": expense.created_at,
                 "cashier": cashier or "—",
                 "sort_id": expense.pk,
@@ -2583,7 +2588,7 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
                 "total": _money_ksh(row.total),
                 "status": row.get_status_display(),
                 "kind": row.get_kind_display(),
-                "when": row.created_at.strftime("%d %b %Y · %H:%M"),
+                "when": timezone.localtime(row.created_at).strftime("%d %b %Y · %H:%M"),
                 "cashier": cashier or "—",
             }
         )
@@ -2682,7 +2687,7 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
                 "kind": row.kind,
                 "kind_label": row.get_kind_display(),
                 "payment_label": row.get_payment_method_display(),
-                "when": row.created_at.strftime("%d %b %Y · %H:%M"),
+                "when": timezone.localtime(row.created_at).strftime("%d %b %Y · %H:%M"),
                 "cashier": _cashier_label(row.created_by) or "—",
                 "can_confirm": is_pending,
                 "can_cancel": is_pending,
@@ -5838,7 +5843,9 @@ def _build_supply(filters):
         entry["amount"] += unit_price * quantity
         entry["details"].append(
             {
-                "date": line.movement.created_at.strftime("%d %b %Y, %H:%M"),
+                "date": timezone.localtime(line.movement.created_at).strftime(
+                    "%d %b %Y, %H:%M"
+                ),
                 "shop": line.movement.shop.name if line.movement.shop_id else "—",
                 "quantity": quantity,
                 "unit_price": _money_ksh(unit_price),
@@ -7456,7 +7463,7 @@ def _build_return_receipts(filters):
                         client,
                         _money_ksh(row.total),
                         row.get_status_display(),
-                        row.created_at.strftime("%d %b %Y · %H:%M"),
+                        timezone.localtime(row.created_at).strftime("%d %b %Y · %H:%M"),
                         cashier or "—",
                     ],
                 }
@@ -7553,6 +7560,7 @@ def _build_return_receipts(filters):
             "Open a receipt to return items or cancel a sale or credit."
         ),
         "ledger_layout": True,
+        "list_table_layout": True,
         "show_search": True,
         "search_placeholder": "Search receipts…",
         "search_empty": "No receipts match that search.",

@@ -126,19 +126,21 @@ def _sync_complete_shop_checkout(
     portal_shop=None,
 ) -> dict:
     """Replay a shop-floor receipt queued while offline."""
-    from django.core.cache import cache
     from django.core.exceptions import ValidationError
 
-    from shops.services import complete_shop_checkout
+    from shops.services import (
+        complete_shop_checkout,
+        get_idempotent_shop_checkout,
+        store_idempotent_shop_checkout,
+    )
     from shops.session import resolve_shop_for_floor
 
     client_id = (payload.get("client_id") or "").strip()
     if not client_id:
         raise SyncOperationError("client_id is required for offline checkout.", "invalid_client_id")
 
-    cache_key = f"shop_checkout_client:{client_id}"
-    cached = cache.get(cache_key)
-    if isinstance(cached, dict) and cached.get("ok"):
+    cached = get_idempotent_shop_checkout(client_id)
+    if cached is not None:
         return cached
 
     try:
@@ -227,7 +229,7 @@ def _sync_complete_shop_checkout(
     safe["ok"] = True
     safe["client_id"] = client_id
     safe["queued"] = True
-    cache.set(cache_key, safe, 60 * 60 * 24 * 7)
+    store_idempotent_shop_checkout(client_id, safe)
     return safe
 
 

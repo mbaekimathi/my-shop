@@ -5,6 +5,8 @@ Semantics match the permissions UI:
 - Explicit allowed=False ⇒ denied
 - Super Admin always allowed (cannot be locked out of the system)
 - HR staff always keep access to hr-management/permissions so they can recover
+- Shop-scoped roles (employee / shop_manager / shop_cashier) must be allocated
+  to at least one active shop to open stock-management or analytics
 """
 
 from __future__ import annotations
@@ -13,11 +15,22 @@ from django.contrib import messages
 from django.http import JsonResponse
 
 from .access import HR_STAFF_ROLES, redirect_to_role_home
-from .models import EmployeeModulePermission, EmployeeRole
+from .models import (
+    SHOP_ASSIGNABLE_ROLES,
+    EmployeeModulePermission,
+    EmployeeRole,
+)
 from .permissions_catalog import PERMISSION_MODULE_BY_SLUG, is_valid_permission_key
 
 
 REQUEST_PERM_CACHE_ATTR = "_employee_module_perm_cache"
+
+# Shop-scoped staff must be allocated to at least one shop to open these modules.
+SHOP_ALLOCATION_GATED_MODULES = frozenset({"stock-management", "analytics"})
+
+NO_SHOP_ALLOCATION_MESSAGE = (
+    "You must be allocated to at least one shop to use this module."
+)
 
 
 def normalize_submodule(module_slug: str, submodule_slug: str) -> str:
@@ -81,6 +94,19 @@ def employee_may(profile, module_slug: str, submodule_slug: str) -> bool:
     return cache.get((module_slug, submodule_slug), True)
 
 
+def profile_has_shop_allocation(profile) -> bool:
+    """Company-wide roles always pass; shop-scoped roles need allocated shops."""
+    if profile is None:
+        return False
+    if getattr(profile, "role", None) == EmployeeRole.SUPER_ADMIN:
+        return True
+    if getattr(profile, "role", None) not in SHOP_ASSIGNABLE_ROLES:
+        return True
+    from items.services import actionable_shops_for_profile
+
+    return bool(actionable_shops_for_profile(profile))
+
+
 def employee_may_any(profile, module_slug: str) -> bool:
     """True if the employee may use at least one submodule in the module."""
     module = PERMISSION_MODULE_BY_SLUG.get(module_slug)
@@ -88,10 +114,17 @@ def employee_may_any(profile, module_slug: str) -> bool:
         return True
     if getattr(profile, "role", None) == EmployeeRole.SUPER_ADMIN:
         return True
-    return any(
+    if not any(
         employee_may(profile, module_slug, submodule["slug"])
         for submodule in module["submodules"]
-    )
+    ):
+        return False
+    if (
+        module_slug in SHOP_ALLOCATION_GATED_MODULES
+        and not profile_has_shop_allocation(profile)
+    ):
+        return False
+    return True
 
 
 def module_capabilities(profile, module_slug: str) -> dict[str, bool]:
@@ -123,6 +156,24 @@ def permission_denied_response(
     return redirect("employees:login")
 
 
+def require_shop_allocation(
+    request,
+    profile,
+    *,
+    as_json: bool = False,
+    message: str | None = None,
+):
+    """Deny when a shop-scoped employee has no allocated shops."""
+    if profile_has_shop_allocation(profile):
+        return None
+    return permission_denied_response(
+        request,
+        profile,
+        message=message or NO_SHOP_ALLOCATION_MESSAGE,
+        as_json=as_json,
+    )
+
+
 def require_module_permission(
     request,
     profile,
@@ -133,25 +184,33 @@ def require_module_permission(
     message: str | None = None,
 ):
     """Return a deny response when not allowed; otherwise None."""
-    if employee_may(profile, module_slug, submodule_slug):
-        return None
-    label = f"{module_slug}/{normalize_submodule(module_slug, submodule_slug)}"
-    return permission_denied_response(
-        request,
-        profile,
-        message=message or f"You do not have permission for {label}.",
-        as_json=as_json,
-    )
+    if not employee_may(profile, module_slug, submodule_slug):
+        label = f"{module_slug}/{normalize_submodule(module_slug, submodule_slug)}"
+        return permission_denied_response(
+            request,
+            profile,
+            message=message or f"You do not have permission for {label}.",
+            as_json=as_json,
+        )
+    if module_slug in SHOP_ALLOCATION_GATED_MODULES:
+        denied = require_shop_allocation(request, profile, as_json=as_json)
+        if denied is not None:
+            return denied
+    return None
 
 
 def ensure_employee_may(profile, module_slug: str, submodule_slug: str, *, message=None):
     """Raise ValidationError when profile may not perform the capability."""
     from django.core.exceptions import ValidationError
 
-    if employee_may(profile, module_slug, submodule_slug):
-        return
-    label = f"{module_slug}/{normalize_submodule(module_slug, submodule_slug)}"
-    raise ValidationError(message or f"You do not have permission for {label}.")
+    if not employee_may(profile, module_slug, submodule_slug):
+        label = f"{module_slug}/{normalize_submodule(module_slug, submodule_slug)}"
+        raise ValidationError(message or f"You do not have permission for {label}.")
+    if (
+        module_slug in SHOP_ALLOCATION_GATED_MODULES
+        and not profile_has_shop_allocation(profile)
+    ):
+        raise ValidationError(message or NO_SHOP_ALLOCATION_MESSAGE)
 
 
 def my_shop_capabilities(profile) -> dict[str, bool]:

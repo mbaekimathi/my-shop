@@ -2455,6 +2455,10 @@
       }
     };
 
+    const newCheckoutClientId = () =>
+      (crypto?.randomUUID && crypto.randomUUID()) ||
+      `checkout-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
     const confirmWrongShopSale = () =>
       new Promise((resolve) => {
         if (!wrongShopModal) {
@@ -2548,358 +2552,367 @@
     };
 
     const submitCheckout = async () => {
+      // Latch immediately so blur/input/Enter races cannot start a second sale.
       if (checkoutInFlight) return;
-      if (!checkoutEnabled) {
-        setCartStatus("Checkout is disabled in POS settings.", { error: true });
-        return;
-      }
-      if (!checkoutForm || !checkoutUrl) {
-        setCartStatus("Checkout is unavailable. Refresh and try again.", {
-          error: true,
-        });
-        return;
-      }
-      if (cart.size === 0) {
-        setCartStatus("Add items before completing the receipt.", { error: true });
-        return;
-      }
-      if (!hasEnabledKinds()) {
-        setCartStatus("No document types are enabled in POS settings.", {
-          error: true,
-        });
-        return;
-      }
-      const verified =
-        cartCodeVerified || (await verifyCartLoginCode({ autoCheckout: false }));
-      if (!verified) return;
-
-      const kind = selectedKind();
-      if (!kind || !checkoutForm.querySelector(`[data-cart-kind][value="${kind}"]`)) {
-        setCartStatus("Choose an enabled document type.", { error: true });
-        return;
-      }
-      for (const line of cart.values()) {
-        if (!line.trackSerial) continue;
-        const serials = Array.isArray(line.serials) ? line.serials : [];
-        if (!serials.length || serials.length !== line.qty) {
-          setCartStatus(
-            `Add serial numbers for “${line.name}” before checkout.`,
-            { error: true }
-          );
-          openSerialSaleModal(line);
-          return;
-        }
-      }
-      if (kind === "credit" || kind === "quotation") {
-        const phone = normalizeClientPhoneField({ force: true });
-        const name = (clientNameInput?.value || "").trim();
-        if (kind === "credit" && creditWhatsapp && !phone) {
-          setCartStatus(
-            "Enter the client phone number so the credit sale can be sent on WhatsApp.",
-            { error: true }
-          );
-          focusCartClientFields();
-          return;
-        }
-        if (!phone && !name) {
-          setCartStatus(
-            "Enter a client name, a phone number, or both for credit and quotation.",
-            { error: true }
-          );
-          focusCartClientFields();
-          return;
-        }
-      }
-      const payload = {
-        kind,
-        client_name: (
-          checkoutForm.querySelector("[data-cart-client-name]")?.value || ""
-        ).trim().toUpperCase(),
-        client_phone: normalizeClientPhoneField({ force: true }),
-        login_code: (cartLoginCode?.value || "").trim(),
-        share_whatsapp: Boolean(
-          checkoutForm.querySelector("[data-cart-whatsapp]")?.checked
-        ),
-        lines: [...cart.values()].map((line) => ({
-          id: line.id,
-          qty: line.qty,
-          price: discountEnabled ? line.price : line.listPrice || line.price,
-          serials: Array.isArray(line.serials) ? line.serials : [],
-        })),
-      };
-
-      if (kind === "sale") {
-        if (!paymentsEnabled || !hasEnabledPayments()) {
-          setCartStatus("No payment methods are enabled in POS settings.", {
-            error: true,
-          });
-          return;
-        }
-        payload.payment_method = selectedPayment();
-        if (
-          !payload.payment_method ||
-          !checkoutForm.querySelector(
-            `[data-cart-pay][value="${payload.payment_method}"]`
-          )
-        ) {
-          setCartStatus("Choose an enabled payment method.", { error: true });
-          return;
-        }
-        if (payload.payment_method === "both") {
-          syncSplitAmounts(splitLastEdited);
-          payload.cash_amount = cashInput?.value || "0";
-          payload.mpesa_amount = mpesaInput?.value || "0";
-        }
-      }
-
-      if (kind === "credit") {
-        const dueDate = (creditDueInput?.value || "").trim();
-        if (dueDate) payload.credit_due_date = dueDate;
-      }
-
-      const needsStk =
-        kind === "sale" &&
-        stkReady &&
-        (payload.payment_method === "mpesa" ||
-          payload.payment_method === "both");
-      if (needsStk && stkConfirmed?.id) {
-        const phone = normalizeClientPhoneField({ force: true });
-        if (!phone) {
-          setCartStatus(
-            "Enter the client phone number used for the STK Push.",
-            { error: true }
-          );
-          focusCartClientFields();
-          return;
-        }
-        payload.client_phone = phone;
-        const expectedAmount = mpesaPromptAmount();
-        if (Number(stkConfirmed.amount || 0) !== Number(expectedAmount || 0)) {
-          clearStkConfirmation({ keepStatus: true });
-          setStkStatus("Cart amount changed — send a new STK prompt if needed.", {
-            error: true,
-          });
-          setCartStatus("Cart amount changed — send a new STK prompt if needed.", {
-            error: true,
-          });
-          syncStkPanel();
-          return;
-        }
-        payload.stk_payment_id = stkConfirmed.id;
-        payload.mpesa_receipt_number = stkConfirmed.mpesa_receipt_number || "";
-      }
-
-      const printerStatus = window.RichcomPrinter?.getStatus?.();
-      let printVia = resolvePrintChannel(
-        (printerStatus?.connected && printerStatus.channel) ||
-          (printerStatus?.wantConnected && printerStatus.preferredChannel) ||
-          ""
-      );
-      const hasPrintChannels = hasEnabledPrintChannels();
-      if (kind === "sale" && compulsoryPrintOnSale) {
-        if (!hasPrintChannels) {
-          setCartStatus(
-            "Compulsory printing is on, but no print channels are enabled in settings.",
-            { error: true }
-          );
-          return;
-        }
-        if (!printVia) {
-          setCartStatus(
-            "Connect an enabled printer from the sidebar before completing the sale.",
-            { error: true }
-          );
-          return;
-        }
-        if (window.RichcomPrinter) {
-          try {
-            await window.RichcomPrinter.ensureConnected(printVia);
-          } catch (_) {
-            /* restore best-effort */
-          }
-          const live = window.RichcomPrinter.getStatus();
-          if (live.connected) {
-            printVia = resolvePrintChannel(live.channel || printVia);
-          }
-        }
-        if (
-          window.RichcomPrinter &&
-          !window.RichcomPrinter.canAutoPrint(printVia)
-        ) {
-          setCartStatus(
-            "Connect a printer from the sidebar (Connect to printer) before completing the sale.",
-            { error: true }
-          );
-          return;
-        }
-      }
-      if (printVia && hasPrintChannels) payload.print_via = printVia;
-
-      if (cartStaffAllocatedToShop === false) {
-        const confirmed = await confirmWrongShopSale();
-        if (!confirmed) {
-          setCartStatus("Sale cancelled.", { ok: false, error: false });
-          return;
-        }
-      }
-
       checkoutInFlight = true;
       if (cartSubmit) cartSubmit.disabled = true;
-      setCartStatus(
-        needsStk && stkConfirmed?.id
-          ? "Completing M-Pesa sale…"
-          : "Printing receipt…"
-      );
-
-      const finishSuccessfulCheckout = async (data, { queued = false } = {}) => {
-        const soldLines = [...cart.values()].map((line) => ({
-          id: line.id,
-          qty: line.qty,
-        }));
-        cart.clear();
-        renderCart();
-        resetCheckoutForm();
-        if (Array.isArray(data.stock_updates) && data.stock_updates.length) {
-          applyStockUpdates(data.stock_updates);
-        } else if (kind !== "quotation") {
-          applyStockUpdates(
-            soldLines.map((line) => {
-              const card = cartRoot.querySelector(
-                `[data-cart-item][data-item-id="${CSS.escape(String(line.id))}"]`
-              );
-              const current = Math.max(
-                0,
-                Math.floor(Number(card?.getAttribute("data-item-stock")) || 0)
-              );
-              return {
-                id: line.id,
-                quantity: Math.max(0, current - Math.max(0, line.qty || 0)),
-              };
-            })
-          );
-        }
-        setCartOpen(false);
-        setCartStatus(
-          queued
-            ? data.message || "Sale queued — it will sync when you reconnect."
-            : data.message || "Receipt completed.",
-          { ok: true }
-        );
-        if (data.whatsapp_url) {
-          window.open(data.whatsapp_url, "_blank", "noopener");
-        }
-        const channel = resolvePrintChannel(data.print_via || printVia || "");
-        const shouldPrint =
-          !queued &&
-          hasEnabledPrintChannels() &&
-          Boolean(channel) &&
-          Boolean(data.receipt_text) &&
-          (Boolean(data.print_required) ||
-            kind === "sale" ||
-            kind === "credit" ||
-            kind === "quotation");
-        if (shouldPrint) {
-          await printReceiptText(
-            data.receipt_text,
-            channel,
-            data.receipt_qr,
-            {
-              ...(data.receipt_font || {}),
-              paper_width: data.receipt_paper_width || "",
-            },
-            data.receipt_ticket || null
-          );
-        }
-      };
-
-      const queueOfflineCheckout = async () => {
-        if (needsStk && !stkConfirmed?.id) {
-          setCartStatus(
-            "M-Pesa STK needs a network connection. Switch to cash or reconnect.",
-            { error: true }
-          );
-          return false;
-        }
-        if (
-          kind === "sale" &&
-          (payload.payment_method === "mpesa" || payload.payment_method === "both") &&
-          !payload.stk_payment_id
-        ) {
-          setCartStatus(
-            "M-Pesa sales without a completed STK prompt need a network connection.",
-            { error: true }
-          );
-          return false;
-        }
-        const clientId =
-          (crypto?.randomUUID && crypto.randomUUID()) ||
-          `checkout-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const shopId = Number(cartRoot?.dataset?.shopId || 0) || 0;
-        const { queueOperation } = await import("./offline/sync.js");
-        await queueOperation("complete_shop_checkout", {
-          client_id: clientId,
-          shop_id: shopId,
-          checkout: payload,
-        });
-        await finishSuccessfulCheckout(
-          {
-            ok: true,
-            message: "Sale queued offline — it will sync when you reconnect.",
-            stock_updates: [],
-          },
-          { queued: true }
-        );
-        return true;
-      };
+      window.clearTimeout(cartVerifyTimer);
+      cartVerifySeq += 1;
 
       try {
-        const { isOnline } = await import("./offline/connectivity.js");
-        if (!isOnline()) {
-          await queueOfflineCheckout();
+        if (!checkoutEnabled) {
+          setCartStatus("Checkout is disabled in POS settings.", { error: true });
           return;
         }
-
-        const response = await fetch(checkoutUrl, {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            "X-CSRFToken": getCsrfToken(checkoutForm),
-          },
-          credentials: "same-origin",
-          body: JSON.stringify(payload),
-        });
-        const data = await response.json().catch(() => ({}));
-        if (response.status === 503 || data.offline) {
-          await queueOfflineCheckout();
-          return;
-        }
-        if (!response.ok || !data.ok) {
-          const errorText = data.error || "Could not complete the receipt.";
-          if (
-            data.code === "unauthorized" ||
-            window.MyshopUnauthorized?.isUnauthorizedText?.(errorText)
-          ) {
-            window.MyshopUnauthorized?.show(errorText);
-          }
-          setCartStatus(errorText, {
+        if (!checkoutForm || !checkoutUrl) {
+          setCartStatus("Checkout is unavailable. Refresh and try again.", {
             error: true,
           });
           return;
         }
-        await finishSuccessfulCheckout(data);
-      } catch (err) {
-        // Network failure while supposedly online — queue for sync.
-        try {
-          const queued = await queueOfflineCheckout();
-          if (queued) return;
-        } catch (_queueErr) {
-          /* fall through */
+        if (cart.size === 0) {
+          setCartStatus("Add items before completing the receipt.", { error: true });
+          return;
         }
-        setCartStatus(
-          err?.message || "Network error while completing the receipt.",
-          { error: true }
+        if (!hasEnabledKinds()) {
+          setCartStatus("No document types are enabled in POS settings.", {
+            error: true,
+          });
+          return;
+        }
+        const verified =
+          cartCodeVerified || (await verifyCartLoginCode({ autoCheckout: false }));
+        if (!verified) return;
+
+        const kind = selectedKind();
+        if (!kind || !checkoutForm.querySelector(`[data-cart-kind][value="${kind}"]`)) {
+          setCartStatus("Choose an enabled document type.", { error: true });
+          return;
+        }
+        for (const line of cart.values()) {
+          if (!line.trackSerial) continue;
+          const serials = Array.isArray(line.serials) ? line.serials : [];
+          if (!serials.length || serials.length !== line.qty) {
+            setCartStatus(
+              `Add serial numbers for “${line.name}” before checkout.`,
+              { error: true }
+            );
+            openSerialSaleModal(line);
+            return;
+          }
+        }
+        if (kind === "credit" || kind === "quotation") {
+          const phone = normalizeClientPhoneField({ force: true });
+          const name = (clientNameInput?.value || "").trim();
+          if (kind === "credit" && creditWhatsapp && !phone) {
+            setCartStatus(
+              "Enter the client phone number so the credit sale can be sent on WhatsApp.",
+              { error: true }
+            );
+            focusCartClientFields();
+            return;
+          }
+          if (!phone && !name) {
+            setCartStatus(
+              "Enter a client name, a phone number, or both for credit and quotation.",
+              { error: true }
+            );
+            focusCartClientFields();
+            return;
+          }
+        }
+        const checkoutClientId = newCheckoutClientId();
+        const payload = {
+          kind,
+          client_id: checkoutClientId,
+          client_name: (
+            checkoutForm.querySelector("[data-cart-client-name]")?.value || ""
+          ).trim().toUpperCase(),
+          client_phone: normalizeClientPhoneField({ force: true }),
+          login_code: (cartLoginCode?.value || "").trim(),
+          share_whatsapp: Boolean(
+            checkoutForm.querySelector("[data-cart-whatsapp]")?.checked
+          ),
+          lines: [...cart.values()].map((line) => ({
+            id: line.id,
+            qty: line.qty,
+            price: discountEnabled ? line.price : line.listPrice || line.price,
+            serials: Array.isArray(line.serials) ? line.serials : [],
+          })),
+        };
+
+        if (kind === "sale") {
+          if (!paymentsEnabled || !hasEnabledPayments()) {
+            setCartStatus("No payment methods are enabled in POS settings.", {
+              error: true,
+            });
+            return;
+          }
+          payload.payment_method = selectedPayment();
+          if (
+            !payload.payment_method ||
+            !checkoutForm.querySelector(
+              `[data-cart-pay][value="${payload.payment_method}"]`
+            )
+          ) {
+            setCartStatus("Choose an enabled payment method.", { error: true });
+            return;
+          }
+          if (payload.payment_method === "both") {
+            syncSplitAmounts(splitLastEdited);
+            payload.cash_amount = cashInput?.value || "0";
+            payload.mpesa_amount = mpesaInput?.value || "0";
+          }
+        }
+
+        if (kind === "credit") {
+          const dueDate = (creditDueInput?.value || "").trim();
+          if (dueDate) payload.credit_due_date = dueDate;
+        }
+
+        const needsStk =
+          kind === "sale" &&
+          stkReady &&
+          (payload.payment_method === "mpesa" ||
+            payload.payment_method === "both");
+        if (needsStk && stkConfirmed?.id) {
+          const phone = normalizeClientPhoneField({ force: true });
+          if (!phone) {
+            setCartStatus(
+              "Enter the client phone number used for the STK Push.",
+              { error: true }
+            );
+            focusCartClientFields();
+            return;
+          }
+          payload.client_phone = phone;
+          const expectedAmount = mpesaPromptAmount();
+          if (Number(stkConfirmed.amount || 0) !== Number(expectedAmount || 0)) {
+            clearStkConfirmation({ keepStatus: true });
+            setStkStatus("Cart amount changed — send a new STK prompt if needed.", {
+              error: true,
+            });
+            setCartStatus("Cart amount changed — send a new STK prompt if needed.", {
+              error: true,
+            });
+            syncStkPanel();
+            return;
+          }
+          payload.stk_payment_id = stkConfirmed.id;
+          payload.mpesa_receipt_number = stkConfirmed.mpesa_receipt_number || "";
+        }
+
+        const printerStatus = window.RichcomPrinter?.getStatus?.();
+        let printVia = resolvePrintChannel(
+          (printerStatus?.connected && printerStatus.channel) ||
+            (printerStatus?.wantConnected && printerStatus.preferredChannel) ||
+            ""
         );
+        const hasPrintChannels = hasEnabledPrintChannels();
+        if (kind === "sale" && compulsoryPrintOnSale) {
+          if (!hasPrintChannels) {
+            setCartStatus(
+              "Compulsory printing is on, but no print channels are enabled in settings.",
+              { error: true }
+            );
+            return;
+          }
+          if (!printVia) {
+            setCartStatus(
+              "Connect an enabled printer from the sidebar before completing the sale.",
+              { error: true }
+            );
+            return;
+          }
+          if (window.RichcomPrinter) {
+            try {
+              await window.RichcomPrinter.ensureConnected(printVia);
+            } catch (_) {
+              /* restore best-effort */
+            }
+            const live = window.RichcomPrinter.getStatus();
+            if (live.connected) {
+              printVia = resolvePrintChannel(live.channel || printVia);
+            }
+          }
+          if (
+            window.RichcomPrinter &&
+            !window.RichcomPrinter.canAutoPrint(printVia)
+          ) {
+            setCartStatus(
+              "Connect a printer from the sidebar (Connect to printer) before completing the sale.",
+              { error: true }
+            );
+            return;
+          }
+        }
+        if (printVia && hasPrintChannels) payload.print_via = printVia;
+
+        if (cartStaffAllocatedToShop === false) {
+          const confirmed = await confirmWrongShopSale();
+          if (!confirmed) {
+            setCartStatus("Sale cancelled.", { ok: false, error: false });
+            return;
+          }
+        }
+
+        setCartStatus(
+          needsStk && stkConfirmed?.id
+            ? "Completing M-Pesa sale…"
+            : "Printing receipt…"
+        );
+
+        const finishSuccessfulCheckout = async (data, { queued = false } = {}) => {
+          const soldLines = [...cart.values()].map((line) => ({
+            id: line.id,
+            qty: line.qty,
+          }));
+          cart.clear();
+          renderCart();
+          resetCheckoutForm();
+          if (Array.isArray(data.stock_updates) && data.stock_updates.length) {
+            applyStockUpdates(data.stock_updates);
+          } else if (kind !== "quotation") {
+            applyStockUpdates(
+              soldLines.map((line) => {
+                const card = cartRoot.querySelector(
+                  `[data-cart-item][data-item-id="${CSS.escape(String(line.id))}"]`
+                );
+                const current = Math.max(
+                  0,
+                  Math.floor(Number(card?.getAttribute("data-item-stock")) || 0)
+                );
+                return {
+                  id: line.id,
+                  quantity: Math.max(0, current - Math.max(0, line.qty || 0)),
+                };
+              })
+            );
+          }
+          setCartOpen(false);
+          setCartStatus(
+            queued
+              ? data.message || "Sale queued — it will sync when you reconnect."
+              : data.message || "Receipt completed.",
+            { ok: true }
+          );
+          if (data.whatsapp_url) {
+            window.open(data.whatsapp_url, "_blank", "noopener");
+          }
+          const channel = resolvePrintChannel(data.print_via || printVia || "");
+          const shouldPrint =
+            !queued &&
+            hasEnabledPrintChannels() &&
+            Boolean(channel) &&
+            Boolean(data.receipt_text) &&
+            (Boolean(data.print_required) ||
+              kind === "sale" ||
+              kind === "credit" ||
+              kind === "quotation");
+          if (shouldPrint) {
+            await printReceiptText(
+              data.receipt_text,
+              channel,
+              data.receipt_qr,
+              {
+                ...(data.receipt_font || {}),
+                paper_width: data.receipt_paper_width || "",
+              },
+              data.receipt_ticket || null
+            );
+          }
+        };
+
+        const queueOfflineCheckout = async () => {
+          if (needsStk && !stkConfirmed?.id) {
+            setCartStatus(
+              "M-Pesa STK needs a network connection. Switch to cash or reconnect.",
+              { error: true }
+            );
+            return false;
+          }
+          if (
+            kind === "sale" &&
+            (payload.payment_method === "mpesa" || payload.payment_method === "both") &&
+            !payload.stk_payment_id
+          ) {
+            setCartStatus(
+              "M-Pesa sales without a completed STK prompt need a network connection.",
+              { error: true }
+            );
+            return false;
+          }
+          const shopId = Number(cartRoot?.dataset?.shopId || 0) || 0;
+          const { queueOperation } = await import("./offline/sync.js");
+          // Reuse the same client_id as the online attempt so a lost response
+          // cannot create a second receipt when the queue syncs later.
+          const offlineCheckout = { ...payload };
+          delete offlineCheckout.client_id;
+          await queueOperation("complete_shop_checkout", {
+            client_id: checkoutClientId,
+            shop_id: shopId,
+            checkout: offlineCheckout,
+          });
+          await finishSuccessfulCheckout(
+            {
+              ok: true,
+              message: "Sale queued offline — it will sync when you reconnect.",
+              stock_updates: [],
+            },
+            { queued: true }
+          );
+          return true;
+        };
+
+        try {
+          const { isOnline } = await import("./offline/connectivity.js");
+          if (!isOnline()) {
+            await queueOfflineCheckout();
+            return;
+          }
+
+          const response = await fetch(checkoutUrl, {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+              "X-CSRFToken": getCsrfToken(checkoutForm),
+            },
+            credentials: "same-origin",
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (response.status === 503 || data.offline) {
+            await queueOfflineCheckout();
+            return;
+          }
+          if (!response.ok || !data.ok) {
+            const errorText = data.error || "Could not complete the receipt.";
+            if (
+              data.code === "unauthorized" ||
+              window.MyshopUnauthorized?.isUnauthorizedText?.(errorText)
+            ) {
+              window.MyshopUnauthorized?.show(errorText);
+            }
+            setCartStatus(errorText, {
+              error: true,
+            });
+            return;
+          }
+          await finishSuccessfulCheckout(data);
+        } catch (err) {
+          // Network failure while supposedly online — queue for sync.
+          try {
+            const queued = await queueOfflineCheckout();
+            if (queued) return;
+          } catch (_queueErr) {
+            /* fall through */
+          }
+          setCartStatus(
+            err?.message || "Network error while completing the receipt.",
+            { error: true }
+          );
+        }
       } finally {
         checkoutInFlight = false;
         if (cartSubmit) cartSubmit.disabled = !cartCodeVerified;
@@ -4541,7 +4554,10 @@
     });
     cartLoginCode?.addEventListener("blur", () => {
       if (cartLoginCode.disabled) return;
-      verifyCartLoginCode({ autoCheckout: true });
+      // Verify only — auto-checkout is owned by the debounced input path
+      // so blur + verify cannot start a second sale.
+      if (checkoutInFlight || cartCodeVerified) return;
+      verifyCartLoginCode({ autoCheckout: false });
     });
 
     clientPhoneInput?.addEventListener("input", () => {

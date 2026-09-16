@@ -3541,6 +3541,36 @@ def build_expense_supplier_receipt(
     }
 
 
+SHOP_CHECKOUT_CLIENT_CACHE_TTL = 60 * 60 * 24 * 7
+
+
+def shop_checkout_client_cache_key(client_id: str) -> str:
+    return f"shop_checkout_client:{(client_id or '').strip()}"
+
+
+def get_idempotent_shop_checkout(client_id: str) -> dict | None:
+    """Return a prior successful checkout result for this client_id, if any."""
+    key = (client_id or "").strip()
+    if not key:
+        return None
+    cached = cache.get(shop_checkout_client_cache_key(key))
+    if isinstance(cached, dict) and cached.get("ok"):
+        return cached
+    return None
+
+
+def store_idempotent_shop_checkout(client_id: str, result: dict) -> None:
+    """Cache a successful checkout so retries with the same client_id do not double-insert."""
+    key = (client_id or "").strip()
+    if not key or not isinstance(result, dict) or not result.get("ok"):
+        return
+    cache.set(
+        shop_checkout_client_cache_key(key),
+        result,
+        SHOP_CHECKOUT_CLIENT_CACHE_TTL,
+    )
+
+
 def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) -> dict:
     """
     Complete a MY-SHOP cart checkout.

@@ -138,25 +138,30 @@
         receipt.status
       )}">${escapeHtml(receipt.status_label || "")}</span>
     </div>
+    <p class="shop-receipt-summary-when"><strong>${escapeHtml(
+      receipt.created_label || "—"
+    )}</strong></p>
+    <p class="shop-receipt-muted">Cashier: ${escapeHtml(
+      receipt.cashier || "—"
+    )}</p>
   </div>
 
   <div class="shop-receipt-card">
     <h3>Payment &amp; client</h3>
     <dl>
-      <div><dt>Date &amp; time of payment</dt><dd>${escapeHtml(
-        receipt.created_label || "—"
-      )}</dd></div>
-      <div><dt>Mode of payment</dt><dd>${escapeHtml(
+      <div><dt>Payment</dt><dd>${escapeHtml(
         receipt.payment_label || "—"
       )}</dd></div>
-      <div><dt>Client name</dt><dd>${escapeHtml(
+      <div><dt>Client</dt><dd>${escapeHtml(
         receipt.client_name || "Walk-in"
       )}</dd></div>
-      <div><dt>Phone number</dt><dd>${escapeHtml(
+      <div><dt>Phone</dt><dd>${escapeHtml(
         receipt.client_phone || "—"
       )}</dd></div>
-      <div><dt>Total</dt><dd>KSh ${escapeHtml(money(receipt.total))}</dd></div>
       <div><dt>Shop</dt><dd>${escapeHtml(receipt.shop_name || "—")}</dd></div>
+      <div class="is-total"><dt>Total</dt><dd>KSh ${escapeHtml(
+        money(receipt.total)
+      )}</dd></div>
     </dl>
   </div>
 

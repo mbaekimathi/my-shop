@@ -273,6 +273,43 @@ class ShopPortalOfflineSyncTests(TestCase):
         stock = ShopStock.objects.get(shop=self.shop, item=self.item)
         self.assertEqual(stock.quantity, 48)
 
+    def test_portal_online_checkout_is_idempotent_by_client_id(self):
+        client = self._portal_client()
+        client_id = str(uuid.uuid4())
+        payload = {
+            "client_id": client_id,
+            "kind": "sale",
+            "payment_method": "cash",
+            "client_name": "WALK IN",
+            "login_code": self.profile.employee_id,
+            "lines": [
+                {
+                    "id": self.item.pk,
+                    "qty": 1,
+                    "price": str(self.item.shop_price),
+                    "serials": [],
+                }
+            ],
+        }
+        url = reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk})
+        first = client.post(url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(first.status_code, 200, first.content)
+        first_data = first.json()
+        self.assertTrue(first_data.get("ok"))
+        before = ShopReceipt.objects.filter(shop=self.shop).count()
+        stock_before = ShopStock.objects.get(shop=self.shop, item=self.item).quantity
+
+        second = client.post(url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(second.status_code, 200, second.content)
+        second_data = second.json()
+        self.assertTrue(second_data.get("ok"))
+        self.assertEqual(second_data.get("receipt_number"), first_data.get("receipt_number"))
+        self.assertEqual(ShopReceipt.objects.filter(shop=self.shop).count(), before)
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop, item=self.item).quantity,
+            stock_before,
+        )
+
     def test_sale_checkout_allows_missing_client(self):
         response = self._portal_client().post(
             reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}),

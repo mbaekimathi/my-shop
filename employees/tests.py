@@ -4,6 +4,11 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from employees.analytics_services import ANALYTICS_SECTIONS, _build_clients
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
 from employees.permissions_catalog import PERMISSION_MODULE_BY_SLUG
+from employees.module_permissions import (
+    employee_may_any,
+    profile_has_shop_allocation,
+    require_module_permission,
+)
 from employees.workspace import (
     DASHBOARD_MODULES,
     HR_SIDEBAR_SECTIONS,
@@ -1280,3 +1285,80 @@ class MarketingLinksPageTests(TestCase):
         self.assertEqual(len(shop["variants"]), 1)
         self.assertEqual(shop["variants"][0]["key"], "hosted")
         self.assertTrue(shop["variants"][0]["qr"].startswith("data:image/png;base64,"))
+
+
+@override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
+class ShopAllocationModuleGateTests(TestCase):
+    """Shop-scoped staff need allocated shops for stock-management and analytics."""
+
+    def setUp(self):
+        self.password = "alloc-gate-pass"
+        self.user = User.objects.create_user(
+            username="810021",
+            password=self.password,
+            email="alloc-gate@test.local",
+            first_name="ALLOC",
+            last_name="CASHIER",
+            is_active=True,
+        )
+        self.cashier = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="810021",
+            phone_country_code="+254",
+            phone_number="700000921",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        self.shop = Shop.objects.create(
+            name="ALLOC GATE SHOP",
+            location="NAIROBI",
+            email="alloc-gate@test.local",
+            phone_number="0700000921",
+            login_code="810121",
+            password_hash="x",
+            created_by=self.cashier,
+        )
+
+    def test_unallocated_cashier_denied_stock_and_analytics(self):
+        self.assertFalse(profile_has_shop_allocation(self.cashier))
+        self.assertFalse(employee_may_any(self.cashier, "stock-management"))
+        self.assertFalse(employee_may_any(self.cashier, "analytics"))
+
+        from django.test import RequestFactory
+
+        request = RequestFactory().get("/")
+        request.user = self.user
+        denied_stock = require_module_permission(
+            request, self.cashier, "stock-management", "view", as_json=True
+        )
+        denied_analytics = require_module_permission(
+            request, self.cashier, "analytics", "view", as_json=True
+        )
+        self.assertEqual(denied_stock.status_code, 403)
+        self.assertEqual(denied_analytics.status_code, 403)
+
+        sidebar = sidebar_for_role_dashboard(
+            self.cashier.role, profile=self.cashier
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertNotIn("Stock Management", labels)
+        self.assertNotIn("Analytics", labels)
+
+    def test_allocated_cashier_may_access_stock_and_analytics(self):
+        self.cashier.assigned_shops.add(self.shop)
+        self.assertTrue(profile_has_shop_allocation(self.cashier))
+        self.assertTrue(employee_may_any(self.cashier, "stock-management"))
+        self.assertTrue(employee_may_any(self.cashier, "analytics"))
+
+        self.client.login(username="810021", password=self.password)
+        stock = self.client.get("/shop-cashier/stock-management/")
+        analytics = self.client.get("/shop-cashier/analytics/")
+        self.assertEqual(stock.status_code, 200)
+        self.assertEqual(analytics.status_code, 200)
+
+    def test_unallocated_cashier_http_redirected_from_modules(self):
+        self.client.login(username="810021", password=self.password)
+        stock = self.client.get("/shop-cashier/stock-management/")
+        analytics = self.client.get("/shop-cashier/analytics/")
+        self.assertEqual(stock.status_code, 302)
+        self.assertEqual(analytics.status_code, 302)

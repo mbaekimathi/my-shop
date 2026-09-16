@@ -111,9 +111,15 @@ def serial_in_stock_check_api(request):
         if raw:
             serials = [raw]
     found = check_serials_already_in_stock(item_id=item_id, serials=serials)
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+
     allowed_shop_ids = {
         shop.pk for shop in actionable_shops_for_profile(profile)
     } if profile is not None else set()
+    shop_scoped = (
+        profile is not None
+        and getattr(profile, "role", None) in SHOP_ASSIGNABLE_ROLES
+    )
     ordered = []
     seen = set()
     for raw in serials:
@@ -125,7 +131,12 @@ def serial_in_stock_check_api(request):
         shop_name = (hit or {}).get("shop_name") or ""
         hit_shop_id = (hit or {}).get("shop_id")
         if hit and allowed_shop_ids and hit_shop_id not in allowed_shop_ids:
-            shop_name = "Another shop"
+            if shop_scoped:
+                # Do not confirm existence at shops outside allocation.
+                hit = None
+                shop_name = ""
+            else:
+                shop_name = "Another shop"
         ordered.append(
             {
                 "serial": serial,
@@ -5055,6 +5066,7 @@ def _build_serial_history_events(*, item, serial, shop_ids):
 def stock_serial_history(request, profile, meta, module, item_id, serial_number):
     """Show every movement for one serial from registration to now."""
     from employees.access import role_url_segment
+    from employees.models import SHOP_ASSIGNABLE_ROLES
 
     from .models import ItemSerial, ItemSerialStatus
 
@@ -5064,6 +5076,14 @@ def stock_serial_history(request, profile, meta, module, item_id, serial_number)
         item=item,
         serial_number__iexact=(serial_number or "").strip(),
     )
+
+    display_shops = _serial_shops_for_profile(profile)
+    shop_ids = [shop.pk for shop in display_shops]
+    if getattr(profile, "role", None) in SHOP_ASSIGNABLE_ROLES:
+        if not shop_ids:
+            raise Http404("Serial not found.")
+        if serial.shop_id is not None and serial.shop_id not in shop_ids:
+            raise Http404("Serial not found.")
 
     if request.method == "POST":
         try:
@@ -5094,8 +5114,6 @@ def stock_serial_history(request, profile, meta, module, item_id, serial_number)
         profile=profile,
     )
 
-    display_shops = _serial_shops_for_profile(profile)
-    shop_ids = [shop.pk for shop in display_shops]
     rows = _build_serial_history_events(
         item=item, serial=serial, shop_ids=shop_ids
     )

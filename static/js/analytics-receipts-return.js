@@ -225,11 +225,15 @@
   <dl>
     <div><dt>Name</dt><dd>${escapeHtml(receipt.client_name || "—")}</dd></div>
     <div><dt>Phone</dt><dd>${escapeHtml(receipt.client_phone || "—")}</dd></div>
+    <div><dt>Shop</dt><dd>${escapeHtml(receipt.shop_name || "—")}</dd></div>
   </dl>
 </div>`
         : `<div class="shop-receipt-card">
   <h3>Customer</h3>
   <p class="shop-receipt-muted">No customer details on this receipt.</p>
+  <dl>
+    <div><dt>Shop</dt><dd>${escapeHtml(receipt.shop_name || "—")}</dd></div>
+  </dl>
 </div>`;
 
     const itemsHtml = lines

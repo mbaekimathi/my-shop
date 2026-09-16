@@ -51,7 +51,7 @@
         {% if page.expense_category %}
         <input type="hidden" name="category" value="{{ page.expense_category }}">
         {% endif %}
-        {% if section_slug == "receipts" %}
+        {% if section_slug == "receipts" or section_slug == "return-receipts" %}
         <select name="receipt_kind" aria-label="Receipt type">
           <option value="all"{% if page.receipt_kind == 'all' or not page.receipt_kind %} selected{% endif %}>All types</option>
           <option value="sales"{% if page.receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
@@ -650,7 +650,7 @@
 {% block extra_js %}
 {{ block.super }}
 {% if page.receipt_modal %}
-<script defer src="{% static 'js/analytics-receipts-return.js' %}?v=1"></script>
+<script defer src="{% static 'js/analytics-receipts-return.js' %}?v=2"></script>
 {% endif %}
 <script>
   (() => {

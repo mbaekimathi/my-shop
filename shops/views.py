@@ -2412,6 +2412,17 @@ def my_shop_checkout(request, shop_id):
     if denied:
         return denied
 
+    from shops.services import (
+        get_idempotent_shop_checkout,
+        store_idempotent_shop_checkout,
+    )
+
+    client_id = str(payload.get("client_id") or "").strip()
+    if client_id:
+        cached = get_idempotent_shop_checkout(client_id)
+        if cached is not None:
+            return JsonResponse(cached)
+
     try:
         result = complete_shop_checkout(
             shop=shop, profile=profile, payload=payload, request=request
@@ -2423,30 +2434,32 @@ def my_shop_checkout(request, shop_id):
             status=400,
         )
 
-    return JsonResponse(
-        {
-            "ok": True,
-            "receipt_number": result["receipt_number"],
-            "kind": result["kind"],
-            "kind_label": result["kind_label"],
-            "total": result["total"],
-            "whatsapp_url": result["whatsapp_url"],
-            "authorised_by": result["authorised_by"],
-            "print_via": result.get("print_via") or "",
-            "print_required": bool(result.get("print_required")),
-            "receipt_text": result.get("message") or "",
-            "receipt_ticket": result.get("receipt_ticket") or {},
-            "receipt_qr": result.get("receipt_qr") or {},
-            "receipt_font": result.get("receipt_font") or {},
-            "receipt_paper_width": result.get("receipt_paper_width") or "80",
-            "stock_updates": result.get("stock_updates") or [],
-            "message": (
-                f"{result['kind_label']} {result['receipt_number']} completed "
-                f"(KSh {result['total']})."
-            ),
-            "mpesa_receipt_number": result.get("mpesa_receipt_number") or "",
-        }
-    )
+    response_payload = {
+        "ok": True,
+        "receipt_number": result["receipt_number"],
+        "kind": result["kind"],
+        "kind_label": result["kind_label"],
+        "total": result["total"],
+        "whatsapp_url": result["whatsapp_url"],
+        "authorised_by": result["authorised_by"],
+        "print_via": result.get("print_via") or "",
+        "print_required": bool(result.get("print_required")),
+        "receipt_text": result.get("message") or "",
+        "receipt_ticket": result.get("receipt_ticket") or {},
+        "receipt_qr": result.get("receipt_qr") or {},
+        "receipt_font": result.get("receipt_font") or {},
+        "receipt_paper_width": result.get("receipt_paper_width") or "80",
+        "stock_updates": result.get("stock_updates") or [],
+        "message": (
+            f"{result['kind_label']} {result['receipt_number']} completed "
+            f"(KSh {result['total']})."
+        ),
+        "mpesa_receipt_number": result.get("mpesa_receipt_number") or "",
+    }
+    if client_id:
+        response_payload["client_id"] = client_id
+        store_idempotent_shop_checkout(client_id, response_payload)
+    return JsonResponse(response_payload)
 
 
 @shop_floor_required

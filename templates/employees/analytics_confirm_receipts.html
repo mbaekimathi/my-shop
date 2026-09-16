@@ -5,7 +5,7 @@
 
 {% block workspace_content %}
 <section
-  class="ax ax--ledger"
+  class="ax ax--ledger ax--list-table"
   data-animate="rise"
   data-analytics
   data-ax-section="confirm-receipts"
@@ -64,12 +64,12 @@
           <h3>Receipts</h3>
         </div>
       </header>
-      <div class="ax-table-wrap ax-table-wrap--scroll">
+      <div class="ax-table-wrap ax-table-wrap--list ax-table-wrap--scroll">
         {% if rows %}
-        <table class="ax-table">
+        <table class="ax-table ax-table--list">
           <thead>
             <tr>
-              <th>Receipt</th>
+              <th class="ax-th--item">Receipt</th>
               <th>Status</th>
               <th>Type</th>
               <th>Shop</th>
@@ -144,7 +144,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=1"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=2"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");

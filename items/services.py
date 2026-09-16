@@ -1123,12 +1123,24 @@ def apply_serial_status(*, profile, serial: ItemSerial, new_status: str) -> str:
     if new_status not in labels:
         raise ValidationError("Choose a valid serial status.")
 
+    def _guard_serial_shop(locked_serial):
+        if locked_serial.shop_id is None:
+            from employees.models import SHOP_ASSIGNABLE_ROLES
+
+            if getattr(profile, "role", None) in SHOP_ASSIGNABLE_ROLES:
+                raise ValidationError("You are not allocated to the selected shop.")
+            return
+        _assert_shop_allowed(profile, locked_serial.shop)
+
+    _guard_serial_shop(serial)
+
     with transaction.atomic():
         serial = (
             ItemSerial.objects.select_for_update()
             .select_related("item", "shop")
             .get(pk=serial.pk)
         )
+        _guard_serial_shop(serial)
         was_available = bool(serial.is_available)
         will_be_available = new_status in SERIAL_AVAILABLE_STATUSES
         released_from_sale = False
@@ -1139,6 +1151,7 @@ def apply_serial_status(*, profile, serial: ItemSerial, new_status: str) -> str:
                 serial, profile=profile
             )
             serial.refresh_from_db(fields=["shop"])
+            _guard_serial_shop(serial)
 
         serial.is_available = will_be_available
         if will_be_available and not was_available and not released_from_sale:
@@ -2869,6 +2882,7 @@ def respond_to_stock_request(
         "respond_stock_request",
         message="You do not have permission to accept or decline stock requests.",
     )
+    _assert_shop_allowed(authorising, supplier, label="supplying shop")
 
     # Prefer the authorising employee as responder when available.
     if authorising is not None:
