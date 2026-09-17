@@ -27,7 +27,7 @@
   data-default-kind="{{ default_kind }}"
   data-default-payment="{{ default_payment }}"
   data-default-print-via="{{ default_print_via }}"
-  data-pos-checkout="{% if checkout_enabled %}1{% else %}0{% endif %}"
+  data-pos-checkout="{% if checkout_enabled and shop_day_can_trade != False %}1{% else %}0{% endif %}"
   data-pos-kinds="{{ cart_kinds|join:',' }}"
   data-pos-payments="{{ pos_flags.payment_methods|join:',' }}"
   data-pos-cash-sale="{% if pos_flags.cash_sale_checkout %}1{% else %}0{% endif %}"
@@ -44,9 +44,38 @@
   data-credit-whatsapp="{% if credit_whatsapp %}1{% else %}0{% endif %}"
   data-print-relay-url="{{ print_relay_url }}"
   data-print-channels="{{ pos_flags.print_channels|join:',' }}"
-  {% if not checkout_enabled %}data-pos-checkout-blocked="1"{% endif %}
+  data-shop-day-can-trade="{% if shop_day_can_trade != False %}1{% else %}0{% endif %}"
+  {% if shop_day_toggle_url %}data-shop-day-toggle-url="{{ shop_day_toggle_url }}"{% endif %}
+  {% if not checkout_enabled or shop_day_can_trade == False %}data-pos-checkout-blocked="1"{% endif %}
 >
-  {% if not checkout_enabled %}
+  {% if shop_day_can_trade == False %}
+  <div class="dashboard-placeholder shop-floor-pos-disabled" data-animate="rise">
+    <span class="dashboard-placeholder-icon" aria-hidden="true">
+      <i data-lucide="{% if shop_day_stale_open %}door-closed{% else %}door-open{% endif %}"></i>
+    </span>
+    <strong>
+      {% if shop_day_stale_open %}
+      Close yesterday’s day before selling
+      {% else %}
+      Open the shop before selling
+      {% endif %}
+    </strong>
+    <p>
+      {% if shop_day_stale_open %}
+      This shop was left open from a previous day. Close it, then open today’s day.
+      {% else %}
+      Enter opening balances on the open/close page to unlock sales, credit, and trade out.
+      {% endif %}
+    </p>
+    {% if shop_day_toggle_url %}
+    <p>
+      <a class="btn btn--primary" href="{{ shop_day_toggle_url }}">
+        {% if shop_day_stale_open %}Go to close shop{% else %}Go to open shop{% endif %}
+      </a>
+    </p>
+    {% endif %}
+  </div>
+  {% elif not checkout_enabled %}
   <div class="dashboard-placeholder shop-floor-pos-disabled" data-animate="rise">
     <i data-lucide="sliders-horizontal" aria-hidden="true"></i>
     <p>Checkout is turned off in POS settings. Enable Sale, Credit, or Quotation (and a payment method for Sale) to sell from this shop.</p>

@@ -5,7 +5,8 @@
   data-shop-low-stock-modal
   data-shop-id="{{ shop.id }}"
   data-force="{% if low_stock_alert_force %}1{% else %}0{% endif %}"
-  data-selling-page="{% if low_stock_alert_on_selling %}1{% else %}0{% endif %}"
+  data-selling-page="0"
+  data-open-session-id="{{ low_stock_open_session_id }}"
   hidden
   aria-hidden="true"
 >
@@ -22,7 +23,7 @@
         <h2 id="shop-low-stock-modal-title">Low stock alerts</h2>
         <p class="shop-day-modal-summary">
           {{ low_stock_alert_count }} item{{ low_stock_alert_count|pluralize }}
-          at or below the alert quantity. Dismiss to keep selling; this returns after you submit opening or closing balances.
+          at or below the alert quantity. Dismiss to keep selling — this alert will not show again until you close the shop and open a new day.
         </p>
       </div>
       <button

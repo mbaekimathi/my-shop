@@ -82,6 +82,18 @@ class ShopPortalOfflineSyncTests(TestCase):
                 for serial in self.serials
             ]
         )
+        from shops.services import open_shop_day
+
+        open_shop_day(
+            shop=self.shop,
+            payload={
+                "cash_amount": "0",
+                "mpesa_amount": "0",
+                "credit_amount": "0",
+                "stock_confirmed": True,
+                "login_code": self.profile.employee_id,
+            },
+        )
 
     def tearDown(self):
         from shops.services import _invalidate_communications_settings_cache

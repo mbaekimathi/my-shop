@@ -15,20 +15,36 @@
     <div class="item-panel-head-top">
       <div>
         <p class="stock-kicker">{{ shop.name }}</p>
-        <h2>{% if is_open %}Today’s till{% else %}Start the day{% endif %}</h2>
+        <h2>
+          {% if stale_open %}
+          Close yesterday’s day
+          {% elif is_open %}
+          Today’s till
+          {% else %}
+          Start the day
+          {% endif %}
+        </h2>
         <p>
-          {% if is_open %}
+          {% if stale_open %}
+          This shop was left open from a previous day. Close it with closing balances, then open today’s day before selling.
+          {% elif is_open %}
           Check the till, take a drawing if needed, then close when done.
           {% elif last_closed %}
-          Enter opening balances to start trading.
+          Enter opening balances to start trading. Sales stay locked until you open.
           {% else %}
-          Enter opening balances to open this shop.
+          Enter opening balances to open this shop. Sales stay locked until you open.
           {% endif %}
         </p>
       </div>
-      <p class="shop-day-badge{% if is_open %} is-open{% else %} is-closed{% endif %}">
-        <i data-lucide="{% if is_open %}door-open{% else %}door-closed{% endif %}" aria-hidden="true"></i>
-        {% if is_open %}Open{% else %}Closed{% endif %}
+      <p class="shop-day-badge{% if is_open and not stale_open %} is-open{% else %} is-closed{% endif %}">
+        <i data-lucide="{% if is_open and not stale_open %}door-open{% else %}door-closed{% endif %}" aria-hidden="true"></i>
+        {% if stale_open %}
+        Left open
+        {% elif is_open %}
+        Open
+        {% else %}
+        Closed
+        {% endif %}
       </p>
     </div>
   </header>

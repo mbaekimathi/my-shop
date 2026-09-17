@@ -4,14 +4,13 @@
 
   const shopId = modal.getAttribute("data-shop-id") || "";
   const force = modal.getAttribute("data-force") === "1";
-  const sellingPage = modal.getAttribute("data-selling-page") === "1";
+  const openSessionId = modal.getAttribute("data-open-session-id") || "";
 
-  const dismissKey = () => {
-    const today = new Date().toISOString().slice(0, 10);
-    return `shop-low-stock-dismissed:${shopId}:${today}`;
-  };
+  const dismissKey = () =>
+    `shop-low-stock-dismissed:${shopId}:session:${openSessionId || "none"}`;
 
   const isDismissed = () => {
+    if (!openSessionId) return false;
     try {
       return Boolean(sessionStorage.getItem(dismissKey()));
     } catch (_) {
@@ -20,16 +19,9 @@
   };
 
   const markDismissed = () => {
+    if (!openSessionId) return;
     try {
       sessionStorage.setItem(dismissKey(), String(Date.now()));
-    } catch (_) {
-      /* ignore */
-    }
-  };
-
-  const clearDismissed = () => {
-    try {
-      sessionStorage.removeItem(dismissKey());
     } catch (_) {
       /* ignore */
     }
@@ -56,13 +48,8 @@
     el.addEventListener("click", dismissModal);
   });
 
-  if (force) {
-    clearDismissed();
-    setOpen(true);
-    return;
-  }
-
-  if (sellingPage && !isDismissed() && !dayModalOpen()) {
+  // Show only after a forced open (once per open session).
+  if (force && !isDismissed() && !dayModalOpen()) {
     setOpen(true);
   }
 })();

@@ -694,38 +694,96 @@ def save_working_hours_settings(data) -> CompanyWorkingHoursSettings:
     return settings_row
 
 
-def build_shop_day_prompt(*, shop: Shop) -> dict:
-    """Whether the shop floor should show an open/close balances popup."""
-    settings_row = get_company_working_hours_settings()
-    if not settings_row.enabled:
-        return {"show": False}
+def shop_day_floor_state(*, shop: Shop) -> dict:
+    """Compulsory open/close state for floor trading.
 
+    Trading requires an open day session started today. A session left open from
+    a previous calendar day must be closed before today's day can be opened.
+    """
     now = timezone.localtime()
-    weekday_index = now.weekday()
-    if weekday_index < 0 or weekday_index >= len(WEEKDAY_WORK_FIELDS):
-        return {"show": False}
-
-    if not getattr(settings_row, WEEKDAY_WORK_FIELDS[weekday_index], False):
-        return {"show": False}
-
+    today = now.date()
     open_session = get_open_shop_day(shop)
-    is_open = open_session is not None
-    now_time = now.time()
     shop_hours = get_shop_working_hours_settings(shop)
     start_time = shop_hours.start_time
     end_time = shop_hours.end_time
-    mode = None
+    settings_row = get_company_working_hours_settings()
 
-    if (
-        not is_open
-        and start_time <= now_time < end_time
-    ):
-        mode = "open"
-    elif is_open and now_time >= end_time:
-        mode = "close"
+    working_day = False
+    if settings_row.enabled:
+        weekday_index = now.weekday()
+        if 0 <= weekday_index < len(WEEKDAY_WORK_FIELDS):
+            working_day = bool(
+                getattr(settings_row, WEEKDAY_WORK_FIELDS[weekday_index], False)
+            )
 
-    if mode is None:
+    if open_session is None:
+        # Always require open to trade. After hours on a configured working day,
+        # do not auto-prompt reopen — the day already ended.
+        after_hours = bool(
+            settings_row.enabled and working_day and now.time() >= end_time
+        )
+        return {
+            "is_open": False,
+            "can_trade": False,
+            "needs_action": not after_hours,
+            "mode": None if after_hours else "open",
+            "stale_open": False,
+            "open_session": None,
+            "start_time": start_time,
+            "end_time": end_time,
+        }
+
+    opened_local = timezone.localtime(open_session.opened_at)
+    stale_open = opened_local.date() < today
+    if stale_open:
+        return {
+            "is_open": True,
+            "can_trade": False,
+            "needs_action": True,
+            "mode": "close",
+            "stale_open": True,
+            "open_session": open_session,
+            "start_time": start_time,
+            "end_time": end_time,
+        }
+
+    needs_close = bool(
+        settings_row.enabled and working_day and now.time() >= end_time
+    )
+    return {
+        "is_open": True,
+        "can_trade": True,
+        "needs_action": needs_close,
+        "mode": "close" if needs_close else None,
+        "stale_open": False,
+        "open_session": open_session,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+
+
+def require_shop_day_for_sale(*, shop: Shop) -> dict:
+    """Raise if the shop cannot complete sale/credit/trade-out right now."""
+    state = shop_day_floor_state(shop=shop)
+    if state["can_trade"]:
+        return state
+    if state["stale_open"]:
+        raise ValidationError(
+            "Yesterday’s shop day is still open. Close it, then open today’s day before selling."
+        )
+    raise ValidationError("Open the shop day before selling.")
+
+
+def build_shop_day_prompt(*, shop: Shop) -> dict:
+    """Whether the shop floor should prompt for compulsory open/close."""
+    state = shop_day_floor_state(shop=shop)
+    if not state.get("needs_action") or not state.get("mode"):
         return {"show": False}
+
+    mode = state["mode"]
+    open_session = state.get("open_session")
+    start_time = state["start_time"]
+    end_time = state["end_time"]
 
     form_data = {
         "cash_amount": "",
@@ -759,6 +817,8 @@ def build_shop_day_prompt(*, shop: Shop) -> dict:
         "show": True,
         "mode": mode,
         "auto_open": True,
+        "stale_open": bool(state.get("stale_open")),
+        "compulsory": True,
         "form_data": form_data,
         "start_time": start_time.strftime("%H:%M"),
         "end_time": end_time.strftime("%H:%M"),
@@ -766,11 +826,7 @@ def build_shop_day_prompt(*, shop: Shop) -> dict:
 
 
 def list_shop_day_prompts(*, shops) -> list[dict]:
-    """Shops that currently need an open or close balance popup."""
-    settings_row = get_company_working_hours_settings()
-    if not settings_row.enabled:
-        return []
-
+    """Shops that currently need an open or close balance action."""
     rows = []
     for shop in shops:
         prompt = build_shop_day_prompt(shop=shop)
@@ -788,19 +844,16 @@ def list_shop_day_prompts(*, shops) -> list[dict]:
 
 
 def shop_working_hours_status_map(*, shops) -> dict[str, str]:
-    """Map shop id → floor status for working-hours UI badges."""
-    settings_row = get_company_working_hours_settings()
-    if not settings_row.enabled:
-        return {}
-
+    """Map shop id → floor status for open/close UI badges."""
     statuses = {}
     for shop in shops:
-        prompt = build_shop_day_prompt(shop=shop)
+        state = shop_day_floor_state(shop=shop)
         shop_key = str(shop.pk)
-        if prompt.get("show"):
-            statuses[shop_key] = prompt["mode"]
-            continue
-        if get_open_shop_day(shop) is not None:
+        if state.get("needs_action") and state.get("mode"):
+            statuses[shop_key] = state["mode"]
+        elif state.get("can_trade"):
+            statuses[shop_key] = "trading"
+        elif state.get("is_open"):
             statuses[shop_key] = "trading"
         else:
             statuses[shop_key] = "idle"
@@ -820,11 +873,8 @@ def list_active_shops():
 def list_working_hours_shop_rows(*, shops=None, post=None) -> list[dict]:
     """Shops covered by company working hours with live floor status."""
     shops = shops if shops is not None else list_active_shops()
-    settings_row = get_company_working_hours_settings()
     hours_map = get_shop_working_hours_map(shops)
-    status_map = (
-        shop_working_hours_status_map(shops=shops) if settings_row.enabled else {}
-    )
+    status_map = shop_working_hours_status_map(shops=shops)
 
     rows = []
     for shop in shops:
@@ -836,10 +886,7 @@ def list_working_hours_shop_rows(*, shops=None, post=None) -> list[dict]:
             end_time = hours_row.end_time.strftime("%H:%M")
 
         status = status_map.get(str(shop.pk), "")
-        if not settings_row.enabled:
-            label = "Prompts off"
-            tone = "muted"
-        elif status == "open":
+        if status == "open":
             label = "Needs opening"
             tone = "open"
         elif status == "close":
@@ -852,8 +899,8 @@ def list_working_hours_shop_rows(*, shops=None, post=None) -> list[dict]:
             label = "Closed"
             tone = "idle"
         else:
-            label = "Off hours"
-            tone = "muted"
+            label = "Closed"
+            tone = "idle"
 
         rows.append(
             {
@@ -3614,6 +3661,13 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     kind = (payload.get("kind") or ShopReceiptKind.SALE).strip().lower()
     if kind not in ShopReceiptKind.values:
         raise ValidationError("Choose sale, credit, quotation, or trade out.")
+
+    if kind in (
+        ShopReceiptKind.SALE,
+        ShopReceiptKind.CREDIT,
+        ShopReceiptKind.TRADE_OUT,
+    ):
+        require_shop_day_for_sale(shop=shop)
 
     pos_settings = get_effective_pos_settings(shop)
     if not pos_settings.kind_enabled(kind):

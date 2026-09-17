@@ -16,7 +16,7 @@ from shops.models import (
     ShopReceiptKind,
     ShopReceiptStatus,
 )
-from shops.services import complete_shop_checkout, get_company_pos_settings
+from shops.services import complete_shop_checkout, get_company_pos_settings, open_shop_day
 from shops.trade_settlement import record_trade_exchange, record_trade_payment, trade_balance_due
 
 
@@ -83,6 +83,16 @@ class TradeOutCheckoutTests(TestCase):
             item=self.exchange_item,
             quantity=0,
             average_cost=Decimal("0.00"),
+        )
+        open_shop_day(
+            shop=self.shop,
+            payload={
+                "cash_amount": "0",
+                "mpesa_amount": "0",
+                "credit_amount": "0",
+                "stock_confirmed": True,
+                "login_code": "100001",
+            },
         )
 
     def _checkout_trade(self):

@@ -69,7 +69,9 @@ from .services import (
     build_shop_day_prompt,
     close_shop_day,
     list_shop_day_prompts,
+    shop_day_floor_state,
     shop_working_hours_status_map,
+    require_shop_day_for_sale,
     complete_shop_checkout,
     create_shop,
     day_session_balance_summary,
@@ -328,22 +330,57 @@ def _shop_day_prompt_context(shop, profile, *, active=None):
     if active == "day_toggle":
         return {}
 
-    if profile is not None and not employee_may(profile, "my-shop", "open_close"):
-        return {}
+    day_state = shop_day_floor_state(shop=shop)
+    day_toggle_url = reverse(
+        "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+    )
+    can_open_close = profile is None or employee_may(profile, "my-shop", "open_close")
+
+    # Trading blocked → always show redirect prompt (even without open_close perm,
+    # so staff know they must get an authorised person to open/close).
+    if not day_state.get("can_trade"):
+        mode = day_state.get("mode") or ("close" if day_state.get("is_open") else "open")
+        return {
+            "shop_day_modal": True,
+            "shop_day_prompt": {
+                "show": True,
+                "mode": mode,
+                "auto_open": True,
+                "stale_open": bool(day_state.get("stale_open")),
+                "compulsory": True,
+                "redirect_only": True,
+                "start_time": day_state["start_time"].strftime("%H:%M"),
+                "end_time": day_state["end_time"].strftime("%H:%M"),
+            },
+            "shop_day_toggle_url": day_toggle_url,
+            "shop_day_can_trade": False,
+            "shop_day_stale_open": bool(day_state.get("stale_open")),
+            "shop_day_is_open": bool(day_state.get("is_open")),
+        }
+
+    if not can_open_close:
+        return {
+            "shop_day_can_trade": True,
+            "shop_day_stale_open": False,
+            "shop_day_is_open": True,
+        }
 
     prompt = build_shop_day_prompt(shop=shop)
     if not prompt.get("show"):
-        return {}
+        return {
+            "shop_day_can_trade": True,
+            "shop_day_stale_open": False,
+            "shop_day_is_open": True,
+        }
 
+    prompt = {**prompt, "redirect_only": True, "compulsory": True}
     return {
         "shop_day_modal": True,
         "shop_day_prompt": prompt,
-        "shop_day_toggle_url": reverse(
-            "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
-        ),
-        "shop_day_verify_url": reverse(
-            "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
-        ),
+        "shop_day_toggle_url": day_toggle_url,
+        "shop_day_can_trade": True,
+        "shop_day_stale_open": bool(prompt.get("stale_open")),
+        "shop_day_is_open": True,
     }
 
 
@@ -351,15 +388,12 @@ def _shop_day_all_shops_context(shops, profile):
     from employees.module_permissions import employee_may
 
     settings_row = get_company_working_hours_settings()
-    if not settings_row.enabled:
-        return {"working_hours_enabled": False}
-
     can_open_close = profile is None or employee_may(profile, "my-shop", "open_close")
     prompts = list_shop_day_prompts(shops=shops) if can_open_close else []
     status_map = shop_working_hours_status_map(shops=shops) if can_open_close else {}
 
     return {
-        "working_hours_enabled": True,
+        "working_hours_enabled": bool(settings_row.enabled),
         "shop_day_prompts": prompts,
         "shop_day_status_map": status_map,
         "shop_day_needs_open": sum(
@@ -394,15 +428,18 @@ def _shop_floor_chrome(
         stock_request_status_url = reverse(
             "employees:my_shop_stock_request_status", kwargs={"shop_id": shop.pk}
         )
+    day_state = shop_day_floor_state(shop=shop) if shop is not None else {}
+    open_session = day_state.get("open_session") if day_state else None
     low_stock_alerts = []
     low_stock_alert_force = False
-    if shop is not None:
+    # Low stock popup only after a successful open, once per open session.
+    if shop is not None and active == "workspace" and day_state.get("can_trade"):
         force_key = _low_stock_alert_force_key(shop)
         if request is not None:
             low_stock_alert_force = bool(request.session.get(force_key))
-            if active == "workspace" and low_stock_alert_force:
+            if low_stock_alert_force:
                 request.session.pop(force_key, None)
-        if active == "workspace":
+        if low_stock_alert_force:
             low_stock_alerts = list_shop_low_stock_alerts(shop)
     return {
         "profile": profile,
@@ -413,7 +450,7 @@ def _shop_floor_chrome(
             shop=shop,
             shops=shops,
             active=active,
-            shop_open=get_open_shop_day(shop) is not None,
+            shop_open=bool(day_state.get("is_open")) and not bool(day_state.get("stale_open")),
             print_channels=print_channels,
             portal=portal,
             profile=profile,
@@ -427,7 +464,8 @@ def _shop_floor_chrome(
         "low_stock_alerts": low_stock_alerts,
         "low_stock_alert_count": len(low_stock_alerts),
         "low_stock_alert_force": low_stock_alert_force,
-        "low_stock_alert_on_selling": active == "workspace",
+        "low_stock_alert_on_selling": False,
+        "low_stock_open_session_id": open_session.pk if open_session else "",
         **_shop_day_prompt_context(shop, profile, active=active),
     }
 
@@ -2236,23 +2274,38 @@ def my_shop_day_toggle(request, shop_id):
                         status=400,
                     )
             else:
-                if shop_has_low_stock_alerts(shop):
+                # Force low-stock alert once after opening only.
+                if result.get("action") == "open" and shop_has_low_stock_alerts(shop):
                     request.session[_low_stock_alert_force_key(shop)] = True
                 if wants_json:
+                    redirect_url = (
+                        reverse(
+                            "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
+                        )
+                        if result.get("action") == "open"
+                        else reverse(
+                            "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+                        )
+                    )
                     return JsonResponse(
                         {
                             "ok": True,
                             "message": result["message"],
                             "action": result["action"],
+                            "redirect_url": redirect_url,
                         }
                     )
                 messages.success(request, result["message"])
+                if result.get("action") == "open":
+                    return redirect("employees:my_shop_workspace", shop_id=shop.pk)
                 return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
 
     # Refresh open state after failed post / for GET
     open_session = get_open_shop_day(shop)
+    day_state = shop_day_floor_state(shop=shop)
     is_open = open_session is not None
     mode = "close" if is_open else "open"
+    stale_open = bool(day_state.get("stale_open"))
     day_sessions = list_shop_day_sessions(shop, limit=40)
     open_summary = (
         day_session_balance_summary(open_session) if open_session else {}
@@ -2299,24 +2352,37 @@ def my_shop_day_toggle(request, shop_id):
                 int(Decimal(last_closed.closing_credit).quantize(Decimal("1")))
             )
 
+    if stale_open:
+        headline = "Close yesterday’s day"
+        summary = (
+            "This shop was left open from a previous day. Close it with closing "
+            "balances, then open today’s day before selling."
+        )
+        title = f"Close yesterday’s day — {shop.name}"
+    elif is_open:
+        headline = "Today’s till"
+        summary = "Check the till, take a drawing if needed, then close when done."
+        title = f"Today’s till — {shop.name}"
+    else:
+        headline = "Start the day"
+        summary = "Enter opening balances to start trading. Sales stay locked until you open."
+        title = f"Start the day — {shop.name}"
+
     return _render_my_shop_tool_page(
         request,
         shop=shop,
         profile=profile,
         shops=shops,
         active="day_toggle",
-        title=("Today’s till" if is_open else "Start the day") + f" — {shop.name}",
-        headline="Today’s till" if is_open else "Start the day",
-        summary=(
-            "Check the till, take a drawing if needed, then close when done."
-            if is_open
-            else "Enter opening balances to start trading."
-        ),
+        title=title,
+        headline=headline,
+        summary=summary,
         icon="door-closed" if is_open else "door-open",
         template_name="shops/my_shop_day_toggle.html",
         extra_context={
             "mode": mode,
             "is_open": is_open,
+            "stale_open": stale_open,
             "open_session": open_session,
             "open_summary": open_summary,
             "last_closed": last_closed,
@@ -2326,7 +2392,7 @@ def my_shop_day_toggle(request, shop_id):
             "form_errors": form_errors,
             "drawing_data": drawing_data,
             "drawing_errors": drawing_errors,
-            "can_record_drawing": can_record_drawing,
+            "can_record_drawing": can_record_drawing and not stale_open,
             "verify_login_code_url": reverse(
                 "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
             ),
@@ -2474,6 +2540,14 @@ def my_shop_stk_initiate(request, shop_id):
     denied = _require_my_shop_permission(request, profile, "sale", as_json=True, portal_ok=True)
     if denied:
         return denied
+    try:
+        require_shop_day_for_sale(shop=shop)
+    except ValidationError as exc:
+        errors = _validation_errors(exc)
+        return JsonResponse(
+            {"ok": False, "error": errors[0] if errors else "Open the shop day before selling."},
+            status=400,
+        )
     sync_callback_base_from_request(request, persist=True)
     if not stk_ready():
         row = get_daraja_settings()

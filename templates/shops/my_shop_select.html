@@ -45,11 +45,11 @@
     </div>
     {% endif %}
 
-    {% if working_hours_enabled and shop_day_prompts %}
+    {% if shop_day_prompts %}
     <div class="shop-select-hours-alert" role="status">
       <i data-lucide="clock" aria-hidden="true"></i>
       <div>
-        <strong>Working hours</strong>
+        <strong>Open / close required</strong>
         <p>
           {% if shop_day_needs_open and shop_day_needs_close %}
           {{ shop_day_needs_open }} shop{{ shop_day_needs_open|pluralize }} need opening and {{ shop_day_needs_close }} need closing.
@@ -58,7 +58,7 @@
           {% elif shop_day_needs_close %}
           {{ shop_day_needs_close }} shop{{ shop_day_needs_close|pluralize }} need closing balances.
           {% endif %}
-          Sign in to each shop to complete the popup.
+          Sign in, then complete open/close before selling.
         </p>
       </div>
     </div>
@@ -97,11 +97,11 @@
             </span>
             <span class="shop-select-card-body">
               <span class="shop-select-card-name">{{ shop.name }}</span>
-              {% if working_hours_enabled and shop_hours_status == 'open' %}
+              {% if shop_hours_status == 'open' %}
               <span class="shop-select-hours-pill is-open">Needs opening</span>
-              {% elif working_hours_enabled and shop_hours_status == 'close' %}
+              {% elif shop_hours_status == 'close' %}
               <span class="shop-select-hours-pill is-close">Needs closing</span>
-              {% elif working_hours_enabled and shop_hours_status == 'trading' %}
+              {% elif shop_hours_status == 'trading' %}
               <span class="shop-select-hours-pill is-trading">Open</span>
               {% endif %}
               <span class="shop-select-card-meta">
@@ -136,11 +136,11 @@
         </span>
         <span class="shop-select-card-body">
           <span class="shop-select-card-name">{{ selected_shop.name }}</span>
-          {% if working_hours_enabled and selected_shop_hours_status == 'open' %}
+          {% if selected_shop_hours_status == 'open' %}
           <span class="shop-select-hours-pill is-open">Needs opening</span>
-          {% elif working_hours_enabled and selected_shop_hours_status == 'close' %}
+          {% elif selected_shop_hours_status == 'close' %}
           <span class="shop-select-hours-pill is-close">Needs closing</span>
-          {% elif working_hours_enabled and selected_shop_hours_status == 'trading' %}
+          {% elif selected_shop_hours_status == 'trading' %}
           <span class="shop-select-hours-pill is-trading">Open</span>
           {% endif %}
           <span class="shop-select-card-meta">
