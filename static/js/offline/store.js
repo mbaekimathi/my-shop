@@ -62,6 +62,56 @@ export async function queueCount() {
   return items.length;
 }
 
+const PENDING_SALES_PREFIX = "pending-sales:v1:";
+
+function pendingSalesKey(shopId) {
+  return `${PENDING_SALES_PREFIX}${Number(shopId) || 0}`;
+}
+
+/** Rebuild per-shop pending line qty from the offline checkout queue. */
+export async function rebuildPendingSalesFromQueue(queue) {
+  const byShop = new Map();
+  for (const op of queue || []) {
+    if (op?.type !== "complete_shop_checkout") continue;
+    const payload = op.payload || {};
+    const shopId = Number(payload.shop_id) || 0;
+    if (!shopId) continue;
+    const checkout = payload.checkout || payload;
+    const lines = Array.isArray(checkout.lines) ? checkout.lines : [];
+    if (!byShop.has(shopId)) byShop.set(shopId, []);
+    byShop.get(shopId).push({
+      clientId: String(payload.client_id || "").trim(),
+      queueId: op.id,
+      lines: lines.map((line) => ({
+        id: line?.id,
+        qty: line?.qty,
+      })),
+    });
+  }
+  for (const [shopId, entries] of byShop) {
+    await cacheSet(pendingSalesKey(shopId), entries, 60 * 60 * 24 * 14);
+  }
+}
+
+export async function getPendingSales(shopId) {
+  const rows = await cacheGet(pendingSalesKey(shopId));
+  return Array.isArray(rows) ? rows : [];
+}
+
+export async function pendingQuantitiesForShop(shopId) {
+  const entries = await getPendingSales(shopId);
+  const qty = {};
+  for (const entry of entries) {
+    for (const line of entry.lines || []) {
+      const id = String(line?.id ?? "");
+      const q = Math.max(0, Math.floor(Number(line?.qty) || 0));
+      if (!id || !q) continue;
+      qty[id] = (qty[id] || 0) + q;
+    }
+  }
+  return qty;
+}
+
 export async function cacheSet(key, value, ttlSeconds = 300) {
   const expiresAt = Date.now() + ttlSeconds * 1000;
   const db = await openDb();

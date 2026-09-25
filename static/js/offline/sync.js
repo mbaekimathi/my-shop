@@ -45,11 +45,26 @@ export async function queueOperation(type, payload) {
     createdAt: new Date().toISOString(),
   };
   await store.queueAdd(item);
+  await store.rebuildPendingSalesFromQueue(await store.queueAll());
+  notifyQueueChanged();
   updatePendingBadge();
   if (isOnline()) {
     await syncNow();
   }
   return item.id;
+}
+
+function notifyQueueChanged() {
+  document.dispatchEvent(new CustomEvent("myshop-offline-queue-changed"));
+}
+
+function sortQueue(items) {
+  return [...(items || [])].sort((a, b) => {
+    const ta = String(a?.createdAt || "");
+    const tb = String(b?.createdAt || "");
+    if (ta && tb) return ta.localeCompare(tb);
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  });
 }
 
 export async function getPendingCount() {
@@ -109,12 +124,16 @@ async function applyResults(results) {
       }
     }
   }
+  if (applied > 0) {
+    await store.rebuildPendingSalesFromQueue(await store.queueAll());
+    notifyQueueChanged();
+  }
   return { applied, failed, firstError };
 }
 
 export async function syncNow() {
   if (syncing || !isOnline()) return { ok: true, skipped: true };
-  const queue = await store.queueAll();
+  const queue = sortQueue(await store.queueAll());
   if (!queue.length) {
     setSyncError("");
     await updatePendingBadge();
@@ -141,8 +160,10 @@ export async function syncNow() {
       if (!ok) {
         failed += authOps.length;
         firstError =
-          data?.error ||
           data?.message ||
+          (data?.error === "auth_required"
+            ? "Sign in again, then tap Sync now to replay queued changes."
+            : data?.error) ||
           (status === 403
             ? "Sync blocked (sign in again or refresh the page)."
             : `Sync failed (HTTP ${status}).`);
@@ -194,5 +215,6 @@ export function initAutoSync() {
   onConnectivityChange((online) => {
     if (online) syncNow();
   });
+  store.queueAll().then((queue) => store.rebuildPendingSalesFromQueue(queue));
   updatePendingBadge();
 }

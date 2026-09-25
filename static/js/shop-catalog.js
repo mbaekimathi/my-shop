@@ -155,6 +155,7 @@
       "data-item-avg-buy-qty",
       String(Math.max(1, Math.floor(Number(item.avg_buy_qty) || 1)))
     );
+    article.setAttribute("data-item-stock-base", String(stock));
     article.setAttribute("data-item-stock", String(stock));
     article.setAttribute("data-item-track-serial", trackSerial);
     if (imageUrl) article.setAttribute("data-item-image", imageUrl);
@@ -163,8 +164,10 @@
       `${name} ${category}`.toLowerCase()
     );
 
+    const imgOnError =
+      "this.onerror=null;this.replaceWith(Object.assign(document.createElement('span'),{className:'shop-floor-item-fallback',innerHTML:'<i data-lucide=\\'package\\' aria-hidden=\\'true\\'></i>'}));window.lucide&&window.lucide.createIcons&&window.lucide.createIcons();";
     const media = imageUrl
-      ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" width="320" height="220">`
+      ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" width="320" height="220" onerror="${imgOnError}">`
       : `<span class="shop-floor-item-fallback"><i data-lucide="package" aria-hidden="true"></i></span>`;
 
     const descHtml = descShort
@@ -249,7 +252,24 @@
     }
   };
 
+  const syncStaleCatalogHint = () => {
+    let hint = floor.querySelector("[data-catalog-stale-banner]");
+    if (!floor.hasAttribute("data-catalog-from-cache")) {
+      hint?.remove();
+      return;
+    }
+    if (!hint) {
+      hint = document.createElement("p");
+      hint.className = "shop-floor-catalog-stale-hint";
+      hint.setAttribute("data-catalog-stale-banner", "");
+      hint.textContent =
+        "Cached catalog — stock and prices update when you reconnect.";
+      root.parentNode?.insertBefore(hint, root);
+    }
+  };
+
   const notifyRendered = () => {
+    syncStaleCatalogHint();
     document.dispatchEvent(
       new CustomEvent("shop-catalog:rendered", {
         detail: { total: totalCount, visible: root.querySelectorAll("[data-item-row]").length },
@@ -337,6 +357,21 @@
     notifyRendered();
   };
 
+  const loadCatalogFromCache = async (page, q) => {
+    const store = await import("./offline/store.js");
+    let data = await store.cacheGet(cacheKeyFor(page, q));
+    let fromCache = Boolean(data?.ok);
+    if (!fromCache && q) {
+      data = await store.cacheGet(cacheKeyFor(page, ""));
+      fromCache = Boolean(data?.ok);
+      if (fromCache) data = { ...data, localFilter: q };
+    }
+    if (!fromCache) {
+      throw new Error("offline_catalog_miss");
+    }
+    return { data, fromCache };
+  };
+
   const fetchCatalogPage = async ({ page, q }) => {
     const params = new URLSearchParams({
       page: String(page),
@@ -344,38 +379,33 @@
     });
     if (q) params.set("q", q);
     const cacheKey = cacheKeyFor(page, q);
-    const online = typeof navigator === "undefined" || navigator.onLine;
+    const { isAppOnline } = await import("./offline/net.js");
+    const online = await isAppOnline();
 
     let data = null;
     let fromCache = false;
 
     if (online) {
-      const response = await fetch(`${apiUrl}?${params.toString()}`, {
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
-      });
-      data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error || "Catalog load failed");
-      }
       try {
-        const store = await import("./offline/store.js");
-        await store.cacheSet(cacheKey, data, 60 * 60 * 12);
-      } catch (_cacheErr) {
-        /* cache optional */
+        const response = await fetch(`${apiUrl}?${params.toString()}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "Catalog load failed");
+        }
+        try {
+          const store = await import("./offline/store.js");
+          await store.cacheSet(cacheKey, data, 60 * 60 * 12);
+        } catch (_cacheErr) {
+          /* cache optional */
+        }
+      } catch (_networkErr) {
+        ({ data, fromCache } = await loadCatalogFromCache(page, q));
       }
     } else {
-      const store = await import("./offline/store.js");
-      data = await store.cacheGet(cacheKey);
-      fromCache = Boolean(data?.ok);
-      if (!fromCache && q) {
-        data = await store.cacheGet(cacheKeyFor(page, ""));
-        fromCache = Boolean(data?.ok);
-        if (fromCache) data = { ...data, localFilter: q };
-      }
-      if (!fromCache) {
-        throw new Error("offline_catalog_miss");
-      }
+      ({ data, fromCache } = await loadCatalogFromCache(page, q));
     }
 
     return { data, fromCache, cacheKey };
@@ -464,7 +494,8 @@
       else floor.removeAttribute("data-catalog-from-cache");
 
       const localFilter = String(data.localFilter || q || "");
-      const offline = typeof navigator !== "undefined" && !navigator.onLine;
+      const { isAppOnline } = await import("./offline/net.js");
+      const offline = !(await isAppOnline());
       if (offline && localFilter) {
         filterRenderedItems(localFilter);
       } else {
@@ -482,7 +513,8 @@
           filterRenderedItems(activeQuery);
           return;
         }
-        const offline = typeof navigator !== "undefined" && !navigator.onLine;
+        const { isAppOnline } = await import("./offline/net.js");
+        const offline = !(await isAppOnline());
         root.innerHTML = offline
           ? '<div class="dashboard-placeholder"><p>Offline — open this shop online once to cache the catalog.</p></div>'
           : '<div class="dashboard-placeholder"><p>Could not load catalog. Try again.</p></div>';
@@ -494,8 +526,9 @@
     }
   };
 
-  const reload = (q = "") => {
-    const offline = typeof navigator !== "undefined" && !navigator.onLine;
+  const reload = async (q = "") => {
+    const { isAppOnline } = await import("./offline/net.js");
+    const offline = !(await isAppOnline());
     if (offline && hasRenderedItems()) {
       filterRenderedItems(q);
       activeQuery = q;

@@ -1624,6 +1624,36 @@
       );
     };
 
+    const applyPendingStockToCatalog = async () => {
+      const shopId = Number(cartRoot?.dataset?.shopId || 0);
+      if (!shopId) return;
+      let pending = {};
+      try {
+        const store = await import("./offline/store.js");
+        pending = await store.pendingQuantitiesForShop(shopId);
+      } catch (_err) {
+        return;
+      }
+      cartRoot.querySelectorAll("[data-cart-item]").forEach((card) => {
+        const id = card.getAttribute("data-item-id");
+        let base = card.getAttribute("data-item-stock-base");
+        if (base == null) {
+          base = card.getAttribute("data-item-stock") || "0";
+          card.setAttribute("data-item-stock-base", base);
+        }
+        const held = Math.max(0, Math.floor(Number(pending[id]) || 0));
+        const qty = Math.max(0, Math.floor(Number(base) || 0) - held);
+        card.setAttribute("data-item-stock", String(qty));
+        const valueEl = card.querySelector(".shop-floor-stock-value");
+        if (valueEl) valueEl.textContent = String(qty);
+        const stockWrap = card.querySelector(".shop-floor-stock");
+        if (stockWrap) stockWrap.classList.toggle("is-empty", qty <= 0);
+        card.classList.toggle("is-out", qty <= 0);
+      });
+      syncCardControls();
+      syncProductControls();
+    };
+
     const applyStockUpdates = (updates) => {
       if (!Array.isArray(updates) || !updates.length) return;
       updates.forEach((row) => {
@@ -1635,6 +1665,7 @@
             `[data-cart-item][data-item-id="${CSS.escape(id)}"]`
           )
           .forEach((card) => {
+            card.setAttribute("data-item-stock-base", String(qty));
             card.setAttribute("data-item-stock", String(qty));
             const valueEl = card.querySelector(".shop-floor-stock-value");
             if (valueEl) valueEl.textContent = String(qty);
@@ -2786,22 +2817,31 @@
           resetCheckoutForm();
           if (Array.isArray(data.stock_updates) && data.stock_updates.length) {
             applyStockUpdates(data.stock_updates);
+            applyPendingStockToCatalog();
+          } else if (queued && kind !== "quotation") {
+            await applyPendingStockToCatalog();
           } else if (kind !== "quotation") {
             applyStockUpdates(
               soldLines.map((line) => {
                 const card = cartRoot.querySelector(
                   `[data-cart-item][data-item-id="${CSS.escape(String(line.id))}"]`
                 );
-                const current = Math.max(
+                const base = Math.max(
                   0,
-                  Math.floor(Number(card?.getAttribute("data-item-stock")) || 0)
+                  Math.floor(
+                    Number(
+                      card?.getAttribute("data-item-stock-base") ??
+                        card?.getAttribute("data-item-stock")
+                    ) || 0
+                  )
                 );
                 return {
                   id: line.id,
-                  quantity: Math.max(0, current - Math.max(0, line.qty || 0)),
+                  quantity: Math.max(0, base - Math.max(0, line.qty || 0)),
                 };
               })
             );
+            applyPendingStockToCatalog();
           }
           setCartOpen(false);
           setCartStatus(
@@ -4453,8 +4493,12 @@
     }
 
     document.addEventListener("shop-catalog:rendered", () => {
+      applyPendingStockToCatalog();
       syncCardControls();
       if (window.lucide?.createIcons) window.lucide.createIcons();
+    });
+    document.addEventListener("myshop-offline-queue-changed", () => {
+      applyPendingStockToCatalog();
     });
 
     cartRoot.addEventListener("click", (event) => {

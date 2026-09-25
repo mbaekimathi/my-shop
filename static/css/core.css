@@ -2234,6 +2234,17 @@ a.workspace-module-link:focus-visible {
   }
 }
 
+.shop-floor-catalog-stale-hint {
+  margin: 0 0 0.65rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+  border-radius: 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+}
+
 /* Offline status bar (pending queue / sync errors) */
 .offline-bar {
   display: flex;

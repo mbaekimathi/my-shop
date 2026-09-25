@@ -238,8 +238,10 @@
       `${name} ${category} ${description}`.toLowerCase()
     );
 
+    const thumbOnError =
+      "this.onerror=null;this.replaceWith(Object.assign(document.createElement('span'),{className:'item-thumb item-thumb--empty',innerHTML:'<i data-lucide=\\'package\\'></i>'}));window.lucide&&window.lucide.createIcons&&window.lucide.createIcons();";
     const thumb = imageUrl
-      ? `<img class="item-thumb" src="${escapeHtml(imageUrl)}" alt="" width="32" height="32">`
+      ? `<img class="item-thumb" src="${escapeHtml(imageUrl)}" alt="" width="32" height="32" onerror="${thumbOnError}">`
       : `<span class="item-thumb item-thumb--empty" aria-hidden="true"><i data-lucide="package"></i></span>`;
 
     const categoryCell = includeCategory
@@ -425,22 +427,30 @@
     try {
       let data = null;
       let fromCache = false;
-      const online = typeof navigator === "undefined" || navigator.onLine;
+      const { isAppOnline } = await import("./offline/net.js");
+      const online = await isAppOnline();
 
       if (online) {
-        const response = await fetch(`${apiUrl}?${params.toString()}`, {
-          headers: { Accept: "application/json" },
-          credentials: "same-origin",
-        });
-        data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.ok) {
-          throw new Error(data.error || "Catalog load failed");
-        }
         try {
+          const response = await fetch(`${apiUrl}?${params.toString()}`, {
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+          });
+          data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.ok) {
+            throw new Error(data.error || "Catalog load failed");
+          }
+          try {
+            const store = await import("./offline/store.js");
+            await store.cacheSet(cacheKey, data, 60 * 60 * 12);
+          } catch (_cacheErr) {
+            /* cache optional */
+          }
+        } catch (_networkErr) {
           const store = await import("./offline/store.js");
-          await store.cacheSet(cacheKey, data, 60 * 60 * 12);
-        } catch (_cacheErr) {
-          /* cache optional */
+          data = await store.cacheGet(cacheKey);
+          fromCache = Boolean(data?.ok);
+          if (!fromCache) throw _networkErr;
         }
       } else {
         const store = await import("./offline/store.js");
@@ -459,15 +469,7 @@
         panel.removeAttribute("data-catalog-from-cache");
       }
 
-      if (
-        online &&
-        !append &&
-        !fromCache &&
-        hasMore &&
-        nextPage &&
-        typeof navigator !== "undefined" &&
-        navigator.onLine
-      ) {
+      if (online && !append && !fromCache && hasMore && nextPage) {
         const warmPage = nextPage;
         const warmQ = activeQuery;
         const warmSort = activeSort;
@@ -508,7 +510,8 @@
         /* fall through */
       }
       if (!append) {
-        const offline = typeof navigator !== "undefined" && !navigator.onLine;
+        const { isAppOnline } = await import("./offline/net.js");
+        const offline = !(await isAppOnline());
         root.innerHTML = offline
           ? '<div class="dashboard-placeholder"><p>Offline — open Item Management online once to cache the catalog.</p></div>'
           : '<div class="dashboard-placeholder"><p>Could not load items. Try again.</p></div>';

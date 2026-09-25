@@ -45,7 +45,6 @@ export async function fetchJson(url, options = {}) {
 }
 
 export async function checkEmployeeIdOffline(url, code) {
-  const cacheKey = `emp_id_check:${code}`;
   const cached = await store.getCachedEmployeeIdCheck(code);
   if (cached) return cached;
 

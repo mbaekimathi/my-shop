@@ -727,6 +727,34 @@ class ItemImageUrlTests(TestCase):
         self.item.save(update_fields=["image"])
         self.assertEqual(self.item.public_image_url(), "")
 
+    def test_public_image_url_uses_app_route_when_file_exists(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.urls import reverse
+
+        upload = SimpleUploadedFile(
+            "photo.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg"
+        )
+        self.item.image = upload
+        self.item.save(update_fields=["image"])
+        self.assertEqual(
+            self.item.public_image_url(),
+            reverse("core:item_photo", kwargs={"item_id": self.item.pk}),
+        )
+
+    def test_item_photo_view_serves_upload(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.urls import reverse
+
+        upload = SimpleUploadedFile(
+            "photo.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg"
+        )
+        self.item.image = upload
+        self.item.save(update_fields=["image"])
+        url = reverse("core:item_photo", kwargs={"item_id": self.item.pk})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "image/jpeg")
+
     def test_item_management_catalog_omits_missing_file(self):
         from items.services import build_item_management_catalog_page
 

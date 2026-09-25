@@ -55,7 +55,7 @@ class Item(models.Model):
         return f"{self.name} ({self.category})"
 
     def public_image_url(self) -> str:
-        """Media URL when the file exists; empty when the DB path is broken."""
+        """Catalog URL when the file exists; empty when the DB path is broken."""
         field = self.image
         if not field:
             return ""
@@ -66,7 +66,11 @@ class Item(models.Model):
             storage = getattr(field, "storage", None)
             if storage is not None and not storage.exists(name):
                 return ""
-            return field.url or ""
+            if not self.pk:
+                return field.url or ""
+            from django.urls import reverse
+
+            return reverse("core:item_photo", kwargs={"item_id": self.pk})
         except (ValueError, OSError, AttributeError):
             return ""
 

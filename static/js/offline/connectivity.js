@@ -4,7 +4,7 @@
  * Design goals:
  * - Stay optimistic while MY-SHOP is reachable.
  * - Ignore one-off timeouts (dev server reload, busy runserver, brief adapter flicker).
- * - Only show the "You're turning offline" toast after a confirmed, sustained outage.
+ * - Only show the "You're offline" toast after a long, confirmed outage (not a blip).
  */
 
 // navigator.onLine only reports whether the browser has a network interface. It
@@ -18,18 +18,36 @@ let offlineSince = 0;
 const listeners = new Set();
 
 const OFFLINE_TOAST_OUT_MS = 220;
-/** How long the app must stay unreachable before the toast appears. */
-const OFFLINE_TOAST_CONFIRM_MS = 12_000;
-const PING_INTERVAL_MS = 30_000;
-const PING_TIMEOUT_MS = 5_000;
-/** Consecutive failed probes required before flipping to offline. */
-const FAILED_PINGS_FOR_OFFLINE = 3;
+/** Toast appears only after the app has stayed unreachable this long. */
+const OFFLINE_TOAST_CONFIRM_MS = 45_000;
+const PING_INTERVAL_MS = 45_000;
+const PING_TIMEOUT_MS = 8_000;
+/** Minimum time between probe attempts (avoids burst failures). */
+const MIN_PING_GAP_MS = 5_000;
+/** Consecutive failures before we consider marking offline (with duration). */
+const FAILED_PINGS_FOR_OFFLINE = 5;
+/** Must be unreachable at least this long (and enough fails) before "offline". */
+const MIN_OUTAGE_MS_BEFORE_OFFLINE = 22_000;
+/** Many rapid failures without recovery — treat as offline even if window is short. */
+const HARD_FAILS_FOR_OFFLINE = 9;
+/** After a recent successful ping, ignore one slow/timeout probe (not a full outage). */
+const RECENT_OK_GRACE_MS = 20_000;
+/** User dismissed the toast — stay quiet for a while unless still offline. */
+const TOAST_SNOOZE_AFTER_DISMISS_MS = 15 * 60 * 1000;
+/** Brief offline→online flap — suppress toast replays for a few minutes. */
+const TOAST_MUTE_AFTER_BLIP_MS = 4 * 60 * 1000;
+/** Shorter offline episodes than this are treated as blips when recovering. */
+const OFFLINE_BLIP_MAX_MS = 35_000;
 
 let failedPings = 0;
+let firstFailAt = 0;
 let pingInFlight = null;
 let pingSequence = 0;
 let initialized = false;
 let lastSuccessAt = 0;
+let lastPingEndedAt = 0;
+let toastSnoozedUntil = 0;
+let toastMutedUntil = 0;
 
 function refreshLucideIcons() {
   if (window.lucide?.createIcons) {
@@ -44,7 +62,7 @@ function ensureOfflineToast() {
   toast = document.createElement("div");
   toast.className = "offline-toast";
   toast.setAttribute("role", "status");
-  toast.setAttribute("aria-live", "assertive");
+  toast.setAttribute("aria-live", "polite");
   toast.setAttribute("data-offline-toast", "");
   toast.hidden = true;
   toast.innerHTML = `
@@ -65,7 +83,10 @@ function ensureOfflineToast() {
   `;
   toast
     .querySelector("[data-offline-toast-dismiss]")
-    ?.addEventListener("click", () => hideOfflineToast(toast));
+    ?.addEventListener("click", () => {
+      toastSnoozedUntil = Date.now() + TOAST_SNOOZE_AFTER_DISMISS_MS;
+      hideOfflineToast(toast);
+    });
   document.body.appendChild(toast);
   refreshLucideIcons();
   return toast;
@@ -84,11 +105,15 @@ function hideOfflineToast(toast = document.querySelector("[data-offline-toast]")
 }
 
 function showOfflineToast() {
+  const now = Date.now();
+  if (now < toastSnoozedUntil || now < toastMutedUntil) return;
+
   const toast = ensureOfflineToast();
+  if (!toast.hidden && toast.classList.contains("is-live")) return;
+
   window.clearTimeout(toastRemoveTimer);
   toast.hidden = false;
   toast.classList.remove("is-hiding", "is-live");
-  // Restart entrance + live pulse on every confirmed offline event
   toast.style.animation = "none";
   void toast.offsetWidth;
   toast.style.animation = "";
@@ -145,7 +170,6 @@ function updateConnectivityIndicators() {
     const hasPending = pending && !pending.hidden;
     const syncError = bar.querySelector("[data-offline-sync-error]");
     const hasError = syncError && !syncError.hidden;
-    // Status toast covers going-offline; bar stays for queue / errors only
     bar.hidden = !hasPending && !hasError;
   });
 
@@ -169,12 +193,15 @@ function notify() {
 
   if (wentOffline) {
     offlineSince = Date.now();
-    // Confirm the outage before alarming the user — brief reloads / VPN blips
-    // often recover within a few seconds.
     scheduleOfflineToast();
   } else if (wentOnline) {
+    const blip =
+      offlineSince > 0 && Date.now() - offlineSince < OFFLINE_BLIP_MAX_MS;
     offlineSince = 0;
     hideOfflineToast();
+    if (blip) {
+      toastMutedUntil = Date.now() + TOAST_MUTE_AFTER_BLIP_MS;
+    }
   }
 }
 
@@ -188,28 +215,40 @@ export function onConnectivityChange(fn) {
 }
 
 function markOnline() {
+  const wasOffline = !online;
   failedPings = 0;
+  firstFailAt = 0;
   lastSuccessAt = Date.now();
-  if (!online) {
+  if (wasOffline) {
     online = true;
     notify();
   }
 }
 
+function shouldMarkOffline() {
+  if (failedPings >= HARD_FAILS_FOR_OFFLINE) return true;
+  if (failedPings < FAILED_PINGS_FOR_OFFLINE) return false;
+  if (!firstFailAt) return false;
+  return Date.now() - firstFailAt >= MIN_OUTAGE_MS_BEFORE_OFFLINE;
+}
+
 function markOfflineCandidate() {
+  if (failedPings === 0) firstFailAt = Date.now();
   failedPings += 1;
-  // A single timeout or service-worker fallback must not make the entire
-  // app appear offline. Confirm loss of reachability first.
-  if (failedPings >= FAILED_PINGS_FOR_OFFLINE && online) {
+
+  if (online && shouldMarkOffline()) {
     online = false;
     notify();
   }
 }
 
 async function ping() {
-  // Coalesce probes — parallel fetches can double-count failures and false-trip
-  // the offline toast during busy runserver / visibility churn.
   if (pingInFlight) return pingInFlight;
+
+  const gap = Date.now() - lastPingEndedAt;
+  if (lastPingEndedAt > 0 && gap < MIN_PING_GAP_MS) {
+    return Promise.resolve();
+  }
 
   const sequence = ++pingSequence;
   const controller = new AbortController();
@@ -223,8 +262,6 @@ async function ping() {
     signal: controller.signal,
   })
     .then((response) => {
-      // A successful application response is the only confirmation that the
-      // browser can currently reach this MY-SHOP deployment.
       if (!response.ok) throw new Error(`Ping failed (HTTP ${response.status})`);
       return response.json().catch(() => ({}));
     })
@@ -235,21 +272,18 @@ async function ping() {
     })
     .catch((err) => {
       if (sequence !== pingSequence) return;
-      // Page is unloading / navigating — do not treat abort as an outage.
       if (document.visibilityState === "hidden" && err?.name === "AbortError") {
         return;
       }
-      // If we succeeded very recently, treat an isolated timeout as noise
-      // (common while Django runserver is busy or auto-reloading).
       const recentlyOk =
-        Number.isFinite(lastSuccessAt) && Date.now() - lastSuccessAt < 8_000;
-      if (recentlyOk && err?.name === "AbortError") {
-        return;
-      }
+        Number.isFinite(lastSuccessAt) &&
+        Date.now() - lastSuccessAt < RECENT_OK_GRACE_MS;
+      if (recentlyOk && err?.name === "AbortError") return;
       markOfflineCandidate();
     })
     .finally(() => {
       window.clearTimeout(timeout);
+      lastPingEndedAt = Date.now();
       if (sequence === pingSequence) pingInFlight = null;
     });
 
@@ -258,6 +292,7 @@ async function ping() {
 }
 
 export function checkConnectivity() {
+  lastPingEndedAt = 0;
   return ping();
 }
 
@@ -266,13 +301,10 @@ export function initConnectivity() {
   initialized = true;
 
   window.addEventListener("online", () => {
-    // Do not mark the app online until MY-SHOP itself answers the health check.
-    ping();
+    window.setTimeout(() => ping(), 800);
   });
   window.addEventListener("offline", () => {
-    // Browser offline events are noisy on Windows (VPN / adapter power). Probe
-    // once after a short delay so a flicker does not burn a failure slot.
-    window.setTimeout(() => ping(), 1_200);
+    window.setTimeout(() => ping(), 3_000);
   });
 
   lastSuccessAt = Date.now();

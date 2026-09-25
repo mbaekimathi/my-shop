@@ -33,6 +33,7 @@ BUDGET_CONCURRENT_PINGS = 1.50
 FIX_HINTS = {
     "connectivity source": "static/js/offline/connectivity.js must exist and export initConnectivity.",
     "failed ping threshold": "FAILED_PINGS_FOR_OFFLINE must be >= 3 so one/two blips do not flip offline.",
+    "outage duration gate": "MIN_OUTAGE_MS_BEFORE_OFFLINE must exist so brief fail bursts stay online.",
     "toast confirm delay": "OFFLINE_TOAST_CONFIRM_MS must be >= 10000 so brief outages stay silent.",
     "recent success grace": "Recent successful pings must ignore isolated AbortError timeouts.",
     "offline event debounce": "window offline handler must delay before probing (noisy on Windows).",
@@ -96,13 +97,22 @@ def check_source_invariants() -> list[tuple[str, bool, str]]:
             f"OFFLINE_TOAST_CONFIRM_MS={toast_ms}",
         )
     )
+    min_outage = _const_int(src, "MIN_OUTAGE_MS_BEFORE_OFFLINE")
+    results.append(
+        (
+            "outage duration gate",
+            min_outage is not None and min_outage >= 15_000,
+            f"MIN_OUTAGE_MS_BEFORE_OFFLINE={min_outage}",
+        )
+    )
     results.append(
         (
             "recent success grace",
             "lastSuccessAt" in src
+            and             "RECENT_OK_GRACE_MS" in src
             and "AbortError" in src
-            and ("8_000" in src or "8000" in src),
-            "recent-success AbortError ignore",
+            and (_const_int(src, "RECENT_OK_GRACE_MS") or 0) >= 15_000,
+            "recent-success AbortError grace",
         )
     )
     results.append(
@@ -143,15 +153,20 @@ class ConnectivityMachine:
     def __init__(
         self,
         *,
-        failed_needed: int = 3,
-        toast_confirm_ms: int = 12_000,
-        recent_success_ms: int = 8_000,
+        failed_needed: int = 5,
+        hard_fails: int = 9,
+        min_outage_ms: int = 22_000,
+        toast_confirm_ms: int = 45_000,
+        recent_success_ms: int = 20_000,
     ) -> None:
         self.failed_needed = failed_needed
+        self.hard_fails = hard_fails
+        self.min_outage_ms = min_outage_ms
         self.toast_confirm_ms = toast_confirm_ms
         self.recent_success_ms = recent_success_ms
         self.online = True
         self.failed_pings = 0
+        self.first_fail_at: float | None = None
         self.last_success_at: float | None = None
         self.offline_since = 0.0
         self.toast_visible = False
@@ -167,8 +182,16 @@ class ConnectivityMachine:
         ):
             self.toast_visible = True
 
+    def _should_mark_offline(self) -> bool:
+        if self.failed_pings >= self.hard_fails:
+            return True
+        if self.failed_pings < self.failed_needed or self.first_fail_at is None:
+            return False
+        return (self.now - self.first_fail_at) >= self.min_outage_ms
+
     def success(self) -> None:
         self.failed_pings = 0
+        self.first_fail_at = None
         self.last_success_at = self.now
         if not self.online:
             self.online = True
@@ -184,8 +207,10 @@ class ConnectivityMachine:
         )
         if recently_ok and abort:
             return
+        if self.failed_pings == 0:
+            self.first_fail_at = self.now
         self.failed_pings += 1
-        if self.failed_pings >= self.failed_needed and self.online:
+        if self._should_mark_offline() and self.online:
             self.online = False
             self.offline_since = self.now
             self.toast_due_at = self.now + self.toast_confirm_ms
@@ -206,20 +231,31 @@ def check_state_machine() -> list[tuple[str, bool, str]]:
     results.append(
         (
             "state machine: three fails",
+            m.online and not m.toast_visible,
+            f"online={m.online} toast={m.toast_visible} (needs sustained outage)",
+        )
+    )
+
+    m.advance(22_000)
+    m.failure()
+    m.failure()
+    results.append(
+        (
+            "state machine: sustained outage",
             (not m.online) and not m.toast_visible and m.toast_due_at is not None,
             f"online={m.online} toast={m.toast_visible}",
         )
     )
 
-    m.advance(5_000)
+    m.advance(20_000)
     results.append(
         (
             "state machine: toast wait",
             (not m.online) and not m.toast_visible,
-            f"toast_visible={m.toast_visible} after 5s",
+            f"toast_visible={m.toast_visible} before confirm window",
         )
     )
-    m.advance(8_000)
+    m.advance(30_000)
     results.append(
         (
             "state machine: toast after confirm",
@@ -247,6 +283,18 @@ def check_state_machine() -> list[tuple[str, bool, str]]:
             "state machine: timeout grace",
             grace.online and grace.failed_pings == before,
             f"failed_pings={grace.failed_pings}",
+        )
+    )
+
+    burst = ConnectivityMachine()
+    burst.success()
+    for _ in range(9):
+        burst.failure()
+    results.append(
+        (
+            "state machine: hard fail burst",
+            not burst.online,
+            f"online={burst.online} after {burst.failed_pings} fails",
         )
     )
     return results

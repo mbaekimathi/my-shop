@@ -1,5 +1,5 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v17";
+const CACHE_VERSION = "myshop-v18";
 
 // Precache only the shared shell. Page-specific bundles (my-shop, catalogs,
 // printer) are cached on first use via networkFirst to keep install light.
@@ -11,6 +11,7 @@ const PRECACHE = [
   "/static/js/offline/sync.js",
   "/static/js/offline/client.js",
   "/static/js/offline/init.js",
+  "/static/js/offline/net.js",
   "/static/js/offline/staff.js",
   "/static/js/offline/serials.js",
   "/static/manifest.webmanifest",

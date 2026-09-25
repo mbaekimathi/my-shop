@@ -3,7 +3,9 @@ import json
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from django.http import Http404, HttpResponse, JsonResponse
+import mimetypes
+
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.db.models import F, Q
 from django.urls import reverse
@@ -5284,3 +5286,23 @@ def stock_management_print(request, role_segment):
     }
 
     return render(request, "items/stock_print.html", context)
+
+
+@require_GET
+def item_photo(request, item_id):
+    """Serve item photos through Django (works when /media/ is not web-exposed)."""
+    item = get_object_or_404(Item, pk=item_id)
+    field = item.image
+    if not field:
+        raise Http404("Photo not found.")
+    try:
+        name = (getattr(field, "name", None) or "").strip()
+        storage = getattr(field, "storage", None)
+        if not name or storage is None or not storage.exists(name):
+            raise Http404("Photo not found.")
+        content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        response = FileResponse(field.open("rb"), content_type=content_type)
+        response["Cache-Control"] = "public, max-age=86400, immutable"
+        return response
+    except (ValueError, OSError, AttributeError) as exc:
+        raise Http404("Photo not found.") from exc

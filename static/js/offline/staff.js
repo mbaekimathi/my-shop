@@ -39,12 +39,11 @@ export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
     const cached = await fromCache();
     if (cached) return cached;
     return {
-      ok: true,
+      ok: false,
       offline: true,
       cached: false,
-      employee_id: normalized,
-      name: "",
-      message: "Offline — staff ID will be confirmed when you reconnect.",
+      error:
+        "Offline — verify this staff ID online once before checkout can continue.",
     };
   };
 

@@ -299,8 +299,17 @@
 
   const revalidateLocalCatalog = () => {
     if (localRevalidating) return;
-    const online = typeof navigator === "undefined" || navigator.onLine;
-    if (!online) return;
+    import("./offline/net.js")
+      .then(({ isAppOnline }) => isAppOnline())
+      .then((online) => {
+        if (!online) return;
+        runLocalRevalidate();
+      })
+      .catch(() => {});
+  };
+
+  const runLocalRevalidate = () => {
+    if (localRevalidating) return;
     localRevalidating = true;
     const before = catalogSignature(localCatalog);
     fetchPreloadFromNetwork()
@@ -1629,7 +1638,8 @@
     setBusy(true);
 
     const cacheKey = cacheKeyFor(page, q);
-    const online = typeof navigator === "undefined" || navigator.onLine;
+    const { isAppOnline } = await import("./offline/net.js");
+    const online = await isAppOnline();
     const memHit = memoryCache.get(cacheKey);
 
     if (memHit?.ok) {
@@ -1649,17 +1659,25 @@
       let fromCache = false;
 
       if (online) {
-        const response = await fetch(`${apiUrl}?${buildFetchParams(page, q).toString()}`, {
-          headers: { Accept: "application/json" },
-          credentials: "same-origin",
-          signal,
-        });
-        data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.ok) throw new Error(data.error || "failed");
-        memoryCache.set(cacheKey, data);
-        getOfflineStore().then((store) => {
-          if (store?.cacheSet) store.cacheSet(cacheKey, data, 60 * 60 * 12);
-        });
+        try {
+          const response = await fetch(`${apiUrl}?${buildFetchParams(page, q).toString()}`, {
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+            signal,
+          });
+          data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.ok) throw new Error(data.error || "failed");
+          memoryCache.set(cacheKey, data);
+          getOfflineStore().then((store) => {
+            if (store?.cacheSet) store.cacheSet(cacheKey, data, 60 * 60 * 12);
+          });
+        } catch (_networkErr) {
+          if (_networkErr?.name === "AbortError") throw _networkErr;
+          const store = await getOfflineStore();
+          data = store ? await store.cacheGet(cacheKey) : null;
+          fromCache = Boolean(data?.ok);
+          if (!fromCache) throw _networkErr;
+        }
       } else {
         const store = await getOfflineStore();
         data = store ? await store.cacheGet(cacheKey) : null;
