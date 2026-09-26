@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
@@ -105,6 +106,8 @@ class NexusVerifyApiKeyTests(TestCase):
         request_obj = open_mock.call_args[0][0]
         self.assertEqual(request_obj.method, "POST")
         self.assertNotEqual(request_obj.method, "GET")
+        body = json.loads(request_obj.data.decode("utf-8"))
+        self.assertEqual(body, {"phone": "254700000001", "amount": "1.00"})
 
     @patch("shops.nexus_stk._NEXUS_URL_OPENER.open")
     def test_verify_accepts_validation_error_when_key_works(self, open_mock):

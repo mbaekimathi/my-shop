@@ -132,12 +132,27 @@
               name="nexus_api_key"
               autocomplete="off"
               spellcheck="false"
-              placeholder="{% if daraja.nexus_api_key_set %}Saved{% else %}Nexus collection key{% endif %}"
+              placeholder="{% if daraja.nexus_api_key_set %}Saved{% else %}cm_… from Nexus{% endif %}"
               data-nexus-api-key
               {% if not daraja.nexus_api_key_set %}required{% endif %}
             >
           </label>
-          <input type="hidden" name="nexus_collection_id" value="{{ form_data.nexus_collection_id }}" data-nexus-collection-id>
+          <label class="daraja-field">
+            <span>Collection ID (BillRefNumber)</span>
+            <input
+              type="text"
+              name="nexus_collection_id"
+              value="{{ form_data.nexus_collection_id }}"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="e.g. C9DCFF5A9A3"
+              data-nexus-collection-id
+            >
+          </label>
+          <p class="daraja-field-hint">
+            Uses POST to fin.richcom.co.ke with <code>X-API-Key</code> and
+            <code>{"phone","amount"}</code> (Production only). Collection ID is stored for receipts; STK uses your account automatically.
+          </p>
         </div>
 
         <div class="daraja-form-actions">

@@ -1,4 +1,11 @@
-"""Nexus collections STK helpers (any Nexus-issued collection API key)."""
+"""Nexus collections STK helpers (RUSHTech / Richcom collections API).
+
+Contract (Production):
+  POST {NEXUS_STK_URL}
+  Headers: X-API-Key, Content-Type: application/json
+  Body: {"phone": "2547...", "amount": "1500.00"}  (amount as string)
+  Collection id (C2B BillRefNumber) is tied to the key; STK uses it automatically.
+"""
 
 from __future__ import annotations
 
@@ -174,63 +181,52 @@ def _method_get_not_allowed(text: str) -> bool:
     return "method" in lowered and "get" in lowered and "not allowed" in lowered
 
 
+def _nexus_stk_probe_body() -> dict:
+    """Same JSON shape as RUSHTech docs; probe phone/amount only (no live STK to a real customer)."""
+    return {"phone": "254700000001", "amount": "1.00"}
+
+
 def verify_nexus_collection_api_key(api_key: str) -> dict:
     key = (api_key or "").strip()
     if not key:
         raise ValidationError("Nexus collection API key is required.")
     if len(key) < 8:
         raise ValidationError("Enter the full API key from your Nexus collection account.")
+    if not key.startswith("cm_"):
+        raise ValidationError(
+            "Nexus collection keys usually start with cm_. Paste the full key from your Nexus account."
+        )
 
     url = nexus_stk_url()
-    probe_bodies = (
-        {"phone": "254700000001", "amount": "1.00"},
-        {"phoneNumber": "254700000001", "amount": 1},
-        {"phone": "254700000001", "amount": 1},
-    )
-    auth_modes = ("x-api-key", "bearer")
-
-    last_error: ValidationError | None = None
-    for auth_mode in auth_modes:
-        for probe_body in probe_bodies:
-            try:
-                payload = _nexus_request(
-                    url,
-                    api_key=key,
-                    method="POST",
-                    body=probe_body,
-                    auth_mode=auth_mode,
-                )
-                return {
-                    "ok": True,
-                    "collection_id": _collection_id_from_payload(payload),
-                    "payload": payload,
-                }
-            except ValidationError as exc:
-                last_error = exc
-                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
-                if _nexus_key_auth_error(message):
-                    continue
-                if _nexus_key_accepted_validation_error(message):
-                    return {"ok": True, "collection_id": "", "payload": {}}
-                if _method_get_not_allowed(message):
-                    continue
-                raise
-
-    if last_error is not None:
-        message = (
-            "; ".join(last_error.messages)
-            if hasattr(last_error, "messages")
-            else str(last_error)
+    try:
+        payload = _nexus_request(
+            url,
+            api_key=key,
+            method="POST",
+            body=_nexus_stk_probe_body(),
+            auth_mode="x-api-key",
         )
+        return {
+            "ok": True,
+            "collection_id": _collection_id_from_payload(payload),
+            "payload": payload,
+        }
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        if _nexus_key_auth_error(message):
+            raise ValidationError(
+                f"Nexus rejected this API key. {message}"
+            ) from exc
+        if _nexus_key_accepted_validation_error(message):
+            return {"ok": True, "collection_id": "", "payload": {}}
         if _method_get_not_allowed(message):
             raise ValidationError(
-                "Nexus STK endpoint rejected the verify request (POST was converted to GET). "
-                "Set NEXUS_STK_URL in .env to the exact STK URL from Nexus (with trailing /), "
-                "deploy the latest app code, restart Passenger, then try again."
-            ) from last_error
-        raise last_error
-
-    raise ValidationError("Could not verify Nexus collection API key.")
+                "Nexus STK endpoint rejected the verify request (POST was treated as GET). "
+                "Deploy the latest app code, set NEXUS_STK_URL to "
+                "https://fin.richcom.co.ke/api/v1/collections/stk/ in .env, restart Passenger, "
+                "then Save & verify again."
+            ) from exc
+        raise
 
 
 def _party_phone(phone: str) -> str:
@@ -315,10 +311,7 @@ def initiate_nexus_stk_push(
 
     body = {
         "phone": party,
-        "phoneNumber": party,
         "amount": f"{pay_amount:.2f}",
-        "account_reference": reference,
-        "accountReference": reference,
     }
     try:
         payload = _nexus_request(
@@ -417,13 +410,12 @@ def query_nexus_stk_status(payment: MpesaStkPayment) -> MpesaStkPayment:
         raise ValidationError("Nexus collection API key is missing.")
 
     ref = (payment.checkout_request_id or payment.public_id or "").strip()
+    if not ref:
+        return payment
+
     base = nexus_stk_url().rstrip("/")
-    candidates = [
-        f"{base}/{ref}/",
-        f"{base}?checkout_request_id={ref}",
-        f"{base}?id={ref}",
-        f"{base}?reference={ref}",
-    ]
+    # STK URL is POST-only; do not GET the collections/stk/ root.
+    candidates = [f"{base}/{ref}/"]
 
     payment.last_status_query_at = timezone.now()
     payment.save(update_fields=["last_status_query_at", "updated_at"])
