@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from decimal import Decimal
@@ -21,6 +22,8 @@ from .models import (
     MpesaStkStatus,
     StkProvider,
 )
+logger = logging.getLogger(__name__)
+
 from .services import (
     _normalize_phone,
     _money,
@@ -512,6 +515,25 @@ def _callback_url(*, request=None) -> str:
     public = normalize_callback_base_url(base, allow_local=False)
     secret = ensure_callback_secret()
     return f"{public}/mpesa/daraja/callback/{secret}/"
+
+
+def resolve_stk_callback_url(*, request=None) -> str:
+    """Public STK result webhook (Daraja + Nexus). Uses HTTPS base from request or .env."""
+    try:
+        return _callback_url(request=request)
+    except ValidationError:
+        pass
+    callback_base = resolve_callback_base_url(request=request, persist=bool(request))
+    if not callback_base:
+        return ""
+    try:
+        if is_safaricom_callback_base(callback_base):
+            return _callback_url(request=request)
+    except ValidationError:
+        pass
+    row = get_daraja_settings()
+    secret = ensure_callback_secret(row)
+    return f"{callback_base.rstrip('/')}/mpesa/daraja/callback/{secret}/"
 
 
 def validate_callback_base_url(value: str) -> str:
@@ -1071,6 +1093,12 @@ def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
             .first()
         )
     if payment is None:
+        logger.warning(
+            "STK callback did not match a payment checkout=%s merchant=%s ref=%s",
+            checkout_id,
+            merchant_id,
+            payment_ref,
+        )
         return None
 
     receipt_number = _stk_receipt_from_callback_metadata(callback if isinstance(callback, dict) else {})
@@ -1083,7 +1111,7 @@ def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
             or ""
         ).strip()
 
-    return _apply_stk_outcome(
+    updated = _apply_stk_outcome(
         payment,
         result_code=result_code,
         result_desc=result_desc or payment.result_desc,
@@ -1091,6 +1119,30 @@ def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
         merchant_id=merchant_id,
         checkout_id=checkout_id,
     )
+    logger.info(
+        "STK callback updated %s status=%s receipt=%s code=%s",
+        updated.public_id,
+        updated.status,
+        updated.mpesa_receipt_number or "-",
+        result_code,
+    )
+    return updated
+
+
+def stk_payment_trace_dict(payment: MpesaStkPayment) -> dict:
+    return {
+        "id": str(payment.public_id),
+        "status": payment.status,
+        "status_label": payment.get_status_display(),
+        "provider": (payment.stk_provider or StkProvider.DARAJA).strip(),
+        "amount": f"{Decimal(payment.amount):.2f}",
+        "phone": payment.phone,
+        "mpesa_receipt_number": payment.mpesa_receipt_number or "",
+        "result_desc": payment.result_desc or "",
+        "checkout_request_id": payment.checkout_request_id or "",
+        "created_at": payment.created_at.isoformat() if payment.created_at else "",
+        "shop_id": payment.shop_id,
+    }
 
 
 def require_successful_stk(

@@ -153,6 +153,16 @@
             Uses POST to fin.richcom.co.ke with <code>X-API-Key</code> and
             <code>{"phone","amount"}</code> (Production only). Collection ID is stored for receipts; STK uses your account automatically.
           </p>
+          {% if daraja.callback_url %}
+          <p class="daraja-field-hint">
+            <strong>STK result webhook</strong> (give this URL to RUSHTech/Nexus if they ask where to POST payment results):
+          </p>
+          <code class="daraja-field-hint" data-nexus-callback-url>{{ daraja.callback_url }}</code>
+          {% elif is_hosted_deploy %}
+          <p class="daraja-field-hint">
+            Set <code>DARAJA_CALLBACK_BASE_URL</code> in server <code>.env</code>, restart the app, then refresh this page to see the STK webhook URL.
+          </p>
+          {% endif %}
         </div>
 
         <div class="daraja-form-actions">
@@ -437,12 +447,59 @@
     </section>
   </div>
   {% endif %}
+
+  <section class="pos-settings-group" data-stk-trace-section>
+    <div class="pos-settings-group-head">
+      <h3>Recent STK payments</h3>
+      <p class="daraja-field-hint">After a shop-cart test, refresh a row to poll Nexus/Richcom or apply a callback.</p>
+    </div>
+    <div class="daraja-form-actions">
+      <button type="button" class="btn btn--secondary" data-stk-trace-refresh-all>
+        Refresh all pending
+      </button>
+    </div>
+    <div class="daraja-status" data-stk-trace-table-wrap>
+      {% if recent_stk_payments %}
+      <table class="daraja-trace-table" data-stk-trace-table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Status</th>
+            <th>Amount</th>
+            <th>Receipt</th>
+            <th>Result</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in recent_stk_payments %}
+          <tr data-stk-trace-row="{{ row.id }}">
+            <td><code>{{ row.created_at|slice:":19" }}</code></td>
+            <td>{{ row.status_label }} <small>({{ row.provider }})</small></td>
+            <td>{{ row.amount }}</td>
+            <td>{% if row.mpesa_receipt_number %}<strong>{{ row.mpesa_receipt_number }}</strong>{% else %}—{% endif %}</td>
+            <td>{{ row.result_desc|truncatechars:48 }}</td>
+            <td>
+              <button type="button" class="btn btn--ghost btn--small" data-stk-trace-refresh data-payment-id="{{ row.id }}">
+                Refresh
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="daraja-field-hint">No STK payments yet. Send a test STK from the shop cart.</p>
+      {% endif %}
+    </div>
+    <p class="daraja-form-message" data-stk-trace-message hidden></p>
+  </section>
 </section>
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/daraja-settings.js' %}?v=17"></script>
+<script src="{% static 'js/daraja-settings.js' %}?v=18"></script>
 {% if show_developer_subscriptions %}
 <script src="{% static 'js/developer-payment-settings.js' %}?v=1"></script>
 {% endif %}

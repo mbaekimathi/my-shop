@@ -1315,6 +1315,64 @@ def _company_daraja_settings(request, context):
             messages.success(request, "Nexus collection API key verified and saved.")
             return redirect(request.path)
 
+        if action == "refresh_stk_payment":
+            from shops.daraja_stk import (
+                get_stk_payment,
+                refresh_stk_payment_if_pending,
+                stk_payment_trace_dict,
+            )
+            from shops.models import MpesaStkPayment, MpesaStkStatus
+
+            payment_id = (request.POST.get("payment_id") or "").strip()
+            payment = get_stk_payment(payment_id)
+            if payment is None:
+                err = {"ok": False, "error": "STK payment not found."}
+                if wants_json:
+                    return JsonResponse(err, status=404)
+                messages.error(request, err["error"])
+                return redirect(request.path)
+            if payment.status == MpesaStkStatus.PENDING:
+                payment = refresh_stk_payment_if_pending(
+                    payment, min_age_seconds=0, force_safaricom=True
+                )
+            recent = [
+                stk_payment_trace_dict(p)
+                for p in MpesaStkPayment.objects.order_by("-created_at")[:10]
+            ]
+            payload = {
+                "ok": True,
+                "payment": stk_payment_trace_dict(payment),
+                "recent_stk_payments": recent,
+            }
+            if wants_json:
+                return JsonResponse(payload)
+            messages.success(
+                request,
+                f"STK {payment.public_id}: {payment.get_status_display()} — "
+                f"{payment.mpesa_receipt_number or payment.result_desc or 'no receipt yet'}",
+            )
+            return redirect(request.path)
+
+        if action == "refresh_all_pending_stk":
+            from shops.daraja_stk import refresh_stk_payment_if_pending, stk_payment_trace_dict
+            from shops.models import MpesaStkPayment, MpesaStkStatus
+
+            pending = MpesaStkPayment.objects.filter(status=MpesaStkStatus.PENDING).order_by(
+                "-created_at"
+            )[:25]
+            for payment in pending:
+                refresh_stk_payment_if_pending(
+                    payment, min_age_seconds=0, force_safaricom=True
+                )
+            recent = [
+                stk_payment_trace_dict(p)
+                for p in MpesaStkPayment.objects.order_by("-created_at")[:10]
+            ]
+            if wants_json:
+                return JsonResponse({"ok": True, "recent_stk_payments": recent})
+            messages.success(request, f"Refreshed {pending.count()} pending STK payment(s).")
+            return redirect(request.path)
+
         if action == "save_daraja_credentials":
             enable_raw = (request.POST.get("enable_stk_push") or "").strip().lower()
             enable_stk = None
@@ -1396,6 +1454,14 @@ def _company_daraja_settings(request, context):
         daraja_payload["has_callback_base"] = True
         daraja_payload["callback_is_public"] = True
 
+    from shops.daraja_stk import stk_payment_trace_dict
+    from shops.models import MpesaStkPayment
+
+    recent_stk_payments = [
+        stk_payment_trace_dict(p)
+        for p in MpesaStkPayment.objects.select_related("shop").order_by("-created_at")[:10]
+    ]
+
     context.update(
         {
             "is_hosted_deploy": getattr(dj_settings, "IS_HOSTED", False)
@@ -1403,6 +1469,7 @@ def _company_daraja_settings(request, context):
             "daraja": daraja_payload,
             "daraja_environments": DarajaEnvironment.choices,
             "stk_providers": StkProvider.choices,
+            "recent_stk_payments": recent_stk_payments,
             "form_data": {
                 "stk_provider": row.stk_provider or StkProvider.DARAJA,
                 "environment": row.environment,
@@ -1441,6 +1508,9 @@ def _developer_payment_settings(request, context):
             "save_nexus_credentials",
             "save_stk_provider",
             "save_daraja_environment",
+            "refresh_stk_payment",
+            "refresh_all_pending_stk",
+            "sync_daraja_callback",
         ):
             return _company_daraja_settings(request, context)
 

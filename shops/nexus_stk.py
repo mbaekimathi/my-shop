@@ -253,12 +253,9 @@ def _unwrap_nexus_payload(payload: dict) -> dict:
 
 
 def _nexus_callback_url(*, request=None) -> str:
-    try:
-        from shops.daraja_stk import _callback_url
+    from shops.daraja_stk import resolve_stk_callback_url
 
-        return _callback_url(request=request)
-    except ValidationError:
-        return ""
+    return resolve_stk_callback_url(request=request)
 
 
 def _nexus_status_from_payload(payload: dict) -> tuple[str, str, str]:

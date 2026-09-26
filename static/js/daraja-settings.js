@@ -574,4 +574,90 @@
       }
     });
   }
+
+  const stkTraceMessage = root.querySelector("[data-stk-trace-message]");
+  const stkTraceTable = root.querySelector("[data-stk-trace-table]");
+
+  const setStkTraceMessage = (text, { error = false } = {}) => {
+    if (!stkTraceMessage) return;
+    stkTraceMessage.hidden = !text;
+    stkTraceMessage.textContent = text || "";
+    stkTraceMessage.classList.toggle("is-error", Boolean(error));
+    stkTraceMessage.classList.toggle("is-ok", Boolean(text) && !error);
+  };
+
+  const renderStkTraceRows = (rows) => {
+    if (!stkTraceTable || !Array.isArray(rows)) return;
+    const tbody = stkTraceTable.querySelector("tbody");
+    if (!tbody) return;
+    tbody.innerHTML = rows
+      .map((row) => {
+        const receipt = row.mpesa_receipt_number
+          ? `<strong>${row.mpesa_receipt_number}</strong>`
+          : "—";
+        const desc = String(row.result_desc || "").slice(0, 48);
+        const when = String(row.created_at || "").slice(0, 19);
+        return `<tr data-stk-trace-row="${row.id}">
+          <td><code>${when}</code></td>
+          <td>${row.status_label || row.status} <small>(${row.provider || ""})</small></td>
+          <td>${row.amount || ""}</td>
+          <td>${receipt}</td>
+          <td>${desc}</td>
+          <td><button type="button" class="btn btn--ghost btn--small" data-stk-trace-refresh data-payment-id="${row.id}">Refresh</button></td>
+        </tr>`;
+      })
+      .join("");
+    bindStkTraceRefreshButtons();
+  };
+
+  const bindStkTraceRefreshButtons = () => {
+    root.querySelectorAll("[data-stk-trace-refresh]").forEach((btn) => {
+      if (btn.dataset.stkTraceBound === "1") return;
+      btn.dataset.stkTraceBound = "1";
+      btn.addEventListener("click", async () => {
+        const paymentId = btn.getAttribute("data-payment-id") || "";
+        if (!paymentId) return;
+        btn.disabled = true;
+        setStkTraceMessage("Refreshing…");
+        try {
+          const body = new URLSearchParams({
+            action: "refresh_stk_payment",
+            payment_id: paymentId,
+          });
+          const data = await postAction(body);
+          renderStkTraceRows(data.recent_stk_payments);
+          const p = data.payment || {};
+          setStkTraceMessage(
+            p.mpesa_receipt_number
+              ? `Updated: M-Pesa ${p.mpesa_receipt_number} (${p.status_label || p.status})`
+              : `Updated: ${p.status_label || p.status} — ${p.result_desc || ""}`
+          );
+        } catch (err) {
+          setStkTraceMessage(err.message || "Refresh failed.", { error: true });
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  };
+
+  const refreshAllBtn = root.querySelector("[data-stk-trace-refresh-all]");
+  if (refreshAllBtn) {
+    refreshAllBtn.addEventListener("click", async () => {
+      refreshAllBtn.disabled = true;
+      setStkTraceMessage("Refreshing pending payments…");
+      try {
+        const body = new URLSearchParams({ action: "refresh_all_pending_stk" });
+        const data = await postAction(body);
+        renderStkTraceRows(data.recent_stk_payments);
+        setStkTraceMessage("Pending STK payments refreshed.");
+      } catch (err) {
+        setStkTraceMessage(err.message || "Refresh failed.", { error: true });
+      } finally {
+        refreshAllBtn.disabled = false;
+      }
+    });
+  }
+
+  bindStkTraceRefreshButtons();
 })();
