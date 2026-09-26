@@ -274,6 +274,23 @@ class DarajaStkHardeningTests(TestCase):
             self.assertEqual(detect_ngrok_public_base_url(), "")
             mock_open.assert_not_called()
 
+    @override_settings(IS_HOSTED=True)
+    def test_hosted_request_base_assumes_https_for_public_host(self):
+        from django.test import RequestFactory
+
+        from shops.daraja_stk import detect_request_base_url
+
+        request = RequestFactory().get("/", HTTP_HOST="shop.example.com")
+        self.assertEqual(detect_request_base_url(request), "https://shop.example.com")
+
+    @override_settings(IS_HOSTED=True)
+    def test_stk_callback_message_hosted_mentions_env_not_ngrok(self):
+        from shops.daraja_stk import stk_callback_blocked_message
+
+        msg = stk_callback_blocked_message()
+        self.assertIn("HTTPS", msg)
+        self.assertNotIn("ngrok http 8000", msg)
+
     def test_ensure_callback_secret_generates_when_missing(self):
         row = get_daraja_settings()
         row.callback_secret = ""

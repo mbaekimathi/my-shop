@@ -9,7 +9,8 @@
   data-daraja-can-enable-stk="{% if daraja.uses_nexus_stk %}{% if daraja.nexus_key_verified %}1{% else %}0{% endif %}{% elif daraja.credentials_valid and daraja.has_callback_base %}1{% else %}0{% endif %}"
   data-daraja-credentials-valid="{% if daraja.credentials_valid %}1{% else %}0{% endif %}"
   data-daraja-nexus-verified="{% if daraja.nexus_key_verified %}1{% else %}0{% endif %}"
-  data-daraja-has-callback="{% if daraja.has_callback_base %}1{% else %}0{% endif %}">
+  data-daraja-has-callback="{% if daraja.has_callback_base %}1{% else %}0{% endif %}"
+  data-daraja-hosted="{% if is_hosted_deploy %}1{% else %}0{% endif %}">
   <div class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
@@ -30,7 +31,7 @@
           <div class="pos-settings-copy">
             <strong>Enable STK Push</strong>
             <p data-daraja-ready-hint>
-              {% if daraja.is_ready_for_stk %}Ready.{% elif not daraja.uses_nexus_stk and not daraja.has_callback_base %}Needs public HTTPS callback (ngrok or live domain).{% elif not daraja.credentials_valid and not daraja.uses_nexus_stk %}Save credentials below.{% elif daraja.uses_nexus_stk and not daraja.nexus_key_verified %}Save Nexus key below.{% else %}Configure below, then enable. Shop cart: Settings → POS.{% endif %}
+              {% if daraja.is_ready_for_stk %}Ready.{% elif not daraja.uses_nexus_stk and not daraja.has_callback_base %}{% if is_hosted_deploy %}Use your live HTTPS domain (callback auto-detected) or set DARAJA_CALLBACK_BASE_URL in .env.{% else %}Needs public HTTPS (hosted domain for Production, or ngrok for local dev).{% endif %}{% elif not daraja.credentials_valid and not daraja.uses_nexus_stk %}Save credentials below.{% elif daraja.uses_nexus_stk and not daraja.nexus_key_verified %}Save Nexus key below.{% else %}Configure below, then enable. Shop cart: Settings → POS.{% endif %}
             </p>
             <p class="daraja-form-message" data-daraja-stk-message hidden></p>
           </div>
@@ -418,7 +419,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/daraja-settings.js' %}?v=13"></script>
+<script src="{% static 'js/daraja-settings.js' %}?v=14"></script>
 {% if show_developer_subscriptions %}
 <script src="{% static 'js/developer-payment-settings.js' %}?v=1"></script>
 {% endif %}

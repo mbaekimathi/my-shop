@@ -251,6 +251,15 @@ def detect_request_base_url(request) -> str:
     ).lower()
     if proto not in {"http", "https"}:
         proto = "http"
+    host_only = host.split(":")[0].strip().lower()
+    if (
+        getattr(settings, "IS_HOSTED", False)
+        and proto == "http"
+        and host_only
+        and not _is_local_or_private_host(host_only)
+    ):
+        # Common behind TLS terminators that omit X-Forwarded-Proto.
+        proto = "https"
     return f"{proto}://{host}".rstrip("/")
 
 
@@ -359,10 +368,31 @@ def callback_secret_matches(value: str) -> bool:
 
 def detect_settings_callback_base() -> str:
     """Public HTTPS base learned by AutoHostMiddleware or set in .env."""
-    base = (getattr(settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip().rstrip("/")
-    if is_safaricom_callback_base(base):
-        return base
+    for attr in ("DARAJA_CALLBACK_BASE_URL", "PUBLIC_SITE_URL"):
+        base = (getattr(settings, attr, "") or "").strip().rstrip("/")
+        if is_safaricom_callback_base(base):
+            return base
     return ""
+
+
+def stk_callback_blocked_message() -> str:
+    """User-facing hint when Daraja STK cannot enable (callback not public HTTPS)."""
+    if getattr(settings, "IS_HOSTED", False):
+        learned = detect_settings_callback_base()
+        if learned:
+            return (
+                f"M-Pesa callbacks use {learned}. Save and verify Daraja credentials, "
+                "then enable STK Push."
+            )
+        return (
+            "Open this app via your live HTTPS domain so the callback URL is detected, "
+            "or set DARAJA_CALLBACK_BASE_URL (or PUBLIC_SITE_URL) in .env, then refresh "
+            "and enable STK Push."
+        )
+    return (
+        "For local dev, run ngrok http 8000 and open the ngrok HTTPS link, then refresh. "
+        "For Production, use your hosted HTTPS domain (no ngrok required)."
+    )
 
 
 def persist_public_callback_base(base: str) -> str:

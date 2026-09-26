@@ -1203,7 +1203,7 @@ def _company_daraja_settings(request, context):
                 "yes",
             )
             try:
-                row = set_daraja_stk_enabled(enabled=enabled)
+                row = set_daraja_stk_enabled(enabled=enabled, request=request)
             except ValidationError as exc:
                 message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
                 if wants_json:
@@ -1377,8 +1377,11 @@ def _company_daraja_settings(request, context):
     resolved_callback = resolve_callback_base_url(request=request) or (
         daraja_settings_as_dict(row).get("callback_base_url") or ""
     )
+    from django.conf import settings as dj_settings
+
     context.update(
         {
+            "is_hosted_deploy": getattr(dj_settings, "IS_HOSTED", False),
             "daraja": daraja_settings_as_dict(row),
             "daraja_environments": DarajaEnvironment.choices,
             "stk_providers": StkProvider.choices,

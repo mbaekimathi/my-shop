@@ -1197,7 +1197,10 @@ def daraja_settings_as_dict(
     )
 
     if light:
-        callback_base = (row.callback_base_url or "").strip()
+        callback_base = resolve_callback_base_url() or (row.callback_base_url or "").strip()
+        has_callback = row.has_usable_callback_base() or is_safaricom_callback_base(
+            callback_base
+        )
         return {
             "stk_provider": row.stk_provider or StkProvider.DARAJA,
             "stk_provider_label": row.get_stk_provider_display(),
@@ -1211,8 +1214,9 @@ def daraja_settings_as_dict(
             "environment_label": row.get_environment_display(),
             "credentials_valid": bool(row.credentials_valid),
             "last_error": row.last_error or "",
-            "has_callback_base": row.has_usable_callback_base(),
+            "has_callback_base": has_callback,
             "is_ready_for_stk": row.is_ready_for_stk(),
+            "callback_base_url": callback_base,
         }
 
     callback_base = resolve_callback_base_url() or (
@@ -1365,7 +1369,7 @@ def set_shop_stk_push_enabled(*, enabled: bool) -> CompanyDarajaSettings:
     return set_daraja_stk_enabled(enabled=enabled)
 
 
-def set_daraja_stk_enabled(*, enabled: bool) -> CompanyDarajaSettings:
+def set_daraja_stk_enabled(*, enabled: bool, request=None) -> CompanyDarajaSettings:
     row = get_daraja_settings()
     if row.uses_nexus_stk():
         if enabled and not row.nexus_key_verified:
@@ -1390,15 +1394,18 @@ def set_daraja_stk_enabled(*, enabled: bool) -> CompanyDarajaSettings:
     if enabled and not row.has_credentials():
         raise ValidationError("Complete Daraja credentials before enabling STK Push.")
     if enabled and not row.has_usable_callback_base():
-        # Last chance: pick up a running ngrok tunnel before failing.
-        from shops.daraja_stk import sync_callback_base_from_request
+        from django.conf import settings as dj_settings
 
-        sync_callback_base_from_request(None, persist=True)
+        from shops.daraja_stk import stk_callback_blocked_message, sync_callback_base_from_request
+
+        sync_callback_base_from_request(request, persist=True)
+        if request is None and not getattr(dj_settings, "IS_HOSTED", False):
+            sync_callback_base_from_request(None, persist=True)
         row = get_daraja_settings()
     if enabled and not row.has_usable_callback_base():
-        raise ValidationError(
-            "Start ngrok (ngrok http 8000), refresh this page, then enable STK Push."
-        )
+        from shops.daraja_stk import stk_callback_blocked_message
+
+        raise ValidationError(stk_callback_blocked_message())
     row.enable_stk_push = bool(enabled)
     if not enabled:
         row.last_error = ""
@@ -1521,10 +1528,9 @@ def update_daraja_settings(
         if enable_stk_push and not (key and secret and lipa_passkey and code):
             raise ValidationError("Complete Daraja credentials before enabling STK Push.")
         if enable_stk_push and not public_callback:
-            raise ValidationError(
-                "Open this page via your public HTTPS domain or ngrok link first, "
-                "then enable STK Push."
-            )
+            from shops.daraja_stk import stk_callback_blocked_message
+
+            raise ValidationError(stk_callback_blocked_message())
         row.enable_stk_push = bool(enable_stk_push)
         update_fields.append("enable_stk_push")
     elif enable_stk_push is None and public_callback and not was_credentials_valid:

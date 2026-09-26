@@ -155,11 +155,38 @@
     }
   }
 
+  function isHostedDeploy() {
+    return root.dataset.darajaHosted === "1";
+  }
+
   function canEnableStk(data) {
     if (usesNexus(data)) {
       return Boolean(data.nexus_key_verified);
     }
     return Boolean(data.credentials_valid && data.has_callback_base);
+  }
+
+  function stkEnableBlockMessage(data) {
+    if (usesNexus(data || null)) {
+      return "Save and verify your Nexus collection API key first.";
+    }
+    const snap = data || {
+      credentials_valid: root.dataset.darajaCredentialsValid === "1",
+      has_callback_base: root.dataset.darajaHasCallback === "1",
+    };
+    if (!snap.credentials_valid) {
+      return "Save and verify Daraja credentials below first.";
+    }
+    if (isHostedDeploy()) {
+      return (
+        "Use your live HTTPS domain (callback is auto-detected when you open this page), " +
+        "or set DARAJA_CALLBACK_BASE_URL or PUBLIC_SITE_URL in .env, refresh, then enable STK."
+      );
+    }
+    return (
+      "Local dev: ngrok http 8000, open the ngrok HTTPS link, refresh. " +
+      "Production on hosting: use your live HTTPS domain — ngrok is not required."
+    );
   }
 
   function setMessage(text, { error = false } = {}) {
@@ -228,7 +255,9 @@
     if (data.is_ready_for_stk) {
       readyHint.textContent = "Ready.";
     } else if (!usesNexus(data) && !data.has_callback_base) {
-      readyHint.textContent = "Needs public HTTPS callback (ngrok or live domain).";
+      readyHint.textContent = isHostedDeploy()
+        ? "Needs your live HTTPS domain (or DARAJA_CALLBACK_BASE_URL in .env)."
+        : "Needs public HTTPS (hosted domain for Production, or ngrok locally).";
     } else if (!usesNexus(data) && !data.credentials_valid) {
       readyHint.textContent = "Save credentials below.";
     } else if (usesNexus(data) && !data.nexus_key_verified) {
@@ -408,15 +437,7 @@
       ) {
         stkToggle.checked = previous;
         setStkLabel(previous);
-        const nexusSelected = root.querySelector(
-          '[data-stk-provider][value="nexus"]'
-        )?.checked;
-        setStkMessage(
-          nexusSelected
-            ? "Save and verify your Nexus collection API key first."
-            : "Start ngrok with: ngrok http 8000 — then refresh this page and enable STK.",
-          { error: true }
-        );
+        setStkMessage(stkEnableBlockMessage(null), { error: true });
         return;
       }
       stkToggle.disabled = true;

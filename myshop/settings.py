@@ -44,6 +44,8 @@ CSRF_COOKIE_AGE = int(os.getenv("CSRF_COOKIE_AGE", str(60 * 60 * 24 * 365 * 10))
 
 # Optional override; otherwise auto from request / ngrok.
 DARAJA_CALLBACK_BASE_URL = os.getenv("DARAJA_CALLBACK_BASE_URL", "").strip()
+# Hosted production site URL (https://your-domain.com) when callbacks cannot be inferred from requests.
+PUBLIC_SITE_URL = os.getenv("PUBLIC_SITE_URL", "").strip().rstrip("/")
 DARAJA_NGROK_API_URL = os.getenv(
     "DARAJA_NGROK_API_URL", "http://127.0.0.1:4040/api/tunnels"
 ).strip()

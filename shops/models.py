@@ -907,7 +907,9 @@ class CompanyDarajaSettings(models.Model):
         if not self.has_credentials() or not self.credentials_valid:
             return "Open Settings → Daraja and verify credentials"
         if not self.has_usable_callback_base():
-            return "Set DARAJA_CALLBACK_BASE_URL in .env, use ngrok, or open via public HTTPS"
+            from shops.daraja_stk import stk_callback_blocked_message
+
+            return stk_callback_blocked_message()
         if not self.enable_stk_push:
             return "Enable STK Push in Settings → POS"
         return "STK not ready"
@@ -928,10 +930,9 @@ class CompanyDarajaSettings(models.Model):
             elif not self.credentials_valid:
                 issues.append("Daraja credentials are not verified.")
             if not self.has_usable_callback_base():
-                issues.append(
-                    "No public HTTPS callback URL. Set DARAJA_CALLBACK_BASE_URL in .env, "
-                    "run ngrok, or open the app via your live domain."
-                )
+                from shops.daraja_stk import stk_callback_blocked_message
+
+                issues.append(stk_callback_blocked_message())
         creds_ok = False
         if self.uses_nexus_stk():
             creds_ok = self.nexus_key_verified and self.has_nexus_credentials()
