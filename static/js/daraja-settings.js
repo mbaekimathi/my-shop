@@ -69,12 +69,19 @@
 
   function revealAfterEnvironment() {
     syncSandboxProviderUI(null);
-    if (providerSection && selectedEnvironment() && isProductionEnv(null)) {
+    const env = selectedEnvironment();
+    if (providerSection && env && isProductionEnv(null)) {
       providerSection.hidden = false;
+    }
+    if (!env) {
+      followSections.forEach((section) => {
+        section.hidden = true;
+      });
+      return;
     }
     const hasProvider =
       root.querySelector("[data-stk-provider]:checked") ||
-      selectedEnvironment() === "sandbox";
+      env === "sandbox";
     if (hasProvider) {
       revealFollowSections();
     }
@@ -301,6 +308,7 @@
     const callbackInput = root.querySelector("[data-daraja-callback-base]");
     if (callbackInput && data.callback_base_url) {
       callbackInput.value = data.callback_base_url;
+    }
     const fullEl = root.querySelector("[data-daraja-callback-full]");
     if (fullEl && data.callback_url) {
       fullEl.textContent = data.callback_url;
