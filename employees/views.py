@@ -41,7 +41,12 @@ from shops.services import (
     receipt_qr_for_settings,
     set_company_pos_setting,
     set_company_tax_percent,
+    set_daraja_environment,
     set_daraja_stk_enabled,
+    set_shop_stk_push_enabled,
+    set_stk_provider,
+    stk_shop_activation_status,
+    update_nexus_stk_settings,
     set_mpesa_payment_details,
     set_receipt_font_style,
     set_receipt_number_formats,
@@ -1177,7 +1182,7 @@ def _company_communications_settings(request, context):
 
 def _company_daraja_settings(request, context):
     from shops.daraja_stk import resolve_callback_base_url, sync_callback_base_from_request
-    from shops.models import DarajaEnvironment
+    from shops.models import DarajaEnvironment, StkProvider
 
     # Avoid ngrok/network probes on every GET — sync callback from current domain on load.
     sync_callback_base_from_request(request, persist=True)
@@ -1212,13 +1217,95 @@ def _company_daraja_settings(request, context):
                     )
                 messages.error(request, message)
                 return redirect(request.path)
-            payload = daraja_settings_as_dict(row)
+            payload = daraja_settings_as_dict(row, light=True)
             if wants_json:
                 return JsonResponse({"ok": True, **payload})
             messages.success(
                 request,
                 "STK Push enabled." if row.enable_stk_push else "STK Push disabled.",
             )
+            return redirect(request.path)
+
+        if action == "save_daraja_environment":
+            try:
+                row = set_daraja_environment(
+                    environment=request.POST.get("environment") or "",
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": message,
+                            **daraja_settings_as_dict(get_daraja_settings()),
+                        },
+                        status=400,
+                    )
+                messages.error(request, message)
+                return redirect(request.path)
+            payload = daraja_settings_as_dict(row, light=True)
+            if wants_json:
+                return JsonResponse({"ok": True, **payload})
+            return redirect(request.path)
+
+        if action == "save_stk_provider":
+            try:
+                row = set_stk_provider(provider=request.POST.get("stk_provider") or "")
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": message,
+                            **daraja_settings_as_dict(get_daraja_settings()),
+                        },
+                        status=400,
+                    )
+                messages.error(request, message)
+                return redirect(request.path)
+            payload = daraja_settings_as_dict(row, light=True)
+            if wants_json:
+                return JsonResponse({"ok": True, **payload})
+            return redirect(request.path)
+
+        if action == "save_nexus_credentials":
+            enable_raw = (request.POST.get("enable_stk_push") or "").strip().lower()
+            enable_stk = None
+            if enable_raw in ("1", "true", "on", "yes"):
+                enable_stk = True
+            elif enable_raw in ("0", "false", "off", "no"):
+                enable_stk = False
+            try:
+                row = update_nexus_stk_settings(
+                    nexus_api_key=request.POST.get("nexus_api_key") or "",
+                    nexus_collection_id=request.POST.get("nexus_collection_id") or "",
+                    enable_stk_push=enable_stk,
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": message,
+                            **daraja_settings_as_dict(get_daraja_settings()),
+                        },
+                        status=400,
+                    )
+                messages.error(request, message)
+                return redirect(request.path)
+            payload = daraja_settings_as_dict(row)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "message": "Nexus collection API key verified and saved.",
+                        **payload,
+                    }
+                )
+            messages.success(request, "Nexus collection API key verified and saved.")
             return redirect(request.path)
 
         if action == "save_daraja_credentials":
@@ -1294,11 +1381,14 @@ def _company_daraja_settings(request, context):
         {
             "daraja": daraja_settings_as_dict(row),
             "daraja_environments": DarajaEnvironment.choices,
+            "stk_providers": StkProvider.choices,
             "form_data": {
+                "stk_provider": row.stk_provider or StkProvider.DARAJA,
                 "environment": row.environment,
                 "shortcode": row.shortcode,
                 "callback_base_url": resolved_callback,
                 "enable_stk_push": row.enable_stk_push,
+                "nexus_collection_id": row.nexus_collection_id or "",
             },
         }
     )
@@ -1311,6 +1401,7 @@ def _developer_payment_settings(request, context):
         DarajaEnvironment,
         DeveloperPaymentCadence,
         DeveloperPaymentPopupLocation,
+        StkProvider,
     )
 
     row = get_daraja_settings()
@@ -1323,7 +1414,13 @@ def _developer_payment_settings(request, context):
     if request.method == "POST":
         action = (request.POST.get("action") or "").strip()
 
-        if action in ("toggle_stk_push", "save_daraja_credentials"):
+        if action in (
+            "toggle_stk_push",
+            "save_daraja_credentials",
+            "save_nexus_credentials",
+            "save_stk_provider",
+            "save_daraja_environment",
+        ):
             return _company_daraja_settings(request, context)
 
         if action == "save_developer_subscriptions":
@@ -1379,12 +1476,15 @@ def _developer_payment_settings(request, context):
         {
             "daraja": daraja_settings_as_dict(row),
             "daraja_environments": DarajaEnvironment.choices,
+            "stk_providers": StkProvider.choices,
             "form_data": {
+                "stk_provider": row.stk_provider or StkProvider.DARAJA,
                 "environment": row.environment,
                 "shortcode": row.shortcode,
                 "callback_base_url": row.callback_base_url
                 or (daraja_settings_as_dict(row).get("callback_base_url") or ""),
                 "enable_stk_push": row.enable_stk_push,
+                "nexus_collection_id": row.nexus_collection_id or "",
             },
             "show_developer_subscriptions": True,
             "developer_payments": developer_payment_settings_as_dict(developer),
@@ -1614,7 +1714,7 @@ def _company_working_hours_settings(request, context):
 POS_SETTING_GROUPS = (
     {
         "title": "Transaction types",
-        "summary": "Choose which document types appear on the shop checkout.",
+        "summary": "",
         "toggles": (
             ("enable_sale", "Sale"),
             ("enable_credit", "Credit"),
@@ -1624,7 +1724,7 @@ POS_SETTING_GROUPS = (
     },
     {
         "title": "Payment methods",
-        "summary": "Choose which payment options appear for cash sale checkout.",
+        "summary": "",
         "toggles": (
             ("enable_cash", "Cash"),
             ("enable_mpesa", "M-Pesa"),
@@ -1633,13 +1733,13 @@ POS_SETTING_GROUPS = (
     },
     {
         "title": "Discounts",
-        "summary": "Allow staff to lower sale prices on the shop page.",
-        "toggles": (("enable_discount", "Activate discount"),),
+        "summary": "",
+        "toggles": (("enable_discount", "Discount"),),
     },
     {
         "title": "Tax",
-        "summary": "Add a tax percentage on top of the items subtotal at checkout.",
-        "toggles": (("enable_tax", "Activate tax"),),
+        "summary": "",
+        "toggles": (("enable_tax", "Tax"),),
         "show_tax_percent": True,
     },
 )
@@ -1688,15 +1788,49 @@ def _company_pos_settings(
                     return JsonResponse({"ok": False, "error": message}, status=400)
                 messages.error(request, message)
                 return redirect(request.path)
+            stk_payload = stk_shop_activation_status(pos=row)
             if wants_json:
                 return JsonResponse(
                     {
                         "ok": True,
                         "field": field,
                         "enabled": getattr(row, field),
+                        **stk_payload,
                     }
                 )
             messages.success(request, "Setting updated.")
+            return redirect(request.path)
+        if action == "toggle_shop_stk_push":
+            enabled = (request.POST.get("enabled") or "").strip() in (
+                "1",
+                "true",
+                "on",
+                "yes",
+            )
+            try:
+                set_shop_stk_push_enabled(enabled=enabled)
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": message,
+                            **stk_shop_activation_status(pos=get_company_pos_settings()),
+                        },
+                        status=400,
+                    )
+                messages.error(request, message)
+                return redirect(request.path)
+            payload = stk_shop_activation_status(pos=get_company_pos_settings())
+            if wants_json:
+                return JsonResponse({"ok": True, **payload})
+            messages.success(
+                request,
+                "STK Push enabled for shop checkout."
+                if payload.get("enable_stk_push")
+                else "STK Push disabled on shop checkout.",
+            )
             return redirect(request.path)
         if action == "set_tax_percent":
             try:
@@ -1869,6 +2003,11 @@ def _company_pos_settings(
         return redirect(request.path)
 
     pos = get_company_pos_settings()
+    from .workspace import hr_section_url
+    from shops.services import POS_EMPLOYEE_PERMISSION_LINKS
+
+    permissions_url = hr_section_url(context["profile"].role, "permissions")
+    show_employee_perm_links = template_name == "employees/settings_pos.html"
     groups = []
     enabled_count = 0
     toggle_count = 0
@@ -1879,13 +2018,20 @@ def _company_pos_settings(
             toggle_count += 1
             if enabled:
                 enabled_count += 1
-            toggles.append(
-                {
-                    "field": field,
-                    "label": label,
-                    "enabled": enabled,
-                }
-            )
+            toggle_payload = {
+                "field": field,
+                "label": label,
+                "enabled": enabled,
+            }
+            if show_employee_perm_links:
+                perm = POS_EMPLOYEE_PERMISSION_LINKS.get(field)
+                if perm:
+                    module_slug, _sub_slug, perm_label = perm
+                    toggle_payload["employee_perm"] = {
+                        "label": perm_label,
+                        "href": f"{permissions_url}#module-{module_slug}",
+                    }
+            toggles.append(toggle_payload)
         groups.append(
             {
                 "title": group["title"],
@@ -1911,6 +2057,9 @@ def _company_pos_settings(
     def _money(value: Decimal) -> str:
         return f"{value:,.0f}"
 
+    from django.urls import reverse
+
+    stk_shop = stk_shop_activation_status(pos=pos)
     context.update(
         {
             "pos_settings": pos,
@@ -1918,6 +2067,10 @@ def _company_pos_settings(
             "pos_settings_flags": pos_settings_as_dict(pos),
             "pos_enabled_count": enabled_count,
             "pos_toggle_count": toggle_count,
+            "stk_shop": stk_shop,
+            "daraja_settings_url": reverse(
+                "employees:settings_section", kwargs={"section": "company-daraja"}
+            ),
             "tax_percent_value": f"{pos.tax_percent:.0f}",
             "receipt_paper_width": paper_width,
             "receipt_font_size": font["size"],

@@ -788,9 +788,28 @@ class DarajaEnvironment(models.TextChoices):
     PRODUCTION = "production", "Production"
 
 
+class StkProvider(models.TextChoices):
+    DARAJA = "daraja", "Safaricom Daraja (your credentials)"
+    NEXUS = "nexus", "Nexus collections API"
+
+
 class CompanyDarajaSettings(models.Model):
     """Safaricom Daraja / Lipa Na M-Pesa STK Push credentials (singleton)."""
 
+    stk_provider = models.CharField(
+        max_length=32,
+        choices=StkProvider.choices,
+        default=StkProvider.DARAJA,
+    )
+    nexus_api_key = models.CharField(max_length=255, blank=True, default="")
+    nexus_collection_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="C2B BillRefNumber / collection id from Nexus (informational).",
+    )
+    nexus_key_verified = models.BooleanField(default=False)
+    nexus_key_checked_at = models.DateTimeField(null=True, blank=True)
     enable_stk_push = models.BooleanField(default=False)
     environment = models.CharField(
         max_length=16,
@@ -825,7 +844,22 @@ class CompanyDarajaSettings(models.Model):
     def __str__(self):
         return "Company Daraja settings"
 
+    def nexus_stk_allowed(self) -> bool:
+        """Nexus collections STK is production-only; Sandbox uses Safaricom Daraja test apps."""
+        return (self.environment or DarajaEnvironment.SANDBOX) == DarajaEnvironment.PRODUCTION
+
+    def uses_nexus_stk(self) -> bool:
+        if not self.nexus_stk_allowed():
+            return False
+        provider = (self.stk_provider or StkProvider.DARAJA).strip()
+        return provider in (StkProvider.NEXUS, "nexus_rushtech")
+
+    def has_nexus_credentials(self) -> bool:
+        return bool((self.nexus_api_key or "").strip())
+
     def has_credentials(self) -> bool:
+        if self.uses_nexus_stk():
+            return self.has_nexus_credentials()
         return bool(
             (self.consumer_key or "").strip()
             and (self.consumer_secret or "").strip()
@@ -845,24 +879,37 @@ class CompanyDarajaSettings(models.Model):
         resolved = resolve_callback_base_url(request=None, persist=False)
         return is_safaricom_callback_base(resolved)
 
-    def is_ready_for_stk(self) -> bool:
+    def stk_credentials_ready(self) -> bool:
+        """Daraja/Nexus verified; does not require STK Push to be enabled on POS."""
+        if self.uses_nexus_stk():
+            return bool(self.nexus_key_verified and self.has_nexus_credentials())
         return bool(
-            self.enable_stk_push
-            and self.credentials_valid
+            self.credentials_valid
             and self.has_credentials()
             and self.has_usable_callback_base()
         )
+
+    def is_ready_for_stk(self) -> bool:
+        if not self.enable_stk_push:
+            return False
+        return self.stk_credentials_ready()
 
     def stk_not_ready_reason(self) -> str:
         """Short reason shown when STK cannot run (empty when ready)."""
         if self.is_ready_for_stk():
             return ""
+        if self.uses_nexus_stk():
+            if not self.has_nexus_credentials() or not self.nexus_key_verified:
+                return "Open Settings → Daraja and verify your Nexus API key"
+            if not self.enable_stk_push:
+                return "Enable STK Push in Settings → POS"
+            return "STK not ready"
         if not self.has_credentials() or not self.credentials_valid:
             return "Open Settings → Daraja and verify credentials"
         if not self.has_usable_callback_base():
             return "Set DARAJA_CALLBACK_BASE_URL in .env, use ngrok, or open via public HTTPS"
         if not self.enable_stk_push:
-            return "Enable STK Push in Daraja settings"
+            return "Enable STK Push in Settings → POS"
         return "STK not ready"
 
     def stk_blocker_message(self) -> str:
@@ -870,22 +917,32 @@ class CompanyDarajaSettings(models.Model):
         if self.is_ready_for_stk():
             return ""
         issues: list[str] = []
-        if not self.has_credentials():
-            issues.append("Daraja credentials are not saved.")
-        elif not self.credentials_valid:
-            issues.append("Daraja credentials are not verified.")
-        if not self.has_usable_callback_base():
-            issues.append(
-                "No public HTTPS callback URL. Set DARAJA_CALLBACK_BASE_URL in .env, "
-                "run ngrok, or open the app via your live domain."
+        if self.uses_nexus_stk():
+            if not self.has_nexus_credentials():
+                issues.append("Nexus collection API key is not saved.")
+            elif not self.nexus_key_verified:
+                issues.append("Nexus collection API key is not verified.")
+        else:
+            if not self.has_credentials():
+                issues.append("Daraja credentials are not saved.")
+            elif not self.credentials_valid:
+                issues.append("Daraja credentials are not verified.")
+            if not self.has_usable_callback_base():
+                issues.append(
+                    "No public HTTPS callback URL. Set DARAJA_CALLBACK_BASE_URL in .env, "
+                    "run ngrok, or open the app via your live domain."
+                )
+        creds_ok = False
+        if self.uses_nexus_stk():
+            creds_ok = self.nexus_key_verified and self.has_nexus_credentials()
+        else:
+            creds_ok = (
+                self.credentials_valid
+                and self.has_credentials()
+                and self.has_usable_callback_base()
             )
-        if (
-            self.has_credentials()
-            and self.credentials_valid
-            and self.has_usable_callback_base()
-            and not self.enable_stk_push
-        ):
-            issues.append("STK Push is turned off in Daraja settings.")
+        if creds_ok and not self.enable_stk_push:
+            issues.append("STK Push is turned off in Settings → POS.")
         if not issues:
             issues.append("STK Push is not configured.")
         message = " ".join(issues)
@@ -1060,6 +1117,12 @@ def _new_stk_public_id() -> str:
 class MpesaStkPayment(models.Model):
     """Tracks a Daraja STK Push request through callback confirmation."""
 
+    stk_provider = models.CharField(
+        max_length=32,
+        choices=StkProvider.choices,
+        blank=True,
+        default="",
+    )
     public_id = models.CharField(
         max_length=36,
         unique=True,

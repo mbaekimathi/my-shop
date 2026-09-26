@@ -502,6 +502,10 @@ def _dashboard_analytics_section_links(role, *, active_slug=None, profile=None):
             continue
         if profile is not None and not employee_may(profile, "analytics", slug):
             continue
+        from shops.services import company_pos_analytics_section_visible
+
+        if not company_pos_analytics_section_visible(slug):
+            continue
         links.append(
             _link(
                 section["label"],
@@ -1254,6 +1258,7 @@ def sidebar_for_hr_permissions(role, profile=None):
                 href=f"#module-{module['slug']}",
             )
             for module in permission_modules_for_display()
+            if module["submodules"]
         ],
     ]
     return resolve_sidebar_hrefs(
@@ -1321,6 +1326,10 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
         if profile is not None and not employee_may(
             profile, "analytics", section["slug"]
         ):
+            continue
+        from shops.services import company_pos_analytics_section_visible
+
+        if not company_pos_analytics_section_visible(section["slug"]):
             continue
         section_links.append(
             _link(

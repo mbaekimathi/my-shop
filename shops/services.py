@@ -14,6 +14,7 @@ from employees.countries import COUNTRY_DIAL_CODES
 from .models import (
     CompanyCommunicationsSettings,
     CompanyDarajaSettings,
+    StkProvider,
     CompanyDeveloperPaymentSettings,
     CompanyPosSettings,
     CompanyProfile,
@@ -1182,7 +1183,11 @@ def update_message_channel_settings(
     return get_communications_settings()
 
 
-def daraja_settings_as_dict(settings_row: CompanyDarajaSettings | None = None) -> dict:
+def daraja_settings_as_dict(
+    settings_row: CompanyDarajaSettings | None = None,
+    *,
+    light: bool = False,
+) -> dict:
     row = settings_row or get_daraja_settings()
     from shops.daraja_stk import (
         _callback_url,
@@ -1190,6 +1195,25 @@ def daraja_settings_as_dict(settings_row: CompanyDarajaSettings | None = None) -
         is_safaricom_callback_base,
         resolve_callback_base_url,
     )
+
+    if light:
+        callback_base = (row.callback_base_url or "").strip()
+        return {
+            "stk_provider": row.stk_provider or StkProvider.DARAJA,
+            "stk_provider_label": row.get_stk_provider_display(),
+            "uses_nexus_stk": row.uses_nexus_stk(),
+            "nexus_stk_allowed": row.nexus_stk_allowed(),
+            "nexus_api_key_set": bool((row.nexus_api_key or "").strip()),
+            "nexus_collection_id": row.nexus_collection_id or "",
+            "nexus_key_verified": bool(row.nexus_key_verified),
+            "enable_stk_push": bool(row.enable_stk_push),
+            "environment": row.environment or DarajaEnvironment.SANDBOX,
+            "environment_label": row.get_environment_display(),
+            "credentials_valid": bool(row.credentials_valid),
+            "last_error": row.last_error or "",
+            "has_callback_base": row.has_usable_callback_base(),
+            "is_ready_for_stk": row.is_ready_for_stk(),
+        }
 
     callback_base = resolve_callback_base_url() or (
         (row.callback_base_url or "").strip()
@@ -1206,6 +1230,14 @@ def daraja_settings_as_dict(settings_row: CompanyDarajaSettings | None = None) -
     except Exception:
         callback_full = ""
     return {
+        "stk_provider": row.stk_provider or StkProvider.DARAJA,
+        "stk_provider_label": row.get_stk_provider_display(),
+        "uses_nexus_stk": row.uses_nexus_stk(),
+        "nexus_stk_allowed": row.nexus_stk_allowed(),
+        "nexus_api_key_set": bool((row.nexus_api_key or "").strip()),
+        "nexus_collection_id": row.nexus_collection_id or "",
+        "nexus_key_verified": bool(row.nexus_key_verified),
+        "nexus_key_checked_at": row.nexus_key_checked_at,
         "enable_stk_push": bool(row.enable_stk_push),
         "environment": row.environment or DarajaEnvironment.SANDBOX,
         "environment_label": row.get_environment_display(),
@@ -1281,8 +1313,76 @@ def verify_daraja_oauth(*, consumer_key: str, consumer_secret: str, environment:
     }
 
 
+def pos_mpesa_checkout_enabled(
+    pos: CompanyPosSettings | None = None,
+) -> bool:
+    row = pos or get_company_pos_settings()
+    return bool(row.enable_mpesa or row.enable_cash_mpesa)
+
+
+def stk_shop_activation_status(
+    *,
+    pos: CompanyPosSettings | None = None,
+) -> dict:
+    """Whether STK Push can be enabled from POS settings for shop checkout."""
+    from shops.daraja_stk import stk_ready
+
+    pos_row = pos or get_company_pos_settings()
+    daraja = get_daraja_settings()
+    mpesa_on = pos_mpesa_checkout_enabled(pos_row)
+    credentials_ready = daraja.stk_credentials_ready()
+    can_enable = bool(mpesa_on and credentials_ready)
+    blockers: list[str] = []
+    if not mpesa_on:
+        blockers.append("Turn on M-Pesa or Cash + M-Pesa under payment methods.")
+    if not credentials_ready:
+        blockers.append(
+            "Configure and verify STK in Settings → Daraja (Sandbox/Production and provider)."
+        )
+    return {
+        "mpesa_checkout_enabled": mpesa_on,
+        "stk_credentials_ready": credentials_ready,
+        "stk_can_enable_on_pos": can_enable,
+        "enable_stk_push": bool(daraja.enable_stk_push),
+        "stk_ready_for_shop": bool(stk_ready()),
+        "stk_activation_hint": " ".join(blockers),
+        "stk_provider_label": daraja.get_stk_provider_display(),
+        "uses_nexus_stk": daraja.uses_nexus_stk(),
+    }
+
+
+def set_shop_stk_push_enabled(*, enabled: bool) -> CompanyDarajaSettings:
+    if enabled:
+        status = stk_shop_activation_status()
+        if not status["mpesa_checkout_enabled"]:
+            raise ValidationError(
+                "Turn on M-Pesa or Cash + M-Pesa before enabling STK Push on the shop."
+            )
+        if not status["stk_credentials_ready"]:
+            raise ValidationError(
+                "Configure and verify STK in Settings → Daraja before enabling it on the shop."
+            )
+    return set_daraja_stk_enabled(enabled=enabled)
+
+
 def set_daraja_stk_enabled(*, enabled: bool) -> CompanyDarajaSettings:
     row = get_daraja_settings()
+    if row.uses_nexus_stk():
+        if enabled and not row.nexus_key_verified:
+            raise ValidationError(
+                "Save and verify your Nexus collection API key before enabling STK Push."
+            )
+        if enabled and not row.has_nexus_credentials():
+            raise ValidationError(
+                "Enter your Nexus collection API key before enabling STK Push."
+            )
+        row.enable_stk_push = bool(enabled)
+        if not enabled:
+            row.last_error = ""
+        row.save(update_fields=["enable_stk_push", "last_error", "updated_at"])
+        _invalidate_daraja_settings_cache()
+        return get_daraja_settings()
+
     if enabled and not row.credentials_valid:
         raise ValidationError(
             "Save and verify Daraja credentials before enabling STK Push."
@@ -1387,6 +1487,7 @@ def update_daraja_settings(
         invalidate_daraja_access_token_cache()
         raise
 
+    row.stk_provider = StkProvider.DARAJA
     row.environment = env
     row.shortcode = code
     if callback:
@@ -1401,6 +1502,7 @@ def update_daraja_settings(
     row.credentials_checked_at = timezone.now()
     row.last_error = ""
     update_fields = [
+        "stk_provider",
         "environment",
         "shortcode",
         "callback_base_url",
@@ -1434,6 +1536,114 @@ def update_daraja_settings(
     row.save(update_fields=update_fields)
     _invalidate_daraja_settings_cache()
     invalidate_daraja_access_token_cache()
+    return get_daraja_settings()
+
+
+def set_daraja_environment(*, environment: str) -> CompanyDarajaSettings:
+    env = (environment or "").strip().lower()
+    if env not in {choice.value for choice in DarajaEnvironment}:
+        raise ValidationError("Choose Sandbox or Production.")
+    row = get_daraja_settings()
+    row.environment = env
+    update_fields = ["environment", "updated_at"]
+    if env == DarajaEnvironment.SANDBOX and row.stk_provider in (
+        StkProvider.NEXUS,
+        "nexus_rushtech",
+    ):
+        row.stk_provider = StkProvider.DARAJA
+        update_fields.append("stk_provider")
+    row.save(update_fields=update_fields)
+    _invalidate_daraja_settings_cache()
+    return get_daraja_settings()
+
+
+def set_stk_provider(*, provider: str) -> CompanyDarajaSettings:
+    value = (provider or "").strip().lower()
+    if value == "nexus_rushtech":
+        value = StkProvider.NEXUS
+    allowed = {choice.value for choice in StkProvider}
+    if value not in allowed:
+        raise ValidationError("Choose a valid STK provider.")
+    row = get_daraja_settings()
+    if value == StkProvider.NEXUS and not row.nexus_stk_allowed():
+        raise ValidationError(
+            "Sandbox uses Safaricom Daraja test credentials only. "
+            "Switch to Production to use Nexus collections API."
+        )
+    if row.stk_provider != value:
+        row.stk_provider = value
+        row.last_error = ""
+        row.save(update_fields=["stk_provider", "last_error", "updated_at"])
+        _invalidate_daraja_settings_cache()
+    return get_daraja_settings()
+
+
+def update_nexus_stk_settings(
+    *,
+    nexus_api_key: str = "",
+    nexus_collection_id: str = "",
+    enable_stk_push=None,
+) -> CompanyDarajaSettings:
+    from shops.nexus_stk import verify_nexus_collection_api_key
+
+    row = get_daraja_settings()
+    if not row.nexus_stk_allowed():
+        raise ValidationError(
+            "Nexus collections API is not available in Sandbox. "
+            "Use Safaricom Daraja test credentials or switch to Production."
+        )
+    key = (nexus_api_key or "").strip() or (row.nexus_api_key or "").strip()
+    if not key:
+        raise ValidationError("Nexus collection API key is required.")
+
+    try:
+        verified = verify_nexus_collection_api_key(key)
+    except ValidationError as exc:
+        row.nexus_key_verified = False
+        row.nexus_key_checked_at = timezone.now()
+        row.last_error = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        if enable_stk_push is True:
+            row.enable_stk_push = False
+        row.save(
+            update_fields=[
+                "nexus_key_verified",
+                "nexus_key_checked_at",
+                "last_error",
+                "enable_stk_push",
+                "updated_at",
+            ]
+        )
+        _invalidate_daraja_settings_cache()
+        raise
+
+    row.stk_provider = StkProvider.NEXUS
+    if (nexus_api_key or "").strip():
+        row.nexus_api_key = key
+    collection_id = (nexus_collection_id or "").strip()
+    if collection_id:
+        row.nexus_collection_id = collection_id
+    elif verified.get("collection_id"):
+        row.nexus_collection_id = verified["collection_id"]
+    row.nexus_key_verified = True
+    row.nexus_key_checked_at = timezone.now()
+    row.last_error = ""
+    update_fields = [
+        "stk_provider",
+        "nexus_api_key",
+        "nexus_collection_id",
+        "nexus_key_verified",
+        "nexus_key_checked_at",
+        "last_error",
+        "updated_at",
+    ]
+    if enable_stk_push is not None:
+        row.enable_stk_push = bool(enable_stk_push)
+        update_fields.append("enable_stk_push")
+    elif not row.enable_stk_push:
+        row.enable_stk_push = True
+        update_fields.append("enable_stk_push")
+    row.save(update_fields=update_fields)
+    _invalidate_daraja_settings_cache()
     return get_daraja_settings()
 
 
@@ -2508,6 +2718,94 @@ def set_mpesa_payment_details(
     )
     _invalidate_pos_settings_cache()
     return settings_row
+
+
+# Company POS toggles that gate HR permission columns / analytics sections.
+POS_EMPLOYEE_PERMISSION_LINKS: dict[str, tuple[str, str, str]] = {
+    "enable_sale": ("my-shop", "sale", "Cash sale"),
+    "enable_credit": ("my-shop", "credit", "Credit sale"),
+    "enable_quotation": ("my-shop", "quotation", "Quotation"),
+    "enable_trade_out": ("my-shop", "trade_out", "Trade out"),
+}
+
+_POS_FIELD_TO_ANALYTICS_SECTION = {
+    "enable_sale": "sales",
+    "enable_credit": "credits",
+    "enable_quotation": "quotations",
+    "enable_trade_out": "tradings",
+}
+
+_POS_FIELD_TO_RECEIPT_KIND = {
+    "enable_sale": "sale",
+    "enable_credit": "credit",
+    "enable_quotation": "quotation",
+    "enable_trade_out": "trade_out",
+}
+
+
+def company_pos_disabled_permission_keys(
+    pos: CompanyPosSettings | None = None,
+) -> frozenset[tuple[str, str]]:
+    row = pos or get_company_pos_settings()
+    disabled: set[tuple[str, str]] = set()
+    for field, (module_slug, submodule_slug, _label) in POS_EMPLOYEE_PERMISSION_LINKS.items():
+        if not bool(getattr(row, field, True)):
+            disabled.add((module_slug, submodule_slug))
+            analytics_slug = _POS_FIELD_TO_ANALYTICS_SECTION.get(field)
+            if analytics_slug:
+                disabled.add(("analytics", analytics_slug))
+    if not row.enabled_print_channels():
+        disabled.add(("my-shop", "print"))
+    return frozenset(disabled)
+
+
+def company_pos_permission_visible(
+    module_slug: str,
+    submodule_slug: str,
+    *,
+    pos: CompanyPosSettings | None = None,
+) -> bool:
+    return (module_slug, submodule_slug) not in company_pos_disabled_permission_keys(pos)
+
+
+def company_pos_analytics_section_visible(
+    section_slug: str,
+    *,
+    pos: CompanyPosSettings | None = None,
+) -> bool:
+    slug = (section_slug or "").strip().lower()
+    row = pos or get_company_pos_settings()
+    for field, analytics_slug in _POS_FIELD_TO_ANALYTICS_SECTION.items():
+        if slug == analytics_slug and not bool(getattr(row, field, True)):
+            return False
+    return True
+
+
+def company_pos_receipt_kind_visible(
+    kind: str,
+    *,
+    pos: CompanyPosSettings | None = None,
+) -> bool:
+    key = (kind or "").strip().lower()
+    row = pos or get_company_pos_settings()
+    for field, receipt_kind in _POS_FIELD_TO_RECEIPT_KIND.items():
+        if key == receipt_kind and not bool(getattr(row, field, True)):
+            return False
+    return True
+
+
+def filter_submodules_for_company_pos(
+    module_slug: str,
+    submodules,
+    *,
+    pos: CompanyPosSettings | None = None,
+):
+    disabled = company_pos_disabled_permission_keys(pos)
+    return [
+        sub
+        for sub in submodules
+        if (module_slug, sub["slug"]) not in disabled
+    ]
 
 
 def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict:

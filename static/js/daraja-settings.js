@@ -16,13 +16,151 @@
     "";
 
   const form = root.querySelector("[data-daraja-form]");
+  const nexusForm = root.querySelector("[data-nexus-form]");
   const stkToggle = root.querySelector("[data-daraja-stk-toggle]");
   const stkState = root.querySelector("[data-daraja-stk-state]");
   const statusEl = root.querySelector("[data-daraja-status]");
+  const nexusStatusEl = root.querySelector("[data-nexus-status]");
   const messageEl = root.querySelector("[data-daraja-message]");
+  const nexusMessageEl = root.querySelector("[data-nexus-message]");
   const stkMessageEl = root.querySelector("[data-daraja-stk-message]");
   const readyHint = root.querySelector("[data-daraja-ready-hint]");
   const saveBtn = root.querySelector("[data-daraja-save]");
+  const nexusSaveBtn = root.querySelector("[data-nexus-save]");
+  const darajaPanel = root.querySelector('[data-stk-panel="daraja"]');
+  const nexusPanel = root.querySelector('[data-stk-panel="nexus"]');
+  const providerSection = root.querySelector("[data-stk-provider-section]");
+  const followSections = root.querySelectorAll("[data-stk-follow-section]");
+  const envHiddenInput = root.querySelector("[data-daraja-environment-value]");
+  const providerPicker = root.querySelector("[data-stk-provider-picker]");
+  const providerIntro = root.querySelector("[data-stk-provider-intro]");
+  const sandboxDarajaNote = root.querySelector("[data-stk-sandbox-daraja-note]");
+
+  function selectedEnvironment() {
+    return root.querySelector("[data-daraja-environment]:checked")?.value || "";
+  }
+
+  function isProductionEnv(data) {
+    if (data && data.environment) {
+      return data.environment === "production";
+    }
+    return selectedEnvironment() === "production";
+  }
+
+  function updateEnvironmentLabels(label) {
+    const text = label || "this environment";
+    root.querySelectorAll("[data-daraja-env-label]").forEach((el) => {
+      el.textContent = text;
+    });
+  }
+
+  function syncEnvironmentHidden() {
+    const value = selectedEnvironment();
+    if (envHiddenInput && value) {
+      envHiddenInput.value = value;
+    }
+  }
+
+  function revealFollowSections() {
+    followSections.forEach((section) => {
+      section.hidden = false;
+    });
+  }
+
+  function revealAfterEnvironment() {
+    syncSandboxProviderUI(null);
+    if (providerSection && selectedEnvironment() && isProductionEnv(null)) {
+      providerSection.hidden = false;
+    }
+    const hasProvider =
+      root.querySelector("[data-stk-provider]:checked") ||
+      selectedEnvironment() === "sandbox";
+    if (hasProvider) {
+      revealFollowSections();
+    }
+  }
+
+  /** Instant UI when Sandbox/Production or provider changes (no server wait). */
+  function applyClientSelection() {
+    syncEnvironmentHidden();
+    syncSandboxProviderUI(null);
+    revealAfterEnvironment();
+    syncProviderPanels(null);
+    const label = root
+      .querySelector("[data-daraja-environment]:checked")
+      ?.closest(".daraja-env-option")
+      ?.querySelector("strong")?.textContent;
+    if (label) updateEnvironmentLabels(label);
+    const snapshot = {
+      environment: selectedEnvironment(),
+      stk_provider:
+        root.querySelector("[data-stk-provider]:checked")?.value || "daraja",
+      uses_nexus_stk: usesNexus(null),
+      nexus_stk_allowed: isProductionEnv(null),
+      credentials_valid: root.dataset.darajaCredentialsValid === "1",
+      nexus_key_verified: root.dataset.darajaNexusVerified === "1",
+      has_callback_base: root.dataset.darajaHasCallback === "1",
+      enable_stk_push: Boolean(stkToggle?.checked),
+      is_ready_for_stk: false,
+    };
+    renderReadyHint(snapshot);
+    root.dataset.darajaCanEnableStk = canEnableStk(snapshot) ? "1" : "0";
+  }
+
+  function mergeServerState(data) {
+    if (!data) return;
+    if (typeof data.credentials_valid === "boolean") {
+      root.dataset.darajaCredentialsValid = data.credentials_valid ? "1" : "0";
+    }
+    if (typeof data.nexus_key_verified === "boolean") {
+      root.dataset.darajaNexusVerified = data.nexus_key_verified ? "1" : "0";
+    }
+    if (typeof data.has_callback_base === "boolean") {
+      root.dataset.darajaHasCallback = data.has_callback_base ? "1" : "0";
+    }
+    renderStatus(data);
+  }
+
+  function usesNexus(data) {
+    if (data) {
+      if (data.nexus_stk_allowed === false || data.environment === "sandbox") {
+        return false;
+      }
+      return (
+        data.uses_nexus_stk === true ||
+        data.stk_provider === "nexus" ||
+        data.stk_provider === "nexus_rushtech"
+      );
+    }
+    if (!isProductionEnv(null)) return false;
+    return Boolean(
+      root.querySelector('[data-stk-provider][value="nexus"]:checked') ||
+        root.querySelector('[data-stk-provider][value="nexus_rushtech"]:checked')
+    );
+  }
+
+  function syncSandboxProviderUI(data) {
+    const production = isProductionEnv(data);
+    if (providerPicker) providerPicker.hidden = !production;
+    if (providerSection && !production) providerSection.hidden = true;
+    if (sandboxDarajaNote) sandboxDarajaNote.hidden = true;
+    if (providerIntro) providerIntro.hidden = true;
+    const darajaInput = root.querySelector('[data-stk-provider][value="daraja"]');
+    const nexusInput = root.querySelector('[data-stk-provider][value="nexus"]');
+    if (nexusInput) nexusInput.disabled = !production;
+    if (!production && darajaInput) {
+      darajaInput.checked = true;
+      darajaInput.closest(".daraja-env-option")?.classList.add("is-active");
+      nexusInput?.closest(".daraja-env-option")?.classList.remove("is-active");
+    }
+  }
+
+  function canEnableStk(data) {
+    if (usesNexus(data)) {
+      return Boolean(data.nexus_key_verified);
+    }
+    return Boolean(data.credentials_valid && data.has_callback_base);
+  }
 
   function setMessage(text, { error = false } = {}) {
     if (!messageEl) return;
@@ -30,6 +168,14 @@
     messageEl.textContent = text || "";
     messageEl.classList.toggle("is-error", Boolean(error));
     messageEl.classList.toggle("is-ok", Boolean(text) && !error);
+  }
+
+  function setNexusMessage(text, { error = false } = {}) {
+    if (!nexusMessageEl) return;
+    nexusMessageEl.hidden = !text;
+    nexusMessageEl.textContent = text || "";
+    nexusMessageEl.classList.toggle("is-error", Boolean(error));
+    nexusMessageEl.classList.toggle("is-ok", Boolean(text) && !error);
   }
 
   function setStkMessage(text, { error = false } = {}) {
@@ -45,52 +191,79 @@
     stkToggle?.closest(".perm-switch")?.classList.toggle("is-denied", !enabled);
   }
 
-  function renderStatus(data) {
-    if (!statusEl) return;
-    const env = data.environment_label || data.environment || "Daraja";
-    if (data.credentials_valid) {
-      statusEl.innerHTML = `<span class="daraja-status-pill is-ok">Verified · ${env}</span>`;
-    } else if (data.last_error) {
-      statusEl.innerHTML = `<span class="daraja-status-pill is-bad">Not verified</span><em>${data.last_error}</em>`;
+  function syncProviderPanels(data) {
+    const nexus = data
+      ? usesNexus(data)
+      : Boolean(
+          root.querySelector('[data-stk-provider][value="nexus"]:checked') ||
+            root.querySelector('[data-stk-provider][value="nexus_rushtech"]:checked')
+        );
+    if (darajaPanel) darajaPanel.hidden = nexus;
+    if (nexusPanel) nexusPanel.hidden = !nexus;
+    root.querySelectorAll("[data-stk-provider]").forEach((input) => {
+      const option = input.closest(".daraja-env-option");
+      if (option) {
+        option.classList.toggle("is-active", input.checked);
+      }
+    });
+  }
+
+  function renderNexusStatus(data) {
+    if (!nexusStatusEl) return;
+    if (data.nexus_key_verified) {
+      nexusStatusEl.innerHTML = `<span class="daraja-status-pill is-ok">Verified</span>`;
+    } else if (usesNexus(data) && data.last_error) {
+      nexusStatusEl.innerHTML = `<span class="daraja-status-pill is-bad">Not verified</span><em>${data.last_error}</em>`;
     } else {
-      statusEl.innerHTML =
-        `<span class="daraja-status-pill">Not configured</span><em>Enter credentials and save to verify.</em>`;
+      nexusStatusEl.innerHTML = `<span class="daraja-status-pill">Not set</span>`;
     }
-    root.dataset.darajaCanEnableStk =
-      data.credentials_valid && data.has_callback_base ? "1" : "0";
-    if (readyHint) {
-      if (data.is_ready_for_stk) {
-        readyHint.textContent =
-          "Ready — STK Push can run on shop checkout and client account pay.";
-      } else if (!data.has_callback_base) {
-        readyHint.textContent =
-          "STK stays off until a public HTTPS callback is available. Keep ngrok http 8000 running — it is detected automatically even on localhost.";
-      } else if (data.credentials_valid && !data.enable_stk_push) {
-        readyHint.textContent =
-          "Credentials verified. Turn this on to activate STK Push.";
-      } else if (!data.credentials_valid) {
-        readyHint.textContent =
-          "Save and verify credentials below before enabling.";
+    const collectionInput = root.querySelector("[data-nexus-collection-id]");
+    if (collectionInput && data.nexus_collection_id) {
+      collectionInput.value = data.nexus_collection_id;
+    }
+  }
+
+  function renderReadyHint(data) {
+    if (!readyHint) return;
+    if (data.is_ready_for_stk) {
+      readyHint.textContent = "Ready.";
+    } else if (!usesNexus(data) && !data.has_callback_base) {
+      readyHint.textContent = "Needs public HTTPS callback (ngrok or live domain).";
+    } else if (!usesNexus(data) && !data.credentials_valid) {
+      readyHint.textContent = "Save credentials below.";
+    } else if (usesNexus(data) && !data.nexus_key_verified) {
+      readyHint.textContent = "Save Nexus key below.";
+    } else {
+      readyHint.textContent = "Configure below. Shop cart: Settings → POS.";
+    }
+  }
+
+  function renderStatus(data) {
+    const env = data.environment_label || data.environment || "Daraja";
+    if (statusEl) {
+      if (data.credentials_valid) {
+        statusEl.innerHTML = `<span class="daraja-status-pill is-ok">Verified</span>`;
+      } else if (data.last_error && !usesNexus(data)) {
+        statusEl.innerHTML = `<span class="daraja-status-pill is-bad">Not verified</span><em>${data.last_error}</em>`;
       } else {
-        readyHint.textContent = "STK Push is not ready yet.";
+        statusEl.innerHTML = `<span class="daraja-status-pill">Not set</span>`;
       }
     }
+    root.dataset.darajaCanEnableStk = canEnableStk(data) ? "1" : "0";
+    renderReadyHint(data);
+    renderNexusStatus(data);
+    updateEnvironmentLabels(data.environment_label);
+    syncEnvironmentHidden();
+    syncSandboxProviderUI(data);
+    revealAfterEnvironment();
+    syncProviderPanels(data);
     const callbackInput = root.querySelector("[data-daraja-callback-base]");
     if (callbackInput && data.callback_base_url) {
       callbackInput.value = data.callback_base_url;
-    }
     const fullEl = root.querySelector("[data-daraja-callback-full]");
-    const hintEm = root.querySelector(".daraja-field-hint");
-    if (data.callback_url && hintEm) {
-      if (fullEl) {
-        fullEl.textContent = data.callback_url;
-      } else {
-        const code = document.createElement("code");
-        code.setAttribute("data-daraja-callback-full", "");
-        code.textContent = data.callback_url;
-        hintEm.appendChild(document.createTextNode(" Full callback path: "));
-        hintEm.appendChild(code);
-      }
+    if (fullEl && data.callback_url) {
+      fullEl.textContent = data.callback_url;
+      fullEl.hidden = false;
     }
   }
 
@@ -115,14 +288,109 @@
     return data;
   }
 
+  let envSaveTimer = 0;
+  let envSaveInFlight = null;
+
+  function queueEnvironmentSave(environment) {
+    window.clearTimeout(envSaveTimer);
+    envSaveTimer = window.setTimeout(() => {
+      if (envSaveInFlight) envSaveInFlight.abort();
+      const controller = new AbortController();
+      envSaveInFlight = controller;
+      fetch(window.location.pathname, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "X-CSRFToken": csrfToken,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          action: "save_daraja_environment",
+          environment,
+        }),
+        credentials: "same-origin",
+      })
+        .then((response) => response.json().then((data) => ({ response, data })))
+        .then(({ response, data }) => {
+          if (!response.ok || !data.ok) {
+            const error = new Error(data.error || "Could not save environment.");
+            error.payload = data;
+            throw error;
+          }
+          mergeServerState(data);
+        })
+        .catch((err) => {
+          if (err.name === "AbortError") return;
+          if (err.payload) mergeServerState(err.payload);
+          setStkMessage(err.message || "Could not save environment.", {
+            error: true,
+          });
+        })
+        .finally(() => {
+          if (envSaveInFlight === controller) envSaveInFlight = null;
+        });
+    }, 120);
+  }
+
   root.querySelectorAll("[data-daraja-environment]").forEach((input) => {
     input.addEventListener("change", () => {
-      root.querySelectorAll(".daraja-env-option").forEach((option) => {
+      const picker = input.closest(".daraja-env-picker");
+      picker?.querySelectorAll(".daraja-env-option").forEach((option) => {
         option.classList.toggle(
           "is-active",
           option.querySelector("input")?.checked
         );
       });
+      applyClientSelection();
+      queueEnvironmentSave(input.value);
+    });
+  });
+
+  root.querySelectorAll("[data-stk-provider]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      if (!input.checked) return;
+      if (!selectedEnvironment()) {
+        setStkMessage("Choose Sandbox or Production first.", { error: true });
+        input.checked = false;
+        return;
+      }
+      if (
+        (input.value === "nexus" || input.value === "nexus_rushtech") &&
+        !isProductionEnv(null)
+      ) {
+        setStkMessage(
+          "Sandbox uses Safaricom Daraja test credentials only.",
+          { error: true }
+        );
+        input.checked = false;
+        const daraja = root.querySelector('[data-stk-provider][value="daraja"]');
+        if (daraja) daraja.checked = true;
+        syncProviderPanels(null);
+        return;
+      }
+      applyClientSelection();
+      setStkMessage("");
+      postAction(
+        new URLSearchParams({
+          action: "save_stk_provider",
+          stk_provider: input.value,
+        })
+      )
+        .then((data) => {
+          mergeServerState(data);
+          if (stkToggle) {
+            stkToggle.checked = Boolean(data.enable_stk_push);
+            setStkLabel(Boolean(data.enable_stk_push));
+          }
+        })
+        .catch((err) => {
+          if (err.payload) mergeServerState(err.payload);
+          setStkMessage(err.message || "Could not switch STK provider.", {
+            error: true,
+          });
+        });
     });
   });
 
@@ -140,8 +408,13 @@
       ) {
         stkToggle.checked = previous;
         setStkLabel(previous);
+        const nexusSelected = root.querySelector(
+          '[data-stk-provider][value="nexus"]'
+        )?.checked;
         setStkMessage(
-          "Start ngrok with: ngrok http 8000 — then refresh this page and enable STK.",
+          nexusSelected
+            ? "Save and verify your Nexus collection API key first."
+            : "Start ngrok with: ngrok http 8000 — then refresh this page and enable STK.",
           { error: true }
         );
         return;
@@ -180,6 +453,7 @@
       event.preventDefault();
       setMessage("Verifying with Safaricom…");
       if (saveBtn) saveBtn.disabled = true;
+      syncEnvironmentHidden();
       const body = new URLSearchParams(new FormData(form));
       body.set("action", "save_daraja_credentials");
       try {
@@ -209,6 +483,40 @@
         setMessage(err.message || "Verification failed.", { error: true });
       } finally {
         if (saveBtn) saveBtn.disabled = false;
+      }
+    });
+  }
+
+  applyClientSelection();
+
+  if (nexusForm) {
+    nexusForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setNexusMessage("Verifying with Nexus collections…");
+      if (nexusSaveBtn) nexusSaveBtn.disabled = true;
+      const body = new URLSearchParams(new FormData(nexusForm));
+      body.set("action", "save_nexus_credentials");
+      try {
+        const data = await postAction(body);
+        renderStatus(data);
+        if (stkToggle) {
+          stkToggle.checked = Boolean(data.enable_stk_push);
+          setStkLabel(Boolean(data.enable_stk_push));
+        }
+        const keyInput = nexusForm.querySelector("[name=nexus_api_key]");
+        if (keyInput) {
+          keyInput.value = "";
+          keyInput.required = false;
+          keyInput.placeholder = "Saved — enter a new key to replace";
+        }
+        setNexusMessage(
+          data.message || "Nexus collection API key verified and saved."
+        );
+      } catch (err) {
+        if (err.payload) renderStatus(err.payload);
+        setNexusMessage(err.message || "Verification failed.", { error: true });
+      } finally {
+        if (nexusSaveBtn) nexusSaveBtn.disabled = false;
       }
     });
   }

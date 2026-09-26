@@ -483,6 +483,8 @@ def _render_hr_permissions(request, profile, section_meta):
 
     modules = []
     for module in permission_modules_for_display():
+        if not module["submodules"]:
+            continue
         rows = []
         for employee in employees:
             toggles = []

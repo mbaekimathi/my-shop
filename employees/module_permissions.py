@@ -90,6 +90,11 @@ def employee_may(profile, module_slug: str, submodule_slug: str) -> bool:
         # Unknown keys are not gated by this matrix.
         return True
 
+    from shops.services import company_pos_permission_visible
+
+    if not company_pos_permission_visible(module_slug, submodule_slug):
+        return False
+
     cache = _cache_for(profile)
     return cache.get((module_slug, submodule_slug), True)
 

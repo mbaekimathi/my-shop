@@ -164,15 +164,18 @@ assert _DASHBOARD_SLUGS <= _PERMISSION_SLUGS, (
 
 def permission_modules_for_display():
     """Permission modules with the shop-floor label taken from company profile."""
-    from shops.services import get_company_display_name
+    from shops.services import filter_submodules_for_company_pos, get_company_display_name
 
     brand = get_company_display_name()
     modules = []
     for module in PERMISSION_MODULES:
+        submodules = filter_submodules_for_company_pos(
+            module["slug"], module["submodules"]
+        )
+        payload = {**module, "submodules": submodules}
         if module["slug"] == "my-shop":
-            modules.append({**module, "label": brand})
-        else:
-            modules.append(module)
+            payload["label"] = brand
+        modules.append(payload)
     return modules
 
 

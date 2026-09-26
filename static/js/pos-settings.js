@@ -16,6 +16,11 @@
     "";
 
   const enabledCountEl = root.querySelector("[data-pos-enabled-count]");
+  const isCompanyPos = root.hasAttribute("data-company-pos-settings");
+  const stkToggle = root.querySelector("[data-stk-shop-toggle]");
+  const stkState = root.querySelector("[data-stk-shop-state]");
+  const stkHint = root.querySelector("[data-stk-shop-hint]");
+  const stkMessage = root.querySelector("[data-stk-shop-message]");
 
   function syncEnabledCount() {
     if (!enabledCountEl) return;
@@ -39,6 +44,67 @@
     taxRow.hidden = !enabled;
   }
 
+  function syncEmployeePermLinks(field, enabled) {
+    if (!field) return;
+    root.querySelectorAll(
+      `[data-pos-employee-link][data-pos-field="${field}"]`
+    ).forEach((link) => {
+      link.hidden = !enabled;
+    });
+  }
+
+  function setStkMessage(text, { error = false } = {}) {
+    if (!stkMessage) return;
+    stkMessage.hidden = !text;
+    stkMessage.textContent = text || "";
+    stkMessage.classList.toggle("is-error", Boolean(error));
+    stkMessage.classList.toggle("is-ok", Boolean(text) && !error);
+  }
+
+  function setStkToggleLabel(enabled) {
+    if (stkState) stkState.textContent = enabled ? "On" : "Off";
+    stkToggle?.closest(".perm-switch")?.classList.toggle("is-denied", !enabled);
+  }
+
+  function optimisticMpesaStkHint() {
+    if (!isCompanyPos || !stkHint) return;
+    const mpesa =
+      root.querySelector('[data-pos-toggle][data-field="enable_mpesa"]')?.checked ||
+      root.querySelector('[data-pos-toggle][data-field="enable_cash_mpesa"]')
+        ?.checked;
+    if (!mpesa) {
+      stkHint.textContent = "Enable M-Pesa below.";
+      root.dataset.stkCanEnable = "0";
+      return;
+    }
+    if (root.dataset.stkCanEnable === "1") {
+      stkHint.textContent = stkToggle?.checked
+        ? "Active on cart."
+        : "Ready to enable.";
+    }
+  }
+
+  function renderStkShopStatus(data) {
+    if (!data || !isCompanyPos) return;
+    if (typeof data.stk_can_enable_on_pos === "boolean") {
+      root.dataset.stkCanEnable = data.stk_can_enable_on_pos ? "1" : "0";
+    }
+    if (stkToggle && typeof data.enable_stk_push === "boolean") {
+      stkToggle.checked = data.enable_stk_push;
+      setStkToggleLabel(data.enable_stk_push);
+    }
+    if (!stkHint) return;
+    if (data.stk_ready_for_shop) {
+      stkHint.textContent = "Active on cart.";
+    } else if (!data.mpesa_checkout_enabled) {
+      stkHint.textContent = "Enable M-Pesa below.";
+    } else if (!data.stk_credentials_ready) {
+      stkHint.textContent = "Set up Daraja first.";
+    } else {
+      stkHint.textContent = "Ready to enable.";
+    }
+  }
+
   async function postSettings(body) {
     const response = await fetch(window.location.pathname, {
       method: "POST",
@@ -53,7 +119,9 @@
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) {
-      throw new Error(data.error || "Could not save setting.");
+      const error = new Error(data.error || "Could not save setting.");
+      error.payload = data;
+      throw error;
     }
     return data;
   }
@@ -63,6 +131,7 @@
     if (input.dataset.field === "enable_tax") {
       syncTaxRow(input.checked);
     }
+    syncEmployeePermLinks(input.dataset.field, input.checked);
 
     input.addEventListener("change", async () => {
       const enabled = input.checked;
@@ -71,7 +140,14 @@
       if (input.dataset.field === "enable_tax") {
         syncTaxRow(enabled);
       }
-      input.disabled = true;
+      syncEmployeePermLinks(input.dataset.field, enabled);
+      if (
+        isCompanyPos &&
+        (input.dataset.field === "enable_mpesa" ||
+          input.dataset.field === "enable_cash_mpesa")
+      ) {
+        optimisticMpesaStkHint();
+      }
       input.closest(".perm-switch")?.classList.add("is-saving");
 
       const body = new URLSearchParams({
@@ -88,20 +164,71 @@
           syncTaxRow(Boolean(data.enabled));
         }
         syncEnabledCount();
+        if (
+          isCompanyPos &&
+          (input.dataset.field === "enable_mpesa" ||
+            input.dataset.field === "enable_cash_mpesa")
+        ) {
+          renderStkShopStatus(data);
+        }
       } catch (error) {
         input.checked = previous;
         setStateLabel(input, previous);
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(previous);
         }
+        syncEmployeePermLinks(input.dataset.field, previous);
         syncEnabledCount();
         window.alert(error.message || "Could not save setting.");
       } finally {
-        input.disabled = false;
         input.closest(".perm-switch")?.classList.remove("is-saving");
       }
     });
   });
+
+  if (isCompanyPos && stkToggle) {
+    setStkToggleLabel(stkToggle.checked);
+    stkToggle.addEventListener("change", async () => {
+      const enabled = stkToggle.checked;
+      const previous = !enabled;
+      setStkToggleLabel(enabled);
+      setStkMessage("");
+      if (enabled && root.dataset.stkCanEnable === "0") {
+        stkToggle.checked = previous;
+        setStkToggleLabel(previous);
+        setStkMessage(
+          stkHint?.textContent ||
+            "Turn on M-Pesa and configure Daraja settings first.",
+          { error: true }
+        );
+        return;
+      }
+      stkToggle.closest(".perm-switch")?.classList.add("is-saving");
+      try {
+        const data = await postSettings(
+          new URLSearchParams({
+            action: "toggle_shop_stk_push",
+            enabled: enabled ? "1" : "0",
+          })
+        );
+        renderStkShopStatus(data);
+        setStkMessage(
+          data.enable_stk_push
+            ? "STK Push enabled for shop checkout."
+            : "STK Push disabled on shop checkout."
+        );
+      } catch (error) {
+        stkToggle.checked = previous;
+        setStkToggleLabel(previous);
+        if (error.payload) renderStkShopStatus(error.payload);
+        setStkMessage(error.message || "Could not update STK Push.", {
+          error: true,
+        });
+      } finally {
+        stkToggle.closest(".perm-switch")?.classList.remove("is-saving");
+      }
+    });
+  }
 
   if (taxInput) {
     let taxTimer = 0;

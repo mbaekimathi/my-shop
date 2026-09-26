@@ -9,39 +9,67 @@
   class="item-panel item-panel--dense item-panel--pos-settings"
   data-animate="rise"
   data-pos-settings
+  data-company-pos-settings
+  data-stk-can-enable="{% if stk_shop.stk_can_enable_on_pos %}1{% else %}0{% endif %}"
 >
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
         <p class="stock-kicker">Settings · POS</p>
         <h2>{{ meta.headline }}</h2>
-        <p>{{ meta.summary }} Toggle what appears on the shop checkout page.</p>
-      </div>
-      <div class="stock-stats">
-        <p class="stock-stat">
-          <strong data-pos-enabled-count>{{ pos_enabled_count }}</strong>
-          <span>of {{ pos_toggle_count }} on</span>
-        </p>
-        <p class="stock-stat">
-          <strong>{{ pos_setting_groups|length }}</strong>
-          <span>group{{ pos_setting_groups|length|pluralize }}</span>
-        </p>
+        <p>Shop checkout options.</p>
       </div>
     </div>
   </header>
 
   <div class="pos-settings-groups">
+    <section class="pos-settings-group" data-stk-shop-group>
+      <ul class="pos-settings-list">
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>STK Push on shop</strong>
+            <p data-stk-shop-hint>
+              {% if stk_shop.stk_ready_for_shop %}Active on cart.{% elif not stk_shop.mpesa_checkout_enabled %}Enable M-Pesa below.{% elif not stk_shop.stk_credentials_ready %}Set up <a href="{{ daraja_settings_url }}">Daraja</a> first.{% else %}Ready to enable.{% endif %}
+            </p>
+            <p class="daraja-form-message" data-stk-shop-message hidden></p>
+          </div>
+          <label class="perm-switch{% if not stk_shop.enable_stk_push %} is-denied{% endif %}">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if stk_shop.enable_stk_push %}checked{% endif %}
+              data-stk-shop-toggle
+              aria-label="Enable STK Push on shop"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state" data-stk-shop-state>
+              {% if stk_shop.enable_stk_push %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+      </ul>
+    </section>
+
     {% for group in pos_setting_groups %}
     <section class="pos-settings-group">
       <div class="pos-settings-group-head">
         <h3>{{ group.title }}</h3>
-        <p>{{ group.summary }}</p>
       </div>
       <ul class="pos-settings-list">
         {% for toggle in group.toggles %}
         <li class="pos-settings-row">
           <div class="pos-settings-copy">
             <strong>{{ toggle.label }}</strong>
+            {% if toggle.employee_perm %}
+            <p class="pos-settings-employee-link">
+              <a
+                href="{{ toggle.employee_perm.href }}"
+                data-pos-employee-link
+                data-pos-field="{{ toggle.field }}"
+                {% if not toggle.enabled %}hidden{% endif %}
+              >Permissions · {{ toggle.employee_perm.label }}</a>
+            </p>
+            {% endif %}
           </div>
           <label class="perm-switch">
             <input
@@ -89,5 +117,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}?v=2"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=7"></script>
 {% endblock %}

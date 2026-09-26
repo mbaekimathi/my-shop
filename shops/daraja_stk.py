@@ -19,6 +19,7 @@ from .models import (
     MpesaStkPayment,
     MpesaStkPurpose,
     MpesaStkStatus,
+    StkProvider,
 )
 from .services import (
     _normalize_phone,
@@ -540,6 +541,21 @@ def initiate_stk_push(
     if request is not None:
         sync_callback_base_from_request(request, persist=True)
     row = get_daraja_settings()
+    if row.uses_nexus_stk():
+        from shops.nexus_stk import initiate_nexus_stk_push
+
+        return initiate_nexus_stk_push(
+            purpose=purpose,
+            amount=amount,
+            phone=phone,
+            account_reference=account_reference,
+            description=description,
+            shop=shop,
+            profile=profile,
+            account_kind=account_kind,
+            account_id=account_id,
+            receipt=receipt,
+        )
     if not row.is_ready_for_stk():
         reason = row.stk_not_ready_reason()
         if row.enable_stk_push and row.credentials_valid and not row.has_usable_callback_base():
@@ -614,6 +630,7 @@ def initiate_stk_push(
         created_by=profile,
         status=MpesaStkStatus.PENDING,
         stk_business_shortcode=business_shortcode,
+        stk_provider=StkProvider.DARAJA,
     )
 
     request_obj = urllib.request.Request(
@@ -773,6 +790,11 @@ def _stk_query_allowed(payment: MpesaStkPayment) -> bool:
 
 def query_stk_push_status(payment: MpesaStkPayment) -> MpesaStkPayment:
     """Ask Safaricom for the latest STK result when the callback may be delayed."""
+    from shops.nexus_stk import payment_uses_nexus, query_nexus_stk_status
+
+    if payment_uses_nexus(payment):
+        return query_nexus_stk_status(payment)
+
     checkout_id = (payment.checkout_request_id or "").strip()
     if not checkout_id:
         raise ValidationError("STK payment has no checkout request id.")

@@ -105,7 +105,7 @@
         <p>Short prefix + 4-digit sequence (example: <code>S0001</code>).</p>
       </div>
       <ul class="pos-settings-list receipt-format-list">
-        <li class="pos-settings-row pos-settings-row--format">
+        <li class="pos-settings-row pos-settings-row--format" data-receipt-kind-row="sale"{% if not pos_settings.enable_sale %} hidden{% endif %}>
           <div class="pos-settings-copy">
             <strong>Sale</strong>
             <p data-receipt-format-preview="sale">Example: {{ receipt_format_previews.sale }}</p>
@@ -122,7 +122,7 @@
             >
           </label>
         </li>
-        <li class="pos-settings-row pos-settings-row--format">
+        <li class="pos-settings-row pos-settings-row--format" data-receipt-kind-row="credit"{% if not pos_settings.enable_credit %} hidden{% endif %}>
           <div class="pos-settings-copy">
             <strong>Credit</strong>
             <p data-receipt-format-preview="credit">Example: {{ receipt_format_previews.credit }}</p>
@@ -139,7 +139,7 @@
             >
           </label>
         </li>
-        <li class="pos-settings-row pos-settings-row--format">
+        <li class="pos-settings-row pos-settings-row--format" data-receipt-kind-row="quotation"{% if not pos_settings.enable_quotation %} hidden{% endif %}>
           <div class="pos-settings-copy">
             <strong>Quotation</strong>
             <p data-receipt-format-preview="quotation">Example: {{ receipt_format_previews.quotation }}</p>
@@ -156,7 +156,7 @@
             >
           </label>
         </li>
-        <li class="pos-settings-row pos-settings-row--format">
+        <li class="pos-settings-row pos-settings-row--format" data-receipt-kind-row="trade_out"{% if not pos_settings.enable_trade_out %} hidden{% endif %}>
           <div class="pos-settings-copy">
             <strong>Trade out</strong>
             <p data-receipt-format-preview="trade_out">Example: {{ receipt_format_previews.trade_out }}</p>
