@@ -88,3 +88,40 @@ class NexusStkSettingsTests(TestCase):
         self.assertContains(response, "Enable STK Push")
         self.assertContains(response, "Nexus collections")
         self.assertContains(response, "data-nexus-form")
+
+
+class NexusVerifyApiKeyTests(TestCase):
+    @patch("shops.nexus_stk.urllib.request.urlopen")
+    def test_verify_uses_post_not_get(self, urlopen_mock):
+        from io import BytesIO
+
+        from shops.nexus_stk import verify_nexus_collection_api_key
+
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = (
+            b'{"collection_id": "ABC123", "success": true}'
+        )
+
+        result = verify_nexus_collection_api_key("cm_test_key_12345678")
+        self.assertEqual(result["collection_id"], "ABC123")
+
+        request_obj = urlopen_mock.call_args[0][0]
+        self.assertEqual(request_obj.method, "POST")
+        self.assertNotEqual(request_obj.method, "GET")
+
+    @patch("shops.nexus_stk.urllib.request.urlopen")
+    def test_verify_accepts_validation_error_when_key_works(self, urlopen_mock):
+        import urllib.error
+        from io import BytesIO
+
+        from shops.nexus_stk import verify_nexus_collection_api_key
+
+        urlopen_mock.side_effect = urllib.error.HTTPError(
+            url="https://example.test/stk/",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(b'{"detail": "Invalid phone number"}'),
+        )
+
+        result = verify_nexus_collection_api_key("cm_test_key_12345678")
+        self.assertTrue(result["ok"])

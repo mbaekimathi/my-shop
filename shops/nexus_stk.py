@@ -67,6 +67,8 @@ def _nexus_request(
                 detail = "; ".join(str(part) for part in detail)
         except Exception:
             detail = ""
+        if not detail and exc.code == 405:
+            detail = f'Method "{method}" not allowed.'
         message = str(detail).strip() or "Nexus collections API rejected the request."
         raise ValidationError(message) from exc
     except urllib.error.URLError as exc:
@@ -85,13 +87,7 @@ def _nexus_request(
     return payload
 
 
-def verify_nexus_collection_api_key(api_key: str) -> dict:
-    key = (api_key or "").strip()
-    if not key:
-        raise ValidationError("Nexus collection API key is required.")
-    if len(key) < 8:
-        raise ValidationError("Enter the full API key from your Nexus collection account.")
-    payload = _nexus_request(nexus_stk_url(), api_key=key, method="GET")
+def _collection_id_from_payload(payload: dict) -> str:
     collection_id = (
         payload.get("collection_id")
         or payload.get("collectionId")
@@ -100,10 +96,76 @@ def verify_nexus_collection_api_key(api_key: str) -> dict:
         or ""
     )
     if isinstance(collection_id, str):
-        collection_id = collection_id.strip()
-    else:
-        collection_id = str(collection_id or "").strip()
-    return {"ok": True, "collection_id": collection_id, "payload": payload}
+        return collection_id.strip()
+    return str(collection_id or "").strip()
+
+
+def _nexus_key_auth_error(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(
+        token in lowered
+        for token in (
+            "unauthorized",
+            "authentication",
+            "invalid api",
+            "invalid key",
+            "forbidden",
+            "permission denied",
+            "credentials",
+            "api key",
+        )
+    )
+
+
+def _nexus_key_accepted_validation_error(text: str) -> bool:
+    """True when the API authenticated the key but rejected probe field values."""
+    lowered = (text or "").lower()
+    if _nexus_key_auth_error(lowered):
+        return False
+    return any(
+        token in lowered
+        for token in (
+            "phone",
+            "amount",
+            "required",
+            "invalid",
+            "must be",
+            "field",
+            "minimum",
+            "greater than",
+        )
+    )
+
+
+def verify_nexus_collection_api_key(api_key: str) -> dict:
+    key = (api_key or "").strip()
+    if not key:
+        raise ValidationError("Nexus collection API key is required.")
+    if len(key) < 8:
+        raise ValidationError("Enter the full API key from your Nexus collection account.")
+
+    # Collections STK URL accepts POST only (GET returns "Method GET not allowed").
+    probe_body = {"phone": "254700000001", "amount": "0.01"}
+    try:
+        payload = _nexus_request(
+            nexus_stk_url(),
+            api_key=key,
+            method="POST",
+            body=probe_body,
+        )
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        if _nexus_key_auth_error(message):
+            raise
+        if _nexus_key_accepted_validation_error(message):
+            return {"ok": True, "collection_id": "", "payload": {}}
+        raise
+
+    return {
+        "ok": True,
+        "collection_id": _collection_id_from_payload(payload),
+        "payload": payload,
+    }
 
 
 def _party_phone(phone: str) -> str:
