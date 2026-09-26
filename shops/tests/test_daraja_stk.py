@@ -221,6 +221,26 @@ class DarajaStkQueryTests(TestCase):
         self.assertEqual(payment.status, MpesaStkStatus.SUCCESS)
         self.assertEqual(payment.mpesa_receipt_number, "ABC123")
 
+    def test_flat_nexus_callback_matches_public_reference(self):
+        payment = MpesaStkPayment.objects.create(
+            purpose=MpesaStkPurpose.SALE,
+            status=MpesaStkStatus.PENDING,
+            amount=Decimal("1500.00"),
+            phone="254795606115",
+            stk_provider="nexus",
+        )
+        handle_stk_callback(
+            {
+                "reference": str(payment.public_id),
+                "status": "success",
+                "mpesa_receipt_number": "THL9XYZ01",
+                "result_desc": "Payment completed.",
+            }
+        )
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, MpesaStkStatus.SUCCESS)
+        self.assertEqual(payment.mpesa_receipt_number, "THL9XYZ01")
+
 
 class DarajaStkHardeningTests(TestCase):
     def setUp(self):

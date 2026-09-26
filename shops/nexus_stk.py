@@ -243,7 +243,26 @@ def _pick_str(payload: dict, *keys: str) -> str:
     return ""
 
 
+def _unwrap_nexus_payload(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    inner = payload.get("data")
+    if isinstance(inner, dict):
+        return {**payload, **inner}
+    return payload
+
+
+def _nexus_callback_url(*, request=None) -> str:
+    try:
+        from shops.daraja_stk import _callback_url
+
+        return _callback_url(request=request)
+    except ValidationError:
+        return ""
+
+
 def _nexus_status_from_payload(payload: dict) -> tuple[str, str, str]:
+    payload = _unwrap_nexus_payload(payload)
     """Return (result_code, result_desc, mpesa_receipt) from a Nexus status body."""
     status = _pick_str(payload, "status", "state", "payment_status").lower()
     receipt = _pick_str(
@@ -254,7 +273,28 @@ def _nexus_status_from_payload(payload: dict) -> tuple[str, str, str]:
         "receipt_number",
         "receipt",
     )
-    desc = _pick_str(payload, "result_desc", "message", "detail", "customer_message")
+    desc = _pick_str(
+        payload,
+        "result_desc",
+        "ResultDesc",
+        "message",
+        "detail",
+        "customer_message",
+        "ResponseDescription",
+    )
+    result_code_raw = payload.get("ResultCode")
+    if result_code_raw is not None and str(result_code_raw).strip() != "":
+        code = str(result_code_raw).strip()
+        if code in ("0", "00"):
+            return "0", desc or "Payment confirmed.", receipt or _pick_str(
+                payload, "mpesa_receipt_number", "MpesaReceiptNumber"
+            )
+        if code in ("1032",):
+            return "1032", desc or "Payment cancelled.", receipt
+        if code in ("1037",):
+            return "1037", desc or "Payment expired.", receipt
+        return code, desc or "Payment failed.", receipt
+
     success_flag = payload.get("success")
     if success_flag is True or status in ("success", "completed", "paid", "ok"):
         return "0", desc or "Payment confirmed.", receipt
@@ -279,6 +319,7 @@ def initiate_nexus_stk_push(
     account_kind: str = "",
     account_id: int | None = None,
     receipt=None,
+    request=None,
 ) -> MpesaStkPayment:
     row = get_daraja_settings()
     if not row.is_ready_for_stk():
@@ -312,7 +353,14 @@ def initiate_nexus_stk_push(
     body = {
         "phone": party,
         "amount": f"{pay_amount:.2f}",
+        "reference": str(payment.public_id),
+        "client_reference": str(payment.public_id),
     }
+    callback = _nexus_callback_url(request=request)
+    if callback:
+        body["callback_url"] = callback
+        body["CallBackURL"] = callback
+
     try:
         payload = _nexus_request(
             nexus_stk_url(),
@@ -331,6 +379,7 @@ def initiate_nexus_stk_push(
         )
         raise
 
+    payload = _unwrap_nexus_payload(payload)
     checkout_id = _pick_str(
         payload,
         "checkout_request_id",
@@ -344,9 +393,15 @@ def initiate_nexus_stk_push(
         payload,
         "merchant_request_id",
         "MerchantRequestID",
-        "reference",
     )
+    response_code = str(payload.get("ResponseCode") or "").strip()
+    response_desc = _pick_str(payload, "ResponseDescription", "CustomerMessage")
     result_code, result_desc, receipt_no = _nexus_status_from_payload(payload)
+    if not result_code and response_code and response_code not in ("0", "00"):
+        result_code = response_code
+        result_desc = result_desc or response_desc or "STK Push was not accepted."
+    elif not result_code and response_code in ("0", "00") and not checkout_id:
+        result_desc = result_desc or response_desc
 
     payment.merchant_request_id = merchant_id
     payment.checkout_request_id = checkout_id or payment.public_id
@@ -401,7 +456,7 @@ def initiate_nexus_stk_push(
 
 
 def query_nexus_stk_status(payment: MpesaStkPayment) -> MpesaStkPayment:
-    """Best-effort status poll for Nexus STK (API shape may vary by deployment)."""
+    """Poll Nexus STK status (POST probes + optional GET by id)."""
     from shops.daraja_stk import _apply_stk_outcome
 
     row = get_daraja_settings()
@@ -409,29 +464,62 @@ def query_nexus_stk_status(payment: MpesaStkPayment) -> MpesaStkPayment:
     if not api_key:
         raise ValidationError("Nexus collection API key is missing.")
 
-    ref = (payment.checkout_request_id or payment.public_id or "").strip()
-    if not ref:
-        return payment
-
-    base = nexus_stk_url().rstrip("/")
-    # STK URL is POST-only; do not GET the collections/stk/ root.
-    candidates = [f"{base}/{ref}/"]
+    checkout_ref = (payment.checkout_request_id or "").strip()
+    public_ref = (payment.public_id or "").strip()
+    if checkout_ref == public_ref:
+        checkout_ref = ""
 
     payment.last_status_query_at = timezone.now()
     payment.save(update_fields=["last_status_query_at", "updated_at"])
 
+    base = nexus_stk_url().rstrip("/")
+    post_bodies = []
+    if checkout_ref:
+        post_bodies.extend(
+            [
+                {"checkout_request_id": checkout_ref},
+                {"CheckoutRequestID": checkout_ref},
+                {"request_id": checkout_ref},
+            ]
+        )
+    if public_ref:
+        post_bodies.append({"reference": public_ref, "client_reference": public_ref})
+
     payload = None
-    for url in candidates:
+    for body in post_bodies:
         try:
-            payload = _nexus_request(url, api_key=api_key, method="GET")
+            payload = _nexus_request(
+                nexus_stk_url(),
+                api_key=api_key,
+                method="POST",
+                body=body,
+            )
         except ValidationError:
             continue
         if payload:
             break
 
+    if payload is None and checkout_ref and checkout_ref != public_ref:
+        try:
+            payload = _nexus_request(
+                f"{base}/{checkout_ref}/",
+                api_key=api_key,
+                method="GET",
+            )
+        except ValidationError:
+            payload = None
+
     if not payload:
+        age = (timezone.now() - payment.created_at).total_seconds()
+        if age >= 75:
+            payment.result_desc = (
+                payment.result_desc
+                or "STK Push timed out. Customer did not confirm in time."
+            )
+            payment.save(update_fields=["result_desc", "updated_at"])
         return payment
 
+    payload = _unwrap_nexus_payload(payload)
     result_code, result_desc, receipt_no = _nexus_status_from_payload(payload)
     if not result_code:
         if result_desc:

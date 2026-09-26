@@ -585,6 +585,7 @@ def initiate_stk_push(
             account_kind=account_kind,
             account_id=account_id,
             receipt=receipt,
+            request=request,
         )
     if not row.is_ready_for_stk():
         reason = row.stk_not_ready_reason()
@@ -925,8 +926,19 @@ def refresh_stk_payment_if_pending(
     age = (timezone.now() - payment.created_at).total_seconds()
     if age < min_age_seconds:
         return payment
-    if not force_safaricom and not _stk_query_allowed(payment):
+    from shops.nexus_stk import payment_uses_nexus
+
+    if not force_safaricom and not payment_uses_nexus(payment) and not _stk_query_allowed(payment):
         return payment
+    if not force_safaricom and payment_uses_nexus(payment) and not _stk_query_allowed(payment):
+        # Nexus has no Daraja callback on our URL unless Richcom forwards it; poll more often.
+        elapsed_q = (
+            (timezone.now() - payment.last_status_query_at).total_seconds()
+            if payment.last_status_query_at
+            else 999
+        )
+        if elapsed_q < 3:
+            return payment
     try:
         payment = query_stk_push_status(payment)
     except ValidationError:
@@ -934,18 +946,110 @@ def refresh_stk_payment_if_pending(
     except Exception:
         return payment
     payment.refresh_from_db()
+    if payment_uses_nexus(payment) and payment.status == MpesaStkStatus.PENDING:
+        age = (timezone.now() - payment.created_at).total_seconds()
+        if age >= 90:
+            payment = _apply_stk_outcome(
+                payment,
+                result_code="1037",
+                result_desc=(
+                    payment.result_desc
+                    or "STK Push timed out. Customer did not confirm in time."
+                ),
+            )
     return payment
+
+
+def _stk_receipt_from_callback_metadata(callback: dict) -> str:
+    metadata = callback.get("CallbackMetadata") or callback.get("callback_metadata") or {}
+    if isinstance(metadata, dict):
+        items = metadata.get("Item") or metadata.get("item") or []
+        if isinstance(items, list):
+            for item in items:
+                name = (item.get("Name") or item.get("name") or "").strip()
+                value = item.get("Value")
+                if name == "MpesaReceiptNumber" and value is not None:
+                    return str(value).strip()
+    return ""
+
+
+def _normalize_stk_callback_envelope(payload: dict) -> tuple[dict, str, str, str, str]:
+    """Return (callback_dict, checkout_id, merchant_id, result_code, result_desc)."""
+    body = (payload or {}).get("Body") or payload or {}
+    if not isinstance(body, dict):
+        body = {}
+    callback = body.get("stkCallback") or body.get("StkCallback") or {}
+    if not isinstance(callback, dict):
+        callback = {}
+
+    checkout_id = (callback.get("CheckoutRequestID") or callback.get("checkout_request_id") or "").strip()
+    merchant_id = (callback.get("MerchantRequestID") or callback.get("merchant_request_id") or "").strip()
+    result_code = str(
+        callback.get("ResultCode") if callback.get("ResultCode") is not None else ""
+    ).strip()
+    result_desc = (callback.get("ResultDesc") or callback.get("result_desc") or "").strip()
+
+    if not callback or (not checkout_id and not result_code):
+        flat = body if body.get("stkCallback") is None and body.get("StkCallback") is None else payload
+        if not isinstance(flat, dict):
+            flat = {}
+        inner = flat.get("data")
+        if isinstance(inner, dict):
+            flat = {**flat, **inner}
+        checkout_id = checkout_id or (
+            flat.get("CheckoutRequestID")
+            or flat.get("checkout_request_id")
+            or flat.get("stk_request_id")
+            or ""
+        ).strip()
+        merchant_id = merchant_id or (
+            flat.get("MerchantRequestID") or flat.get("merchant_request_id") or ""
+        ).strip()
+        if result_code == "":
+            if flat.get("ResultCode") is not None:
+                result_code = str(flat.get("ResultCode")).strip()
+            elif flat.get("result_code") is not None:
+                result_code = str(flat.get("result_code")).strip()
+        if not result_desc:
+            result_desc = (
+                flat.get("ResultDesc")
+                or flat.get("result_desc")
+                or flat.get("message")
+                or flat.get("detail")
+                or ""
+            ).strip()
+        status = str(flat.get("status") or flat.get("state") or "").strip().lower()
+        if not result_code and status in ("success", "completed", "paid", "ok"):
+            result_code = "0"
+        elif not result_code and status in ("cancelled", "canceled"):
+            result_code = "1032"
+        elif not result_code and status in ("expired", "timeout"):
+            result_code = "1037"
+        elif not result_code and status in ("failed", "error", "rejected"):
+            result_code = "1"
+        if not callback:
+            callback = flat
+
+    return callback, checkout_id, merchant_id, result_code, result_desc
 
 
 @transaction.atomic
 def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
-    """Process Safaricom STK callback body and update the matching payment."""
+    """Process Safaricom or Nexus STK callback JSON and update the matching payment."""
+    callback, checkout_id, merchant_id, result_code, result_desc = _normalize_stk_callback_envelope(
+        payload or {}
+    )
     body = (payload or {}).get("Body") or payload or {}
-    callback = body.get("stkCallback") or body.get("StkCallback") or {}
-    checkout_id = (callback.get("CheckoutRequestID") or "").strip()
-    merchant_id = (callback.get("MerchantRequestID") or "").strip()
-    result_code = str(callback.get("ResultCode") if callback.get("ResultCode") is not None else "").strip()
-    result_desc = (callback.get("ResultDesc") or "").strip()
+    if not isinstance(body, dict):
+        body = {}
+    payment_ref = (
+        body.get("reference")
+        or body.get("client_reference")
+        or body.get("account_reference")
+        or (callback.get("reference") if isinstance(callback, dict) else "")
+        or ""
+    )
+    payment_ref = str(payment_ref or "").strip()
 
     payment = None
     if checkout_id:
@@ -960,18 +1064,24 @@ def handle_stk_callback(payload: dict) -> MpesaStkPayment | None:
             .filter(merchant_request_id=merchant_id)
             .first()
         )
+    if payment is None and payment_ref:
+        payment = (
+            MpesaStkPayment.objects.select_for_update()
+            .filter(public_id=payment_ref)
+            .first()
+        )
     if payment is None:
         return None
 
-    receipt_number = ""
-    metadata = callback.get("CallbackMetadata") or {}
-    items = metadata.get("Item") or metadata.get("item") or []
-    if isinstance(items, list):
-        for item in items:
-            name = (item.get("Name") or item.get("name") or "").strip()
-            value = item.get("Value")
-            if name == "MpesaReceiptNumber" and value is not None:
-                receipt_number = str(value).strip()
+    receipt_number = _stk_receipt_from_callback_metadata(callback if isinstance(callback, dict) else {})
+    if not receipt_number and isinstance(callback, dict):
+        receipt_number = (
+            callback.get("mpesa_receipt_number")
+            or callback.get("MpesaReceiptNumber")
+            or callback.get("receipt_number")
+            or callback.get("receipt")
+            or ""
+        ).strip()
 
     return _apply_stk_outcome(
         payment,

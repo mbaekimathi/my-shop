@@ -2018,6 +2018,7 @@
           const statusRes = await fetch(statusUrl, {
             headers: { Accept: "application/json" },
             credentials: "same-origin",
+            signal: AbortSignal.timeout(20000),
           });
           const statusData = await statusRes.json().catch(() => ({}));
           if (!statusRes.ok || !statusData.ok) {
@@ -2030,6 +2031,7 @@
           if (statusData.failed) {
             throw new Error(
               statusData.result_desc ||
+                statusData.status_label ||
                 "Customer did not complete M-Pesa payment."
             );
           }
@@ -2038,6 +2040,9 @@
             "Waiting for customer to confirm on their phone…";
           setStkWaiting(true, liveMsg);
           setCartStatus(liveMsg);
+          if (statusData.mpesa_receipt_number) {
+            setStkReceiptVisible(statusData.mpesa_receipt_number);
+          }
         }
         if (pollToken !== stkPollToken) return;
         if (!confirmed) {
