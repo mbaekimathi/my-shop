@@ -449,7 +449,11 @@
       ) {
         stkToggle.checked = previous;
         setStkLabel(previous);
-        setStkMessage(stkEnableBlockMessage(null), { error: true });
+        const serverNote = root.querySelector("[data-daraja-server-stk-note]");
+        setStkMessage(
+          serverNote?.textContent?.trim() || stkEnableBlockMessage(null),
+          { error: true }
+        );
         return;
       }
       stkToggle.disabled = true;

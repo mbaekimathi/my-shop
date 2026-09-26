@@ -1184,7 +1184,7 @@ def _company_daraja_settings(request, context):
     from shops.daraja_stk import resolve_callback_base_url, sync_callback_base_from_request
     from shops.models import DarajaEnvironment, StkProvider
 
-    # Avoid ngrok/network probes on every GET — sync callback from current domain on load.
+    # Pick up live HTTPS domain / .env callback on every load (hosted production).
     sync_callback_base_from_request(request, persist=True)
     row = get_daraja_settings()
     wants_json = (
@@ -1381,8 +1381,9 @@ def _company_daraja_settings(request, context):
         messages.error(request, "Unknown action.")
         return redirect(request.path)
 
+    daraja_payload = daraja_settings_as_dict(row)
     resolved_callback = resolve_callback_base_url(request=request) or (
-        daraja_settings_as_dict(row).get("callback_base_url") or ""
+        daraja_payload.get("callback_base_url") or ""
     )
     from django.conf import settings as dj_settings
     from shops.daraja_stk import detect_request_base_url, is_safaricom_callback_base
@@ -1390,12 +1391,16 @@ def _company_daraja_settings(request, context):
     browsing_public_https = is_safaricom_callback_base(
         detect_request_base_url(request)
     )
+    if is_safaricom_callback_base(resolved_callback):
+        daraja_payload["callback_base_url"] = resolved_callback
+        daraja_payload["has_callback_base"] = True
+        daraja_payload["callback_is_public"] = True
 
     context.update(
         {
             "is_hosted_deploy": getattr(dj_settings, "IS_HOSTED", False)
             or browsing_public_https,
-            "daraja": daraja_settings_as_dict(row),
+            "daraja": daraja_payload,
             "daraja_environments": DarajaEnvironment.choices,
             "stk_providers": StkProvider.choices,
             "form_data": {

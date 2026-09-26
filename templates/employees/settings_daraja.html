@@ -31,8 +31,16 @@
           <div class="pos-settings-copy">
             <strong>Enable STK Push</strong>
             <p data-daraja-ready-hint>
-              {% if daraja.is_ready_for_stk %}Ready.{% elif not daraja.uses_nexus_stk and not daraja.has_callback_base %}{% if is_hosted_deploy %}Use your live HTTPS domain (callback auto-detected) or set DARAJA_CALLBACK_BASE_URL in .env.{% else %}Needs public HTTPS (hosted domain for Production, or ngrok for local dev).{% endif %}{% elif not daraja.credentials_valid and not daraja.uses_nexus_stk %}Save credentials below.{% elif daraja.uses_nexus_stk and not daraja.nexus_key_verified %}Save Nexus key below.{% else %}Configure below, then enable. Shop cart: Settings → POS.{% endif %}
+              {% if daraja.is_ready_for_stk %}Ready.{% elif not daraja.uses_nexus_stk and not daraja.has_callback_base %}{% if is_hosted_deploy %}Set DARAJA_CALLBACK_BASE_URL in server .env (spelling: DARAJA, not DARJAJA), restart the app, refresh.{% else %}Needs public HTTPS (hosted domain for Production, or ngrok for local dev).{% endif %}{% elif not daraja.credentials_valid and not daraja.uses_nexus_stk %}Save and verify Production Daraja credentials below, then enable STK.{% elif daraja.uses_nexus_stk and not daraja.nexus_key_verified %}Save Nexus key below.{% else %}Configure below, then enable. Shop cart: Settings → POS.{% endif %}
             </p>
+            {% if is_hosted_deploy and form_data.environment != "production" %}
+            <p class="daraja-form-message is-error">Live site: choose <strong>Production</strong> below and save Safaricom production credentials (Sandbox is for testing only).</p>
+            {% elif not daraja.is_ready_for_stk and daraja.stk_blocker_message %}
+            <p class="daraja-form-message is-error" data-daraja-server-stk-note>{{ daraja.stk_blocker_message }}</p>
+            {% endif %}
+            {% if daraja.has_callback_base and daraja.callback_base_url %}
+            <p class="daraja-form-message is-ok">M-Pesa callback base: <code>{{ daraja.callback_base_url }}</code></p>
+            {% endif %}
             <p class="daraja-form-message" data-daraja-stk-message hidden></p>
           </div>
           <label class="perm-switch{% if not daraja.enable_stk_push %} is-denied{% endif %}">
@@ -419,7 +427,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/daraja-settings.js' %}?v=15"></script>
+<script src="{% static 'js/daraja-settings.js' %}?v=16"></script>
 {% if show_developer_subscriptions %}
 <script src="{% static 'js/developer-payment-settings.js' %}?v=1"></script>
 {% endif %}
