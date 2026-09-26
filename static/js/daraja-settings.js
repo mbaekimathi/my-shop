@@ -155,8 +155,19 @@
     }
   }
 
+  function isPublicHttpsBrowsing() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (window.location.protocol !== "https:" || !host) return false;
+    return !(
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "[::1]" ||
+      host.endsWith(".local")
+    );
+  }
+
   function isHostedDeploy() {
-    return root.dataset.darajaHosted === "1";
+    return root.dataset.darajaHosted === "1" || isPublicHttpsBrowsing();
   }
 
   function canEnableStk(data) {
@@ -178,14 +189,15 @@
       return "Save and verify Daraja credentials below first.";
     }
     if (isHostedDeploy()) {
+      const origin = window.location.origin || "your HTTPS domain";
       return (
-        "Use your live HTTPS domain (callback is auto-detected when you open this page), " +
-        "or set DARAJA_CALLBACK_BASE_URL or PUBLIC_SITE_URL in .env, refresh, then enable STK."
+        `Callbacks use ${origin}. Save and verify Daraja credentials below, ` +
+        "then enable STK Push (set DARAJA_CALLBACK_BASE_URL in .env if this fails)."
       );
     }
     return (
-      "Local dev: ngrok http 8000, open the ngrok HTTPS link, refresh. " +
-      "Production on hosting: use your live HTTPS domain — ngrok is not required."
+      "Local dev only: use ngrok http 8000 and open the ngrok HTTPS link, then refresh. " +
+      "On live hosting, open the site via HTTPS — ngrok is not used."
     );
   }
 
@@ -509,6 +521,15 @@
   }
 
   applyClientSelection();
+
+  if (isPublicHttpsBrowsing() && root.dataset.darajaHasCallback !== "1") {
+    postAction(new URLSearchParams({ action: "sync_daraja_callback" }))
+      .then((data) => {
+        mergeServerState(data);
+        applyClientSelection();
+      })
+      .catch(() => {});
+  }
 
   if (nexusForm) {
     nexusForm.addEventListener("submit", async (event) => {

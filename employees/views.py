@@ -1194,6 +1194,13 @@ def _company_daraja_settings(request, context):
 
     if request.method == "POST":
         action = (request.POST.get("action") or "").strip()
+        if action == "sync_daraja_callback":
+            sync_callback_base_from_request(request, persist=True)
+            row = get_daraja_settings()
+            payload = daraja_settings_as_dict(row, light=True)
+            if wants_json:
+                return JsonResponse({"ok": True, **payload})
+            return redirect(request.path)
         if action == "toggle_stk_push":
             sync_callback_base_from_request(request, persist=True)
             enabled = (request.POST.get("enabled") or "").strip().lower() in (
@@ -1378,10 +1385,16 @@ def _company_daraja_settings(request, context):
         daraja_settings_as_dict(row).get("callback_base_url") or ""
     )
     from django.conf import settings as dj_settings
+    from shops.daraja_stk import detect_request_base_url, is_safaricom_callback_base
+
+    browsing_public_https = is_safaricom_callback_base(
+        detect_request_base_url(request)
+    )
 
     context.update(
         {
-            "is_hosted_deploy": getattr(dj_settings, "IS_HOSTED", False),
+            "is_hosted_deploy": getattr(dj_settings, "IS_HOSTED", False)
+            or browsing_public_https,
             "daraja": daraja_settings_as_dict(row),
             "daraja_environments": DarajaEnvironment.choices,
             "stk_providers": StkProvider.choices,
