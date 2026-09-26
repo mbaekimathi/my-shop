@@ -22,10 +22,42 @@ from .services import _money, get_daraja_settings
 
 
 def nexus_stk_url() -> str:
-    return (
+    url = (
         getattr(settings, "NEXUS_STK_URL", None)
         or "https://fin.richcom.co.ke/api/v1/collections/stk/"
     ).strip()
+    if not url.endswith("/"):
+        url = f"{url}/"
+    return url
+
+
+class _NexusPostRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep POST body/method on 301/302 (default urllib may turn POST into GET)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        method = getattr(req, "method", None) or "GET"
+        if method in {"POST", "PUT", "PATCH"}:
+            return urllib.request.Request(
+                newurl,
+                data=req.data,
+                headers=req.headers,
+                method=method,
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_NEXUS_URL_OPENER = urllib.request.build_opener(_NexusPostRedirectHandler)
+
+
+def _nexus_auth_headers(api_key: str, *, auth_mode: str | None = None) -> dict:
+    mode = (auth_mode or getattr(settings, "NEXUS_STK_AUTH", "x-api-key") or "x-api-key")
+    mode = mode.strip().lower()
+    headers = {"Accept": "application/json"}
+    if mode in {"bearer", "authorization", "token"}:
+        headers["Authorization"] = f"Bearer {api_key}"
+    else:
+        headers["X-API-Key"] = api_key
+    return headers
 
 
 def _nexus_request(
@@ -35,11 +67,9 @@ def _nexus_request(
     method: str = "GET",
     body: dict | None = None,
     timeout: float = 20,
+    auth_mode: str | None = None,
 ) -> dict:
-    headers = {
-        "X-API-Key": api_key,
-        "Accept": "application/json",
-    }
+    headers = _nexus_auth_headers(api_key, auth_mode=auth_mode)
     data = None
     if body is not None:
         headers["Content-Type"] = "application/json"
@@ -51,7 +81,7 @@ def _nexus_request(
         headers=headers,
     )
     try:
-        with urllib.request.urlopen(request_obj, timeout=timeout) as response:
+        with _NEXUS_URL_OPENER.open(request_obj, timeout=timeout) as response:
             raw = response.read().decode("utf-8") or "{}"
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -107,8 +137,10 @@ def _nexus_key_auth_error(text: str) -> bool:
         for token in (
             "unauthorized",
             "authentication",
+            "authentication credentials were not provided",
             "invalid api",
             "invalid key",
+            "invalid collection api key",
             "forbidden",
             "permission denied",
             "credentials",
@@ -137,6 +169,11 @@ def _nexus_key_accepted_validation_error(text: str) -> bool:
     )
 
 
+def _method_get_not_allowed(text: str) -> bool:
+    lowered = (text or "").lower()
+    return "method" in lowered and "get" in lowered and "not allowed" in lowered
+
+
 def verify_nexus_collection_api_key(api_key: str) -> dict:
     key = (api_key or "").strip()
     if not key:
@@ -144,28 +181,56 @@ def verify_nexus_collection_api_key(api_key: str) -> dict:
     if len(key) < 8:
         raise ValidationError("Enter the full API key from your Nexus collection account.")
 
-    # Collections STK URL accepts POST only (GET returns "Method GET not allowed").
-    probe_body = {"phone": "254700000001", "amount": "0.01"}
-    try:
-        payload = _nexus_request(
-            nexus_stk_url(),
-            api_key=key,
-            method="POST",
-            body=probe_body,
-        )
-    except ValidationError as exc:
-        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
-        if _nexus_key_auth_error(message):
-            raise
-        if _nexus_key_accepted_validation_error(message):
-            return {"ok": True, "collection_id": "", "payload": {}}
-        raise
+    url = nexus_stk_url()
+    probe_bodies = (
+        {"phone": "254700000001", "amount": "1.00"},
+        {"phoneNumber": "254700000001", "amount": 1},
+        {"phone": "254700000001", "amount": 1},
+    )
+    auth_modes = ("x-api-key", "bearer")
 
-    return {
-        "ok": True,
-        "collection_id": _collection_id_from_payload(payload),
-        "payload": payload,
-    }
+    last_error: ValidationError | None = None
+    for auth_mode in auth_modes:
+        for probe_body in probe_bodies:
+            try:
+                payload = _nexus_request(
+                    url,
+                    api_key=key,
+                    method="POST",
+                    body=probe_body,
+                    auth_mode=auth_mode,
+                )
+                return {
+                    "ok": True,
+                    "collection_id": _collection_id_from_payload(payload),
+                    "payload": payload,
+                }
+            except ValidationError as exc:
+                last_error = exc
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if _nexus_key_auth_error(message):
+                    continue
+                if _nexus_key_accepted_validation_error(message):
+                    return {"ok": True, "collection_id": "", "payload": {}}
+                if _method_get_not_allowed(message):
+                    continue
+                raise
+
+    if last_error is not None:
+        message = (
+            "; ".join(last_error.messages)
+            if hasattr(last_error, "messages")
+            else str(last_error)
+        )
+        if _method_get_not_allowed(message):
+            raise ValidationError(
+                "Nexus STK endpoint rejected the verify request (POST was converted to GET). "
+                "Set NEXUS_STK_URL in .env to the exact STK URL from Nexus (with trailing /), "
+                "deploy the latest app code, restart Passenger, then try again."
+            ) from last_error
+        raise last_error
+
+    raise ValidationError("Could not verify Nexus collection API key.")
 
 
 def _party_phone(phone: str) -> str:
@@ -250,7 +315,10 @@ def initiate_nexus_stk_push(
 
     body = {
         "phone": party,
+        "phoneNumber": party,
         "amount": f"{pay_amount:.2f}",
+        "account_reference": reference,
+        "accountReference": reference,
     }
     try:
         payload = _nexus_request(

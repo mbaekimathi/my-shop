@@ -49,6 +49,11 @@ PUBLIC_SITE_URL = os.getenv("PUBLIC_SITE_URL", "").strip().rstrip("/")
 DARAJA_NGROK_API_URL = os.getenv(
     "DARAJA_NGROK_API_URL", "http://127.0.0.1:4040/api/tunnels"
 ).strip()
+NEXUS_STK_URL = os.getenv(
+    "NEXUS_STK_URL", "https://fin.richcom.co.ke/api/v1/collections/stk/"
+).strip()
+# x-api-key (default) or bearer
+NEXUS_STK_AUTH = (os.getenv("NEXUS_STK_AUTH", "x-api-key") or "x-api-key").strip().lower()
 
 # ---------------------------------------------------------------------------
 # Application
