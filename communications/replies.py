@@ -80,11 +80,6 @@ def _destination_keys(phone: str = "", chat_id: str = "") -> set[str]:
     return {k for k in keys if k}
 
 
-def _is_sandbox_join(body: str) -> bool:
-    text = (body or "").strip().lower()
-    return text.startswith("join ") or text == "join"
-
-
 def _match_outbound_for_inbound(
     *,
     phone: str,
@@ -131,6 +126,8 @@ def record_inbound_reply(
         _e164,
         _looks_like_wa_lid,
         _strip_whatsapp_prefix,
+        is_sandbox_join_body,
+        process_sandbox_join_message,
         remember_whatsapp_lid,
     )
     from shops.services import get_communications_settings
@@ -140,7 +137,8 @@ def record_inbound_reply(
         return None
 
     text = str(body or "").strip()
-    if _is_sandbox_join(text):
+    if is_sandbox_join_body(text):
+        process_sandbox_join_message(from_value=from_value, wa_id=wa_id, body=text)
         return None
     media_count = 0
     try:

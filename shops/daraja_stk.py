@@ -31,6 +31,7 @@ from .services import (
     get_company_pos_settings,
     get_effective_pos_settings,
     get_daraja_settings,
+    get_daraja_settings_db,
     verify_daraja_oauth,
 )
 
@@ -348,7 +349,7 @@ def ensure_callback_secret(row: CompanyDarajaSettings | None = None) -> str:
 
     from shops.services import _invalidate_daraja_settings_cache
 
-    settings_row = row or get_daraja_settings()
+    settings_row = row or get_daraja_settings_db()
     secret = (settings_row.callback_secret or "").strip()
     if secret:
         return secret
@@ -409,7 +410,9 @@ def persist_public_callback_base(base: str) -> str:
         normalized = normalize_callback_base_url(raw, allow_local=False)
     except ValidationError:
         return ""
-    row = get_daraja_settings()
+    if getattr(settings, "IS_HOSTED", False) and detect_settings_callback_base():
+        return normalized
+    row = get_daraja_settings_db()
     current = (row.callback_base_url or "").strip().rstrip("/")
     if current != normalized:
         row.callback_base_url = normalized

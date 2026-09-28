@@ -13,7 +13,7 @@ import re
 
 from django.conf import settings
 
-from shops.services import get_communications_settings, _normalize_phone
+from shops.services import _normalize_phone, get_communications_settings
 
 from .constants import BRIDGE_STATUS_CONNECTED, BRIDGE_STATUS_DISCONNECTED
 
@@ -557,20 +557,7 @@ def list_recent_twilio_messages(*, page_size: int = 50) -> list[dict[str, Any]]:
     token = (row.twilio_auth_token or "").strip()
     if not account_sid or not token:
         return []
-    size = max(1, min(int(page_size or 50), 100))
-    request = Request(
-        TWILIO_API.format(sid=account_sid) + f"?PageSize={size}",
-        method="GET",
-        headers={"Authorization": _basic_auth_header(account_sid, token)},
-    )
-    try:
-        with urlopen(request, timeout=15) as response:
-            payload = json.loads(response.read().decode("utf-8") or "{}")
-    except Exception:
-        logger.debug("Could not list Twilio messages", exc_info=True)
-        return []
-    messages = payload.get("messages")
-    return messages if isinstance(messages, list) else []
+    return _list_twilio_messages(account_sid, token, page_size=page_size)
 
 
 def sync_inbound_replies(*, force: bool = False, limit: int = 50) -> int:
@@ -663,9 +650,61 @@ def _stored_lid_for_phone(row, phone_e164: str) -> str:
     return str(lids.get(key) or lids.get(f"+{key}") or "")
 
 
-def _latest_sandbox_join_lid(account_sid: str, auth_token: str, sandbox_from: str) -> str:
+def is_sandbox_join_body(body: str) -> bool:
+    text = (body or "").strip().lower()
+    return text.startswith("join ") or text == "join"
+
+
+def _sandbox_join_phrase_matches(body: str, row=None) -> bool:
+    text = (body or "").strip().lower()
+    if not is_sandbox_join_body(text):
+        return False
+    phrase = (sandbox_join_info(row).get("phrase") or "").strip().lower()
+    if not phrase:
+        return True
+    return text == phrase
+
+
+def _join_identity_matches_phone(
+    want_digits: str, *, from_ident: str = "", wa_id: str = ""
+) -> bool:
+    if not want_digits:
+        return False
+    for raw in (from_ident, wa_id):
+        got = _normalize_phone(raw) or "".join(ch for ch in str(raw or "") if ch.isdigit())
+        if not got:
+            continue
+        if got == want_digits or got.endswith(want_digits[-9:]) or want_digits.endswith(got[-9:]):
+            return True
+    return False
+
+
+def process_sandbox_join_message(
+    *,
+    from_value: str = "",
+    wa_id: str = "",
+    body: str = "",
+) -> bool:
+    """
+    Record phone↔LID mapping when a customer joins the Twilio WhatsApp sandbox.
+    Returns True when the message was a sandbox join (not a normal inbox reply).
+    """
+    if not is_sandbox_join_body(body):
+        return False
+    row = get_communications_settings()
+    if not _sandbox_join_phrase_matches(body, row):
+        return False
+    ident = _strip_whatsapp_prefix(from_value)
+    wa_digits = _normalize_phone(wa_id)
+    if _looks_like_wa_lid(ident) and wa_digits:
+        remember_whatsapp_lid(f"+{wa_digits}", ident)
+    return True
+
+
+def _list_twilio_messages(account_sid: str, auth_token: str, *, page_size: int = 40) -> list[dict[str, Any]]:
+    size = max(1, min(int(page_size or 40), 100))
     request = Request(
-        TWILIO_API.format(sid=account_sid) + "?PageSize=40",
+        TWILIO_API.format(sid=account_sid) + f"?PageSize={size}",
         method="GET",
         headers={"Authorization": _basic_auth_header(account_sid, auth_token)},
     )
@@ -673,21 +712,50 @@ def _latest_sandbox_join_lid(account_sid: str, auth_token: str, sandbox_from: st
         with urlopen(request, timeout=15) as response:
             payload = json.loads(response.read().decode("utf-8") or "{}")
     except Exception:
-        logger.debug("Could not list Twilio messages for sandbox join LID", exc_info=True)
+        logger.debug("Could not list Twilio messages", exc_info=True)
+        return []
+    messages = payload.get("messages")
+    return messages if isinstance(messages, list) else []
+
+
+def _sandbox_join_lid_for_phone(
+    account_sid: str,
+    auth_token: str,
+    sandbox_from: str,
+    phone_e164: str,
+) -> str:
+    """LID from this customer's sandbox join, not another person's join."""
+    want = _normalize_phone(phone_e164) or _e164(phone_e164).lstrip("+")
+    if not want:
         return ""
-    want = (sandbox_from or "").lower()
-    for item in payload.get("messages") or []:
-        if str(item.get("direction") or "") != "inbound":
+    want_from = (sandbox_from or "").lower()
+    row = get_communications_settings()
+    for item in _list_twilio_messages(account_sid, auth_token, page_size=50):
+        if str(item.get("direction") or "").lower() != "inbound":
             continue
-        if want and str(item.get("to") or "").lower() != want:
+        if want_from and str(item.get("to") or "").lower() != want_from:
             continue
-        body = str(item.get("body") or "").strip().lower()
-        if not body.startswith("join"):
+        body = str(item.get("body") or "")
+        if not _sandbox_join_phrase_matches(body, row):
             continue
-        ident = _strip_whatsapp_prefix(str(item.get("from") or ""))
-        if _looks_like_wa_lid(ident):
-            return ident
+        from_ident = _strip_whatsapp_prefix(str(item.get("from") or ""))
+        wa_id = str(item.get("wa_id") or item.get("WaId") or "")
+        if not _join_identity_matches_phone(want, from_ident=from_ident, wa_id=wa_id):
+            continue
+        if _looks_like_wa_lid(from_ident):
+            return from_ident
     return ""
+
+
+def _is_sandbox_not_joined(result: dict[str, Any]) -> bool:
+    error_code = str(result.get("error_code") or "")
+    err = (result.get("error") or "").lower()
+    return (
+        error_code in {"63015", "63016"}
+        or "sandbox" in err
+        or "has not joined" in err
+        or "joined the sandbox" in err
+    )
 
 
 def _submit_twilio_message(
@@ -789,7 +857,7 @@ def _submit_twilio_message(
         return {
             "ok": False,
             "retryable": is_retryable_error(retry_hint),
-            "error": message,
+            "error": friendly_send_error(message),
             "messageId": sid,
             "status": status,
             "error_code": error_code,
@@ -862,23 +930,28 @@ def send_whatsapp_message(
         media_path=media_path or "",
         skip_poll=skip_poll,
     )
-    error_code = str(result.get("error_code") or "")
-    if (
-        to_number
-        and not result.get("ok")
-        and (error_code == "63015" or "sandbox" in (result.get("error") or "").lower())
-    ):
-        lid = _latest_sandbox_join_lid(account_sid, auth_token, from_value)
-        lid_to = f"whatsapp:{lid}" if lid else ""
-        if lid_to and lid_to != to_value:
-            remember_whatsapp_lid(to_number, lid)
+    if to_number and not result.get("ok") and _is_sandbox_not_joined(result):
+        sent_ident = _strip_whatsapp_prefix(to_value)
+        retry_to = ""
+        if _looks_like_wa_lid(sent_ident):
+            retry_to = f"whatsapp:{to_number}"
+        else:
+            matched_lid = _sandbox_join_lid_for_phone(
+                account_sid, auth_token, from_value, to_number
+            )
+            if matched_lid:
+                remember_whatsapp_lid(to_number, matched_lid)
+                retry_to = f"whatsapp:{matched_lid}"
+        if retry_to and retry_to.lower() != to_value.lower():
             result = _submit_twilio_message(
                 account_sid=account_sid,
                 auth_token=auth_token,
                 from_value=from_value,
-                to_value=lid_to,
+                to_value=retry_to,
                 text=text,
                 media_path=media_path or "",
                 skip_poll=skip_poll,
             )
+    if not result.get("ok") and result.get("error"):
+        result = {**result, "error": friendly_send_error(str(result.get("error") or ""))}
     return result

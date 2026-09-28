@@ -4,7 +4,12 @@ from unittest.mock import patch
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
-from shops.models import CompanyDarajaSettings, DarajaEnvironment, StkProvider
+from shops.models import (
+    CompanyDarajaSettings,
+    DarajaDeployProfile,
+    DarajaEnvironment,
+    StkProvider,
+)
 from shops.services import (
     _invalidate_daraja_settings_cache,
     get_daraja_settings,
@@ -18,7 +23,7 @@ from shops.services import (
 class NexusStkSettingsTests(TestCase):
     def setUp(self):
         CompanyDarajaSettings.objects.update_or_create(
-            pk=1,
+            deploy_profile=DarajaDeployProfile.LOCAL,
             defaults={
                 "stk_provider": StkProvider.DARAJA,
                 "enable_stk_push": False,

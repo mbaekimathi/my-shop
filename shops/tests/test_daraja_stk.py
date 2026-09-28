@@ -22,6 +22,7 @@ from shops.daraja_stk import (
 from shops.models import (
     CompanyDarajaSettings,
     CompanyPosSettings,
+    DarajaDeployProfile,
     MpesaStkPayment,
     MpesaStkPurpose,
     MpesaStkStatus,
@@ -36,7 +37,9 @@ from shops.services import (
 
 class DarajaStkConfigTests(TestCase):
     def setUp(self):
-        CompanyDarajaSettings.objects.get_or_create(pk=1)
+        CompanyDarajaSettings.objects.get_or_create(
+            deploy_profile=DarajaDeployProfile.LOCAL
+        )
         CompanyPosSettings.objects.get_or_create(pk=1)
 
     def test_resolve_buy_goods_when_collection_not_set(self):
@@ -77,7 +80,7 @@ class DarajaStkConfigTests(TestCase):
 class DarajaCallbackAutoDetectTests(TestCase):
     def setUp(self):
         CompanyDarajaSettings.objects.update_or_create(
-            pk=1,
+            deploy_profile=DarajaDeployProfile.LOCAL,
             defaults={"callback_base_url": "https://old-domain.example.com"},
         )
         _invalidate_daraja_settings_cache()
@@ -113,7 +116,7 @@ class DarajaCallbackAutoDetectTests(TestCase):
 class DarajaStkQueryTests(TestCase):
     def setUp(self):
         CompanyDarajaSettings.objects.update_or_create(
-            pk=1,
+            deploy_profile=DarajaDeployProfile.LOCAL,
             defaults={
                 "shortcode": "174379",
                 "passkey": "test-passkey",
@@ -245,7 +248,7 @@ class DarajaStkQueryTests(TestCase):
 class DarajaStkHardeningTests(TestCase):
     def setUp(self):
         CompanyDarajaSettings.objects.update_or_create(
-            pk=1,
+            deploy_profile=DarajaDeployProfile.LOCAL,
             defaults={
                 "callback_secret": "test-callback-secret",
                 "callback_base_url": "https://shop.example.com",

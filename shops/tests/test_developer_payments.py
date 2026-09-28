@@ -12,6 +12,7 @@ from shops.daraja_stk import handle_stk_callback
 from shops.models import (
     CompanyDarajaSettings,
     CompanyDeveloperPaymentSettings,
+    DarajaDeployProfile,
     MpesaStkPayment,
     MpesaStkPurpose,
     MpesaStkStatus,
@@ -47,7 +48,9 @@ class DeveloperPaymentIsolationTests(TestCase):
             role=EmployeeRole.IT_SUPPORT,
         )
         CompanyDeveloperPaymentSettings.objects.filter(pk=1).delete()
-        CompanyDarajaSettings.objects.get_or_create(pk=1)
+        CompanyDarajaSettings.objects.get_or_create(
+            deploy_profile=DarajaDeployProfile.LOCAL
+        )
 
     def _login(self):
         self.client.force_login(self.user)

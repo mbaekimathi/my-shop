@@ -153,7 +153,7 @@ WEBSITE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 POS_SETTINGS_CACHE_KEY = "company_pos_settings:v1"
 SHOP_POS_SETTINGS_CACHE_KEY = "shop_pos_settings:v1:{shop_id}"
 POS_SETTINGS_CACHE_TTL = 300
-DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v1"
+DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v2"
 COMMUNICATIONS_SETTINGS_CACHE_KEY = "company_communications_settings:v1"
 RECEIPT_QR_PREVIEW_CACHE_KEY = "receipt_qr_preview:v1"
 RECEIPT_QR_PREVIEW_CACHE_TTL = 300
@@ -192,8 +192,43 @@ def _invalidate_pos_settings_cache(*, shop_id: int | None = None) -> None:
         cache.delete(SHOP_POS_SETTINGS_CACHE_KEY.format(shop_id=shop_id))
 
 
-def _invalidate_daraja_settings_cache() -> None:
-    cache.delete(DARAJA_SETTINGS_CACHE_KEY)
+def _daraja_settings_cache_key(profile: str | None = None) -> str:
+    from shops.deploy_profile import current_daraja_deploy_profile
+
+    p = profile or current_daraja_deploy_profile()
+    return f"{DARAJA_SETTINGS_CACHE_KEY}:{p}"
+
+
+def _invalidate_daraja_settings_cache(*, profile: str | None = None) -> None:
+    from shops.models import DarajaDeployProfile
+
+    if profile:
+        cache.delete(_daraja_settings_cache_key(profile))
+        return
+    for p in DarajaDeployProfile:
+        cache.delete(_daraja_settings_cache_key(p.value))
+
+
+def get_daraja_settings_db() -> CompanyDarajaSettings:
+    from shops.deploy_profile import current_daraja_deploy_profile
+
+    profile = current_daraja_deploy_profile()
+    cache_key = _daraja_settings_cache_key(profile)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    settings_row, _ = CompanyDarajaSettings.objects.get_or_create(
+        deploy_profile=profile,
+        defaults={"deploy_profile": profile},
+    )
+    cache.set(cache_key, settings_row, POS_SETTINGS_CACHE_TTL)
+    return settings_row
+
+
+def get_daraja_settings() -> CompanyDarajaSettings:
+    from shops.deploy_profile import apply_hosted_env_overlays
+
+    return apply_hosted_env_overlays(get_daraja_settings_db())
 
 
 def _invalidate_communications_settings_cache() -> None:
@@ -921,15 +956,6 @@ def list_working_hours_shop_rows(*, shops=None, post=None) -> list[dict]:
     return rows
 
 
-def get_daraja_settings() -> CompanyDarajaSettings:
-    cached = cache.get(DARAJA_SETTINGS_CACHE_KEY)
-    if cached is not None:
-        return cached
-    settings_row, _ = CompanyDarajaSettings.objects.get_or_create(pk=1)
-    cache.set(DARAJA_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
-    return settings_row
-
-
 def get_communications_settings() -> CompanyCommunicationsSettings:
     cached = cache.get(COMMUNICATIONS_SETTINGS_CACHE_KEY)
     if cached is not None:
@@ -1183,12 +1209,35 @@ def update_message_channel_settings(
     return get_communications_settings()
 
 
+def _daraja_deploy_meta() -> dict:
+    from shops.deploy_profile import (
+        deploy_profile_label,
+        hosted_daraja_credentials_locked,
+        hosted_env_overrides,
+        hosted_nexus_credentials_locked,
+        hosted_stk_enable_locked,
+        is_hosted_deploy,
+    )
+
+    db_row = get_daraja_settings_db()
+    return {
+        "deploy_profile": db_row.deploy_profile,
+        "deploy_profile_label": deploy_profile_label(),
+        "is_hosted_deploy": is_hosted_deploy(),
+        "credentials_from_env": hosted_daraja_credentials_locked(),
+        "nexus_credentials_from_env": hosted_nexus_credentials_locked(),
+        "stk_enable_from_env": hosted_stk_enable_locked(),
+        "hosted_env_keys": sorted(hosted_env_overrides().keys()),
+    }
+
+
 def daraja_settings_as_dict(
     settings_row: CompanyDarajaSettings | None = None,
     *,
     light: bool = False,
 ) -> dict:
     row = settings_row or get_daraja_settings()
+    deploy_meta = _daraja_deploy_meta()
     from shops.daraja_stk import (
         _callback_url,
         ensure_callback_secret,
@@ -1217,6 +1266,7 @@ def daraja_settings_as_dict(
             "has_callback_base": has_callback,
             "is_ready_for_stk": row.is_ready_for_stk(),
             "callback_base_url": callback_base,
+            **deploy_meta,
         }
 
     callback_base = resolve_callback_base_url() or (
@@ -1261,6 +1311,7 @@ def daraja_settings_as_dict(
         "is_ready_for_stk": row.is_ready_for_stk(),
         "stk_not_ready_reason": row.stk_not_ready_reason(),
         "stk_blocker_message": row.stk_blocker_message(),
+        **deploy_meta,
     }
 
 
@@ -1370,13 +1421,20 @@ def set_shop_stk_push_enabled(*, enabled: bool) -> CompanyDarajaSettings:
 
 
 def set_daraja_stk_enabled(*, enabled: bool, request=None) -> CompanyDarajaSettings:
-    row = get_daraja_settings()
-    if row.uses_nexus_stk():
-        if enabled and not row.nexus_key_verified:
+    from shops.deploy_profile import hosted_stk_enable_locked
+
+    if hosted_stk_enable_locked():
+        raise ValidationError(
+            "STK Push enable/disable is controlled by DARAJA_ENABLE_STK_PUSH in server .env."
+        )
+    effective = get_daraja_settings()
+    row = get_daraja_settings_db()
+    if effective.uses_nexus_stk():
+        if enabled and not effective.nexus_key_verified:
             raise ValidationError(
                 "Save and verify your Nexus collection API key before enabling STK Push."
             )
-        if enabled and not row.has_nexus_credentials():
+        if enabled and not effective.has_nexus_credentials():
             raise ValidationError(
                 "Enter your Nexus collection API key before enabling STK Push."
             )
@@ -1387,22 +1445,22 @@ def set_daraja_stk_enabled(*, enabled: bool, request=None) -> CompanyDarajaSetti
         _invalidate_daraja_settings_cache()
         return get_daraja_settings()
 
-    if enabled and not row.credentials_valid:
+    if enabled and not effective.credentials_valid:
         raise ValidationError(
             "Save and verify Daraja credentials before enabling STK Push."
         )
-    if enabled and not row.has_credentials():
+    if enabled and not effective.has_credentials():
         raise ValidationError("Complete Daraja credentials before enabling STK Push.")
-    if enabled and not row.has_usable_callback_base():
+    if enabled and not effective.has_usable_callback_base():
         from django.conf import settings as dj_settings
 
-        from shops.daraja_stk import stk_callback_blocked_message, sync_callback_base_from_request
+        from shops.daraja_stk import sync_callback_base_from_request
 
         sync_callback_base_from_request(request, persist=True)
         if request is None and not getattr(dj_settings, "IS_HOSTED", False):
             sync_callback_base_from_request(None, persist=True)
-        row = get_daraja_settings()
-    if enabled and not row.has_usable_callback_base():
+        effective = get_daraja_settings()
+    if enabled and not effective.has_usable_callback_base():
         from shops.daraja_stk import stk_callback_blocked_message
 
         raise ValidationError(stk_callback_blocked_message())
@@ -1427,6 +1485,15 @@ def update_daraja_settings(
 ) -> CompanyDarajaSettings:
     """Save Daraja credentials and verify them against Safaricom before keeping them."""
     from django.conf import settings as dj_settings
+
+    from shops.deploy_profile import hosted_daraja_credentials_locked
+
+    if hosted_daraja_credentials_locked():
+        raise ValidationError(
+            "Daraja credentials on hosted are loaded from server .env "
+            "(DARAJA_CONSUMER_KEY, DARAJA_CONSUMER_SECRET, DARAJA_PASSKEY, DARAJA_SHORTCODE). "
+            "Update those variables and restart the app."
+        )
 
     from shops.daraja_stk import (
         invalidate_daraja_access_token_cache,
@@ -1456,11 +1523,12 @@ def update_daraja_settings(
             callback = validate_callback_base_url(callback_base_url) or ""
     env_callback = (getattr(dj_settings, "DARAJA_CALLBACK_BASE_URL", "") or "").strip()
 
-    row = get_daraja_settings()
-    was_credentials_valid = bool(row.credentials_valid)
-    key = (consumer_key or "").strip() or (row.consumer_key or "").strip()
-    secret = (consumer_secret or "").strip() or (row.consumer_secret or "").strip()
-    lipa_passkey = (passkey or "").strip() or (row.passkey or "").strip()
+    effective = get_daraja_settings()
+    row = get_daraja_settings_db()
+    was_credentials_valid = bool(effective.credentials_valid)
+    key = (consumer_key or "").strip() or (effective.consumer_key or "").strip()
+    secret = (consumer_secret or "").strip() or (effective.consumer_secret or "").strip()
+    lipa_passkey = (passkey or "").strip() or (effective.passkey or "").strip()
 
     if not key:
         raise ValidationError("Consumer key is required.")
@@ -1546,10 +1614,16 @@ def update_daraja_settings(
 
 
 def set_daraja_environment(*, environment: str) -> CompanyDarajaSettings:
+    from shops.deploy_profile import hosted_env_overrides
+
+    if "environment" in hosted_env_overrides():
+        raise ValidationError(
+            "Daraja environment on hosted is set by DARAJA_ENVIRONMENT in server .env."
+        )
     env = (environment or "").strip().lower()
     if env not in {choice.value for choice in DarajaEnvironment}:
         raise ValidationError("Choose Sandbox or Production.")
-    row = get_daraja_settings()
+    row = get_daraja_settings_db()
     row.environment = env
     update_fields = ["environment", "updated_at"]
     if env == DarajaEnvironment.SANDBOX and row.stk_provider in (
@@ -1564,14 +1638,20 @@ def set_daraja_environment(*, environment: str) -> CompanyDarajaSettings:
 
 
 def set_stk_provider(*, provider: str) -> CompanyDarajaSettings:
+    from shops.deploy_profile import hosted_env_overrides
+
+    if "stk_provider" in hosted_env_overrides():
+        raise ValidationError(
+            "STK provider on hosted is set by DARAJA_STK_PROVIDER in server .env."
+        )
     value = (provider or "").strip().lower()
     if value == "nexus_rushtech":
         value = StkProvider.NEXUS
     allowed = {choice.value for choice in StkProvider}
     if value not in allowed:
         raise ValidationError("Choose a valid STK provider.")
-    row = get_daraja_settings()
-    if value == StkProvider.NEXUS and not row.nexus_stk_allowed():
+    row = get_daraja_settings_db()
+    if value == StkProvider.NEXUS and not get_daraja_settings().nexus_stk_allowed():
         raise ValidationError(
             "Sandbox uses Safaricom Daraja test credentials only. "
             "Switch to Production to use Nexus collections API."
@@ -1590,15 +1670,23 @@ def update_nexus_stk_settings(
     nexus_collection_id: str = "",
     enable_stk_push=None,
 ) -> CompanyDarajaSettings:
+    from shops.deploy_profile import hosted_nexus_credentials_locked
     from shops.nexus_stk import verify_nexus_collection_api_key
 
-    row = get_daraja_settings()
-    if not row.nexus_stk_allowed():
+    if hosted_nexus_credentials_locked():
+        raise ValidationError(
+            "Nexus API key on hosted is loaded from NEXUS_API_KEY in server .env. "
+            "Update that variable and restart the app."
+        )
+
+    effective = get_daraja_settings()
+    row = get_daraja_settings_db()
+    if not effective.nexus_stk_allowed():
         raise ValidationError(
             "Nexus collections API is not available in Sandbox. "
             "Use Safaricom Daraja test credentials or switch to Production."
         )
-    key = (nexus_api_key or "").strip() or (row.nexus_api_key or "").strip()
+    key = (nexus_api_key or "").strip() or (effective.nexus_api_key or "").strip()
     if not key:
         raise ValidationError("Nexus collection API key is required.")
 

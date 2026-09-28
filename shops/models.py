@@ -793,9 +793,20 @@ class StkProvider(models.TextChoices):
     NEXUS = "nexus", "Nexus collections API"
 
 
-class CompanyDarajaSettings(models.Model):
-    """Safaricom Daraja / Lipa Na M-Pesa STK Push credentials (singleton)."""
+class DarajaDeployProfile(models.TextChoices):
+    LOCAL = "local", "Local development"
+    HOSTED = "hosted", "Hosted production"
 
+
+class CompanyDarajaSettings(models.Model):
+    """Safaricom Daraja / Lipa Na M-Pesa STK Push credentials (per deploy profile)."""
+
+    deploy_profile = models.CharField(
+        max_length=16,
+        choices=DarajaDeployProfile.choices,
+        unique=True,
+        default=DarajaDeployProfile.LOCAL,
+    )
     stk_provider = models.CharField(
         max_length=32,
         choices=StkProvider.choices,
@@ -842,7 +853,7 @@ class CompanyDarajaSettings(models.Model):
         verbose_name_plural = "Company Daraja settings"
 
     def __str__(self):
-        return "Company Daraja settings"
+        return f"Company Daraja settings ({self.get_deploy_profile_display()})"
 
     def nexus_stk_allowed(self) -> bool:
         """Nexus collections STK is production-only; Sandbox uses Safaricom Daraja test apps."""

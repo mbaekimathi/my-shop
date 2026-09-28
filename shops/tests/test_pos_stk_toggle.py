@@ -4,6 +4,7 @@ from django.test import TestCase
 from shops.models import (
     CompanyDarajaSettings,
     CompanyPosSettings,
+    DarajaDeployProfile,
     DarajaEnvironment,
     StkProvider,
 )
@@ -25,7 +26,7 @@ class PosStkToggleTests(TestCase):
             },
         )
         CompanyDarajaSettings.objects.update_or_create(
-            pk=1,
+            deploy_profile=DarajaDeployProfile.LOCAL,
             defaults={
                 "environment": DarajaEnvironment.PRODUCTION,
                 "stk_provider": StkProvider.NEXUS,

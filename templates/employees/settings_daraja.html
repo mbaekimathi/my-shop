@@ -15,6 +15,16 @@
     <div class="item-panel-head-top">
       <div>
         <h2>{{ meta.headline }}</h2>
+        <p class="daraja-form-message">
+          Profile: <strong>{{ daraja.deploy_profile_label|default:"Local" }}</strong>
+          {% if daraja.credentials_from_env or daraja.nexus_credentials_from_env %}
+          — credentials loaded from server <code>.env</code>
+          {% elif is_hosted_deploy %}
+          — set <code>DARAJA_*</code> / <code>NEXUS_*</code> in server <code>.env</code> or save below
+          {% else %}
+          — credentials saved in this app (local database)
+          {% endif %}
+        </p>
         {% if show_developer_subscriptions %}
         <p>Developer payments and Daraja STK configuration.</p>
         {% else %}

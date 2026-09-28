@@ -465,8 +465,12 @@ def _send_quietly(phone: str, body: str) -> None:
     try:
         from .twilio import send_whatsapp_message
 
-        result = send_whatsapp_message(phone=phone, text=body)
+        result = send_whatsapp_message(phone=phone, text=body, skip_poll=True)
         if not result.get("ok"):
-            logger.warning("Auto WhatsApp share failed: %s", result.get("error"))
+            err = str(result.get("error") or "")
+            if "sandbox" in err.lower() or "63015" in err or "63016" in err:
+                logger.info("Auto WhatsApp share skipped (sandbox): %s", err)
+            else:
+                logger.warning("Auto WhatsApp share failed: %s", err)
     except Exception:
         logger.exception("Auto WhatsApp share failed")

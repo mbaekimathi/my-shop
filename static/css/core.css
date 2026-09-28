@@ -2348,14 +2348,20 @@ html.is-offline .offline-hint {
 }
 
 .connectivity-indicator--offline {
-  color: var(--accent);
-  border-color: rgba(var(--accent-rgb), 0.45);
-  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
   cursor: pointer;
 }
 
 .connectivity-indicator--offline:hover {
-  background: rgba(var(--accent-rgb), 0.16);
+  background: rgba(255, 107, 107, 0.16);
+}
+
+.connectivity-indicator--offline .connectivity-indicator__ring {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.4);
+  animation: connectivity-offline-pulse 1.8s ease-in-out infinite;
 }
 
 .connectivity-indicator__badge {
@@ -2386,9 +2392,19 @@ html.is-offline .offline-hint {
 }
 
 .page-landing .site-header:not(.is-scrolled) .connectivity-indicator--offline {
-  color: var(--accent);
-  border-color: rgba(var(--accent-rgb), 0.55);
-  background: rgba(var(--accent-rgb), 0.15);
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: rgba(255, 107, 107, 0.14);
+}
+
+@keyframes connectivity-offline-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 @keyframes connectivity-pulse {

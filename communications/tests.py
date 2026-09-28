@@ -439,13 +439,21 @@ class TwilioSendChannelTests(TestCase):
             def __exit__(self, *args):
                 return False
 
+        fail_sid = "SM" + "a" * 32
+
         def fake_urlopen(request, timeout=30):
             url = request.full_url
-            if url.endswith("Messages.json"):
-                return FakeResponse(b'{"sid":"SMFAIL15","status":"queued"}')
-            return FakeResponse(
-                b'{"sid":"SMFAIL15","status":"failed","error_code":63015,"error_message":null}'
-            )
+            if url.endswith("Messages.json") and request.method == "POST":
+                return FakeResponse(
+                    f'{{"sid":"{fail_sid}","status":"queued"}}'.encode("ascii")
+                )
+            if fail_sid in url:
+                return FakeResponse(
+                    f'{{"sid":"{fail_sid}","status":"failed","error_code":63015,"error_message":null}}'.encode(
+                        "ascii"
+                    )
+                )
+            return FakeResponse(b'{"messages":[]}')
 
         with patch("communications.twilio.urlopen", fake_urlopen), patch(
             "communications.twilio.time.sleep"
@@ -2216,15 +2224,63 @@ class WhatsAppInboxTests(TestCase):
     def test_join_messages_are_not_stored(self):
         from communications.models import InboundReply
         from communications.replies import record_inbound_reply
+        from shops.services import get_communications_settings
 
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            whatsapp_from="whatsapp:+14155238886",
+            join_code="control-did",
+        )
         self.assertIsNone(
             record_inbound_reply(
                 message_sid="SM" + "e" * 32,
-                from_value="whatsapp:+254712345678",
+                from_value="whatsapp:ke.123456789",
+                wa_id="254712345678",
                 body="join control-did",
             )
         )
         self.assertEqual(InboundReply.objects.count(), 0)
+        row = get_communications_settings()
+        self.assertEqual(row.twilio_whatsapp_lids.get("254712345678"), "ke.123456789")
+
+    def test_sandbox_join_lid_matches_recipient_not_latest_stranger(self):
+        from unittest.mock import patch
+
+        from communications.twilio import _sandbox_join_lid_for_phone
+
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            whatsapp_from="whatsapp:+14155238886",
+            join_code="control-did",
+        )
+
+        class ListResponse:
+            def read(self):
+                return (
+                    b'{"messages":['
+                    b'{"direction":"inbound","to":"whatsapp:+14155238886",'
+                    b'"from":"whatsapp:ke.999999999","body":"join control-did","wa_id":"254700000001"},'
+                    b'{"direction":"inbound","to":"whatsapp:+14155238886",'
+                    b'"from":"whatsapp:ke.123456789","body":"join control-did","wa_id":"254712345678"}'
+                    b"]}"
+                )
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with patch("communications.twilio.urlopen", return_value=ListResponse()):
+            lid = _sandbox_join_lid_for_phone(
+                "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "secret-token",
+                "whatsapp:+14155238886",
+                "+254712345678",
+            )
+        self.assertEqual(lid, "ke.123456789")
 
     def test_sync_pulls_inbound_from_twilio_list(self):
         from unittest.mock import patch

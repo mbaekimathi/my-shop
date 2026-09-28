@@ -1,8 +1,9 @@
 """
 Connectivity / false-offline correction loops for MY-SHOP.
 
-Guards the "You're offline" toast path so transient noise (dev-server reload,
-busy runserver, brief Windows adapter flicker) does not mark the app offline.
+Guards offline detection so transient noise (dev-server reload, busy runserver,
+brief Windows adapter flicker) does not mark the app offline. Offline is shown
+only via the header connectivity icon (no full-screen toast).
 
 Usage:
   python scripts/test_connectivity_loop.py
@@ -34,16 +35,15 @@ FIX_HINTS = {
     "connectivity source": "static/js/offline/connectivity.js must exist and export initConnectivity.",
     "failed ping threshold": "FAILED_PINGS_FOR_OFFLINE must be >= 3 so one/two blips do not flip offline.",
     "outage duration gate": "MIN_OUTAGE_MS_BEFORE_OFFLINE must exist so brief fail bursts stay online.",
-    "toast confirm delay": "OFFLINE_TOAST_CONFIRM_MS must be >= 10000 so brief outages stay silent.",
+    "no offline toast": "connectivity.js must not show a full-screen offline toast (header icon only).",
     "recent success grace": "Recent successful pings must ignore isolated AbortError timeouts.",
     "offline event debounce": "window offline handler must delay before probing (noisy on Windows).",
     "sw ping bypass": "static/sw.js must not convert /employees/api/ping/ into a fake offline 503.",
+    "sw auth bypass": "static/sw.js must not intercept login/register (no synthetic 503 Offline HTML).",
     "state machine: one fail": "A single failed probe must keep isOnline() true.",
     "state machine: two fails": "Two failed probes must keep isOnline() true.",
-    "state machine: three fails": "Three consecutive failures should mark offline (without toast yet).",
-    "state machine: toast wait": "Toast must stay hidden until OFFLINE_TOAST_CONFIRM_MS elapses.",
-    "state machine: toast after confirm": "After the confirm window, the offline toast must appear.",
-    "state machine: recover": "A successful ping must clear offline + cancel a pending toast.",
+    "state machine: three fails": "Three consecutive failures alone must not mark offline (needs sustained outage).",
+    "state machine: recover": "A successful ping must clear offline state.",
     "state machine: timeout grace": "AbortError within the recent-success window must not burn a failure.",
     "live ping": "GET /employees/api/ping/ must return {ok:true} quickly.",
     "ping under load": "Ping must stay healthy while several probes run together (busy server).",
@@ -75,7 +75,6 @@ def check_source_invariants() -> list[tuple[str, bool, str]]:
     sw_src = _read(sw) if sw.exists() else ""
 
     failed_need = _const_int(src, "FAILED_PINGS_FOR_OFFLINE")
-    toast_ms = _const_int(src, "OFFLINE_TOAST_CONFIRM_MS")
     results.append(
         (
             "connectivity source",
@@ -92,9 +91,11 @@ def check_source_invariants() -> list[tuple[str, bool, str]]:
     )
     results.append(
         (
-            "toast confirm delay",
-            toast_ms is not None and toast_ms >= 10_000,
-            f"OFFLINE_TOAST_CONFIRM_MS={toast_ms}",
+            "no offline toast",
+            "showOfflineToast" not in src
+            and "data-offline-toast" not in src
+            and "updateConnectivityIndicators" in src,
+            "header indicator only",
         )
     )
     min_outage = _const_int(src, "MIN_OUTAGE_MS_BEFORE_OFFLINE")
@@ -134,6 +135,13 @@ def check_source_invariants() -> list[tuple[str, bool, str]]:
     )
     results.append(
         (
+            "sw auth bypass",
+            "isAuthPath" in sw_src and "if (isAuthPath(url)) return;" in sw_src,
+            "login/register bypass SW fetch handler",
+        )
+    )
+    results.append(
+        (
             "no force race",
             # Probes must reuse in-flight work, not stack fetches.
             "if (pingInFlight) return pingInFlight" in src
@@ -156,31 +164,20 @@ class ConnectivityMachine:
         failed_needed: int = 5,
         hard_fails: int = 9,
         min_outage_ms: int = 22_000,
-        toast_confirm_ms: int = 45_000,
         recent_success_ms: int = 20_000,
     ) -> None:
         self.failed_needed = failed_needed
         self.hard_fails = hard_fails
         self.min_outage_ms = min_outage_ms
-        self.toast_confirm_ms = toast_confirm_ms
         self.recent_success_ms = recent_success_ms
         self.online = True
         self.failed_pings = 0
         self.first_fail_at: float | None = None
         self.last_success_at: float | None = None
-        self.offline_since = 0.0
-        self.toast_visible = False
-        self.toast_due_at: float | None = None
         self.now = 0.0
 
     def advance(self, ms: float) -> None:
         self.now += ms
-        if (
-            not self.online
-            and self.toast_due_at is not None
-            and self.now >= self.toast_due_at
-        ):
-            self.toast_visible = True
 
     def _should_mark_offline(self) -> bool:
         if self.failed_pings >= self.hard_fails:
@@ -195,9 +192,6 @@ class ConnectivityMachine:
         self.last_success_at = self.now
         if not self.online:
             self.online = True
-            self.offline_since = 0.0
-            self.toast_due_at = None
-            self.toast_visible = False
 
     def failure(self, *, abort: bool = False, page_hidden: bool = False) -> None:
         if page_hidden and abort:
@@ -212,8 +206,6 @@ class ConnectivityMachine:
         self.failed_pings += 1
         if self._should_mark_offline() and self.online:
             self.online = False
-            self.offline_since = self.now
-            self.toast_due_at = self.now + self.toast_confirm_ms
 
 
 def check_state_machine() -> list[tuple[str, bool, str]]:
@@ -222,17 +214,17 @@ def check_state_machine() -> list[tuple[str, bool, str]]:
     m = ConnectivityMachine()
     m.success()
     m.failure()
-    results.append(("state machine: one fail", m.online and not m.toast_visible, f"online={m.online}"))
+    results.append(("state machine: one fail", m.online, f"online={m.online}"))
 
     m.failure()
-    results.append(("state machine: two fails", m.online and not m.toast_visible, f"online={m.online}"))
+    results.append(("state machine: two fails", m.online, f"online={m.online}"))
 
     m.failure()
     results.append(
         (
             "state machine: three fails",
-            m.online and not m.toast_visible,
-            f"online={m.online} toast={m.toast_visible} (needs sustained outage)",
+            m.online,
+            f"online={m.online} (needs sustained outage)",
         )
     )
 
@@ -242,25 +234,8 @@ def check_state_machine() -> list[tuple[str, bool, str]]:
     results.append(
         (
             "state machine: sustained outage",
-            (not m.online) and not m.toast_visible and m.toast_due_at is not None,
-            f"online={m.online} toast={m.toast_visible}",
-        )
-    )
-
-    m.advance(20_000)
-    results.append(
-        (
-            "state machine: toast wait",
-            (not m.online) and not m.toast_visible,
-            f"toast_visible={m.toast_visible} before confirm window",
-        )
-    )
-    m.advance(30_000)
-    results.append(
-        (
-            "state machine: toast after confirm",
-            m.toast_visible,
-            f"toast_visible={m.toast_visible} after confirm window",
+            not m.online,
+            f"online={m.online}",
         )
     )
 
@@ -268,8 +243,8 @@ def check_state_machine() -> list[tuple[str, bool, str]]:
     results.append(
         (
             "state machine: recover",
-            m.online and not m.toast_visible and m.toast_due_at is None,
-            f"online={m.online} toast={m.toast_visible}",
+            m.online,
+            f"online={m.online}",
         )
     )
 

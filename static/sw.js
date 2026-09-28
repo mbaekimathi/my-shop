@@ -1,5 +1,5 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v18";
+const CACHE_VERSION = "myshop-v19";
 
 // Precache only the shared shell. Page-specific bundles (my-shop, catalogs,
 // printer) are cached on first use via networkFirst to keep install light.
@@ -114,6 +114,10 @@ self.addEventListener("fetch", (event) => {
   // confirmed application outage.
   if (isConnectivityPing(url)) return;
 
+  // Login/register/logout must hit the network directly (fresh CSRF + no fake
+  // 503 "Offline" HTML when the origin is slow or the host is busy).
+  if (isAuthPath(url)) return;
+
   if (isApi(url)) {
     event.respondWith(
       fetch(request).catch(() =>
@@ -121,21 +125,6 @@ self.addEventListener("fetch", (event) => {
           status: 503,
           headers: { "Content-Type": "application/json" },
         })
-      )
-    );
-    return;
-  }
-
-  // Never serve cached login/register HTML (CSRF tokens must be fresh).
-  if (isAuthPath(url)) {
-    event.respondWith(
-      fetch(request).catch(
-        () =>
-          new Response("Offline — refresh when back online to sign in.", {
-            status: 503,
-            statusText: "Offline",
-            headers: { "Content-Type": "text/plain; charset=utf-8" },
-          })
       )
     );
     return;
