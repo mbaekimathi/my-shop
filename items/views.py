@@ -3139,6 +3139,10 @@ def _stock_report_download(
     view_by="timeline",
     company_name="MY-SHOP",
     shop_label="",
+    logo_path="",
+    company_phone="",
+    company_email="",
+    company_location="",
 ):
     from django.utils import timezone as dj_timezone
 
@@ -3356,6 +3360,10 @@ def _stock_report_download(
         view_label=view_label,
         shop_label=shop_label,
         generated_at=generated_at,
+        logo_path=logo_path,
+        company_phone=company_phone,
+        company_email=company_email,
+        company_location=company_location,
         summary_rows=summary_rows,
         summary_headers=summary_headers,
         summary_qty_label=qty_label,
@@ -3636,6 +3644,15 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
 
         company = get_company_profile()
         company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+        company_phone = (getattr(company, "phone_number", None) or "").strip()
+        company_email = (getattr(company, "email", None) or "").strip()
+        company_location = (getattr(company, "location", None) or "").strip()
+        logo_path = ""
+        if getattr(company, "logo", None):
+            try:
+                logo_path = company.logo.path
+            except Exception:
+                logo_path = ""
         if selected_shop_ids:
             shop_label = ", ".join(
                 shops_by_id[sid].name
@@ -3659,6 +3676,10 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             view_by=view_by,
             company_name=company_name,
             shop_label=shop_label,
+            logo_path=logo_path,
+            company_phone=company_phone,
+            company_email=company_email,
+            company_location=company_location,
         )
 
     return render(
