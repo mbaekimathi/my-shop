@@ -2978,14 +2978,27 @@ def _movements_report_params(
     }
 
 
-def _stock_report_download_filename(page_mode, filter_context):
+def _stock_report_download_filename(page_mode, filter_context, *, event_filter="all"):
     import re
 
+    from django.utils import timezone as dj_timezone
+
     label = (filter_context.get("report_period_label") or "export").strip()
-    safe = re.sub(r"[^\w\-]+", "-", label, flags=re.UNICODE).strip("-").lower()
-    safe = safe or "export"
+    safe_period = re.sub(r"[^\w\-]+", "-", label, flags=re.UNICODE).strip("-").lower()
+    safe_period = safe_period or "export"
+    type_slug = {
+        "in": "stock-in",
+        "out": "stock-out",
+        "sale": "sale",
+        "transfer": "transfer",
+        "return": "return",
+        "all": "all",
+    }.get(event_filter or "all", "all")
+    stamp = dj_timezone.localtime(dj_timezone.now()).strftime("%Y-%m-%d-%H%M")
     prefix = "stock-movements" if page_mode == "movements" else "stock-report"
-    return f"{prefix}-{safe}.csv"
+    if page_mode == "movements" and type_slug != "all":
+        return f"{prefix}-{safe_period}-{type_slug}-{stamp}.csv"
+    return f"{prefix}-{safe_period}-{stamp}.csv"
 
 
 def _format_movement_csv_when(value):
@@ -2998,14 +3011,141 @@ def _format_movement_csv_when(value):
     return date_format(local, "d M Y H:i")
 
 
-def _stock_report_csv_response(*, filename, header, rows):
+def _movement_event_filter_label(event_filter):
+    return {
+        "all": "All movements",
+        "in": "Stock in",
+        "out": "Stock out",
+        "sale": "Sale",
+        "transfer": "Transfer",
+        "return": "Return",
+    }.get(event_filter or "all", "All movements")
+
+
+def _movement_summary_qty_label(event_filter):
+    return {
+        "all": "Qty",
+        "in": "Stocked in",
+        "out": "Stocked out",
+        "sale": "Sold",
+        "transfer": "Transferred",
+        "return": "Returned",
+    }.get(event_filter or "all", "Qty")
+
+
+def _event_matches_summary_filter(event, event_filter):
+    allowed = MOVEMENT_EVENT_FILTER_TYPES.get(event_filter or "all")
+    if not allowed:
+        return True
+    return event.get("event_type") in allowed
+
+
+def _item_qty_summary_rows(events, event_filter="all"):
+    """Per-item quantity totals for the active movement type."""
+    totals = {}
+    for event in events:
+        if not _event_matches_summary_filter(event, event_filter):
+            continue
+        name = (event.get("item_name") or "—").strip() or "—"
+        category = (event.get("item_category") or "").strip()
+        key = (name.lower(), category.lower(), name, category)
+        qty = int(event.get("quantity") or 0)
+        row = totals.get(key)
+        if row is None:
+            totals[key] = {
+                "item_name": name,
+                "item_category": category,
+                "quantity": qty,
+            }
+        else:
+            row["quantity"] += qty
+
+    rows = sorted(
+        totals.values(),
+        key=lambda row: (row["item_name"].lower(), row["item_category"].lower()),
+    )
+    return rows
+
+
+def _item_qty_summary_by_type_rows(events):
+    """When type=all, show each item with In / Out / Transfer / Sale / Return."""
+    blanks = {
+        "in": 0,
+        "out": 0,
+        "transfer": 0,
+        "sale": 0,
+        "return": 0,
+    }
+    type_map = {
+        "in": "in",
+        "out": "out",
+        "transfer_fulfilled": "transfer",
+        "request": "transfer",
+        "sale": "sale",
+        "return": "return",
+    }
+    totals = {}
+    for event in events:
+        bucket = type_map.get(event.get("event_type"))
+        if not bucket:
+            continue
+        name = (event.get("item_name") or "—").strip() or "—"
+        category = (event.get("item_category") or "").strip()
+        key = (name.lower(), category.lower(), name, category)
+        row = totals.get(key)
+        if row is None:
+            row = {
+                "item_name": name,
+                "item_category": category,
+                **blanks,
+            }
+            totals[key] = row
+        row[bucket] += int(event.get("quantity") or 0)
+
+    return sorted(
+        totals.values(),
+        key=lambda row: (row["item_name"].lower(), row["item_category"].lower()),
+    )
+
+
+def _stock_report_csv_meta_rows(
+    *,
+    page_mode,
+    filter_context,
+    event_filter="all",
+    view_by="timeline",
+):
+    from django.utils import timezone as dj_timezone
+
+    period = (filter_context.get("report_period_label") or "").strip() or "—"
+    downloaded = _format_movement_csv_when(dj_timezone.now())
+    rows = [
+        [
+            "Report",
+            "Stock movements" if page_mode == "movements" else "Stock report",
+        ],
+        ["Period", period],
+        ["Downloaded", downloaded],
+    ]
+    if page_mode == "movements":
+        rows.append(["Type", _movement_event_filter_label(event_filter)])
+        rows.append(
+            [
+                "View",
+                "Item summary" if view_by == "item" else "Timeline",
+            ]
+        )
+    rows.append([])
+    return rows
+
+
+def _stock_report_csv_response(*, filename, rows):
     import csv
 
     response = HttpResponse(content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     response.write("\ufeff")
     writer = csv.writer(response)
-    writer.writerow(header)
     writer.writerows(rows)
     return response
 
@@ -3020,14 +3160,21 @@ def _stock_report_csv_download(
     movement_item_group_by_shop,
     item_report_rows,
     item_report_group_by_shop,
+    event_filter="all",
+    view_by="timeline",
 ):
-    filename = _stock_report_download_filename(page_mode, filter_context)
+    filename = _stock_report_download_filename(
+        page_mode, filter_context, event_filter=event_filter
+    )
+    rows = _stock_report_csv_meta_rows(
+        page_mode=page_mode,
+        filter_context=filter_context,
+        event_filter=event_filter,
+        view_by=view_by,
+    )
 
     if page_mode == "movements" and is_item_movement_summary:
-        header = [
-            "Item",
-            "Category",
-        ]
+        header = ["Item", "Category"]
         if movement_item_group_by_shop:
             header.append("Shop")
         header.extend(
@@ -3043,10 +3190,21 @@ def _stock_report_csv_download(
                 "Last activity",
             ]
         )
-        rows = []
-        for row in movement_item_rows:
-            if row.get("is_item_total"):
-                continue
+        rows.append(["Summary by item"])
+        rows.append(header)
+        sorted_items = sorted(
+            [
+                row
+                for row in movement_item_rows
+                if not row.get("is_item_total")
+            ],
+            key=lambda row: (
+                (row.get("item_name") or "").lower(),
+                (row.get("shop_name") or "").lower(),
+                row.get("last_at") or "",
+            ),
+        )
+        for row in sorted_items:
             line = [
                 row.get("item_name") or "",
                 row.get("item_category") or "",
@@ -3067,28 +3225,99 @@ def _stock_report_csv_download(
                 ]
             )
             rows.append(line)
-        return _stock_report_csv_response(
-            filename=filename, header=header, rows=rows
-        )
+        return _stock_report_csv_response(filename=filename, rows=rows)
 
     if page_mode == "movements":
-        header = [
-            "When",
-            "Type",
-            "Item",
-            "Category",
-            "Receipt #",
-            "From",
-            "To",
-            "Qty",
-            "Serials",
-            "Pay",
-            "Seller",
-            "Shop",
-            "Note",
-        ]
-        rows = []
-        for event in movement_events:
+        qty_label = _movement_summary_qty_label(event_filter)
+        rows.append(["Summary by item"])
+        if event_filter == "all":
+            rows.append(
+                [
+                    "Item",
+                    "Category",
+                    "Stocked in",
+                    "Stocked out",
+                    "Transferred",
+                    "Sold",
+                    "Returned",
+                ]
+            )
+            summary_rows = _item_qty_summary_by_type_rows(movement_events)
+            totals = {
+                "in": 0,
+                "out": 0,
+                "transfer": 0,
+                "sale": 0,
+                "return": 0,
+            }
+            for row in summary_rows:
+                rows.append(
+                    [
+                        row["item_name"],
+                        row["item_category"],
+                        row["in"],
+                        row["out"],
+                        row["transfer"],
+                        row["sale"],
+                        row["return"],
+                    ]
+                )
+                for key in totals:
+                    totals[key] += row[key]
+            if summary_rows:
+                rows.append(
+                    [
+                        "Total",
+                        "",
+                        totals["in"],
+                        totals["out"],
+                        totals["transfer"],
+                        totals["sale"],
+                        totals["return"],
+                    ]
+                )
+        else:
+            rows.append(["Item", "Category", qty_label])
+            summary_rows = _item_qty_summary_rows(
+                movement_events, event_filter=event_filter
+            )
+            total_qty = 0
+            for row in summary_rows:
+                rows.append(
+                    [row["item_name"], row["item_category"], row["quantity"]]
+                )
+                total_qty += row["quantity"]
+            if summary_rows:
+                rows.append(["Total", "", total_qty])
+
+        rows.append([])
+        rows.append(["Details by date and time"])
+        rows.append(
+            [
+                "When",
+                "Type",
+                "Item",
+                "Category",
+                "Receipt #",
+                "From",
+                "To",
+                "Qty",
+                "Serials",
+                "Pay",
+                "Seller",
+                "Shop",
+                "Note",
+            ]
+        )
+        detail_events = sorted(
+            movement_events,
+            key=lambda event: (
+                event.get("happened_at") or "",
+                (event.get("item_name") or "").lower(),
+                event.get("event_type") or "",
+            ),
+        )
+        for event in detail_events:
             serials = event.get("serial_numbers") or []
             rows.append(
                 [
@@ -3107,10 +3336,9 @@ def _stock_report_csv_download(
                     event.get("note") or "",
                 ]
             )
-        return _stock_report_csv_response(
-            filename=filename, header=header, rows=rows
-        )
+        return _stock_report_csv_response(filename=filename, rows=rows)
 
+    rows.append(["Summary by item"])
     header = ["Item", "Category"]
     if item_report_group_by_shop:
         header.append("Shop")
@@ -3126,10 +3354,19 @@ def _stock_report_csv_download(
             "Closing stock",
         ]
     )
-    rows = []
-    for row in item_report_rows:
-        if row.get("is_item_total"):
-            continue
+    rows.append(header)
+    sorted_report = sorted(
+        [row for row in item_report_rows if not row.get("is_item_total")],
+        key=lambda row: (
+            (
+                getattr(row.get("item"), "name", None)
+                or row.get("item_name")
+                or ""
+            ).lower(),
+            (row.get("shop_name") or "").lower(),
+        ),
+    )
+    for row in sorted_report:
         item = row.get("item")
         line = [
             getattr(item, "name", None) or row.get("item_name") or "",
@@ -3150,7 +3387,7 @@ def _stock_report_csv_download(
             ]
         )
         rows.append(line)
-    return _stock_report_csv_response(filename=filename, header=header, rows=rows)
+    return _stock_report_csv_response(filename=filename, rows=rows)
 
 
 def stock_report(request, profile, meta, module, *, page_mode="report"):
@@ -3426,6 +3663,8 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             movement_item_group_by_shop=movement_item_group_by_shop,
             item_report_rows=item_report_rows,
             item_report_group_by_shop=item_report_group_by_shop,
+            event_filter=event_filter,
+            view_by=view_by,
         )
 
     return render(
