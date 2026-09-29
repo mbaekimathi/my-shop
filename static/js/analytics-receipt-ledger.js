@@ -155,6 +155,7 @@
     const phoneInput = payModal.querySelector("[data-ax-pay-phone]");
     const stkIdInput = payModal.querySelector("[data-ax-stk-id]");
     const receiptIdInput = payModal.querySelector("[data-ax-pay-receipt-id]");
+    const receiptIdsWrap = payModal.querySelector("[data-ax-pay-receipt-ids]");
     const payTitleEl = payModal.querySelector("[data-ax-pay-title]");
     const payHintEl = payModal.querySelector("[data-ax-pay-hint]");
     const payDueEl = payModal.querySelector("[data-ax-pay-due]");
@@ -194,31 +195,90 @@
       payStatusEl.className = error ? "ax-pay-status is-error" : "ax-pay-status is-ok";
     }
 
-    function openPayModal(source) {
+    function formatDueLabel(raw, fallback) {
+      if (fallback) return fallback;
+      const n = Number.parseFloat(String(raw || "0").replace(/,/g, ""));
+      if (!Number.isFinite(n)) return "KSh 0";
+      return `KSh ${n.toLocaleString("en-KE", {
+        minimumFractionDigits: n % 1 ? 2 : 0,
+        maximumFractionDigits: 2,
+      })}`;
+    }
+
+    function setPayReceiptIds(ids) {
+      if (receiptIdsWrap) {
+        receiptIdsWrap.innerHTML = "";
+        (ids || []).forEach((id) => {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = "receipt_ids";
+          input.value = String(id);
+          receiptIdsWrap.appendChild(input);
+        });
+      }
+      if (receiptIdInput) {
+        receiptIdInput.value = ids && ids.length === 1 ? String(ids[0]) : "";
+      }
+    }
+
+    function openPayModal(source, selectedReceipts) {
       const accountDueRaw = payModal.getAttribute("data-balance-raw") || "";
       const accountDueLabel = payModal.getAttribute("data-balance") || "";
-      const receiptId = (source?.getAttribute?.("data-receipt-id") || "").trim();
-      const payAll = !receiptId || source?.getAttribute?.("data-pay-all") === "1";
-      const dueRaw = payAll
-        ? accountDueRaw
-        : source?.getAttribute?.("data-receipt-due-raw") || accountDueRaw;
-      const dueLabel = payAll
-        ? accountDueLabel
-        : source?.getAttribute?.("data-receipt-due") || accountDueLabel;
-      const receiptNumber = source?.getAttribute?.("data-receipt-number") || "receipt";
+      const multi =
+        Array.isArray(selectedReceipts) && selectedReceipts.length > 0
+          ? selectedReceipts
+          : null;
+      const receiptId = multi
+        ? ""
+        : (source?.getAttribute?.("data-receipt-id") || "").trim();
+      const payAll =
+        !multi && (!receiptId || source?.getAttribute?.("data-pay-all") === "1");
 
-      if (receiptIdInput) receiptIdInput.value = payAll ? "" : receiptId;
-      if (payTitleEl) payTitleEl.textContent = payAll ? "Pay all" : `Pay ${receiptNumber}`;
+      let dueRaw = accountDueRaw;
+      let dueLabel = accountDueLabel;
+      let receiptIds = [];
+      let title = "Pay amount";
+      let hint = "Clears from earliest receipt to latest.";
+
+      if (multi) {
+        receiptIds = multi.map((row) => row.id);
+        const sum = multi.reduce((acc, row) => acc + (row.dueRaw || 0), 0);
+        dueRaw = String(Math.round(sum * 100) / 100);
+        dueLabel = formatDueLabel(dueRaw, multi.length === 1 ? multi[0].dueLabel : "");
+        if (multi.length === 1) {
+          title = `Pay ${multi[0].number || "receipt"}`;
+          hint = "Pays this receipt only.";
+        } else {
+          title = `Pay ${multi.length} receipts`;
+          hint = "Clears selected receipts from earliest to latest.";
+        }
+      } else if (payAll) {
+        receiptIds = [];
+        title = "Pay amount";
+        hint = "Clears from earliest receipt to latest.";
+        dueRaw = accountDueRaw;
+        dueLabel = accountDueLabel;
+      } else {
+        receiptIds = receiptId ? [receiptId] : [];
+        dueRaw = source?.getAttribute?.("data-receipt-due-raw") || accountDueRaw;
+        dueLabel = source?.getAttribute?.("data-receipt-due") || accountDueLabel;
+        const receiptNumber = source?.getAttribute?.("data-receipt-number") || "receipt";
+        title = `Pay ${receiptNumber}`;
+        hint = "Pays this receipt only.";
+      }
+
+      setPayReceiptIds(receiptIds);
+      if (payTitleEl) payTitleEl.textContent = title;
       const dueNumber = Number.parseFloat(String(dueRaw || "0").replace(/,/g, "")) || 0;
       if (payHintEl) {
         if (dueNumber <= 0) {
           payHintEl.textContent = payAll
             ? "No outstanding balance for this filter."
-            : "This receipt is fully paid.";
+            : multi
+              ? "Selected receipts have no balance due."
+              : "This receipt is fully paid.";
         } else {
-          payHintEl.textContent = payAll
-            ? "Clears from earliest receipt to latest."
-            : "Pays this receipt only.";
+          payHintEl.textContent = hint;
         }
       }
       if (payDueEl) payDueEl.textContent = dueLabel;
@@ -238,7 +298,9 @@
         setPayStatus(
           payAll
             ? "No outstanding balance to pay."
-            : "This receipt has no balance due.",
+            : multi
+              ? "Selected receipts have no balance due."
+              : "This receipt has no balance due.",
           { error: true }
         );
       } else {
@@ -255,7 +317,7 @@
       payModal.hidden = true;
       if (payAmount) payAmount.value = "";
       if (stkIdInput) stkIdInput.value = "";
-      if (receiptIdInput) receiptIdInput.value = "";
+      setPayReceiptIds([]);
       if (paySubmit) paySubmit.disabled = false;
       setPayStatus("");
       syncModalOpen();
@@ -313,6 +375,8 @@
             amount,
             phone,
           });
+          const singleReceiptId = (receiptIdInput?.value || "").trim();
+          if (singleReceiptId) body.set("receipt_id", singleReceiptId);
           const startRes = await fetch(stkInitiateUrl, {
             method: "POST",
             headers: {
@@ -368,6 +432,14 @@
     });
 
     document.addEventListener("click", (event) => {
+      const paySelected = event.target.closest("[data-ax-pay-selected]");
+      if (paySelected) {
+        event.preventDefault();
+        const selected = getSelectedLedgerReceipts();
+        if (!selected.length) return;
+        openPayModal(null, selected);
+        return;
+      }
       const payOpen = event.target.closest("[data-ax-pay-open]");
       if (payOpen) {
         event.preventDefault();
@@ -391,6 +463,88 @@
     }
     syncMethodUi();
   }
+
+  function getSelectedLedgerReceipts() {
+    const checks = document.querySelectorAll(
+      "[data-ax-ledger-select-row]:checked"
+    );
+    return [...checks]
+      .map((input) => {
+        const id = (input.getAttribute("data-receipt-id") || "").trim();
+        if (!id) return null;
+        const dueRaw =
+          Number.parseFloat(
+            String(input.getAttribute("data-receipt-due-raw") || "0").replace(
+              /,/g,
+              ""
+            )
+          ) || 0;
+        return {
+          id,
+          number: input.getAttribute("data-receipt-number") || "receipt",
+          dueRaw,
+          dueLabel: input.getAttribute("data-receipt-due") || "",
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function syncLedgerSelection() {
+    const card = document.querySelector("[data-ax-ledger-select]");
+    if (!card) return;
+    const bar = card.querySelector("[data-ax-ledger-select-bar]");
+    const countEl = card.querySelector("[data-ax-ledger-select-count]");
+    const payBtn = card.querySelector("[data-ax-pay-selected]");
+    const selectAll = card.querySelector("[data-ax-ledger-select-all]");
+    const rows = [...card.querySelectorAll("[data-ax-ledger-select-row]")];
+    const visible = rows.filter((input) => {
+      const tr = input.closest("[data-ax-receipt-row]");
+      return tr && !tr.hidden;
+    });
+    const checked = visible.filter((input) => input.checked);
+    const n = checked.length;
+    if (bar) bar.hidden = n === 0;
+    if (countEl) {
+      countEl.textContent =
+        n === 1 ? "1 receipt selected" : `${n} receipts selected`;
+    }
+    if (payBtn) payBtn.disabled = n === 0;
+    if (selectAll) {
+      selectAll.checked = visible.length > 0 && checked.length === visible.length;
+      selectAll.indeterminate =
+        checked.length > 0 && checked.length < visible.length;
+    }
+    rows.forEach((input) => {
+      const tr = input.closest("[data-ax-receipt-row]");
+      tr?.classList.toggle("is-selected", input.checked);
+    });
+    if (window.lucide && typeof window.lucide.createIcons === "function") {
+      window.lucide.createIcons();
+    }
+  }
+
+  (function initLedgerSelection() {
+    const card = document.querySelector("[data-ax-ledger-select]");
+    if (!card) return;
+    const selectAll = card.querySelector("[data-ax-ledger-select-all]");
+    card.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (target.matches("[data-ax-ledger-select-all]")) {
+        card.querySelectorAll("[data-ax-ledger-select-row]").forEach((input) => {
+          const tr = input.closest("[data-ax-receipt-row]");
+          if (tr && !tr.hidden) input.checked = target.checked;
+        });
+        syncLedgerSelection();
+        return;
+      }
+      if (target.matches("[data-ax-ledger-select-row]")) {
+        syncLedgerSelection();
+      }
+    });
+    selectAll?.addEventListener("click", (event) => event.stopPropagation());
+    syncLedgerSelection();
+  })();
 
   const manageModal = document.querySelector("[data-ax-receipt-manage-modal]");
   if (manageModal) {
@@ -768,6 +922,7 @@
       });
       if (noResults) noResults.hidden = visible > 0 || !query;
       if (table) table.hidden = visible === 0 && Boolean(query);
+      if (typeof syncLedgerSelection === "function") syncLedgerSelection();
     };
 
     let timer = 0;

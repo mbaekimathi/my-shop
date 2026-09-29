@@ -22,9 +22,9 @@
   >
     <div class="workspace-modal-head">
       <div>
-        <h2 id="ax-pay-modal-title" data-ax-pay-title>Pay all</h2>
+        <h2 id="ax-pay-modal-title" data-ax-pay-title>Pay amount</h2>
         <p class="ax-receipt-modal-meta">
-          <span data-ax-pay-hint>Clears from earliest receipt to latest.</span>
+          <span data-ax-pay-hint>Enter an amount to clear oldest credits first, or select receipts below.</span>
           Balance <strong data-ax-pay-balance>{{ balance }}</strong>
         </p>
       </div>
@@ -38,6 +38,7 @@
         <input type="hidden" name="kind" value="{{ account_kind }}">
         <input type="hidden" name="account_id" value="{{ account_id }}">
         <input type="hidden" name="receipt_id" value="" data-ax-pay-receipt-id>
+        <div data-ax-pay-receipt-ids hidden></div>
         <input type="hidden" name="stk_payment_id" value="" data-ax-stk-id>
         {% for shop_id in selected_shop_ids %}
         <input type="hidden" name="shop_id" value="{{ shop_id }}">

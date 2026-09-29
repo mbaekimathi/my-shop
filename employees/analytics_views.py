@@ -932,26 +932,58 @@ def analytics_account_pay(request, role_segment):
         receipt_id = int(request.POST.get("receipt_id") or 0)
     except (TypeError, ValueError):
         receipt_id = 0
+    receipt_ids = []
+    for raw in request.POST.getlist("receipt_ids"):
+        try:
+            pk = int(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if pk > 0:
+            receipt_ids.append(pk)
+    if receipt_id and receipt_id not in receipt_ids:
+        receipt_ids.append(receipt_id)
     payment_method = (request.POST.get("payment_method") or "cash").strip().lower()
     stk_payment_id = (request.POST.get("stk_payment_id") or "").strip()
 
     try:
-        if receipt_id and kind == "credit":
+        if len(receipt_ids) == 1 and kind == "credit":
             result = apply_credit_receipt_payment(
                 profile=profile,
-                receipt_id=receipt_id,
+                receipt_id=receipt_ids[0],
                 amount=request.POST.get("amount"),
                 payment_method=payment_method,
                 stk_payment_id=stk_payment_id,
             )
-        elif receipt_id and kind in ("expense", "stock"):
+        elif len(receipt_ids) == 1 and kind in ("expense", "stock"):
             result = apply_supplier_receipt_payment(
                 profile=profile,
                 kind=kind,
                 account_id=account_id,
-                receipt_id=receipt_id,
+                receipt_id=receipt_ids[0],
                 amount=request.POST.get("amount"),
                 shop_ids=request.POST.getlist("shop_id"),
+            )
+        elif len(receipt_ids) > 1 and kind == "credit":
+            date_filter = _date_filter_context(request, allow_all_time=True)
+            result = apply_account_payment(
+                profile=profile,
+                kind=kind,
+                account_id=account_id,
+                amount=request.POST.get("amount"),
+                payment_method=payment_method,
+                stk_payment_id=stk_payment_id,
+                shop_ids=request.POST.getlist("shop_id"),
+                start=date_filter.get("start"),
+                end=date_filter.get("end"),
+                receipt_ids=receipt_ids,
+            )
+        elif receipt_ids and kind in ("expense", "stock"):
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "Select one supplier receipt at a time.",
+                },
+                status=400,
             )
         else:
             date_filter = _date_filter_context(request, allow_all_time=True)

@@ -383,6 +383,22 @@ def _allocated_shop_filter(profile, request=None, *, shop_ids=None) -> dict:
     }
 
 
+def _parse_receipt_id_set(receipt_ids) -> set[int]:
+    """Normalize optional receipt id filters from forms / APIs."""
+    if not receipt_ids:
+        return set()
+    values = [receipt_ids] if isinstance(receipt_ids, (str, int)) else list(receipt_ids)
+    parsed: set[int] = set()
+    for raw in values:
+        try:
+            pk = int(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if pk > 0:
+            parsed.add(pk)
+    return parsed
+
+
 def apply_account_payment(
     *,
     profile,
@@ -394,8 +410,13 @@ def apply_account_payment(
     shop_ids=None,
     start=None,
     end=None,
+    receipt_ids=None,
 ) -> dict:
-    """Apply a payment to an account, clearing receipts oldest → newest (FIFO)."""
+    """Apply a payment to an account, clearing receipts oldest → newest (FIFO).
+
+    When ``receipt_ids`` is provided for credit accounts, only those receipts are
+    eligible — still allocated oldest → newest within the selection.
+    """
     from django.core.exceptions import ValidationError
     from django.db import transaction
 
@@ -411,6 +432,7 @@ def apply_account_payment(
 
     pay_amount = _parse_pay_amount(amount)
     remaining = pay_amount
+    selected_receipt_ids = _parse_receipt_id_set(receipt_ids)
     allocated = {shop.pk for shop in actionable_shops_for_profile(profile)}
     if shop_ids:
         parsed = set()
@@ -455,25 +477,38 @@ def apply_account_payment(
                     raise ValidationError("M-Pesa payment belongs to a different client.")
                 mpesa_receipt_number = stk_payment.mpesa_receipt_number or ""
 
-            receipts = list(
-                _within_created_range(
-                    ShopReceipt.objects.select_for_update().filter(
-                        client_id=client.pk,
-                        kind=ShopReceiptKind.CREDIT,
-                        shop_id__in=shop_ids,
-                    ),
-                    start,
-                    end,
-                )
-                .exclude(status=ShopReceiptStatus.CANCELLED)
-                .order_by("created_at", "pk")
+            credit_qs = ShopReceipt.objects.select_for_update().filter(
+                client_id=client.pk,
+                kind=ShopReceiptKind.CREDIT,
+                shop_id__in=shop_ids,
             )
+            if selected_receipt_ids:
+                credit_qs = credit_qs.filter(pk__in=selected_receipt_ids)
+            else:
+                credit_qs = _within_created_range(credit_qs, start, end)
+            receipts = list(
+                credit_qs.exclude(status=ShopReceiptStatus.CANCELLED).order_by(
+                    "created_at", "pk"
+                )
+            )
+            if selected_receipt_ids:
+                found = {row.pk for row in receipts}
+                missing = selected_receipt_ids - found
+                if missing:
+                    raise ValidationError(
+                        "One or more selected credit receipts were not found "
+                        "for this client."
+                    )
             balance_before = sum(
                 (_due_amount(row.total, row.amount_paid) for row in receipts),
                 _zero(),
             )
             if balance_before <= 0:
-                raise ValidationError("This account has no balance due.")
+                raise ValidationError(
+                    "Selected receipts have no balance due."
+                    if selected_receipt_ids
+                    else "This account has no balance due."
+                )
             if pay_amount > balance_before:
                 raise ValidationError(
                     f"Amount exceeds balance due ({_money_ksh(balance_before)})."
@@ -513,8 +548,19 @@ def apply_account_payment(
                 stk_payment.applied = True
                 stk_payment.save(update_fields=["applied", "updated_at"])
 
+            # Account balance after payment: all open credits for this client/shops,
+            # not only the selected subset.
+            all_open = list(
+                ShopReceipt.objects.filter(
+                    client_id=client.pk,
+                    kind=ShopReceiptKind.CREDIT,
+                    shop_id__in=shop_ids,
+                )
+                .exclude(status=ShopReceiptStatus.CANCELLED)
+                .only("total", "amount_paid")
+            )
             balance_after = sum(
-                (_due_amount(row.total, row.amount_paid) for row in receipts),
+                (_due_amount(row.total, row.amount_paid) for row in all_open),
                 _zero(),
             )
             pay_label = "M-Pesa" if method == "mpesa" else "Cash"
@@ -528,6 +574,11 @@ def apply_account_payment(
                     f"{'' if converted == 1 else 's'} now recorded as "
                     f"{'a sale' if converted == 1 else 'sales'}."
                 )
+            scope_note = (
+                " selected"
+                if selected_receipt_ids
+                else ""
+            )
             return {
                 "ok": True,
                 "kind": kind,
@@ -540,7 +591,7 @@ def apply_account_payment(
                 "account_balance_raw": str(balance_after),
                 "message": (
                     f"{pay_label} payment of {_money_ksh(pay_amount)} applied "
-                    f"oldest → newest across {cleared} receipt"
+                    f"oldest → newest across {cleared}{scope_note} receipt"
                     f"{'' if cleared == 1 else 's'}{ref_bit}.{converted_note}"
                 ),
             }
@@ -2970,6 +3021,8 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
         "account_kind": "credit",
         "account_id": client.pk,
         "can_pay": balance > 0,
+        "ledger_show_receipt_pay": True,
+        "ledger_show_select": True,
         "scope_hint": scope_hint,
         "other_credits_count": other_count,
         "other_credits_alert": other_credits_alert,

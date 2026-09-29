@@ -149,6 +149,16 @@
 
       <div class="stock-report-filter-actions">
         <button type="submit" class="stock-report-apply">Apply</button>
+        <button
+          type="submit"
+          class="stock-report-apply stock-report-apply--ghost"
+          name="download"
+          value="1"
+          data-stock-report-download
+        >
+          <i data-lucide="download" aria-hidden="true"></i>
+          Download
+        </button>
       </div>
     </form>
   </header>
@@ -275,7 +285,7 @@
             {% endif %}
           </table>
         </div>
-      {% elif movement_events %}
+      {% elif movement_event_groups %}
       <div class="staff-table-wrap stock-report-table-wrap">
         <table class="staff-table stock-report-table stock-report-table--timeline">
           <thead>
@@ -294,9 +304,37 @@
               <th scope="col">Seller</th>
             </tr>
           </thead>
-          <tbody>
-            {% for event in movement_events %}
-            <tr data-stock-live-row data-search-text="{{ event.item_name|lower }} {{ event.item_category|lower }} {{ event.event_label|lower }} {{ event.from_label|lower }} {{ event.to_label|lower }} {{ event.by|lower }}{% if event.receipt_number %} {{ event.receipt_number|lower }}{% endif %}{% for serial in event.serial_numbers %} {{ serial|lower }}{% endfor %}">
+          {% for group in movement_event_groups %}
+          <tbody
+            class="stock-report-receipt-group{% if group.is_multi %} is-multi{% endif %}"
+            data-stock-live-row
+            data-search-text="{{ group.search_text }}"
+          >
+            {% if group.is_multi %}
+            <tr class="stock-report-receipt-head">
+              <td colspan="{% if is_item_movement_detail %}9{% else %}10{% endif %}">
+                <div class="stock-report-receipt-head-inner">
+                  <strong class="stock-report-receipt-number">{{ group.receipt_number }}</strong>
+                  <span class="stock-report-receipt-meta">
+                    {% if report_range == 'day' %}
+                    {{ group.happened_at|time:"H:i" }}
+                    {% else %}
+                    {{ group.happened_at|date:"d M Y" }} · {{ group.happened_at|time:"H:i" }}
+                    {% endif %}
+                    {% if group.shop_name %} · {{ group.shop_name }}{% endif %}
+                    · {{ group.activities|length }} activities
+                  </span>
+                  <span class="stock-report-receipt-labels">
+                    {% for badge in group.activity_labels %}
+                    <span class="stock-report-type stock-report-type--{{ badge.event_type }}">{{ badge.label }}</span>
+                    {% endfor %}
+                  </span>
+                </div>
+              </td>
+            </tr>
+            {% endif %}
+            {% for event in group.activities %}
+            <tr class="{% if group.is_multi %}stock-report-receipt-activity{% endif %}">
               <td data-label="When">
                 {% if report_range == 'day' %}
                 {{ event.happened_at|time:"H:i" }}
@@ -332,7 +370,23 @@
               </td>
               <td data-label="Serial">
                 {% if event.serial_numbers %}
-                {% for serial in event.serial_numbers %}<span class="stock-serial-number">{{ serial }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}
+                <div class="stock-report-serial-cell">
+                  <button
+                    type="button"
+                    class="ax-eye stock-report-serial-eye"
+                    data-stock-serials-view
+                    data-serials-title="{% if event.item_name %}{{ event.item_name }}{% endif %}{% if event.receipt_number %} · {{ event.receipt_number }}{% endif %}"
+                    aria-label="View {{ event.serial_numbers|length }} serial{{ event.serial_numbers|length|pluralize }}"
+                  >
+                    <i data-lucide="eye" aria-hidden="true"></i>
+                  </button>
+                  <span class="stock-report-serial-count">{{ event.serial_numbers|length }}</span>
+                  <ul class="stock-report-serials-data" hidden>
+                    {% for serial in event.serial_numbers %}
+                    <li>{{ serial }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
                 {% endif %}
               </td>
               <td data-label="Pay">{{ event.pay }}</td>
@@ -340,6 +394,7 @@
             </tr>
             {% endfor %}
           </tbody>
+          {% endfor %}
         </table>
       </div>
       {% else %}
@@ -458,6 +513,42 @@
     {% endif %}
   </div>
 </section>
+
+{% if is_movements_page %}
+<div
+  class="workspace-modal stock-report-serials-modal"
+  data-stock-report-serials-modal
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-stock-report-serials-close></div>
+  <div
+    class="workspace-modal-dialog stock-report-serials-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stock-report-serials-title"
+  >
+    <header class="workspace-modal-head">
+      <div>
+        <p class="stock-report-serials-kicker">Serial numbers</p>
+        <h2 id="stock-report-serials-title" data-stock-report-serials-title>Serials</h2>
+      </div>
+      <button type="button" class="workspace-modal-close" data-stock-report-serials-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+    <div class="stock-report-serials-body">
+      <p class="stock-report-serials-count">
+        <span data-stock-report-serials-count>0</span> serial<span data-stock-report-serials-plural>s</span>
+      </p>
+      <ul class="stock-report-serials-list" data-stock-report-serials-list></ul>
+    </div>
+    <div class="workspace-modal-actions">
+      <button type="button" class="btn btn--primary" data-stock-report-serials-close>Done</button>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
@@ -681,6 +772,68 @@
         }
         form.submit();
       });
+    });
+  })();
+
+  (() => {
+    const modal = document.querySelector("[data-stock-report-serials-modal]");
+    if (!modal) return;
+
+    const titleEl = modal.querySelector("[data-stock-report-serials-title]");
+    const listEl = modal.querySelector("[data-stock-report-serials-list]");
+    const countEl = modal.querySelector("[data-stock-report-serials-count]");
+    const pluralEl = modal.querySelector("[data-stock-report-serials-plural]");
+    const body = document.body;
+
+    const escapeHtml = (value) =>
+      String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+    const setOpen = (open) => {
+      modal.hidden = !open;
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+      body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+      if (open && window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    const openFromButton = (btn) => {
+      const cell = btn.closest(".stock-report-serial-cell");
+      const items = [...(cell?.querySelectorAll(".stock-report-serials-data li") || [])]
+        .map((li) => (li.textContent || "").trim())
+        .filter(Boolean);
+      if (!items.length || !listEl) return;
+
+      const title = (btn.getAttribute("data-serials-title") || "").trim();
+      if (titleEl) titleEl.textContent = title || "Serial numbers";
+      if (countEl) countEl.textContent = String(items.length);
+      if (pluralEl) pluralEl.hidden = items.length === 1;
+      listEl.innerHTML = items
+        .map(
+          (serial) =>
+            `<li><span class="stock-serial-number">${escapeHtml(serial)}</span></li>`
+        )
+        .join("");
+      setOpen(true);
+    };
+
+    document.addEventListener("click", (event) => {
+      const openBtn = event.target.closest("[data-stock-serials-view]");
+      if (openBtn) {
+        event.preventDefault();
+        openFromButton(openBtn);
+        return;
+      }
+      if (event.target.closest("[data-stock-report-serials-close]")) {
+        setOpen(false);
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) setOpen(false);
     });
   })();
 </script>

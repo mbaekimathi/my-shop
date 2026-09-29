@@ -729,7 +729,21 @@
                           <option value="transfer">Transfer</option>
                           <option value="display">Display</option>
                           <option value="return">Supplier return</option>
+                          <option value="custom">Custom</option>
                         </select>
+                      </label>
+                      <label class="stock-inline-field" data-stock-custom-reason-wrap hidden>
+                        <span>Custom reason</span>
+                        <input
+                          type="text"
+                          name="note"
+                          maxlength="200"
+                          placeholder="Enter reason"
+                          autocomplete="off"
+                          data-stock-custom-reason
+                          data-stock-field
+                          disabled
+                        >
                       </label>
                       <label class="stock-inline-field">
                         <span>Refund</span>
@@ -1034,7 +1048,18 @@
               <option value="transfer">Transfer</option>
               <option value="display">Display</option>
               <option value="return">Supplier return</option>
+              <option value="custom">Custom</option>
             </select>
+          </label>
+          <label class="stock-float-field" data-stock-float-custom-reason-wrap hidden>
+            <span>Custom reason</span>
+            <input
+              type="text"
+              maxlength="200"
+              placeholder="Enter reason"
+              autocomplete="off"
+              data-stock-float-custom-reason
+            >
           </label>
           <label class="stock-float-field">
             <span>Refund</span>

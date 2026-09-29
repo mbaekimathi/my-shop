@@ -188,6 +188,50 @@ class CreditPaymentConversionTests(TestCase):
         self.assertFalse(second.settled_from_credit)
         self.assertEqual(second.amount_paid, Decimal("0.00"))
 
+    def test_selected_receipts_skip_unselected_older(self):
+        first = self._receipt(total=Decimal("50.00"))
+        second = self._receipt(total=Decimal("70.00"))
+        third = self._receipt(total=Decimal("40.00"))
+        result = apply_account_payment(
+            profile=self.cashier,
+            kind="credit",
+            account_id=self.client.pk,
+            amount="70",
+            receipt_ids=[second.pk, third.pk],
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+        third.refresh_from_db()
+        self.assertEqual(result["cleared"], 1)
+        self.assertEqual(result["converted"], 1)
+        self.assertEqual(first.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(first.amount_paid, Decimal("0.00"))
+        self.assertEqual(second.kind, ShopReceiptKind.SALE)
+        self.assertTrue(second.settled_from_credit)
+        self.assertEqual(third.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(third.amount_paid, Decimal("0.00"))
+
+    def test_selected_receipts_fifo_within_selection(self):
+        first = self._receipt(total=Decimal("50.00"))
+        second = self._receipt(total=Decimal("70.00"))
+        third = self._receipt(total=Decimal("40.00"))
+        result = apply_account_payment(
+            profile=self.cashier,
+            kind="credit",
+            account_id=self.client.pk,
+            amount="90",
+            receipt_ids=[second.pk, third.pk],
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+        third.refresh_from_db()
+        self.assertEqual(result["cleared"], 2)
+        self.assertEqual(result["converted"], 1)
+        self.assertEqual(first.amount_paid, Decimal("0.00"))
+        self.assertEqual(second.kind, ShopReceiptKind.SALE)
+        self.assertEqual(third.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(third.amount_paid, Decimal("20.00"))
+
 
 class SalesAnalyticsPaidCreditsTests(TestCase):
     def setUp(self):

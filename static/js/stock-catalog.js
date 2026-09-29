@@ -1041,7 +1041,21 @@
             <option value="transfer">Transfer</option>
             <option value="display">Display</option>
             <option value="return">Supplier return</option>
+            <option value="custom">Custom</option>
           </select>
+        </label>
+        <label class="stock-inline-field" data-stock-custom-reason-wrap hidden>
+          <span>Custom reason</span>
+          <input
+            type="text"
+            name="note"
+            maxlength="200"
+            placeholder="Enter reason"
+            autocomplete="off"
+            data-stock-custom-reason
+            data-stock-field
+            disabled
+          >
         </label>
         <label class="stock-inline-field">
           <span>Refund</span>
@@ -1131,6 +1145,7 @@
           >`
         : mode === "out"
           ? `<input type="hidden" name="reason" value="" data-stock-reason data-stock-field disabled>
+           <input type="hidden" name="note" value="" data-stock-custom-reason data-stock-field disabled>
            <input type="hidden" name="refund" value="" data-stock-refund data-stock-field disabled>
            <input type="hidden" name="refund_amount" value="" data-stock-refund-amount data-stock-field disabled>`
           : "";

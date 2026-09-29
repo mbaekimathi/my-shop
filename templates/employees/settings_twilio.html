@@ -15,7 +15,16 @@
       <div>
         <p class="stock-kicker">Settings · Communication settings</p>
         <h2>{{ meta.headline }}</h2>
-        <p>Set up Twilio and optional Message / SMS fallbacks.</p>
+        <p class="daraja-form-message">
+          Profile: <strong>{{ comms.deploy_profile_label|default:"Local" }}</strong>
+          {% if comms.credentials_from_env %}
+          — Twilio, SMS, and Message credentials are loaded from server <code>.env</code> on hosted.
+          {% elif comms.is_hosted_deploy %}
+          — set <code>TWILIO_*</code>, <code>SMS_*</code>, and <code>MESSAGE_*</code> in server <code>.env</code>, then restart the app.
+          {% else %}
+          — credentials are saved in this app (local database).
+          {% endif %}
+        </p>
       </div>
     </div>
   </header>
@@ -46,7 +55,7 @@
           Open WhatsApp on this phone
         </a>
       </article>
-      <form class="daraja-credentials-form" data-comms-form="twilio" novalidate>
+      <form class="daraja-credentials-form" data-comms-form="twilio" novalidate{% if comms.credentials_from_env %} hidden{% endif %}>
         <input type="hidden" name="action" value="save_twilio_settings">
         <div class="daraja-status" data-comms-whatsapp-status>
           {% if comms.has_twilio_credentials %}
@@ -135,6 +144,13 @@
           <p class="daraja-form-message" data-comms-message hidden></p>
         </div>
       </form>
+      {% if comms.credentials_from_env %}
+      <p class="daraja-help">
+        Twilio is configured via <code>TWILIO_ACCOUNT_SID</code>, <code>TWILIO_AUTH_TOKEN</code>,
+        <code>TWILIO_WHATSAPP_FROM</code>, <code>TWILIO_FROM_NUMBER</code>, and optional
+        <code>TWILIO_WHATSAPP_JOIN_CODE</code> in server <code>.env</code>.
+      </p>
+      {% endif %}
     </section>
 
     <section class="pos-settings-group">
@@ -142,7 +158,7 @@
         <h3>Message API</h3>
         <p>Sender identity for the Message channel API.</p>
       </div>
-      <form class="daraja-credentials-form" data-comms-form="message" novalidate>
+      <form class="daraja-credentials-form" data-comms-form="message" novalidate{% if comms.credentials_from_env %} hidden{% endif %}>
         <input type="hidden" name="action" value="save_message_settings">
         <div class="daraja-status" data-comms-message-status>
           {% if comms.message_from_name %}
@@ -181,6 +197,12 @@
           <p class="daraja-form-message" data-comms-message hidden></p>
         </div>
       </form>
+      {% if comms.credentials_from_env %}
+      <p class="daraja-help">
+        Message channel uses <code>MESSAGE_FROM_NAME</code> and <code>MESSAGE_REPLY_TO</code> in server <code>.env</code>.
+        Outbound SMTP (if used) uses <code>EMAIL_HOST</code>, <code>EMAIL_HOST_USER</code>, <code>EMAIL_HOST_PASSWORD</code>, and related <code>EMAIL_*</code> variables.
+      </p>
+      {% endif %}
     </section>
 
     <section class="pos-settings-group">
@@ -188,7 +210,7 @@
         <h3>Text (SMS) API</h3>
         <p>SMS provider API credentials.</p>
       </div>
-      <form class="daraja-credentials-form" data-comms-form="sms" novalidate>
+      <form class="daraja-credentials-form" data-comms-form="sms" novalidate{% if comms.credentials_from_env %} hidden{% endif %}>
         <input type="hidden" name="action" value="save_sms_settings">
         <div class="daraja-status" data-comms-sms-status>
           {% if comms.has_sms_credentials %}
@@ -265,6 +287,12 @@
           <p class="daraja-form-message" data-comms-message hidden></p>
         </div>
       </form>
+      {% if comms.credentials_from_env %}
+      <p class="daraja-help">
+        SMS uses <code>SMS_PROVIDER</code>, <code>SMS_API_KEY</code>, <code>SMS_SENDER_ID</code>, and optional
+        <code>SMS_API_SECRET</code> / <code>SMS_API_BASE_URL</code> in server <code>.env</code>.
+      </p>
+      {% endif %}
     </section>
   </div>
 </section>

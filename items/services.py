@@ -2015,11 +2015,25 @@ def _parse_movement_lines(data, movement_type: str):
             if stock_req.require_reason_on_out:
                 if reason not in valid_reasons:
                     errors.append(
-                        f"{line_label}: choose a reason (waste, transfer, display, supplier return, or trade out)."
+                        f"{line_label}: choose a reason (waste, transfer, display, "
+                        "supplier return, trade out, or custom)."
                     )
                     continue
             elif reason not in valid_reasons:
                 reason = ""
+
+            if reason == StockOutReason.CUSTOM:
+                if not note:
+                    errors.append(f"{line_label}: enter a custom reason.")
+                    continue
+                if len(note) > 200:
+                    errors.append(
+                        f"{line_label}: custom reason must be 200 characters or fewer."
+                    )
+                    continue
+            else:
+                # Preset reasons do not carry free-text notes from this form.
+                note = ""
 
             refund = (raw_refunds[index] if index < len(raw_refunds) else "").strip().lower()
             refund_amount = None

@@ -264,6 +264,7 @@ class StockOutReason(models.TextChoices):
     DISPLAY = "display", "Display"
     RETURN = "return", "Supplier return"
     TRADE_OUT = "trade_out", "Trade out"
+    CUSTOM = "custom", "Custom"
 
 
 class StockRequestStatus(models.TextChoices):

@@ -956,7 +956,7 @@ def list_working_hours_shop_rows(*, shops=None, post=None) -> list[dict]:
     return rows
 
 
-def get_communications_settings() -> CompanyCommunicationsSettings:
+def get_communications_settings_db() -> CompanyCommunicationsSettings:
     cached = cache.get(COMMUNICATIONS_SETTINGS_CACHE_KEY)
     if cached is not None:
         return cached
@@ -965,11 +965,19 @@ def get_communications_settings() -> CompanyCommunicationsSettings:
     return settings_row
 
 
+def get_communications_settings() -> CompanyCommunicationsSettings:
+    from shops.deploy_profile import apply_hosted_comms_env_overlays
+
+    return apply_hosted_comms_env_overlays(get_communications_settings_db())
+
+
 def communications_settings_as_dict(
     settings_row: CompanyCommunicationsSettings | None = None,
 ) -> dict:
+    from shops.deploy_profile import comms_deploy_meta
+
     row = settings_row or get_communications_settings()
-    return {
+    payload = {
         "enable_whatsapp": bool(row.enable_whatsapp),
         "enable_message": bool(row.enable_message),
         "enable_sms": bool(row.enable_sms),
@@ -1003,22 +1011,27 @@ def communications_settings_as_dict(
         "message_reply_to": row.message_reply_to or "",
         "updated_at": row.updated_at,
     }
+    payload.update(comms_deploy_meta())
+    return payload
 
 
 def set_communications_setting(*, field: str, enabled: bool) -> CompanyCommunicationsSettings:
     if field not in COMMUNICATIONS_TOGGLE_FIELDS:
         raise ValidationError("Unknown communications setting.")
-    row = get_communications_settings()
+    row = get_communications_settings_db()
     if enabled:
-        if field == "enable_whatsapp" and not row.has_twilio_credentials():
+        effective = get_communications_settings()
+        if field == "enable_whatsapp" and not effective.has_twilio_credentials():
             raise ValidationError(
-                "Save Twilio credentials below before enabling WhatsApp."
+                "Set Twilio credentials in server .env before enabling WhatsApp."
             )
-        if field == "enable_sms" and not row.has_sms_credentials():
-            raise ValidationError("Save SMS credentials below before enabling Text.")
-        if field == "enable_message" and not (row.message_from_name or "").strip():
+        if field == "enable_sms" and not effective.has_sms_credentials():
             raise ValidationError(
-                "Set a sender name under Message settings before enabling Message."
+                "Set SMS credentials in server .env (SMS_API_KEY, SMS_SENDER_ID) before enabling Text."
+            )
+        if field == "enable_message" and not (effective.message_from_name or "").strip():
+            raise ValidationError(
+                "Set MESSAGE_FROM_NAME in server .env before enabling Message."
             )
         if field == "enable_bulk_send" and not (
             row.enable_whatsapp or row.enable_sms or row.enable_message
@@ -1026,13 +1039,13 @@ def set_communications_setting(*, field: str, enabled: bool) -> CompanyCommunica
             raise ValidationError(
                 "Enable at least one channel (WhatsApp, Message, or Text) before bulk send."
             )
-        if field == "enable_automations" and not row.has_twilio_credentials():
+        if field == "enable_automations" and not effective.has_twilio_credentials():
             raise ValidationError(
-                "Save Twilio credentials in Settings before turning on automations."
+                "Set Twilio credentials in server .env before turning on automations."
             )
-        if field.startswith("auto_") and not row.has_twilio_credentials():
+        if field.startswith("auto_") and not effective.has_twilio_credentials():
             raise ValidationError(
-                "Save Twilio credentials in Settings before turning on automations."
+                "Set Twilio credentials in server .env before turning on automations."
             )
     setattr(row, field, bool(enabled))
     update_fields = [field, "updated_at"]
@@ -1057,7 +1070,7 @@ def update_automation_audience(
 ) -> CompanyCommunicationsSettings:
     from communications.constants import AUDIENCE_TYPES, AUDIENCE_SALE, AUDIENCE_WHATSAPP
 
-    row = get_communications_settings()
+    row = get_communications_settings_db()
     kind = (audience_type or "").strip().lower() or AUDIENCE_SALE
     if kind not in AUDIENCE_TYPES or kind == AUDIENCE_WHATSAPP:
         kind = AUDIENCE_SALE
@@ -1098,7 +1111,15 @@ def update_twilio_settings(
     whatsapp_from: str | None = None,
     join_code: str | None = None,
 ) -> CompanyCommunicationsSettings:
-    row = get_communications_settings()
+    from shops.deploy_profile import hosted_comms_secrets_locked
+
+    if hosted_comms_secrets_locked():
+        raise ValidationError(
+            "Twilio credentials on hosted are loaded from server .env only "
+            "(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, TWILIO_FROM_NUMBER). "
+            "Update .env and restart the app."
+        )
+    row = get_communications_settings_db()
     account_sid = (account_sid or "").strip() or row.twilio_account_sid
     sid_match = re.search(r"AC[0-9a-fA-F]{32}", account_sid or "")
     if sid_match:
@@ -1153,7 +1174,14 @@ def update_sms_settings(
     sender_id: str = "",
     api_base_url: str = "",
 ) -> CompanyCommunicationsSettings:
-    row = get_communications_settings()
+    from shops.deploy_profile import hosted_comms_secrets_locked
+
+    if hosted_comms_secrets_locked():
+        raise ValidationError(
+            "SMS credentials on hosted are loaded from server .env only "
+            "(SMS_PROVIDER, SMS_API_KEY, SMS_SENDER_ID, …). Update .env and restart the app."
+        )
+    row = get_communications_settings_db()
     provider = (provider or "").strip() or row.sms_provider
     if provider not in {choice.value for choice in SmsProvider}:
         raise ValidationError("Select a valid SMS provider.")
@@ -1192,7 +1220,14 @@ def update_message_channel_settings(
     from_name: str = "",
     reply_to: str = "",
 ) -> CompanyCommunicationsSettings:
-    row = get_communications_settings()
+    from shops.deploy_profile import hosted_comms_secrets_locked
+
+    if hosted_comms_secrets_locked():
+        raise ValidationError(
+            "Message / email identity on hosted is loaded from server .env only "
+            "(MESSAGE_FROM_NAME, MESSAGE_REPLY_TO). Update .env and restart the app."
+        )
+    row = get_communications_settings_db()
     from_name = (from_name or "").strip()
     reply_to = (reply_to or "").strip().lower()
     if not from_name:
@@ -1490,9 +1525,9 @@ def update_daraja_settings(
 
     if hosted_daraja_credentials_locked():
         raise ValidationError(
-            "Daraja credentials on hosted are loaded from server .env "
-            "(DARAJA_CONSUMER_KEY, DARAJA_CONSUMER_SECRET, DARAJA_PASSKEY, DARAJA_SHORTCODE). "
-            "Update those variables and restart the app."
+            "Daraja credentials on hosted are loaded from server .env only "
+            "(DARAJA_CONSUMER_KEY, DARAJA_CONSUMER_SECRET, DARAJA_PASSKEY, DARAJA_SHORTCODE, …). "
+            "Update .env and restart the app."
         )
 
     from shops.daraja_stk import (

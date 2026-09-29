@@ -660,6 +660,7 @@
     const floatSupplierId = floatRoot?.querySelector("[data-stock-float-supplier-id]");
     const floatPayment = floatRoot?.querySelector("[data-stock-float-payment]");
     const floatReason = floatRoot?.querySelector("[data-stock-float-reason]");
+    const floatCustomReason = floatRoot?.querySelector("[data-stock-float-custom-reason]");
     const floatRefund = floatRoot?.querySelector("[data-stock-float-refund]");
     const floatRefundAmount = floatRoot?.querySelector("[data-stock-float-refund-amount]");
     const floatRefundAmountWrap = floatRoot?.querySelector(
@@ -915,9 +916,10 @@
 
     const floatOutReady = () => {
       if (mode !== "out") return false;
-      const reason = (floatReason?.value || "").trim();
+      const reason = (floatReason?.value || "").trim().toLowerCase();
       const refund = (floatRefund?.value || "").trim();
       if (stockReq.out.reason && !reason) return false;
+      if (reason === "custom" && !(floatCustomReason?.value || "").trim()) return false;
       if (stockReq.out.refund) {
         if (!refund) return false;
         if (refund === "yes") {
@@ -943,9 +945,13 @@
 
     const cellHasOutDetails = (cell) => {
       if (!stockReq.out.reason && !stockReq.out.refund) return true;
-      const reason = (cell.querySelector("[data-stock-reason]")?.value || "").trim();
+      const reason = (cell.querySelector("[data-stock-reason]")?.value || "").trim().toLowerCase();
       const refund = (cell.querySelector("[data-stock-refund]")?.value || "").trim();
       if (stockReq.out.reason && !reason) return false;
+      if (reason === "custom") {
+        const custom = (cell.querySelector("[data-stock-custom-reason]")?.value || "").trim();
+        if (!custom) return false;
+      }
       if (stockReq.out.refund) {
         if (!refund) return false;
         if (refund === "yes") {
@@ -1034,9 +1040,16 @@
         if (supplierId) supplierId.value = floatSupplierId?.value || "";
       } else {
         const reason = cell.querySelector("[data-stock-reason]");
+        const customReason = cell.querySelector("[data-stock-custom-reason]");
         const refund = cell.querySelector("[data-stock-refund]");
         const amount = cell.querySelector("[data-stock-refund-amount]");
         if (reason) reason.value = floatReason?.value || "";
+        if (customReason) {
+          customReason.value =
+            (floatReason?.value || "").toLowerCase() === "custom"
+              ? (floatCustomReason?.value || "").trim()
+              : "";
+        }
         if (refund) refund.value = floatRefund?.value || "";
         if (amount) {
           amount.value =
@@ -1267,12 +1280,18 @@
       }
       if (mode === "out") {
         autoApplyDetailsToReady({ silent: true });
-        const reason = (floatReason?.value || "").trim();
+        const reason = (floatReason?.value || "").trim().toLowerCase();
         const refund = (floatRefund?.value || "").trim();
         if (stockReq.out.reason && !reason) {
           return blockSubmit(
             "Choose stock-out reason first — in Stock-out details (submit panel).",
             floatReason
+          );
+        }
+        if (reason === "custom" && !(floatCustomReason?.value || "").trim()) {
+          return blockSubmit(
+            "Enter a custom reason first — in Stock-out details (submit panel).",
+            floatCustomReason
           );
         }
         if (stockReq.out.refund) {
@@ -1709,6 +1728,23 @@
       });
     }
 
+    const syncFloatCustomReasonVisibility = () => {
+      const show = (floatReason?.value || "").toLowerCase() === "custom";
+      const wrap = floatRoot?.querySelector("[data-stock-float-custom-reason-wrap]");
+      if (wrap) {
+        wrap.hidden = !show;
+        wrap.classList.toggle("is-custom-reason-visible", show);
+      }
+      if (!show && floatCustomReason) floatCustomReason.value = "";
+    };
+    if (floatReason) {
+      floatReason.addEventListener("change", () => {
+        syncFloatCustomReasonVisibility();
+        renderSummary();
+      });
+      syncFloatCustomReasonVisibility();
+    }
+
     panel.addEventListener("input", (event) => {
       const cell = event.target.closest?.("[data-stock-shop-cell]");
       if (!cell) return;
@@ -1883,7 +1919,12 @@
         return;
       }
       if (mode === "out" && !floatOutReady()) {
-        setApplyStatus("Choose reason and refund details.", true);
+        const reason = (floatReason?.value || "").trim().toLowerCase();
+        if (reason === "custom" && !(floatCustomReason?.value || "").trim()) {
+          setApplyStatus("Enter a custom reason.", true);
+        } else {
+          setApplyStatus("Choose reason and refund details.", true);
+        }
         return;
       }
       autoApplyDetailsToReady({ silent: false });
@@ -2128,13 +2169,16 @@
       }
       if (
         target.matches(
-          "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-refund], [data-stock-float-refund-amount]"
+          "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-custom-reason], [data-stock-float-refund], [data-stock-float-refund-amount]"
         )
       ) {
         if (target.matches("[data-stock-float-refund]")) {
           const show = target.value === "yes";
           if (floatRefundAmountWrap) floatRefundAmountWrap.hidden = !show;
           if (!show && floatRefundAmount) floatRefundAmount.value = "";
+        }
+        if (target.matches("[data-stock-float-reason]")) {
+          syncFloatCustomReasonVisibility();
         }
         autoApplyDetailsToReady({ silent: true });
         renderSummary();
@@ -2145,9 +2189,12 @@
       if (
         target instanceof Element &&
         target.matches(
-          "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-refund], [data-stock-float-refund-amount]"
+          "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-custom-reason], [data-stock-float-refund], [data-stock-float-refund-amount]"
         )
       ) {
+        if (target.matches("[data-stock-float-reason]")) {
+          syncFloatCustomReasonVisibility();
+        }
         autoApplyDetailsToReady({ silent: false });
       }
       renderSummary();
@@ -2482,6 +2529,7 @@
   const floatSupplierId = floatRoot?.querySelector("[data-stock-float-supplier-id]");
   const floatPayment = floatRoot?.querySelector("[data-stock-float-payment]");
   const floatReason = floatRoot?.querySelector("[data-stock-float-reason]");
+  const floatCustomReason = floatRoot?.querySelector("[data-stock-float-custom-reason]");
   const floatRefund = floatRoot?.querySelector("[data-stock-float-refund]");
   const floatRefundAmount = floatRoot?.querySelector("[data-stock-float-refund-amount]");
   const floatRefundAmountWrap = floatRoot?.querySelector("[data-stock-float-refund-amount-wrap]");
@@ -2860,6 +2908,23 @@
       });
   };
 
+  const syncCustomReasonVisibility = (root, reasonValue) => {
+    if (!root) return;
+    const show = String(reasonValue || "").toLowerCase() === "custom";
+    root
+      .querySelectorAll("[data-stock-custom-reason-wrap], [data-stock-float-custom-reason-wrap]")
+      .forEach((wrap) => {
+        wrap.hidden = !show;
+        wrap.classList.toggle("is-custom-reason-visible", show);
+        if (!show) {
+          const customInput = wrap.querySelector(
+            "[data-stock-custom-reason], [data-stock-float-custom-reason]"
+          );
+          if (customInput) customInput.value = "";
+        }
+      });
+  };
+
   const syncRefundFromSelect = (select) => {
     if (!(select instanceof HTMLSelectElement)) return;
     if (select.matches("[data-stock-float-refund]")) {
@@ -2876,6 +2941,25 @@
         select.closest(".stock-item-inputs") ||
         select.parentElement;
       syncRefundAmountVisibility(scope, select.value);
+    }
+  };
+
+  const syncCustomReasonFromSelect = (select) => {
+    if (!(select instanceof HTMLSelectElement)) return;
+    if (select.matches("[data-stock-float-reason]")) {
+      const scope =
+        select.closest("[data-stock-float-apply]") ||
+        floatRoot ||
+        select.parentElement;
+      syncCustomReasonVisibility(scope, select.value);
+      return;
+    }
+    if (select.matches("[data-stock-reason]")) {
+      const scope =
+        select.closest("[data-stock-item-inputs]") ||
+        select.closest(".stock-item-inputs") ||
+        select.parentElement;
+      syncCustomReasonVisibility(scope, select.value);
     }
   };
 
@@ -2899,9 +2983,16 @@
     const inputs = getInputsRow(row);
     if (!inputs) return;
     const reason = inputs.querySelector("[data-stock-reason]");
+    const customReason = inputs.querySelector("[data-stock-custom-reason]");
     const refund = inputs.querySelector("[data-stock-refund]");
     const amount = inputs.querySelector("[data-stock-refund-amount]");
-    if (reason) reason.value = details.reason || "";
+    if (reason) {
+      reason.value = details.reason || "";
+      syncCustomReasonFromSelect(reason);
+    }
+    if (customReason && details.reason === "custom") {
+      customReason.value = details.customReason || "";
+    }
     if (refund) {
       refund.value = details.refund || "";
       syncRefundFromSelect(refund);
@@ -3057,9 +3148,13 @@
     if (!stockReq.out.reason && !stockReq.out.refund) return true;
     const inputs = getInputsRow(row);
     if (!inputs) return false;
-    const reason = (inputs.querySelector("[data-stock-reason]")?.value || "").trim();
+    const reason = (inputs.querySelector("[data-stock-reason]")?.value || "").trim().toLowerCase();
     const refund = (inputs.querySelector("[data-stock-refund]")?.value || "").trim().toLowerCase();
     if (stockReq.out.reason && !reason) return false;
+    if (reason === "custom") {
+      const custom = (inputs.querySelector("[data-stock-custom-reason]")?.value || "").trim();
+      if (!custom) return false;
+    }
     if (stockReq.out.refund) {
       if (refund !== "yes" && refund !== "no") return false;
       if (refund === "yes") {
@@ -3284,7 +3379,9 @@
       }
       if (mode === "out" && !rowHasOutDetails(row)) {
         const details = readFloatDetails();
-        const reasonOk = !stockReq.out.reason || Boolean(details.reason);
+        const reasonOk =
+          (!stockReq.out.reason || Boolean(details.reason)) &&
+          (details.reason !== "custom" || Boolean(details.customReason));
         const refundOk =
           !stockReq.out.refund ||
           ((details.refund === "yes" || details.refund === "no") &&
@@ -3573,6 +3670,7 @@
     if (mode !== "out") return false;
     const details = readFloatDetails();
     if (stockReq.out.reason && !details.reason) return false;
+    if (details.reason === "custom" && !details.customReason) return false;
     if (stockReq.out.refund) {
       if (details.refund !== "yes" && details.refund !== "no") return false;
       if (details.refund === "yes") {
@@ -3783,6 +3881,12 @@
         return blockSubmit(
           `Choose stock-out reason first — in ${detailsPanelLabel}.`,
           floatReason
+        );
+      }
+      if (details.reason === "custom" && !details.customReason) {
+        return blockSubmit(
+          `Enter a custom reason first — in ${detailsPanelLabel}.`,
+          floatCustomReason
         );
       }
       if (stockReq.out.refund) {
@@ -4100,10 +4204,13 @@
   const readFloatDetails = () => {
     if (mode === "out") {
       const reason = (floatReason?.value || "").trim().toLowerCase();
+      const customReason =
+        reason === "custom" ? (floatCustomReason?.value || "").trim() : "";
       const refund = (floatRefund?.value || "").trim().toLowerCase();
       const refundAmount = (floatRefundAmount?.value || "").trim();
       if (floatRefund) syncRefundFromSelect(floatRefund);
-      return { reason, refund, refundAmount };
+      if (floatReason) syncCustomReasonFromSelect(floatReason);
+      return { reason, customReason, refund, refundAmount };
     }
     const name = (floatSupplierName?.value || "").trim().toUpperCase();
     const dial = (floatSupplierDial?.value || "").trim();
@@ -4247,6 +4354,9 @@
         if (stockReq.out.reason && !details.reason) {
           setApplyStatus("Choose a stock-out reason.", true);
           floatReason?.focus();
+        } else if (details.reason === "custom" && !details.customReason) {
+          setApplyStatus("Enter a custom reason.", true);
+          floatCustomReason?.focus();
         } else if (
           stockReq.out.refund &&
           details.refund !== "yes" &&
@@ -4307,6 +4417,7 @@
     const phone = inputs.querySelector("[data-stock-supplier-phone]");
     const supplierId = inputs.querySelector("[data-stock-supplier-id]");
     const reason = inputs.querySelector("[data-stock-reason]");
+    const customReason = inputs.querySelector("[data-stock-custom-reason]");
     const refund = inputs.querySelector("[data-stock-refund]");
     const refundAmount = inputs.querySelector("[data-stock-refund-amount]");
     if (buying) buying.value = "";
@@ -4315,9 +4426,11 @@
     if (phone) phone.value = "";
     if (supplierId) supplierId.value = "";
     if (reason) reason.value = "";
+    if (customReason) customReason.value = "";
     if (refund) refund.value = "";
     if (refundAmount) refundAmount.value = "";
     syncRefundAmountVisibility(inputs, "");
+    syncCustomReasonVisibility(inputs, "");
     setCountryOnField(inputs, "+254", "KE");
   };
 
@@ -4328,9 +4441,11 @@
     if (floatSupplierId) floatSupplierId.value = "";
     if (floatPayment) floatPayment.value = "";
     if (floatReason) floatReason.value = "";
+    if (floatCustomReason) floatCustomReason.value = "";
     if (floatRefund) floatRefund.value = "";
     if (floatRefundAmount) floatRefundAmount.value = "";
     syncRefundAmountVisibility(floatRoot, "");
+    syncCustomReasonVisibility(floatRoot, "");
     setCountryOnField(floatRoot?.querySelector("[data-stock-float-phone-wrap]"), "+254", "KE");
     setApplyStatus("");
 
@@ -4579,11 +4694,14 @@
     if (!(target instanceof Element)) return;
     if (
       target.matches(
-        "[data-stock-float-supplier-name], [data-stock-float-supplier-phone], [data-stock-float-supplier-dial], [data-stock-float-payment], [data-stock-float-reason], [data-stock-float-refund], [data-stock-float-refund-amount]"
+        "[data-stock-float-supplier-name], [data-stock-float-supplier-phone], [data-stock-float-supplier-dial], [data-stock-float-payment], [data-stock-float-reason], [data-stock-float-custom-reason], [data-stock-float-refund], [data-stock-float-refund-amount]"
       )
     ) {
       if (target.matches("[data-stock-float-refund]")) {
         syncRefundFromSelect(target);
+      }
+      if (target.matches("[data-stock-float-reason]")) {
+        syncCustomReasonFromSelect(target);
       }
       if (target.matches("[data-stock-float-supplier-name], [data-stock-float-supplier-phone]")) {
         if (target.matches("[data-stock-float-supplier-phone]")) {
@@ -4607,10 +4725,13 @@
     const itemRow = findItemRowFromNode(target);
     if (!itemRow) return;
     if (target.matches(
-      "[data-stock-serial-input], [data-stock-qty], [data-stock-buying-price], [data-stock-supplier-name], [data-stock-supplier-phone], [data-stock-supplier-dial], [data-stock-payment], [data-stock-reason], [data-stock-refund], [data-stock-refund-amount]"
+      "[data-stock-serial-input], [data-stock-qty], [data-stock-buying-price], [data-stock-supplier-name], [data-stock-supplier-phone], [data-stock-supplier-dial], [data-stock-payment], [data-stock-reason], [data-stock-custom-reason], [data-stock-refund], [data-stock-refund-amount]"
     )) {
       if (target.matches("[data-stock-refund]")) {
         syncRefundFromSelect(target);
+      }
+      if (target.matches("[data-stock-reason]")) {
+        syncCustomReasonFromSelect(target);
       }
       if (target.matches("[data-stock-buying-price]")) {
         syncBuyPriceGhost(target);
@@ -4702,9 +4823,23 @@
   document.addEventListener("change", onRefundChange);
   document.addEventListener("input", onRefundChange);
 
+  // Custom reason text field appears when Reason = Custom.
+  const onReasonChange = (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.matches("[data-stock-reason], [data-stock-float-reason]")) return;
+    syncCustomReasonFromSelect(target);
+    renderSummary();
+  };
+  document.addEventListener("change", onReasonChange);
+
   if (floatRefund) syncRefundFromSelect(floatRefund);
   document.querySelectorAll("[data-stock-refund]").forEach((select) => {
     syncRefundFromSelect(select);
+  });
+  if (floatReason) syncCustomReasonFromSelect(floatReason);
+  document.querySelectorAll("[data-stock-reason]").forEach((select) => {
+    syncCustomReasonFromSelect(select);
   });
 
   applyBtn?.addEventListener("click", (event) => {
@@ -4951,7 +5086,7 @@
     if (!(target instanceof Element)) return;
     if (
       target.matches(
-        "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-refund], [data-stock-login-code], [data-stock-float-login-code]"
+        "[data-stock-float-payment], [data-stock-float-reason], [data-stock-float-custom-reason], [data-stock-float-refund], [data-stock-login-code], [data-stock-float-login-code]"
       )
     ) {
       hideSupplierSuggest(floatRoot);

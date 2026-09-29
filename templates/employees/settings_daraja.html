@@ -122,7 +122,7 @@
         <h3>Nexus API key</h3>
       </div>
 
-      <form class="daraja-credentials-form" data-nexus-form novalidate>
+      <form class="daraja-credentials-form" data-nexus-form novalidate{% if daraja.nexus_credentials_from_env %} hidden{% endif %}>
         <div class="daraja-status" data-nexus-status>
           {% if daraja.nexus_key_verified %}
           <span class="daraja-status-pill is-ok">Verified</span>
@@ -182,6 +182,11 @@
           <p class="daraja-form-message" data-nexus-message hidden></p>
         </div>
       </form>
+      {% if daraja.nexus_credentials_from_env %}
+      <p class="daraja-field-hint">
+        Nexus uses <code>NEXUS_API_KEY</code> and <code>NEXUS_COLLECTION_ID</code> in server <code>.env</code>.
+      </p>
+      {% endif %}
     </section>
 
     <section class="pos-settings-group" data-stk-panel="daraja" data-stk-follow-section{% if not form_data.environment or daraja.uses_nexus_stk %} hidden{% endif %}>
@@ -189,7 +194,7 @@
         <h3>Daraja · <span data-daraja-env-label>{{ daraja.environment_label }}</span></h3>
       </div>
 
-      <form class="daraja-credentials-form" data-daraja-form novalidate>
+      <form class="daraja-credentials-form" data-daraja-form novalidate{% if daraja.credentials_from_env %} hidden{% endif %}>
         <input type="hidden" name="environment" value="{{ form_data.environment }}" data-daraja-environment-value>
         <div class="daraja-status" data-daraja-status>
           {% if daraja.credentials_valid %}
@@ -284,6 +289,13 @@
           <p class="daraja-form-message" data-daraja-message hidden></p>
         </div>
       </form>
+      {% if daraja.credentials_from_env %}
+      <p class="daraja-field-hint">
+        Safaricom Daraja uses <code>DARAJA_CONSUMER_KEY</code>, <code>DARAJA_CONSUMER_SECRET</code>,
+        <code>DARAJA_PASSKEY</code>, <code>DARAJA_SHORTCODE</code>, and <code>DARAJA_ENVIRONMENT=production</code>
+        in server <code>.env</code>.
+      </p>
+      {% endif %}
     </section>
   </div>
 

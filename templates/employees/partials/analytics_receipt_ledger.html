@@ -1,4 +1,4 @@
-<section class="ax-card ax-card--wide ax-card--ledger" data-ax-ledger-card>
+<section class="ax-card ax-card--wide ax-card--ledger" data-ax-ledger-card{% if ledger_show_select %} data-ax-ledger-select{% endif %}>
   <header class="ax-card-head">
     <div class="ax-card-head-main">
       <h3>{{ ledger_title|default:"Receipts" }}</h3>
@@ -22,6 +22,16 @@
     {% endif %}
   </header>
 
+  {% if ledger_show_select and can_pay %}
+  <div class="ax-ledger-select-bar" data-ax-ledger-select-bar hidden>
+    <span class="ax-ledger-select-count" data-ax-ledger-select-count>0 selected</span>
+    <button type="button" class="ax-apply" data-ax-pay-selected disabled>
+      <i data-lucide="wallet" aria-hidden="true"></i>
+      <span>Pay selected</span>
+    </button>
+  </div>
+  {% endif %}
+
   {% if ledger_search %}
   <p class="ax-scroll-hint" data-ax-ledger-scroll-hint aria-hidden="true">Scroll sideways for all columns</p>
   {% endif %}
@@ -31,6 +41,14 @@
     <table class="ax-table ax-table--list{% if table_class %} {{ table_class }}{% endif %}">
       <thead>
         <tr>
+          {% if ledger_show_select %}
+          <th class="ax-col-select">
+            <label class="ax-select-all">
+              <span class="visually-hidden">Select all unpaid</span>
+              <input type="checkbox" data-ax-ledger-select-all aria-label="Select all unpaid receipts">
+            </label>
+          </th>
+          {% endif %}
           <th class="ax-th--item">Receipt</th>
           <th>Shop</th>
           <th>Items</th>
@@ -49,11 +67,37 @@
         {% for row in rows %}
         {{ row.lines|json_script:row.id }}
         <tr
-          class="ax-receipt-row"
+          class="ax-receipt-row{% if ledger_show_select and row.can_pay %} is-selectable{% endif %}"
           data-ax-receipt-row
           data-row-id="{{ row.id }}"
           data-search-text="{{ row.number }} {{ row.shop }} {{ row.status }} {{ row.cashier }}{% if row.pay_by %} {{ row.pay_by }}{% endif %}"
+          {% if ledger_show_select and row.can_pay %}
+          data-receipt-id="{{ row.pay_id }}"
+          data-receipt-number="{{ row.number }}"
+          data-receipt-due="{{ row.due }}"
+          data-receipt-due-raw="{{ row.due_raw }}"
+          {% endif %}
         >
+          {% if ledger_show_select %}
+          <td class="ax-col-select" data-label="Select">
+            {% if row.can_pay %}
+            <label class="ax-select-row">
+              <span class="visually-hidden">Select {{ row.number }}</span>
+              <input
+                type="checkbox"
+                data-ax-ledger-select-row
+                data-receipt-id="{{ row.pay_id }}"
+                data-receipt-number="{{ row.number }}"
+                data-receipt-due="{{ row.due }}"
+                data-receipt-due-raw="{{ row.due_raw }}"
+                aria-label="Select {{ row.number }}"
+              >
+            </label>
+            {% else %}
+            <span class="ax-select-na" aria-hidden="true">—</span>
+            {% endif %}
+          </td>
+          {% endif %}
           <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
           <td data-label="Shop">{{ row.shop }}</td>
           <td data-label="Items">{{ row.item_count }}</td>
@@ -97,6 +141,7 @@
                 data-receipt-due="{{ row.due }}"
                 data-receipt-due-raw="{{ row.due_raw }}"
                 data-receipt-shop="{{ row.shop }}"
+                {% if not row.can_pay %}disabled{% endif %}
               >
                 Pay
               </button>

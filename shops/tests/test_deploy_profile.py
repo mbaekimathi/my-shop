@@ -28,11 +28,13 @@ class DeployProfileDarajaTests(TestCase):
         self.assertEqual(row.consumer_key, "local-key")
 
     @override_settings(IS_HOSTED=True)
-    def test_hosted_uses_hosted_row_without_env(self):
+    def test_hosted_without_env_does_not_expose_db_secrets(self):
         _invalidate_daraja_settings_cache()
         row = get_daraja_settings()
         self.assertEqual(row.deploy_profile, DarajaDeployProfile.HOSTED)
-        self.assertEqual(row.consumer_key, "hosted-db-key")
+        self.assertEqual(row.consumer_key, "")
+        db = get_daraja_settings_db()
+        self.assertEqual(db.consumer_key, "hosted-db-key")
 
     @override_settings(IS_HOSTED=True)
     def test_hosted_env_overlays_credentials(self):
@@ -48,7 +50,7 @@ class DeployProfileDarajaTests(TestCase):
         try:
             os.environ.update(env)
             _invalidate_daraja_settings_cache()
-            self.assertTrue(hosted_daraja_credentials_locked())
+            self.assertTrue(hosted_daraja_credentials_locked())  # all hosted saves blocked
             row = get_daraja_settings()
             self.assertEqual(row.consumer_key, "env-key")
             self.assertEqual(row.shortcode, "522522")

@@ -464,6 +464,100 @@ class ItemStockReportRowsTests(TestCase):
             {"in", "out"},
         )
 
+    def test_timeline_groups_sale_and_return_by_receipt(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from items.views import (
+            _filter_movement_events,
+            _group_timeline_events_by_receipt,
+        )
+
+        now = timezone.now()
+        sale = {
+            "happened_at": now,
+            "event_type": "sale",
+            "event_label": "Stock sale",
+            "item_name": "Item A",
+            "item_category": "Phones",
+            "from_label": "Shop",
+            "to_label": "Client",
+            "by": "Cashier",
+            "quantity": 2,
+            "receipt_number": "RCP-100",
+            "receipt_status": "partial_return",
+            "serial_numbers": ["SN1"],
+            "note": "",
+        }
+        other_sale = {
+            "happened_at": now + timedelta(minutes=5),
+            "event_type": "sale",
+            "event_label": "Stock sale",
+            "item_name": "Item B",
+            "item_category": "Phones",
+            "from_label": "Shop",
+            "to_label": "Client",
+            "by": "Cashier",
+            "quantity": 1,
+            "receipt_number": "RCP-100",
+            "receipt_status": "partial_return",
+            "serial_numbers": [],
+            "note": "",
+        }
+        returned = {
+            "happened_at": now + timedelta(days=2),
+            "event_type": "return",
+            "event_label": "Return",
+            "item_name": "Item A",
+            "item_category": "Phones",
+            "from_label": "Client",
+            "to_label": "Shop",
+            "by": "Cashier",
+            "quantity": 1,
+            "receipt_number": "RCP-100",
+            "receipt_status": "partial_return",
+            "serial_numbers": ["SN1"],
+            "note": "Return on RCP-100",
+        }
+        stock_out = {
+            "happened_at": now + timedelta(hours=1),
+            "event_type": "out",
+            "event_label": "Stock out",
+            "item_name": "Item C",
+            "item_category": "Accessories",
+            "from_label": "Shop",
+            "to_label": "Damage",
+            "by": "Manager",
+            "quantity": 1,
+            "receipt_number": "",
+            "receipt_status": "",
+            "serial_numbers": [],
+            "note": "",
+        }
+
+        groups = _group_timeline_events_by_receipt(
+            [sale, stock_out, other_sale, returned]
+        )
+        self.assertEqual(len(groups), 2)
+        receipt_group = groups[0]
+        self.assertTrue(receipt_group["is_receipt_group"])
+        self.assertTrue(receipt_group["is_multi"])
+        self.assertEqual(receipt_group["receipt_number"], "RCP-100")
+        self.assertEqual(
+            [row["event_type"] for row in receipt_group["activities"]],
+            ["sale", "sale", "return"],
+        )
+        self.assertEqual(groups[1]["activities"][0]["event_type"], "out")
+
+        sale_filtered = _filter_movement_events(
+            [sale, other_sale, returned, stock_out], "sale"
+        )
+        self.assertEqual(
+            {row["event_type"] for row in sale_filtered},
+            {"sale", "return"},
+        )
+        self.assertNotIn("out", {row["event_type"] for row in sale_filtered})
+
     def test_low_stock_rows_are_per_shop_not_company_total(self):
         from items.views import _build_low_stock_rows
 

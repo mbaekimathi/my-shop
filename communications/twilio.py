@@ -630,7 +630,9 @@ def remember_whatsapp_lid(phone_e164: str, lid: str) -> None:
     ident = _strip_whatsapp_prefix(lid)
     if not key or not _looks_like_wa_lid(ident):
         return
-    row = get_communications_settings()
+    from shops.services import get_communications_settings_db
+
+    row = get_communications_settings_db()
     lids = dict(getattr(row, "twilio_whatsapp_lids", None) or {})
     if lids.get(key) == ident:
         return

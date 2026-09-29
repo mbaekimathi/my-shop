@@ -14570,6 +14570,74 @@ html[data-theme="light"] .low-stock-badge.is-low {
   background: color-mix(in srgb, var(--mist) 26%, var(--surface));
 }
 
+.ax-ledger-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 1rem 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.ax-ledger-select-count {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.ax-col-select {
+  width: 2.25rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ax-select-all,
+.ax-select-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  cursor: pointer;
+}
+
+.ax-select-all input,
+.ax-select-row input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent-deep);
+  cursor: pointer;
+}
+
+.ax-select-na {
+  color: var(--mist-dim);
+  font-size: 0.75rem;
+}
+
+.ax-receipt-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+[data-ax-section="client-account"] .ax-table th.ax-col-actions,
+[data-ax-section="client-account"] .ax-table td.ax-col-actions {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  min-width: 7.5rem;
+  background: var(--surface);
+  box-shadow: -1px 0 0 var(--line);
+}
+
+[data-ax-section="client-account"] .ax-table thead th.ax-col-actions {
+  z-index: 3;
+}
+
+[data-ax-section="client-account"] .ax-table tr.is-selected td.ax-col-actions {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
 [data-ax-section="supplier-account"] .ax-top-main {
   display: flex;
   justify-content: space-between;
@@ -17304,6 +17372,8 @@ html[data-theme="light"] .low-stock-badge.is-low {
 .stock-report-filter-actions {
   display: flex;
   align-items: end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .stock-report-apply {
@@ -17327,6 +17397,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.35rem;
   text-decoration: none;
   background: transparent;
   border: 1px solid var(--line);
@@ -17336,6 +17407,12 @@ html[data-theme="light"] .low-stock-badge.is-low {
 .stock-report-apply--ghost:hover {
   filter: none;
   background: var(--panel-muted);
+  color: var(--text-strong);
+}
+
+.stock-report-apply--ghost i {
+  width: 0.95rem;
+  height: 0.95rem;
 }
 
 .stock-report-field--grow {
@@ -18342,6 +18419,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
   color: #2a5f8f;
 }
 
+.stock-report-type--return,
 .stock-report-type--returned {
   background: rgba(124, 92, 191, 0.14);
   color: #5c3f9a;
@@ -18349,6 +18427,118 @@ html[data-theme="light"] .low-stock-badge.is-low {
 
 .stock-report-table--timeline {
   min-width: 960px;
+}
+
+.stock-report-receipt-group.is-multi {
+  border-top: 2px solid rgba(59, 110, 160, 0.28);
+}
+
+.stock-report-receipt-group.is-multi + .stock-report-receipt-group.is-multi {
+  border-top-width: 2px;
+}
+
+.stock-report-receipt-head td {
+  padding: 0.55rem 0.75rem;
+  background: rgba(59, 110, 160, 0.08);
+  border-bottom: 1px solid rgba(59, 110, 160, 0.16);
+}
+
+.stock-report-receipt-head-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.75rem;
+}
+
+.stock-report-receipt-number {
+  font-size: 0.95rem;
+  color: var(--text-strong);
+  letter-spacing: 0.01em;
+}
+
+.stock-report-receipt-meta {
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.stock-report-receipt-labels {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.stock-report-receipt-activity td:first-child {
+  padding-left: 1.25rem;
+}
+
+.stock-report-serial-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.stock-report-serial-eye {
+  flex: 0 0 auto;
+}
+
+.stock-report-serial-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--mist-dim);
+  min-width: 1rem;
+}
+
+.stock-report-serials-dialog {
+  width: min(28rem, calc(100vw - 1.5rem));
+}
+
+.stock-report-serials-kicker {
+  margin: 0 0 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.stock-report-serials-body {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.25rem 0 0.5rem;
+}
+
+.stock-report-serials-count {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--mist-dim);
+}
+
+.stock-report-serials-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+  max-height: min(50vh, 22rem);
+  overflow: auto;
+}
+
+.stock-report-serials-list li {
+  display: flex;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input-bg);
+}
+
+.stock-report-serials-list .stock-serial-number {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-strong);
 }
 
 .stock-report-from {
@@ -18562,12 +18752,16 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 [data-stock-refund-amount-wrap][hidden],
-[data-stock-float-refund-amount-wrap][hidden] {
+[data-stock-float-refund-amount-wrap][hidden],
+[data-stock-custom-reason-wrap][hidden],
+[data-stock-float-custom-reason-wrap][hidden] {
   display: none !important;
 }
 
 [data-stock-refund-amount-wrap].is-refund-amount-visible,
-[data-stock-float-refund-amount-wrap].is-refund-amount-visible {
+[data-stock-float-refund-amount-wrap].is-refund-amount-visible,
+[data-stock-custom-reason-wrap].is-custom-reason-visible,
+[data-stock-float-custom-reason-wrap].is-custom-reason-visible {
   display: grid;
 }
 

@@ -292,6 +292,35 @@ MEDIA_ROOT = BASE_DIR / "media"
 # Google Maps Places (storefront delivery location search).
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
 
+# SMTP (hosted .env only — used when EMAIL_HOST is set)
+_email_host = (os.getenv("EMAIL_HOST") or "").strip()
+if _email_host:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = _email_host
+    EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+    EMAIL_HOST_USER = (os.getenv("EMAIL_HOST_USER") or "").strip()
+    EMAIL_HOST_PASSWORD = (os.getenv("EMAIL_HOST_PASSWORD") or "").strip()
+    EMAIL_USE_TLS = (os.getenv("EMAIL_USE_TLS", "1") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    EMAIL_USE_SSL = (os.getenv("EMAIL_USE_SSL", "") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    DEFAULT_FROM_EMAIL = (
+        (os.getenv("DEFAULT_FROM_EMAIL") or "").strip()
+        or (os.getenv("MESSAGE_FROM_EMAIL") or "").strip()
+        or EMAIL_HOST_USER
+        or "noreply@localhost"
+    )
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
 # Auto: serve media from Django on hosted installs unless explicitly disabled.
 SERVE_MEDIA_IN_PRODUCTION = resolve_bool(
     "SERVE_MEDIA_IN_PRODUCTION",

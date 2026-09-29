@@ -1897,7 +1897,7 @@ def _timeline_event_from_movement_line(
         "item_category": line.item.category,
         "item_id": line.item_id,
         "quantity": line.quantity,
-        "reason": line.get_reason_display() if line.reason else "",
+        "reason": _stock_out_reason_label(line),
         "payment_status": (
             line.get_payment_status_display() if line.payment_status else ""
         ),
@@ -2435,6 +2435,18 @@ def _movement_pay_label(*, line=None, movement=None, receipt=None):
     return "—"
 
 
+def _stock_out_reason_label(line):
+    from .models import StockOutReason
+
+    reason = (getattr(line, "reason", None) or "").strip()
+    if not reason:
+        return ""
+    if reason == StockOutReason.CUSTOM:
+        detail = (getattr(line, "note", None) or "").strip()
+        return detail or "Custom"
+    return line.get_reason_display()
+
+
 def _movement_parties_for_line(*, movement, line):
     from .models import StockMovementType
 
@@ -2449,7 +2461,7 @@ def _movement_parties_for_line(*, movement, line):
             "pay": _movement_pay_label(line=line, movement=movement),
         }
     if movement.movement_type == StockMovementType.OUT:
-        reason = line.get_reason_display() if line.reason else "—"
+        reason = _stock_out_reason_label(line) or "—"
         return {
             "from_label": shop_name,
             "to_label": reason,
@@ -2511,7 +2523,31 @@ def _filter_movement_events(events, event_filter):
     allowed = MOVEMENT_EVENT_FILTER_TYPES.get(event_filter)
     if not allowed:
         return events
-    return [event for event in events if event.get("event_type") in allowed]
+    if event_filter not in ("sale", "return"):
+        return [event for event in events if event.get("event_type") in allowed]
+
+    # Keep sale + return companions on the same receipt so they stay together.
+    matching_receipts = {
+        (event.get("receipt_number") or "").strip()
+        for event in events
+        if event.get("event_type") in allowed
+        and (event.get("receipt_number") or "").strip()
+    }
+    companion_types = frozenset({"sale", "return"})
+    filtered = []
+    for event in events:
+        event_type = event.get("event_type")
+        if event_type in allowed:
+            filtered.append(event)
+            continue
+        receipt = (event.get("receipt_number") or "").strip()
+        if (
+            receipt
+            and receipt in matching_receipts
+            and event_type in companion_types
+        ):
+            filtered.append(event)
+    return filtered
 
 
 def _filter_timeline_display_events(events):
@@ -2519,6 +2555,104 @@ def _filter_timeline_display_events(events):
     return [
         event for event in events if event.get("event_type") != "request"
     ]
+
+
+def _timeline_event_search_text(event):
+    parts = [
+        event.get("item_name") or "",
+        event.get("item_category") or "",
+        event.get("event_label") or "",
+        event.get("from_label") or "",
+        event.get("to_label") or "",
+        event.get("by") or "",
+        event.get("receipt_number") or "",
+        event.get("note") or "",
+    ]
+    for serial in event.get("serial_numbers") or []:
+        parts.append(str(serial))
+    return " ".join(parts).lower()
+
+
+_RECEIPT_ACTIVITY_SORT = {
+    "sale": 0,
+    "return": 1,
+}
+
+
+def _group_timeline_events_by_receipt(events):
+    """
+    Collapse receipt-linked activities into one timeline group per receipt.
+
+    Sales and later returns on the same receipt stay together (sorted under the
+    earliest activity time). Events without a receipt number stay as single rows.
+    """
+    groups = []
+    receipt_index = {}
+
+    for event in events:
+        receipt = (event.get("receipt_number") or "").strip()
+        if not receipt:
+            groups.append(
+                {
+                    "receipt_number": "",
+                    "receipt_status": event.get("receipt_status") or "",
+                    "happened_at": event["happened_at"],
+                    "shop_name": event.get("shop_name") or "",
+                    "is_receipt_group": False,
+                    "activities": [event],
+                    "search_text": _timeline_event_search_text(event),
+                }
+            )
+            continue
+
+        idx = receipt_index.get(receipt)
+        if idx is None:
+            receipt_index[receipt] = len(groups)
+            groups.append(
+                {
+                    "receipt_number": receipt,
+                    "receipt_status": event.get("receipt_status") or "",
+                    "happened_at": event["happened_at"],
+                    "shop_name": event.get("shop_name") or "",
+                    "is_receipt_group": True,
+                    "activities": [event],
+                    "search_text": _timeline_event_search_text(event),
+                }
+            )
+            continue
+
+        group = groups[idx]
+        group["activities"].append(event)
+        group["search_text"] = (
+            f"{group['search_text']} {_timeline_event_search_text(event)}".strip()
+        )
+        if event["happened_at"] < group["happened_at"]:
+            group["happened_at"] = event["happened_at"]
+        status = event.get("receipt_status") or ""
+        if status:
+            group["receipt_status"] = status
+
+    for group in groups:
+        activities = group["activities"]
+        activities.sort(
+            key=lambda row: (
+                _RECEIPT_ACTIVITY_SORT.get(row.get("event_type"), 2),
+                row["happened_at"],
+                row.get("item_name") or "",
+            )
+        )
+        labels = []
+        seen_labels = set()
+        for activity in activities:
+            label = activity.get("event_label") or ""
+            event_type = activity.get("event_type") or "all"
+            if label and label not in seen_labels:
+                seen_labels.add(label)
+                labels.append({"label": label, "event_type": event_type})
+        group["activity_labels"] = labels
+        group["is_multi"] = len(activities) > 1
+
+    return groups
 
 
 def _filter_item_summary_movement_events(events):
@@ -2844,6 +2978,181 @@ def _movements_report_params(
     }
 
 
+def _stock_report_download_filename(page_mode, filter_context):
+    import re
+
+    label = (filter_context.get("report_period_label") or "export").strip()
+    safe = re.sub(r"[^\w\-]+", "-", label, flags=re.UNICODE).strip("-").lower()
+    safe = safe or "export"
+    prefix = "stock-movements" if page_mode == "movements" else "stock-report"
+    return f"{prefix}-{safe}.csv"
+
+
+def _format_movement_csv_when(value):
+    if value is None:
+        return ""
+    from django.utils import timezone as dj_timezone
+    from django.utils.formats import date_format
+
+    local = dj_timezone.localtime(value) if dj_timezone.is_aware(value) else value
+    return date_format(local, "d M Y H:i")
+
+
+def _stock_report_csv_response(*, filename, header, rows):
+    import csv
+
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response.write("\ufeff")
+    writer = csv.writer(response)
+    writer.writerow(header)
+    writer.writerows(rows)
+    return response
+
+
+def _stock_report_csv_download(
+    *,
+    page_mode,
+    filter_context,
+    is_item_movement_summary,
+    movement_events,
+    movement_item_rows,
+    movement_item_group_by_shop,
+    item_report_rows,
+    item_report_group_by_shop,
+):
+    filename = _stock_report_download_filename(page_mode, filter_context)
+
+    if page_mode == "movements" and is_item_movement_summary:
+        header = [
+            "Item",
+            "Category",
+        ]
+        if movement_item_group_by_shop:
+            header.append("Shop")
+        header.extend(
+            [
+                "Current stock",
+                "Events",
+                "In",
+                "Out",
+                "Transfer in",
+                "Transfer out",
+                "Sale",
+                "Return",
+                "Last activity",
+            ]
+        )
+        rows = []
+        for row in movement_item_rows:
+            if row.get("is_item_total"):
+                continue
+            line = [
+                row.get("item_name") or "",
+                row.get("item_category") or "",
+            ]
+            if movement_item_group_by_shop:
+                line.append(row.get("shop_name") or "")
+            line.extend(
+                [
+                    row.get("current_stock") or 0,
+                    row.get("event_count") or 0,
+                    row.get("units_in") or 0,
+                    row.get("units_out") or 0,
+                    row.get("units_transfer_in") or 0,
+                    row.get("units_transfer_out") or 0,
+                    row.get("units_sale") or 0,
+                    row.get("units_return") or 0,
+                    _format_movement_csv_when(row.get("last_at")),
+                ]
+            )
+            rows.append(line)
+        return _stock_report_csv_response(
+            filename=filename, header=header, rows=rows
+        )
+
+    if page_mode == "movements":
+        header = [
+            "When",
+            "Type",
+            "Item",
+            "Category",
+            "Receipt #",
+            "From",
+            "To",
+            "Qty",
+            "Serials",
+            "Pay",
+            "Seller",
+            "Shop",
+            "Note",
+        ]
+        rows = []
+        for event in movement_events:
+            serials = event.get("serial_numbers") or []
+            rows.append(
+                [
+                    _format_movement_csv_when(event.get("happened_at")),
+                    event.get("event_label") or event.get("event_type") or "",
+                    event.get("item_name") or "",
+                    event.get("item_category") or "",
+                    event.get("receipt_number") or "",
+                    event.get("from_label") or "",
+                    event.get("to_label") or "",
+                    event.get("quantity") or 0,
+                    "; ".join(str(s) for s in serials),
+                    event.get("pay") or "",
+                    event.get("by") or "",
+                    event.get("shop_name") or "",
+                    event.get("note") or "",
+                ]
+            )
+        return _stock_report_csv_response(
+            filename=filename, header=header, rows=rows
+        )
+
+    header = ["Item", "Category"]
+    if item_report_group_by_shop:
+        header.append("Shop")
+    header.extend(
+        [
+            "Starting stock",
+            "Stock in",
+            "Transfer in",
+            "Stock out",
+            "Transfer out",
+            "Net sale",
+            "Returned",
+            "Closing stock",
+        ]
+    )
+    rows = []
+    for row in item_report_rows:
+        if row.get("is_item_total"):
+            continue
+        item = row.get("item")
+        line = [
+            getattr(item, "name", None) or row.get("item_name") or "",
+            getattr(item, "category", None) or row.get("item_category") or "",
+        ]
+        if item_report_group_by_shop:
+            line.append(row.get("shop_name") or "")
+        line.extend(
+            [
+                row.get("starting_stock") or 0,
+                row.get("stock_in") or 0,
+                row.get("stock_transfer_in") or 0,
+                row.get("stock_out") or 0,
+                row.get("stock_transfer_out") or 0,
+                row.get("net_sale") or 0,
+                row.get("stock_return") or 0,
+                row.get("closing_stock") or 0,
+            ]
+        )
+        rows.append(line)
+    return _stock_report_csv_response(filename=filename, header=header, rows=rows)
+
+
 def stock_report(request, profile, meta, module, *, page_mode="report"):
     from employees.models import SHOP_ASSIGNABLE_ROLES
 
@@ -2909,6 +3218,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     shop_ids_for_query = [] if no_shop_access else active_shop_ids
 
     movement_events = []
+    movement_event_groups = []
     units_in = 0
     units_out = 0
     units_request = 0
@@ -2977,6 +3287,9 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             movement_events = _filter_movement_events(movement_events, event_filter)
         if view_by == "timeline":
             movement_events = _filter_timeline_display_events(movement_events)
+            movement_event_groups = _group_timeline_events_by_receipt(
+                movement_events
+            )
         elif is_item_movement_summary:
             movement_events = _filter_item_summary_movement_events(movement_events)
         (
@@ -3098,6 +3411,23 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         "year": "Year",
     }
 
+    item_report_group_by_shop = not is_movements and len(shop_ids_for_query) > 1
+    movement_item_group_by_shop = (
+        is_item_movement_summary and len(shop_ids_for_query) > 1
+    )
+
+    if (request.GET.get("download") or "").strip() == "1":
+        return _stock_report_csv_download(
+            page_mode=page_mode,
+            filter_context=filter_context,
+            is_item_movement_summary=is_item_movement_summary,
+            movement_events=movement_events,
+            movement_item_rows=movement_item_rows,
+            movement_item_group_by_shop=movement_item_group_by_shop,
+            item_report_rows=item_report_rows,
+            item_report_group_by_shop=item_report_group_by_shop,
+        )
+
     return render(
         request,
         "items/stock_report.html",
@@ -3111,14 +3441,11 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "stock_mode": page_mode,
             "is_movements_page": is_movements,
             "movement_events": movement_events,
+            "movement_event_groups": movement_event_groups,
             "item_report_rows": item_report_rows,
             "item_report_totals": totals,
-            "item_report_group_by_shop": (
-                not is_movements and len(shop_ids_for_query) > 1
-            ),
-            "movement_item_group_by_shop": (
-                is_item_movement_summary and len(shop_ids_for_query) > 1
-            ),
+            "item_report_group_by_shop": item_report_group_by_shop,
+            "movement_item_group_by_shop": movement_item_group_by_shop,
             "movement_count": len(movement_events),
             "item_count": len(item_report_rows),
             "units_in": units_in,
@@ -3481,7 +3808,7 @@ def stock_settings(request, profile, meta, module):
                 {
                     "field": "require_reason_on_out",
                     "label": "Reason",
-                    "hint": "Waste, transfer, display, or supplier return",
+                    "hint": "Waste, transfer, display, supplier return, or custom",
                     "enabled": settings_row.require_reason_on_out,
                 },
                 {

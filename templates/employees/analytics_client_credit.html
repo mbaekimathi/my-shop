@@ -30,9 +30,9 @@
         </button>
         {% endif %}
         {% if can_pay %}
-        <button type="button" class="ax-apply" data-ax-pay-open>
+        <button type="button" class="ax-apply" data-ax-pay-open data-pay-all="1">
           <i data-lucide="wallet" aria-hidden="true"></i>
-          <span>Pay balance</span>
+          <span>Pay amount</span>
         </button>
         {% endif %}
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back" }}</a>
@@ -56,7 +56,7 @@
       <button type="submit" class="ax-apply">Apply</button>
     </form>
     <p class="ax-lead">
-      Credit receipts and outstanding balance for this client
+      Select one or more credit receipts to pay, or use Pay amount to clear the oldest credits first
       · {{ scope_hint|default:"All shops" }}
       · {{ report_period_label|default:"All time" }}.
     </p>
@@ -190,7 +190,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=15"></script>
+<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=16"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");
