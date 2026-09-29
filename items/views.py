@@ -23,6 +23,7 @@ from .services import (
     build_stock_catalog_page,
     build_stock_print_document,
     build_stock_print_pdf,
+    build_stock_report_pdf,
     check_serials_already_in_stock,
     create_item,
     delete_item,
@@ -2997,8 +2998,8 @@ def _stock_report_download_filename(page_mode, filter_context, *, event_filter="
     stamp = dj_timezone.localtime(dj_timezone.now()).strftime("%Y-%m-%d-%H%M")
     prefix = "stock-movements" if page_mode == "movements" else "stock-report"
     if page_mode == "movements" and type_slug != "all":
-        return f"{prefix}-{safe_period}-{type_slug}-{stamp}.csv"
-    return f"{prefix}-{safe_period}-{stamp}.csv"
+        return f"{prefix}-{safe_period}-{type_slug}-{stamp}.pdf"
+    return f"{prefix}-{safe_period}-{stamp}.pdf"
 
 
 def _format_movement_csv_when(value):
@@ -3011,19 +3012,13 @@ def _format_movement_csv_when(value):
     return date_format(local, "d M Y H:i")
 
 
-def _format_movement_csv_date_time(value):
-    """Return (date, time) strings Excel keeps readable (not ########)."""
+def _format_movement_pdf_date_time(value):
     if value is None:
         return "", ""
     from django.utils import timezone as dj_timezone
 
     local = dj_timezone.localtime(value) if dj_timezone.is_aware(value) else value
-    # ISO-style date + 24h time; leading tab forces text so Excel won't
-    # hide values as ######## when it auto-widens poorly.
-    return (
-        f"\t{local.strftime('%Y-%m-%d')}",
-        f"\t{local.strftime('%H:%M')}",
-    )
+    return local.strftime("%d %b %Y"), local.strftime("%H:%M")
 
 
 def _movement_event_filter_label(event_filter):
@@ -3123,49 +3118,14 @@ def _item_qty_summary_by_type_rows(events):
     )
 
 
-def _stock_report_csv_meta_rows(
-    *,
-    page_mode,
-    filter_context,
-    event_filter="all",
-    view_by="timeline",
-):
-    from django.utils import timezone as dj_timezone
-
-    period = (filter_context.get("report_period_label") or "").strip() or "—"
-    downloaded = _format_movement_csv_when(dj_timezone.now())
-    rows = [
-        [
-            "Report",
-            "Stock movements" if page_mode == "movements" else "Stock report",
-        ],
-        ["Period", period],
-        ["Downloaded", downloaded],
-    ]
-    if page_mode == "movements":
-        rows.append(["Type", _movement_event_filter_label(event_filter)])
-        rows.append(
-            [
-                "View",
-                "Item summary" if view_by == "item" else "Timeline",
-            ]
-        )
-    rows.append([])
-    return rows
-
-
-def _stock_report_csv_response(*, filename, rows):
-    import csv
-
-    response = HttpResponse(content_type="text/csv; charset=utf-8")
+def _stock_report_pdf_response(*, filename, pdf_bytes):
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
-    response.write("\ufeff")
-    writer = csv.writer(response)
-    writer.writerows(rows)
+    response["Content-Length"] = str(len(pdf_bytes))
     return response
 
 
-def _stock_report_csv_download(
+def _stock_report_download(
     *,
     page_mode,
     filter_context,
@@ -3177,43 +3137,49 @@ def _stock_report_csv_download(
     item_report_group_by_shop,
     event_filter="all",
     view_by="timeline",
+    company_name="MY-SHOP",
+    shop_label="",
 ):
+    from django.utils import timezone as dj_timezone
+
     filename = _stock_report_download_filename(
         page_mode, filter_context, event_filter=event_filter
     )
-    rows = _stock_report_csv_meta_rows(
-        page_mode=page_mode,
-        filter_context=filter_context,
-        event_filter=event_filter,
-        view_by=view_by,
-    )
+    period_label = (filter_context.get("report_period_label") or "").strip() or "—"
+    event_label = _movement_event_filter_label(event_filter)
+    view_label = "Item summary" if view_by == "item" else "Timeline"
+    generated_at = dj_timezone.localtime(dj_timezone.now())
+
+    summary_headers = None
+    summary_rows = None
+    detail_rows = None
+    item_summary_headers = None
+    item_summary_rows = None
+    report_headers = None
+    report_rows = None
+    qty_label = _movement_summary_qty_label(event_filter)
 
     if page_mode == "movements" and is_item_movement_summary:
-        header = ["Item", "Category"]
+        item_summary_headers = ["Item", "Category"]
         if movement_item_group_by_shop:
-            header.append("Shop")
-        header.extend(
+            item_summary_headers.append("Shop")
+        item_summary_headers.extend(
             [
-                "Current stock",
+                "Stock",
                 "Events",
                 "In",
                 "Out",
-                "Transfer in",
-                "Transfer out",
+                "T-in",
+                "T-out",
                 "Sale",
                 "Return",
                 "Last date",
                 "Last time",
             ]
         )
-        rows.append(["Summary by item"])
-        rows.append(header)
+        item_summary_rows = []
         sorted_items = sorted(
-            [
-                row
-                for row in movement_item_rows
-                if not row.get("is_item_total")
-            ],
+            [row for row in movement_item_rows if not row.get("is_item_total")],
             key=lambda row: (
                 (row.get("item_name") or "").lower(),
                 (row.get("shop_name") or "").lower(),
@@ -3221,6 +3187,7 @@ def _stock_report_csv_download(
             ),
         )
         for row in sorted_items:
+            last_date, last_time = _format_movement_pdf_date_time(row.get("last_at"))
             line = [
                 row.get("item_name") or "",
                 row.get("item_category") or "",
@@ -3237,28 +3204,24 @@ def _stock_report_csv_download(
                     row.get("units_transfer_out") or 0,
                     row.get("units_sale") or 0,
                     row.get("units_return") or 0,
-                    *_format_movement_csv_date_time(row.get("last_at")),
+                    last_date,
+                    last_time,
                 ]
             )
-            rows.append(line)
-        return _stock_report_csv_response(filename=filename, rows=rows)
-
-    if page_mode == "movements":
-        qty_label = _movement_summary_qty_label(event_filter)
-        rows.append(["Summary by item"])
+            item_summary_rows.append(line)
+    elif page_mode == "movements":
         if event_filter == "all":
-            rows.append(
-                [
-                    "Item",
-                    "Category",
-                    "Stocked in",
-                    "Stocked out",
-                    "Transferred",
-                    "Sold",
-                    "Returned",
-                ]
-            )
-            summary_rows = _item_qty_summary_by_type_rows(movement_events)
+            summary_headers = [
+                "Item",
+                "Category",
+                "Stocked in",
+                "Stocked out",
+                "Transferred",
+                "Sold",
+                "Returned",
+            ]
+            typed = _item_qty_summary_by_type_rows(movement_events)
+            summary_rows = []
             totals = {
                 "in": 0,
                 "out": 0,
@@ -3266,8 +3229,8 @@ def _stock_report_csv_download(
                 "sale": 0,
                 "return": 0,
             }
-            for row in summary_rows:
-                rows.append(
+            for row in typed:
+                summary_rows.append(
                     [
                         row["item_name"],
                         row["item_category"],
@@ -3281,7 +3244,7 @@ def _stock_report_csv_download(
                 for key in totals:
                     totals[key] += row[key]
             if summary_rows:
-                rows.append(
+                summary_rows.append(
                     [
                         "Total",
                         "",
@@ -3293,39 +3256,20 @@ def _stock_report_csv_download(
                     ]
                 )
         else:
-            rows.append(["Item", "Category", qty_label])
-            summary_rows = _item_qty_summary_rows(
+            summary_headers = ["Item", "Category", qty_label]
+            typed = _item_qty_summary_rows(
                 movement_events, event_filter=event_filter
             )
+            summary_rows = []
             total_qty = 0
-            for row in summary_rows:
-                rows.append(
+            for row in typed:
+                summary_rows.append(
                     [row["item_name"], row["item_category"], row["quantity"]]
                 )
                 total_qty += row["quantity"]
             if summary_rows:
-                rows.append(["Total", "", total_qty])
+                summary_rows.append(["Total", "", total_qty])
 
-        rows.append([])
-        rows.append(["Activity details"])
-        rows.append(
-            [
-                "Date",
-                "Time",
-                "Type",
-                "Item",
-                "Category",
-                "Receipt #",
-                "From",
-                "To",
-                "Qty",
-                "Serials",
-                "Pay",
-                "Seller",
-                "Shop",
-                "Note",
-            ]
-        )
         detail_events = sorted(
             movement_events,
             key=lambda event: (
@@ -3334,81 +3278,94 @@ def _stock_report_csv_download(
                 event.get("event_type") or "",
             ),
         )
+        detail_rows = []
         for event in detail_events:
-            serials = event.get("serial_numbers") or []
-            date_value, time_value = _format_movement_csv_date_time(
+            date_value, time_value = _format_movement_pdf_date_time(
                 event.get("happened_at")
             )
-            rows.append(
+            detail_rows.append(
                 [
                     date_value,
                     time_value,
                     event.get("event_label") or event.get("event_type") or "",
                     event.get("item_name") or "",
-                    event.get("item_category") or "",
+                    event.get("quantity") or 0,
                     event.get("receipt_number") or "",
                     event.get("from_label") or "",
                     event.get("to_label") or "",
-                    event.get("quantity") or 0,
-                    "; ".join(str(s) for s in serials),
-                    event.get("pay") or "",
                     event.get("by") or "",
-                    event.get("shop_name") or "",
-                    event.get("note") or "",
                 ]
             )
-        return _stock_report_csv_response(filename=filename, rows=rows)
-
-    rows.append(["Summary by item"])
-    header = ["Item", "Category"]
-    if item_report_group_by_shop:
-        header.append("Shop")
-    header.extend(
-        [
-            "Starting stock",
-            "Stock in",
-            "Transfer in",
-            "Stock out",
-            "Transfer out",
-            "Net sale",
-            "Returned",
-            "Closing stock",
-        ]
-    )
-    rows.append(header)
-    sorted_report = sorted(
-        [row for row in item_report_rows if not row.get("is_item_total")],
-        key=lambda row: (
-            (
-                getattr(row.get("item"), "name", None)
-                or row.get("item_name")
-                or ""
-            ).lower(),
-            (row.get("shop_name") or "").lower(),
-        ),
-    )
-    for row in sorted_report:
-        item = row.get("item")
-        line = [
-            getattr(item, "name", None) or row.get("item_name") or "",
-            getattr(item, "category", None) or row.get("item_category") or "",
-        ]
+    else:
+        report_headers = ["Item", "Category"]
         if item_report_group_by_shop:
-            line.append(row.get("shop_name") or "")
-        line.extend(
+            report_headers.append("Shop")
+        report_headers.extend(
             [
-                row.get("starting_stock") or 0,
-                row.get("stock_in") or 0,
-                row.get("stock_transfer_in") or 0,
-                row.get("stock_out") or 0,
-                row.get("stock_transfer_out") or 0,
-                row.get("net_sale") or 0,
-                row.get("stock_return") or 0,
-                row.get("closing_stock") or 0,
+                "Starting",
+                "In",
+                "T-in",
+                "Out",
+                "T-out",
+                "Net sale",
+                "Returned",
+                "Closing",
             ]
         )
-        rows.append(line)
-    return _stock_report_csv_response(filename=filename, rows=rows)
+        report_rows = []
+        sorted_report = sorted(
+            [row for row in item_report_rows if not row.get("is_item_total")],
+            key=lambda row: (
+                (
+                    getattr(row.get("item"), "name", None)
+                    or row.get("item_name")
+                    or ""
+                ).lower(),
+                (row.get("shop_name") or "").lower(),
+            ),
+        )
+        for row in sorted_report:
+            item = row.get("item")
+            line = [
+                getattr(item, "name", None) or row.get("item_name") or "",
+                getattr(item, "category", None) or row.get("item_category") or "",
+            ]
+            if item_report_group_by_shop:
+                line.append(row.get("shop_name") or "")
+            line.extend(
+                [
+                    row.get("starting_stock") or 0,
+                    row.get("stock_in") or 0,
+                    row.get("stock_transfer_in") or 0,
+                    row.get("stock_out") or 0,
+                    row.get("stock_transfer_out") or 0,
+                    row.get("net_sale") or 0,
+                    row.get("stock_return") or 0,
+                    row.get("closing_stock") or 0,
+                ]
+            )
+            report_rows.append(line)
+
+    pdf_bytes = build_stock_report_pdf(
+        company_name=company_name,
+        page_mode=page_mode,
+        period_label=period_label,
+        event_filter=event_filter,
+        event_filter_label=event_label,
+        view_by=view_by if page_mode == "movements" else "item",
+        view_label=view_label,
+        shop_label=shop_label,
+        generated_at=generated_at,
+        summary_rows=summary_rows,
+        summary_headers=summary_headers,
+        summary_qty_label=qty_label,
+        detail_rows=detail_rows,
+        item_summary_rows=item_summary_rows,
+        item_summary_headers=item_summary_headers,
+        report_rows=report_rows,
+        report_headers=report_headers,
+    )
+    return _stock_report_pdf_response(filename=filename, pdf_bytes=pdf_bytes)
 
 
 def stock_report(request, profile, meta, module, *, page_mode="report"):
@@ -3675,7 +3632,21 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     )
 
     if (request.GET.get("download") or "").strip() == "1":
-        return _stock_report_csv_download(
+        from shops.services import get_company_profile
+
+        company = get_company_profile()
+        company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+        if selected_shop_ids:
+            shop_label = ", ".join(
+                shops_by_id[sid].name
+                for sid in selected_shop_ids
+                if sid in shops_by_id
+            )
+        elif len(filter_shops) == 1:
+            shop_label = filter_shops[0].name
+        else:
+            shop_label = "All shops"
+        return _stock_report_download(
             page_mode=page_mode,
             filter_context=filter_context,
             is_item_movement_summary=is_item_movement_summary,
@@ -3686,6 +3657,8 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             item_report_group_by_shop=item_report_group_by_shop,
             event_filter=event_filter,
             view_by=view_by,
+            company_name=company_name,
+            shop_label=shop_label,
         )
 
     return render(

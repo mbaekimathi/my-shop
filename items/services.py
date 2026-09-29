@@ -3564,3 +3564,422 @@ def build_stock_print_pdf(
 
     doc.build(story)
     return buffer.getvalue()
+
+
+def build_stock_report_pdf(
+    *,
+    company_name: str,
+    page_mode: str,
+    period_label: str,
+    event_filter: str = "all",
+    event_filter_label: str = "All movements",
+    view_by: str = "timeline",
+    view_label: str = "Timeline",
+    shop_label: str = "",
+    generated_at=None,
+    summary_rows: list | None = None,
+    summary_headers: list | None = None,
+    summary_qty_label: str = "Qty",
+    detail_rows: list | None = None,
+    item_summary_rows: list | None = None,
+    item_summary_headers: list | None = None,
+    report_rows: list | None = None,
+    report_headers: list | None = None,
+) -> bytes:
+    """
+    Professional A4 PDF for stock movements / stock report downloads.
+
+    Repeating header + footer on every page, item summary, then dated details.
+    """
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+    from reportlab.platypus import (
+        KeepTogether,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    from core.pdf_fonts import MANROPE_PDF, MANROPE_PDF_BOLD, register_manrope_pdf_fonts
+
+    register_manrope_pdf_fonts()
+
+    is_movements = page_mode == "movements"
+    use_landscape = is_movements and view_by != "item"
+    page_size = landscape(A4) if use_landscape else A4
+
+    ink = colors.HexColor("#0f172a")
+    muted = colors.HexColor("#64748b")
+    line = colors.HexColor("#e2e8f0")
+    line_strong = colors.HexColor("#cbd5e1")
+    surface = colors.HexColor("#f8fafc")
+    head_fill = colors.HexColor("#0f172a")
+    accent = colors.HexColor("#0f766e")
+    accent_soft = colors.HexColor("#ccfbf1")
+    row_alt = colors.HexColor("#f1f5f9")
+    white = colors.white
+
+    buffer = BytesIO()
+    left_m = 12 * mm
+    right_m = 12 * mm
+    top_m = 22 * mm
+    bottom_m = 16 * mm
+
+    title = "Stock Movement Report" if is_movements else "Stock Report"
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=page_size,
+        leftMargin=left_m,
+        rightMargin=right_m,
+        topMargin=top_m,
+        bottomMargin=bottom_m,
+        title=f"{company_name} — {title}",
+        author=company_name or "MY-SHOP",
+    )
+
+    styles = getSampleStyleSheet()
+
+    def _esc(text) -> str:
+        return (
+            str(text if text is not None else "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    section_title = ParagraphStyle(
+        "ReportSection",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=10,
+        textColor=ink,
+        leading=13,
+        spaceBefore=2,
+        spaceAfter=4,
+    )
+    cell = ParagraphStyle(
+        "ReportCell",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7.5,
+        textColor=ink,
+        leading=9.5,
+    )
+    cell_bold = ParagraphStyle(
+        "ReportCellBold",
+        parent=cell,
+        fontName=MANROPE_PDF_BOLD,
+    )
+    head_cell = ParagraphStyle(
+        "ReportHeadCell",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7,
+        textColor=white,
+        leading=9,
+    )
+    meta_chip = ParagraphStyle(
+        "ReportMetaChip",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7.5,
+        textColor=ink,
+        leading=10,
+    )
+    meta_chip_label = ParagraphStyle(
+        "ReportMetaChipLabel",
+        parent=meta_chip,
+        fontName=MANROPE_PDF_BOLD,
+        textColor=muted,
+        fontSize=6.5,
+    )
+    empty_style = ParagraphStyle(
+        "ReportEmpty",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=9,
+        textColor=muted,
+        leading=12,
+        alignment=TA_CENTER,
+    )
+
+    generated = generated_at
+    if generated is None:
+        from django.utils import timezone as dj_timezone
+
+        generated = dj_timezone.localtime(dj_timezone.now())
+    stamp = generated.strftime("%d %b %Y · %H:%M")
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+
+    class _NumberedCanvas(pdf_canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            pdf_canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_page_states = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            page_count = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self._draw_chrome(page_count)
+                pdf_canvas.Canvas.showPage(self)
+            pdf_canvas.Canvas.save(self)
+
+        def _draw_chrome(self, page_count: int):
+            width, height = page_size
+            page_no = self._pageNumber
+
+            # Header bar
+            self.setFillColor(head_fill)
+            self.rect(0, height - 16 * mm, width, 16 * mm, fill=1, stroke=0)
+            self.setFillColor(accent)
+            self.rect(0, height - 16.8 * mm, width, 0.8 * mm, fill=1, stroke=0)
+
+            self.setFillColor(white)
+            self.setFont(MANROPE_PDF_BOLD, 8)
+            self.drawString(left_m, height - 7 * mm, "STOCK MANAGEMENT")
+            self.setFont(MANROPE_PDF_BOLD, 11)
+            self.drawString(left_m, height - 12.2 * mm, title)
+
+            self.setFont(MANROPE_PDF, 8)
+            self.drawRightString(width - right_m, height - 7 * mm, brand)
+            self.setFont(MANROPE_PDF, 7.5)
+            self.drawRightString(
+                width - right_m,
+                height - 12.2 * mm,
+                period_label or "—",
+            )
+
+            # Footer
+            self.setStrokeColor(line_strong)
+            self.setLineWidth(0.6)
+            self.line(left_m, 10 * mm, width - right_m, 10 * mm)
+            self.setFillColor(muted)
+            self.setFont(MANROPE_PDF, 7)
+            self.drawString(
+                left_m,
+                5.5 * mm,
+                f"Generated {stamp}  ·  {event_filter_label}",
+            )
+            self.drawCentredString(
+                width / 2,
+                5.5 * mm,
+                brand,
+            )
+            self.drawRightString(
+                width - right_m,
+                5.5 * mm,
+                f"Page {page_no} of {page_count}",
+            )
+
+    story: list = []
+
+    # Meta strip
+    meta_pairs = [
+        ("Period", period_label or "—"),
+        ("Type", event_filter_label if is_movements else "Item stock"),
+        ("View", view_label if is_movements else "Report"),
+    ]
+    if shop_label:
+        meta_pairs.append(("Shop", shop_label))
+    meta_pairs.append(("Downloaded", stamp))
+
+    meta_cells = []
+    for label, value in meta_pairs:
+        meta_cells.append(
+            [
+                Paragraph(_esc(label).upper(), meta_chip_label),
+                Paragraph(_esc(value), meta_chip),
+            ]
+        )
+    chip_w = doc.width / max(len(meta_cells), 1)
+    meta_table = Table(
+        [meta_cells],
+        colWidths=[chip_w] * len(meta_cells),
+    )
+    meta_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), surface),
+                ("BOX", (0, 0), (-1, -1), 0.6, line),
+                ("INNERGRID", (0, 0), (-1, -1), 0.4, line),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.append(meta_table)
+    story.append(Spacer(1, 5 * mm))
+
+    def _styled_table(headers, data_rows, *, col_widths=None, emphasize_last=False):
+        if not data_rows:
+            return Paragraph("No rows for these filters.", empty_style)
+
+        head = [Paragraph(_esc(h), head_cell) for h in headers]
+        body = [head]
+        for row in data_rows:
+            cells = []
+            for idx, value in enumerate(row):
+                style = cell_bold if idx == 0 else cell
+                if emphasize_last and idx == len(row) - 1:
+                    style = cell_bold
+                cells.append(Paragraph(_esc(value), style))
+            body.append(cells)
+
+        table = Table(
+            body,
+            colWidths=col_widths,
+            repeatRows=1,
+        )
+        cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), head_fill),
+            ("TEXTCOLOR", (0, 0), (-1, 0), white),
+            ("FONTNAME", (0, 0), (-1, 0), MANROPE_PDF_BOLD),
+            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+            ("BACKGROUND", (0, 1), (-1, -1), white),
+            ("TEXTCOLOR", (0, 1), (-1, -1), ink),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.2, accent),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.35, line),
+            ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.2),
+            ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+        ]
+        for r in range(1, len(body)):
+            if r % 2 == 0:
+                cmds.append(("BACKGROUND", (0, r), (-1, r), row_alt))
+        # Numeric-looking trailing columns right-aligned when short header names
+        if len(headers) >= 3:
+            cmds.append(("ALIGN", (-1, 1), (-1, -1), "RIGHT"))
+            if len(headers) >= 4:
+                cmds.append(("ALIGN", (-2, 1), (-2, -1), "RIGHT"))
+        if emphasize_last and len(body) > 1:
+            last = len(body) - 1
+            cmds.append(("BACKGROUND", (0, last), (-1, last), accent_soft))
+            cmds.append(("FONTNAME", (0, last), (-1, last), MANROPE_PDF_BOLD))
+            cmds.append(("LINEABOVE", (0, last), (-1, last), 0.8, accent))
+        table.setStyle(TableStyle(cmds))
+        return table
+
+    # ---- Movements: item summary view ----
+    if is_movements and view_by == "item" and item_summary_headers is not None:
+        story.append(Paragraph("Summary by item", section_title))
+        widths = None
+        if item_summary_headers:
+            n = len(item_summary_headers)
+            item_w = doc.width * 0.22
+            rest = (doc.width - item_w) / max(1, n - 1)
+            widths = [item_w] + [rest] * (n - 1)
+        story.append(
+            _styled_table(
+                item_summary_headers or [],
+                item_summary_rows or [],
+                col_widths=widths,
+            )
+        )
+        doc.build(story, canvasmaker=_NumberedCanvas)
+        return buffer.getvalue()
+
+    # ---- Stock report (non-movements) ----
+    if not is_movements:
+        story.append(Paragraph("Item stock summary", section_title))
+        widths = None
+        if report_headers:
+            n = len(report_headers)
+            item_w = doc.width * 0.24
+            rest = (doc.width - item_w) / max(1, n - 1)
+            widths = [item_w] + [rest] * (n - 1)
+        story.append(
+            _styled_table(
+                report_headers or [],
+                report_rows or [],
+                col_widths=widths,
+            )
+        )
+        doc.build(story, canvasmaker=_NumberedCanvas)
+        return buffer.getvalue()
+
+    # ---- Movements timeline: summary + details ----
+    story.append(Paragraph("Summary by item", section_title))
+    sum_headers = summary_headers or ["Item", "Category", summary_qty_label]
+    sum_rows = list(summary_rows or [])
+    sum_widths = None
+    if sum_headers:
+        n = len(sum_headers)
+        if n <= 3:
+            sum_widths = [doc.width * 0.42, doc.width * 0.33, doc.width * 0.25]
+        else:
+            item_w = doc.width * 0.26
+            cat_w = doc.width * 0.16
+            rest = (doc.width - item_w - cat_w) / max(1, n - 2)
+            sum_widths = [item_w, cat_w] + [rest] * (n - 2)
+    story.append(
+        KeepTogether(
+            [
+                _styled_table(
+                    sum_headers,
+                    sum_rows,
+                    col_widths=sum_widths,
+                    emphasize_last=bool(sum_rows),
+                )
+            ]
+        )
+    )
+    story.append(Spacer(1, 6 * mm))
+
+    story.append(Paragraph("Activity details", section_title))
+    detail_headers = [
+        "Date",
+        "Time",
+        "Type",
+        "Item",
+        "Qty",
+        "Receipt",
+        "From",
+        "To",
+        "Seller",
+    ]
+    detail_data = detail_rows or []
+    if not detail_data:
+        story.append(Paragraph("No activity rows for these filters.", empty_style))
+    else:
+        usable = doc.width
+        detail_widths = [
+            usable * 0.10,
+            usable * 0.07,
+            usable * 0.11,
+            usable * 0.20,
+            usable * 0.06,
+            usable * 0.12,
+            usable * 0.12,
+            usable * 0.12,
+            usable * 0.10,
+        ]
+        # Soften long text via Paragraph already in _styled_table
+        story.append(
+            _styled_table(
+                detail_headers,
+                detail_data,
+                col_widths=detail_widths,
+            )
+        )
+
+    doc.build(story, canvasmaker=_NumberedCanvas)
+    return buffer.getvalue()
