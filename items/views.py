@@ -3011,6 +3011,21 @@ def _format_movement_csv_when(value):
     return date_format(local, "d M Y H:i")
 
 
+def _format_movement_csv_date_time(value):
+    """Return (date, time) strings Excel keeps readable (not ########)."""
+    if value is None:
+        return "", ""
+    from django.utils import timezone as dj_timezone
+
+    local = dj_timezone.localtime(value) if dj_timezone.is_aware(value) else value
+    # ISO-style date + 24h time; leading tab forces text so Excel won't
+    # hide values as ######## when it auto-widens poorly.
+    return (
+        f"\t{local.strftime('%Y-%m-%d')}",
+        f"\t{local.strftime('%H:%M')}",
+    )
+
+
 def _movement_event_filter_label(event_filter):
     return {
         "all": "All movements",
@@ -3187,7 +3202,8 @@ def _stock_report_csv_download(
                 "Transfer out",
                 "Sale",
                 "Return",
-                "Last activity",
+                "Last date",
+                "Last time",
             ]
         )
         rows.append(["Summary by item"])
@@ -3221,7 +3237,7 @@ def _stock_report_csv_download(
                     row.get("units_transfer_out") or 0,
                     row.get("units_sale") or 0,
                     row.get("units_return") or 0,
-                    _format_movement_csv_when(row.get("last_at")),
+                    *_format_movement_csv_date_time(row.get("last_at")),
                 ]
             )
             rows.append(line)
@@ -3291,10 +3307,11 @@ def _stock_report_csv_download(
                 rows.append(["Total", "", total_qty])
 
         rows.append([])
-        rows.append(["Details by date and time"])
+        rows.append(["Activity details"])
         rows.append(
             [
-                "When",
+                "Date",
+                "Time",
                 "Type",
                 "Item",
                 "Category",
@@ -3319,9 +3336,13 @@ def _stock_report_csv_download(
         )
         for event in detail_events:
             serials = event.get("serial_numbers") or []
+            date_value, time_value = _format_movement_csv_date_time(
+                event.get("happened_at")
+            )
             rows.append(
                 [
-                    _format_movement_csv_when(event.get("happened_at")),
+                    date_value,
+                    time_value,
                     event.get("event_label") or event.get("event_type") or "",
                     event.get("item_name") or "",
                     event.get("item_category") or "",
