@@ -3058,17 +3058,21 @@ def _item_qty_summary_rows(events, event_filter="all"):
             continue
         name = (event.get("item_name") or "—").strip() or "—"
         category = (event.get("item_category") or "").strip()
+        item_id = event.get("item_id")
         key = (name.lower(), category.lower(), name, category)
         qty = int(event.get("quantity") or 0)
         row = totals.get(key)
         if row is None:
             totals[key] = {
+                "item_id": item_id,
                 "item_name": name,
                 "item_category": category,
                 "quantity": qty,
             }
         else:
             row["quantity"] += qty
+            if row.get("item_id") is None and item_id is not None:
+                row["item_id"] = item_id
 
     rows = sorted(
         totals.values(),
@@ -3101,21 +3105,56 @@ def _item_qty_summary_by_type_rows(events):
             continue
         name = (event.get("item_name") or "—").strip() or "—"
         category = (event.get("item_category") or "").strip()
+        item_id = event.get("item_id")
         key = (name.lower(), category.lower(), name, category)
         row = totals.get(key)
         if row is None:
             row = {
+                "item_id": item_id,
                 "item_name": name,
                 "item_category": category,
                 **blanks,
             }
             totals[key] = row
         row[bucket] += int(event.get("quantity") or 0)
+        if row.get("item_id") is None and item_id is not None:
+            row["item_id"] = item_id
 
     return sorted(
         totals.values(),
         key=lambda row: (row["item_name"].lower(), row["item_category"].lower()),
     )
+
+
+def _summary_qty_for_estimate(row, event_filter="all"):
+    """Quantity used for estimated buying value on the summary report."""
+    if event_filter == "all":
+        # Value of units that left stock (out + sold); returns are not added back.
+        return int(row.get("out") or 0) + int(row.get("sale") or 0)
+    return int(row.get("quantity") or 0)
+
+
+def _format_money_pdf(value):
+    from decimal import Decimal, ROUND_HALF_UP
+
+    try:
+        amount = Decimal(str(value or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    except Exception:
+        amount = Decimal("0.00")
+    return f"{amount:,.2f}"
+
+
+def _buying_prices_for_summary(rows, shop_ids=None):
+    from .services import session_average_buying_prices_for_items
+
+    item_ids = [
+        row.get("item_id")
+        for row in rows
+        if row.get("item_id") is not None
+    ]
+    return session_average_buying_prices_for_items(item_ids, shop_ids=shop_ids)
 
 
 def _stock_report_pdf_response(*, filename, pdf_bytes):
@@ -3143,7 +3182,10 @@ def _stock_report_download(
     company_phone="",
     company_email="",
     company_location="",
+    shop_ids=None,
 ):
+    from decimal import Decimal
+
     from django.utils import timezone as dj_timezone
 
     filename = _stock_report_download_filename(
@@ -3215,6 +3257,8 @@ def _stock_report_download(
             item_summary_rows.append(line)
     elif page_mode == "movements":
         if event_filter == "all":
+            typed = _item_qty_summary_by_type_rows(movement_events)
+            buy_prices = _buying_prices_for_summary(typed, shop_ids=shop_ids)
             summary_headers = [
                 "Item",
                 "Category",
@@ -3223,8 +3267,9 @@ def _stock_report_download(
                 "Transferred",
                 "Sold",
                 "Returned",
+                "Buy price",
+                "Est. value",
             ]
-            typed = _item_qty_summary_by_type_rows(movement_events)
             summary_rows = []
             totals = {
                 "in": 0,
@@ -3233,7 +3278,14 @@ def _stock_report_download(
                 "sale": 0,
                 "return": 0,
             }
+            total_value = Decimal("0.00")
             for row in typed:
+                qty_for_value = _summary_qty_for_estimate(row, "all")
+                unit_buy = buy_prices.get(row.get("item_id")) or Decimal("0")
+                est_value = (unit_buy * Decimal(qty_for_value)).quantize(
+                    Decimal("0.01")
+                )
+                total_value += est_value
                 summary_rows.append(
                     [
                         row["item_name"],
@@ -3243,6 +3295,8 @@ def _stock_report_download(
                         row["transfer"],
                         row["sale"],
                         row["return"],
+                        _format_money_pdf(unit_buy),
+                        _format_money_pdf(est_value),
                     ]
                 )
                 for key in totals:
@@ -3257,22 +3311,50 @@ def _stock_report_download(
                         totals["transfer"],
                         totals["sale"],
                         totals["return"],
+                        "",
+                        _format_money_pdf(total_value),
                     ]
                 )
         else:
-            summary_headers = ["Item", "Category", qty_label]
             typed = _item_qty_summary_rows(
                 movement_events, event_filter=event_filter
             )
+            buy_prices = _buying_prices_for_summary(typed, shop_ids=shop_ids)
+            summary_headers = [
+                "Item",
+                "Category",
+                qty_label,
+                "Buy price",
+                "Est. value",
+            ]
             summary_rows = []
             total_qty = 0
+            total_value = Decimal("0.00")
             for row in typed:
+                qty = int(row.get("quantity") or 0)
+                unit_buy = buy_prices.get(row.get("item_id")) or Decimal("0")
+                est_value = (unit_buy * Decimal(qty)).quantize(Decimal("0.01"))
+                total_qty += qty
+                total_value += est_value
                 summary_rows.append(
-                    [row["item_name"], row["item_category"], row["quantity"]]
+                    [
+                        row["item_name"],
+                        row["item_category"],
+                        qty,
+                        _format_money_pdf(unit_buy),
+                        _format_money_pdf(est_value),
+                    ]
                 )
-                total_qty += row["quantity"]
             if summary_rows:
-                summary_rows.append(["Total", "", total_qty])
+                summary_rows.append(
+                    [
+                        "Total",
+                        "",
+                        total_qty,
+                        "",
+                        _format_money_pdf(total_value),
+                    ]
+                )
 
         detail_events = sorted(
             movement_events,
@@ -3680,6 +3762,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             company_phone=company_phone,
             company_email=company_email,
             company_location=company_location,
+            shop_ids=shop_ids_for_query,
         )
 
     return render(

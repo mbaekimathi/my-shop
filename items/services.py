@@ -3600,7 +3600,7 @@ def build_stock_report_pdf(
 
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas as pdf_canvas
@@ -3619,8 +3619,8 @@ def build_stock_report_pdf(
     register_manrope_pdf_fonts()
 
     is_movements = page_mode == "movements"
-    use_landscape = is_movements and view_by != "item"
-    page_size = landscape(A4) if use_landscape else A4
+    # Always portrait A4 for print-friendly downloads.
+    page_size = A4
 
     # Modern slate + teal palette (matches MY-SHOP, avoids purple/cream clichés)
     ink = colors.HexColor("#0b1220")
@@ -3644,10 +3644,10 @@ def build_stock_report_pdf(
     white = colors.white
 
     buffer = BytesIO()
-    left_m = 11 * mm
-    right_m = 11 * mm
-    top_m = 28 * mm
-    bottom_m = 16 * mm
+    left_m = 10 * mm
+    right_m = 10 * mm
+    top_m = 26 * mm
+    bottom_m = 15 * mm
 
     title = "Stock Movement Report" if is_movements else "Stock Report"
     doc = SimpleDocTemplate(
@@ -3702,9 +3702,9 @@ def build_stock_report_pdf(
         "ReportCell",
         parent=styles["Normal"],
         fontName=MANROPE_PDF,
-        fontSize=7.4,
+        fontSize=7.0,
         textColor=ink,
-        leading=9.4,
+        leading=8.8,
     )
     cell_bold = ParagraphStyle(
         "ReportCellBold",
@@ -4030,18 +4030,23 @@ def build_stock_report_pdf(
                 else summary_rows
             )
             for row in usable:
-                for value in row[2:]:
+                # Qty columns sit before Buy price / Est. value
+                for value in row[2:-2]:
                     try:
                         qty_total += int(value or 0)
                     except (TypeError, ValueError):
                         pass
         else:
-            qty_total = _sum_qty(summary_rows, -1)
+            # Qty is usually column index 2 when Buy price / Est. value follow
+            qty_total = _sum_qty(summary_rows, 2)
         activity_count = len(detail_rows or [])
+        est_value_label = "—"
+        if summary_rows and str(summary_rows[-1][0]).strip().lower() == "total":
+            est_value_label = str(summary_rows[-1][-1] or "—")
         kpi_data = [
             ("ITEMS", str(item_count)),
             ("UNITS", str(qty_total)),
-            ("ACTIVITIES", str(activity_count)),
+            ("EST. VALUE", est_value_label),
             ("TYPE", event_filter_label),
         ]
     elif is_movements:
@@ -4232,7 +4237,7 @@ def build_stock_report_pdf(
         _section(
             "01  SUMMARY",
             "Summary by item",
-            f"How many units were {_esc(summary_qty_label).lower()} for each item.",
+            f"Quantities and estimated buying value ({_esc(summary_qty_label).lower()} × buy price).",
         )
     )
     sum_headers = summary_headers or ["Item", "Category", summary_qty_label]
@@ -4242,9 +4247,19 @@ def build_stock_report_pdf(
         n = len(sum_headers)
         if n <= 3:
             sum_widths = [doc.width * 0.44, doc.width * 0.30, doc.width * 0.26]
+        elif n == 5:
+            # Item, Category, Qty, Buy price, Est. value
+            sum_widths = [
+                doc.width * 0.30,
+                doc.width * 0.18,
+                doc.width * 0.14,
+                doc.width * 0.18,
+                doc.width * 0.20,
+            ]
         else:
-            item_w = doc.width * 0.24
-            cat_w = doc.width * 0.16
+            # All-types summary with buy price + est. value
+            item_w = doc.width * 0.18
+            cat_w = doc.width * 0.12
             rest = (doc.width - item_w - cat_w) / max(1, n - 2)
             sum_widths = [item_w, cat_w] + [rest] * (n - 2)
     story.append(
@@ -4256,7 +4271,7 @@ def build_stock_report_pdf(
                     col_widths=sum_widths,
                     emphasize_last=bool(sum_rows),
                     numeric_from=2,
-                    qty_col=len(sum_headers) - 1 if len(sum_headers) <= 3 else None,
+                    qty_col=None,
                 )
             ]
         )
@@ -4271,8 +4286,7 @@ def build_stock_report_pdf(
         )
     )
     detail_headers = [
-        "Date",
-        "Time",
+        "When",
         "Type",
         "Item",
         "Qty",
@@ -4281,20 +4295,28 @@ def build_stock_report_pdf(
         "To",
         "Seller",
     ]
-    detail_data = detail_rows or []
+    detail_data = []
+    for row in detail_rows or []:
+        # Incoming rows: Date, Time, Type, Item, Qty, Receipt, From, To, Seller
+        if len(row) >= 9:
+            when = f"{row[0]} {row[1]}".strip()
+            detail_data.append(
+                [when, row[2], row[3], row[4], row[5], row[6], row[7], row[8]]
+            )
+        else:
+            detail_data.append(list(row))
     if not detail_data:
         story.append(Paragraph("No activity rows for these filters.", empty_style))
     else:
         usable = doc.width
         detail_widths = [
-            usable * 0.10,
+            usable * 0.16,
+            usable * 0.12,
+            usable * 0.20,
             usable * 0.07,
-            usable * 0.12,
-            usable * 0.19,
-            usable * 0.06,
-            usable * 0.12,
-            usable * 0.12,
-            usable * 0.12,
+            usable * 0.13,
+            usable * 0.11,
+            usable * 0.11,
             usable * 0.10,
         ]
         story.append(
@@ -4302,8 +4324,8 @@ def build_stock_report_pdf(
                 detail_headers,
                 detail_data,
                 col_widths=detail_widths,
-                type_col=2,
-                qty_col=4,
+                type_col=1,
+                qty_col=3,
             )
         )
 
