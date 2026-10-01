@@ -415,9 +415,11 @@
   const showCatalogLoading = () => {
     if (pickerCollapsed || !listRoot) return;
     lastRenderKey = "";
-    // Park filled/selected rows before wiping — matrix pages keep them inside
-    // listRoot, so an unguarded innerHTML wipe drops multi-item stock lines.
+    // Park filled/selected rows before wiping, then re-pin them above the
+    // catalog so stocked lines stay visible during the loading flash.
+    // (parkFilled / restoreParkedToTop are initialized before any call site.)
     parkFilled();
+    restoreParkedToTop();
     listRoot.innerHTML = `
       <div class="buy-stock-catalog-loading" data-stock-catalog-loading aria-live="polite">
         <span class="buy-stock-catalog-loading-bar" aria-hidden="true"></span>
@@ -507,8 +509,37 @@
     }
   };
 
+  // Matrix filled rows live in a sibling mount ABOVE the catalog root so
+  // live-search replace (listRoot.innerHTML = "") never destroys them.
+  const filledMount = () => {
+    if (!editableMatrix || !multiShopMatrix || !listRoot) return null;
+    const wrap = listRoot.parentElement;
+    if (!wrap) return null;
+    let mount = wrap.querySelector(":scope > [data-stock-filled-mount]");
+    if (!mount) {
+      mount = document.createElement("div");
+      mount.setAttribute("data-stock-filled-mount", "");
+      wrap.insertBefore(mount, listRoot);
+    }
+    return mount;
+  };
+
+  const filledGroupRows = () => {
+    const mount = filledMount();
+    return [
+      ...(mount?.querySelectorAll("[data-item-row][data-item-id]") || []),
+      ...(listRoot?.querySelectorAll(
+        "[data-stock-filled-group] [data-item-row][data-item-id]"
+      ) || []),
+    ];
+  };
+
   const isFilledPair = (headerRow) => {
     if (!headerRow) return false;
+    // Promoted matrix rows must survive catalog replace even if qty briefly
+    // reads empty while focus moves into the search box.
+    if (headerRow.classList.contains("is-filled")) return true;
+    if (headerRow.closest("[data-stock-filled-group]")) return true;
     // Keep the row the user just moved into when search clears after a promote.
     if (
       document.activeElement instanceof Element &&
@@ -543,9 +574,12 @@
 
   const parkFilled = () => {
     if (!parked) return;
+    // Matrix filled mount is outside listRoot — leave those rows in place.
+    // Only rescue filled rows still trapped inside the wipeable catalog root.
     listRoot.querySelectorAll(PARK_CANDIDATE_SELECTOR).forEach((row) => {
       if (!isFilledPair(row)) return;
       if (parked.contains(row)) return;
+      if (row.closest("[data-stock-filled-mount]")) return;
       if (editableMatrix) {
         parked.appendChild(row);
         return;
@@ -568,21 +602,29 @@
   const ensureSelectedGroup = () => {
     if (!editableMatrix || !multiShopMatrix) return null;
     const key = "__selected__";
-    let section = groupEls.get(key);
-    if (section) {
-      if (listRoot.firstElementChild !== section) {
-        listRoot.insertBefore(section, listRoot.firstElementChild);
-      }
+    const mount = filledMount();
+    if (!mount) return null;
+    let section =
+      mount.querySelector(":scope > [data-stock-filled-group]") ||
+      groupEls.get(key);
+    if (section && section.isConnected) {
+      // Re-parent into the persistent mount if an older path left it in listRoot.
+      if (!mount.contains(section)) mount.appendChild(section);
+      groupEls.set(key, section);
       section.hidden = false;
+      if (mount.firstElementChild !== section) {
+        mount.insertBefore(section, mount.firstElementChild);
+      }
       return section;
     }
+    if (section) groupEls.delete(key);
+    // Build via ensureGroup (appends to listRoot), then move into the mount.
     section = ensureGroup("__selected__");
     const title = section.querySelector(".stock-category-title");
     if (title) title.textContent = "Items with quantity";
     section.setAttribute("data-stock-filled-group", "");
-    if (listRoot.firstElementChild !== section) {
-      listRoot.insertBefore(section, listRoot.firstElementChild);
-    }
+    mount.appendChild(section);
+    section.hidden = false;
     return section;
   };
 
@@ -605,6 +647,12 @@
           tbody.appendChild(row);
         });
       }
+      if (section) {
+        const count = tbody?.querySelectorAll("[data-item-row]").length || 0;
+        const countEl = section.querySelector("[data-category-count]");
+        if (countEl) countEl.textContent = String(count);
+        section.hidden = count === 0;
+      }
       const parkedTable = parked.closest("table");
       if (parkedTable) parkedTable.hidden = true;
       return;
@@ -617,6 +665,12 @@
         list.insertBefore(parkedWrap, listRoot);
       }
     }
+  };
+
+  // Keep every stocked line pinned above results before search replaces the catalog.
+  const pinFilledAboveCatalog = () => {
+    parkFilled();
+    restoreParkedToTop();
   };
 
   const sortFilledRowsInPlace = () => {
@@ -1421,6 +1475,15 @@
       if (el) el.textContent = String(count);
       section.hidden = count === 0;
     });
+    // Filled mount may hold the selected group even if map was briefly cleared.
+    filledMount()
+      ?.querySelectorAll(":scope > [data-stock-filled-group]")
+      .forEach((section) => {
+        const count = section.querySelectorAll("[data-item-row]").length;
+        const el = section.querySelector("[data-category-count]");
+        if (el) el.textContent = String(count);
+        section.hidden = count === 0;
+      });
     refreshCategorySubtotals();
   };
 
@@ -1538,8 +1601,13 @@
       return;
     }
     if (replace) {
-      parkFilled();
+      // Move stocked lines into the persistent mount BEFORE wiping listRoot.
+      pinFilledAboveCatalog();
+      // Keep the persistent "Items with quantity" section mapped — it lives
+      // outside listRoot and must survive catalog search replaces.
+      const selected = groupEls.get("__selected__");
       groupEls.clear();
+      if (selected?.isConnected) groupEls.set("__selected__", selected);
       listRoot.innerHTML = "";
     }
     const parkedIds = new Set(
@@ -1547,11 +1615,11 @@
         (row) => row.getAttribute("data-item-id")
       )
     );
-    // Also skip ids already restored into the selected group from a prior pass.
-    listRoot.querySelectorAll("[data-stock-filled-group] [data-item-row][data-item-id]").forEach((row) => {
+    // Skip ids already held in the persistent filled mount (or legacy in-root group).
+    filledGroupRows().forEach((row) => {
       parkedIds.add(row.getAttribute("data-item-id"));
     });
-    if (replace) restoreParkedToTop();
+    if (replace && !editableMatrix) restoreParkedToTop();
     items.forEach((item) => {
       itemCache.set(String(item.id), item);
       if (parkedIds.has(String(item.id))) return;
@@ -1634,14 +1702,20 @@
     appendItems(Array.isArray(data.items) ? data.items : [], { replace: !append });
 
     const visible = listRoot.querySelectorAll("[data-item-row]").length;
+    const filledCount = filledGroupRows().length;
     const parkedCount = parked?.querySelectorAll("[data-item-row]").length || 0;
     if (noResults) {
       const idle = searchFirst && !activeQuery && !browseOpen;
       noResults.hidden =
-        idle || visible + parkedCount > 0 || (!activeQuery && totalCount === 0);
+        idle ||
+        visible + filledCount + parkedCount > 0 ||
+        (!activeQuery && totalCount === 0);
     }
     if (moreWrap) moreWrap.hidden = !hasMore;
-    updateCount(visible + parkedCount || totalCount, Boolean(activeQuery));
+    updateCount(
+      visible + filledCount + parkedCount || totalCount,
+      Boolean(activeQuery)
+    );
     notify();
   };
 
@@ -1848,6 +1922,11 @@
     openPicker({ browse: false });
   });
 
+  searchInput?.addEventListener("focus", () => {
+    // Pin stocked lines the moment the user returns to search, before any
+    // keystroke replaces catalog results.
+    if (editableMatrix) pinFilledAboveCatalog();
+  });
   searchInput?.addEventListener("input", () => {
     window.clearTimeout(searchTimer);
     const query = String(searchInput.value || "").trim();
@@ -1855,9 +1934,11 @@
     if (query) {
       setPickerCollapsed(false);
       setBrowseOpen(false);
+      // Keep every in-progress stock line visible above filtered results.
+      if (editableMatrix) pinFilledAboveCatalog();
       // Local filter is instant — skip the loading flash once catalog is warm.
-      // Matrix pages keep filled rows in listRoot; only the simple picker needs
-      // a full-list loading wipe (parkFilled still guards showCatalogLoading).
+      // Matrix pages keep filled rows outside listRoot; only the simple picker
+      // needs a full-list loading wipe (parkFilled still guards showCatalogLoading).
       if (!warmLocal && simpleMode) showCatalogLoading();
     }
     if (warmLocal) {

@@ -835,16 +835,33 @@
     const ensureLiveFilledTbody = () => {
       const catalogRoot = panel.querySelector("[data-stock-catalog-root]");
       if (!catalogRoot) return null;
-      let section = catalogRoot.querySelector("[data-stock-filled-group]");
+      const wrap = catalogRoot.parentElement;
+      if (!wrap) return null;
+
+      // Keep filled rows outside the catalog root so live search cannot wipe them.
+      let mount = wrap.querySelector(":scope > [data-stock-filled-mount]");
+      if (!mount) {
+        mount = document.createElement("div");
+        mount.setAttribute("data-stock-filled-mount", "");
+        wrap.insertBefore(mount, catalogRoot);
+      }
+
+      let section =
+        mount.querySelector(":scope > [data-stock-filled-group]") ||
+        catalogRoot.querySelector("[data-stock-filled-group]");
       if (section) {
-        if (catalogRoot.firstElementChild !== section) {
-          catalogRoot.insertBefore(section, catalogRoot.firstElementChild);
+        if (!mount.contains(section)) mount.appendChild(section);
+        if (mount.firstElementChild !== section) {
+          mount.insertBefore(section, mount.firstElementChild);
         }
+        section.hidden = false;
         return section.querySelector("[data-stock-catalog-tbody]");
       }
-      const sample = catalogRoot.querySelector(
-        ".stock-category:not([data-stock-filled-group])"
-      );
+
+      const sample =
+        catalogRoot.querySelector(
+          ".stock-category:not([data-stock-filled-group])"
+        ) || mount.querySelector(".stock-category");
       if (!sample) return null;
       section = sample.cloneNode(true);
       section.setAttribute("data-stock-filled-group", "");
@@ -854,7 +871,7 @@
       if (title) title.textContent = "Items with quantity";
       const countEl = section.querySelector("[data-category-count]");
       if (countEl) countEl.textContent = "0";
-      catalogRoot.insertBefore(section, catalogRoot.firstElementChild);
+      mount.insertBefore(section, mount.firstElementChild);
       return tbody;
     };
 
@@ -868,6 +885,9 @@
         ...row.querySelectorAll("[data-stock-shop-cell]"),
       ].some((c) => cellQty(c) > 0);
       row.classList.toggle("is-filled", rowFilled);
+      // Pin stocked lines into the persistent top group immediately so live
+      // search never hides an in-progress item while looking up the next one.
+      reorderFilledRow(row);
     };
 
     const syncCellBalance = (cell) => {
