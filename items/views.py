@@ -323,7 +323,12 @@ def item_management(request, profile, meta, module, page_sidebar):
         elif action == "delete":
             item = get_object_or_404(Item, pk=item_id)
             name = item.name
-            delete_item(item)
+            try:
+                delete_item(item)
+            except ValidationError as exc:
+                for msg in _validation_errors(exc):
+                    messages.error(request, msg)
+                return redirect(request.path)
             messages.success(request, f"Item “{name}” deleted.")
             return redirect(request.path)
 

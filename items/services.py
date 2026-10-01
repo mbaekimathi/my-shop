@@ -4,6 +4,7 @@ import re
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import F, OuterRef, Subquery
+from django.db.models.deletion import ProtectedError
 
 from employees.countries import COUNTRY_DIAL_CODES
 
@@ -1728,9 +1729,20 @@ def toggle_item_suspended(item: Item) -> Item:
 
 
 def delete_item(item: Item) -> None:
+    if item.stock_movement_lines.exists():
+        raise ValidationError(
+            f"“{item.name}” cannot be deleted because it has stock movement history. "
+            "Suspend it instead to hide it from sales."
+        )
     if item.image:
         item.image.delete(save=False)
-    item.delete()
+    try:
+        item.delete()
+    except ProtectedError as exc:
+        raise ValidationError(
+            f"“{item.name}” cannot be deleted because related records still reference it. "
+            "Suspend it instead to hide it from sales."
+        ) from exc
 
 
 def _parse_serial_numbers(raw_value: str) -> list[str]:
