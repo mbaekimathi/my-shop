@@ -415,6 +415,9 @@
   const showCatalogLoading = () => {
     if (pickerCollapsed || !listRoot) return;
     lastRenderKey = "";
+    // Park filled/selected rows before wiping — matrix pages keep them inside
+    // listRoot, so an unguarded innerHTML wipe drops multi-item stock lines.
+    parkFilled();
     listRoot.innerHTML = `
       <div class="buy-stock-catalog-loading" data-stock-catalog-loading aria-live="polite">
         <span class="buy-stock-catalog-loading-bar" aria-hidden="true"></span>
@@ -1853,7 +1856,9 @@
       setPickerCollapsed(false);
       setBrowseOpen(false);
       // Local filter is instant — skip the loading flash once catalog is warm.
-      if (!warmLocal) showCatalogLoading();
+      // Matrix pages keep filled rows in listRoot; only the simple picker needs
+      // a full-list loading wipe (parkFilled still guards showCatalogLoading).
+      if (!warmLocal && simpleMode) showCatalogLoading();
     }
     if (warmLocal) {
       // No debounce needed: filtering is in memory and render is frame-batched.

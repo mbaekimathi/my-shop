@@ -909,7 +909,15 @@
       ].some((c) => cellQty(c) > 0);
       row.classList.toggle("is-filled", rowFilled);
       reorderFilledRow(row);
-      if (rowFilled) {
+      if (!rowFilled) return;
+      // Stock-in: wait until qty + buying price are both set before clearing
+      // search so the user can immediately look up the next item.
+      const readyToClear =
+        mode !== "in" ||
+        [...row.querySelectorAll("[data-stock-shop-cell]")].some(
+          (c) => cellQty(c) > 0 && cellHasPrice(c)
+        );
+      if (readyToClear) {
         // Defer so focus can land on the next field before catalog reload parks rows.
         window.setTimeout(() => clearLiveSearchIfUsed(), 0);
       }
