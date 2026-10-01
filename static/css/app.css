@@ -18049,7 +18049,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 .stock-panel--report .stock-report-table .stock-col-item {
-  width: 16rem;
+  width: 26rem;
 }
 
 .stock-panel--report .stock-report-table .stock-col-shop {
@@ -18070,15 +18070,15 @@ html[data-theme="light"] .low-stock-badge.is-low {
 
 .stock-panel--report .stock-report-table--items,
 .stock-panel--report .stock-report-table--items-summary {
-  min-width: 1080px;
+  min-width: 1240px;
 }
 
 .stock-panel--report .stock-report-table--items-by-shop {
-  min-width: 1180px;
+  min-width: 1340px;
 }
 
 .stock-panel--report .stock-report-table--items-summary.stock-report-table--items-by-shop {
-  min-width: 1280px;
+  min-width: 1440px;
 }
 
 .stock-panel--report .stock-report-table th,
@@ -18121,22 +18121,34 @@ html[data-theme="light"] .low-stock-badge.is-low {
   font-variant-numeric: normal;
 }
 
+/* Stock report/movements: show full item names (override dense ellipsis). */
+.stock-panel--report .stock-report-table td[data-label="Item"],
+.stock-panel--report .stock-report-table th[data-label="Item"] {
+  overflow: visible;
+  white-space: normal;
+}
+
 .stock-panel--report .stock-report-table td[data-label="Item"] strong {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: 0.92rem;
   font-weight: 650;
 }
 
 .stock-panel--report .stock-report-table--items .stock-report-from,
-.stock-panel--report .stock-report-table--items-summary .stock-report-from {
+.stock-panel--report .stock-report-table--items-summary .stock-report-from,
+.stock-panel--report .stock-report-table--timeline .stock-report-from {
   display: block;
   margin: 0.08rem 0 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: 0.74rem;
 }
 
@@ -18277,7 +18289,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
   .stock-panel--report .staff-table {
     display: table;
     width: 100%;
-    min-width: 1080px;
+    min-width: 1180px;
     table-layout: fixed;
   }
 
@@ -18307,7 +18319,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
   .stock-panel--report .stock-report-table td[data-label="Item"],
   .stock-panel--report .stock-report-table th[data-label="Item"] {
     display: table-cell;
-    white-space: nowrap;
+    white-space: normal;
   }
 
   .stock-panel--report .stock-report-table th::before,
@@ -18426,7 +18438,15 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 .stock-report-table--timeline {
-  min-width: 960px;
+  min-width: 1180px;
+}
+
+.stock-panel--report .stock-report-table--timeline th[data-label="Item"],
+.stock-panel--report .stock-report-table--timeline td[data-label="Item"] {
+  width: 26rem;
+  min-width: 22rem;
+  max-width: 32rem;
+  white-space: normal;
 }
 
 .stock-report-receipt-group.is-multi {

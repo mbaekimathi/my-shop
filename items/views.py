@@ -1872,6 +1872,29 @@ def _request_transfer_counts_toward_units(movement) -> bool:
     return movement.request_status != StockRequestStatus.FULFILLED
 
 
+def _transfer_people_for_movement(movement):
+    """Requester and receiver names for inter-shop transfer movements."""
+    from .models import StockMovementType
+
+    if movement.movement_type != StockMovementType.REQUEST:
+        return "", ""
+    return (
+        _employee_display_name(movement.created_by),
+        _employee_display_name(movement.responded_by),
+    )
+
+
+def _format_transfer_by_label(*, requested_by, received_by):
+    req = (requested_by or "").strip()
+    rec = (received_by or "").strip()
+    parts = []
+    if req and req != "—":
+        parts.append(f"Requested: {req}")
+    if rec and rec != "—":
+        parts.append(f"Received: {rec}")
+    return " · ".join(parts) if parts else "—"
+
+
 def _timeline_event_from_movement_line(
     *,
     movement,
@@ -1885,6 +1908,16 @@ def _timeline_event_from_movement_line(
 ):
     parties = _movement_parties_for_line(movement=movement, line=line)
     from .models import StockMovementType
+
+    requested_by, received_by = _transfer_people_for_movement(movement)
+    by_label = _employee_display_name(actor)
+    if movement.movement_type == StockMovementType.REQUEST and (
+        transfer_direction or event_type == "transfer_fulfilled"
+    ):
+        by_label = _format_transfer_by_label(
+            requested_by=requested_by,
+            received_by=received_by,
+        )
 
     return {
         "happened_at": happened_at,
@@ -1908,7 +1941,9 @@ def _timeline_event_from_movement_line(
             line.get_payment_status_display() if line.payment_status else ""
         ),
         "note": line.note or "",
-        "by": _employee_display_name(actor),
+        "by": by_label,
+        "requested_by": requested_by,
+        "received_by": received_by,
         "serial_numbers": _movement_serial_numbers(line.serial_numbers),
         "movement_id": movement.pk,
         "receipt_number": "",
@@ -1974,6 +2009,7 @@ def _build_movement_timeline(
             "shop",
             "requested_from_shop",
             "created_by__user",
+            "responded_by__user",
         )
         .prefetch_related(Prefetch("lines", queryset=line_qs))
         .order_by("created_at", "pk")
@@ -2070,6 +2106,7 @@ def _build_movement_timeline(
         .select_related(
             "shop",
             "requested_from_shop",
+            "created_by__user",
             "responded_by__user",
         )
         .prefetch_related(Prefetch("lines", queryset=fulfilled_line_qs))
@@ -2571,6 +2608,8 @@ def _timeline_event_search_text(event):
         event.get("from_label") or "",
         event.get("to_label") or "",
         event.get("by") or "",
+        event.get("requested_by") or "",
+        event.get("received_by") or "",
         event.get("receipt_number") or "",
         event.get("note") or "",
     ]

@@ -464,6 +464,67 @@ class ItemStockReportRowsTests(TestCase):
             {"in", "out"},
         )
 
+    def test_timeline_transfer_shows_requester_and_receiver(self):
+        from items.views import _build_movement_timeline, _filter_timeline_display_events
+
+        receiver = User.objects.create_user(
+            username="840012",
+            password="report-pass",
+            email="stock-receiver@test.local",
+            first_name="STOCK",
+            last_name="RECEIVER",
+            is_active=True,
+        )
+        receiver_profile = EmployeeProfile.objects.create(
+            user=receiver,
+            employee_id="840012",
+            phone_country_code="+254",
+            phone_number="700000942",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        from items.models import (
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+            StockRequestStatus,
+        )
+
+        movement = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_a,
+            requested_from_shop=self.shop_b,
+            request_status=StockRequestStatus.FULFILLED,
+            responded_at=self.now,
+            created_by=self.profile,
+            responded_by=receiver_profile,
+        )
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=self.item,
+            quantity=2,
+        )
+        events, *_ = _build_movement_timeline(
+            shop_ids=[self.shop_a.pk],
+            day_start=self.day_start,
+            day_end=self.day_end,
+            item_mode="all",
+            selected_categories=[],
+            selected_item_ids=[],
+            report_items=[self.item],
+        )
+        transfers = [
+            event
+            for event in _filter_timeline_display_events(events)
+            if event.get("event_type") == "transfer_fulfilled"
+        ]
+        self.assertEqual(len(transfers), 1)
+        event = transfers[0]
+        self.assertEqual(event["requested_by"], "STOCK REPORT")
+        self.assertEqual(event["received_by"], "STOCK RECEIVER")
+        self.assertIn("Requested: STOCK REPORT", event["by"])
+        self.assertIn("Received: STOCK RECEIVER", event["by"])
+
     def test_timeline_groups_sale_and_return_by_receipt(self):
         from datetime import timedelta
 
