@@ -1251,6 +1251,7 @@ def my_shop_workspace(request, shop_id):
     show_payment_picker = bool(
         default_kind == "sale" and pos_flags["cash_sale_checkout"] and enabled_payments
     )
+    daraja_settings = get_daraja_settings()
 
     # Lean buy-stock modal context: avoid Item.count()/SUM(quantity) on every
     # workspace render. The catalog itself loads via JSON after the modal opens.
@@ -1313,9 +1314,10 @@ def my_shop_workspace(request, shop_id):
             ),
             "pos_settings": pos_settings,
             "pos_flags": pos_flags,
+            "enable_stk_push": daraja_settings.enable_stk_push,
             "stk_ready": stk_ready(),
-            "stk_off_label": get_daraja_settings().stk_not_ready_reason() or "STK unavailable",
-            "stk_blocker_message": get_daraja_settings().stk_blocker_message(),
+            "stk_off_label": daraja_settings.stk_not_ready_reason() or "STK unavailable",
+            "stk_blocker_message": daraja_settings.stk_blocker_message(),
             "stk_settings_url": reverse(
                 "employees:settings_section", kwargs={"section": "company-daraja"}
             ),

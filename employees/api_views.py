@@ -1,6 +1,7 @@
 import json
 
 from django.http import JsonResponse
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .access import get_employee_meta_for_request, get_profile_for_request
@@ -27,8 +28,12 @@ def _sync_actor(request):
 
 
 @require_GET
+@ensure_csrf_cookie
 def ping_api(request):
-    """Lightweight connectivity check for offline clients."""
+    """Lightweight connectivity check for offline clients.
+
+    Also refreshes the CSRF cookie so long-lived stock-in pages keep a valid token.
+    """
     return JsonResponse({"ok": True})
 
 

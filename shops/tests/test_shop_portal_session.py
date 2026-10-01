@@ -105,3 +105,10 @@ class ShopPortalSessionLifetimeTests(TestCase):
         response = client.get(reverse("employees:ping"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(client.session.get_expiry_age(), SHOP_PORTAL_SESSION_AGE)
+
+    def test_ping_sets_csrf_cookie(self):
+        client = Client(enforce_csrf_checks=True)
+        response = client.get(reverse("employees:ping"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("csrftoken", response.cookies)
+        self.assertTrue(response.cookies["csrftoken"].value)

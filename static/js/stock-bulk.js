@@ -458,14 +458,92 @@
   const wrongShopModalConfirmBtn = wrongShopModal?.querySelector("[data-wrong-shop-confirm]");
   let wrongShopModalDefaults = null;
 
-  const getCsrf = () =>
-    form.querySelector("[name=csrfmiddlewaretoken]")?.value ||
-    document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
-    document.cookie
+  const readCsrfCookie = () => {
+    const raw = document.cookie
       .split("; ")
       .find((row) => row.startsWith("csrftoken="))
-      ?.split("=")[1] ||
-    "";
+      ?.slice("csrftoken=".length);
+    if (!raw) return "";
+    try {
+      return decodeURIComponent(raw);
+    } catch (_) {
+      return raw;
+    }
+  };
+
+  const syncCsrfIntoForms = (token) => {
+    if (!token) return;
+    const seen = new Set();
+    [
+      ...form.querySelectorAll("[name=csrfmiddlewaretoken]"),
+      ...document.querySelectorAll("[name=csrfmiddlewaretoken]"),
+    ].forEach((input) => {
+      if (seen.has(input)) return;
+      seen.add(input);
+      input.value = token;
+    });
+  };
+
+  /** Prefer the live cookie so long-open stock forms stay in sync. */
+  const getCsrf = () => {
+    const cookie = readCsrfCookie();
+    if (cookie) {
+      syncCsrfIntoForms(cookie);
+      return cookie;
+    }
+    return (
+      form.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+      document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+      ""
+    );
+  };
+
+  const isPageExpiredError = (response, data) => {
+    if (response?.status !== 403) return false;
+    const msg = String(data?.error || "").toLowerCase();
+    return msg.includes("page expired") || msg.includes("csrf");
+  };
+
+  const refreshCsrfViaPing = async () => {
+    try {
+      await fetch("/employees/api/ping/", {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+    } catch (_) {
+      /* ignore — fall through to whatever cookie/form token exists */
+    }
+    return getCsrf();
+  };
+
+  /** POST with live CSRF header/form sync; retry once on Page expired. */
+  const postWithCsrfRetry = async (url, options = {}) => {
+    const buildOptions = () => {
+      const token = getCsrf();
+      const headers = { ...(options.headers || {}), "X-CSRFToken": token };
+      let body = options.body;
+      if (body instanceof FormData && token) {
+        body.set("csrfmiddlewaretoken", token);
+      }
+      return {
+        ...options,
+        headers,
+        credentials: options.credentials || "same-origin",
+        body,
+      };
+    };
+
+    let response = await fetch(url, buildOptions());
+    let data = await response.json().catch(() => ({}));
+    if (isPageExpiredError(response, data)) {
+      await refreshCsrfViaPing();
+      response = await fetch(url, buildOptions());
+      data = await response.json().catch(() => ({}));
+    }
+    return { response, data };
+  };
 
   const rememberWrongShopModalDefaults = () => {
     if (wrongShopModalDefaults || !wrongShopModal) return;
@@ -1167,16 +1245,11 @@
 
       try {
         const body = new URLSearchParams({ login_code: code });
-        const response = await fetch(verifyLoginUrl, {
+        const { response, data } = await postWithCsrfRetry(verifyLoginUrl, {
           method: "POST",
-          headers: {
-            Accept: "application/json",
-            "X-CSRFToken": getCsrf(),
-          },
-          credentials: "same-origin",
+          headers: { Accept: "application/json" },
           body,
         });
-        const data = await response.json().catch(() => ({}));
         if (current !== loginVerifySeq) return false;
         if (!response.ok || !data.ok) {
           loginVerified = false;
@@ -2394,16 +2467,11 @@
         const code = (matrixLoginCodeInput.value || "").trim();
         if (/^\d{6}$/.test(code)) {
           try {
-            const response = await fetch(matrixVerifyLoginUrl, {
+            const { response, data } = await postWithCsrfRetry(matrixVerifyLoginUrl, {
               method: "POST",
-              headers: {
-                Accept: "application/json",
-                "X-CSRFToken": getCsrf(),
-              },
-              credentials: "same-origin",
+              headers: { Accept: "application/json" },
               body: new URLSearchParams({ login_code: code }),
             });
-            const data = await response.json().catch(() => ({}));
             if (!response.ok || !data.ok) {
               setApplyStatus(data.error || "Enter a valid active staff 6-digit ID.", true);
               return;
@@ -2447,7 +2515,7 @@
         if (highUnitBuyingLines(ready).length) {
           body.set("confirm_high_buying_price", "1");
         }
-        const response = await fetch(
+        const { response, data } = await postWithCsrfRetry(
           form.getAttribute("action") || window.location.href,
           {
             method: "POST",
@@ -2455,11 +2523,9 @@
               Accept: "application/json",
               "X-Requested-With": "XMLHttpRequest",
             },
-            credentials: "same-origin",
             body,
           }
         );
-        const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) {
           const errors = Array.isArray(data.errors) ? data.errors.filter(Boolean) : [];
           const error =
@@ -3966,16 +4032,11 @@
 
     try {
       const body = new URLSearchParams({ login_code: code });
-      const response = await fetch(verifyLoginUrl, {
+      const { response, data } = await postWithCsrfRetry(verifyLoginUrl, {
         method: "POST",
-        headers: {
-          Accept: "application/json",
-          "X-CSRFToken": getCsrf(),
-        },
-        credentials: "same-origin",
+        headers: { Accept: "application/json" },
         body,
       });
-      const data = await response.json().catch(() => ({}));
       if (current !== loginVerifySeq) return false;
       if (!response.ok || !data.ok) {
         loginVerified = false;
@@ -4303,16 +4364,14 @@
       if (highUnitBuyingLines(ready).length) {
         body.set("confirm_high_buying_price", "1");
       }
-      const response = await fetch(
+      const { response, data } = await postWithCsrfRetry(
         form.getAttribute("action") || window.location.href,
         {
           method: "POST",
           headers: { Accept: "application/json" },
-          credentials: "same-origin",
           body,
         }
       );
-      const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) {
         setApplyStatus(data.error || "Could not stock in items.", true);
         autoStockInFlight = false;
@@ -5422,7 +5481,7 @@
       if (highUnitBuyingLines(readyActive).length) {
         body.set("confirm_high_buying_price", "1");
       }
-      const response = await fetch(
+      const { response, data } = await postWithCsrfRetry(
         form.getAttribute("action") || window.location.href,
         {
           method: "POST",
@@ -5430,11 +5489,9 @@
             Accept: "application/json",
             "X-Requested-With": "XMLHttpRequest",
           },
-          credentials: "same-origin",
           body,
         }
       );
-      const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) {
         const errors = Array.isArray(data.errors) ? data.errors.filter(Boolean) : [];
         setApplyStatus(

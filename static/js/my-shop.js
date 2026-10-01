@@ -1498,6 +1498,7 @@
     const stkInitiateUrl = cartRoot.getAttribute("data-stk-initiate-url") || "";
     const stkStatusTemplate =
       cartRoot.getAttribute("data-stk-status-url-template") || "";
+    const stkEnabled = cartRoot.getAttribute("data-stk-enabled") === "1";
     const stkReady = cartRoot.getAttribute("data-stk-ready") === "1";
     const stkOffLabel = cartRoot.getAttribute("data-stk-off-label") || "STK unavailable";
     const stkBlockerMessage =
@@ -1766,7 +1767,7 @@
           (selectedPayment() === "mpesa" || selectedPayment() === "both")
       );
 
-    const saleNeedsStk = () => Boolean(saleUsesMpesa() && stkReady);
+    const saleNeedsStk = () => Boolean(saleUsesMpesa() && stkEnabled && stkReady);
 
     const mpesaPromptAmount = () => {
       if (selectedPayment() === "both") {
@@ -1853,12 +1854,13 @@
 
     const syncStkPanel = () => {
       const usesMpesa = saleUsesMpesa();
-      if (stkPanel) stkPanel.hidden = !usesMpesa;
+      const showStk = Boolean(usesMpesa && stkEnabled);
+      if (stkPanel) stkPanel.hidden = !showStk;
 
       const amount = mpesaPromptAmount();
       setStaffCodeLocked(false);
 
-      if (!usesMpesa) {
+      if (!showStk) {
         setStkError("", { show: false });
         clearStkConfirmation();
         return;
@@ -1936,7 +1938,7 @@
     };
 
     const sendStkPrompt = async () => {
-      if (!saleUsesMpesa() || stkSending || stkConfirmed) return;
+      if (!saleUsesMpesa() || !stkEnabled || stkSending || stkConfirmed) return;
       if (!stkReady) {
         const blocker = stkBlockerMessage || stkOffLabel || "STK Push is not ready.";
         setStkError(blocker);
@@ -2722,6 +2724,7 @@
 
         const needsStk =
           kind === "sale" &&
+          stkEnabled &&
           stkReady &&
           (payload.payment_method === "mpesa" ||
             payload.payment_method === "both");

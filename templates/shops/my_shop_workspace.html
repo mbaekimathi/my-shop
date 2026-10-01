@@ -16,6 +16,7 @@
   data-checkout-url="{{ checkout_url }}"
   data-stk-initiate-url="{{ stk_initiate_url }}"
   data-stk-status-url-template="{{ stk_status_url_template }}"
+  data-stk-enabled="{% if enable_stk_push %}1{% else %}0{% endif %}"
   data-stk-ready="{% if stk_ready %}1{% else %}0{% endif %}"
   data-stk-off-label="{{ stk_off_label|escapejs }}"
   data-stk-blocker-message="{{ stk_blocker_message|escapejs }}"
@@ -685,10 +686,10 @@
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=70"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=71"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=35"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/stock-bulk.js' %}?v=matrix50"></script>
+<script defer src="{% static 'js/stock-bulk.js' %}?v=matrix51"></script>
 <script defer src="{% static 'js/my-shop-expense.js' %}?v=10"></script>
 <script
   defer
