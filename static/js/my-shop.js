@@ -1608,21 +1608,23 @@
       "[data-printer-required-notice-text]"
     );
 
-    const setNoticeEl = (root, textEl, message) => {
+    const setNoticeEl = (root, textEl, message, { showConnect = false } = {}) => {
       if (!root || !textEl) return;
       textEl.textContent = message || "";
       root.hidden = !message;
+      const connectBtn = root.querySelector("[data-printer-required-connect]");
+      if (connectBtn) connectBtn.hidden = !(message && showConnect);
       if (message && window.lucide?.createIcons) {
         window.lucide.createIcons({ nodes: [root] });
       }
     };
 
-    const setCartNotice = (message) => {
-      setNoticeEl(cartNotice, cartNoticeText, message);
+    const setCartNotice = (message, options = {}) => {
+      setNoticeEl(cartNotice, cartNoticeText, message, options);
     };
 
-    const setPagePrinterNotice = (message) => {
-      setNoticeEl(pagePrinterNotice, pagePrinterNoticeText, message);
+    const setPagePrinterNotice = (message, options = {}) => {
+      setNoticeEl(pagePrinterNotice, pagePrinterNoticeText, message, options);
     };
 
     const setCartStatus = (message, { ok = false, error = false } = {}) => {
@@ -1632,14 +1634,21 @@
       cartStatus.classList.toggle("is-error", error);
     };
 
-    const printerRequiredMessage = () => {
-      if (!compulsoryPrintOnSale || !checkoutEnabled) return "";
+    const PRINTER_CONNECT_MSG =
+      "Connect a printer before completing the sale.";
+    const PRINTER_CHANNELS_MSG =
+      "Compulsory printing is on, but no print channels are enabled in settings.";
+
+    const printerRequiredNotice = () => {
+      if (!compulsoryPrintOnSale || !checkoutEnabled) {
+        return { message: "", showConnect: false };
+      }
       if (!hasEnabledPrintChannels()) {
-        return "Compulsory printing is on, but no print channels are enabled in settings.";
+        return { message: PRINTER_CHANNELS_MSG, showConnect: false };
       }
       const status = window.RichcomPrinter?.getStatus?.();
       if (!status?.connected) {
-        return "Connect a printer from the sidebar (Connect to printer) before completing the sale.";
+        return { message: PRINTER_CONNECT_MSG, showConnect: true };
       }
       const channel = resolvePrintChannel(status.channel);
       if (
@@ -1647,24 +1656,27 @@
         (window.RichcomPrinter?.canAutoPrint &&
           !window.RichcomPrinter.canAutoPrint(channel))
       ) {
-        return "Connect a printer from the sidebar (Connect to printer) before completing the sale.";
+        return { message: PRINTER_CONNECT_MSG, showConnect: true };
       }
-      return "";
+      return { message: "", showConnect: false };
     };
 
     const syncPrinterRequiredNotice = () => {
-      const message = printerRequiredMessage();
-      setCartNotice(message);
-      setPagePrinterNotice(message);
+      const { message, showConnect } = printerRequiredNotice();
+      setCartNotice(message, { showConnect });
+      setPagePrinterNotice(message, { showConnect });
       return message;
     };
 
     const notifyPrinterRequired = (message) => {
-      const text = message || printerRequiredMessage();
+      const notice = printerRequiredNotice();
+      const text = message || notice.message;
       if (!text) return;
+      const showConnect =
+        text === PRINTER_CONNECT_MSG || notice.showConnect;
       setCartStatus(text, { error: true });
-      setCartNotice(text);
-      setPagePrinterNotice(text);
+      setCartNotice(text, { showConnect });
+      setPagePrinterNotice(text, { showConnect });
       pushStockRequestToast(text, "error");
     };
 
@@ -1757,7 +1769,9 @@
     const paymentsEnabled = cartRoot.dataset.posCashSale === "1";
     const discountEnabled = cartRoot.dataset.posDiscount === "1";
     const stockTrackingEnabled = cartRoot.dataset.posStockTracking !== "0";
-    const clientDataEnabled = cartRoot.dataset.posClientData !== "0";
+    const clientDataEnabled = cartRoot.dataset.posClientData === "1";
+    const requireClientPhone = cartRoot.dataset.posRequireClientPhone === "1";
+    const requireClientName = cartRoot.dataset.posRequireClientName === "1";
     const compulsoryPrintOnSale = cartRoot.dataset.posCompulsoryPrint === "1";
 
     const selectedKind = () => {
@@ -2274,14 +2288,17 @@
       if (clientBlock) clientBlock.hidden = false;
       const hasSerials = cartHasSerialTracked();
       const kind = selectedKind();
-      const required = kind !== "sale";
-      const phoneRequired = kind === "credit" && creditWhatsapp;
-      const nameRequired = kind === "trade_out";
+      const eitherRequired =
+        kind === "credit" || kind === "quotation" || kind === "trade_out";
+      const phoneRequired =
+        requireClientPhone || (kind === "credit" && creditWhatsapp);
+      const nameRequired = requireClientName || kind === "trade_out";
+      const blockRequired = phoneRequired || nameRequired || eitherRequired;
       if (clientPhoneInput) clientPhoneInput.required = phoneRequired;
       if (clientNameInput) clientNameInput.required = nameRequired;
-      if (clientBlock) clientBlock.classList.toggle("is-required", required);
+      if (clientBlock) clientBlock.classList.toggle("is-required", blockRequired);
       if (clientHeading) {
-        clientHeading.innerHTML = required
+        clientHeading.innerHTML = blockRequired
           ? 'Link client <span class="shop-serial-required" aria-hidden="true">*</span>'
           : "Link client";
       }
@@ -2293,7 +2310,13 @@
         } else if (kind === "trade_out") {
           clientNote.textContent =
             "Capture the client who is taking stock on trade. Name is required.";
-        } else if (required) {
+        } else if (phoneRequired && nameRequired) {
+          clientNote.textContent = "Client phone and full name are required.";
+        } else if (phoneRequired) {
+          clientNote.textContent = "Client phone is required.";
+        } else if (nameRequired) {
+          clientNote.textContent = "Client full name is required.";
+        } else if (eitherRequired) {
           clientNote.textContent = "Enter a name, a phone number, or both.";
         } else if (hasSerials) {
           clientNote.textContent =
@@ -2748,35 +2771,50 @@
             return;
           }
         }
-        if (
-          clientDataEnabled &&
-          (kind === "credit" || kind === "quotation" || kind === "trade_out")
-        ) {
+        if (clientDataEnabled) {
           const phone = normalizeClientPhoneField({ force: true });
           const name = (clientNameInput?.value || "").trim();
-          if (kind === "credit" && creditWhatsapp && !phone) {
+          if (requireClientPhone && !phone) {
             setCartStatus(
-              "Enter the client phone number so the credit sale can be sent on WhatsApp.",
+              "Enter the client phone number before completing.",
               { error: true }
             );
             focusCartClientFields();
             return;
           }
-          if (kind === "trade_out" && !name) {
+          if (requireClientName && !name) {
             setCartStatus(
-              "Enter the client full name for a trade out.",
+              "Enter the client full name before completing.",
               { error: true }
             );
             focusCartClientFields();
             return;
           }
-          if (!phone && !name) {
-            setCartStatus(
-              "Enter a client name, a phone number, or both for credit, quotation, and trade out.",
-              { error: true }
-            );
-            focusCartClientFields();
-            return;
+          if (kind === "credit" || kind === "quotation" || kind === "trade_out") {
+            if (kind === "credit" && creditWhatsapp && !phone) {
+              setCartStatus(
+                "Enter the client phone number so the credit sale can be sent on WhatsApp.",
+                { error: true }
+              );
+              focusCartClientFields();
+              return;
+            }
+            if (kind === "trade_out" && !name) {
+              setCartStatus(
+                "Enter the client full name for a trade out.",
+                { error: true }
+              );
+              focusCartClientFields();
+              return;
+            }
+            if (!phone && !name) {
+              setCartStatus(
+                "Enter a client name, a phone number, or both for credit, quotation, and trade out.",
+                { error: true }
+              );
+              focusCartClientFields();
+              return;
+            }
           }
         }
         const checkoutClientId = newCheckoutClientId();
@@ -2884,7 +2922,7 @@
           }
           if (!printVia) {
             notifyPrinterRequired(
-              "Connect a printer from the sidebar (Connect to printer) before completing the sale."
+              "Connect a printer before completing the sale."
             );
             return;
           }
@@ -2904,7 +2942,7 @@
             !window.RichcomPrinter.canAutoPrint(printVia)
           ) {
             notifyPrinterRequired(
-              "Connect a printer from the sidebar (Connect to printer) before completing the sale."
+              "Connect a printer before completing the sale."
             );
             return;
           }

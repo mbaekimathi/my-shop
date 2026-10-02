@@ -368,6 +368,14 @@ class CompanyPosSettings(models.Model):
         default=True,
         help_text="When on, cart can collect client name and phone. When off, client fields are hidden.",
     )
+    require_client_phone = models.BooleanField(
+        default=False,
+        help_text="When on (and client data is collected), client phone is required before checkout.",
+    )
+    require_client_name = models.BooleanField(
+        default=False,
+        help_text="When on (and client data is collected), client full name is required before checkout.",
+    )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     compulsory_print_on_sale = models.BooleanField(default=False)
@@ -620,6 +628,14 @@ class ShopPosSettings(models.Model):
     enable_client_data = models.BooleanField(
         default=True,
         help_text="When on, cart can collect client name and phone. When off, client fields are hidden.",
+    )
+    require_client_phone = models.BooleanField(
+        default=False,
+        help_text="When on (and client data is collected), client phone is required before checkout.",
+    )
+    require_client_name = models.BooleanField(
+        default=False,
+        help_text="When on (and client data is collected), client full name is required before checkout.",
     )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)

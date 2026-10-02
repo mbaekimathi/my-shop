@@ -38,10 +38,17 @@
 
   const taxRow = root.querySelector("[data-tax-percent-row]");
   const taxInput = root.querySelector("[data-tax-percent-input]");
+  const clientDataDependents = root.querySelectorAll("[data-client-data-dependent]");
 
   function syncTaxRow(enabled) {
     if (!taxRow) return;
     taxRow.hidden = !enabled;
+  }
+
+  function syncClientDataDependents(enabled) {
+    clientDataDependents.forEach((row) => {
+      row.hidden = !enabled;
+    });
   }
 
   function syncEmployeePermLinks(field, enabled) {
@@ -131,6 +138,9 @@
     if (input.dataset.field === "enable_tax") {
       syncTaxRow(input.checked);
     }
+    if (input.dataset.field === "enable_client_data") {
+      syncClientDataDependents(input.checked);
+    }
     syncEmployeePermLinks(input.dataset.field, input.checked);
 
     input.addEventListener("change", async () => {
@@ -139,6 +149,9 @@
       setStateLabel(input, enabled);
       if (input.dataset.field === "enable_tax") {
         syncTaxRow(enabled);
+      }
+      if (input.dataset.field === "enable_client_data") {
+        syncClientDataDependents(enabled);
       }
       syncEmployeePermLinks(input.dataset.field, enabled);
       if (
@@ -163,6 +176,9 @@
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(Boolean(data.enabled));
         }
+        if (input.dataset.field === "enable_client_data") {
+          syncClientDataDependents(Boolean(data.enabled));
+        }
         syncEnabledCount();
         if (
           isCompanyPos &&
@@ -176,6 +192,9 @@
         setStateLabel(input, previous);
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(previous);
+        }
+        if (input.dataset.field === "enable_client_data") {
+          syncClientDataDependents(previous);
         }
         syncEmployeePermLinks(input.dataset.field, previous);
         syncEnabledCount();

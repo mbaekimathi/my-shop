@@ -67,6 +67,8 @@ POS_SETTING_FIELDS = {
     "enable_stock_tracking",
     "enable_open_close",
     "enable_client_data",
+    "require_client_phone",
+    "require_client_name",
     "enable_tax",
     "compulsory_print_on_sale",
     "enable_print_bluetooth",
@@ -89,6 +91,8 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_stock_tracking",
         "enable_open_close",
         "enable_client_data",
+        "require_client_phone",
+        "require_client_name",
         "enable_tax",
         "tax_percent",
     }
@@ -242,11 +246,10 @@ def _invalidate_communications_settings_cache() -> None:
 
 
 def get_company_pos_settings() -> CompanyPosSettings:
-    cached = cache.get(POS_SETTINGS_CACHE_KEY)
-    if cached is not None:
-        return cached
+    # Always read from DB. LocMemCache is per-process on cPanel, so a cached
+    # model instance can keep serving toggles (e.g. client data) after another
+    # worker already saved the change.
     settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
-    cache.set(POS_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
     return settings_row
 
 
@@ -257,13 +260,11 @@ def _shop_pos_defaults_from_company(company: CompanyPosSettings | None = None) -
 
 def get_shop_pos_settings(shop: Shop) -> ShopPosSettings:
     """Return (and lazily create) the shop override row, seeded from company defaults."""
-    cache_key = SHOP_POS_SETTINGS_CACHE_KEY.format(shop_id=shop.pk)
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
+    existing = ShopPosSettings.objects.filter(shop_id=shop.pk).first()
+    if existing is not None:
+        return existing
     defaults = _shop_pos_defaults_from_company()
     settings_row, _ = ShopPosSettings.objects.get_or_create(shop=shop, defaults=defaults)
-    cache.set(cache_key, settings_row, POS_SETTINGS_CACHE_TTL)
     return settings_row
 
 
@@ -2990,6 +2991,8 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_stock_tracking": bool(getattr(row, "enable_stock_tracking", True)),
         "enable_open_close": bool(getattr(row, "enable_open_close", True)),
         "enable_client_data": bool(getattr(row, "enable_client_data", True)),
+        "require_client_phone": bool(getattr(row, "require_client_phone", False)),
+        "require_client_name": bool(getattr(row, "require_client_name", False)),
         "enable_tax": row.enable_tax,
         "tax_percent": str(Decimal(row.tax_percent or 0).quantize(Decimal("0.01"))),
         "effective_tax_percent": str(tax_percent.quantize(Decimal("0.01"))),
@@ -4163,6 +4166,12 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     client_phone_raw = (payload.get("client_phone") or "").strip()
     client_phone = format_kenya_phone(client_phone_raw) if client_phone_raw else ""
     collect_client_data = bool(getattr(pos_settings, "enable_client_data", True))
+    require_client_phone = collect_client_data and bool(
+        getattr(pos_settings, "require_client_phone", False)
+    )
+    require_client_name = collect_client_data and bool(
+        getattr(pos_settings, "require_client_name", False)
+    )
     if not collect_client_data:
         client_name = ""
         client_phone_raw = ""
@@ -4385,6 +4394,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             ShopReceiptKind.QUOTATION,
             ShopReceiptKind.TRADE_OUT,
         }
+        if require_client_phone and not client_phone_raw:
+            raise ValidationError("Enter the client phone number before completing.")
+        if require_client_name and not client_name:
+            raise ValidationError("Enter the client full name before completing.")
         if requires_client and not client_name and not client_phone_raw:
             raise ValidationError(
                 "Enter a client name, a phone number, or both for credit, quotation, and trade out."

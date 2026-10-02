@@ -2173,18 +2173,23 @@ ${bodyHtml}
       if (window.lucide?.createIcons) window.lucide.createIcons();
     };
 
-    document.querySelectorAll(`[data-modal-open="connect-printer"]`).forEach((trigger) => {
-      trigger.addEventListener("click", () => {
-        modal.hidden = false;
-        document.body.classList.add("workspace-modal-open");
-        // Clear stale scan lists so old USB fallback results never linger under Wi‑Fi.
-        modal.querySelectorAll("[data-printer-devices]").forEach((list) => {
-          list.innerHTML = "";
-          list.hidden = true;
-        });
-        refreshAll();
-        if (window.lucide?.createIcons) window.lucide.createIcons();
+    const openConnectPrinterModal = () => {
+      modal.hidden = false;
+      document.body.classList.add("workspace-modal-open");
+      // Clear stale scan lists so old USB fallback results never linger under Wi‑Fi.
+      modal.querySelectorAll("[data-printer-devices]").forEach((list) => {
+        list.innerHTML = "";
+        list.hidden = true;
       });
+      refreshAll();
+      if (window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    document.addEventListener("click", (event) => {
+      const trigger = event.target.closest?.(`[data-modal-open="connect-printer"]`);
+      if (!trigger) return;
+      event.preventDefault();
+      openConnectPrinterModal();
     });
 
     modal.querySelectorAll("[data-printer-close], [data-modal-close]").forEach((el) => {

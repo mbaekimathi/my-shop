@@ -57,7 +57,13 @@
       </div>
       <ul class="pos-settings-list">
         {% for toggle in group.toggles %}
-        <li class="pos-settings-row">
+        <li
+          class="pos-settings-row"
+          {% if toggle.field == "require_client_phone" or toggle.field == "require_client_name" %}
+          data-client-data-dependent
+          {% if not pos_settings.enable_client_data %}hidden{% endif %}
+          {% endif %}
+        >
           <div class="pos-settings-copy">
             <strong>{{ toggle.label }}</strong>
             {% if toggle.employee_perm %}
@@ -117,5 +123,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}?v=7"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=8"></script>
 {% endblock %}

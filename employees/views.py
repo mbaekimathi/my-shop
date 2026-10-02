@@ -1840,7 +1840,11 @@ POS_SETTING_GROUPS = (
     {
         "title": "Clients",
         "summary": "",
-        "toggles": (("enable_client_data", "Collect client data"),),
+        "toggles": (
+            ("enable_client_data", "Collect client data"),
+            ("require_client_phone", "Compulsory client phone"),
+            ("require_client_name", "Compulsory client name"),
+        ),
     },
     {
         "title": "Tax",

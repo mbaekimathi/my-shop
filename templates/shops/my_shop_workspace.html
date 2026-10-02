@@ -34,7 +34,9 @@
   data-pos-cash-sale="{% if pos_flags.cash_sale_checkout %}1{% else %}0{% endif %}"
   data-pos-discount="{% if pos_settings.enable_discount %}1{% else %}0{% endif %}"
   data-pos-stock-tracking="{% if pos_settings.enable_stock_tracking %}1{% else %}0{% endif %}"
-  data-pos-client-data="{% if pos_settings.enable_client_data %}1{% else %}0{% endif %}"
+  data-pos-client-data="{% if pos_flags.enable_client_data %}1{% else %}0{% endif %}"
+  data-pos-require-client-phone="{% if pos_flags.enable_client_data and pos_flags.require_client_phone %}1{% else %}0{% endif %}"
+  data-pos-require-client-name="{% if pos_flags.enable_client_data and pos_flags.require_client_name %}1{% else %}0{% endif %}"
   data-pos-tax="{% if pos_settings.enable_tax %}1{% else %}0{% endif %}"
   data-pos-tax-percent="{{ pos_flags.effective_tax_percent }}"
   data-pos-receipt-width="{{ pos_flags.receipt_paper_width }}"
@@ -87,7 +89,18 @@
   {% if checkout_enabled and shop_day_can_trade != False and pos_settings.compulsory_print_on_sale %}
   <div class="shop-floor-notice" data-printer-required-notice hidden role="alert">
     <i data-lucide="printer" aria-hidden="true"></i>
-    <p data-printer-required-notice-text></p>
+    <div class="shop-floor-notice-copy">
+      <p data-printer-required-notice-text></p>
+      <button
+        type="button"
+        class="shop-floor-notice-link"
+        data-modal-open="connect-printer"
+        data-printer-required-connect
+        hidden
+      >
+        Connect to printer
+      </button>
+    </div>
   </div>
   {% endif %}
   <div class="shop-floor-toolbar">
@@ -237,7 +250,18 @@
   </header>
   <div class="shop-cart-notice" data-cart-notice hidden role="alert">
     <i data-lucide="printer" aria-hidden="true"></i>
-    <p data-cart-notice-text></p>
+    <div class="shop-cart-notice-copy">
+      <p data-cart-notice-text></p>
+      <button
+        type="button"
+        class="shop-cart-notice-link"
+        data-modal-open="connect-printer"
+        data-printer-required-connect
+        hidden
+      >
+        Connect to printer
+      </button>
+    </div>
   </div>
   <div class="shop-cart-body">
     <ul class="shop-cart-lines" data-cart-lines></ul>
@@ -369,18 +393,34 @@
       </div>
       {% endif %}
 
-      {% if pos_settings.enable_client_data %}
-      <div class="shop-cart-client" data-cart-client>
+      {% if pos_flags.enable_client_data %}
+      <div class="shop-cart-client{% if pos_flags.require_client_phone or pos_flags.require_client_name or default_kind != 'sale' %} is-required{% endif %}" data-cart-client>
         <div class="shop-cart-client-head">
           <p class="shop-cart-client-label" data-cart-client-heading>
-            Link client{% if default_kind != "sale" %} <span class="shop-serial-required" aria-hidden="true">*</span>{% endif %}
+            Link client{% if pos_flags.require_client_phone or pos_flags.require_client_name or default_kind != "sale" %} <span class="shop-serial-required" aria-hidden="true">*</span>{% endif %}
           </p>
           <p class="shop-cart-client-note" data-cart-client-note>
-            {% if default_kind == "sale" %}Optional. Enter a name, a phone number, or both.{% else %}Enter a name, a phone number, or both.{% endif %}
+            {% if pos_flags.require_client_phone and pos_flags.require_client_name %}
+            Client phone and full name are required.
+            {% elif pos_flags.require_client_phone %}
+            Client phone is required.
+            {% elif pos_flags.require_client_name %}
+            Client full name is required.
+            {% elif default_kind == "sale" %}
+            Optional. Enter a name, a phone number, or both.
+            {% else %}
+            Enter a name, a phone number, or both.
+            {% endif %}
           </p>
         </div>
         <label class="shop-cart-input">
-          <span data-cart-client-phone-label>Client phone <em>(optional)</em></span>
+          <span data-cart-client-phone-label>
+            {% if pos_flags.require_client_phone %}
+            Client phone <span class="shop-serial-required" aria-hidden="true">*</span>
+            {% else %}
+            Client phone <em>(optional)</em>
+            {% endif %}
+          </span>
           <input
             type="tel"
             name="client_phone"
@@ -388,11 +428,18 @@
             inputmode="tel"
             data-cart-client-phone
             placeholder="07XX XXX XXX"
+            {% if pos_flags.require_client_phone %}required{% endif %}
           >
         </label>
         <div class="shop-cart-name-wrap">
           <label class="shop-cart-input">
-            <span data-cart-client-name-label>Client full name <em>(optional)</em></span>
+            <span data-cart-client-name-label>
+              {% if pos_flags.require_client_name %}
+              Client full name <span class="shop-serial-required" aria-hidden="true">*</span>
+              {% else %}
+              Client full name <em>(optional)</em>
+              {% endif %}
+            </span>
             <input
               type="text"
               name="client_name"
@@ -402,6 +449,7 @@
               placeholder="Full name"
               aria-autocomplete="list"
               aria-controls="shop-cart-client-suggest"
+              {% if pos_flags.require_client_name %}required{% endif %}
             >
           </label>
           <div
@@ -699,8 +747,8 @@
 <script defer src="{% static 'js/shop-catalog.js' %}?v=6"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=74"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=22"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=77"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=38"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=matrix54"></script>
