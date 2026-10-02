@@ -225,10 +225,14 @@
         </span>
       </button>
       <div class="shop-floor-item-meta">
-        <span class="shop-floor-stock${out ? " is-empty" : ""}">
+        ${
+          stockTrackingEnabled
+            ? `<span class="shop-floor-stock${out ? " is-empty" : ""}">
           <span class="shop-floor-stock-label">Stock</span>
           <span class="shop-floor-stock-value">${stock}</span>
-        </span>
+        </span>`
+            : ""
+        }
         <span class="shop-floor-price">KSh ${escapeHtml(price)}</span>
       </div>
       ${actions}

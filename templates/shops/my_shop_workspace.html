@@ -34,6 +34,7 @@
   data-pos-cash-sale="{% if pos_flags.cash_sale_checkout %}1{% else %}0{% endif %}"
   data-pos-discount="{% if pos_settings.enable_discount %}1{% else %}0{% endif %}"
   data-pos-stock-tracking="{% if pos_settings.enable_stock_tracking %}1{% else %}0{% endif %}"
+  data-pos-client-data="{% if pos_settings.enable_client_data %}1{% else %}0{% endif %}"
   data-pos-tax="{% if pos_settings.enable_tax %}1{% else %}0{% endif %}"
   data-pos-tax-percent="{{ pos_flags.effective_tax_percent }}"
   data-pos-receipt-width="{{ pos_flags.receipt_paper_width }}"
@@ -228,6 +229,10 @@
       <i data-lucide="x" aria-hidden="true"></i>
     </button>
   </header>
+  <div class="shop-cart-notice" data-cart-notice hidden role="alert">
+    <i data-lucide="printer" aria-hidden="true"></i>
+    <p data-cart-notice-text></p>
+  </div>
   <div class="shop-cart-body">
     <ul class="shop-cart-lines" data-cart-lines></ul>
   </div>
@@ -358,6 +363,7 @@
       </div>
       {% endif %}
 
+      {% if pos_settings.enable_client_data %}
       <div class="shop-cart-client" data-cart-client>
         <div class="shop-cart-client-head">
           <p class="shop-cart-client-label" data-cart-client-heading>
@@ -402,6 +408,7 @@
         </div>
       </div>
       <p class="shop-cart-client-hint" data-cart-client-hint></p>
+      {% endif %}
 
       <div class="shop-cart-stk" data-cart-stk-panel hidden>
         <div
@@ -539,7 +546,7 @@
             </div>
             <p class="shop-product-price-hint" id="shop-product-price-hint" data-product-price-hint{% if not pos_settings.enable_discount %} hidden{% endif %}></p>
           </div>
-          <span class="shop-product-modal-stock" data-product-stock></span>
+          <span class="shop-product-modal-stock" data-product-stock{% if not pos_settings.enable_stock_tracking %} hidden{% endif %}></span>
         </div>
       </div>
       {% if checkout_enabled %}
@@ -687,7 +694,7 @@
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=72"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=73"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=38"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=matrix54"></script>

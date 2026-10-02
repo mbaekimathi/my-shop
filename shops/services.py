@@ -66,6 +66,7 @@ POS_SETTING_FIELDS = {
     "enable_discount",
     "enable_stock_tracking",
     "enable_open_close",
+    "enable_client_data",
     "enable_tax",
     "compulsory_print_on_sale",
     "enable_print_bluetooth",
@@ -87,6 +88,7 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_discount",
         "enable_stock_tracking",
         "enable_open_close",
+        "enable_client_data",
         "enable_tax",
         "tax_percent",
     }
@@ -2987,6 +2989,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_discount": row.enable_discount,
         "enable_stock_tracking": bool(getattr(row, "enable_stock_tracking", True)),
         "enable_open_close": bool(getattr(row, "enable_open_close", True)),
+        "enable_client_data": bool(getattr(row, "enable_client_data", True)),
         "enable_tax": row.enable_tax,
         "tax_percent": str(Decimal(row.tax_percent or 0).quantize(Decimal("0.01"))),
         "effective_tax_percent": str(tax_percent.quantize(Decimal("0.01"))),
@@ -4159,10 +4162,19 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     client_name = (payload.get("client_name") or "").strip().upper()
     client_phone_raw = (payload.get("client_phone") or "").strip()
     client_phone = format_kenya_phone(client_phone_raw) if client_phone_raw else ""
+    collect_client_data = bool(getattr(pos_settings, "enable_client_data", True))
+    if not collect_client_data:
+        client_name = ""
+        client_phone_raw = ""
+        client_phone = ""
 
     share_whatsapp = bool(payload.get("share_whatsapp"))
     if kind != ShopReceiptKind.QUOTATION:
         share_whatsapp = False
+    if share_whatsapp and not collect_client_data:
+        raise ValidationError(
+            "Client data collection is disabled in POS settings, so WhatsApp share is unavailable."
+        )
     if share_whatsapp and not client_phone_raw:
         raise ValidationError("Client phone is required to share on WhatsApp.")
 
@@ -4368,7 +4380,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         if not prepared:
             raise ValidationError("Add at least one valid item to the cart.")
 
-        requires_client = kind in {
+        requires_client = collect_client_data and kind in {
             ShopReceiptKind.CREDIT,
             ShopReceiptKind.QUOTATION,
             ShopReceiptKind.TRADE_OUT,
@@ -4377,14 +4389,14 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             raise ValidationError(
                 "Enter a client name, a phone number, or both for credit, quotation, and trade out."
             )
-        if kind == ShopReceiptKind.CREDIT:
+        if collect_client_data and kind == ShopReceiptKind.CREDIT:
             from communications.automations import credit_whatsapp_required
 
             if credit_whatsapp_required() and not client_phone_raw:
                 raise ValidationError(
                     "Enter the client phone number so the credit sale can be sent on WhatsApp."
                 )
-        if kind == ShopReceiptKind.TRADE_OUT and not client_name:
+        if collect_client_data and kind == ShopReceiptKind.TRADE_OUT and not client_name:
             raise ValidationError(
                 "Enter the client full name for a trade out."
             )

@@ -24249,6 +24249,39 @@ html[data-theme="dark"] .shop-cart-fab-count {
   height: 1.05rem;
 }
 
+.shop-cart-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.75rem 1.15rem;
+  border-bottom: 1px solid rgba(220, 53, 69, 0.28);
+  background: rgba(220, 53, 69, 0.1);
+  color: var(--text-strong);
+}
+
+.shop-cart-notice[hidden] {
+  display: none !important;
+}
+
+.shop-cart-notice > svg,
+.shop-cart-notice > i {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-top: 0.1rem;
+  color: #c0392b;
+}
+
+.shop-cart-notice p {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--danger-text, #c0392b);
+}
+
 .shop-cart-body {
   flex: 1 1 auto;
   overflow: auto;

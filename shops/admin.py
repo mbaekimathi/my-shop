@@ -55,6 +55,7 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "enable_discount",
         "enable_stock_tracking",
         "enable_open_close",
+        "enable_client_data",
         "enable_tax",
         "tax_percent",
         "compulsory_print_on_sale",

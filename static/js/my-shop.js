@@ -1428,6 +1428,8 @@
     const linesEl = document.querySelector("[data-cart-lines]");
     const footEl = document.querySelector("[data-cart-foot]");
     const itemLabelEl = document.querySelector("[data-cart-item-label]");
+    const cartNotice = drawer?.querySelector("[data-cart-notice]");
+    const cartNoticeText = drawer?.querySelector("[data-cart-notice-text]");
     const totalEl = document.querySelector("[data-cart-total]");
     const subtotalEl = document.querySelector("[data-cart-subtotal]");
     const taxEl = document.querySelector("[data-cart-tax]");
@@ -1601,11 +1603,33 @@
       return roundMoney(subtotal + cartTaxAmount(subtotal));
     };
 
+    const clearCartNotice = () => {
+      if (!cartNotice) return;
+      cartNotice.hidden = true;
+      if (cartNoticeText) cartNoticeText.textContent = "";
+    };
+
+    const setCartNotice = (message) => {
+      if (!cartNotice || !cartNoticeText) return;
+      cartNoticeText.textContent = message || "";
+      cartNotice.hidden = !message;
+      if (message && window.lucide?.createIcons) {
+        window.lucide.createIcons({ nodes: [cartNotice] });
+      }
+    };
+
     const setCartStatus = (message, { ok = false, error = false } = {}) => {
       if (!cartStatus) return;
       cartStatus.textContent = message || defaultStatusMessage;
       cartStatus.classList.toggle("is-ok", ok);
       cartStatus.classList.toggle("is-error", error);
+      if (!error) clearCartNotice();
+    };
+
+    const notifyPrinterRequired = (message) => {
+      setCartStatus(message, { error: true });
+      setCartNotice(message);
+      pushStockRequestToast(message, "error");
     };
 
     const setCartVerified = (verified, message = "") => {
@@ -1649,7 +1673,7 @@
         if (valueEl) valueEl.textContent = String(qty);
         const stockWrap = card.querySelector(".shop-floor-stock");
         if (stockWrap) stockWrap.classList.toggle("is-empty", qty <= 0);
-        card.classList.toggle("is-out", qty <= 0);
+        card.classList.toggle("is-out", stockTrackingEnabled && qty <= 0);
       });
       syncCardControls();
       syncProductControls();
@@ -1676,9 +1700,14 @@
         if (productModal?.dataset.itemId === id) {
           productModal.dataset.itemStock = String(qty);
           if (productStock) {
-            productStock.textContent =
-              qty > 0 ? `${qty} in stock` : "Out of stock";
-            productStock.classList.toggle("is-empty", qty <= 0);
+            if (stockTrackingEnabled) {
+              productStock.hidden = false;
+              productStock.textContent =
+                qty > 0 ? `${qty} in stock` : "Out of stock";
+              productStock.classList.toggle("is-empty", qty <= 0);
+            } else {
+              productStock.hidden = true;
+            }
           }
         }
       });
@@ -1692,6 +1721,7 @@
     const paymentsEnabled = cartRoot.dataset.posCashSale === "1";
     const discountEnabled = cartRoot.dataset.posDiscount === "1";
     const stockTrackingEnabled = cartRoot.dataset.posStockTracking !== "0";
+    const clientDataEnabled = cartRoot.dataset.posClientData !== "0";
     const compulsoryPrintOnSale = cartRoot.dataset.posCompulsoryPrint === "1";
 
     const selectedKind = () => {
@@ -2170,6 +2200,19 @@
     };
 
     const syncClientRequirements = () => {
+      if (!clientDataEnabled) {
+        if (clientBlock) clientBlock.hidden = true;
+        if (clientHint) {
+          clientHint.hidden = true;
+          clientHint.textContent = "";
+        }
+        if (clientSuggest) {
+          clientSuggest.hidden = true;
+          clientSuggest.innerHTML = "";
+        }
+        return;
+      }
+      if (clientBlock) clientBlock.hidden = false;
       const hasSerials = cartHasSerialTracked();
       const kind = selectedKind();
       const required = kind !== "sale";
@@ -2423,8 +2466,8 @@
         creditDueInput.required = false;
         if (isCredit) ensureCreditDueDefault();
       }
-      if (whatsappWrap) whatsappWrap.hidden = !isQuote;
-      if (!isQuote && checkoutForm) {
+      if (whatsappWrap) whatsappWrap.hidden = !(isQuote && clientDataEnabled);
+      if ((!isQuote || !clientDataEnabled) && checkoutForm) {
         const wa = checkoutForm.querySelector("[data-cart-whatsapp]");
         if (wa) wa.checked = false;
       }
@@ -2646,7 +2689,10 @@
             return;
           }
         }
-        if (kind === "credit" || kind === "quotation" || kind === "trade_out") {
+        if (
+          clientDataEnabled &&
+          (kind === "credit" || kind === "quotation" || kind === "trade_out")
+        ) {
           const phone = normalizeClientPhoneField({ force: true });
           const name = (clientNameInput?.value || "").trim();
           if (kind === "credit" && creditWhatsapp && !phone) {
@@ -2678,13 +2724,20 @@
         const payload = {
           kind,
           client_id: checkoutClientId,
-          client_name: (
-            checkoutForm.querySelector("[data-cart-client-name]")?.value || ""
-          ).trim().toUpperCase(),
-          client_phone: normalizeClientPhoneField({ force: true }),
+          client_name: clientDataEnabled
+            ? (
+                checkoutForm.querySelector("[data-cart-client-name]")?.value || ""
+              )
+                .trim()
+                .toUpperCase()
+            : "",
+          client_phone: clientDataEnabled
+            ? normalizeClientPhoneField({ force: true })
+            : "",
           login_code: (cartLoginCode?.value || "").trim(),
           share_whatsapp: Boolean(
-            checkoutForm.querySelector("[data-cart-whatsapp]")?.checked
+            clientDataEnabled &&
+              checkoutForm.querySelector("[data-cart-whatsapp]")?.checked
           ),
           lines: [...cart.values()].map((line) => ({
             id: line.id,
@@ -2765,16 +2818,14 @@
         const hasPrintChannels = hasEnabledPrintChannels();
         if (kind === "sale" && compulsoryPrintOnSale) {
           if (!hasPrintChannels) {
-            setCartStatus(
-              "Compulsory printing is on, but no print channels are enabled in settings.",
-              { error: true }
+            notifyPrinterRequired(
+              "Compulsory printing is on, but no print channels are enabled in settings."
             );
             return;
           }
           if (!printVia) {
-            setCartStatus(
-              "Connect an enabled printer from the sidebar before completing the sale.",
-              { error: true }
+            notifyPrinterRequired(
+              "Connect a printer from the sidebar (Connect to printer) before completing the sale."
             );
             return;
           }
@@ -2793,9 +2844,8 @@
             window.RichcomPrinter &&
             !window.RichcomPrinter.canAutoPrint(printVia)
           ) {
-            setCartStatus(
-              "Connect a printer from the sidebar (Connect to printer) before completing the sale.",
-              { error: true }
+            notifyPrinterRequired(
+              "Connect a printer from the sidebar (Connect to printer) before completing the sale."
             );
             return;
           }
@@ -3587,9 +3637,14 @@
         ?.classList.toggle("is-locked", !discountEnabled);
       syncPriceHint(item.minPrice, salePrice, item.listPrice);
       if (productStock) {
-        productStock.textContent =
-          item.stock > 0 ? `${item.stock} in stock` : "Out of stock";
-        productStock.classList.toggle("is-empty", item.stock <= 0);
+        if (stockTrackingEnabled) {
+          productStock.hidden = false;
+          productStock.textContent =
+            item.stock > 0 ? `${item.stock} in stock` : "Out of stock";
+          productStock.classList.toggle("is-empty", item.stock <= 0);
+        } else {
+          productStock.hidden = true;
+        }
       }
       if (productMedia) {
         if (item.image) {

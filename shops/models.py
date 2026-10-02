@@ -364,6 +364,10 @@ class CompanyPosSettings(models.Model):
         default=True,
         help_text="When on, staff must open the shop day before selling and are redirected to open/close. When off, open/close is optional.",
     )
+    enable_client_data = models.BooleanField(
+        default=True,
+        help_text="When on, cart can collect client name and phone. When off, client fields are hidden.",
+    )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     compulsory_print_on_sale = models.BooleanField(default=False)
@@ -612,6 +616,10 @@ class ShopPosSettings(models.Model):
     enable_open_close = models.BooleanField(
         default=True,
         help_text="When on, staff must open the shop day before selling and are redirected to open/close. When off, open/close is optional.",
+    )
+    enable_client_data = models.BooleanField(
+        default=True,
+        help_text="When on, cart can collect client name and phone. When off, client fields are hidden.",
     )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)

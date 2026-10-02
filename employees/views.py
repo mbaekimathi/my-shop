@@ -1838,6 +1838,11 @@ POS_SETTING_GROUPS = (
         "toggles": (("enable_open_close", "Compulsory open & close"),),
     },
     {
+        "title": "Clients",
+        "summary": "",
+        "toggles": (("enable_client_data", "Collect client data"),),
+    },
+    {
         "title": "Tax",
         "summary": "",
         "toggles": (("enable_tax", "Tax"),),
