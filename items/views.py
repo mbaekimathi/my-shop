@@ -3351,7 +3351,9 @@ def _movements_report_params(
     }
 
 
-def _stock_report_download_filename(page_mode, filter_context, *, event_filter="all"):
+def _stock_report_download_filename(
+    page_mode, filter_context, *, event_filter="all", report_kind="actual"
+):
     import re
 
     from django.utils import timezone as dj_timezone
@@ -3367,11 +3369,12 @@ def _stock_report_download_filename(page_mode, filter_context, *, event_filter="
         "return": "return",
         "all": "all",
     }.get(event_filter or "all", "all")
+    kind_slug = "audit" if report_kind == "audit" else "actual"
     stamp = dj_timezone.localtime(dj_timezone.now()).strftime("%Y-%m-%d-%H%M")
     prefix = "stock-movements" if page_mode == "movements" else "stock-report"
     if page_mode == "movements" and type_slug != "all":
-        return f"{prefix}-{safe_period}-{type_slug}-{stamp}.pdf"
-    return f"{prefix}-{safe_period}-{stamp}.pdf"
+        return f"{prefix}-{kind_slug}-{safe_period}-{type_slug}-{stamp}.pdf"
+    return f"{prefix}-{kind_slug}-{safe_period}-{stamp}.pdf"
 
 
 def _format_movement_csv_when(value):
@@ -3391,6 +3394,180 @@ def _format_movement_pdf_date_time(value):
 
     local = dj_timezone.localtime(value) if dj_timezone.is_aware(value) else value
     return local.strftime("%d %b %Y"), local.strftime("%H:%M")
+
+
+def _parse_report_kind(raw):
+    kind = (raw or "actual").strip().lower()
+    return "audit" if kind == "audit" else "actual"
+
+
+def _movement_event_status_label(event):
+    from shops.models import ShopReceiptStatus
+
+    status = (event.get("receipt_status") or "").strip()
+    if status:
+        try:
+            return ShopReceiptStatus(status).label
+        except ValueError:
+            return status.replace("_", " ").title()
+    pay = (event.get("payment_status") or event.get("pay") or "").strip()
+    if pay and pay != "—":
+        return pay
+    return "—"
+
+
+def _movement_event_seller_label(event):
+    seller = (event.get("seller") or "").strip()
+    if seller and seller != "—":
+        return seller
+    by = (event.get("by") or "").strip()
+    if by and by != "—":
+        return by
+    received = (event.get("received_by") or "").strip()
+    if received and received != "—":
+        return received
+    requested = (event.get("requested_by") or "").strip()
+    if requested and requested != "—":
+        return requested
+    return "—"
+
+
+def _movement_event_note_label(event):
+    note = (event.get("note") or "").strip()
+    if note:
+        return note
+    reason = (event.get("reason") or "").strip()
+    if reason:
+        return reason
+    trade = (event.get("trade") or "").strip()
+    if trade:
+        return trade
+    return "—"
+
+
+def _movement_event_stock_delta(event):
+    qty = int(event.get("quantity") or 0)
+    event_type = (event.get("event_type") or "").strip()
+    direction = (event.get("transfer_direction") or "").strip()
+    if event_type in ("in", "return"):
+        return qty
+    if event_type in ("out", "sale"):
+        return -qty
+    if event_type in ("transfer_fulfilled", "transfer", "request"):
+        if direction == "in":
+            return qty
+        if direction == "out":
+            return -qty
+        return 0
+    return 0
+
+
+def _movement_event_shop_stock_key(event):
+    item_id = event.get("item_id")
+    if not item_id:
+        return None
+    direction = (event.get("transfer_direction") or "").strip()
+    if direction == "out" and event.get("source_shop_id"):
+        return (item_id, event.get("source_shop_id"))
+    shop_id = event.get("shop_id")
+    if not shop_id:
+        return None
+    return (item_id, shop_id)
+
+
+def _audit_shop_qty_after_events(events, *, shop_ids, day_end):
+    """
+    Map each event object id -> shop on-hand qty after that event.
+
+    Rewinds current stock through after-period aggregates, then reverse-walks
+    the provided events (newest first) so each row gets a post-event balance.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone as dj_timezone
+
+    qty_by_event = {}
+    if not events:
+        return qty_by_event
+
+    item_ids = []
+    seen_items = set()
+    shop_ids_used = []
+    seen_shops = set()
+    for event in events:
+        item_id = event.get("item_id")
+        if item_id and item_id not in seen_items:
+            seen_items.add(item_id)
+            item_ids.append(item_id)
+        key = _movement_event_shop_stock_key(event)
+        if key:
+            shop_id = key[1]
+            if shop_id and shop_id not in seen_shops:
+                seen_shops.add(shop_id)
+                shop_ids_used.append(shop_id)
+    active_shop_ids = shop_ids_used or list(shop_ids or [])
+    if not item_ids or not active_shop_ids:
+        for event in events:
+            qty_by_event[id(event)] = 0
+        return qty_by_event
+
+    now = dj_timezone.now()
+    far_future = now + timedelta(days=3650)
+    current = _current_stock_by_item_shop(item_ids, active_shop_ids)
+    balances = dict(current)
+
+    if day_end is not None and day_end < now:
+        after_moves = _movement_qty_by_item_shop(
+            item_ids, active_shop_ids, day_end, far_future
+        )
+        after_transfers = _transfer_qty_by_item_shop(
+            item_ids, active_shop_ids, day_end, far_future
+        )
+        after_sales = _receipt_sale_qty_by_item_shop(
+            item_ids, active_shop_ids, day_end, far_future
+        )
+        after_returns = _return_qty_by_item_shop(
+            item_ids, active_shop_ids, day_end, far_future
+        )
+        for key in list(balances.keys()):
+            after = after_moves.get(key) or {"in": 0, "out": 0}
+            after_transfer = after_transfers.get(key) or {"in": 0, "out": 0}
+            _starting, closing = _item_report_closing_starting(
+                current=current.get(key) or 0,
+                after_in=after["in"],
+                after_out=after["out"],
+                after_sale=after_sales.get(key) or 0,
+                after_transfer_in=after_transfer["in"],
+                after_transfer_out=after_transfer["out"],
+                after_return=after_returns.get(key) or 0,
+                stock_in=0,
+                stock_out=0,
+                stock_sale=0,
+                stock_transfer_in=0,
+                stock_transfer_out=0,
+                stock_return=0,
+            )
+            balances[key] = closing
+
+    sorted_events = sorted(
+        events,
+        key=lambda event: (
+            event.get("happened_at") or "",
+            (event.get("item_name") or "").lower(),
+            event.get("event_type") or "",
+            event.get("movement_id") or 0,
+        ),
+        reverse=True,
+    )
+    for event in sorted_events:
+        key = _movement_event_shop_stock_key(event)
+        if not key:
+            qty_by_event[id(event)] = 0
+            continue
+        after_qty = int(balances.get(key) or 0)
+        qty_by_event[id(event)] = after_qty
+        balances[key] = after_qty - _movement_event_stock_delta(event)
+    return qty_by_event
 
 
 def _movement_event_filter_label(event_filter):
@@ -3536,6 +3713,40 @@ def _stock_report_pdf_response(*, filename, pdf_bytes):
     return response
 
 
+def _build_audit_detail_rows(events, *, shop_ids, day_end):
+    """Audit PDF activity rows: When, Type, Qty, Seller, Status, Note, Shop qty."""
+    detail_events = sorted(
+        events or [],
+        key=lambda event: (
+            event.get("happened_at") or "",
+            (event.get("item_name") or "").lower(),
+            event.get("event_type") or "",
+        ),
+    )
+    headers = ["When", "Type", "Qty", "Seller", "Status", "Note", "Shop qty"]
+    shop_qty_map = _audit_shop_qty_after_events(
+        detail_events, shop_ids=shop_ids, day_end=day_end
+    )
+    rows = []
+    for event in detail_events:
+        date_value, time_value = _format_movement_pdf_date_time(
+            event.get("happened_at")
+        )
+        when = f"{date_value} {time_value}".strip()
+        rows.append(
+            [
+                when,
+                event.get("event_label") or event.get("event_type") or "",
+                event.get("quantity") or 0,
+                _movement_event_seller_label(event),
+                _movement_event_status_label(event),
+                _movement_event_note_label(event),
+                shop_qty_map.get(id(event), 0),
+            ]
+        )
+    return headers, rows
+
+
 def _stock_report_download(
     *,
     page_mode,
@@ -3548,6 +3759,8 @@ def _stock_report_download(
     item_report_group_by_shop,
     event_filter="all",
     view_by="timeline",
+    report_kind="actual",
+    day_end=None,
     company_name="MY-SHOP",
     shop_label="",
     logo_path="",
@@ -3560,8 +3773,12 @@ def _stock_report_download(
 
     from django.utils import timezone as dj_timezone
 
+    report_kind = _parse_report_kind(report_kind)
     filename = _stock_report_download_filename(
-        page_mode, filter_context, event_filter=event_filter
+        page_mode,
+        filter_context,
+        event_filter=event_filter,
+        report_kind=report_kind,
     )
     period_label = (filter_context.get("report_period_label") or "").strip() or "—"
     event_label = _movement_event_filter_label(event_filter)
@@ -3571,11 +3788,44 @@ def _stock_report_download(
     summary_headers = None
     summary_rows = None
     detail_rows = None
+    detail_headers = None
     item_summary_headers = None
     item_summary_rows = None
     report_headers = None
     report_rows = None
     qty_label = _movement_summary_qty_label(event_filter)
+
+    # Audit downloads are a separate trail document — activity rows only.
+    if report_kind == "audit" and page_mode == "movements":
+        detail_headers, detail_rows = _build_audit_detail_rows(
+            movement_events, shop_ids=shop_ids, day_end=day_end
+        )
+        pdf_bytes = build_stock_report_pdf(
+            company_name=company_name,
+            page_mode=page_mode,
+            period_label=period_label,
+            event_filter=event_filter,
+            event_filter_label=event_label,
+            view_by=view_by,
+            view_label=view_label,
+            shop_label=shop_label,
+            report_kind="audit",
+            generated_at=generated_at,
+            logo_path=logo_path,
+            company_phone=company_phone,
+            company_email=company_email,
+            company_location=company_location,
+            summary_rows=None,
+            summary_headers=None,
+            summary_qty_label=qty_label,
+            detail_rows=detail_rows,
+            detail_headers=detail_headers,
+            item_summary_rows=None,
+            item_summary_headers=None,
+            report_rows=None,
+            report_headers=None,
+        )
+        return _stock_report_pdf_response(filename=filename, pdf_bytes=pdf_bytes)
 
     if page_mode == "movements" and is_item_movement_summary:
         item_summary_headers = ["Item", "Category"]
@@ -3738,6 +3988,16 @@ def _stock_report_download(
                 event.get("event_type") or "",
             ),
         )
+        detail_headers = [
+            "When",
+            "Type",
+            "Item",
+            "Qty",
+            "Receipt",
+            "From",
+            "To",
+            "Seller",
+        ]
         detail_rows = []
         for event in detail_events:
             date_value, time_value = _format_movement_pdf_date_time(
@@ -3817,6 +4077,7 @@ def _stock_report_download(
         view_by=view_by if page_mode == "movements" else "item",
         view_label=view_label,
         shop_label=shop_label,
+        report_kind=report_kind,
         generated_at=generated_at,
         logo_path=logo_path,
         company_phone=company_phone,
@@ -3826,6 +4087,7 @@ def _stock_report_download(
         summary_headers=summary_headers,
         summary_qty_label=qty_label,
         detail_rows=detail_rows,
+        detail_headers=detail_headers,
         item_summary_rows=item_summary_rows,
         item_summary_headers=item_summary_headers,
         report_rows=report_rows,
@@ -4233,6 +4495,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             shop_label = filter_shops[0].name
         else:
             shop_label = "All shops"
+        report_kind = _parse_report_kind(request.GET.get("report_kind"))
         return _stock_report_download(
             page_mode=page_mode,
             filter_context=filter_context,
@@ -4244,6 +4507,8 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             item_report_group_by_shop=item_report_group_by_shop,
             event_filter=event_filter,
             view_by=view_by,
+            report_kind=report_kind,
+            day_end=day_end,
             company_name=company_name,
             shop_label=shop_label,
             logo_path=logo_path,
@@ -4296,6 +4561,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "selected_item_ids": set(selected_item_ids),
             "event_filter": event_filter,
             "view_by": view_by,
+            "report_kind": _parse_report_kind(request.GET.get("report_kind")),
             "timeline_page": timeline_page,
             "timeline_page_size": timeline_page_size,
             "timeline_total_groups": timeline_total_groups,

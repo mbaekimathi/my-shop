@@ -17376,6 +17376,10 @@ html[data-theme="light"] .low-stock-badge.is-low {
   flex-wrap: wrap;
 }
 
+.stock-report-download-kind {
+  min-width: 9.5rem;
+}
+
 .stock-report-apply {
   min-height: 2.25rem;
   padding: 0.35rem 0.9rem;

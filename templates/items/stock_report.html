@@ -149,6 +149,15 @@
 
       <div class="stock-report-filter-actions">
         <button type="submit" class="stock-report-apply">Apply</button>
+        <label class="stock-report-field stock-report-download-kind">
+          <span>PDF type</span>
+          <select name="report_kind" aria-label="Download report type">
+            <option value="actual"{% if report_kind != 'audit' %} selected{% endif %}>Actual report</option>
+            {% if is_movements_page %}
+            <option value="audit"{% if report_kind == 'audit' %} selected{% endif %}>Audit trail</option>
+            {% endif %}
+          </select>
+        </label>
         <button
           type="submit"
           class="stock-report-apply stock-report-apply--ghost"

@@ -3588,6 +3588,7 @@ def build_stock_report_pdf(
     view_by: str = "timeline",
     view_label: str = "Timeline",
     shop_label: str = "",
+    report_kind: str = "actual",
     generated_at=None,
     logo_path: str = "",
     company_phone: str = "",
@@ -3597,15 +3598,18 @@ def build_stock_report_pdf(
     summary_headers: list | None = None,
     summary_qty_label: str = "Qty",
     detail_rows: list | None = None,
+    detail_headers: list | None = None,
     item_summary_rows: list | None = None,
     item_summary_headers: list | None = None,
     report_rows: list | None = None,
     report_headers: list | None = None,
 ) -> bytes:
     """
-    Modern branded A4 PDF for stock movements / stock report downloads.
+    Compact branded A4 PDF for stock movements / stock report downloads.
 
-    Company logo in the header, KPI cards, clear column grids, repeating footer.
+    Actual reports include item summaries and operational activity columns.
+    Audit PDFs are a separate trail document: amber chrome, event KPIs, and
+    When/Type/Qty/Seller/Status/Note/Shop qty — no buy-price summary.
     """
     from io import BytesIO
     from pathlib import Path
@@ -3617,7 +3621,6 @@ def build_stock_report_pdf(
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas as pdf_canvas
     from reportlab.platypus import (
-        Flowable,
         KeepTogether,
         Paragraph,
         SimpleDocTemplate,
@@ -3631,10 +3634,11 @@ def build_stock_report_pdf(
     register_manrope_pdf_fonts()
 
     is_movements = page_mode == "movements"
+    is_audit = (report_kind or "actual").strip().lower() == "audit"
     # Always portrait A4 for print-friendly downloads.
     page_size = A4
 
-    # Modern slate + teal palette (matches MY-SHOP, avoids purple/cream clichés)
+    # Actual report: teal operational palette. Audit trail: slate + amber.
     ink = colors.HexColor("#0b1220")
     muted = colors.HexColor("#5b6b7c")
     mist = colors.HexColor("#94a3b8")
@@ -3643,25 +3647,40 @@ def build_stock_report_pdf(
     surface = colors.HexColor("#f5f8fb")
     surface_warm = colors.HexColor("#eef6f4")
     head_fill = colors.HexColor("#0b1220")
-    accent = colors.HexColor("#0f766e")
-    accent_deep = colors.HexColor("#115e59")
-    accent_soft = colors.HexColor("#d9f3ee")
-    accent_mid = colors.HexColor("#99e2d4")
-    row_alt = colors.HexColor("#f8fafc")
+    white = colors.white
+    if is_audit:
+        accent = colors.HexColor("#b45309")
+        accent_deep = colors.HexColor("#92400e")
+        accent_soft = colors.HexColor("#fef3c7")
+        accent_mid = colors.HexColor("#fbbf24")
+        surface_warm = colors.HexColor("#fffbeb")
+        head_fill = colors.HexColor("#1c1917")
+        row_alt = colors.HexColor("#fafaf9")
+    else:
+        accent = colors.HexColor("#0f766e")
+        accent_deep = colors.HexColor("#115e59")
+        accent_soft = colors.HexColor("#d9f3ee")
+        accent_mid = colors.HexColor("#99e2d4")
+        row_alt = colors.HexColor("#f8fafc")
     type_sale = colors.HexColor("#1d4ed8")
     type_out = colors.HexColor("#b91c1c")
     type_in = colors.HexColor("#047857")
     type_return = colors.HexColor("#7c3aed")
     type_transfer = colors.HexColor("#b45309")
-    white = colors.white
 
     buffer = BytesIO()
-    left_m = 10 * mm
-    right_m = 10 * mm
-    top_m = 26 * mm
-    bottom_m = 15 * mm
+    # Compact margins so more report rows fit per page.
+    left_m = 8 * mm
+    right_m = 8 * mm
+    top_m = 16 * mm
+    bottom_m = 11 * mm
 
-    title = "Stock Movement Report" if is_movements else "Stock Report"
+    if is_audit:
+        title = "Stock Movement Audit Trail" if is_movements else "Stock Audit Trail"
+    elif is_movements:
+        title = "Stock Movement Report"
+    else:
+        title = "Stock Report"
     doc = SimpleDocTemplate(
         buffer,
         pagesize=page_size,
@@ -3687,36 +3706,36 @@ def build_stock_report_pdf(
         "ReportSectionKicker",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=6.5,
+        fontSize=5.5,
         textColor=accent,
-        leading=8,
-        spaceAfter=1,
+        leading=6.5,
+        spaceAfter=0,
     )
     section_title = ParagraphStyle(
         "ReportSection",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=11,
+        fontSize=9,
         textColor=ink,
-        leading=14,
-        spaceAfter=2,
+        leading=11,
+        spaceAfter=1,
     )
     section_sub = ParagraphStyle(
         "ReportSectionSub",
         parent=styles["Normal"],
         fontName=MANROPE_PDF,
-        fontSize=7.5,
+        fontSize=6.5,
         textColor=muted,
-        leading=10,
-        spaceAfter=5,
+        leading=8,
+        spaceAfter=2.5,
     )
     cell = ParagraphStyle(
         "ReportCell",
         parent=styles["Normal"],
         fontName=MANROPE_PDF,
-        fontSize=7.0,
+        fontSize=6.4,
         textColor=ink,
-        leading=8.8,
+        leading=7.8,
     )
     cell_bold = ParagraphStyle(
         "ReportCellBold",
@@ -3743,9 +3762,9 @@ def build_stock_report_pdf(
         "ReportHeadCell",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=6.8,
+        fontSize=6.0,
         textColor=white,
-        leading=8.5,
+        leading=7.4,
         alignment=TA_LEFT,
     )
     head_cell_center = ParagraphStyle(
@@ -3762,44 +3781,44 @@ def build_stock_report_pdf(
         "ReportKpiLabel",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=6.2,
+        fontSize=5.5,
         textColor=muted,
-        leading=8,
+        leading=6.5,
         alignment=TA_LEFT,
     )
     kpi_value = ParagraphStyle(
         "ReportKpiValue",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=11,
+        fontSize=8.5,
         textColor=ink,
-        leading=13,
+        leading=10,
         alignment=TA_LEFT,
     )
     hero_title = ParagraphStyle(
         "ReportHeroTitle",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=16,
+        fontSize=11,
         textColor=ink,
-        leading=19,
-        spaceAfter=2,
+        leading=13,
+        spaceAfter=1,
     )
     hero_sub = ParagraphStyle(
         "ReportHeroSub",
         parent=styles["Normal"],
         fontName=MANROPE_PDF,
-        fontSize=8.5,
+        fontSize=7,
         textColor=muted,
-        leading=11,
+        leading=9,
     )
     empty_style = ParagraphStyle(
         "ReportEmpty",
         parent=styles["Normal"],
         fontName=MANROPE_PDF,
-        fontSize=9,
+        fontSize=8,
         textColor=muted,
-        leading=12,
+        leading=10,
         alignment=TA_CENTER,
     )
 
@@ -3828,20 +3847,6 @@ def build_stock_report_pdf(
             return type_out
         return accent
 
-    class _AccentBar(Flowable):
-        def __init__(self, width, height=1.1 * mm, color=accent):
-            Flowable.__init__(self)
-            self._width = width
-            self._height = height
-            self._color = color
-
-        def wrap(self, availWidth, availHeight):
-            return self._width, self._height
-
-        def draw(self):
-            self.canv.setFillColor(self._color)
-            self.canv.roundRect(0, 0, self._width, self._height, 0.4 * mm, fill=1, stroke=0)
-
     class _NumberedCanvas(pdf_canvas.Canvas):
         def __init__(self, *args, **kwargs):
             pdf_canvas.Canvas.__init__(self, *args, **kwargs)
@@ -3862,154 +3867,179 @@ def build_stock_report_pdf(
         def _draw_chrome(self, page_count: int):
             width, height = page_size
             page_no = self._pageNumber
-            header_h = 22 * mm
+            header_h = 14 * mm
 
             # Soft top wash
             self.setFillColor(surface)
-            self.rect(0, height - header_h - 4 * mm, width, header_h + 4 * mm, fill=1, stroke=0)
+            self.rect(0, height - header_h - 2 * mm, width, header_h + 2 * mm, fill=1, stroke=0)
 
             # Dark brand bar
             self.setFillColor(head_fill)
             self.roundRect(
-                left_m - 2 * mm,
+                left_m - 1.5 * mm,
                 height - header_h,
-                width - left_m - right_m + 4 * mm,
-                header_h - 2 * mm,
-                2.2 * mm,
+                width - left_m - right_m + 3 * mm,
+                header_h - 1.5 * mm,
+                1.6 * mm,
                 fill=1,
                 stroke=0,
             )
             # Accent rail
             self.setFillColor(accent)
             self.rect(
-                left_m - 2 * mm,
+                left_m - 1.5 * mm,
                 height - header_h,
-                1.4 * mm,
-                header_h - 2 * mm,
+                1.1 * mm,
+                header_h - 1.5 * mm,
                 fill=1,
                 stroke=0,
             )
 
-            text_x = left_m + 2 * mm
+            text_x = left_m + 1.5 * mm
             if resolved_logo:
                 try:
-                    logo_box = 12 * mm
-                    plate_x = left_m + 2 * mm
-                    plate_y = height - header_h + 3.2 * mm
+                    logo_box = 8 * mm
+                    plate_x = left_m + 1.5 * mm
+                    plate_y = height - header_h + 1.8 * mm
                     self.setFillColor(white)
                     self.roundRect(
                         plate_x,
                         plate_y,
-                        logo_box + 1.2 * mm,
-                        logo_box + 1.2 * mm,
-                        1.4 * mm,
+                        logo_box + 0.8 * mm,
+                        logo_box + 0.8 * mm,
+                        1.0 * mm,
                         fill=1,
                         stroke=0,
                     )
                     self.drawImage(
                         resolved_logo,
-                        plate_x + 0.6 * mm,
-                        plate_y + 0.6 * mm,
+                        plate_x + 0.4 * mm,
+                        plate_y + 0.4 * mm,
                         width=logo_box,
                         height=logo_box,
                         preserveAspectRatio=True,
                         mask="auto",
                         anchor="c",
                     )
-                    text_x = left_m + 18 * mm
+                    text_x = left_m + 12.5 * mm
                 except Exception:
-                    text_x = left_m + 2 * mm
+                    text_x = left_m + 1.5 * mm
 
             self.setFillColor(accent_mid)
-            self.setFont(MANROPE_PDF_BOLD, 7)
-            self.drawString(text_x, height - 8.2 * mm, "STOCK MANAGEMENT")
+            self.setFont(MANROPE_PDF_BOLD, 5.5)
+            self.drawString(
+                text_x,
+                height - 5.2 * mm,
+                "AUDIT TRAIL" if is_audit else "STOCK MANAGEMENT",
+            )
             self.setFillColor(white)
-            self.setFont(MANROPE_PDF_BOLD, 12)
-            self.drawString(text_x, height - 14.2 * mm, title)
+            self.setFont(MANROPE_PDF_BOLD, 9.5)
+            self.drawString(text_x, height - 10.2 * mm, title)
 
             self.setFillColor(mist)
-            self.setFont(MANROPE_PDF, 7.5)
-            self.drawRightString(width - right_m - 1 * mm, height - 8.2 * mm, brand)
+            self.setFont(MANROPE_PDF, 6.2)
+            self.drawRightString(width - right_m - 0.5 * mm, height - 5.2 * mm, brand)
             self.setFillColor(white)
-            self.setFont(MANROPE_PDF_BOLD, 8.5)
+            self.setFont(MANROPE_PDF_BOLD, 7.2)
             self.drawRightString(
-                width - right_m - 1 * mm,
-                height - 14.2 * mm,
+                width - right_m - 0.5 * mm,
+                height - 10.2 * mm,
                 period_label or "—",
             )
 
             # Footer band
             self.setFillColor(surface)
-            self.rect(0, 0, width, 13 * mm, fill=1, stroke=0)
+            self.rect(0, 0, width, 9.5 * mm, fill=1, stroke=0)
             self.setStrokeColor(line_strong)
-            self.setLineWidth(0.7)
-            self.line(left_m, 12 * mm, width - right_m, 12 * mm)
+            self.setLineWidth(0.5)
+            self.line(left_m, 9 * mm, width - right_m, 9 * mm)
             self.setFillColor(accent)
-            self.circle(left_m + 1.5 * mm, 6.2 * mm, 1.3 * mm, fill=1, stroke=0)
+            self.circle(left_m + 1.2 * mm, 4.6 * mm, 1.0 * mm, fill=1, stroke=0)
 
             contact_bits = [bit for bit in (company_phone, company_email, company_location) if bit]
             contact_line = "  ·  ".join(contact_bits[:2]) if contact_bits else brand
 
             self.setFillColor(muted)
-            self.setFont(MANROPE_PDF, 6.8)
+            self.setFont(MANROPE_PDF, 5.8)
             self.drawString(
-                left_m + 5 * mm,
-                7.4 * mm,
+                left_m + 4 * mm,
+                5.6 * mm,
                 f"Generated {stamp}",
             )
             self.drawString(
-                left_m + 5 * mm,
-                3.6 * mm,
+                left_m + 4 * mm,
+                2.4 * mm,
                 f"{event_filter_label}  ·  {contact_line}",
             )
-            self.setFont(MANROPE_PDF_BOLD, 7.2)
+            self.setFont(MANROPE_PDF_BOLD, 6.5)
             self.setFillColor(ink)
             self.drawRightString(
                 width - right_m,
-                5.5 * mm,
+                4.0 * mm,
                 f"{page_no} / {page_count}",
             )
 
     story: list = []
 
-    # Hero intro
-    hero_left = [
-        Paragraph(_esc(title), hero_title),
-        Paragraph(
-            _esc(
-                f"{event_filter_label} · {view_label} · {shop_label or 'All shops'}"
+    # Compact meta strip
+    if is_audit:
+        hero_left = [
+            Paragraph(_esc("Audit trail"), hero_title),
+            Paragraph(
+                _esc(
+                    f"{event_filter_label} · {shop_label or 'All shops'} · "
+                    f"{len(detail_rows or [])} event"
+                    f"{'' if len(detail_rows or []) == 1 else 's'}"
+                ),
+                hero_sub,
             ),
-            hero_sub,
-        ),
-    ]
-    hero_right = [
-        Paragraph("REPORT PERIOD", kpi_label),
-        Paragraph(_esc(period_label or "—"), kpi_value),
-        Paragraph(_esc(f"Downloaded {stamp}"), hero_sub),
-    ]
+        ]
+        hero_right = [
+            Paragraph("PERIOD", kpi_label),
+            Paragraph(_esc(period_label or "—"), kpi_value),
+            Paragraph(_esc(f"Generated {stamp}"), hero_sub),
+        ]
+        hero_bg = surface_warm
+        hero_box = accent_mid
+    else:
+        hero_left = [
+            Paragraph(_esc(title), hero_title),
+            Paragraph(
+                _esc(
+                    f"Actual report · {event_filter_label} · {view_label} · "
+                    f"{shop_label or 'All shops'}"
+                ),
+                hero_sub,
+            ),
+        ]
+        hero_right = [
+            Paragraph("PERIOD", kpi_label),
+            Paragraph(_esc(period_label or "—"), kpi_value),
+            Paragraph(_esc(stamp), hero_sub),
+        ]
+        hero_bg = surface_warm
+        hero_box = accent_mid
     hero = Table(
         [[hero_left, hero_right]],
-        colWidths=[doc.width * 0.62, doc.width * 0.38],
+        colWidths=[doc.width * 0.64, doc.width * 0.36],
     )
     hero.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, -1), surface_warm),
-                ("BOX", (0, 0), (-1, -1), 0.8, accent_mid),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("BACKGROUND", (0, 0), (-1, -1), hero_bg),
+                ("BOX", (0, 0), (-1, -1), 0.6, hero_box),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("BACKGROUND", (1, 0), (1, 0), white),
-                ("LINEBEFORE", (1, 0), (1, 0), 1.2, accent),
+                ("LINEBEFORE", (1, 0), (1, 0), 1.0, accent),
             ]
         )
     )
     story.append(hero)
-    story.append(Spacer(1, 3.5 * mm))
-    story.append(_AccentBar(doc.width, 0.7 * mm, accent))
-    story.append(Spacer(1, 3.5 * mm))
+    story.append(Spacer(1, 2 * mm))
 
     # KPI cards
     def _count_rows(rows):
@@ -4032,7 +4062,20 @@ def build_stock_report_pdf(
                 continue
         return total
 
-    if is_movements and view_by != "item":
+    if is_audit:
+        audit_qty = 0
+        for row in detail_rows or []:
+            try:
+                audit_qty += int(row[2] or 0)
+            except (TypeError, ValueError, IndexError):
+                pass
+        kpi_data = [
+            ("EVENTS", str(len(detail_rows or []))),
+            ("UNITS", str(audit_qty)),
+            ("FILTER", event_filter_label),
+            ("SHOP", shop_label or "All shops"),
+        ]
+    elif is_movements and view_by != "item":
         item_count = _count_rows(summary_rows)
         if event_filter == "all" and summary_rows:
             qty_total = 0
@@ -4051,7 +4094,6 @@ def build_stock_report_pdf(
         else:
             # Qty is usually column index 2 when Buy price / Est. value follow
             qty_total = _sum_qty(summary_rows, 2)
-        activity_count = len(detail_rows or [])
         est_value_label = "—"
         if summary_rows and str(summary_rows[-1][0]).strip().lower() == "total":
             est_value_label = str(summary_rows[-1][-1] or "—")
@@ -4088,20 +4130,20 @@ def build_stock_report_pdf(
     kpi_table = Table([kpi_cols], colWidths=[kpi_w] * len(kpi_cols))
     kpi_cmds = [
         ("BACKGROUND", (0, 0), (-1, -1), white),
-        ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
-        ("INNERGRID", (0, 0), (-1, -1), 0.45, line),
-        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("BOX", (0, 0), (-1, -1), 0.5, line_strong),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, line),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]
     for idx in range(len(kpi_cols)):
         # Colored top accent per card via LINEABOVE isn't enough; use BACKGROUND strip via nested feel
-        kpi_cmds.append(("LINEABOVE", (idx, 0), (idx, 0), 2.2, accent if idx % 2 == 0 else accent_deep))
+        kpi_cmds.append(("LINEABOVE", (idx, 0), (idx, 0), 1.6, accent if idx % 2 == 0 else accent_deep))
     kpi_table.setStyle(TableStyle(kpi_cmds))
     story.append(kpi_table)
-    story.append(Spacer(1, 5 * mm))
+    story.append(Spacer(1, 2.5 * mm))
 
     def _section(kicker: str, heading: str, subtitle: str = ""):
         block = [
@@ -4111,7 +4153,7 @@ def build_stock_report_pdf(
         if subtitle:
             block.append(Paragraph(_esc(subtitle), section_sub))
         else:
-            block.append(Spacer(1, 2 * mm))
+            block.append(Spacer(1, 1 * mm))
         return KeepTogether(block)
 
     def _styled_table(
@@ -4160,15 +4202,15 @@ def build_stock_report_pdf(
             ("FONTNAME", (0, 0), (-1, 0), MANROPE_PDF_BOLD),
             ("BACKGROUND", (0, 1), (-1, -1), white),
             ("TEXTCOLOR", (0, 1), (-1, -1), ink),
-            ("LINEBELOW", (0, 0), (-1, 0), 2.0, accent),
-            ("LINEBELOW", (0, 1), (-1, -2), 0.4, line),
-            ("BOX", (0, 0), (-1, -1), 0.9, line_strong),
-            ("INNERGRID", (0, 0), (-1, -1), 0.35, line),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.4, accent),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.3, line),
+            ("BOX", (0, 0), (-1, -1), 0.6, line_strong),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, line),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4.5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4.5),
-            ("TOPPADDING", (0, 0), (-1, -1), 3.6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2.8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2.8),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.0),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, row_alt]),
         ]
         if qty_col is not None:
@@ -4188,6 +4230,52 @@ def build_stock_report_pdf(
             cmds.append(("TEXTCOLOR", (0, last), (-1, last), accent_deep))
         table.setStyle(TableStyle(cmds))
         return table
+
+    # ---- Audit trail: activity ledger only (no financial summary) ----
+    if is_audit and is_movements:
+        story.append(
+            _section(
+                "AUDIT LEDGER",
+                "Activity details",
+                "When · Type · Qty · Seller · Status · Note · Shop qty after each event.",
+            )
+        )
+        headers = list(detail_headers) if detail_headers else [
+            "When",
+            "Type",
+            "Qty",
+            "Seller",
+            "Status",
+            "Note",
+            "Shop qty",
+        ]
+        detail_data = [list(row) for row in (detail_rows or [])]
+        if not detail_data:
+            story.append(
+                Paragraph("No audit activity for these filters.", empty_style)
+            )
+        else:
+            usable = doc.width
+            detail_widths = [
+                usable * 0.16,
+                usable * 0.12,
+                usable * 0.08,
+                usable * 0.16,
+                usable * 0.12,
+                usable * 0.22,
+                usable * 0.14,
+            ]
+            story.append(
+                _styled_table(
+                    headers,
+                    detail_data,
+                    col_widths=detail_widths,
+                    type_col=1,
+                    qty_col=2,
+                )
+            )
+        doc.build(story, canvasmaker=_NumberedCanvas)
+        return buffer.getvalue()
 
     # ---- Movements: item summary view ----
     if is_movements and view_by == "item" and item_summary_headers is not None:
@@ -4244,7 +4332,7 @@ def build_stock_report_pdf(
         doc.build(story, canvasmaker=_NumberedCanvas)
         return buffer.getvalue()
 
-    # ---- Movements timeline: summary + details ----
+    # ---- Actual movements timeline: summary + operational details ----
     story.append(
         _section(
             "01  SUMMARY",
@@ -4288,7 +4376,7 @@ def build_stock_report_pdf(
             ]
         )
     )
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 3 * mm))
 
     story.append(
         _section(
@@ -4297,7 +4385,7 @@ def build_stock_report_pdf(
             "Chronological rows for every filtered movement in this period.",
         )
     )
-    detail_headers = [
+    headers = list(detail_headers) if detail_headers else [
         "When",
         "Type",
         "Item",
@@ -4307,9 +4395,10 @@ def build_stock_report_pdf(
         "To",
         "Seller",
     ]
+
     detail_data = []
     for row in detail_rows or []:
-        # Incoming rows: Date, Time, Type, Item, Qty, Receipt, From, To, Seller
+        # Actual report incoming rows: Date, Time, Type, Item, Qty, Receipt, From, To, Seller
         if len(row) >= 9:
             when = f"{row[0]} {row[1]}".strip()
             detail_data.append(
@@ -4333,7 +4422,7 @@ def build_stock_report_pdf(
         ]
         story.append(
             _styled_table(
-                detail_headers,
+                headers,
                 detail_data,
                 col_widths=detail_widths,
                 type_col=1,
