@@ -9,6 +9,7 @@ from decimal import Decimal
 from django.db.models import (
     Case,
     Count,
+    DateTimeField,
     DecimalField,
     ExpressionWrapper,
     F,
@@ -4344,42 +4345,50 @@ def _period_breakdown_config(filters) -> dict | None:
     }
 
 
-def _trunc_tzinfo():
-    """
-    Fixed-offset tzinfo for MySQL Trunc*/CONVERT_TZ.
-
-    Named zones (Africa/Nairobi) need MySQL timezone tables, which shared
-    cPanel hosts often lack — CONVERT_TZ then returns NULL and Django raises
-    ValueError. Offset form (+03:00) works without those tables. Nairobi has
-    no DST, so a fixed offset matches TIME_ZONE.
-    """
+def _local_utc_offset() -> timedelta:
+    """Current TIME_ZONE offset from UTC (Africa/Nairobi is fixed +03, no DST)."""
     tz = timezone.get_current_timezone()
-    offset = tz.utcoffset(timezone.now()) or timedelta(0)
-    total_minutes = int(offset.total_seconds() // 60)
-    sign = "-" if total_minutes < 0 else "+"
-    hours, minutes = divmod(abs(total_minutes), 60)
-    name = f"{sign}{hours:02d}:{minutes:02d}"
-    return dt_timezone(timedelta(minutes=total_minutes), name)
+    return tz.utcoffset(timezone.now()) or timedelta(0)
 
 
 def _created_at_trunc(field: str, bucket_kind: str):
-    tz = _trunc_tzinfo()
+    """
+    Truncate timestamps in local wall time without MySQL CONVERT_TZ.
+
+    cPanel MySQL often has empty timezone tables, so CONVERT_TZ returns NULL
+    for both named zones (Africa/Nairobi) and even CONVERT_TZ(..., 'UTC', ...)
+    because 'UTC' is also a named zone. Shift with INTERVAL, then Trunc with
+    tzinfo=UTC so Django skips CONVERT_TZ entirely.
+    """
+    shifted = ExpressionWrapper(
+        F(field) + _local_utc_offset(),
+        output_field=DateTimeField(),
+    )
+    # Match connection.timezone_name (UTC) → no CONVERT_TZ in SQL.
+    utc = dt_timezone.utc
     if bucket_kind == "hour":
-        return TruncHour(field, tzinfo=tz)
+        return TruncHour(shifted, tzinfo=utc)
     if bucket_kind == "day":
-        return TruncDay(field, tzinfo=tz)
-    return TruncMonth(field, tzinfo=tz)
+        return TruncDay(shifted, tzinfo=utc)
+    return TruncMonth(shifted, tzinfo=utc)
 
 
 def _bucket_label(moment, bucket_kind: str) -> str:
     if moment is None:
         return ""
-    local = timezone.localtime(moment)
+    # SQL buckets are local wall time encoded as UTC (see _created_at_trunc).
+    # Python-built labels from _iter_bucket_labels are real local datetimes.
+    if timezone.is_aware(moment) and moment.utcoffset() == timedelta(0):
+        wall = moment.replace(tzinfo=None)
+    else:
+        wall = timezone.localtime(moment)
+        if timezone.is_aware(wall):
+            wall = wall.replace(tzinfo=None)
     if bucket_kind == "hour":
-        return local.replace(minute=0, second=0, microsecond=0).strftime("%H:00")
+        return wall.replace(minute=0, second=0, microsecond=0).strftime("%H:00")
     if bucket_kind == "day":
-        return local.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%d %b")
-    return local.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime(
+        return wall.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%d %b")
+    return wall.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime(
         "%b %Y"
     )
 
