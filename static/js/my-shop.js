@@ -1691,6 +1691,7 @@
     const defaultPrintVia = cartRoot.dataset.defaultPrintVia || "";
     const paymentsEnabled = cartRoot.dataset.posCashSale === "1";
     const discountEnabled = cartRoot.dataset.posDiscount === "1";
+    const stockTrackingEnabled = cartRoot.dataset.posStockTracking !== "0";
     const compulsoryPrintOnSale = cartRoot.dataset.posCompulsoryPrint === "1";
 
     const selectedKind = () => {
@@ -3263,7 +3264,7 @@
     const clampQty = (qty, stock) => {
       let next = Math.floor(Number(qty));
       if (!Number.isFinite(next) || next < 1) next = 0;
-      if (stock > 0 && next > stock) next = stock;
+      if (stockTrackingEnabled && stock > 0 && next > stock) next = stock;
       return next;
     };
 
@@ -3424,7 +3425,7 @@
 
         card.classList.toggle("is-in-cart", inCart);
         if (addBtn) {
-          if (stock <= 0) {
+          if (stockTrackingEnabled && stock <= 0) {
             addBtn.hidden = false;
             addBtn.disabled = true;
           } else {
@@ -3434,11 +3435,14 @@
         }
         if (qtyWrap) qtyWrap.hidden = !inCart;
         if (qtyInput && line) {
-          qtyInput.max = String(stock || "");
+          if (stockTrackingEnabled && stock > 0) qtyInput.max = String(stock);
+          else qtyInput.removeAttribute("max");
           qtyInput.value = String(line.qty);
         }
         const inc = card.querySelector('[data-cart-qty="inc"]');
-        if (inc && line) inc.disabled = stock > 0 && line.qty >= stock;
+        if (inc && line) {
+          inc.disabled = stockTrackingEnabled && stock > 0 && line.qty >= stock;
+        }
       });
     };
 
@@ -3451,18 +3455,22 @@
       );
       const inCart = Boolean(line);
       if (productAdd) {
-        productAdd.hidden = inCart || stock <= 0;
-        productAdd.disabled = stock <= 0;
+        const outOfStock = stockTrackingEnabled && stock <= 0;
+        productAdd.hidden = inCart || outOfStock;
+        productAdd.disabled = outOfStock;
         const label = productAdd.querySelector("span");
-        if (label) label.textContent = stock <= 0 ? "Out of stock" : "Add to cart";
+        if (label) label.textContent = outOfStock ? "Out of stock" : "Add to cart";
       }
       if (productQtyWrap) productQtyWrap.hidden = !inCart;
       if (productQtyInput && line) {
-        productQtyInput.max = String(stock || "");
+        if (stockTrackingEnabled && stock > 0) productQtyInput.max = String(stock);
+        else productQtyInput.removeAttribute("max");
         productQtyInput.value = String(line.qty);
       }
       const inc = productModal.querySelector('[data-product-qty="inc"]');
-      if (inc && line) inc.disabled = stock > 0 && line.qty >= stock;
+      if (inc && line) {
+        inc.disabled = stockTrackingEnabled && stock > 0 && line.qty >= stock;
+      }
 
       const listPrice = roundMoney(
         productModal.dataset.itemListPrice || line?.listPrice || 0
@@ -3740,7 +3748,7 @@
         qtyInput.type = "number";
         qtyInput.className = "shop-cart-qty-input";
         qtyInput.min = "1";
-        if (line.stock > 0) qtyInput.max = String(line.stock);
+        if (stockTrackingEnabled && line.stock > 0) qtyInput.max = String(line.stock);
         qtyInput.value = String(line.qty);
         qtyInput.inputMode = "numeric";
         qtyInput.setAttribute("aria-label", "Quantity");
@@ -3751,7 +3759,9 @@
         inc.setAttribute("aria-label", "Increase quantity");
         inc.dataset.cartQty = "inc";
         inc.innerHTML = '<i data-lucide="plus" aria-hidden="true"></i>';
-        if (line.stock > 0 && line.qty >= line.stock) inc.disabled = true;
+        if (stockTrackingEnabled && line.stock > 0 && line.qty >= line.stock) {
+          inc.disabled = true;
+        }
 
         qtyWrap.append(dec, qtyInput, inc);
 
@@ -3954,7 +3964,8 @@
         return false;
       }
       if (
-        serialSaleItem?.stock > 0 &&
+        stockTrackingEnabled &&
+        serialSaleItem.stock > 0 &&
         collectSerialSaleValues().length >= serialSaleItem.stock
       ) {
         setSerialSaleStatus("No more stock available for another serial.", {
@@ -4018,6 +4029,7 @@
       }
 
       if (
+        stockTrackingEnabled &&
         serialSaleItem.stock > 0 &&
         collectSerialSaleValues().length >= serialSaleItem.stock
       ) {
@@ -4409,7 +4421,11 @@
         focusSerialSaleEntry();
         return false;
       }
-      if (serialSaleItem.stock > 0 && serials.length > serialSaleItem.stock) {
+      if (
+        stockTrackingEnabled &&
+        serialSaleItem.stock > 0 &&
+        serials.length > serialSaleItem.stock
+      ) {
         setSerialSaleStatus(
           `Only ${serialSaleItem.stock} unit${serialSaleItem.stock === 1 ? "" : "s"} in stock.`,
           { error: true }
@@ -4442,7 +4458,8 @@
     const addItem = (sourceEl) => {
       if (!checkoutEnabled) return;
       const item = readItemFromEl(sourceEl);
-      if (!item.id || item.stock <= 0) return;
+      if (!item.id) return;
+      if (stockTrackingEnabled && item.stock <= 0) return;
       if (item.trackSerial || cart.get(item.id)?.trackSerial) {
         const existing = cart.get(item.id);
         const salePrice = clampPrice(

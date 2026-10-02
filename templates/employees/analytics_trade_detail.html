@@ -13,6 +13,7 @@
   data-catalog-url="{{ catalog_url }}"
   data-balance="{{ balance_raw }}"
   data-can-settle="{% if can_settle %}1{% else %}0{% endif %}"
+  data-can-return="{% if can_return %}1{% else %}0{% endif %}"
 >
   <header class="td-head">
     <a class="td-back" href="{{ back_href }}">
@@ -57,7 +58,7 @@
     </dl>
   </div>
 
-  <div class="td-layout{% if not can_settle %} td-layout--single{% endif %}">
+  <div class="td-layout{% if not can_settle and not can_return %} td-layout--single{% endif %}">
     <div class="td-main">
       <section class="td-card">
         <header class="td-card-head">
@@ -69,7 +70,7 @@
           <li>
             <div class="td-item-copy">
               <strong>{{ line.name }}</strong>
-              <span>{{ line.remaining }} of {{ line.qty }} · {{ line.unit_price }} each</span>
+              <span>{{ line.remaining }} of {{ line.qty }} · {{ line.unit_price }} each{% if line.returned %} · {{ line.returned }} returned{% endif %}</span>
             </div>
             <em>{{ line.line_total }}</em>
           </li>
@@ -98,19 +99,20 @@
       </section>
       {% endif %}
 
-      {% if not can_settle %}
+      {% if not can_settle and not can_return %}
       <p class="td-cleared">This trade is fully cleared.</p>
       {% endif %}
     </div>
 
-    {% if can_settle %}
+    {% if can_settle or can_return %}
     <aside class="td-side" data-trade-settle-panel>
       <section class="td-card td-card--settle">
         <header class="td-card-head">
-          <h2>Clear trade</h2>
+          <h2>{% if can_settle %}Clear trade{% else %}Return item{% endif %}</h2>
         </header>
 
-        <div class="td-tabs" role="tablist" aria-label="Settle mode">
+        {% if can_settle %}
+        <div class="td-tabs{% if can_return %} td-tabs--three{% endif %}" role="tablist" aria-label="Settle mode">
           <label class="td-tab">
             <input type="radio" name="settle_mode" value="payment" data-trade-mode checked>
             <span>Pay &amp; convert</span>
@@ -119,8 +121,16 @@
             <input type="radio" name="settle_mode" value="exchange" data-trade-mode>
             <span>Exchange item</span>
           </label>
+          {% if can_return %}
+          <label class="td-tab">
+            <input type="radio" name="settle_mode" value="return" data-trade-mode>
+            <span>Return item</span>
+          </label>
+          {% endif %}
         </div>
+        {% endif %}
 
+        {% if can_settle %}
         <form class="td-form" data-trade-payment-form>
           {% csrf_token %}
           <input type="hidden" name="mode" value="payment">
@@ -197,6 +207,52 @@
           </p>
           <button type="submit" class="td-submit">Stock in &amp; deduct</button>
         </form>
+        {% endif %}
+
+        {% if can_return %}
+        <form class="td-form" data-trade-return-form{% if can_settle %} hidden{% endif %}>
+          {% csrf_token %}
+          <input type="hidden" name="mode" value="return">
+          <input type="hidden" name="line_id" value="" data-trade-return-line-id>
+          <input type="hidden" name="serial_numbers" value="" data-trade-return-serials>
+          <label class="td-field">
+            <span>Item to return</span>
+            <select data-trade-return-line required>
+              <option value="">Select item…</option>
+              {% for line in lines %}
+              {% if line.remaining > 0 %}
+              <option
+                value="{{ line.id }}"
+                data-remaining="{{ line.remaining }}"
+                data-track-serial="{% if line.track_serial %}1{% else %}0{% endif %}"
+                data-serials="{{ line.serials|join:',' }}"
+              >{{ line.name }} ({{ line.remaining }} left)</option>
+              {% endif %}
+              {% endfor %}
+            </select>
+          </label>
+          <label class="td-field">
+            <span>Qty to return</span>
+            <input
+              type="number"
+              name="quantity"
+              min="1"
+              step="1"
+              value="1"
+              required
+              data-trade-return-qty
+            >
+          </label>
+          <div class="td-return-serials" data-trade-return-serial-wrap hidden>
+            <p class="td-field-label">Serial numbers</p>
+            <div class="td-serial-list" data-trade-return-serial-list></div>
+          </div>
+          <p class="td-preview">
+            Restocks shop stock and updates stock movement / stock report.
+          </p>
+          <button type="submit" class="td-submit">Return &amp; restock</button>
+        </form>
+        {% endif %}
 
         <p class="td-status" data-trade-status hidden></p>
       </section>
@@ -208,5 +264,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-trade-settle.js' %}?v=3"></script>
+<script defer src="{% static 'js/analytics-trade-settle.js' %}?v=4"></script>
 {% endblock %}

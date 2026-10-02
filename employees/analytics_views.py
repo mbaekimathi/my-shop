@@ -545,7 +545,7 @@ def analytics_trade_detail(request, role_segment, receipt_id):
             "meta": {
                 "title": f"Trade {detail['receipt_number']}",
                 "headline": detail["receipt_number"],
-                "summary": "Clear this trade by payment or exchange stock-in.",
+                "summary": "Clear this trade by payment or exchange, or return items to restock.",
                 "icon": "repeat",
             },
             "module": module,
@@ -562,12 +562,18 @@ def analytics_trade_detail(request, role_segment, receipt_id):
 @active_employee_required
 @require_POST
 def analytics_trade_settle(request, role_segment, receipt_id):
-    """Settle a trade-out via payment or item exchange."""
+    """Settle a trade-out via payment, exchange, or return items to stock."""
     from django.http import Http404
 
     from .module_permissions import require_module_permission
     from shops.models import ShopReceipt, ShopReceiptKind, ShopReceiptStatus
-    from shops.trade_settlement import record_trade_exchange, record_trade_payment
+    from django.db.models import Q
+
+    from shops.trade_settlement import (
+        record_trade_exchange,
+        record_trade_payment,
+        record_trade_return,
+    )
 
     profile = get_profile_for_request(request)
     if role_from_url_segment(role_segment) is None:
@@ -592,7 +598,10 @@ def analytics_trade_settle(request, role_segment, receipt_id):
         ShopReceipt.objects.filter(
             pk=receipt_id,
             shop_id__in=filters["active_shop_ids"],
-            kind=ShopReceiptKind.TRADE_OUT,
+        )
+        .filter(
+            Q(kind=ShopReceiptKind.TRADE_OUT)
+            | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
         )
         .exclude(status=ShopReceiptStatus.CANCELLED)
         .select_related("shop")
@@ -604,6 +613,11 @@ def analytics_trade_settle(request, role_segment, receipt_id):
     mode = (request.POST.get("mode") or request.POST.get("settle_mode") or "").strip().lower()
     try:
         if mode == "payment":
+            if receipt.kind != ShopReceiptKind.TRADE_OUT:
+                return JsonResponse(
+                    {"ok": False, "error": "This trade is already settled."},
+                    status=400,
+                )
             result = record_trade_payment(
                 receipt,
                 amount=request.POST.get("amount"),
@@ -617,6 +631,11 @@ def analytics_trade_settle(request, role_segment, receipt_id):
                 else f"Payment recorded. Balance left {_money_ksh_safe(result['balance'])}."
             )
         elif mode == "exchange":
+            if receipt.kind != ShopReceiptKind.TRADE_OUT:
+                return JsonResponse(
+                    {"ok": False, "error": "This trade is already settled."},
+                    status=400,
+                )
             try:
                 item_id = int(request.POST.get("item_id") or 0)
             except (TypeError, ValueError):
@@ -656,9 +675,52 @@ def analytics_trade_settle(request, role_segment, receipt_id):
                     f"Exchange recorded for {result['item_name']}. "
                     f"Balance left {_money_ksh_safe(result['balance'])}."
                 )
+        elif mode == "return":
+            import json
+
+            try:
+                line_id = int(request.POST.get("line_id") or 0)
+            except (TypeError, ValueError):
+                line_id = 0
+            try:
+                quantity = int(
+                    request.POST.get("quantity") or request.POST.get("qty") or 0
+                )
+            except (TypeError, ValueError):
+                quantity = 0
+            serials_raw = (
+                request.POST.get("serial_numbers") or request.POST.get("serials") or ""
+            )
+            if isinstance(serials_raw, str) and serials_raw.strip().startswith("["):
+                try:
+                    serials = json.loads(serials_raw)
+                except json.JSONDecodeError:
+                    serials = [s.strip() for s in serials_raw.split(",") if s.strip()]
+            else:
+                serials = [
+                    s.strip()
+                    for s in str(serials_raw).replace("\n", ",").split(",")
+                    if s.strip()
+                ]
+            result = record_trade_return(
+                receipt,
+                lines=[
+                    {
+                        "line_id": line_id,
+                        "qty": quantity,
+                        "serials": serials,
+                    }
+                ],
+                actor=profile,
+            )
+            message = result.get("message") or (
+                f"Returned {result.get('returned_units') or quantity} unit(s) "
+                "and restocked the shop."
+            )
         else:
             return JsonResponse(
-                {"ok": False, "error": "Choose payment or exchange."}, status=400
+                {"ok": False, "error": "Choose payment, exchange, or return."},
+                status=400,
             )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)

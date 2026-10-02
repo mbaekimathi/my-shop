@@ -17943,12 +17943,13 @@ html[data-theme="light"] .low-stock-badge.is-low {
   min-width: 640px;
 }
 
-.stock-report-table--items {
-  min-width: 980px;
+.stock-report-table--items,
+.stock-report-table--items-summary {
+  min-width: 0;
 }
 
 .stock-report-table--items-by-shop {
-  min-width: 1080px;
+  min-width: 0;
 }
 
 .stock-report-table--items th,
@@ -17978,6 +17979,9 @@ html[data-theme="light"] .low-stock-badge.is-low {
 
 .stock-panel--report {
   padding: 0.7rem 0.75rem 0.85rem;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .stock-panel--report .stock-panel-head {
@@ -18043,42 +18047,62 @@ html[data-theme="light"] .low-stock-badge.is-low {
 
 .stock-panel--report .staff-table.stock-report-table {
   width: 100%;
-  min-width: 1080px;
+  min-width: 0;
   table-layout: fixed;
   border-collapse: collapse;
 }
 
-.stock-panel--report .stock-report-table .stock-col-item {
-  width: 26rem;
+.stock-panel--report .staff-table.stock-report-table.stock-report-table--items,
+.stock-panel--report .staff-table.stock-report-table.stock-report-table--items-summary {
+  min-width: 0;
 }
 
-.stock-panel--report .stock-report-table .stock-col-shop {
-  width: 11.5rem;
+.stock-panel--report .stock-report-table-wrap--items {
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
-.stock-panel--report .stock-report-table .stock-col-num {
-  width: 4.75rem;
+.stock-panel--report .stock-report-table--items th[data-col="item"],
+.stock-panel--report .stock-report-table--items-summary th[data-col="item"],
+.stock-panel--report .stock-report-table--items td[data-label="Item"],
+.stock-panel--report .stock-report-table--items-summary td[data-label="Item"] {
+  width: 22%;
+  white-space: normal;
 }
 
-.stock-panel--report .stock-report-table .stock-col-time {
-  width: 7.5rem;
+.stock-panel--report .stock-report-table--items th[data-col="shop"],
+.stock-panel--report .stock-report-table--items-summary th[data-col="shop"],
+.stock-panel--report .stock-report-table--items td[data-label="Shop"],
+.stock-panel--report .stock-report-table--items-summary td[data-label="Shop"] {
+  width: 12%;
+  white-space: normal;
 }
 
-.stock-panel--report .stock-report-table .stock-col-action {
-  width: 6.75rem;
+.stock-panel--report .stock-report-table--items th[data-col="num"],
+.stock-panel--report .stock-report-table--items-summary th[data-col="num"],
+.stock-panel--report .stock-report-table--items-summary th[data-col="time"],
+.stock-panel--report .stock-report-table--items-summary th[data-col="action"] {
+  width: auto;
 }
 
-.stock-panel--report .stock-report-table--items,
-.stock-panel--report .stock-report-table--items-summary {
-  min-width: 1240px;
+.stock-panel--report .stock-report-table--items thead th,
+.stock-panel--report .stock-report-table--items-summary thead th {
+  padding: 0.45rem 0.3rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  white-space: normal;
+  line-height: 1.15;
+  vertical-align: middle;
 }
 
-.stock-panel--report .stock-report-table--items-by-shop {
-  min-width: 1340px;
-}
-
-.stock-panel--report .stock-report-table--items-summary.stock-report-table--items-by-shop {
-  min-width: 1440px;
+.stock-panel--report .stock-report-table--items tbody td,
+.stock-panel--report .stock-report-table--items tfoot td,
+.stock-panel--report .stock-report-table--items-summary tbody td,
+.stock-panel--report .stock-report-table--items-summary tfoot td {
+  padding: 0.45rem 0.3rem;
+  font-size: 0.8rem;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 .stock-panel--report .stock-report-table th,
@@ -18248,6 +18272,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
 
   .stock-report-table td[data-label="Item"],
   .stock-report-table td[data-label="When"],
+  .stock-report-table td[data-label="When / Type"],
   .stock-report-table th[data-label="Item"] {
     display: block;
     padding-bottom: 0.2rem;
@@ -18255,6 +18280,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
 
   .stock-report-table td[data-label="Item"]::before,
   .stock-report-table td[data-label="When"]::before,
+  .stock-report-table td[data-label="When / Type"]::before,
   .stock-report-table th[data-label="Item"]::before {
     display: none;
   }
@@ -18282,62 +18308,228 @@ html[data-theme="light"] .low-stock-badge.is-low {
     grid-column: 1 / -1;
   }
 
-  .stock-panel--report .stock-report-table,
+  /* Item matrices use shared card layout below — do not force wide tables here */
+}
+
+/* Stock report + item summary: readable cards on tablet/phone */
+@media (max-width: 1099px) {
+  .stock-panel--report .stock-report-table-wrap--items {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    max-width: 100%;
+  }
+
+  .stock-panel--report .staff-table.stock-report-table.stock-report-table--items,
+  .stock-panel--report .staff-table.stock-report-table.stock-report-table--items-summary,
   .stock-panel--report .stock-report-table--items,
-  .stock-panel--report .stock-report-table--items-by-shop,
   .stock-panel--report .stock-report-table--items-summary,
-  .stock-panel--report .staff-table {
-    display: table;
+  .stock-panel--report .stock-report-table--items-by-shop {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    border: 0 !important;
+    table-layout: auto !important;
+  }
+
+  .stock-panel--report .stock-report-table--items colgroup,
+  .stock-panel--report .stock-report-table--items-summary colgroup,
+  .stock-panel--report .stock-report-table--items thead,
+  .stock-panel--report .stock-report-table--items-summary thead {
+    display: none !important;
+  }
+
+  .stock-panel--report .stock-report-table--items tbody,
+  .stock-panel--report .stock-report-table--items tfoot,
+  .stock-panel--report .stock-report-table--items-summary tbody,
+  .stock-panel--report .stock-report-table--items-summary tfoot {
+    display: block !important;
     width: 100%;
-    min-width: 1180px;
-    table-layout: fixed;
   }
 
-  .stock-panel--report .stock-report-table thead,
-  .stock-panel--report .staff-table thead {
-    display: table-header-group;
-  }
-
-  .stock-panel--report .stock-report-table tr,
-  .stock-panel--report .staff-table tr,
-  .stock-panel--report .stock-report-table tbody tr,
-  .stock-panel--report .stock-report-table tfoot tr {
-    display: table-row;
+  .stock-panel--report .stock-report-table--items tbody tr,
+  .stock-panel--report .stock-report-table--items tfoot tr,
+  .stock-panel--report .stock-report-table--items-summary tbody tr,
+  .stock-panel--report .stock-report-table--items-summary tfoot tr {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box;
     gap: 0;
-    padding: 0;
+    margin: 0 0 0.7rem;
+    padding: 0.85rem 0.95rem;
+    border: 1px solid color-mix(in srgb, var(--text-strong) 12%, var(--line));
+    border-radius: 12px;
+    background: var(--panel, #fff);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   }
 
-  .stock-panel--report .stock-report-table th,
-  .stock-panel--report .stock-report-table td,
-  .stock-panel--report .staff-table td {
-    display: table-cell;
-    padding: 0.42rem 0.55rem;
-    border-bottom: 1px solid var(--line);
-    white-space: nowrap;
+  .stock-panel--report .stock-report-table--items tfoot tr,
+  .stock-panel--report .stock-report-table--items-summary tfoot tr {
+    background: color-mix(in srgb, var(--panel-muted) 80%, var(--panel));
+    border-color: color-mix(in srgb, var(--text-strong) 18%, var(--line));
   }
 
-  .stock-panel--report .stock-report-table td[data-label="Item"],
-  .stock-panel--report .stock-report-table th[data-label="Item"] {
-    display: table-cell;
-    white-space: normal;
+  .stock-panel--report .stock-report-table--items tbody tr.is-item-total,
+  .stock-panel--report .stock-report-table--items-summary tbody tr.is-item-total {
+    background: color-mix(in srgb, var(--panel-muted) 70%, var(--panel));
   }
 
-  .stock-panel--report .stock-report-table th::before,
-  .stock-panel--report .stock-report-table td::before,
-  .stock-panel--report .staff-table td::before,
-  .stock-panel--report .stock-report-table td[data-label="Item"]::before,
-  .stock-panel--report .stock-report-table td[data-label="When"]::before,
-  .stock-panel--report .stock-report-table th[data-label="Item"]::before {
-    content: none;
-    display: none;
+  .stock-panel--report .stock-report-table--items tbody td,
+  .stock-panel--report .stock-report-table--items tfoot td,
+  .stock-panel--report .stock-report-table--items-summary tbody td,
+  .stock-panel--report .stock-report-table--items-summary tfoot td,
+  .stock-panel--report .stock-report-table--items tbody td[data-label],
+  .stock-panel--report .stock-report-table--items-summary tbody td[data-label] {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0.4rem 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 90%, transparent) !important;
+    text-align: left !important;
+    font-size: 0.78rem !important;
+    line-height: 1.3 !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    overflow-wrap: break-word !important;
+    word-break: normal !important;
+  }
+
+  .stock-panel--report .stock-report-table--items tbody td:last-child,
+  .stock-panel--report .stock-report-table--items tfoot td:last-child,
+  .stock-panel--report .stock-report-table--items-summary tbody td:last-child,
+  .stock-panel--report .stock-report-table--items-summary tfoot td:last-child {
+    border-bottom: 0 !important;
+  }
+
+  .stock-panel--report .stock-report-table--items tbody td::before,
+  .stock-panel--report .stock-report-table--items tfoot td::before,
+  .stock-panel--report .stock-report-table--items-summary tbody td::before,
+  .stock-panel--report .stock-report-table--items-summary tfoot td::before {
+    content: attr(data-label);
+    flex: 0 0 5.5rem;
+    width: 5.5rem;
+    max-width: 40%;
+    font-weight: 700;
+    font-size: 0.58rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+    line-height: 1.35;
+    white-space: normal !important;
+    word-break: normal !important;
+    text-align: left;
+  }
+
+  .stock-panel--report .stock-report-table--items tbody td[data-label="Item"],
+  .stock-panel--report .stock-report-table--items tfoot td[data-label="Item"],
+  .stock-panel--report .stock-report-table--items-summary tbody td[data-label="Item"],
+  .stock-panel--report .stock-report-table--items-summary tfoot td[data-label="Item"] {
+    display: block !important;
+    padding-bottom: 0.5rem !important;
+    border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 12%, var(--line)) !important;
+  }
+
+  .stock-panel--report .stock-report-table--items tbody td[data-label="Item"]::before,
+  .stock-panel--report .stock-report-table--items tfoot td[data-label="Item"]::before,
+  .stock-panel--report .stock-report-table--items-summary tbody td[data-label="Item"]::before,
+  .stock-panel--report .stock-report-table--items-summary tfoot td[data-label="Item"]::before {
+    content: none !important;
+    display: none !important;
   }
 
   .stock-panel--report .stock-report-table--items td[data-label="Item"] strong,
-  .stock-panel--report .stock-report-table--items-summary td[data-label="Item"] strong,
-  .stock-panel--report .stock-report-table--timeline td[data-label="Item"] strong {
+  .stock-panel--report .stock-report-table--items-summary td[data-label="Item"] strong {
     display: block;
+    font-size: 0.86rem !important;
+    font-weight: 700;
+    text-align: left;
+  }
+
+  .stock-panel--report .stock-report-table--items tbody td[data-label="Item"]:empty,
+  .stock-panel--report .stock-report-table--items-summary tbody td[data-label="Item"]:empty,
+  .stock-panel--report .stock-report-table--items tbody tr.is-shop-follow td[data-label="Item"]:not(:has(strong)),
+  .stock-panel--report .stock-report-table--items-summary tbody tr.is-shop-follow td[data-label="Item"]:not(:has(strong)) {
+    display: none !important;
+  }
+
+  .stock-panel--report .stock-report-table--items .stock-report-from,
+  .stock-panel--report .stock-report-table--items-summary .stock-report-from {
+    font-size: 0.66rem !important;
+    text-align: left;
+  }
+
+  .stock-panel--report .stock-report-table--items .stock-matrix-qty,
+  .stock-panel--report .stock-report-table--items-summary .stock-matrix-qty {
+    margin-left: auto;
+    min-width: 1.7rem;
+    padding: 0.12rem 0.35rem;
+    border-radius: 5px;
+    font-size: 0.78rem !important;
+    text-align: center;
+  }
+
+  .stock-panel--report .stock-report-table--items-summary .stock-report-item-link {
+    margin-left: auto;
+    font-size: 0.74rem;
+  }
+
+  .stock-panel--report .stock-report-qty--in:not(.is-empty),
+  .stock-panel--report .stock-report-qty--out:not(.is-empty),
+  .stock-panel--report .stock-report-qty--transfer-in:not(.is-empty),
+  .stock-panel--report .stock-report-qty--transfer-out:not(.is-empty),
+  .stock-panel--report .stock-report-qty--sale:not(.is-empty),
+  .stock-panel--report .stock-report-qty--return:not(.is-empty),
+  .stock-panel--report .stock-report-qty--trade:not(.is-empty) {
+    background: inherit;
+  }
+
+  .stock-panel--report .stock-report-table--items .stock-report-qty--in:not(.is-empty),
+  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--in:not(.is-empty) {
+    background: rgba(34, 160, 107, 0.14);
+  }
+
+  .stock-panel--report .stock-report-table--items .stock-report-qty--out:not(.is-empty),
+  .stock-panel--report .stock-report-table--items .stock-report-qty--transfer-out:not(.is-empty),
+  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--out:not(.is-empty),
+  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--transfer-out:not(.is-empty) {
+    background: rgba(196, 74, 58, 0.12);
+  }
+
+  .stock-panel--report .stock-report-table--items .stock-report-qty--transfer-in:not(.is-empty),
+  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--transfer-in:not(.is-empty) {
+    background: rgba(217, 149, 31, 0.16);
+  }
+
+  .stock-panel--report .stock-report-table--items .stock-report-qty--sale:not(.is-empty),
+  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--sale:not(.is-empty) {
+    background: rgba(59, 110, 160, 0.14);
+  }
+
+  .stock-panel--report .stock-report-table--items .stock-report-qty--return:not(.is-empty),
+  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--return:not(.is-empty) {
+    background: rgba(124, 92, 191, 0.14);
+  }
+
+  .stock-panel--report .stock-report-table--items .stock-report-qty--trade:not(.is-empty),
+  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--trade:not(.is-empty) {
+    background: rgba(46, 125, 110, 0.14);
   }
 }
+
 
 @media (max-width: 520px) {
   .stock-report-filters {
@@ -18417,6 +18609,11 @@ html[data-theme="light"] .low-stock-badge.is-low {
   color: #5c3f9a;
 }
 
+.stock-report-qty--trade:not(.is-empty) {
+  background: rgba(46, 125, 110, 0.14);
+  color: #1f6b5c;
+}
+
 .stock-report-type--transfer_fulfilled {
   background: rgba(217, 149, 31, 0.16);
   color: #9a6a12;
@@ -18438,19 +18635,293 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 .stock-report-table--timeline {
-  min-width: 1180px;
+  min-width: 0;
+}
+
+.stock-panel--report .staff-table.stock-report-table.stock-report-table--timeline {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border: 1px solid color-mix(in srgb, var(--text-strong) 18%, var(--line));
+}
+
+.stock-panel--report .stock-report-table-wrap--timeline {
+  border: 1px solid color-mix(in srgb, var(--text-strong) 14%, var(--line));
+  border-radius: 12px;
+  background: var(--panel, #fff);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+.stock-panel--report .stock-report-table--timeline thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.42rem 0.28rem;
+  background: color-mix(in srgb, var(--panel-muted) 88%, var(--text-strong));
+  border: 1px solid color-mix(in srgb, var(--text-strong) 18%, var(--line));
+  border-bottom-width: 1.5px;
+  color: color-mix(in srgb, var(--text-strong) 72%, var(--mist-dim));
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: normal;
+  line-height: 1.2;
+  vertical-align: middle;
+  hyphens: auto;
+}
+
+.stock-panel--report .stock-report-table--timeline tbody td {
+  padding: 0.45rem 0.28rem;
+  border: 1px solid color-mix(in srgb, var(--text-strong) 14%, var(--line));
+  vertical-align: top;
+  font-size: 0.76rem;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.stock-panel--report .stock-report-table--timeline th[data-col="when"],
+.stock-panel--report .stock-report-table--timeline td[data-label="When / Type"] {
+  width: 8.5%;
+}
+
+.stock-panel--report .stock-report-table--timeline th[data-col="item"],
+.stock-panel--report .stock-report-table--timeline td[data-label="Item"] {
+  width: 14%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="receipt"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Receipt"] {
+  width: 7%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="qty"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Qty"] {
+  width: 4%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="serial"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Serial"] {
+  width: 4.5%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="pay"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Pay"] {
+  width: 5%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="trade"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Trade"] {
+  width: 6.5%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="from"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="From"] {
+  width: 11%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="to"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="To"] {
+  width: 11%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="request"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Request"] {
+  width: 8.5%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="receive"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Receive"] {
+  width: 8.5%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="receipt"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="Receipt"] {
+  width: 8%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="qty"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="Qty"] {
+  width: 4.5%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="serial"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="Serial"] {
+  width: 5%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="pay"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="Pay"] {
+  width: 5.5%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="trade"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="Trade"] {
+  width: 7%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="from"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="From"] {
+  width: 13%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="to"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="To"] {
+  width: 13%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="request"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="Request"] {
+  width: 10%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="receive"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="Receive"] {
+  width: 10%;
+}
+
+.stock-panel--report .stock-report-table--timeline tbody tr:last-child td {
+  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 14%, var(--line));
+}
+
+.stock-panel--report .stock-report-table--timeline tbody tr:hover td {
+  background: color-mix(in srgb, var(--panel-muted) 70%, transparent);
 }
 
 .stock-panel--report .stock-report-table--timeline th[data-label="Item"],
 .stock-panel--report .stock-report-table--timeline td[data-label="Item"] {
-  width: 26rem;
-  min-width: 22rem;
-  max-width: 32rem;
   white-space: normal;
 }
 
+.stock-panel--report .stock-report-table--timeline td[data-label="Qty"] {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-panel--report .stock-report-table--timeline td[data-label="Serial"],
+.stock-panel--report .stock-report-table--timeline td[data-label="Pay"],
+.stock-panel--report .stock-report-table--timeline thead th.is-center {
+  text-align: center;
+}
+
+.stock-report-when-type {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.stock-report-when {
+  display: block;
+  color: var(--text-strong);
+  font-size: 0.72rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+
+.stock-report-when-date {
+  color: var(--text-strong);
+}
+
+.stock-report-when-time {
+  display: block;
+  color: var(--mist-dim);
+  font-weight: 550;
+  font-size: 0.68rem;
+}
+
+.stock-report-when-type .stock-report-type {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.15;
+}
+
+.stock-report-receipt-ref {
+  display: block;
+  max-width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--text-strong);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.stock-panel--report .stock-report-table--timeline td[data-label="Item"] strong {
+  font-size: 0.76rem;
+  line-height: 1.2;
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-from {
+  font-size: 0.65rem;
+  margin-top: 0.12rem;
+  line-height: 1.15;
+}
+
+.stock-report-party,
+.stock-report-seller,
+.stock-report-pay {
+  display: block;
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.stock-report-empty {
+  color: color-mix(in srgb, var(--mist-dim) 70%, transparent);
+  font-weight: 500;
+}
+
+.stock-report-trade {
+  display: inline;
+  max-width: 100%;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f766e;
+  font-size: 0.58rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.stock-report-trade--trade-out {
+  background: rgba(180, 83, 9, 0.14);
+  color: #9a3412;
+}
+
+.stock-report-trade--trade-exchange {
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f766e;
+}
+
+.stock-report-trade--trade-return {
+  background: rgba(124, 92, 191, 0.14);
+  color: #5c3f9a;
+}
+
+.stock-report-trade--trade-sale {
+  background: rgba(59, 110, 160, 0.14);
+  color: #2a5f8f;
+}
+
 .stock-report-receipt-group.is-multi {
-  border-top: 2px solid rgba(59, 110, 160, 0.28);
+  border-top: 2px solid color-mix(in srgb, #3b6ea0 32%, var(--line));
 }
 
 .stock-report-receipt-group.is-multi + .stock-report-receipt-group.is-multi {
@@ -18458,9 +18929,14 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 .stock-report-receipt-head td {
-  padding: 0.55rem 0.75rem;
-  background: rgba(59, 110, 160, 0.08);
-  border-bottom: 1px solid rgba(59, 110, 160, 0.16);
+  padding: 0.65rem 0.85rem;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, #3b6ea0 10%, var(--panel)) 0%,
+    color-mix(in srgb, #3b6ea0 6%, var(--panel-muted)) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--text-strong) 14%, var(--line));
+  border-bottom: 1px solid color-mix(in srgb, #3b6ea0 22%, var(--line));
 }
 
 .stock-report-receipt-head-inner {
@@ -18468,6 +18944,22 @@ html[data-theme="light"] .low-stock-badge.is-low {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem 0.75rem;
+}
+
+@media (max-width: 1099px) {
+  .stock-report-receipt-head-inner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+
+  .stock-report-receipt-labels {
+    margin-left: 0;
+  }
+
+  .stock-report-receipt-number {
+    font-size: 0.84rem;
+  }
 }
 
 .stock-report-receipt-number {
@@ -18489,13 +18981,557 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 .stock-report-receipt-activity td:first-child {
-  padding-left: 1.25rem;
+  padding-left: 1.1rem;
+}
+
+.stock-report-receipt-activity td {
+  background: color-mix(in srgb, var(--panel-muted) 35%, transparent);
 }
 
 .stock-report-serial-cell {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-serial-cell {
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-serial-count {
+  font-size: 0.62rem;
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-serial-eye {
+  padding: 0.15rem;
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-serial-eye i {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.stock-report-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--text-strong) 12%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-muted) 75%, var(--panel));
+}
+
+.stock-report-pagination-meta {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--mist-dim);
+}
+
+.stock-report-pagination-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.stock-report-pagination-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--text-strong) 14%, var(--line));
+  border-radius: 8px;
+  background: var(--panel, #fff);
+  color: var(--text-strong);
+  font-size: 0.82rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.stock-report-pagination-link:hover {
+  border-color: color-mix(in srgb, var(--text-strong) 28%, var(--line));
+}
+
+.stock-report-pagination-current {
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+/* Timeline: readable card stack on tablet + phone */
+@media (max-width: 1099px) {
+  .stock-panel--report .stock-report-table-wrap--timeline {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    max-width: 100%;
+  }
+
+  .stock-panel--report .staff-table.stock-report-table.stock-report-table--timeline,
+  .stock-panel--report .stock-report-table--timeline,
+  .stock-panel--report .stock-report-table--timeline.stock-report-table--timeline-detail {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    border: 0 !important;
+    table-layout: auto !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline colgroup,
+  .stock-panel--report .stock-report-table--timeline thead {
+    display: none !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody.stock-report-receipt-group {
+    display: block !important;
+    width: 100%;
+    margin: 0 0 0.85rem;
+    padding: 0;
+    border: 0;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody.stock-report-receipt-group.is-multi {
+    padding: 0.55rem;
+    border: 1px solid color-mix(in srgb, #3b6ea0 22%, var(--line));
+    border-radius: 12px;
+    background: color-mix(in srgb, #3b6ea0 5%, var(--panel, #fff));
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody tr,
+  .stock-panel--report .stock-report-table--timeline tbody tr.stock-report-receipt-activity {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box;
+    gap: 0;
+    margin: 0 0 0.7rem;
+    padding: 0.85rem 0.95rem;
+    border: 1px solid color-mix(in srgb, var(--text-strong) 12%, var(--line));
+    border-radius: 12px;
+    background: var(--panel, #fff);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody tr:hover td {
+    background: transparent;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody tr.stock-report-receipt-head {
+    padding: 0.7rem 0.85rem;
+    border-color: color-mix(in srgb, #3b6ea0 24%, var(--line));
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, #3b6ea0 10%, var(--panel)) 0%,
+      color-mix(in srgb, #3b6ea0 6%, var(--panel-muted)) 100%
+    );
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody tr.stock-report-receipt-head td,
+  .stock-panel--report .stock-report-table--timeline tbody tr.stock-report-receipt-head td[colspan] {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody tr.stock-report-receipt-head td::before {
+    content: none !important;
+    display: none !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody td,
+  .stock-panel--report .stock-report-table--timeline tbody td[data-label],
+  .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) tbody td[data-label],
+  .stock-panel--report .stock-report-table--timeline-detail tbody td[data-label] {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0.45rem 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 90%, transparent) !important;
+    font-size: 0.78rem !important;
+    line-height: 1.3 !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    overflow-wrap: break-word !important;
+    word-break: normal !important;
+    hyphens: manual;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody td:last-child {
+    border-bottom: 0 !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody td::before {
+    content: attr(data-label);
+    flex: 0 0 4.75rem;
+    width: 4.75rem;
+    max-width: 34%;
+    font-weight: 700;
+    font-size: 0.56rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+    line-height: 1.35;
+    white-space: normal !important;
+    word-break: normal !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody td[data-label="When / Type"],
+  .stock-panel--report .stock-report-table--timeline tbody td[data-label="Item"] {
+    display: block !important;
+    padding-bottom: 0.55rem !important;
+    border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 12%, var(--line)) !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody td[data-label="When / Type"]::before,
+  .stock-panel--report .stock-report-table--timeline tbody td[data-label="Item"]::before {
+    content: none !important;
+    display: none !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-when-type {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.55rem;
+    width: 100%;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-when {
+    display: inline;
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-when-date,
+  .stock-panel--report .stock-report-table--timeline .stock-report-when-time {
+    display: inline;
+    font-size: inherit;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-when-time {
+    margin-left: 0.3rem;
+    color: var(--mist-dim);
+    font-weight: 550;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-type {
+    font-size: 0.58rem !important;
+    padding: 0.14rem 0.38rem !important;
+    border-radius: 999px !important;
+    white-space: nowrap;
+  }
+
+  .stock-panel--report .stock-report-table--timeline td[data-label="Item"] strong {
+    display: block;
+    font-size: 0.86rem !important;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-from {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.66rem !important;
+    color: var(--mist-dim);
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-receipt-ref,
+  .stock-panel--report .stock-report-table--timeline .stock-report-party,
+  .stock-panel--report .stock-report-table--timeline .stock-report-seller,
+  .stock-panel--report .stock-report-table--timeline .stock-report-pay,
+  .stock-panel--report .stock-report-table--timeline .stock-report-empty,
+  .stock-panel--report .stock-report-table--timeline .stock-report-trade {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    text-align: right;
+    font-size: 0.78rem !important;
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+    word-break: normal !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-receipt-ref {
+    font-size: 0.7rem !important;
+    word-break: break-all !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-trade {
+    display: inline-block;
+    width: auto;
+    margin-left: auto;
+    font-size: 0.58rem !important;
+    padding: 0.12rem 0.35rem;
+    border-radius: 999px;
+    text-align: center;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-matrix-qty {
+    margin-left: auto;
+    min-width: 1.6rem;
+    padding: 0.12rem 0.32rem;
+    font-size: 0.76rem !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-serial-cell {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.3rem;
+    margin-left: auto;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-serial-eye i {
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-serial-count {
+    font-size: 0.82rem;
+  }
+
+  .stock-report-receipt-activity td:first-child {
+    padding-left: 0 !important;
+  }
+
+  .stock-report-receipt-head-inner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+
+  .stock-report-receipt-labels {
+    margin-left: 0;
+  }
+
+  .stock-report-pagination {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .stock-report-pagination-links {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .stock-panel--report {
+    padding: 0.45rem 0.35rem 0.6rem;
+  }
+
+  .stock-panel--report .stock-panel-head h2 {
+    font-size: 1rem;
+  }
+
+  .stock-panel--report .stock-panel-head p {
+    font-size: 0.75rem;
+  }
+
+  .stock-panel--report .stock-report-filters {
+    display: grid;
+    grid-template-columns: 1fr;
+    padding: 0.45rem;
+    gap: 0.4rem;
+  }
+
+  .stock-panel--report .stock-report-field span {
+    font-size: 0.62rem;
+  }
+
+  .stock-panel--report .stock-report-field select,
+  .stock-panel--report .stock-report-field input[type="date"],
+  .stock-panel--report .stock-report-field input[type="month"],
+  .stock-panel--report .stock-report-field input[type="number"],
+  .stock-panel--report .stock-report-field input[type="search"] {
+    min-height: 1.9rem;
+    padding: 0.22rem 0.4rem;
+    font-size: 0.78rem;
+  }
+
+  .stock-panel--report .stock-report-apply {
+    width: 100%;
+    min-height: 1.9rem;
+    padding: 0.25rem 0.65rem;
+    font-size: 0.78rem;
+  }
+
+  .stock-panel--report .stock-report-filter-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody tr,
+  .stock-panel--report .stock-report-table--items tbody tr,
+  .stock-panel--report .stock-report-table--items tfoot tr,
+  .stock-panel--report .stock-report-table--items-summary tbody tr,
+  .stock-panel--report .stock-report-table--items-summary tfoot tr {
+    padding: 0.65rem 0.7rem;
+    margin-bottom: 0.55rem;
+    border-radius: 10px;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody td,
+  .stock-panel--report .stock-report-table--items tbody td,
+  .stock-panel--report .stock-report-table--items tfoot td,
+  .stock-panel--report .stock-report-table--items-summary tbody td,
+  .stock-panel--report .stock-report-table--items-summary tfoot td {
+    padding: 0.28rem 0 !important;
+    font-size: 0.72rem !important;
+    line-height: 1.25 !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody td::before,
+  .stock-panel--report .stock-report-table--items tbody td::before,
+  .stock-panel--report .stock-report-table--items tfoot td::before,
+  .stock-panel--report .stock-report-table--items-summary tbody td::before,
+  .stock-panel--report .stock-report-table--items-summary tfoot td::before {
+    flex-basis: 4.25rem;
+    width: 4.25rem;
+    font-size: 0.52rem;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-when,
+  .stock-panel--report .stock-report-table--timeline td[data-label="Item"] strong,
+  .stock-panel--report .stock-report-table--items td[data-label="Item"] strong,
+  .stock-panel--report .stock-report-table--items-summary td[data-label="Item"] strong {
+    font-size: 0.8rem !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-from,
+  .stock-panel--report .stock-report-table--items .stock-report-from,
+  .stock-panel--report .stock-report-table--items-summary .stock-report-from {
+    font-size: 0.6rem !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-receipt-ref,
+  .stock-panel--report .stock-report-table--timeline .stock-report-party,
+  .stock-panel--report .stock-report-table--timeline .stock-report-seller,
+  .stock-panel--report .stock-report-table--timeline .stock-report-pay,
+  .stock-panel--report .stock-report-table--timeline .stock-report-empty {
+    font-size: 0.72rem !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-report-type,
+  .stock-panel--report .stock-report-table--timeline .stock-report-trade {
+    font-size: 0.52rem !important;
+    padding: 0.1rem 0.3rem !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline .stock-matrix-qty,
+  .stock-panel--report .stock-report-table--items .stock-matrix-qty,
+  .stock-panel--report .stock-report-table--items-summary .stock-matrix-qty {
+    min-width: 1.45rem;
+    padding: 0.08rem 0.28rem;
+    font-size: 0.7rem !important;
+  }
+
+  .stock-report-receipt-number {
+    font-size: 0.78rem !important;
+  }
+
+  .stock-report-receipt-meta,
+  .stock-report-pagination-meta,
+  .stock-report-pagination-current,
+  .stock-report-pagination-link {
+    font-size: 0.7rem !important;
+  }
+
+  .stock-report-pagination-link {
+    min-height: 1.75rem;
+    padding: 0.18rem 0.55rem;
+  }
+}
+
+@media (min-width: 1100px) and (max-width: 1360px) {
+  .stock-panel--report .stock-report-table--timeline thead th {
+    font-size: 0.54rem;
+    padding: 0.35rem 0.2rem;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tbody td {
+    font-size: 0.7rem;
+    padding: 0.38rem 0.22rem;
+  }
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-type {
+  padding: 0.12rem 0.32rem;
+  border-radius: 4px;
+  font-size: 0.58rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1.15;
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-matrix-qty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-matrix-qty.is-empty {
+  opacity: 0.45;
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-qty--in:not(.is-empty) {
+  background: rgba(34, 160, 107, 0.14);
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-qty--out:not(.is-empty),
+.stock-panel--report .stock-report-table--timeline .stock-report-qty--transfer-out:not(.is-empty) {
+  background: rgba(196, 74, 58, 0.12);
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-qty--transfer-in:not(.is-empty),
+.stock-panel--report .stock-report-table--timeline .stock-report-qty--request:not(.is-empty) {
+  background: rgba(217, 149, 31, 0.16);
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-qty--sale:not(.is-empty) {
+  background: rgba(59, 110, 160, 0.14);
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-qty--return:not(.is-empty) {
+  background: rgba(124, 92, 191, 0.14);
+}
+
+.stock-panel--report .stock-report-filters {
+  border: 1px solid color-mix(in srgb, var(--text-strong) 8%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-muted) 80%, var(--panel));
 }
 
 .stock-report-serial-eye {
@@ -33194,6 +34230,10 @@ a.wa-act-toggle:focus-visible {
   margin-bottom: 0.85rem;
 }
 
+.td-tabs--three {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
 .td-tab,
 .td-method {
   position: relative;
@@ -33276,10 +34316,62 @@ a.wa-act-toggle:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.td-field input:focus {
+.td-field select {
+  width: 100%;
+  min-width: 0;
+  height: 2.45rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.td-field input:focus,
+.td-field select:focus {
   outline: none;
   border-color: color-mix(in srgb, var(--teal) 55%, var(--line));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 14%, transparent);
+}
+
+.td-field-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--mist-dim);
+}
+
+.td-return-serials {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.td-serial-list {
+  display: grid;
+  gap: 0.3rem;
+  max-height: 9rem;
+  overflow: auto;
+}
+
+.td-serial {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel-muted, var(--surface)) 55%, var(--surface));
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.td-serial input {
+  margin: 0;
 }
 
 .td-suggest {
@@ -33439,6 +34531,10 @@ a.wa-act-toggle:focus-visible {
 
   .td-tabs,
   .td-methods {
+    grid-template-columns: 1fr;
+  }
+
+  .td-tabs--three {
     grid-template-columns: 1fr;
   }
 }

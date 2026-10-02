@@ -17,6 +17,8 @@ const PING_INTERVAL_MS = 45_000;
 const PING_TIMEOUT_MS = 8_000;
 /** Minimum time between probe attempts (avoids burst failures). */
 const MIN_PING_GAP_MS = 5_000;
+/** Extra attempts while runserver reloads (typically ~6–10s unreachable). */
+const PING_RETRY_DELAYS_MS = [2_000, 4_000];
 /** Consecutive failures before we consider marking offline (with duration). */
 const FAILED_PINGS_FOR_OFFLINE = 5;
 /** Must be unreachable at least this long (and enough fails) before "offline". */
@@ -134,6 +136,37 @@ function markOfflineCandidate() {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function shouldIgnorePingError(err) {
+  if (document.visibilityState === "hidden" && err?.name === "AbortError") {
+    return true;
+  }
+  const recentlyOk =
+    Number.isFinite(lastSuccessAt) &&
+    Date.now() - lastSuccessAt < RECENT_OK_GRACE_MS;
+  if (!recentlyOk) return false;
+  if (err?.name === "AbortError") return true;
+  // Transient TCP/refused errors during dev-server reload (not a confirmed outage).
+  if (err?.name === "TypeError") return true;
+  return false;
+}
+
+async function pingOnce(signal) {
+  const response = await fetch("/employees/api/ping/", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error(`Ping failed (HTTP ${response.status})`);
+  const data = await response.json().catch(() => ({}));
+  if (data?.ok === false) throw new Error("Ping was rejected");
+}
+
 async function ping() {
   if (pingInFlight) return pingInFlight;
 
@@ -143,41 +176,40 @@ async function ping() {
   }
 
   const sequence = ++pingSequence;
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
 
-  const run = fetch("/employees/api/ping/", {
-    method: "GET",
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-    signal: controller.signal,
-  })
-    .then((response) => {
-      if (!response.ok) throw new Error(`Ping failed (HTTP ${response.status})`);
-      return response.json().catch(() => ({}));
-    })
-    .then((data) => {
-      if (data?.ok === false) throw new Error("Ping was rejected");
+  const run = (async () => {
+    let lastErr = null;
+    const attempts = 1 + PING_RETRY_DELAYS_MS.length;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (sequence !== pingSequence) return;
-      markOnline();
-    })
-    .catch((err) => {
-      if (sequence !== pingSequence) return;
-      if (document.visibilityState === "hidden" && err?.name === "AbortError") {
-        return;
+      if (attempt > 0) {
+        await sleep(PING_RETRY_DELAYS_MS[attempt - 1]);
+        if (sequence !== pingSequence) return;
       }
-      const recentlyOk =
-        Number.isFinite(lastSuccessAt) &&
-        Date.now() - lastSuccessAt < RECENT_OK_GRACE_MS;
-      if (recentlyOk && err?.name === "AbortError") return;
-      markOfflineCandidate();
-    })
-    .finally(() => {
-      window.clearTimeout(timeout);
-      lastPingEndedAt = Date.now();
-      if (sequence === pingSequence) pingInFlight = null;
-    });
+
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
+      try {
+        await pingOnce(controller.signal);
+        window.clearTimeout(timeout);
+        if (sequence !== pingSequence) return;
+        markOnline();
+        return;
+      } catch (err) {
+        window.clearTimeout(timeout);
+        lastErr = err;
+        if (shouldIgnorePingError(err)) return;
+      }
+    }
+
+    if (sequence !== pingSequence) return;
+    if (lastErr && shouldIgnorePingError(lastErr)) return;
+    markOfflineCandidate();
+  })().finally(() => {
+    lastPingEndedAt = Date.now();
+    if (sequence === pingSequence) pingInFlight = null;
+  });
 
   pingInFlight = run;
   return run;

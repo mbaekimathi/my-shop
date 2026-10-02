@@ -1828,6 +1828,11 @@ POS_SETTING_GROUPS = (
         "toggles": (("enable_discount", "Discount"),),
     },
     {
+        "title": "Stock",
+        "summary": "",
+        "toggles": (("enable_stock_tracking", "Stock quantity tracking"),),
+    },
+    {
         "title": "Tax",
         "summary": "",
         "toggles": (("enable_tax", "Tax"),),

@@ -191,3 +191,39 @@ class TradeOutCheckoutTests(TestCase):
         self.assertEqual(receipt.kind, ShopReceiptKind.TRADE_OUT)
         self.assertEqual(receipt.status, ShopReceiptStatus.CONFIRMED)
         self.assertEqual(trade_balance_due(receipt), Decimal("0.00"))
+
+    def test_return_restocks_and_creates_customer_return_movement(self):
+        from shops.trade_settlement import record_trade_return
+
+        receipt = self._checkout_trade()["receipt"]
+        line = receipt.lines.get()
+        result = record_trade_return(
+            receipt,
+            lines=[{"line_id": line.pk, "qty": 1}],
+            actor=self.profile,
+        )
+        receipt.refresh_from_db()
+        line.refresh_from_db()
+        self.assertEqual(result["returned_units"], 1)
+        self.assertEqual(line.returned_quantity, 1)
+        self.assertEqual(line.remaining_quantity, 1)
+        self.assertEqual(receipt.total, Decimal("1000.00"))
+        self.assertEqual(trade_balance_due(receipt), Decimal("1000.00"))
+
+        stock = ShopStock.objects.get(shop=self.shop, item=self.item)
+        self.assertEqual(stock.quantity, 9)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.stock, 9)
+
+        movement = StockMovement.objects.filter(
+            shop=self.shop, entry_source=StockEntrySource.CUSTOMER_RETURN
+        ).first()
+        self.assertIsNotNone(movement)
+        self.assertIn("Trade return", movement.notes)
+        self.assertEqual(movement.lines.get().quantity, 1)
+        self.assertTrue(
+            any(
+                (event.get("type") or "").lower() == "return"
+                for event in (receipt.trade_settlements or [])
+            )
+        )

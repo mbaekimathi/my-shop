@@ -64,6 +64,7 @@ POS_SETTING_FIELDS = {
     "enable_mpesa",
     "enable_cash_mpesa",
     "enable_discount",
+    "enable_stock_tracking",
     "enable_tax",
     "compulsory_print_on_sale",
     "enable_print_bluetooth",
@@ -150,7 +151,7 @@ RECEIPT_FORMAT_RE = re.compile(r"^[A-Za-z0-9]{1,8}$")
 RECEIPT_QR_CONTENTS = ("website", "receipt_details")
 WEBSITE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 
-POS_SETTINGS_CACHE_KEY = "company_pos_settings:v1"
+POS_SETTINGS_CACHE_KEY = "company_pos_settings:v2"
 SHOP_POS_SETTINGS_CACHE_KEY = "shop_pos_settings:v1:{shop_id}"
 POS_SETTINGS_CACHE_TTL = 300
 DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v2"
@@ -2954,6 +2955,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_mpesa": row.enable_mpesa,
         "enable_cash_mpesa": row.enable_cash_mpesa,
         "enable_discount": row.enable_discount,
+        "enable_stock_tracking": bool(getattr(row, "enable_stock_tracking", True)),
         "enable_tax": row.enable_tax,
         "tax_percent": str(Decimal(row.tax_percent or 0).quantize(Decimal("0.01"))),
         "effective_tax_percent": str(tax_percent.quantize(Decimal("0.01"))),
@@ -4250,7 +4252,12 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             if stock is None:
                 errors.append(f"Item #{item_id} is unavailable.")
                 continue
-            if kind != ShopReceiptKind.QUOTATION and stock.quantity < qty:
+            track_stock = bool(getattr(pos_settings, "enable_stock_tracking", True))
+            if (
+                track_stock
+                and kind != ShopReceiptKind.QUOTATION
+                and stock.quantity < qty
+            ):
                 errors.append(
                     f"Insufficient stock for “{item.name}” "
                     f"(available {stock.quantity}, requested {qty})."
@@ -4521,10 +4528,14 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             stocks_to_update = []
             items_to_update = []
             serials_to_update = []
+            track_stock = bool(getattr(pos_settings, "enable_stock_tracking", True))
             for row in prepared:
                 stock = row["stock"]
                 item = row["item"]
-                stock.quantity -= row["qty"]
+                if track_stock:
+                    stock.quantity -= row["qty"]
+                else:
+                    stock.quantity = max(0, int(stock.quantity) - row["qty"])
                 stock.updated_at = now
                 item.stock = max(0, item.stock - row["qty"])
                 item.updated_at = now
@@ -6262,12 +6273,20 @@ def _create_customer_return_stock_movement(
     if not prepared:
         return None
 
+    kind = getattr(receipt, "kind", "") or ""
+    if kind == ShopReceiptKind.TRADE_OUT or getattr(receipt, "settled_from_trade", False):
+        movement_notes = f"Trade return on {receipt.receipt_number}"
+        line_note_prefix = "Trade return on"
+    else:
+        movement_notes = f"Customer return on {receipt.receipt_number}"
+        line_note_prefix = "Return on"
+
     movement = StockMovement.objects.create(
         movement_type=StockMovementType.IN,
         entry_source=StockEntrySource.CUSTOMER_RETURN,
         shop=shop,
         created_by=actor,
-        notes=f"Customer return on {receipt.receipt_number}",
+        notes=movement_notes,
         supplier_notified=True,
     )
     # Stamp created_at to the return moment (auto_now_add otherwise uses DB now).
@@ -6287,7 +6306,7 @@ def _create_customer_return_stock_movement(
             quantity=qty,
             buying_price=unit_cost,
             unit_cost=unit_cost,
-            note=f"Return on {receipt.receipt_number}",
+            note=f"{line_note_prefix} {receipt.receipt_number}",
             serial_numbers=serials,
         )
     return movement
@@ -6638,7 +6657,11 @@ def return_shop_receipt_items(
             else:
                 cash_amount = Decimal("0.00")
                 mpesa_amount = Decimal("0.00")
-        elif receipt.kind != ShopReceiptKind.CREDIT:
+        elif receipt.kind not in {
+            ShopReceiptKind.CREDIT,
+            ShopReceiptKind.TRADE_OUT,
+        }:
+            # Credits and open trade-outs keep existing till splits; others reset.
             cash_amount = Decimal("0.00")
             mpesa_amount = Decimal("0.00")
 

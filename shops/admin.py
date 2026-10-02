@@ -53,6 +53,7 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "enable_mpesa",
         "enable_cash_mpesa",
         "enable_discount",
+        "enable_stock_tracking",
         "enable_tax",
         "tax_percent",
         "compulsory_print_on_sale",

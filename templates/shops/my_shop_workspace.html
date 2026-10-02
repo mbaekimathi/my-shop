@@ -33,6 +33,7 @@
   data-pos-payments="{{ pos_flags.payment_methods|join:',' }}"
   data-pos-cash-sale="{% if pos_flags.cash_sale_checkout %}1{% else %}0{% endif %}"
   data-pos-discount="{% if pos_settings.enable_discount %}1{% else %}0{% endif %}"
+  data-pos-stock-tracking="{% if pos_settings.enable_stock_tracking %}1{% else %}0{% endif %}"
   data-pos-tax="{% if pos_settings.enable_tax %}1{% else %}0{% endif %}"
   data-pos-tax-percent="{{ pos_flags.effective_tax_percent }}"
   data-pos-receipt-width="{{ pos_flags.receipt_paper_width }}"
@@ -686,7 +687,7 @@
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=71"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=72"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=38"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=matrix54"></script>

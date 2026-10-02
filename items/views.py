@@ -968,6 +968,20 @@ def _parse_id_list(raw_values):
     return ids
 
 
+# SQLite (and large IN lists generally) slows hard once item filters grow.
+# Prefer shop/date filters in SQL and membership checks in Python.
+_SQL_ITEM_IN_LIMIT = 64
+
+
+def _item_ids_for_sql(item_ids):
+    """Return item_ids for SQL IN, or None to skip IN and filter in Python."""
+    if not item_ids:
+        return []
+    if len(item_ids) <= _SQL_ITEM_IN_LIMIT:
+        return list(item_ids)
+    return None
+
+
 def _empty_item_shop_qty(item_ids, shop_ids, keys):
     return {
         (item_id, shop_id): {key: 0 for key in keys}
@@ -993,22 +1007,23 @@ def _movement_qty_by_item_shop(item_ids, shop_ids, start, end):
     if not item_ids or not shop_ids or start >= end:
         return totals
 
-    rows = (
-        StockMovementLine.objects.filter(
-            item_id__in=item_ids,
-            movement__shop_id__in=shop_ids,
-            movement__created_at__gte=start,
-            movement__created_at__lt=end,
-            movement__movement_type__in=[
-                StockMovementType.IN,
-                StockMovementType.OUT,
-            ],
-        )
-        # Customer returns are counted in stock_return, not stock_in.
-        .exclude(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
-        .values("item_id", "movement__shop_id", "movement__movement_type")
-        .annotate(total=Sum("quantity"))
+    sql_item_ids = _item_ids_for_sql(item_ids)
+    qs = StockMovementLine.objects.filter(
+        movement__shop_id__in=shop_ids,
+        movement__created_at__gte=start,
+        movement__created_at__lt=end,
+        movement__movement_type__in=[
+            StockMovementType.IN,
+            StockMovementType.OUT,
+        ],
     )
+    # Customer returns are counted in stock_return, not stock_in.
+    qs = qs.exclude(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
+    if sql_item_ids is not None:
+        qs = qs.filter(item_id__in=sql_item_ids)
+    rows = qs.values(
+        "item_id", "movement__shop_id", "movement__movement_type"
+    ).annotate(total=Sum("quantity"))
     for row in rows:
         _add_item_shop_qty(
             totals,
@@ -1035,14 +1050,16 @@ def _transfer_qty_by_item_shop(item_ids, shop_ids, start, end):
     if not item_ids or not shop_ids or start >= end:
         return totals
 
+    sql_item_ids = _item_ids_for_sql(item_ids)
     base = StockMovementLine.objects.filter(
-        item_id__in=item_ids,
         movement__movement_type=StockMovementType.REQUEST,
         movement__request_status=StockRequestStatus.FULFILLED,
         movement__responded_at__gte=start,
         movement__responded_at__lt=end,
         quantity__gt=0,
     )
+    if sql_item_ids is not None:
+        base = base.filter(item_id__in=sql_item_ids)
 
     in_rows = (
         base.filter(movement__shop_id__in=shop_ids)
@@ -1078,13 +1095,15 @@ def _current_stock_by_item(item_ids, shop_ids):
     totals = {item_id: 0 for item_id in item_ids}
     if not item_ids or not shop_ids:
         return totals
-    rows = (
-        ShopStock.objects.filter(item_id__in=item_ids, shop_id__in=shop_ids)
-        .values("item_id")
-        .annotate(total=Sum("quantity"))
-    )
+    sql_item_ids = _item_ids_for_sql(item_ids)
+    qs = ShopStock.objects.filter(shop_id__in=shop_ids)
+    if sql_item_ids is not None:
+        qs = qs.filter(item_id__in=sql_item_ids)
+    rows = qs.values("item_id").annotate(total=Sum("quantity"))
     for row in rows:
-        totals[row["item_id"]] = int(row["total"] or 0)
+        item_id = row["item_id"]
+        if item_id in totals:
+            totals[item_id] = int(row["total"] or 0)
     return totals
 
 
@@ -1096,9 +1115,12 @@ def _current_stock_by_item_shop(item_ids, shop_ids):
     totals = {(item_id, shop_id): 0 for item_id in item_ids for shop_id in shop_ids}
     if not item_ids or not shop_ids:
         return totals
+    sql_item_ids = _item_ids_for_sql(item_ids)
+    qs = ShopStock.objects.filter(shop_id__in=shop_ids)
+    if sql_item_ids is not None:
+        qs = qs.filter(item_id__in=sql_item_ids)
     rows = (
-        ShopStock.objects.filter(item_id__in=item_ids, shop_id__in=shop_ids)
-        .order_by()
+        qs.order_by()
         .values("item_id", "shop_id")
         .annotate(total=Sum("quantity"))
     )
@@ -1371,17 +1393,17 @@ def _receipt_sale_qty_by_item_shop(item_ids, shop_ids, start, end):
     totals = {(item_id, shop_id): 0 for item_id in item_ids for shop_id in shop_ids}
     if not item_ids or not shop_ids or start >= end:
         return totals
-    rows = (
-        ShopReceiptLine.objects.filter(
-            item_id__in=item_ids,
-            receipt__shop_id__in=shop_ids,
-            receipt__created_at__gte=start,
-            receipt__created_at__lt=end,
-            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
-        )
-        .values("item_id", "receipt__shop_id")
-        .annotate(total=Sum("quantity"))
+    sql_item_ids = _item_ids_for_sql(item_ids)
+    qs = ShopReceiptLine.objects.filter(
+        item_id__isnull=False,
+        receipt__shop_id__in=shop_ids,
+        receipt__created_at__gte=start,
+        receipt__created_at__lt=end,
+        receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
     )
+    if sql_item_ids is not None:
+        qs = qs.filter(item_id__in=sql_item_ids)
+    rows = qs.values("item_id", "receipt__shop_id").annotate(total=Sum("quantity"))
     for row in rows:
         key = (row["item_id"], row["receipt__shop_id"])
         if key in totals:
@@ -1402,6 +1424,73 @@ def _parse_return_batch_at(raw):
     return parse_datetime(text)
 
 
+def _trade_qty_by_item_shop(item_ids, shop_ids, start, end):
+    """
+    Trade-tagged units by (item, shop) for a window.
+
+    Includes trade out / exchange stock movements, trade-tagged customer returns,
+    and sales converted from cleared trade-out receipts.
+    """
+    from django.db.models import Q, Sum
+
+    from shops.models import ShopReceiptKind, ShopReceiptLine
+
+    from .models import (
+        StockEntrySource,
+        StockMovementLine,
+        StockOutReason,
+    )
+
+    totals = {(item_id, shop_id): 0 for item_id in item_ids for shop_id in shop_ids}
+    if not item_ids or not shop_ids or start >= end:
+        return totals
+
+    sql_item_ids = _item_ids_for_sql(item_ids)
+    trade_filter = (
+        Q(movement__entry_source=StockEntrySource.TRADE_OUT)
+        | Q(movement__entry_source=StockEntrySource.TRADE_EXCHANGE)
+        | Q(reason=StockOutReason.TRADE_OUT)
+        | (
+            Q(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
+            & (
+                Q(note__icontains="trade")
+                | Q(movement__notes__icontains="trade")
+            )
+        )
+    )
+    line_qs = StockMovementLine.objects.filter(
+        movement__shop_id__in=shop_ids,
+        movement__created_at__gte=start,
+        movement__created_at__lt=end,
+    ).filter(trade_filter)
+    if sql_item_ids is not None:
+        line_qs = line_qs.filter(item_id__in=sql_item_ids)
+    for row in line_qs.values("item_id", "movement__shop_id").annotate(
+        total=Sum("quantity")
+    ):
+        key = (row["item_id"], row["movement__shop_id"])
+        if key in totals:
+            totals[key] += int(row["total"] or 0)
+
+    receipt_qs = ShopReceiptLine.objects.filter(
+        item_id__isnull=False,
+        receipt__shop_id__in=shop_ids,
+        receipt__created_at__gte=start,
+        receipt__created_at__lt=end,
+        receipt__settled_from_trade=True,
+        receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+    )
+    if sql_item_ids is not None:
+        receipt_qs = receipt_qs.filter(item_id__in=sql_item_ids)
+    for row in receipt_qs.values("item_id", "receipt__shop_id").annotate(
+        total=Sum("quantity")
+    ):
+        key = (row["item_id"], row["receipt__shop_id"])
+        if key in totals:
+            totals[key] += int(row["total"] or 0)
+    return totals
+
+
 def _return_qty_by_item_shop(item_ids, shop_ids, start, end):
     """
     Customer return quantities by (item, shop) for a window.
@@ -1409,16 +1498,27 @@ def _return_qty_by_item_shop(item_ids, shop_ids, start, end):
     Prefers per-return batches (accurate when a receipt is returned across days).
     Falls back to last_returned_at + full returned_quantity for legacy rows.
     """
+    from django.db.models import Q
+
     from shops.models import ShopReceiptLine
 
     totals = {(item_id, shop_id): 0 for item_id in item_ids for shop_id in shop_ids}
     if not item_ids or not shop_ids or start >= end:
         return totals
-    rows = ShopReceiptLine.objects.filter(
-        item_id__in=item_ids,
+    sql_item_ids = _item_ids_for_sql(item_ids)
+    # Bound the scan: legacy rows by last_returned_at, plus any row that has
+    # return_batches (batch timestamps are checked in Python).
+    qs = ShopReceiptLine.objects.filter(
+        item_id__isnull=False,
         receipt__shop_id__in=shop_ids,
         returned_quantity__gt=0,
-    ).values(
+    ).filter(
+        Q(receipt__last_returned_at__gte=start, receipt__last_returned_at__lt=end)
+        | ~Q(return_batches=[])
+    )
+    if sql_item_ids is not None:
+        qs = qs.filter(item_id__in=sql_item_ids)
+    rows = qs.values(
         "item_id",
         "receipt__shop_id",
         "returned_quantity",
@@ -1559,6 +1659,60 @@ def _item_report_closing_starting(
     return starting, closing
 
 
+def _paginate_item_report_groups(rows, page, page_size, *, group_by_shop=False):
+    """
+    Paginate report rows by item group so shop lines for one item stay together.
+
+    Returns (page_rows, total_groups, total_pages, page).
+    """
+    if not rows:
+        return [], 0, 1, 1
+
+    if group_by_shop:
+        groups = []
+        current = []
+        for row in rows:
+            if row.get("is_item_start") and current:
+                groups.append(current)
+                current = [row]
+            else:
+                current.append(row)
+        if current:
+            groups.append(current)
+    else:
+        groups = [[row] for row in rows]
+
+    total_groups = len(groups)
+    total_pages = max(1, (total_groups + page_size - 1) // page_size)
+    page = max(1, min(int(page or 1), total_pages))
+    start = (page - 1) * page_size
+    page_rows = []
+    for group in groups[start : start + page_size]:
+        page_rows.extend(group)
+    return page_rows, total_groups, total_pages, page
+
+
+def _report_page_urls(request, page, total_pages):
+    """Build previous/next querystrings for report pagination."""
+    if total_pages <= 1:
+        return "", ""
+    from urllib.parse import urlencode
+
+    base_params = []
+    for key, values in request.GET.lists():
+        if key == "page":
+            continue
+        for value in values:
+            base_params.append((key, value))
+    prev_url = ""
+    next_url = ""
+    if page > 1:
+        prev_url = "?" + urlencode(base_params + [("page", str(page - 1))])
+    if page < total_pages:
+        next_url = "?" + urlencode(base_params + [("page", str(page + 1))])
+    return prev_url, next_url
+
+
 def _build_item_report_rows(
     items,
     shop_ids,
@@ -1589,28 +1743,42 @@ def _build_item_report_rows(
 
     now = timezone.now()
     far_future = now + timedelta(days=3650)
+    # When the report window ends at/after "now", there is no activity after
+    # day_end yet — skip the expensive after_* queries entirely.
+    need_after = day_end < now
 
     current_shop = _current_stock_by_item_shop(item_ids, shop_ids)
     period_moves = _movement_qty_by_item_shop(item_ids, shop_ids, day_start, day_end)
-    after_moves = _movement_qty_by_item_shop(item_ids, shop_ids, day_end, far_future)
     period_transfers = _transfer_qty_by_item_shop(
         item_ids, shop_ids, day_start, day_end
-    )
-    after_transfers = _transfer_qty_by_item_shop(
-        item_ids, shop_ids, day_end, far_future
     )
     period_sales_shop = _receipt_sale_qty_by_item_shop(
         item_ids, shop_ids, day_start, day_end
     )
-    after_sales_shop = _receipt_sale_qty_by_item_shop(
-        item_ids, shop_ids, day_end, far_future
-    )
     period_returns_shop = _return_qty_by_item_shop(
         item_ids, shop_ids, day_start, day_end
     )
-    after_returns_shop = _return_qty_by_item_shop(
-        item_ids, shop_ids, day_end, far_future
+    period_trade_shop = _trade_qty_by_item_shop(
+        item_ids, shop_ids, day_start, day_end
     )
+    if need_after:
+        after_moves = _movement_qty_by_item_shop(
+            item_ids, shop_ids, day_end, far_future
+        )
+        after_transfers = _transfer_qty_by_item_shop(
+            item_ids, shop_ids, day_end, far_future
+        )
+        after_sales_shop = _receipt_sale_qty_by_item_shop(
+            item_ids, shop_ids, day_end, far_future
+        )
+        after_returns_shop = _return_qty_by_item_shop(
+            item_ids, shop_ids, day_end, far_future
+        )
+    else:
+        after_moves = {}
+        after_transfers = {}
+        after_sales_shop = {}
+        after_returns_shop = {}
 
     if shops_by_id is None and group_by_shop and shop_ids:
         from shops.models import Shop
@@ -1631,6 +1799,7 @@ def _build_item_report_rows(
         stock_transfer_out,
         stock_sale,
         stock_return,
+        stock_trade,
         closing,
     ):
         sale_qty = int(stock_sale or 0)
@@ -1646,6 +1815,7 @@ def _build_item_report_rows(
             "stock_transfer_in": stock_transfer_in,
             "stock_out": stock_out,
             "stock_transfer_out": stock_transfer_out,
+            "stock_trade": int(stock_trade or 0),
             "stock_sale": sale_qty,
             "stock_return": return_qty,
             "net_sale": max(0, sale_qty - return_qty),
@@ -1676,6 +1846,7 @@ def _build_item_report_rows(
                 stock_transfer_out = transfer["out"]
                 stock_sale = period_sales_shop.get(key) or 0
                 stock_return = period_returns_shop.get(key) or 0
+                stock_trade = period_trade_shop.get(key) or 0
                 starting, closing = _item_report_closing_starting(
                     current=current_shop.get(key) or 0,
                     after_in=after["in"],
@@ -1700,6 +1871,7 @@ def _build_item_report_rows(
                     or stock_transfer_in
                     or stock_transfer_out
                     or stock_return
+                    or stock_trade
                 ):
                     has_data = True
                 shop_rows.append(
@@ -1713,6 +1885,7 @@ def _build_item_report_rows(
                         stock_transfer_out=stock_transfer_out,
                         stock_sale=stock_sale,
                         stock_return=stock_return,
+                        stock_trade=stock_trade,
                         closing=closing,
                     )
                 )
@@ -1729,6 +1902,7 @@ def _build_item_report_rows(
                 stock_transfer_out=sum(row["stock_transfer_out"] for row in shop_rows),
                 stock_sale=sum(row["stock_sale"] for row in shop_rows),
                 stock_return=sum(row["stock_return"] for row in shop_rows),
+                stock_trade=sum(row["stock_trade"] for row in shop_rows),
                 closing=sum(row["closing_stock"] for row in shop_rows),
             )
             total["shop_name"] = "Total"
@@ -1771,12 +1945,19 @@ def _build_item_report_rows(
             {k: {"qty": v} for k, v in after_returns_shop.items()}, item_ids, ("qty",)
         ).items()
     }
+    period_trade_item = {
+        item_id: qty["qty"]
+        for item_id, qty in _collapse_item_shop_qty(
+            {k: {"qty": v} for k, v in period_trade_shop.items()}, item_ids, ("qty",)
+        ).items()
+    }
     pos_period = _pos_sale_qty_by_item(items, shop_ids, day_start, day_end)
-    pos_after = _pos_sale_qty_by_item(items, shop_ids, day_end, far_future)
     for item_id, quantity in pos_period.items():
         period_sale_item[item_id] = period_sale_item.get(item_id, 0) + quantity
-    for item_id, quantity in pos_after.items():
-        after_sale_item[item_id] = after_sale_item.get(item_id, 0) + quantity
+    if need_after:
+        pos_after = _pos_sale_qty_by_item(items, shop_ids, day_end, far_future)
+        for item_id, quantity in pos_after.items():
+            after_sale_item[item_id] = after_sale_item.get(item_id, 0) + quantity
 
     for item in items:
         period = period_move_item[item.pk]
@@ -1789,6 +1970,7 @@ def _build_item_report_rows(
         stock_transfer_out = transfer["out"]
         stock_sale = period_sale_item.get(item.pk, 0)
         stock_return = period_return_item.get(item.pk, 0)
+        stock_trade = period_trade_item.get(item.pk, 0)
         starting, closing = _item_report_closing_starting(
             current=current[item.pk]["qty"],
             after_in=after["in"],
@@ -1813,6 +1995,7 @@ def _build_item_report_rows(
             or stock_transfer_in
             or stock_transfer_out
             or stock_return
+            or stock_trade
         ):
             continue
         rows.append(
@@ -1825,6 +2008,7 @@ def _build_item_report_rows(
                 stock_transfer_out=stock_transfer_out,
                 stock_sale=stock_sale,
                 stock_return=stock_return,
+                stock_trade=stock_trade,
                 closing=closing,
             )
         )
@@ -1895,6 +2079,58 @@ def _format_transfer_by_label(*, requested_by, received_by):
     return " · ".join(parts) if parts else "—"
 
 
+def _timeline_trade_label(*, movement=None, line=None, receipt=None, note=""):
+    """Human label for trade-related stock/receipt activity, else empty."""
+    from .models import StockEntrySource, StockOutReason
+
+    source = (getattr(movement, "entry_source", None) or "").strip()
+    if source == StockEntrySource.TRADE_OUT:
+        return "Trade out"
+    if source == StockEntrySource.TRADE_EXCHANGE:
+        return "Trade exchange"
+    if source == StockEntrySource.CUSTOMER_RETURN:
+        text = (note or getattr(line, "note", None) or getattr(movement, "notes", None) or "")
+        if "trade return" in text.lower() or "trade" in text.lower():
+            return "Trade return"
+
+    reason = (getattr(line, "reason", None) or "").strip()
+    if reason == StockOutReason.TRADE_OUT:
+        return "Trade out"
+
+    if receipt is not None:
+        from shops.models import ShopReceiptKind
+
+        kind = getattr(receipt, "kind", None) or ""
+        if kind == ShopReceiptKind.TRADE_OUT:
+            return "Trade out"
+        if getattr(receipt, "settled_from_trade", False):
+            return "Trade sale"
+
+    text = (note or "").strip().lower()
+    if text.startswith("trade out"):
+        return "Trade out"
+    if "trade return" in text:
+        return "Trade return"
+    if "trade exchange" in text:
+        return "Trade exchange"
+    return ""
+
+
+def _trade_receipt_number_from_text(text):
+    """Pull receipt number from trade movement notes when present."""
+    note = (text or "").strip()
+    for prefix in (
+        "Trade out · ",
+        "Trade out ",
+        "Trade return on ",
+        "Trade exchange · ",
+        "Trade exchange ",
+    ):
+        if note.startswith(prefix):
+            return note[len(prefix) :].strip()
+    return ""
+
+
 def _timeline_event_from_movement_line(
     *,
     movement,
@@ -1919,6 +2155,14 @@ def _timeline_event_from_movement_line(
             received_by=received_by,
         )
 
+    note = line.note or ""
+    trade_label = _timeline_trade_label(
+        movement=movement, line=line, note=note or movement.notes or ""
+    )
+    receipt_number = _trade_receipt_number_from_text(note) or _trade_receipt_number_from_text(
+        movement.notes or ""
+    )
+
     return {
         "happened_at": happened_at,
         "event_type": event_type,
@@ -1940,14 +2184,15 @@ def _timeline_event_from_movement_line(
         "payment_status": (
             line.get_payment_status_display() if line.payment_status else ""
         ),
-        "note": line.note or "",
+        "note": note,
         "by": by_label,
         "requested_by": requested_by,
         "received_by": received_by,
         "serial_numbers": _movement_serial_numbers(line.serial_numbers),
         "movement_id": movement.pk,
-        "receipt_number": "",
+        "receipt_number": receipt_number,
         "receipt_status": "",
+        "trade": trade_label,
         "counts_toward_transfer": counts_toward_transfer,
         "transfer_direction": transfer_direction,
         **parties,
@@ -1963,11 +2208,15 @@ def _build_movement_timeline(
     selected_categories,
     selected_item_ids,
     report_items,
+    event_filter="all",
 ):
     """
     Chronological stock events for the filtered period (oldest first).
     Stock in, stock out, and request come from movements; sales are separate events.
     Accepted stock requests also appear when stock moves (responded_at), not only when submitted.
+
+    event_filter narrows which data sources are queried so filtered views avoid
+    loading unrelated sales/returns/transfers for the whole period.
     """
     from django.db.models import Prefetch, Q
 
@@ -1988,6 +2237,15 @@ def _build_movement_timeline(
     if not shop_ids:
         return events, units_in, units_out, units_request, units_sale
 
+    event_filter = _parse_movement_event_filter(event_filter)
+    # Which sources this filter needs from the database.
+    need_stock_movements = event_filter in ("all", "in", "out", "return")
+    need_fulfilled_transfers = event_filter in ("all", "transfer")
+    # Sale/return filters also need the companion type for receipt grouping.
+    need_receipt_sales = event_filter in ("all", "sale", "return")
+    need_legacy_returns = event_filter in ("all", "sale", "return")
+    need_pos_sales = event_filter in ("all", "sale")
+
     line_qs = StockMovementLine.objects.select_related("item").order_by("id")
     movement_filter = Q(
         created_at__gte=day_start,
@@ -2002,435 +2260,500 @@ def _build_movement_timeline(
         movement_filter &= Q(lines__item_id__in=selected_item_ids)
         line_qs = line_qs.filter(item_id__in=selected_item_ids)
 
-    movements = (
-        StockMovement.objects.filter(movement_filter)
-        .distinct()
-        .select_related(
-            "shop",
-            "requested_from_shop",
-            "created_by__user",
-            "responded_by__user",
-        )
-        .prefetch_related(Prefetch("lines", queryset=line_qs))
-        .order_by("created_at", "pk")
-    )
-
-    type_labels = {
-        StockMovementType.IN: "Stock in",
-        StockMovementType.OUT: "Stock out",
-        StockMovementType.REQUEST: "Stock request",
-    }
-
-    for movement in movements:
-        is_customer_return = (
-            movement.entry_source == StockEntrySource.CUSTOMER_RETURN
-        )
-        for line in movement.lines.all():
-            counts_toward_transfer = False
-            transfer_direction = ""
-            if movement.movement_type == StockMovementType.REQUEST:
-                counts_toward_transfer = _request_transfer_counts_toward_units(
-                    movement
-                )
-                transfer_direction = _transfer_direction(movement, shop_ids)
-            if is_customer_return:
-                event_type = "return"
-                event_label = "Return"
-            else:
-                event_type = movement.movement_type
-                event_label = type_labels.get(
-                    movement.movement_type, movement.get_movement_type_display()
-                )
-            if transfer_direction:
-                event_label = _transfer_event_label(
-                    event_type=event_type,
-                    direction=transfer_direction,
-                )
-            event = _timeline_event_from_movement_line(
-                movement=movement,
-                line=line,
-                happened_at=movement.created_at,
-                event_type=event_type,
-                event_label=event_label,
-                actor=movement.created_by,
-                counts_toward_transfer=counts_toward_transfer,
-                transfer_direction=transfer_direction,
+    if need_stock_movements:
+        if event_filter == "in":
+            movement_filter &= Q(movement_type=StockMovementType.IN) & ~Q(
+                entry_source=StockEntrySource.CUSTOMER_RETURN
             )
-            if is_customer_return:
-                note = (line.note or movement.notes or "").strip()
-                receipt_number = ""
-                for prefix in ("Return on ", "Customer return on "):
-                    if note.startswith(prefix):
-                        receipt_number = note[len(prefix) :].strip()
-                        break
-                event["receipt_number"] = receipt_number
-                event["reason"] = "Return"
-                event["note"] = note or (
-                    f"Return on {receipt_number}"
-                    if receipt_number
-                    else "Customer return"
-                )
-            events.append(event)
-            if is_customer_return:
-                continue
-            if movement.movement_type == StockMovementType.IN:
-                units_in += line.quantity
-            elif movement.movement_type == StockMovementType.OUT:
-                units_out += line.quantity
-            elif (
-                movement.movement_type == StockMovementType.REQUEST
-                and counts_toward_transfer
-            ):
-                units_request += line.quantity
-
-    fulfilled_line_qs = StockMovementLine.objects.select_related("item").order_by("id")
-    fulfilled_filter = Q(
-        movement_type=StockMovementType.REQUEST,
-        request_status=StockRequestStatus.FULFILLED,
-        responded_at__gte=day_start,
-        responded_at__lt=day_end,
-    ) & (Q(shop_id__in=shop_ids) | Q(requested_from_shop_id__in=shop_ids))
-
-    if item_mode == "category" and selected_categories:
-        fulfilled_filter &= Q(lines__item__category__in=selected_categories)
-        fulfilled_line_qs = fulfilled_line_qs.filter(
-            item__category__in=selected_categories
-        )
-    elif item_mode == "items" and selected_item_ids:
-        fulfilled_filter &= Q(lines__item_id__in=selected_item_ids)
-        fulfilled_line_qs = fulfilled_line_qs.filter(item_id__in=selected_item_ids)
-
-    fulfilled_movements = (
-        StockMovement.objects.filter(fulfilled_filter)
-        .distinct()
-        .select_related(
-            "shop",
-            "requested_from_shop",
-            "created_by__user",
-            "responded_by__user",
-        )
-        .prefetch_related(Prefetch("lines", queryset=fulfilled_line_qs))
-        .order_by("responded_at", "pk")
-    )
-
-    for movement in fulfilled_movements:
-        for line in movement.lines.all():
-            if line.quantity <= 0:
-                continue
-            transfer_direction = _transfer_direction(movement, shop_ids)
-            event_label = _transfer_event_label(
-                event_type="transfer_fulfilled",
-                direction=transfer_direction,
+        elif event_filter == "out":
+            movement_filter &= Q(movement_type=StockMovementType.OUT)
+        elif event_filter == "return":
+            movement_filter &= Q(
+                movement_type=StockMovementType.IN,
+                entry_source=StockEntrySource.CUSTOMER_RETURN,
             )
-            events.append(
-                _timeline_event_from_movement_line(
+        # event_filter == "all": keep in/out/request submitted rows
+
+        movements = (
+            StockMovement.objects.filter(movement_filter)
+            .distinct()
+            .select_related(
+                "shop",
+                "requested_from_shop",
+                "created_by__user",
+                "responded_by__user",
+            )
+            .prefetch_related(Prefetch("lines", queryset=line_qs))
+            .order_by("created_at", "pk")
+        )
+
+        type_labels = {
+            StockMovementType.IN: "Stock in",
+            StockMovementType.OUT: "Stock out",
+            StockMovementType.REQUEST: "Stock request",
+        }
+
+        for movement in movements:
+            is_customer_return = (
+                movement.entry_source == StockEntrySource.CUSTOMER_RETURN
+            )
+            for line in movement.lines.all():
+                counts_toward_transfer = False
+                transfer_direction = ""
+                if movement.movement_type == StockMovementType.REQUEST:
+                    counts_toward_transfer = _request_transfer_counts_toward_units(
+                        movement
+                    )
+                    transfer_direction = _transfer_direction(movement, shop_ids)
+                if is_customer_return:
+                    event_type = "return"
+                    event_label = "Return"
+                else:
+                    event_type = movement.movement_type
+                    event_label = type_labels.get(
+                        movement.movement_type, movement.get_movement_type_display()
+                    )
+                if transfer_direction:
+                    event_label = _transfer_event_label(
+                        event_type=event_type,
+                        direction=transfer_direction,
+                    )
+                event = _timeline_event_from_movement_line(
                     movement=movement,
                     line=line,
-                    happened_at=movement.responded_at,
-                    event_type="transfer_fulfilled",
+                    happened_at=movement.created_at,
+                    event_type=event_type,
                     event_label=event_label,
-                    actor=movement.responded_by,
+                    actor=movement.created_by,
+                    counts_toward_transfer=counts_toward_transfer,
                     transfer_direction=transfer_direction,
                 )
-            )
-            units_request += line.quantity
+                if is_customer_return:
+                    note = (line.note or movement.notes or "").strip()
+                    receipt_number = ""
+                    for prefix in (
+                        "Trade return on ",
+                        "Return on ",
+                        "Customer return on ",
+                    ):
+                        if note.startswith(prefix):
+                            receipt_number = note[len(prefix) :].strip()
+                            break
+                    event["receipt_number"] = receipt_number
+                    event["reason"] = "Return"
+                    event["note"] = note or (
+                        f"Return on {receipt_number}"
+                        if receipt_number
+                        else "Customer return"
+                    )
+                    event["trade"] = _timeline_trade_label(
+                        movement=movement, line=line, note=event["note"]
+                    )
+                events.append(event)
+                if is_customer_return:
+                    continue
+                if movement.movement_type == StockMovementType.IN:
+                    units_in += line.quantity
+                elif movement.movement_type == StockMovementType.OUT:
+                    units_out += line.quantity
+                elif (
+                    movement.movement_type == StockMovementType.REQUEST
+                    and counts_toward_transfer
+                ):
+                    units_request += line.quantity
 
-    # Sales as separate timeline events (never mixed into stock out).
+    if need_fulfilled_transfers:
+        fulfilled_line_qs = StockMovementLine.objects.select_related("item").order_by(
+            "id"
+        )
+        fulfilled_filter = Q(
+            movement_type=StockMovementType.REQUEST,
+            request_status=StockRequestStatus.FULFILLED,
+            responded_at__gte=day_start,
+            responded_at__lt=day_end,
+        ) & (Q(shop_id__in=shop_ids) | Q(requested_from_shop_id__in=shop_ids))
+
+        if item_mode == "category" and selected_categories:
+            fulfilled_filter &= Q(lines__item__category__in=selected_categories)
+            fulfilled_line_qs = fulfilled_line_qs.filter(
+                item__category__in=selected_categories
+            )
+        elif item_mode == "items" and selected_item_ids:
+            fulfilled_filter &= Q(lines__item_id__in=selected_item_ids)
+            fulfilled_line_qs = fulfilled_line_qs.filter(item_id__in=selected_item_ids)
+
+        fulfilled_movements = (
+            StockMovement.objects.filter(fulfilled_filter)
+            .distinct()
+            .select_related(
+                "shop",
+                "requested_from_shop",
+                "created_by__user",
+                "responded_by__user",
+            )
+            .prefetch_related(Prefetch("lines", queryset=fulfilled_line_qs))
+            .order_by("responded_at", "pk")
+        )
+
+        for movement in fulfilled_movements:
+            for line in movement.lines.all():
+                if line.quantity <= 0:
+                    continue
+                transfer_direction = _transfer_direction(movement, shop_ids)
+                event_label = _transfer_event_label(
+                    event_type="transfer_fulfilled",
+                    direction=transfer_direction,
+                )
+                events.append(
+                    _timeline_event_from_movement_line(
+                        movement=movement,
+                        line=line,
+                        happened_at=movement.responded_at,
+                        event_type="transfer_fulfilled",
+                        event_label=event_label,
+                        actor=movement.responded_by,
+                        transfer_direction=transfer_direction,
+                    )
+                )
+                units_request += line.quantity
+
+    # Sales / returns from receipts and legacy POS — skipped for transfer/in/out filters.
     from pos.models import SaleLine
     from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
 
-    item_name_set = {(item.name or "").strip().lower() for item in report_items}
     item_by_name = {
         (item.name or "").strip().lower(): item for item in report_items
     }
     item_by_id = {item.pk: item for item in report_items}
+    item_name_set = set(item_by_name)
 
-    receipt_lines = (
-        ShopReceiptLine.objects.filter(
-            receipt__created_at__gte=day_start,
-            receipt__created_at__lt=day_end,
-            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
-            receipt__shop_id__in=shop_ids,
+    if need_receipt_sales:
+        receipt_lines = (
+            ShopReceiptLine.objects.filter(
+                receipt__created_at__gte=day_start,
+                receipt__created_at__lt=day_end,
+                receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+                receipt__shop_id__in=shop_ids,
+            )
+            .select_related(
+                "receipt",
+                "receipt__shop",
+                "receipt__created_by__user",
+                "receipt__last_returned_by__user",
+                "receipt__client",
+                "item",
+            )
+            .order_by("receipt__created_at", "id")
         )
-        .select_related(
-            "receipt",
-            "receipt__shop",
-            "receipt__created_by__user",
-            "receipt__last_returned_by__user",
-            "receipt__client",
-            "item",
-        )
-        .order_by("receipt__created_at", "id")
-    )
-    if item_mode == "category" and selected_categories:
-        receipt_lines = receipt_lines.filter(item__category__in=selected_categories)
-    elif item_mode == "items" and selected_item_ids:
-        receipt_lines = receipt_lines.filter(item_id__in=selected_item_ids)
+        if item_mode == "category" and selected_categories:
+            receipt_lines = receipt_lines.filter(
+                item__category__in=selected_categories
+            )
+        elif item_mode == "items" and selected_item_ids:
+            receipt_lines = receipt_lines.filter(item_id__in=selected_item_ids)
 
-    for line in receipt_lines.iterator(chunk_size=500):
-        matched = item_by_id.get(line.item_id) or item_by_name.get(
-            (line.item_name or "").strip().lower()
-        )
-        parties = _movement_parties_for_receipt(receipt=line.receipt)
-        receipt_status = line.receipt.status
-        sale_label = "Stock sale"
-        if receipt_status == ShopReceiptStatus.CANCELLED:
-            sale_label = "Sale (cancelled)"
-        elif receipt_status == ShopReceiptStatus.PARTIAL_RETURN:
-            sale_label = "Sale (partial return)"
-        if line.receipt.kind == ShopReceiptKind.CREDIT:
-            sale_label = sale_label.replace("Sale", "Credit sale").replace("Stock sale", "Credit sale")
-        events.append(
-            {
-                "happened_at": line.receipt.created_at,
-                "event_type": "sale",
-                "event_label": sale_label,
-                "shop_name": (
-                    line.receipt.shop.name if line.receipt.shop_id else "—"
-                ),
-                "shop_id": line.receipt.shop_id,
-                "source_shop_id": None,
-                "from_shop_name": "",
-                "item_name": line.item_name or (matched.name if matched else "—"),
-                "item_category": (
-                    matched.category
-                    if matched
-                    else (line.item.category if line.item_id and line.item else "")
-                ),
-                "item_id": line.item_id or (matched.pk if matched else None),
-                "quantity": line.quantity,
-                "reason": "",
-                "payment_status": parties["pay"] if parties["pay"] != "—" else "",
-                "note": "",
-                "by": _employee_display_name(line.receipt.created_by),
-                "serial_numbers": _movement_serial_numbers(line.serial_numbers),
-                "movement_id": None,
-                "receipt_number": line.receipt.receipt_number,
-                "receipt_status": receipt_status,
-                **parties,
-            }
-        )
-        units_sale += line.quantity
-
-    # Legacy / non-stock returns by return date (not sale date).
-    # New restocked returns appear above as CUSTOMER_RETURN stock movements.
-    legacy_return_lines = (
-        ShopReceiptLine.objects.filter(
-            returned_quantity__gt=0,
-            receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
-            receipt__shop_id__in=shop_ids,
-        )
-        .select_related(
-            "receipt",
-            "receipt__shop",
-            "receipt__created_by__user",
-            "receipt__last_returned_by__user",
-            "receipt__client",
-            "item",
-        )
-        .order_by("receipt__last_returned_at", "id")
-    )
-    if item_mode == "category" and selected_categories:
-        legacy_return_lines = legacy_return_lines.filter(
-            item__category__in=selected_categories
-        )
-    elif item_mode == "items" and selected_item_ids:
-        legacy_return_lines = legacy_return_lines.filter(
-            item_id__in=selected_item_ids
-        )
-
-    for line in legacy_return_lines.iterator(chunk_size=500):
-        matched = item_by_id.get(line.item_id) or item_by_name.get(
-            (line.item_name or "").strip().lower()
-        )
-        parties = _movement_parties_for_receipt(receipt=line.receipt)
-        receipt_status = line.receipt.status
-        batches = line.return_batches or []
-        if isinstance(batches, list) and batches:
-            # Restocked returns with an item already appear via StockMovement.
-            if line.item_id:
-                continue
-            for batch in batches:
-                if not isinstance(batch, dict):
-                    continue
-                happened_at = _parse_return_batch_at(batch.get("at"))
-                if (
-                    happened_at is None
-                    or happened_at < day_start
-                    or happened_at >= day_end
-                ):
-                    continue
-                try:
-                    qty = int(batch.get("qty") or 0)
-                except (TypeError, ValueError):
-                    qty = 0
-                if qty <= 0:
-                    continue
-                events.append(
-                    {
-                        "happened_at": happened_at,
-                        "event_type": "return",
-                        "event_label": "Return",
-                        "shop_name": (
-                            line.receipt.shop.name if line.receipt.shop_id else "—"
-                        ),
-                        "shop_id": line.receipt.shop_id,
-                        "source_shop_id": None,
-                        "from_shop_name": "",
-                        "item_name": line.item_name
-                        or (matched.name if matched else "—"),
-                        "item_category": (
-                            matched.category
-                            if matched
-                            else (
-                                line.item.category
-                                if line.item_id and line.item
-                                else ""
-                            )
-                        ),
-                        "item_id": line.item_id
-                        or (matched.pk if matched else None),
-                        "quantity": qty,
-                        "reason": "Return",
-                        "payment_status": "",
-                        "note": f"Return on {line.receipt.receipt_number}",
-                        "by": _employee_display_name(
-                            line.receipt.last_returned_by or line.receipt.created_by
-                        ),
-                        "serial_numbers": _movement_serial_numbers(
-                            batch.get("serials") or []
-                        ),
-                        "movement_id": None,
-                        "receipt_number": line.receipt.receipt_number,
-                        "receipt_status": receipt_status,
-                        "from_label": parties.get("to_label", "—"),
-                        "to_label": parties.get("from_label", "—"),
-                        "seller": parties.get("seller", "—"),
-                        "pay": "—",
-                    }
+        for line in receipt_lines.iterator(chunk_size=500):
+            matched = item_by_id.get(line.item_id) or item_by_name.get(
+                (line.item_name or "").strip().lower()
+            )
+            parties = _movement_parties_for_receipt(receipt=line.receipt)
+            receipt_status = line.receipt.status
+            sale_label = "Stock sale"
+            if receipt_status == ShopReceiptStatus.CANCELLED:
+                sale_label = "Sale (cancelled)"
+            elif receipt_status == ShopReceiptStatus.PARTIAL_RETURN:
+                sale_label = "Sale (partial return)"
+            if line.receipt.kind == ShopReceiptKind.CREDIT:
+                sale_label = sale_label.replace("Sale", "Credit sale").replace(
+                    "Stock sale", "Credit sale"
                 )
-            continue
+            events.append(
+                {
+                    "happened_at": line.receipt.created_at,
+                    "event_type": "sale",
+                    "event_label": sale_label,
+                    "shop_name": (
+                        line.receipt.shop.name if line.receipt.shop_id else "—"
+                    ),
+                    "shop_id": line.receipt.shop_id,
+                    "source_shop_id": None,
+                    "from_shop_name": "",
+                    "item_name": line.item_name
+                    or (matched.name if matched else "—"),
+                    "item_category": (
+                        matched.category
+                        if matched
+                        else (
+                            line.item.category
+                            if line.item_id and line.item
+                            else ""
+                        )
+                    ),
+                    "item_id": line.item_id or (matched.pk if matched else None),
+                    "quantity": line.quantity,
+                    "reason": "",
+                    "payment_status": parties["pay"] if parties["pay"] != "—" else "",
+                    "note": "",
+                    "by": _employee_display_name(line.receipt.created_by),
+                    "serial_numbers": _movement_serial_numbers(line.serial_numbers),
+                    "movement_id": None,
+                    "receipt_number": line.receipt.receipt_number,
+                    "receipt_status": receipt_status,
+                    "trade": _timeline_trade_label(receipt=line.receipt),
+                    **parties,
+                }
+            )
+            units_sale += line.quantity
 
-        happened_at = line.receipt.last_returned_at or line.receipt.created_at
-        if happened_at is None or happened_at < day_start or happened_at >= day_end:
-            continue
-        events.append(
-            {
-                "happened_at": happened_at,
-                "event_type": "return",
-                "event_label": "Return",
-                "shop_name": (
-                    line.receipt.shop.name if line.receipt.shop_id else "—"
-                ),
-                "shop_id": line.receipt.shop_id,
-                "source_shop_id": None,
-                "from_shop_name": "",
-                "item_name": line.item_name or (matched.name if matched else "—"),
-                "item_category": (
-                    matched.category
-                    if matched
-                    else (line.item.category if line.item_id and line.item else "")
-                ),
-                "item_id": line.item_id or (matched.pk if matched else None),
-                "quantity": line.returned_quantity,
-                "reason": "Return",
-                "payment_status": "",
-                "note": f"Return on {line.receipt.receipt_number}",
-                "by": _employee_display_name(
-                    line.receipt.last_returned_by or line.receipt.created_by
-                ),
-                "serial_numbers": _movement_serial_numbers(
-                    line.returned_serial_numbers
-                ),
-                "movement_id": None,
-                "receipt_number": line.receipt.receipt_number,
-                "receipt_status": receipt_status,
-                "from_label": parties.get("to_label", "—"),
-                "to_label": parties.get("from_label", "—"),
-                "seller": parties.get("seller", "—"),
-                "pay": "—",
-            }
-        )
-
-    if item_mode == "category" and selected_categories:
-        allowed_names = {
-            (item.name or "").strip().lower()
-            for item in report_items
-            if item.category in selected_categories
-        }
-    elif item_mode == "items" and selected_item_ids:
-        selected_set = set(selected_item_ids)
-        allowed_names = {
-            (item.name or "").strip().lower()
-            for item in report_items
-            if item.pk in selected_set
-        }
-    else:
-        allowed_names = item_name_set
-
-    sale_lines = (
-        SaleLine.objects.filter(
-            sale__sold_at__gte=day_start,
-            sale__sold_at__lt=day_end,
-        )
-        .select_related("sale", "sale__employee__user")
-        .prefetch_related("sale__employee__assigned_shops")
-        .order_by("sale__sold_at", "id")
-    )
-    if shop_ids:
-        sale_lines = sale_lines.filter(
-            sale__employee__assigned_shops__in=shop_ids
-        ).distinct()
-    if allowed_names:
-        sale_lines = sale_lines.filter(
-            product_name__in=[
-                (item.name or "").strip()
-                for item in report_items
-                if (item.name or "").strip().lower() in allowed_names
-            ]
-        )
-
-    for line in sale_lines.iterator(chunk_size=500):
-        key = (line.product_name or "").strip().lower()
-        if allowed_names and key not in allowed_names:
-            continue
-        matched = item_by_name.get(key)
-        sale_shop_id = None
-        sale_shop_name = "—"
-        if line.sale.employee_id:
-            assigned = list(
-                line.sale.employee.assigned_shops.filter(pk__in=shop_ids).values_list(
-                    "pk", "name"
+    if need_legacy_returns:
+        # Bound by return date in SQL so year filters do not scan all historic returns.
+        legacy_return_lines = (
+            ShopReceiptLine.objects.filter(
+                returned_quantity__gt=0,
+                receipt__kind__in=(ShopReceiptKind.SALE, ShopReceiptKind.CREDIT),
+                receipt__shop_id__in=shop_ids,
+            )
+            .filter(
+                Q(
+                    receipt__last_returned_at__gte=day_start,
+                    receipt__last_returned_at__lt=day_end,
+                )
+                | Q(
+                    receipt__last_returned_at__isnull=True,
+                    receipt__created_at__gte=day_start,
+                    receipt__created_at__lt=day_end,
                 )
             )
-            if assigned:
-                sale_shop_id, sale_shop_name = assigned[0]
-        parties = _movement_parties_for_pos_sale(sale=line.sale)
-        events.append(
-            {
-                "happened_at": line.sale.sold_at,
-                "event_type": "sale",
-                "event_label": "Stock sale",
-                "shop_name": sale_shop_name,
-                "shop_id": sale_shop_id,
-                "source_shop_id": None,
-                "from_shop_name": "",
-                "item_name": line.product_name or (matched.name if matched else "—"),
-                "item_category": matched.category if matched else "",
-                "item_id": matched.pk if matched else None,
-                "quantity": line.quantity,
-                "reason": "",
-                "payment_status": "",
-                "note": "",
-                "by": _employee_display_name(line.sale.employee),
-                "serial_numbers": [],
-                "movement_id": None,
-                "receipt_number": "",
-                "receipt_status": "",
-                **parties,
-            }
+            .select_related(
+                "receipt",
+                "receipt__shop",
+                "receipt__created_by__user",
+                "receipt__last_returned_by__user",
+                "receipt__client",
+                "item",
+            )
+            .order_by("receipt__last_returned_at", "id")
         )
-        units_sale += line.quantity
+        if item_mode == "category" and selected_categories:
+            legacy_return_lines = legacy_return_lines.filter(
+                item__category__in=selected_categories
+            )
+        elif item_mode == "items" and selected_item_ids:
+            legacy_return_lines = legacy_return_lines.filter(
+                item_id__in=selected_item_ids
+            )
+
+        for line in legacy_return_lines.iterator(chunk_size=500):
+            matched = item_by_id.get(line.item_id) or item_by_name.get(
+                (line.item_name or "").strip().lower()
+            )
+            parties = _movement_parties_for_receipt(receipt=line.receipt)
+            receipt_status = line.receipt.status
+            batches = line.return_batches or []
+            if isinstance(batches, list) and batches:
+                # Restocked returns with an item already appear via StockMovement.
+                if line.item_id:
+                    continue
+                for batch in batches:
+                    if not isinstance(batch, dict):
+                        continue
+                    happened_at = _parse_return_batch_at(batch.get("at"))
+                    if (
+                        happened_at is None
+                        or happened_at < day_start
+                        or happened_at >= day_end
+                    ):
+                        continue
+                    try:
+                        qty = int(batch.get("qty") or 0)
+                    except (TypeError, ValueError):
+                        qty = 0
+                    if qty <= 0:
+                        continue
+                    events.append(
+                        {
+                            "happened_at": happened_at,
+                            "event_type": "return",
+                            "event_label": "Return",
+                            "shop_name": (
+                                line.receipt.shop.name
+                                if line.receipt.shop_id
+                                else "—"
+                            ),
+                            "shop_id": line.receipt.shop_id,
+                            "source_shop_id": None,
+                            "from_shop_name": "",
+                            "item_name": line.item_name
+                            or (matched.name if matched else "—"),
+                            "item_category": (
+                                matched.category
+                                if matched
+                                else (
+                                    line.item.category
+                                    if line.item_id and line.item
+                                    else ""
+                                )
+                            ),
+                            "item_id": line.item_id
+                            or (matched.pk if matched else None),
+                            "quantity": qty,
+                            "reason": "Return",
+                            "payment_status": "",
+                            "note": f"Return on {line.receipt.receipt_number}",
+                            "by": _employee_display_name(
+                                line.receipt.last_returned_by
+                                or line.receipt.created_by
+                            ),
+                            "serial_numbers": _movement_serial_numbers(
+                                batch.get("serials") or []
+                            ),
+                            "movement_id": None,
+                            "receipt_number": line.receipt.receipt_number,
+                            "receipt_status": receipt_status,
+                            "trade": _timeline_trade_label(receipt=line.receipt),
+                            "from_label": parties.get("to_label", "—"),
+                            "to_label": parties.get("from_label", "—"),
+                            "seller": parties.get("seller", "—"),
+                            "pay": "—",
+                        }
+                    )
+                continue
+
+            happened_at = line.receipt.last_returned_at or line.receipt.created_at
+            if (
+                happened_at is None
+                or happened_at < day_start
+                or happened_at >= day_end
+            ):
+                continue
+            events.append(
+                {
+                    "happened_at": happened_at,
+                    "event_type": "return",
+                    "event_label": "Return",
+                    "shop_name": (
+                        line.receipt.shop.name if line.receipt.shop_id else "—"
+                    ),
+                    "shop_id": line.receipt.shop_id,
+                    "source_shop_id": None,
+                    "from_shop_name": "",
+                    "item_name": line.item_name
+                    or (matched.name if matched else "—"),
+                    "item_category": (
+                        matched.category
+                        if matched
+                        else (
+                            line.item.category
+                            if line.item_id and line.item
+                            else ""
+                        )
+                    ),
+                    "item_id": line.item_id or (matched.pk if matched else None),
+                    "quantity": line.returned_quantity,
+                    "reason": "Return",
+                    "payment_status": "",
+                    "note": f"Return on {line.receipt.receipt_number}",
+                    "by": _employee_display_name(
+                        line.receipt.last_returned_by or line.receipt.created_by
+                    ),
+                    "serial_numbers": _movement_serial_numbers(
+                        line.returned_serial_numbers
+                    ),
+                    "movement_id": None,
+                    "receipt_number": line.receipt.receipt_number,
+                    "receipt_status": receipt_status,
+                    "trade": _timeline_trade_label(receipt=line.receipt),
+                    "from_label": parties.get("to_label", "—"),
+                    "to_label": parties.get("from_label", "—"),
+                    "seller": parties.get("seller", "—"),
+                    "pay": "—",
+                }
+            )
+
+    if need_pos_sales:
+        if item_mode == "category" and selected_categories:
+            allowed_names = {
+                (item.name or "").strip().lower()
+                for item in report_items
+                if item.category in selected_categories
+            }
+        elif item_mode == "items" and selected_item_ids:
+            selected_set = set(selected_item_ids)
+            allowed_names = {
+                (item.name or "").strip().lower()
+                for item in report_items
+                if item.pk in selected_set
+            }
+        else:
+            allowed_names = item_name_set
+
+        sale_lines = (
+            SaleLine.objects.filter(
+                sale__sold_at__gte=day_start,
+                sale__sold_at__lt=day_end,
+            )
+            .select_related("sale", "sale__employee__user")
+            .prefetch_related("sale__employee__assigned_shops")
+            .order_by("sale__sold_at", "id")
+        )
+        if shop_ids:
+            sale_lines = sale_lines.filter(
+                sale__employee__assigned_shops__in=shop_ids
+            ).distinct()
+        if allowed_names:
+            sale_lines = sale_lines.filter(
+                product_name__in=[
+                    (item.name or "").strip()
+                    for item in report_items
+                    if (item.name or "").strip().lower() in allowed_names
+                ]
+            )
+
+        shop_id_set = set(shop_ids)
+        # Do not use iterator() here — it drops prefetch of assigned_shops.
+        for line in sale_lines:
+            key = (line.product_name or "").strip().lower()
+            if allowed_names and key not in allowed_names:
+                continue
+            matched = item_by_name.get(key)
+            sale_shop_id = None
+            sale_shop_name = "—"
+            employee = line.sale.employee if line.sale.employee_id else None
+            if employee is not None:
+                # Prefer prefetched shops; avoid per-row .filter() queries.
+                for shop in employee.assigned_shops.all():
+                    if shop.pk in shop_id_set:
+                        sale_shop_id = shop.pk
+                        sale_shop_name = shop.name
+                        break
+            parties = _movement_parties_for_pos_sale(sale=line.sale)
+            events.append(
+                {
+                    "happened_at": line.sale.sold_at,
+                    "event_type": "sale",
+                    "event_label": "Stock sale",
+                    "shop_name": sale_shop_name,
+                    "shop_id": sale_shop_id,
+                    "source_shop_id": None,
+                    "from_shop_name": "",
+                    "item_name": line.product_name
+                    or (matched.name if matched else "—"),
+                    "item_category": matched.category if matched else "",
+                    "item_id": matched.pk if matched else None,
+                    "quantity": line.quantity,
+                    "reason": "",
+                    "payment_status": "",
+                    "note": "",
+                    "by": _employee_display_name(employee),
+                    "serial_numbers": [],
+                    "movement_id": None,
+                    "receipt_number": "",
+                    "receipt_status": "",
+                    "trade": "",
+                    **parties,
+                }
+            )
+            units_sale += line.quantity
 
     events.sort(key=lambda row: (row["happened_at"], row.get("movement_id") or 0))
     return events, units_in, units_out, units_request, units_sale
@@ -2611,6 +2934,7 @@ def _timeline_event_search_text(event):
         event.get("requested_by") or "",
         event.get("received_by") or "",
         event.get("receipt_number") or "",
+        event.get("trade") or "",
         event.get("note") or "",
     ]
     for serial in event.get("serial_numbers") or []:
@@ -2768,6 +3092,7 @@ def _blank_movement_item_row(
         "units_transfer_out": 0,
         "units_sale": 0,
         "units_return": 0,
+        "units_trade": 0,
         "current_stock": 0,
         "last_at": happened_at,
         "detail_url": "",
@@ -2796,6 +3121,8 @@ def _apply_movement_event_to_row(row, event, *, transfer_only=""):
         row["units_sale"] += quantity
     elif event_type == "return":
         row["units_return"] += quantity
+    if (event.get("trade") or "").strip():
+        row["units_trade"] += quantity
     if row["last_at"] is None or event["happened_at"] > row["last_at"]:
         row["last_at"] = event["happened_at"]
 
@@ -2977,6 +3304,7 @@ def _group_movement_events_by_item(
         total["units_transfer_out"] = sum(row["units_transfer_out"] for row in shop_rows)
         total["units_sale"] = sum(row["units_sale"] for row in shop_rows)
         total["units_return"] = sum(row["units_return"] for row in shop_rows)
+        total["units_trade"] = sum(row.get("units_trade", 0) for row in shop_rows)
         total["current_stock"] = sum(row["current_stock"] for row in shop_rows)
         rows.append(total)
     return rows
@@ -3261,6 +3589,7 @@ def _stock_report_download(
                 "Out",
                 "T-in",
                 "T-out",
+                "Trade",
                 "Sale",
                 "Return",
                 "Last date",
@@ -3292,6 +3621,7 @@ def _stock_report_download(
                     row.get("units_out") or 0,
                     row.get("units_transfer_in") or 0,
                     row.get("units_transfer_out") or 0,
+                    row.get("units_trade") or 0,
                     row.get("units_sale") or 0,
                     row.get("units_return") or 0,
                     last_date,
@@ -3437,6 +3767,7 @@ def _stock_report_download(
                 "T-in",
                 "Out",
                 "T-out",
+                "Trade",
                 "Net sale",
                 "Returned",
                 "Closing",
@@ -3469,6 +3800,7 @@ def _stock_report_download(
                     row.get("stock_transfer_in") or 0,
                     row.get("stock_out") or 0,
                     row.get("stock_transfer_out") or 0,
+                    row.get("stock_trade") or 0,
                     row.get("net_sale") or 0,
                     row.get("stock_return") or 0,
                     row.get("closing_stock") or 0,
@@ -3532,18 +3864,61 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         if (value or "").strip() and (value or "").strip() in set(categories)
     ]
 
-    all_items = list(
-        Item.objects.order_by("category", "name").only("id", "name", "category")
-    )
-    items_by_id = {item.pk: item for item in all_items}
-    selected_item_ids = [
-        pk for pk in _parse_id_list(request.GET.getlist("item_id")) if pk in items_by_id
-    ]
+    # Lazy item-picker catalog: avoid embedding every item on every page load.
+    if (request.GET.get("item_picker") or "").strip() == "1":
+        from django.http import JsonResponse
 
+        picker_items = list(
+            Item.objects.order_by("category", "name").values("id", "name", "category")
+        )
+        return JsonResponse({"items": picker_items})
+
+    selected_item_ids_raw = _parse_id_list(request.GET.getlist("item_id"))
     # Incomplete category/item picks fall back to All (the default).
     if item_mode == "category" and not selected_categories:
         item_mode = "all"
-    elif item_mode == "items" and not selected_item_ids:
+    elif item_mode == "items" and not selected_item_ids_raw:
+        item_mode = "all"
+
+    is_movements = page_mode == "movements"
+    event_filter = _parse_movement_event_filter(
+        request.GET.get("event_type") if is_movements else "all"
+    )
+    view_by = _parse_movement_view_by(
+        request.GET.get("view_by") if is_movements else "item"
+    )
+
+    # Only load the full catalog when the item picker or POS sale matching needs it.
+    need_full_item_catalog = item_mode == "items" or (
+        is_movements and event_filter in ("all", "sale") and item_mode == "all"
+    )
+    if need_full_item_catalog:
+        all_items = list(
+            Item.objects.order_by("category", "name").only("id", "name", "category")
+        )
+        items_by_id = {item.pk: item for item in all_items}
+        filter_items_json = json.dumps(
+            [
+                {"id": item.pk, "name": item.name, "category": item.category}
+                for item in all_items
+            ]
+        )
+    else:
+        all_items = []
+        items_by_id = {}
+        filter_items_json = "[]"
+        if selected_item_ids_raw:
+            selected_only = list(
+                Item.objects.filter(pk__in=selected_item_ids_raw)
+                .only("id", "name", "category")
+                .order_by("category", "name")
+            )
+            items_by_id = {item.pk: item for item in selected_only}
+
+    selected_item_ids = [
+        pk for pk in selected_item_ids_raw if pk in items_by_id
+    ]
+    if item_mode == "items" and not selected_item_ids:
         item_mode = "all"
 
     item_qs = Item.objects.order_by("category", "name")
@@ -3552,14 +3927,18 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     elif item_mode == "items":
         item_qs = item_qs.filter(pk__in=selected_item_ids)
 
-    report_items = list(item_qs.only("id", "name", "category", "is_suspended"))
-    filter_items_json = json.dumps(
-        [
-            {"id": item.pk, "name": item.name, "category": item.category}
-            for item in all_items
-        ]
-    )
-    selected_filter_items = [items_by_id[pk] for pk in selected_item_ids if pk in items_by_id]
+    if is_movements and item_mode == "all" and event_filter not in ("all", "sale"):
+        # Transfer/in/out/return filters don't need the full item list for matching.
+        report_items = []
+    elif item_mode == "all" and need_full_item_catalog:
+        report_items = all_items
+    else:
+        report_items = list(
+            item_qs.only("id", "name", "category", "is_suspended")
+        )
+    selected_filter_items = [
+        items_by_id[pk] for pk in selected_item_ids if pk in items_by_id
+    ]
 
     no_shop_access = (
         profile.role in SHOP_ASSIGNABLE_ROLES and not filter_shops
@@ -3584,17 +3963,11 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         "stock_transfer_out": 0,
         "stock_sale": 0,
         "stock_return": 0,
+        "stock_trade": 0,
         "net_sale": 0,
         "closing_stock": 0,
     }
 
-    is_movements = page_mode == "movements"
-    event_filter = _parse_movement_event_filter(
-        request.GET.get("event_type") if is_movements else "all"
-    )
-    view_by = _parse_movement_view_by(
-        request.GET.get("view_by") if is_movements else "item"
-    )
     is_item_movement_detail = (
         is_movements
         and view_by == "timeline"
@@ -3614,7 +3987,21 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         "units_transfer_out": 0,
         "units_sale": 0,
         "units_return": 0,
+        "units_trade": 0,
     }
+
+    timeline_page = 1
+    timeline_page_size = 100
+    timeline_total_groups = 0
+    timeline_total_pages = 1
+    timeline_prev_url = ""
+    timeline_next_url = ""
+    report_page = 1
+    report_page_size = 50
+    report_total_groups = 0
+    report_total_pages = 1
+    report_prev_url = ""
+    report_next_url = ""
 
     if is_movements:
         (
@@ -3630,7 +4017,8 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             item_mode=item_mode,
             selected_categories=selected_categories,
             selected_item_ids=selected_item_ids,
-            report_items=report_items if item_mode != "all" else all_items,
+            report_items=report_items,
+            event_filter=event_filter,
         )
         if event_filter != "all":
             movement_events = _filter_movement_events(movement_events, event_filter)
@@ -3668,6 +4056,30 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
                 movement_item_totals["units_transfer_out"] += row["units_transfer_out"]
                 movement_item_totals["units_sale"] += row["units_sale"]
                 movement_item_totals["units_return"] += row["units_return"]
+                movement_item_totals["units_trade"] += row.get("units_trade", 0)
+
+        # Paginate timeline HTML only (PDF download keeps the full set).
+        is_download = (request.GET.get("download") or "").strip() == "1"
+        if view_by == "timeline" and movement_event_groups and not is_download:
+            try:
+                timeline_page = max(1, int(request.GET.get("page") or 1))
+            except (TypeError, ValueError):
+                timeline_page = 1
+            timeline_total_groups = len(movement_event_groups)
+            timeline_total_pages = max(
+                1,
+                (timeline_total_groups + timeline_page_size - 1)
+                // timeline_page_size,
+            )
+            if timeline_page > timeline_total_pages:
+                timeline_page = timeline_total_pages
+            start = (timeline_page - 1) * timeline_page_size
+            movement_event_groups = movement_event_groups[
+                start : start + timeline_page_size
+            ]
+            timeline_prev_url, timeline_next_url = _report_page_urls(
+                request, timeline_page, timeline_total_pages
+            )
     else:
         item_report_rows = _build_item_report_rows(
             report_items,
@@ -3686,6 +4098,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             totals["stock_transfer_out"] += row["stock_transfer_out"]
             totals["stock_sale"] += row["stock_sale"]
             totals["stock_return"] += row["stock_return"]
+            totals["stock_trade"] += row["stock_trade"]
             totals["net_sale"] += row["net_sale"]
             totals["closing_stock"] += row["closing_stock"]
         units_in = totals["stock_in"]
@@ -3695,6 +4108,37 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         units_transfer_in = totals["stock_transfer_in"]
         units_transfer_out = totals["stock_transfer_out"]
         units_return = totals["stock_return"]
+
+        # Paginate report HTML only (PDF download keeps the full set).
+        is_download = (request.GET.get("download") or "").strip() == "1"
+        if not is_download and item_report_rows:
+            try:
+                report_page = max(1, int(request.GET.get("page") or 1))
+            except (TypeError, ValueError):
+                report_page = 1
+            group_by_shop = len(shop_ids_for_query) > 1
+            (
+                item_report_rows,
+                report_total_groups,
+                report_total_pages,
+                report_page,
+            ) = _paginate_item_report_groups(
+                item_report_rows,
+                report_page,
+                report_page_size,
+                group_by_shop=group_by_shop,
+            )
+            report_prev_url, report_next_url = _report_page_urls(
+                request, report_page, report_total_pages
+            )
+        elif item_report_rows:
+            report_total_groups = len(
+                {
+                    getattr(row.get("item"), "pk", None)
+                    for row in item_report_rows
+                    if not row.get("is_item_total")
+                }
+            )
 
     from employees.workspace import sidebar_for_stock_management, stock_management_url
 
@@ -3843,10 +4287,27 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "categories": categories,
             "selected_categories": set(selected_categories),
             "filter_items_json": filter_items_json,
+            "item_picker_url": (
+                f"{request.path}?mode={page_mode}&item_picker=1"
+                if is_movements or page_mode == "report"
+                else ""
+            ),
             "selected_filter_items": selected_filter_items,
             "selected_item_ids": set(selected_item_ids),
             "event_filter": event_filter,
             "view_by": view_by,
+            "timeline_page": timeline_page,
+            "timeline_page_size": timeline_page_size,
+            "timeline_total_groups": timeline_total_groups,
+            "timeline_total_pages": timeline_total_pages,
+            "timeline_prev_url": timeline_prev_url,
+            "timeline_next_url": timeline_next_url,
+            "report_page": report_page,
+            "report_page_size": report_page_size,
+            "report_total_groups": report_total_groups,
+            "report_total_pages": report_total_pages,
+            "report_prev_url": report_prev_url,
+            "report_next_url": report_next_url,
             "is_item_movement_summary": is_item_movement_summary,
             "is_item_movement_detail": is_item_movement_detail,
             "movement_item_rows": movement_item_rows,

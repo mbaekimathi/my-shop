@@ -13,7 +13,7 @@
       </div>
     </div>
 
-    <form class="stock-report-filters" method="get" data-stock-report-filters>
+    <form class="stock-report-filters" method="get" data-stock-report-filters{% if item_picker_url %} data-item-picker-url="{{ item_picker_url }}"{% endif %}>
       <input type="hidden" name="mode" value="{{ stock_mode }}">
       {% if not is_movements_page %}
       <input type="hidden" name="view_by" value="item">
@@ -184,33 +184,25 @@
 
     {% if is_movements_page %}
       {% if is_item_movement_summary and movement_item_rows %}
-        <div class="staff-table-wrap stock-report-table-wrap">
+        <div class="staff-table-wrap stock-report-table-wrap stock-report-table-wrap--items">
           <table class="staff-table stock-report-table stock-report-table--items-summary{% if movement_item_group_by_shop %} stock-report-table--items-by-shop{% endif %}">
-            <colgroup>
-              <col class="stock-col-item">
-              {% if movement_item_group_by_shop %}
-              <col class="stock-col-shop">
-              {% endif %}
-              <col class="stock-col-num" span="8">
-              <col class="stock-col-time">
-              <col class="stock-col-action">
-            </colgroup>
             <thead>
               <tr>
-                <th scope="col">Item</th>
+                <th scope="col" data-col="item">Item</th>
                 {% if movement_item_group_by_shop %}
-                <th scope="col">Shop</th>
+                <th scope="col" data-col="shop">Shop</th>
                 {% endif %}
-                <th scope="col" title="Current stock">Stock</th>
-                <th scope="col">Events</th>
-                <th scope="col" title="Stock in">In</th>
-                <th scope="col" title="Stock out">Out</th>
-                <th scope="col" title="Transfer in">T-in</th>
-                <th scope="col" title="Transfer out">T-out</th>
-                <th scope="col" title="Stock sale">Sale</th>
-                <th scope="col" title="Returned">Return</th>
-                <th scope="col">Last</th>
-                <th scope="col"><span class="visually-hidden">Actions</span></th>
+                <th scope="col" data-col="num" class="is-center" title="Current stock">Stock</th>
+                <th scope="col" data-col="num" class="is-center">Events</th>
+                <th scope="col" data-col="num" class="is-center" title="Stock in">In</th>
+                <th scope="col" data-col="num" class="is-center" title="Stock out">Out</th>
+                <th scope="col" data-col="num" class="is-center" title="Transfer in">T-in</th>
+                <th scope="col" data-col="num" class="is-center" title="Transfer out">T-out</th>
+                <th scope="col" data-col="num" class="is-center" title="Trade out, exchange, return, or trade sale">Trade</th>
+                <th scope="col" data-col="num" class="is-center" title="Stock sale">Sale</th>
+                <th scope="col" data-col="num" class="is-center" title="Returned">Return</th>
+                <th scope="col" data-col="time">Last</th>
+                <th scope="col" data-col="action"><span class="visually-hidden">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -240,6 +232,7 @@
                 <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out{% if row.units_out == 0 %} is-empty{% endif %}">{{ row.units_out }}</span></td>
                 <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--in{% if row.units_transfer_in == 0 %} is-empty{% endif %}">{{ row.units_transfer_in }}</span></td>
                 <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--out{% if row.units_transfer_out == 0 %} is-empty{% endif %}">{{ row.units_transfer_out }}</span></td>
+                <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade{% if row.units_trade == 0 %} is-empty{% endif %}">{{ row.units_trade }}</span></td>
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if row.units_sale == 0 %} is-empty{% endif %}">{{ row.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return{% if row.units_return == 0 %} is-empty{% endif %}">{{ row.units_return }}</span></td>
                 <td data-label="Last activity">
@@ -276,6 +269,7 @@
                 <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out">{{ movement_item_totals.units_out }}</span></td>
                 <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--in">{{ movement_item_totals.units_transfer_in }}</span></td>
                 <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--out">{{ movement_item_totals.units_transfer_out }}</span></td>
+                <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade">{{ movement_item_totals.units_trade }}</span></td>
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale">{{ movement_item_totals.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ movement_item_totals.units_return }}</span></td>
                 <td data-label="Last activity"></td>
@@ -286,22 +280,23 @@
           </table>
         </div>
       {% elif movement_event_groups %}
-      <div class="staff-table-wrap stock-report-table-wrap">
-        <table class="staff-table stock-report-table stock-report-table--timeline">
+      <div class="staff-table-wrap stock-report-table-wrap stock-report-table-wrap--timeline">
+        <table class="staff-table stock-report-table stock-report-table--timeline{% if is_item_movement_detail %} stock-report-table--timeline-detail{% endif %}">
           <thead>
             <tr>
-              <th scope="col">When</th>
-              <th scope="col">Type</th>
+              <th scope="col" data-col="when">When · type</th>
               {% if not is_item_movement_detail %}
-              <th scope="col" data-label="Item">Item</th>
+              <th scope="col" data-col="item" data-label="Item">Item</th>
               {% endif %}
-              <th scope="col">Receipt #</th>
-              <th scope="col">From</th>
-              <th scope="col">To</th>
-              <th scope="col">Qty</th>
-              <th scope="col">Serial</th>
-              <th scope="col">Pay</th>
-              <th scope="col">Seller</th>
+              <th scope="col" data-col="receipt">Rcpt</th>
+              <th scope="col" data-col="qty" class="is-center">Qty</th>
+              <th scope="col" data-col="serial" class="is-center">Serial</th>
+              <th scope="col" data-col="pay" class="is-center">Pay</th>
+              <th scope="col" data-col="trade">Trade</th>
+              <th scope="col" data-col="from">From</th>
+              <th scope="col" data-col="to">To</th>
+              <th scope="col" data-col="request">Request</th>
+              <th scope="col" data-col="receive">Receive</th>
             </tr>
           </thead>
           {% for group in movement_event_groups %}
@@ -312,7 +307,7 @@
           >
             {% if group.is_multi %}
             <tr class="stock-report-receipt-head">
-              <td colspan="{% if is_item_movement_detail %}9{% else %}10{% endif %}">
+              <td colspan="{% if is_item_movement_detail %}10{% else %}11{% endif %}">
                 <div class="stock-report-receipt-head-inner">
                   <strong class="stock-report-receipt-number">{{ group.receipt_number }}</strong>
                   <span class="stock-report-receipt-meta">
@@ -335,17 +330,23 @@
             {% endif %}
             {% for event in group.activities %}
             <tr class="{% if group.is_multi %}stock-report-receipt-activity{% endif %}">
-              <td data-label="When">
-                {% if report_range == 'day' %}
-                {{ event.happened_at|time:"H:i" }}
-                {% else %}
-                {{ event.happened_at|date:"d M Y" }} · {{ event.happened_at|time:"H:i" }}
-                {% endif %}
-              </td>
-              <td data-label="Type">
-                <span class="stock-report-type stock-report-type--{% if event.transfer_direction == 'in' or event.transfer_direction == 'both' %}transfer-in{% else %}{{ event.event_type }}{% endif %}">
-                  {{ event.event_label }}
-                </span>
+              <td data-label="When / Type">
+                <div class="stock-report-when-type">
+                  <time class="stock-report-when" datetime="{{ event.happened_at|date:'c' }}">
+                    {% if report_range == 'day' %}
+                    {{ event.happened_at|time:"H:i" }}
+                    {% elif report_range == 'year' or report_range == 'month' %}
+                    <span class="stock-report-when-date">{{ event.happened_at|date:"d/m/y" }}</span>
+                    <span class="stock-report-when-time">{{ event.happened_at|time:"H:i" }}</span>
+                    {% else %}
+                    <span class="stock-report-when-date">{{ event.happened_at|date:"d M" }}</span>
+                    <span class="stock-report-when-time">{{ event.happened_at|time:"H:i" }}</span>
+                    {% endif %}
+                  </time>
+                  <span class="stock-report-type stock-report-type--{% if event.transfer_direction == 'in' or event.transfer_direction == 'both' %}transfer-in{% else %}{{ event.event_type }}{% endif %}">
+                    {{ event.event_label }}
+                  </span>
+                </div>
               </td>
               {% if not is_item_movement_detail %}
               <td data-label="Item">
@@ -355,12 +356,11 @@
                 {% endif %}
               </td>
               {% endif %}
-              <td data-label="Receipt #">{% if event.receipt_number %}{{ event.receipt_number }}{% endif %}</td>
-              <td data-label="From">{{ event.from_label }}</td>
-              <td data-label="To">
-                {{ event.to_label }}
-                {% if event.note %}
-                <span class="stock-report-from">{{ event.note }}</span>
+              <td data-label="Receipt">
+                {% if event.receipt_number %}
+                <span class="stock-report-receipt-ref">{{ event.receipt_number }}</span>
+                {% else %}
+                <span class="stock-report-empty">—</span>
                 {% endif %}
               </td>
               <td data-label="Qty">
@@ -387,16 +387,86 @@
                     {% endfor %}
                   </ul>
                 </div>
+                {% else %}
+                <span class="stock-report-empty">—</span>
                 {% endif %}
               </td>
-              <td data-label="Pay">{{ event.pay }}</td>
-              <td data-label="Seller">{{ event.by }}</td>
+              <td data-label="Pay">
+                {% if event.pay %}
+                <span class="stock-report-pay">{{ event.pay }}</span>
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="Trade">
+                {% if event.trade %}
+                <span class="stock-report-trade stock-report-trade--{{ event.trade|slugify }}">{{ event.trade }}</span>
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="From">
+                {% if event.from_label %}
+                <span class="stock-report-party">{{ event.from_label }}</span>
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="To">
+                {% if event.to_label or event.note %}
+                <span class="stock-report-party">{% if event.to_label %}{{ event.to_label }}{% else %}—{% endif %}</span>
+                {% if event.note %}
+                <span class="stock-report-from">{{ event.note }}</span>
+                {% endif %}
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="Request">
+                {% if event.transfer_direction or event.event_type == 'transfer_fulfilled' %}
+                  {% if event.requested_by and event.requested_by != '—' %}
+                  <span class="stock-report-seller">{{ event.requested_by }}</span>
+                  {% else %}
+                  <span class="stock-report-empty">—</span>
+                  {% endif %}
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="Receive">
+                {% if event.transfer_direction or event.event_type == 'transfer_fulfilled' %}
+                  {% if event.received_by and event.received_by != '—' %}
+                  <span class="stock-report-seller">{{ event.received_by }}</span>
+                  {% else %}
+                  <span class="stock-report-empty">—</span>
+                  {% endif %}
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
             </tr>
             {% endfor %}
           </tbody>
           {% endfor %}
         </table>
       </div>
+      {% if timeline_total_pages > 1 %}
+      <nav class="stock-report-pagination" aria-label="Timeline pages">
+        <p class="stock-report-pagination-meta">
+          Page {{ timeline_page }} of {{ timeline_total_pages }}
+          · {{ timeline_total_groups }} movement{{ timeline_total_groups|pluralize }}
+        </p>
+        <div class="stock-report-pagination-links">
+          {% if timeline_prev_url %}
+          <a class="stock-report-pagination-link" href="{{ timeline_prev_url }}">Previous</a>
+          {% endif %}
+          <span class="stock-report-pagination-current">{{ timeline_page }} / {{ timeline_total_pages }}</span>
+          {% if timeline_next_url %}
+          <a class="stock-report-pagination-link" href="{{ timeline_next_url }}">Next</a>
+          {% endif %}
+        </div>
+      </nav>
+      {% endif %}
       {% else %}
       <div class="dashboard-placeholder">
         <i data-lucide="arrow-down-up" aria-hidden="true"></i>
@@ -412,29 +482,23 @@
       <p class="stock-report-live-empty" data-stock-live-empty hidden>No rows match your search.</p>
     {% else %}
       {% if item_report_rows %}
-      <div class="staff-table-wrap stock-report-table-wrap">
+      <div class="staff-table-wrap stock-report-table-wrap stock-report-table-wrap--items">
         <table class="staff-table stock-report-table stock-report-table--items{% if item_report_group_by_shop %} stock-report-table--items-by-shop{% endif %}">
-          <colgroup>
-            <col class="stock-col-item">
-            {% if item_report_group_by_shop %}
-            <col class="stock-col-shop">
-            {% endif %}
-            <col class="stock-col-num" span="8">
-          </colgroup>
           <thead>
             <tr>
-              <th scope="col">Item</th>
+              <th scope="col" data-col="item">Item</th>
               {% if item_report_group_by_shop %}
-              <th scope="col">Shop</th>
+              <th scope="col" data-col="shop">Shop</th>
               {% endif %}
-              <th scope="col" title="Starting stock">Start</th>
-              <th scope="col" title="Stock in">In</th>
-              <th scope="col" title="Transfer in">T-in</th>
-              <th scope="col" title="Stock out">Out</th>
-              <th scope="col" title="Transfer out">T-out</th>
-              <th scope="col" title="Items sold net of returns; red when returns reduced sales">Sale</th>
-              <th scope="col" title="Returned">Return</th>
-              <th scope="col" title="Closing stock">Close</th>
+              <th scope="col" data-col="num" class="is-center" title="Starting stock">Start</th>
+              <th scope="col" data-col="num" class="is-center" title="Stock in">In</th>
+              <th scope="col" data-col="num" class="is-center" title="Transfer in">T-in</th>
+              <th scope="col" data-col="num" class="is-center" title="Stock out">Out</th>
+              <th scope="col" data-col="num" class="is-center" title="Transfer out">T-out</th>
+              <th scope="col" data-col="num" class="is-center" title="Trade out, exchange, return, or trade sale">Trade</th>
+              <th scope="col" data-col="num" class="is-center" title="Items sold net of returns; red when returns reduced sales">Sale</th>
+              <th scope="col" data-col="num" class="is-center" title="Returned">Return</th>
+              <th scope="col" data-col="num" class="is-center" title="Closing stock">Close</th>
             </tr>
           </thead>
           <tbody>
@@ -471,6 +535,9 @@
               <td data-label="Transfer out">
                 <span class="stock-matrix-qty stock-report-qty--transfer-out{% if row.stock_transfer_out == 0 %} is-empty{% endif %}">{{ row.stock_transfer_out }}</span>
               </td>
+              <td data-label="Trade">
+                <span class="stock-matrix-qty stock-report-qty--trade{% if row.stock_trade == 0 %} is-empty{% endif %}">{{ row.stock_trade }}</span>
+              </td>
               <td data-label="Stock sale">
                 <span class="stock-matrix-qty {% if row.stock_return %}stock-report-qty--sale-returned{% else %}stock-report-qty--sale{% endif %}{% if row.net_sale == 0 %} is-empty{% endif %}">{{ row.net_sale }}</span>
               </td>
@@ -494,6 +561,7 @@
               <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--transfer-in">{{ item_report_totals.stock_transfer_in }}</span></td>
               <td data-label="Stock out"><span class="stock-matrix-qty stock-report-qty--out">{{ item_report_totals.stock_out }}</span></td>
               <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--transfer-out">{{ item_report_totals.stock_transfer_out }}</span></td>
+              <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade">{{ item_report_totals.stock_trade }}</span></td>
               <td data-label="Stock sale">
                 <span class="stock-matrix-qty {% if item_report_totals.stock_return %}stock-report-qty--sale-returned{% else %}stock-report-qty--sale{% endif %}{% if item_report_totals.net_sale == 0 %} is-empty{% endif %}">{{ item_report_totals.net_sale }}</span>
               </td>
@@ -503,6 +571,23 @@
           </tfoot>
         </table>
       </div>
+      {% if report_total_pages > 1 %}
+      <nav class="stock-report-pagination" aria-label="Report pages">
+        <p class="stock-report-pagination-meta">
+          Page {{ report_page }} of {{ report_total_pages }}
+          · {{ report_total_groups }} item{{ report_total_groups|pluralize }}
+        </p>
+        <div class="stock-report-pagination-links">
+          {% if report_prev_url %}
+          <a class="stock-report-pagination-link" href="{{ report_prev_url }}">Previous</a>
+          {% endif %}
+          <span class="stock-report-pagination-current">{{ report_page }} / {{ report_total_pages }}</span>
+          {% if report_next_url %}
+          <a class="stock-report-pagination-link" href="{{ report_next_url }}">Next</a>
+          {% endif %}
+        </div>
+      </nav>
+      {% endif %}
       {% else %}
       <div class="dashboard-placeholder">
         <i data-lucide="bar-chart-3" aria-hidden="true"></i>
@@ -647,12 +732,37 @@
     const resultsEl = form.querySelector("[data-stock-item-results]");
     const chipsEl = form.querySelector("[data-stock-item-chips]");
     const catalogEl = form.querySelector("[data-stock-item-catalog]");
+    const itemPickerUrl = form.getAttribute("data-item-picker-url") || "";
     let catalog = [];
+    let catalogLoading = null;
     try {
       catalog = JSON.parse(catalogEl?.textContent || "[]");
     } catch (_e) {
       catalog = [];
     }
+
+    const ensureCatalog = () => {
+      if (catalog.length || !itemPickerUrl) return Promise.resolve(catalog);
+      if (catalogLoading) return catalogLoading;
+      catalogLoading = fetch(itemPickerUrl, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      })
+        .then((res) => (res.ok ? res.json() : { items: [] }))
+        .then((data) => {
+          catalog = Array.isArray(data.items) ? data.items : [];
+          if (catalogEl) catalogEl.textContent = JSON.stringify(catalog);
+          return catalog;
+        })
+        .catch(() => {
+          catalog = [];
+          return catalog;
+        })
+        .finally(() => {
+          catalogLoading = null;
+        });
+      return catalogLoading;
+    };
 
     const selectedIds = () =>
       new Set(
@@ -692,31 +802,41 @@
         hideResults();
         return;
       }
-      const selected = selectedIds();
-      const matches = catalog
-        .filter((item) => {
-          if (selected.has(String(item.id))) return false;
-          const hay = `${item.name} ${item.category}`.toLowerCase();
-          return hay.includes(q);
-        })
-        .slice(0, 8);
+      const renderMatches = () => {
+        const selected = selectedIds();
+        const matches = catalog
+          .filter((item) => {
+            if (selected.has(String(item.id))) return false;
+            const hay = `${item.name} ${item.category}`.toLowerCase();
+            return hay.includes(q);
+          })
+          .slice(0, 8);
 
-      if (!matches.length) {
-        resultsEl.innerHTML = `<p class="stock-report-item-empty">No matches</p>`;
-        resultsEl.hidden = false;
-        return;
-      }
+        if (!matches.length) {
+          resultsEl.innerHTML = `<p class="stock-report-item-empty">No matches</p>`;
+          resultsEl.hidden = false;
+          return;
+        }
 
-      resultsEl.innerHTML = matches
-        .map(
-          (item) =>
-            `<button type="button" class="stock-report-item-result" data-item-id="${item.id}" data-item-name="${item.name.replace(/"/g, "&quot;")}">
+        resultsEl.innerHTML = matches
+          .map(
+            (item) =>
+              `<button type="button" class="stock-report-item-result" data-item-id="${item.id}" data-item-name="${item.name.replace(/"/g, "&quot;")}">
               <strong>${item.name}</strong>
               <em>${item.category}</em>
             </button>`
-        )
-        .join("");
-      resultsEl.hidden = false;
+          )
+          .join("");
+        resultsEl.hidden = false;
+      };
+
+      if (!catalog.length && itemPickerUrl) {
+        resultsEl.innerHTML = `<p class="stock-report-item-empty">Loading items…</p>`;
+        resultsEl.hidden = false;
+        ensureCatalog().then(renderMatches);
+        return;
+      }
+      renderMatches();
     };
 
     searchInput?.addEventListener("input", () => {
@@ -760,6 +880,7 @@
     itemModeSelect?.addEventListener("change", () => {
       syncItemMode(itemModeSelect.value);
       hideResults();
+      if (itemModeSelect.value === "items") ensureCatalog();
     });
 
     form.querySelectorAll("[data-stock-report-calendar]").forEach((input) => {

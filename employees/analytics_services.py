@@ -16,7 +16,7 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Coalesce, Greatest
+from django.db.models.functions import Coalesce, Greatest, TruncDay, TruncHour, TruncMonth
 from django.http import Http404
 from django.utils import timezone
 
@@ -4287,6 +4287,395 @@ def _metric_shop_rows(
     return rows
 
 
+def _period_breakdown_config(filters) -> dict | None:
+    """Pick hour / day / month buckets from the active analytics range filter."""
+    from datetime import timedelta
+
+    range_type = (
+        filters.get("range_type") or filters.get("report_range") or "day"
+    ).strip().lower()
+    if range_type == "day":
+        return {
+            "bucket_kind": "hour",
+            "column_label": "Hour",
+            "title": "Hourly transactions",
+            "empty": "No hourly transactions for this day.",
+        }
+    if range_type == "month":
+        return {
+            "bucket_kind": "day",
+            "column_label": "Day",
+            "title": "Daily transactions",
+            "empty": "No daily transactions for this month.",
+        }
+    if range_type == "year":
+        return {
+            "bucket_kind": "month",
+            "column_label": "Month",
+            "title": "Monthly transactions",
+            "empty": "No monthly transactions for this year.",
+        }
+
+    start, end = filters.get("start"), filters.get("end")
+    if not start or not end:
+        return None
+    duration = end - start
+    if duration <= timedelta(hours=36):
+        return {
+            "bucket_kind": "hour",
+            "column_label": "Hour",
+            "title": "Hourly transactions",
+            "empty": "No hourly transactions for this period.",
+        }
+    if duration <= timedelta(days=62):
+        return {
+            "bucket_kind": "day",
+            "column_label": "Day",
+            "title": "Daily transactions",
+            "empty": "No daily transactions for this period.",
+        }
+    return {
+        "bucket_kind": "month",
+        "column_label": "Month",
+        "title": "Monthly transactions",
+        "empty": "No monthly transactions for this period.",
+    }
+
+
+def _created_at_trunc(field: str, bucket_kind: str):
+    tz = timezone.get_current_timezone()
+    if bucket_kind == "hour":
+        return TruncHour(field, tzinfo=tz)
+    if bucket_kind == "day":
+        return TruncDay(field, tzinfo=tz)
+    return TruncMonth(field, tzinfo=tz)
+
+
+def _bucket_label(moment, bucket_kind: str) -> str:
+    if moment is None:
+        return ""
+    local = timezone.localtime(moment)
+    if bucket_kind == "hour":
+        return local.replace(minute=0, second=0, microsecond=0).strftime("%H:00")
+    if bucket_kind == "day":
+        return local.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%d %b")
+    return local.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime(
+        "%b %Y"
+    )
+
+
+def _iter_bucket_labels(start, end, bucket_kind: str) -> list[str]:
+    from datetime import timedelta
+
+    if not start or not end:
+        return []
+    cursor = timezone.localtime(start)
+    end_local = timezone.localtime(end)
+    labels: list[str] = []
+    if bucket_kind == "hour":
+        cursor = cursor.replace(minute=0, second=0, microsecond=0)
+        step = timedelta(hours=1)
+        while cursor < end_local:
+            labels.append(_bucket_label(cursor, bucket_kind))
+            cursor = cursor + step
+    elif bucket_kind == "day":
+        cursor = cursor.replace(hour=0, minute=0, second=0, microsecond=0)
+        step = timedelta(days=1)
+        while cursor < end_local:
+            labels.append(_bucket_label(cursor, bucket_kind))
+            cursor = cursor + step
+    else:
+        cursor = cursor.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        while cursor < end_local:
+            labels.append(_bucket_label(cursor, bucket_kind))
+            year = cursor.year + (1 if cursor.month == 12 else 0)
+            month = 1 if cursor.month == 12 else cursor.month + 1
+            cursor = cursor.replace(year=year, month=month)
+    return labels
+
+
+def _trading_by_bucket_for_period(
+    *, shop_ids, start, end, bucket_kind: str, kinds=None
+) -> dict[str, dict]:
+    """Net selling value and COGS keyed by time-bucket label."""
+    kinds = list(kinds or [ShopReceiptKind.SALE, ShopReceiptKind.CREDIT])
+    trading_line_qs = _trading_line_qs(
+        shop_ids=shop_ids, start=start, end=end, kinds=kinds
+    )
+    empty = {
+        "lines": 0,
+        "value": _zero(),
+        "cogs": _zero(),
+        "sale_value": _zero(),
+        "credit_value": _zero(),
+        "sale_cogs": _zero(),
+        "credit_cogs": _zero(),
+    }
+    by_bucket: dict[str, dict] = {}
+
+    def _entry(label: str) -> dict:
+        row = by_bucket.get(label)
+        if row is None:
+            row = dict(empty)
+            by_bucket[label] = row
+        return row
+
+    remaining_value = ExpressionWrapper(
+        F("unit_price") * (F("quantity") - F("returned_quantity")),
+        output_field=DecimalField(max_digits=14, decimal_places=2),
+    )
+    remaining_cogs = ExpressionWrapper(
+        F("unit_cost") * (F("quantity") - F("returned_quantity")),
+        output_field=DecimalField(max_digits=14, decimal_places=2),
+    )
+    trunc = _created_at_trunc("receipt__created_at", bucket_kind)
+    for row in (
+        trading_line_qs.annotate(bucket=trunc)
+        .values("bucket", "receipt__kind")
+        .annotate(
+            lines=Count("id"),
+            value=Coalesce(Sum(remaining_value), _zero()),
+            cogs=Coalesce(Sum(remaining_cogs), _zero()),
+        )
+    ):
+        label = _bucket_label(row["bucket"], bucket_kind)
+        if not label:
+            continue
+        kind = row["receipt__kind"]
+        value = Decimal(row["value"] or 0).quantize(Decimal("0.01"))
+        cogs = Decimal(row["cogs"] or 0).quantize(Decimal("0.01"))
+        lines = int(row["lines"] or 0)
+        entry = _entry(label)
+        entry["lines"] += lines
+        entry["value"] += value
+        entry["cogs"] += cogs
+        if kind == ShopReceiptKind.SALE:
+            entry["sale_value"] += value
+            entry["sale_cogs"] += cogs
+        elif kind == ShopReceiptKind.CREDIT:
+            entry["credit_value"] += value
+            entry["credit_cogs"] += cogs
+
+    missing_cost_lines = list(
+        trading_line_qs.filter(unit_cost=0)
+        .exclude(item_id__isnull=True)
+        .annotate(bucket=trunc)
+        .values(
+            "bucket",
+            "receipt__kind",
+            "item_id",
+            "quantity",
+            "returned_quantity",
+        )
+    )
+    if missing_cost_lines:
+        from items.services import last_buying_prices_for_items
+
+        item_ids = {row["item_id"] for row in missing_cost_lines if row["item_id"]}
+        fallback_prices = last_buying_prices_for_items(item_ids)
+        for row in missing_cost_lines:
+            item_id = row["item_id"]
+            unit = Decimal(fallback_prices.get(item_id) or 0)
+            if unit <= 0:
+                continue
+            remaining = max(
+                0, int(row["quantity"] or 0) - int(row["returned_quantity"] or 0)
+            )
+            if remaining <= 0:
+                continue
+            label = _bucket_label(row["bucket"], bucket_kind)
+            if not label:
+                continue
+            extra = (unit * remaining).quantize(Decimal("0.01"))
+            entry = _entry(label)
+            entry["cogs"] += extra
+            if row["receipt__kind"] == ShopReceiptKind.SALE:
+                entry["sale_cogs"] += extra
+            elif row["receipt__kind"] == ShopReceiptKind.CREDIT:
+                entry["credit_cogs"] += extra
+    return by_bucket
+
+
+def _opex_and_drawings_by_bucket(
+    expenses_qs, *, bucket_kind: str
+) -> tuple[dict[str, tuple[int, Decimal]], dict[str, tuple[int, Decimal]]]:
+    opex_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    drawings_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    trunc = _created_at_trunc("created_at", bucket_kind)
+    for row in expenses_qs.annotate(bucket=trunc).values("bucket", "category").annotate(
+        docs=Count("id"),
+        amount=Coalesce(Sum("amount"), _zero()),
+    ):
+        label = _bucket_label(row["bucket"], bucket_kind)
+        if not label:
+            continue
+        amount = Decimal(row["amount"] or 0)
+        docs = int(row["docs"] or 0)
+        if row["category"] == ExpenseCategory.OWNER_DRAWINGS:
+            d_docs, d_amt = drawings_by_bucket.get(label, (0, _zero()))
+            drawings_by_bucket[label] = (d_docs + docs, d_amt + amount)
+        else:
+            o_docs, o_amt = opex_by_bucket.get(label, (0, _zero()))
+            opex_by_bucket[label] = (o_docs + docs, o_amt + amount)
+    return opex_by_bucket, drawings_by_bucket
+
+
+def _docs_by_bucket(qs, *, bucket_kind: str) -> dict[str, int]:
+    trunc = _created_at_trunc("created_at", bucket_kind)
+    return {
+        _bucket_label(row["bucket"], bucket_kind): int(row["docs"] or 0)
+        for row in qs.annotate(bucket=trunc)
+        .values("bucket")
+        .annotate(docs=Count("id"))
+        if row["bucket"] is not None
+    }
+
+
+def _revenue_breakdown_table(
+    *,
+    filters,
+    shop_ids,
+    start,
+    end,
+    sales,
+    credits,
+) -> dict | None:
+    config = _period_breakdown_config(filters)
+    if not config or not start or not end:
+        return None
+
+    bucket_kind = config["bucket_kind"]
+    labels = _iter_bucket_labels(start, end, bucket_kind)
+    if not labels:
+        return None
+
+    trading = _trading_by_bucket_for_period(
+        shop_ids=shop_ids, start=start, end=end, bucket_kind=bucket_kind
+    )
+    period_expenses = _within_created_range(
+        Expense.objects.filter(shop_id__in=shop_ids),
+        start,
+        end,
+    )
+    opex_by_bucket, _drawings = _opex_and_drawings_by_bucket(
+        period_expenses, bucket_kind=bucket_kind
+    )
+    sale_docs_by_bucket = _docs_by_bucket(sales, bucket_kind=bucket_kind)
+    credit_docs_by_bucket = _docs_by_bucket(credits, bucket_kind=bucket_kind)
+
+    metric_maps = [
+        ("Sales", "sale"),
+        ("Credits", "credit"),
+        ("Total", "total"),
+    ]
+    columns = [config["column_label"]]
+    for label, key in metric_maps:
+        columns.append(
+            {
+                "label": label,
+                "pair": True,
+                "pair_qty": "Docs",
+                "pair_amt": "Amt",
+                "total": key == "total",
+                "band": "total" if key == "total" else "flow",
+                "band_start": key in {"sale", "total"},
+            }
+        )
+    columns.extend(
+        [
+            {
+                "label": "Stock",
+                "title": "Buying cost of items sold",
+                "band": "result",
+                "band_start": True,
+            },
+            {
+                "label": "Expenses",
+                "title": "Operating expenses recorded in this bucket (excludes owner drawings)",
+                "pair": True,
+                "pair_qty": "Docs",
+                "pair_amt": "Amt",
+                "band": "result",
+            },
+            {
+                "label": "Profit",
+                "title": "Total − stock − expenses for this bucket",
+                "band": "result",
+            },
+        ]
+    )
+
+    table_rows = []
+    for label in labels:
+        row = trading.get(label) or {}
+        sale_docs = sale_docs_by_bucket.get(label, 0)
+        credit_docs = credit_docs_by_bucket.get(label, 0)
+        sale_amt = Decimal(row.get("sale_value") or 0)
+        credit_amt = Decimal(row.get("credit_value") or 0)
+        stock = Decimal(row.get("cogs") or 0)
+        opex_docs, opex_amt = opex_by_bucket.get(label, (0, _zero()))
+        opex_amt = Decimal(opex_amt or 0)
+        revenue_amt = sale_amt + credit_amt
+        total_docs = sale_docs + credit_docs
+        if not total_docs and not opex_docs and revenue_amt == 0 and stock == 0:
+            continue
+        profit = revenue_amt - stock - opex_amt
+        margin = (
+            ((profit / revenue_amt) * Decimal("100")).quantize(Decimal("0.1"))
+            if revenue_amt > 0
+            else _zero()
+        )
+        cells = [
+            label,
+            _qty_amount_cell(
+                sale_docs,
+                sale_amt,
+                title=f"{sale_docs} · {_money_ksh(sale_amt)}",
+            ),
+            _qty_amount_cell(
+                credit_docs,
+                credit_amt,
+                title=f"{credit_docs} · {_money_ksh(credit_amt)}",
+            ),
+            _qty_amount_cell(
+                total_docs,
+                revenue_amt,
+                title=f"{total_docs} · {_money_ksh(revenue_amt)}",
+            ),
+            _money_cell(stock, title=f"Stock value {_money_ksh(stock)}"),
+            (
+                _qty_amount_cell(
+                    opex_docs,
+                    opex_amt,
+                    title=f"{int(opex_docs or 0)} expenses · {_money_ksh(opex_amt)}",
+                    tone="warn" if opex_amt > 0 else "neutral",
+                )
+                if opex_docs or opex_amt
+                else "—"
+            ),
+            _money_cell(
+                profit,
+                tone="good" if profit >= 0 else "bad",
+                title=f"Profit {_money_ksh(profit)} · margin {margin}%",
+            ),
+        ]
+        table_rows.append(cells)
+
+    return _table(
+        config["title"],
+        columns,
+        table_rows,
+        empty=config["empty"],
+        shop_grid=True,
+        footnote=(
+            f"{config['title']} for the selected range. "
+            "Same rules as revenue by shop: sales and credits are ex-tax item value, "
+            "stock is buying cost, expenses exclude owner drawings, "
+            "profit = total − stock − expenses."
+        ),
+    )
+
+
 def _build_revenue(filters):
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(filters["active_shop_ids"])]
     shop_ids = [shop.pk for shop in shops]
@@ -4499,9 +4888,12 @@ def _build_revenue(filters):
             f"{total_expense_docs} entries · drawings {_money_dense(total_drawings)} excluded"
         )
 
-    return {
+    page = {
         "headline": "Revenue",
-        "lead": "Sales and credits by shop, with stock, expenses, and profit.",
+        "lead": (
+            "Sales and credits by shop, with stock, expenses, and profit. "
+            "Day shows hourly, month shows daily, year shows monthly."
+        ),
         "alerts": [],
         "metrics": [
             _metric(
@@ -4556,6 +4948,17 @@ def _build_revenue(filters):
             )
         ],
     }
+    breakdown = _revenue_breakdown_table(
+        filters=filters,
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        sales=sales,
+        credits=credits,
+    )
+    if breakdown is not None:
+        page["tables"].append(breakdown)
+    return page
 
 
 def _build_balances(filters):
@@ -5185,6 +5588,218 @@ def _build_balances(filters):
     }
 
 
+def _sales_breakdown_table(
+    *,
+    filters,
+    shop_ids,
+    start,
+    end,
+    sales,
+    credits,
+) -> dict | None:
+    config = _period_breakdown_config(filters)
+    if not config or not start or not end:
+        return None
+
+    bucket_kind = config["bucket_kind"]
+    labels = _iter_bucket_labels(start, end, bucket_kind)
+    if not labels:
+        return None
+
+    money_field = DecimalField(max_digits=14, decimal_places=2)
+    zero_money = Value(0, output_field=money_field)
+    cash_expr = Case(
+        When(settled_from_credit=False, then=F("cash_amount")),
+        default=zero_money,
+        output_field=money_field,
+    )
+    mpesa_expr = Case(
+        When(settled_from_credit=False, then=F("mpesa_amount")),
+        default=zero_money,
+        output_field=money_field,
+    )
+    paid_credit_expr = Case(
+        When(
+            settled_from_credit=True,
+            then=ExpressionWrapper(
+                F("cash_amount") + F("mpesa_amount"),
+                output_field=money_field,
+            ),
+        ),
+        default=zero_money,
+        output_field=money_field,
+    )
+    unpaid_due_expr = Greatest(
+        ExpressionWrapper(
+            F("total") - F("amount_paid"),
+            output_field=money_field,
+        ),
+        zero_money,
+    )
+
+    trunc = _created_at_trunc("created_at", bucket_kind)
+    total_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    cash_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    mpesa_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    paid_credit_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    unpaid_credit_by_bucket: dict[str, tuple[int, Decimal]] = {}
+
+    for row in sales.annotate(bucket=trunc).values("bucket").annotate(
+        docs=Count("id"),
+        amount=Coalesce(Sum("total"), _zero()),
+        cash=Coalesce(Sum(cash_expr), _zero()),
+        mpesa=Coalesce(Sum(mpesa_expr), _zero()),
+        paid_credit_docs=Count("id", filter=Q(settled_from_credit=True)),
+        paid_credit=Coalesce(Sum(paid_credit_expr), _zero()),
+    ):
+        label = _bucket_label(row["bucket"], bucket_kind)
+        if not label:
+            continue
+        total_by_bucket[label] = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
+        cash_by_bucket[label] = (0, Decimal(row["cash"] or 0))
+        mpesa_by_bucket[label] = (0, Decimal(row["mpesa"] or 0))
+        paid_credit_by_bucket[label] = (
+            int(row["paid_credit_docs"] or 0),
+            Decimal(row["paid_credit"] or 0),
+        )
+
+    for row in credits.annotate(bucket=trunc).values("bucket").annotate(
+        unpaid_docs=Count("id", filter=Q(total__gt=F("amount_paid"))),
+        unpaid=Coalesce(Sum(unpaid_due_expr), _zero()),
+    ):
+        label = _bucket_label(row["bucket"], bucket_kind)
+        if not label:
+            continue
+        unpaid_credit_by_bucket[label] = (
+            int(row["unpaid_docs"] or 0),
+            Decimal(row["unpaid"] or 0),
+        )
+
+    trading = _trading_by_bucket_for_period(
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        bucket_kind=bucket_kind,
+        kinds=[ShopReceiptKind.SALE],
+    )
+
+    metric_maps = [
+        ("Cash", cash_by_bucket, "cash", "money"),
+        ("M-Pesa", mpesa_by_bucket, "mpesa", "money"),
+        ("Paid", paid_credit_by_bucket, "credits", "pair"),
+        ("Unpaid", unpaid_credit_by_bucket, "unpaid", "pair"),
+        ("Total", total_by_bucket, "total", "pair"),
+    ]
+    column_titles = {
+        "Cash": "POS cash payments on sale receipts",
+        "M-Pesa": "POS M-Pesa payments on sale receipts",
+        "Paid": "Fully paid credit receipts converted to sales",
+        "Unpaid": "Outstanding balance on open credit receipts this bucket",
+        "Total": "Cash + M-Pesa + Paid credits",
+    }
+
+    columns = [config["column_label"]]
+    for label, _by_bucket, band, cell_kind in metric_maps:
+        if cell_kind == "money":
+            columns.append(
+                {
+                    "label": label,
+                    "title": column_titles.get(label, ""),
+                    "band": band,
+                    "band_start": True,
+                    "money": True,
+                }
+            )
+        else:
+            columns.append(
+                {
+                    "label": label,
+                    "pair": True,
+                    "pair_qty": "Docs",
+                    "pair_amt": "Amt",
+                    "total": label == "Total",
+                    "band": band,
+                    "band_start": True,
+                    "title": column_titles.get(label, ""),
+                }
+            )
+    columns.extend(
+        [
+            {
+                "label": "Stock",
+                "title": "Buying cost of items sold",
+                "band": "result",
+                "band_start": True,
+            },
+            {
+                "label": "Profit",
+                "title": "Selling value − stock (ex-tax, this bucket)",
+                "band": "result",
+            },
+        ]
+    )
+
+    def _metric_cell(cell_kind: str, qty, amount):
+        if cell_kind == "money":
+            return _money_cell(amount, title=_money_ksh(amount))
+        return _qty_amount_cell(
+            qty,
+            amount,
+            title=f"{int(qty or 0)} receipts · {_money_ksh(amount)}",
+        )
+
+    table_rows = []
+    for label in labels:
+        total_docs, total_amt = total_by_bucket.get(label, (0, _zero()))
+        unpaid_docs, unpaid_amt = unpaid_credit_by_bucket.get(label, (0, _zero()))
+        row = trading.get(label) or {}
+        selling = Decimal(row.get("value") or 0)
+        stock = Decimal(row.get("cogs") or 0)
+        if (
+            not total_docs
+            and not unpaid_docs
+            and total_amt == 0
+            and unpaid_amt == 0
+            and selling == 0
+            and stock == 0
+        ):
+            continue
+        profit = selling - stock
+        margin = (
+            ((profit / selling) * Decimal("100")).quantize(Decimal("0.1"))
+            if selling > 0
+            else _zero()
+        )
+        cells = [label]
+        for _col, by_bucket, _band, cell_kind in metric_maps:
+            qty, amount = by_bucket.get(label, (0, _zero()))
+            cells.append(_metric_cell(cell_kind, qty, amount))
+        cells.append(_money_cell(stock, title=f"Stock value {_money_ksh(stock)}"))
+        cells.append(
+            _money_cell(
+                profit,
+                tone="good" if profit >= 0 else "bad",
+                title=f"Profit {_money_ksh(profit)} · margin {margin}%",
+            )
+        )
+        table_rows.append(cells)
+
+    return _table(
+        config["title"],
+        columns,
+        table_rows,
+        empty=config["empty"],
+        shop_grid=True,
+        footnote=(
+            f"{config['title']} for the selected range. "
+            "Same rules as sales by shop: Cash and M-Pesa are POS sale payments; "
+            "Paid = settled credits converted to sales (in Total); "
+            "Unpaid = open credit balances (not in Total); "
+            "Total = Cash + M-Pesa + Paid; Profit = selling value − stock."
+        ),
+    )
+
+
 def _build_sales(filters):
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
@@ -5421,11 +6036,12 @@ def _build_sales(filters):
         or unpaid_credit_by_shop.get(shop.pk, (0, _zero()))[0] > 0
     )
 
-    return {
+    page = {
         "headline": "Sales",
         "lead": (
             "Sale receipts by shop — cash, M-Pesa, paid and unpaid credits, "
-            "stock value, and profit."
+            "stock value, and profit. "
+            "Day shows hourly, month shows daily, year shows monthly."
         ),
         "alerts": [],
         "summary_board": _sales_summary_board(
@@ -5458,6 +6074,17 @@ def _build_sales(filters):
             )
         ],
     }
+    breakdown = _sales_breakdown_table(
+        filters=filters,
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        sales=sales,
+        credits=credits,
+    )
+    if breakdown is not None:
+        page["tables"].append(breakdown)
+    return page
 
 
 def _build_items(filters):
@@ -6323,13 +6950,21 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
 
     lines = []
     for line in receipt.lines.all():
+        remaining = int(line.remaining_quantity or 0)
+        serials = list(line.remaining_serial_numbers or [])
         lines.append(
             {
+                "id": line.pk,
                 "name": line.item_name,
                 "qty": int(line.quantity or 0),
-                "remaining": int(line.remaining_quantity or 0),
+                "remaining": remaining,
+                "returned": int(line.returned_quantity or 0),
                 "unit_price": _money_ksh(line.unit_price),
+                "unit_price_raw": str(Decimal(line.unit_price or 0)),
                 "line_total": _money_ksh(line.line_total),
+                "serials": serials,
+                "track_serial": bool(serials)
+                or bool(getattr(getattr(line, "item", None), "track_serial_number", False)),
             }
         )
 
@@ -6344,6 +6979,10 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
         receipt.kind == ShopReceiptKind.TRADE_OUT
         and receipt.status != ShopReceiptStatus.CANCELLED
         and balance > 0
+    )
+    can_return = (
+        receipt.status != ShopReceiptStatus.CANCELLED
+        and any(int(row["remaining"] or 0) > 0 for row in lines)
     )
 
     settlements = []
@@ -6365,6 +7004,17 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
                         f"×{event.get('qty') or 0}"
                     ),
                     "detail": _money_ksh(event.get("value")),
+                    "when": event.get("at") or "",
+                }
+            )
+        elif etype == "return":
+            settlements.append(
+                {
+                    "label": (
+                        f"Return · {event.get('detail') or 'Item'} "
+                        f"×{event.get('qty') or 0}"
+                    ),
+                    "detail": "Restocked",
                     "when": event.get("at") or "",
                 }
             )
@@ -6403,6 +7053,7 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
         "balance": _money_ksh(balance),
         "balance_raw": str(balance),
         "can_settle": can_settle,
+        "can_return": can_return,
         "is_open_trade": receipt.kind == ShopReceiptKind.TRADE_OUT,
         "settlements": settlements,
         "back_href": back_href,

@@ -342,3 +342,147 @@ def record_trade_exchange(
             }
         ],
     }
+
+
+def _clamp_trade_applied_to_total(receipt) -> list[str]:
+    """
+    After a trade return lowers the receipt total, trim cash/exchange that now
+    exceeds the remaining trade value. Prefer trimming cash first, then exchange.
+    """
+    total = _money(receipt.total)
+    paid = _money(receipt.amount_paid)
+    exchange = _money(getattr(receipt, "trade_exchange_value", 0))
+    applied = paid + exchange
+    if applied <= total:
+        return []
+
+    excess = applied - total
+    update_fields: list[str] = []
+
+    if paid > 0 and excess > 0:
+        trim = min(paid, excess)
+        receipt.amount_paid = _money(paid - trim)
+        update_fields.append("amount_paid")
+        # Keep till splits aligned when possible.
+        cash = _money(receipt.cash_amount)
+        mpesa = _money(receipt.mpesa_amount)
+        if cash + mpesa > 0:
+            # Trim cash first, then M-Pesa.
+            cash_trim = min(cash, trim)
+            receipt.cash_amount = _money(cash - cash_trim)
+            leftover = trim - cash_trim
+            if leftover > 0:
+                receipt.mpesa_amount = _money(max(Decimal("0.00"), mpesa - leftover))
+            update_fields.extend(["cash_amount", "mpesa_amount"])
+        excess -= trim
+        paid = _money(receipt.amount_paid)
+
+    if exchange > 0 and excess > 0:
+        trim = min(exchange, excess)
+        receipt.trade_exchange_value = _money(exchange - trim)
+        update_fields.append("trade_exchange_value")
+
+    return list(dict.fromkeys(update_fields))
+
+
+@transaction.atomic
+def record_trade_return(receipt, *, lines, actor=None) -> dict:
+    """
+    Return traded-out item(s) to shop stock.
+
+    Restocks inventory, writes a CUSTOMER_RETURN stock movement (stock report /
+    stock movement), updates the trade totals, and logs the event on the trade.
+    """
+    from shops.services import return_shop_receipt_items
+
+    is_open_trade = receipt.kind == ShopReceiptKind.TRADE_OUT
+    is_settled_trade = (
+        receipt.kind == ShopReceiptKind.SALE
+        and bool(getattr(receipt, "settled_from_trade", False))
+    )
+    if not is_open_trade and not is_settled_trade:
+        raise ValidationError("Only trade receipts can be returned from Tradings.")
+    if receipt.status == ShopReceiptStatus.CANCELLED:
+        raise ValidationError("This trade was already fully returned.")
+
+    if not isinstance(lines, list) or not lines:
+        raise ValidationError("Select at least one item to return.")
+
+    result = return_shop_receipt_items(
+        shop=receipt.shop,
+        receipt_id=receipt.pk,
+        payload={"lines": lines},
+        actor=actor,
+    )
+    receipt.refresh_from_db()
+
+    returned_units = sum(int(row.get("qty") or row.get("quantity") or 0) for row in lines)
+    names = []
+    for row in lines:
+        label = (row.get("item_name") or row.get("name") or "").strip()
+        if label:
+            names.append(label)
+    detail_label = ", ".join(names[:3]) if names else f"{returned_units} unit(s)"
+
+    update_fields: list[str] = []
+    if hasattr(receipt, "trade_settlements"):
+        _append_settlement(
+            receipt,
+            {
+                "type": "return",
+                "qty": returned_units,
+                "lines": [
+                    {
+                        "line_id": row.get("line_id") or row.get("id"),
+                        "qty": row.get("qty") or row.get("quantity"),
+                        "serials": row.get("serials")
+                        or row.get("serial_numbers")
+                        or [],
+                    }
+                    for row in lines
+                ],
+                "detail": detail_label,
+                "at": timezone.now().isoformat(),
+                "by_id": getattr(actor, "pk", None),
+            },
+        )
+        update_fields.append("trade_settlements")
+
+    converted = False
+    confirmed = False
+    if receipt.kind == ShopReceiptKind.TRADE_OUT:
+        update_fields.extend(_clamp_trade_applied_to_total(receipt))
+        action = finalize_trade_if_cleared(receipt)
+        converted = action == "converted_sale"
+        confirmed = action == "confirmed"
+        if converted:
+            for field in (
+                "kind",
+                "payment_method",
+                "cash_amount",
+                "mpesa_amount",
+                "settled_from_trade",
+                "status",
+            ):
+                if field not in update_fields:
+                    update_fields.append(field)
+        elif confirmed and "status" not in update_fields:
+            update_fields.append("status")
+
+    if update_fields:
+        receipt.save(update_fields=list(dict.fromkeys(update_fields)))
+
+    balance = (
+        trade_balance_due(receipt)
+        if receipt.kind == ShopReceiptKind.TRADE_OUT
+        else Decimal("0.00")
+    )
+    return {
+        **result,
+        "converted": converted,
+        "confirmed": confirmed,
+        "balance": balance,
+        "amount_paid": _money(receipt.amount_paid),
+        "exchange_value": _money(getattr(receipt, "trade_exchange_value", 0)),
+        "returned_units": returned_units,
+    }
