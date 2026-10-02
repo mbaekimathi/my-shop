@@ -267,8 +267,11 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         )
 
     def test_paid_credits_split_from_cash_and_mpesa(self):
+        from django.utils import timezone
         from employees.analytics_services import _build_sales
+        from shops.models import ClientCreditAccountEvent, ClientCreditAccountEventKind
 
+        now = timezone.now()
         ShopReceipt.objects.create(
             shop=self.shop,
             receipt_number="SALE-CASH-1",
@@ -293,7 +296,7 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
             created_by=self.cashier,
             settled_from_credit=False,
         )
-        ShopReceipt.objects.create(
+        settled = ShopReceipt.objects.create(
             shop=self.shop,
             receipt_number="SALE-CREDIT-1",
             kind=ShopReceiptKind.SALE,
@@ -320,6 +323,24 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
             client=self.client,
             client_name=self.client.full_name,
         )
+        ClientCreditAccountEvent.objects.create(
+            client=self.client,
+            shop=self.shop,
+            receipt=settled,
+            kind=ClientCreditAccountEventKind.PAYMENT_CASH,
+            amount=Decimal("30.00"),
+            actor=self.cashier,
+            occurred_at=now,
+        )
+        ClientCreditAccountEvent.objects.create(
+            client=self.client,
+            shop=self.shop,
+            receipt=settled,
+            kind=ClientCreditAccountEventKind.PAYMENT_MPESA,
+            amount=Decimal("50.00"),
+            actor=self.cashier,
+            occurred_at=now,
+        )
 
         page = _build_sales(
             {
@@ -336,6 +357,8 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         board = {tile["label"]: tile["value"] for tile in page["summary_board"]["tiles"]}
         self.assertEqual(board["Cash"], "KSh 100.00")
         self.assertEqual(board["M-Pesa"], "KSh 50.00")
+        self.assertEqual(board["Paid cash"], "KSh 30.00")
+        self.assertEqual(board["Paid M-Pesa"], "KSh 50.00")
         self.assertEqual(board["Paid total"], "KSh 80.00")
         self.assertEqual(board["Unpaid"], "KSh 100.00")
         self.assertEqual(page["summary_board"]["hero"]["label"], "General total")
@@ -348,8 +371,16 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
             for col in page["tables"][0]["columns"]
         ]
         self.assertEqual(
-            columns[:6],
-            ["Shop", "Cash", "M-Pesa", "Paid total", "Unpaid", "General total"],
+            columns[:7],
+            [
+                "Shop",
+                "Cash",
+                "M-Pesa",
+                "Paid cash",
+                "Paid M-Pesa",
+                "Paid total",
+                "Unpaid",
+            ],
         )
         self.assertIn("Expected profit", columns)
         self.assertIn("Actual profit", columns)
@@ -358,8 +389,12 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         self.assertEqual(shop_row[1]["label"], "100")
         self.assertEqual(shop_row[2]["kind"], "money")
         self.assertEqual(shop_row[2]["label"], "50")
-        self.assertEqual(shop_row[3]["amount"], "80")
-        self.assertEqual(shop_row[3]["qty"], "1")
-        self.assertEqual(shop_row[4]["amount"], "100")
-        self.assertEqual(shop_row[4]["qty"], "1")
-        self.assertEqual(shop_row[5]["amount"], "330")
+        self.assertEqual(shop_row[3]["kind"], "money")
+        self.assertEqual(shop_row[3]["label"], "30")
+        self.assertEqual(shop_row[4]["kind"], "money")
+        self.assertEqual(shop_row[4]["label"], "50")
+        self.assertEqual(shop_row[5]["amount"], "80")
+        self.assertEqual(shop_row[5]["qty"], "2")
+        self.assertEqual(shop_row[6]["amount"], "100")
+        self.assertEqual(shop_row[6]["qty"], "1")
+        self.assertEqual(shop_row[7]["amount"], "330")

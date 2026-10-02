@@ -11722,7 +11722,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
 .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tiles,
 .ax-summary-board--one .ax-summary-tiles {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
   gap: 0;
   padding-top: 0.15rem;
 }
@@ -12464,7 +12464,36 @@ html[data-theme="light"] .low-stock-badge.is-low {
   color: var(--accent-deep);
 }
 
-.ax--list-table[data-ax-section="credits"] .ax-cell--primary a {
+.ax--list-table[data-ax-section="credits"] .ax-entity-link,
+.ax--list-table[data-ax-section="clients"] .ax-entity-link {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  text-decoration: none;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-entity-name,
+.ax--list-table[data-ax-section="clients"] .ax-entity-name {
+  font-weight: 650;
+  color: var(--text-strong);
+  line-height: 1.25;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-entity-meta,
+.ax--list-table[data-ax-section="clients"] .ax-entity-meta {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--mist-dim);
+  line-height: 1.2;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-entity-link:hover .ax-entity-name,
+.ax--list-table[data-ax-section="clients"] .ax-entity-link:hover .ax-entity-name {
+  color: var(--teal);
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-cell--primary a,
+.ax--list-table[data-ax-section="clients"] .ax-cell--primary a {
   font-weight: 600;
 }
 

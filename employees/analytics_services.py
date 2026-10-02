@@ -39,6 +39,8 @@ from items.models import (
 from items.services import actionable_shops_for_profile
 from shops.models import (
     Client,
+    ClientCreditAccountEvent,
+    ClientCreditAccountEventKind,
     Expense,
     ExpenseCategory,
     ExpensePaymentStatus,
@@ -1608,7 +1610,8 @@ def _sales_summary_board(
     total_docs: int,
     cash_amount,
     mpesa_amount,
-    paid_credit_amount,
+    paid_cash_amount,
+    paid_mpesa_amount,
     unpaid_credit_amount,
     stock_amount,
     expected_profit_amount,
@@ -1619,7 +1622,9 @@ def _sales_summary_board(
     total = Decimal(total_amount or 0)
     cash = Decimal(cash_amount or 0)
     mpesa = Decimal(mpesa_amount or 0)
-    paid_credit = Decimal(paid_credit_amount or 0)
+    paid_cash = Decimal(paid_cash_amount or 0)
+    paid_mpesa = Decimal(paid_mpesa_amount or 0)
+    paid_credit = paid_cash + paid_mpesa
     unpaid_credit = Decimal(unpaid_credit_amount or 0)
     stock = Decimal(stock_amount or 0)
     expected_profit = Decimal(expected_profit_amount or 0)
@@ -1634,10 +1639,10 @@ def _sales_summary_board(
         if total > 0
         else "No sales yet"
     )
-    paid_credit_share = (
+    paid_share = (
         f"{((paid_credit / total) * Decimal('100')).quantize(Decimal('0.1'))}% of general"
         if total > 0
-        else "No sales yet"
+        else "No credit collections yet"
     )
     expected_margin = (
         f"{((expected_profit / total) * Decimal('100')).quantize(Decimal('0.1'))}%"
@@ -1673,9 +1678,23 @@ def _sales_summary_board(
                 "tone": "mpesa",
             },
             {
+                "label": "Paid cash",
+                "value": _money_ksh(paid_cash),
+                "hint": "Credit collections in cash",
+                "icon": "banknote",
+                "tone": "credits",
+            },
+            {
+                "label": "Paid M-Pesa",
+                "value": _money_ksh(paid_mpesa),
+                "hint": "Credit collections via M-Pesa",
+                "icon": "smartphone",
+                "tone": "credits",
+            },
+            {
                 "label": "Paid total",
                 "value": _money_ksh(paid_credit),
-                "hint": paid_credit_share,
+                "hint": paid_share,
                 "icon": "credit-card",
                 "tone": "credits",
             },
@@ -5685,6 +5704,73 @@ def _build_balances(filters):
     }
 
 
+def _credit_payment_totals_by_shop(
+    *, shop_ids, start, end
+) -> tuple[dict[int, tuple[int, Decimal]], dict[int, tuple[int, Decimal]]]:
+    """Credit account collections in period, split by cash / M-Pesa per shop."""
+    paid_cash_by_shop: dict[int, tuple[int, Decimal]] = {}
+    paid_mpesa_by_shop: dict[int, tuple[int, Decimal]] = {}
+    events = _within_created_range(
+        ClientCreditAccountEvent.objects.filter(
+            shop_id__in=shop_ids,
+            kind__in=(
+                ClientCreditAccountEventKind.PAYMENT_CASH,
+                ClientCreditAccountEventKind.PAYMENT_MPESA,
+            ),
+        ),
+        start,
+        end,
+        lookup="occurred_at",
+    )
+    for row in events.values("shop_id", "kind").annotate(
+        docs=Count("id"),
+        amount=Coalesce(Sum("amount"), _zero()),
+    ):
+        shop_id = row["shop_id"]
+        if not shop_id:
+            continue
+        entry = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
+        if row["kind"] == ClientCreditAccountEventKind.PAYMENT_MPESA:
+            paid_mpesa_by_shop[shop_id] = entry
+        else:
+            paid_cash_by_shop[shop_id] = entry
+    return paid_cash_by_shop, paid_mpesa_by_shop
+
+
+def _credit_payment_totals_by_bucket(
+    *, shop_ids, start, end, bucket_kind: str
+) -> tuple[dict[str, tuple[int, Decimal]], dict[str, tuple[int, Decimal]]]:
+    """Credit account collections in period, split by cash / M-Pesa per time bucket."""
+    paid_cash_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    paid_mpesa_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    trunc = _created_at_trunc("occurred_at", bucket_kind)
+    events = _within_created_range(
+        ClientCreditAccountEvent.objects.filter(
+            shop_id__in=shop_ids,
+            kind__in=(
+                ClientCreditAccountEventKind.PAYMENT_CASH,
+                ClientCreditAccountEventKind.PAYMENT_MPESA,
+            ),
+        ),
+        start,
+        end,
+        lookup="occurred_at",
+    )
+    for row in events.annotate(bucket=trunc).values("bucket", "kind").annotate(
+        docs=Count("id"),
+        amount=Coalesce(Sum("amount"), _zero()),
+    ):
+        label = _bucket_label(row["bucket"], bucket_kind)
+        if not label:
+            continue
+        entry = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
+        if row["kind"] == ClientCreditAccountEventKind.PAYMENT_MPESA:
+            paid_mpesa_by_bucket[label] = entry
+        else:
+            paid_cash_by_bucket[label] = entry
+    return paid_cash_by_bucket, paid_mpesa_by_bucket
+
+
 def _sales_breakdown_table(
     *,
     filters,
@@ -5715,17 +5801,6 @@ def _sales_breakdown_table(
         default=zero_money,
         output_field=money_field,
     )
-    paid_credit_expr = Case(
-        When(
-            settled_from_credit=True,
-            then=ExpressionWrapper(
-                F("cash_amount") + F("mpesa_amount"),
-                output_field=money_field,
-            ),
-        ),
-        default=zero_money,
-        output_field=money_field,
-    )
     unpaid_due_expr = Greatest(
         ExpressionWrapper(
             F("total") - F("amount_paid"),
@@ -5738,16 +5813,19 @@ def _sales_breakdown_table(
     total_by_bucket: dict[str, tuple[int, Decimal]] = {}
     cash_by_bucket: dict[str, tuple[int, Decimal]] = {}
     mpesa_by_bucket: dict[str, tuple[int, Decimal]] = {}
-    paid_credit_by_bucket: dict[str, tuple[int, Decimal]] = {}
     unpaid_credit_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    paid_cash_by_bucket, paid_mpesa_by_bucket = _credit_payment_totals_by_bucket(
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        bucket_kind=bucket_kind,
+    )
 
     for row in sales.annotate(bucket=trunc).values("bucket").annotate(
         docs=Count("id"),
         amount=Coalesce(Sum("total"), _zero()),
         cash=Coalesce(Sum(cash_expr), _zero()),
         mpesa=Coalesce(Sum(mpesa_expr), _zero()),
-        paid_credit_docs=Count("id", filter=Q(settled_from_credit=True)),
-        paid_credit=Coalesce(Sum(paid_credit_expr), _zero()),
     ):
         label = _bucket_label(row["bucket"], bucket_kind)
         if not label:
@@ -5755,10 +5833,6 @@ def _sales_breakdown_table(
         total_by_bucket[label] = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
         cash_by_bucket[label] = (0, Decimal(row["cash"] or 0))
         mpesa_by_bucket[label] = (0, Decimal(row["mpesa"] or 0))
-        paid_credit_by_bucket[label] = (
-            int(row["paid_credit_docs"] or 0),
-            Decimal(row["paid_credit"] or 0),
-        )
 
     for row in credits.annotate(bucket=trunc).values("bucket").annotate(
         unpaid_docs=Count("id", filter=Q(total__gt=F("amount_paid"))),
@@ -5780,45 +5854,63 @@ def _sales_breakdown_table(
         kinds=[ShopReceiptKind.SALE],
     )
 
+    paid_total_by_bucket: dict[str, tuple[int, Decimal]] = {}
     general_by_bucket: dict[str, tuple[int, Decimal]] = {}
     for label in labels:
         sale_docs, _sale_amt = total_by_bucket.get(label, (0, _zero()))
         unpaid_docs, unpaid_amt = unpaid_credit_by_bucket.get(label, (0, _zero()))
         cash_amt = cash_by_bucket.get(label, (0, _zero()))[1]
         mpesa_amt = mpesa_by_bucket.get(label, (0, _zero()))[1]
-        paid_amt = paid_credit_by_bucket.get(label, (0, _zero()))[1]
+        paid_cash_docs, paid_cash_amt = paid_cash_by_bucket.get(label, (0, _zero()))
+        paid_mpesa_docs, paid_mpesa_amt = paid_mpesa_by_bucket.get(label, (0, _zero()))
+        paid_amt = Decimal(paid_cash_amt or 0) + Decimal(paid_mpesa_amt or 0)
+        paid_total_by_bucket[label] = (
+            int(paid_cash_docs or 0) + int(paid_mpesa_docs or 0),
+            paid_amt,
+        )
         general_by_bucket[label] = (
             int(sale_docs or 0) + int(unpaid_docs or 0),
             Decimal(cash_amt or 0)
             + Decimal(mpesa_amt or 0)
-            + Decimal(paid_amt or 0)
+            + paid_amt
             + Decimal(unpaid_amt or 0),
         )
 
     metric_maps = [
         ("Cash", cash_by_bucket, "cash", "money"),
         ("M-Pesa", mpesa_by_bucket, "mpesa", "money"),
-        ("Paid total", paid_credit_by_bucket, "credits", "pair"),
+        ("Paid cash", paid_cash_by_bucket, "credits", "money"),
+        ("Paid M-Pesa", paid_mpesa_by_bucket, "credits", "money"),
+        ("Paid total", paid_total_by_bucket, "credits", "pair"),
         ("Unpaid", unpaid_credit_by_bucket, "unpaid", "pair"),
         ("General total", general_by_bucket, "total", "pair"),
     ]
     column_titles = {
         "Cash": "POS cash payments on sale receipts",
         "M-Pesa": "POS M-Pesa payments on sale receipts",
-        "Paid total": "Fully paid credit receipts converted to sales",
+        "Paid cash": "Credit account collections paid in cash this bucket",
+        "Paid M-Pesa": "Credit account collections paid via M-Pesa this bucket",
+        "Paid total": "Paid cash + Paid M-Pesa",
         "Unpaid": "Outstanding balance on open credit receipts this bucket",
         "General total": "Cash + M-Pesa + Paid total + Unpaid",
     }
 
     columns = [config["column_label"]]
     for label, _by_bucket, band, cell_kind in metric_maps:
+        band_start = label in {
+            "Cash",
+            "M-Pesa",
+            "Paid cash",
+            "Unpaid",
+            "General total",
+        }
         if cell_kind == "money":
             columns.append(
                 {
                     "label": label,
                     "title": column_titles.get(label, ""),
                     "band": band,
-                    "band_start": True,
+                    "band_start": band_start,
                     "money": True,
                 }
             )
@@ -5831,7 +5923,7 @@ def _sales_breakdown_table(
                     "pair_amt": "Amt",
                     "total": label == "General total",
                     "band": band,
-                    "band_start": True,
+                    "band_start": band_start,
                     "title": column_titles.get(label, ""),
                 }
             )
@@ -5872,6 +5964,7 @@ def _sales_breakdown_table(
         row = trading.get(label) or {}
         selling = Decimal(row.get("value") or 0)
         stock = Decimal(row.get("cogs") or 0)
+        paid_amt = paid_total_by_bucket.get(label, (0, _zero()))[1]
         if (
             not total_docs
             and not unpaid_docs
@@ -5879,12 +5972,13 @@ def _sales_breakdown_table(
             and unpaid_amt == 0
             and selling == 0
             and stock == 0
+            and paid_amt == 0
         ):
             continue
         collected = (
             cash_by_bucket.get(label, (0, _zero()))[1]
             + mpesa_by_bucket.get(label, (0, _zero()))[1]
-            + paid_credit_by_bucket.get(label, (0, _zero()))[1]
+            + paid_amt
         )
         expected_profit = selling - stock
         actual_profit = collected - stock
@@ -5933,8 +6027,9 @@ def _sales_breakdown_table(
         shop_grid=True,
         footnote=(
             f"{config['title']} for the selected range. "
-            "Same rules as sales by shop: Cash and M-Pesa are POS sale payments; "
-            "Paid total = settled credits converted to sales; "
+            "Cash and M-Pesa are POS sale payments; "
+            "Paid cash / Paid M-Pesa are credit account collections in this bucket; "
+            "Paid total = Paid cash + Paid M-Pesa; "
             "Unpaid = open credit balances; "
             "General total = Cash + M-Pesa + Paid total + Unpaid; "
             "Expected profit = selling value − stock; "
@@ -5961,17 +6056,6 @@ def _build_sales(filters):
         default=zero_money,
         output_field=money_field,
     )
-    paid_credit_expr = Case(
-        When(
-            settled_from_credit=True,
-            then=ExpressionWrapper(
-                F("cash_amount") + F("mpesa_amount"),
-                output_field=money_field,
-            ),
-        ),
-        default=zero_money,
-        output_field=money_field,
-    )
     unpaid_due_expr = Greatest(
         ExpressionWrapper(
             F("total") - F("amount_paid"),
@@ -5983,24 +6067,22 @@ def _build_sales(filters):
     total_by_shop: dict[int, tuple[int, Decimal]] = {}
     cash_by_shop: dict[int, tuple[int, Decimal]] = {}
     mpesa_by_shop: dict[int, tuple[int, Decimal]] = {}
-    paid_credit_by_shop: dict[int, tuple[int, Decimal]] = {}
     unpaid_credit_by_shop: dict[int, tuple[int, Decimal]] = {}
+    paid_cash_by_shop, paid_mpesa_by_shop = _credit_payment_totals_by_shop(
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+    )
     for row in sales.values("shop_id").annotate(
         docs=Count("id"),
         amount=Coalesce(Sum("total"), _zero()),
         cash=Coalesce(Sum(cash_expr), _zero()),
         mpesa=Coalesce(Sum(mpesa_expr), _zero()),
-        paid_credit_docs=Count("id", filter=Q(settled_from_credit=True)),
-        paid_credit=Coalesce(Sum(paid_credit_expr), _zero()),
     ):
         shop_id = row["shop_id"]
         total_by_shop[shop_id] = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
         cash_by_shop[shop_id] = (0, Decimal(row["cash"] or 0))
         mpesa_by_shop[shop_id] = (0, Decimal(row["mpesa"] or 0))
-        paid_credit_by_shop[shop_id] = (
-            int(row["paid_credit_docs"] or 0),
-            Decimal(row["paid_credit"] or 0),
-        )
 
     for row in credits.values("shop_id").annotate(
         unpaid_docs=Count("id", filter=Q(total__gt=F("amount_paid"))),
@@ -6021,6 +6103,7 @@ def _build_sales(filters):
     selling_by_shop: dict[int, Decimal] = {}
     expected_profit_by_shop: dict[int, Decimal] = {}
     actual_profit_by_shop: dict[int, Decimal] = {}
+    paid_total_by_shop: dict[int, tuple[int, Decimal]] = {}
     general_by_shop: dict[int, tuple[int, Decimal]] = {}
     for shop in shops:
         row = trading.get(shop.pk) or {}
@@ -6028,15 +6111,21 @@ def _build_sales(filters):
         stock = Decimal(row.get("cogs") or 0)
         cash_amt = cash_by_shop.get(shop.pk, (0, _zero()))[1]
         mpesa_amt = mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
-        _paid_docs, paid_amt = paid_credit_by_shop.get(shop.pk, (0, _zero()))
+        paid_cash_docs, paid_cash_amt = paid_cash_by_shop.get(shop.pk, (0, _zero()))
+        paid_mpesa_docs, paid_mpesa_amt = paid_mpesa_by_shop.get(shop.pk, (0, _zero()))
         unpaid_docs, unpaid_amt = unpaid_credit_by_shop.get(shop.pk, (0, _zero()))
         sale_docs = total_by_shop.get(shop.pk, (0, _zero()))[0]
-        collected = Decimal(cash_amt or 0) + Decimal(mpesa_amt or 0) + Decimal(paid_amt or 0)
+        paid_amt = Decimal(paid_cash_amt or 0) + Decimal(paid_mpesa_amt or 0)
+        collected = Decimal(cash_amt or 0) + Decimal(mpesa_amt or 0) + paid_amt
         general_amt = collected + Decimal(unpaid_amt or 0)
         selling_by_shop[shop.pk] = selling
         stock_by_shop[shop.pk] = stock
         expected_profit_by_shop[shop.pk] = selling - stock
         actual_profit_by_shop[shop.pk] = collected - stock
+        paid_total_by_shop[shop.pk] = (
+            int(paid_cash_docs or 0) + int(paid_mpesa_docs or 0),
+            paid_amt,
+        )
         general_by_shop[shop.pk] = (
             int(sale_docs or 0) + int(unpaid_docs or 0),
             general_amt,
@@ -6045,14 +6134,18 @@ def _build_sales(filters):
     metric_maps = [
         ("Cash", cash_by_shop, "cash", "money"),
         ("M-Pesa", mpesa_by_shop, "mpesa", "money"),
-        ("Paid total", paid_credit_by_shop, "credits", "pair"),
+        ("Paid cash", paid_cash_by_shop, "credits", "money"),
+        ("Paid M-Pesa", paid_mpesa_by_shop, "credits", "money"),
+        ("Paid total", paid_total_by_shop, "credits", "pair"),
         ("Unpaid", unpaid_credit_by_shop, "unpaid", "pair"),
         ("General total", general_by_shop, "total", "pair"),
     ]
     column_titles = {
         "Cash": "POS cash payments on sale receipts",
         "M-Pesa": "POS M-Pesa payments on sale receipts",
-        "Paid total": "Fully paid credit receipts converted to sales",
+        "Paid cash": "Credit account collections paid in cash this period",
+        "Paid M-Pesa": "Credit account collections paid via M-Pesa this period",
+        "Paid total": "Paid cash + Paid M-Pesa",
         "Unpaid": "Outstanding balance on open credit receipts this period",
         "General total": "Cash + M-Pesa + Paid total + Unpaid",
     }
@@ -6067,13 +6160,20 @@ def _build_sales(filters):
 
     columns = ["Shop"]
     for label, _by_shop, band, cell_kind in metric_maps:
+        band_start = label in {
+            "Cash",
+            "M-Pesa",
+            "Paid cash",
+            "Unpaid",
+            "General total",
+        }
         if cell_kind == "money":
             columns.append(
                 {
                     "label": label,
                     "title": column_titles.get(label, ""),
                     "band": band,
-                    "band_start": True,
+                    "band_start": band_start,
                     "money": True,
                 }
             )
@@ -6086,7 +6186,7 @@ def _build_sales(filters):
                     "pair_amt": "Amt",
                     "total": label == "General total",
                     "band": band,
-                    "band_start": True,
+                    "band_start": band_start,
                     "title": column_titles.get(label, ""),
                 }
             )
@@ -6133,7 +6233,7 @@ def _build_sales(filters):
         collected = (
             cash_by_shop.get(shop.pk, (0, _zero()))[1]
             + mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
-            + paid_credit_by_shop.get(shop.pk, (0, _zero()))[1]
+            + paid_total_by_shop.get(shop.pk, (0, _zero()))[1]
         )
         expected_margin = (
             ((expected_profit / revenue) * Decimal("100")).quantize(Decimal("0.1"))
@@ -6172,7 +6272,8 @@ def _build_sales(filters):
     total_amount = _zero()
     cash_amount = _zero()
     mpesa_amount = _zero()
-    paid_credit_amount = _zero()
+    paid_cash_amount = _zero()
+    paid_mpesa_amount = _zero()
     unpaid_credit_amount = _zero()
     for shop in shops_sorted:
         qty, amount = general_by_shop.get(shop.pk, (0, _zero()))
@@ -6180,12 +6281,14 @@ def _build_sales(filters):
         total_amount += Decimal(amount or 0)
         cash_amount += cash_by_shop.get(shop.pk, (0, _zero()))[1]
         mpesa_amount += mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
-        paid_credit_amount += paid_credit_by_shop.get(shop.pk, (0, _zero()))[1]
+        paid_cash_amount += paid_cash_by_shop.get(shop.pk, (0, _zero()))[1]
+        paid_mpesa_amount += paid_mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
         unpaid_credit_amount += unpaid_credit_by_shop.get(shop.pk, (0, _zero()))[1]
     total_stock = sum((stock_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero())
     total_selling = sum(
         (selling_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero()
     )
+    paid_credit_amount = paid_cash_amount + paid_mpesa_amount
     total_collected = cash_amount + mpesa_amount + paid_credit_amount
     total_expected_profit = total_selling - total_stock
     total_actual_profit = total_collected - total_stock
@@ -6240,12 +6343,13 @@ def _build_sales(filters):
         for shop in shops_sorted
         if general_by_shop.get(shop.pk, (0, _zero()))[0] > 0
         or unpaid_credit_by_shop.get(shop.pk, (0, _zero()))[0] > 0
+        or paid_total_by_shop.get(shop.pk, (0, _zero()))[0] > 0
     )
 
     page = {
         "headline": "Sales",
         "lead": (
-            "Sale receipts by shop — cash, M-Pesa, paid total, unpaid, "
+            "Sale receipts by shop — cash, M-Pesa, paid cash / M-Pesa, unpaid, "
             "general total, stock, expected profit, and actual profit. "
             "Day shows hourly, month shows daily, year shows monthly."
         ),
@@ -6255,7 +6359,8 @@ def _build_sales(filters):
             total_docs=total_docs,
             cash_amount=cash_amount,
             mpesa_amount=mpesa_amount,
-            paid_credit_amount=paid_credit_amount,
+            paid_cash_amount=paid_cash_amount,
+            paid_mpesa_amount=paid_mpesa_amount,
             unpaid_credit_amount=unpaid_credit_amount,
             stock_amount=total_stock,
             expected_profit_amount=total_expected_profit,
@@ -6273,7 +6378,8 @@ def _build_sales(filters):
                 shop_grid=True,
                 footnote=(
                     "Cash and M-Pesa are POS sale payments. "
-                    "Paid total = settled credits converted to sales. "
+                    "Paid cash / Paid M-Pesa are credit account collections this period. "
+                    "Paid total = Paid cash + Paid M-Pesa. "
                     "Unpaid = open credit balances this period. "
                     "General total = Cash + M-Pesa + Paid total + Unpaid. "
                     "Expected profit = selling value − stock. "
@@ -7675,13 +7781,14 @@ def _build_clients(filters):
     for client in Client.objects.filter(pk__in=client_ids_in_scope).order_by(
         "full_name", "id"
     ):
-        phone = client.phone_number or ""
-        label = f"{client.full_name} · {phone}" if phone else client.full_name
+        name = client.full_name or "Client"
+        phone = (client.phone_number or "").strip()
         total_credits, total_balance = totals_by_client.get(client.pk, (0, _zero()))
         ranked.append(
             (
                 total_balance,
-                label,
+                name,
+                phone,
                 client.pk,
                 credit_by_client_shop.get(client.pk) or {},
                 total_credits,
@@ -7694,20 +7801,22 @@ def _build_clients(filters):
     client_rows = []
     for (
         _balance,
-        label,
+        name,
+        phone,
         client_id,
         by_shop,
         total_credits,
         total_balance,
     ) in ranked:
-        cells = [
-            {
-                "href": client_credit_account_url(
-                    role, client_id, query=query, from_credits=from_credits
-                ),
-                "label": label,
-            }
-        ]
+        client_cell = {
+            "href": client_credit_account_url(
+                role, client_id, query=query, from_credits=from_credits
+            ),
+            "label": name,
+        }
+        if phone:
+            client_cell["sub"] = phone
+        cells = [client_cell]
         for shop in shops:
             shop_credits, shop_balance = by_shop.get(shop.pk, (0, _zero()))
             cells.append(

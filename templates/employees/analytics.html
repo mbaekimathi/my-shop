@@ -466,7 +466,7 @@
       <div class="ax-band-legend ax-band-legend--sales" aria-label="Column groups">
         <span class="is-cash">Cash</span>
         <span class="is-mpesa">M-Pesa</span>
-        <span class="is-credits">Paid total</span>
+        <span class="is-credits">Paid cash · Paid M-Pesa · Paid total</span>
         <span class="is-unpaid">Unpaid</span>
         <span class="is-total">General total</span>
         <span class="is-result">Stock · Expected · Actual</span>
@@ -544,7 +544,7 @@
               class="ax-row--total"
               {% endif %}
               {% if table.searchable %}
-              data-search-text="{% if row.search_text %}{{ row.search_text }}{% elif cells.0.label %}{{ cells.0.label }}{% elif cells.0 %}{{ cells.0 }}{% endif %}"
+              data-search-text="{% if row.search_text %}{{ row.search_text }}{% elif cells.0.label %}{{ cells.0.label }}{% if cells.0.sub %} {{ cells.0.sub }}{% endif %}{% elif cells.0 %}{{ cells.0 }}{% endif %}"
               {% endif %}
             >
               {% for cell in cells %}
