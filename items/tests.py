@@ -885,16 +885,51 @@ class ItemImageUrlTests(TestCase):
     def test_public_image_url_uses_app_route_when_file_exists(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         from django.urls import reverse
+        from urllib.parse import quote
 
         upload = SimpleUploadedFile(
             "photo.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg"
         )
         self.item.image = upload
         self.item.save(update_fields=["image"])
+        token = quote(self.item.image.name.rsplit("/", 1)[-1], safe="")
         self.assertEqual(
             self.item.public_image_url(),
-            reverse("core:item_photo", kwargs={"item_id": self.item.pk}),
+            f"{reverse('core:item_photo', kwargs={'item_id': self.item.pk})}?v={token}",
         )
+
+    def test_update_item_replaces_image_and_busts_url(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from items.services import update_item
+
+        first = SimpleUploadedFile(
+            "first.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg"
+        )
+        self.item.image = first
+        self.item.save(update_fields=["image"])
+        old_name = self.item.image.name
+        old_url = self.item.public_image_url()
+
+        second = SimpleUploadedFile(
+            "second.jpg", b"\xff\xd8\xff\xd9\x00\x01", content_type="image/jpeg"
+        )
+        update_item(
+            self.item,
+            {
+                "category": self.item.category,
+                "name": self.item.name,
+                "description": "",
+                "minimum_selling_price": "100.00",
+                "shop_price": "150.00",
+                "pricing_mode": "single",
+            },
+            {"image": second},
+        )
+        self.item.refresh_from_db()
+        self.assertTrue(self.item.image)
+        self.assertNotEqual(self.item.image.name, old_name)
+        self.assertNotEqual(self.item.public_image_url(), old_url)
+        self.assertFalse(self.item.image.storage.exists(old_name))
 
     def test_item_photo_view_serves_upload(self):
         from django.core.files.uploadedfile import SimpleUploadedFile

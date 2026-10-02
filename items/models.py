@@ -5,7 +5,11 @@ from django.db import models
 
 def item_image_path(instance, filename):
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
-    return f"items/images/{instance.pk or uuid.uuid4().hex}.{ext}"
+    if ext not in {"jpg", "jpeg", "png", "webp", "gif"}:
+        ext = "jpg"
+    # Unique name on every upload so replacements never reuse a cached path.
+    stem = instance.pk or uuid.uuid4().hex
+    return f"items/images/{stem}_{uuid.uuid4().hex[:10]}.{ext}"
 
 
 class Item(models.Model):
@@ -69,8 +73,12 @@ class Item(models.Model):
             if not self.pk:
                 return field.url or ""
             from django.urls import reverse
+            from urllib.parse import quote
 
-            return reverse("core:item_photo", kwargs={"item_id": self.pk})
+            url = reverse("core:item_photo", kwargs={"item_id": self.pk})
+            # Bust browser/CDN cache when the stored file is replaced.
+            token = name.rsplit("/", 1)[-1]
+            return f"{url}?v={quote(token, safe='')}"
         except (ValueError, OSError, AttributeError):
             return ""
 

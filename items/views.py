@@ -6747,7 +6747,8 @@ def item_photo(request, item_id):
             raise Http404("Photo not found.")
         content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
         response = FileResponse(field.open("rb"), content_type=content_type)
-        response["Cache-Control"] = "public, max-age=86400, immutable"
+        # Versioned public URLs (?v=filename) handle replacement; keep a short cache.
+        response["Cache-Control"] = "public, max-age=3600"
         return response
     except (ValueError, OSError, AttributeError) as exc:
         raise Http404("Photo not found.") from exc

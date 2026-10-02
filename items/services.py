@@ -1708,16 +1708,28 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
         item.use_individual_shop_prices = True
         item.track_serial_number = cleaned["track_serial_number"]
 
+        old_image_name = (item.image.name if item.image else "") or ""
         if cleaned.get("image"):
-            if item.image:
-                item.image.delete(save=False)
+            # Assign first so the new file is stored under a unique name; then
+            # remove the previous file (avoids Windows overwrite/lock issues).
             item.image = cleaned["image"]
         elif cleaned.get("remove_image"):
             if item.image:
                 item.image.delete(save=False)
             item.image = None
+            old_image_name = ""
 
         item.save()
+        if (
+            cleaned.get("image")
+            and old_image_name
+            and item.image
+            and old_image_name != item.image.name
+        ):
+            try:
+                item.image.storage.delete(old_image_name)
+            except OSError:
+                pass
         _sync_shop_item_prices(item, cleaned["shop_prices"])
         return item
 
