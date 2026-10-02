@@ -360,6 +360,10 @@ class CompanyPosSettings(models.Model):
         default=True,
         help_text="When on, checkout requires enough shop stock. When off, sales can proceed without stock.",
     )
+    enable_open_close = models.BooleanField(
+        default=True,
+        help_text="When on, staff must open the shop day before selling and are redirected to open/close. When off, open/close is optional.",
+    )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     compulsory_print_on_sale = models.BooleanField(default=False)
@@ -601,6 +605,14 @@ class ShopPosSettings(models.Model):
     enable_mpesa = models.BooleanField(default=True)
     enable_cash_mpesa = models.BooleanField(default=True)
     enable_discount = models.BooleanField(default=True)
+    enable_stock_tracking = models.BooleanField(
+        default=True,
+        help_text="When on, checkout requires enough shop stock. When off, sales can proceed without stock.",
+    )
+    enable_open_close = models.BooleanField(
+        default=True,
+        help_text="When on, staff must open the shop day before selling and are redirected to open/close. When off, open/close is optional.",
+    )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     compulsory_print_on_sale = models.BooleanField(default=False)

@@ -117,7 +117,11 @@
 
   form.addEventListener("submit", async (event) => {
     const missing = ["cash_amount", "mpesa_amount", "credit_amount"].filter(
-      (name) => !(form.querySelector(`[name="${name}"]`)?.value || "").trim()
+      (name) => {
+        const input = form.querySelector(`[name="${name}"]`);
+        if (!input) return false;
+        return !(input.value || "").trim();
+      }
     );
     if (missing.length) {
       event.preventDefault();

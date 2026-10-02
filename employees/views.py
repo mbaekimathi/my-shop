@@ -1833,6 +1833,11 @@ POS_SETTING_GROUPS = (
         "toggles": (("enable_stock_tracking", "Stock quantity tracking"),),
     },
     {
+        "title": "Open & close",
+        "summary": "",
+        "toggles": (("enable_open_close", "Compulsory open & close"),),
+    },
+    {
         "title": "Tax",
         "summary": "",
         "toggles": (("enable_tax", "Tax"),),

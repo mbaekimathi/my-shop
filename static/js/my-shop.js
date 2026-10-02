@@ -3425,12 +3425,18 @@
 
         card.classList.toggle("is-in-cart", inCart);
         if (addBtn) {
+          const label = addBtn.querySelector(".shop-floor-add-label");
+          const short = addBtn.querySelector(".shop-floor-add-short");
           if (stockTrackingEnabled && stock <= 0) {
             addBtn.hidden = false;
             addBtn.disabled = true;
+            if (label) label.textContent = "Out of stock";
+            if (short) short.textContent = "Out";
           } else {
             addBtn.hidden = inCart;
             addBtn.disabled = false;
+            if (label) label.textContent = "Add to cart";
+            if (short) short.textContent = "Add";
           }
         }
         if (qtyWrap) qtyWrap.hidden = !inCart;

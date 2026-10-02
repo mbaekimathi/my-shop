@@ -65,6 +65,7 @@ POS_SETTING_FIELDS = {
     "enable_cash_mpesa",
     "enable_discount",
     "enable_stock_tracking",
+    "enable_open_close",
     "enable_tax",
     "compulsory_print_on_sale",
     "enable_print_bluetooth",
@@ -84,6 +85,8 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_mpesa",
         "enable_cash_mpesa",
         "enable_discount",
+        "enable_stock_tracking",
+        "enable_open_close",
         "enable_tax",
         "tax_percent",
     }
@@ -731,11 +734,18 @@ def save_working_hours_settings(data) -> CompanyWorkingHoursSettings:
     return settings_row
 
 
+def shop_day_compulsory_enabled(*, shop: Shop | None = None) -> bool:
+    """Whether open/close day is required before selling and on login."""
+    pos = get_effective_pos_settings(shop)
+    return bool(getattr(pos, "enable_open_close", True))
+
+
 def shop_day_floor_state(*, shop: Shop) -> dict:
     """Compulsory open/close state for floor trading.
 
-    Trading requires an open day session started today. A session left open from
-    a previous calendar day must be closed before today's day can be opened.
+    Trading requires an open day session started today when open/close is
+    enabled. A session left open from a previous calendar day must be closed
+    before today's day can be opened.
     """
     now = timezone.localtime()
     today = now.date()
@@ -743,6 +753,20 @@ def shop_day_floor_state(*, shop: Shop) -> dict:
     shop_hours = get_shop_working_hours_settings(shop)
     start_time = shop_hours.start_time
     end_time = shop_hours.end_time
+
+    if not shop_day_compulsory_enabled(shop=shop):
+        return {
+            "is_open": open_session is not None,
+            "can_trade": True,
+            "needs_action": False,
+            "mode": None,
+            "stale_open": False,
+            "open_session": open_session,
+            "start_time": start_time,
+            "end_time": end_time,
+            "compulsory": False,
+        }
+
     settings_row = get_company_working_hours_settings()
 
     working_day = False
@@ -768,6 +792,7 @@ def shop_day_floor_state(*, shop: Shop) -> dict:
             "open_session": None,
             "start_time": start_time,
             "end_time": end_time,
+            "compulsory": True,
         }
 
     opened_local = timezone.localtime(open_session.opened_at)
@@ -782,6 +807,7 @@ def shop_day_floor_state(*, shop: Shop) -> dict:
             "open_session": open_session,
             "start_time": start_time,
             "end_time": end_time,
+            "compulsory": True,
         }
 
     needs_close = bool(
@@ -796,6 +822,7 @@ def shop_day_floor_state(*, shop: Shop) -> dict:
         "open_session": open_session,
         "start_time": start_time,
         "end_time": end_time,
+        "compulsory": True,
     }
 
 
@@ -813,6 +840,9 @@ def require_shop_day_for_sale(*, shop: Shop) -> dict:
 
 def build_shop_day_prompt(*, shop: Shop) -> dict:
     """Whether the shop floor should prompt for compulsory open/close."""
+    if not shop_day_compulsory_enabled(shop=shop):
+        return {"show": False}
+
     state = shop_day_floor_state(shop=shop)
     if not state.get("needs_action") or not state.get("mode"):
         return {"show": False}
@@ -2956,6 +2986,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_cash_mpesa": row.enable_cash_mpesa,
         "enable_discount": row.enable_discount,
         "enable_stock_tracking": bool(getattr(row, "enable_stock_tracking", True)),
+        "enable_open_close": bool(getattr(row, "enable_open_close", True)),
         "enable_tax": row.enable_tax,
         "tax_percent": str(Decimal(row.tax_percent or 0).quantize(Decimal("0.01"))),
         "effective_tax_percent": str(tax_percent.quantize(Decimal("0.01"))),
@@ -4534,13 +4565,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 item = row["item"]
                 if track_stock:
                     stock.quantity -= row["qty"]
-                else:
-                    stock.quantity = max(0, int(stock.quantity) - row["qty"])
-                stock.updated_at = now
-                item.stock = max(0, item.stock - row["qty"])
-                item.updated_at = now
-                stocks_to_update.append(stock)
-                items_to_update.append(item)
+                    stock.updated_at = now
+                    item.stock = max(0, item.stock - row["qty"])
+                    item.updated_at = now
+                    stocks_to_update.append(stock)
+                    items_to_update.append(item)
                 stock_updates.append(
                     {
                         "id": item.pk,
@@ -4555,14 +4584,18 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                     obj.is_available = False
                     obj.updated_at = now
                     serials_to_update.append(obj)
-            ShopStock.objects.bulk_update(stocks_to_update, ["quantity", "updated_at"])
-            Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
+            if stocks_to_update:
+                ShopStock.objects.bulk_update(
+                    stocks_to_update, ["quantity", "updated_at"]
+                )
+            if items_to_update:
+                Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
             if serials_to_update:
                 ItemSerial.objects.bulk_update(
                     serials_to_update, ["is_available", "updated_at"]
                 )
 
-            if kind == ShopReceiptKind.TRADE_OUT:
+            if track_stock and kind == ShopReceiptKind.TRADE_OUT:
                 _create_trade_out_stock_movement(
                     shop=shop,
                     receipt=receipt,
@@ -5002,6 +5035,43 @@ def day_session_balance_summary(session) -> dict:
     )
 
 
+def shop_day_balance_channels(*, shop: Shop | None = None, pos=None) -> dict:
+    """Which till channels to show on open/close, from activated POS methods.
+
+    Cash / M-Pesa follow payment-method toggles (including Cash+M-Pesa).
+    Credit follows the credit transaction-type toggle.
+    """
+    row = pos if pos is not None else get_effective_pos_settings(shop)
+    show_cash = bool(getattr(row, "enable_cash", True) or getattr(row, "enable_cash_mpesa", True))
+    show_mpesa = bool(
+        getattr(row, "enable_mpesa", True) or getattr(row, "enable_cash_mpesa", True)
+    )
+    show_credit = bool(getattr(row, "enable_credit", True))
+    # Keep open/close usable if every toggle is off.
+    if not (show_cash or show_mpesa or show_credit):
+        show_cash = True
+    labels = []
+    if show_cash:
+        labels.append("cash")
+    if show_mpesa:
+        labels.append("M-Pesa")
+    if show_credit:
+        labels.append("credit")
+    if len(labels) == 1:
+        count_copy = labels[0]
+    elif len(labels) == 2:
+        count_copy = f"{labels[0]} and {labels[1]}"
+    else:
+        count_copy = f"{', '.join(labels[:-1])}, and {labels[-1]}"
+    return {
+        "cash": show_cash,
+        "mpesa": show_mpesa,
+        "credit": show_credit,
+        "count_copy": count_copy,
+        "labels": labels,
+    }
+
+
 def _required_balance_amount(payload: dict, *, keys: tuple[str, ...], label: str) -> Decimal:
     """Require an explicit balance entry (0 is allowed; blank is not)."""
     raw = None
@@ -5015,16 +5085,39 @@ def _required_balance_amount(payload: dict, *, keys: tuple[str, ...], label: str
     return _money(text)
 
 
-def _parse_balance_fields(payload: dict) -> dict:
+def _parse_balance_fields(
+    payload: dict, *, shop: Shop | None = None, defaults: dict | None = None
+) -> dict:
+    channels = shop_day_balance_channels(shop=shop)
+    defaults = defaults or {}
+    zero = Decimal("0.00")
+
+    def _default(key: str) -> Decimal:
+        if key not in defaults or defaults.get(key) is None:
+            return zero
+        return _money(defaults.get(key))
+
     return {
-        "cash": _required_balance_amount(
-            payload, keys=("cash_amount", "cash"), label="cash"
+        "cash": (
+            _required_balance_amount(
+                payload, keys=("cash_amount", "cash"), label="cash"
+            )
+            if channels["cash"]
+            else _default("cash")
         ),
-        "mpesa": _required_balance_amount(
-            payload, keys=("mpesa_amount", "mpesa"), label="M-Pesa"
+        "mpesa": (
+            _required_balance_amount(
+                payload, keys=("mpesa_amount", "mpesa"), label="M-Pesa"
+            )
+            if channels["mpesa"]
+            else _default("mpesa")
         ),
-        "credit": _required_balance_amount(
-            payload, keys=("credit_amount", "credit"), label="credit"
+        "credit": (
+            _required_balance_amount(
+                payload, keys=("credit_amount", "credit"), label="credit"
+            )
+            if channels["credit"]
+            else _default("credit")
         ),
     }
 
@@ -5067,7 +5160,15 @@ def open_shop_day(*, shop: Shop, payload: dict):
     if not _truthy(payload.get("stock_confirmed")):
         raise ValidationError("Confirm that stock is up to date before opening.")
 
-    balances = _parse_balance_fields(payload)
+    last_closed = get_last_closed_shop_day(shop)
+    defaults = {}
+    if last_closed is not None:
+        defaults = {
+            "cash": last_closed.closing_cash,
+            "mpesa": last_closed.closing_mpesa,
+            "credit": last_closed.closing_credit,
+        }
+    balances = _parse_balance_fields(payload, shop=shop, defaults=defaults)
     session = ShopDaySession.objects.create(
         shop=shop,
         opening_cash=balances["cash"],
@@ -5117,7 +5218,16 @@ def close_shop_day(*, shop: Shop, payload: dict):
     if not _truthy(payload.get("stock_confirmed")):
         raise ValidationError("Confirm that stock is up to date before closing.")
 
-    balances = _parse_balance_fields(payload)
+    summary = day_session_balance_summary(session)
+    balances = _parse_balance_fields(
+        payload,
+        shop=shop,
+        defaults={
+            "cash": summary.get("expected_cash"),
+            "mpesa": summary.get("expected_mpesa"),
+            "credit": summary.get("expected_credit"),
+        },
+    )
     session.closing_cash = balances["cash"]
     session.closing_mpesa = balances["mpesa"]
     session.closing_credit = balances["credit"]

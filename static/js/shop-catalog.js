@@ -8,6 +8,7 @@
   const noResults = floor.querySelector("[data-item-no-results]");
   const visibleCountEl = floor.querySelector("[data-item-visible-count]");
   const checkoutEnabled = floor.dataset.posCheckout === "1";
+  const stockTrackingEnabled = floor.dataset.posStockTracking !== "0";
 
   if (!apiUrl || !root) return;
 
@@ -130,7 +131,7 @@
     const category = String(item.category || "");
     const imageUrl = String(item.image_url || "");
     const trackSerial = item.track_serial ? "1" : "0";
-    const out = stock <= 0;
+    const out = stockTrackingEnabled && stock <= 0;
 
     const article = document.createElement("article");
     article.className = "shop-floor-item";
@@ -198,7 +199,7 @@
             class="shop-floor-qty-input"
             data-cart-qty-input
             min="1"
-            max="${stock}"
+            ${stockTrackingEnabled && stock > 0 ? `max="${stock}"` : ""}
             value="1"
             inputmode="numeric"
             aria-label="Quantity in cart"

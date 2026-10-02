@@ -109,6 +109,7 @@ from .services import (
     set_shop_receipt_phone,
     set_shop_receipt_qr_settings,
     set_shop_tax_percent,
+    shop_day_balance_channels,
     toggle_shop_hidden,
     toggle_shop_suspended,
     update_shop,
@@ -2313,19 +2314,24 @@ def my_shop_day_toggle(request, shop_id):
         day_session_balance_summary(open_session) if open_session else {}
     )
     last_closed = None if is_open else get_last_closed_shop_day(shop)
+    balance_channels = shop_day_balance_channels(shop=shop)
 
     # Suggest expected closing balances when closing.
     # Only fill empty fields — never overwrite amounts the user already typed.
     if is_open and open_summary and not form_errors:
-        if not str(form_data.get("cash_amount") or "").strip():
+        if balance_channels["cash"] and not str(form_data.get("cash_amount") or "").strip():
             form_data["cash_amount"] = str(
                 int(open_summary["expected_cash"].quantize(Decimal("1")))
             )
-        if not str(form_data.get("mpesa_amount") or "").strip():
+        if balance_channels["mpesa"] and not str(
+            form_data.get("mpesa_amount") or ""
+        ).strip():
             form_data["mpesa_amount"] = str(
                 int(open_summary["expected_mpesa"].quantize(Decimal("1")))
             )
-        if not str(form_data.get("credit_amount") or "").strip():
+        if balance_channels["credit"] and not str(
+            form_data.get("credit_amount") or ""
+        ).strip():
             form_data["credit_amount"] = str(
                 int(open_summary["expected_credit"].quantize(Decimal("1")))
             )
@@ -2333,21 +2339,24 @@ def my_shop_day_toggle(request, shop_id):
     # Same rule: do not overwrite user-entered values.
     elif not is_open and last_closed and not form_errors:
         if (
-            not str(form_data.get("cash_amount") or "").strip()
+            balance_channels["cash"]
+            and not str(form_data.get("cash_amount") or "").strip()
             and last_closed.closing_cash is not None
         ):
             form_data["cash_amount"] = str(
                 int(Decimal(last_closed.closing_cash).quantize(Decimal("1")))
             )
         if (
-            not str(form_data.get("mpesa_amount") or "").strip()
+            balance_channels["mpesa"]
+            and not str(form_data.get("mpesa_amount") or "").strip()
             and last_closed.closing_mpesa is not None
         ):
             form_data["mpesa_amount"] = str(
                 int(Decimal(last_closed.closing_mpesa).quantize(Decimal("1")))
             )
         if (
-            not str(form_data.get("credit_amount") or "").strip()
+            balance_channels["credit"]
+            and not str(form_data.get("credit_amount") or "").strip()
             and last_closed.closing_credit is not None
         ):
             form_data["credit_amount"] = str(
@@ -2395,6 +2404,7 @@ def my_shop_day_toggle(request, shop_id):
             "drawing_data": drawing_data,
             "drawing_errors": drawing_errors,
             "can_record_drawing": can_record_drawing and not stale_open,
+            "balance_channels": balance_channels,
             "verify_login_code_url": reverse(
                 "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
             ),
@@ -3043,7 +3053,7 @@ def my_shop_stock_request_results_ack_all(request, shop_id):
 SHOP_POS_SETTING_GROUPS = (
     {
         "title": "Transaction types",
-        "summary": "Choose which document types appear on this shop’s checkout.",
+        "summary": "",
         "toggles": (
             ("enable_sale", "Sale"),
             ("enable_credit", "Credit"),
@@ -3053,7 +3063,7 @@ SHOP_POS_SETTING_GROUPS = (
     },
     {
         "title": "Payment methods",
-        "summary": "Choose which payment options appear for cash sale checkout.",
+        "summary": "",
         "toggles": (
             ("enable_cash", "Cash"),
             ("enable_mpesa", "M-Pesa"),
@@ -3062,13 +3072,23 @@ SHOP_POS_SETTING_GROUPS = (
     },
     {
         "title": "Discounts",
-        "summary": "Allow staff to lower sale prices on this shop page.",
-        "toggles": (("enable_discount", "Activate discount"),),
+        "summary": "",
+        "toggles": (("enable_discount", "Discount"),),
+    },
+    {
+        "title": "Stock",
+        "summary": "",
+        "toggles": (("enable_stock_tracking", "Stock quantity tracking"),),
+    },
+    {
+        "title": "Open & close",
+        "summary": "",
+        "toggles": (("enable_open_close", "Compulsory open & close"),),
     },
     {
         "title": "Tax",
-        "summary": "Add a tax percentage on top of the items subtotal at checkout.",
-        "toggles": (("enable_tax", "Activate tax"),),
+        "summary": "",
+        "toggles": (("enable_tax", "Tax"),),
         "show_tax_percent": True,
     },
 )

@@ -25,6 +25,9 @@ from shops.services import (
 
 class CompulsoryShopDayTests(TestCase):
     def setUp(self):
+        from shops.services import _invalidate_pos_settings_cache
+
+        _invalidate_pos_settings_cache()
         self.user = User.objects.create_user(
             username="200001",
             password="pass",
@@ -146,3 +149,23 @@ class CompulsoryShopDayTests(TestCase):
             shop=self.shop, profile=self.profile, payload=payload
         )
         self.assertEqual(result["kind"], ShopReceiptKind.QUOTATION)
+
+    def test_sale_allowed_when_open_close_disabled(self):
+        from shops.services import (
+            _invalidate_pos_settings_cache,
+            set_company_pos_setting,
+        )
+
+        set_company_pos_setting(field="enable_open_close", enabled=False)
+        try:
+            state = shop_day_floor_state(shop=self.shop)
+            self.assertTrue(state["can_trade"])
+            self.assertFalse(state["needs_action"])
+            self.assertIsNone(state["mode"])
+            result = complete_shop_checkout(
+                shop=self.shop, profile=self.profile, payload=self._sale_payload()
+            )
+            self.assertEqual(result["kind"], ShopReceiptKind.SALE)
+        finally:
+            set_company_pos_setting(field="enable_open_close", enabled=True)
+            _invalidate_pos_settings_cache()

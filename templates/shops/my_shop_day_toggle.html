@@ -58,18 +58,24 @@
       </div>
       <strong class="shop-day-live-total">{{ open_summary.expected_total|floatformat:0 }}</strong>
       <ul class="shop-day-live-split">
+        {% if balance_channels.cash %}
         <li>
           <span>Cash</span>
           <em>{{ open_summary.expected_cash|floatformat:0 }}</em>
         </li>
+        {% endif %}
+        {% if balance_channels.mpesa %}
         <li>
           <span>M-Pesa</span>
           <em>{{ open_summary.expected_mpesa|floatformat:0 }}</em>
         </li>
+        {% endif %}
+        {% if balance_channels.credit %}
         <li>
           <span>Credit</span>
           <em>{{ open_summary.expected_credit|floatformat:0 }}</em>
         </li>
+        {% endif %}
       </ul>
     </div>
     <details class="shop-day-live-detail">
@@ -79,10 +85,16 @@
       </summary>
       <ul>
         <li><span>Opened with</span><em>{{ open_summary.opening_total|floatformat:0 }}</em></li>
+        {% if balance_channels.cash %}
         <li><span>Cash sales</span><em>{{ open_summary.cash_sales|floatformat:0 }}</em></li>
+        {% endif %}
+        {% if balance_channels.mpesa %}
         <li><span>M-Pesa sales</span><em>{{ open_summary.mpesa_sales|floatformat:0 }}</em></li>
-        {% if open_summary.cash_refunds or open_summary.mpesa_refunds %}
+        {% endif %}
+        {% if balance_channels.cash and open_summary.cash_refunds %}
         <li><span>Cash returns</span><em>−{{ open_summary.cash_refunds|floatformat:0 }}</em></li>
+        {% endif %}
+        {% if balance_channels.mpesa and open_summary.mpesa_refunds %}
         <li><span>M-Pesa returns</span><em>−{{ open_summary.mpesa_refunds|floatformat:0 }}</em></li>
         {% endif %}
         <li><span>Expenses paid</span><em>{{ open_summary.expenses_paid|floatformat:0 }}</em></li>
@@ -105,9 +117,15 @@
       <p>
         {% if last_closed %}
         Last close {{ last_closed.closed_at|date:"d M · H:i" }}
+        {% if balance_channels.cash %}
         · Cash {{ last_closed.closing_cash|floatformat:0 }}
+        {% endif %}
+        {% if balance_channels.mpesa %}
         · M-Pesa {{ last_closed.closing_mpesa|floatformat:0 }}
+        {% endif %}
+        {% if balance_channels.credit %}
         · Credit {{ last_closed.closing_credit|floatformat:0 }}
+        {% endif %}
         {% else %}
         No day recorded yet.
         {% endif %}
@@ -139,11 +157,11 @@
           <h3>{% if is_open %}Close shop{% else %}Open shop{% endif %}</h3>
           <p>
             {% if is_open %}
-            Count cash, M-Pesa, and credit, then confirm with staff ID.
+            Count {{ balance_channels.count_copy }}, then confirm with staff ID.
             {% elif last_closed %}
             Prefills from last close — change if the till is different.
             {% else %}
-            Enter cash, M-Pesa, and credit to start.
+            Enter {{ balance_channels.count_copy }} to start.
             {% endif %}
           </p>
         </div>
@@ -151,6 +169,7 @@
     </div>
 
     <div class="shop-day-balances">
+      {% if balance_channels.cash %}
       <label class="shop-cart-input">
         <span>Cash</span>
         <input
@@ -164,6 +183,8 @@
           placeholder="0"
         >
       </label>
+      {% endif %}
+      {% if balance_channels.mpesa %}
       <label class="shop-cart-input">
         <span>M-Pesa</span>
         <input
@@ -177,6 +198,8 @@
           placeholder="0"
         >
       </label>
+      {% endif %}
+      {% if balance_channels.credit %}
       <label class="shop-cart-input">
         <span>Credit</span>
         <input
@@ -190,6 +213,7 @@
           placeholder="0"
         >
       </label>
+      {% endif %}
     </div>
 
     <div class="shop-day-form-footer">
@@ -344,12 +368,22 @@
             </td>
             <td class="shop-day-table-balances" data-label="Opening">
               <strong class="shop-day-table-total">{{ row.opening_total|floatformat:0 }}</strong>
-              <span>C {{ row.opening_cash|floatformat:0 }} · M {{ row.opening_mpesa|floatformat:0 }} · Cr {{ row.opening_credit|floatformat:0 }}</span>
+              <span>
+                {% if balance_channels.cash %}C {{ row.opening_cash|floatformat:0 }}{% endif %}
+                {% if balance_channels.cash and balance_channels.mpesa %} · {% endif %}
+                {% if balance_channels.mpesa %}M {{ row.opening_mpesa|floatformat:0 }}{% endif %}
+                {% if balance_channels.credit %}{% if balance_channels.cash or balance_channels.mpesa %} · {% endif %}Cr {{ row.opening_credit|floatformat:0 }}{% endif %}
+              </span>
             </td>
             <td class="shop-day-table-balances" data-label="Closing">
               {% if row.closed_at %}
               <strong class="shop-day-table-total">{{ row.closing_total|floatformat:0 }}</strong>
-              <span>C {{ row.closing_cash|floatformat:0 }} · M {{ row.closing_mpesa|floatformat:0 }} · Cr {{ row.closing_credit|floatformat:0 }}</span>
+              <span>
+                {% if balance_channels.cash %}C {{ row.closing_cash|floatformat:0 }}{% endif %}
+                {% if balance_channels.cash and balance_channels.mpesa %} · {% endif %}
+                {% if balance_channels.mpesa %}M {{ row.closing_mpesa|floatformat:0 }}{% endif %}
+                {% if balance_channels.credit %}{% if balance_channels.cash or balance_channels.mpesa %} · {% endif %}Cr {{ row.closing_credit|floatformat:0 }}{% endif %}
+              </span>
               {% else %}
               <span class="shop-day-table-sub">Expected {{ row.expected_total|floatformat:0 }}</span>
               {% endif %}
@@ -377,5 +411,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/my-shop-day.js' %}?v=7"></script>
+<script src="{% static 'js/my-shop-day.js' %}?v=8"></script>
 {% endblock %}

@@ -40,7 +40,7 @@
       <section class="pos-settings-group">
         <div class="pos-settings-group-head">
           <h3>{{ group.title }}</h3>
-          <p>{{ group.summary }}</p>
+          {% if group.summary %}<p>{{ group.summary }}</p>{% endif %}
         </div>
         <ul class="pos-settings-list">
           {% for toggle in group.toggles %}
