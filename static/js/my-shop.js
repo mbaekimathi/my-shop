@@ -1603,19 +1603,26 @@
       return roundMoney(subtotal + cartTaxAmount(subtotal));
     };
 
-    const clearCartNotice = () => {
-      if (!cartNotice) return;
-      cartNotice.hidden = true;
-      if (cartNoticeText) cartNoticeText.textContent = "";
+    const pagePrinterNotice = cartRoot.querySelector("[data-printer-required-notice]");
+    const pagePrinterNoticeText = cartRoot.querySelector(
+      "[data-printer-required-notice-text]"
+    );
+
+    const setNoticeEl = (root, textEl, message) => {
+      if (!root || !textEl) return;
+      textEl.textContent = message || "";
+      root.hidden = !message;
+      if (message && window.lucide?.createIcons) {
+        window.lucide.createIcons({ nodes: [root] });
+      }
     };
 
     const setCartNotice = (message) => {
-      if (!cartNotice || !cartNoticeText) return;
-      cartNoticeText.textContent = message || "";
-      cartNotice.hidden = !message;
-      if (message && window.lucide?.createIcons) {
-        window.lucide.createIcons({ nodes: [cartNotice] });
-      }
+      setNoticeEl(cartNotice, cartNoticeText, message);
+    };
+
+    const setPagePrinterNotice = (message) => {
+      setNoticeEl(pagePrinterNotice, pagePrinterNoticeText, message);
     };
 
     const setCartStatus = (message, { ok = false, error = false } = {}) => {
@@ -1623,13 +1630,42 @@
       cartStatus.textContent = message || defaultStatusMessage;
       cartStatus.classList.toggle("is-ok", ok);
       cartStatus.classList.toggle("is-error", error);
-      if (!error) clearCartNotice();
+    };
+
+    const printerRequiredMessage = () => {
+      if (!compulsoryPrintOnSale || !checkoutEnabled) return "";
+      if (!hasEnabledPrintChannels()) {
+        return "Compulsory printing is on, but no print channels are enabled in settings.";
+      }
+      const status = window.RichcomPrinter?.getStatus?.();
+      if (!status?.connected) {
+        return "Connect a printer from the sidebar (Connect to printer) before completing the sale.";
+      }
+      const channel = resolvePrintChannel(status.channel);
+      if (
+        !channel ||
+        (window.RichcomPrinter?.canAutoPrint &&
+          !window.RichcomPrinter.canAutoPrint(channel))
+      ) {
+        return "Connect a printer from the sidebar (Connect to printer) before completing the sale.";
+      }
+      return "";
+    };
+
+    const syncPrinterRequiredNotice = () => {
+      const message = printerRequiredMessage();
+      setCartNotice(message);
+      setPagePrinterNotice(message);
+      return message;
     };
 
     const notifyPrinterRequired = (message) => {
-      setCartStatus(message, { error: true });
-      setCartNotice(message);
-      pushStockRequestToast(message, "error");
+      const text = message || printerRequiredMessage();
+      if (!text) return;
+      setCartStatus(text, { error: true });
+      setCartNotice(text);
+      setPagePrinterNotice(text);
+      pushStockRequestToast(text, "error");
     };
 
     const setCartVerified = (verified, message = "") => {
@@ -1776,6 +1812,29 @@
         .filter(Boolean);
       return candidates.find((c) => enabledPrintChannels.includes(c)) || "";
     };
+
+    syncPrinterRequiredNotice();
+    if (window.RichcomPrinter?.onChange) {
+      window.RichcomPrinter.onChange(() => {
+        syncPrinterRequiredNotice();
+      });
+    } else {
+      // Printer module may still be booting — keep checking briefly.
+      let tries = 0;
+      const waitForPrinter = window.setInterval(() => {
+        tries += 1;
+        if (window.RichcomPrinter?.onChange) {
+          window.clearInterval(waitForPrinter);
+          window.RichcomPrinter.onChange(() => {
+            syncPrinterRequiredNotice();
+          });
+          syncPrinterRequiredNotice();
+          return;
+        }
+        syncPrinterRequiredNotice();
+        if (tries >= 40) window.clearInterval(waitForPrinter);
+      }, 250);
+    }
 
     const syncSplitAmounts = (source = splitLastEdited) => {
       if (!cashInput || !mpesaInput || selectedPayment() !== "both") return;
@@ -3579,6 +3638,7 @@
       fab?.setAttribute("aria-expanded", String(open));
       body.classList.toggle("shop-cart-open", open);
       if (open) {
+        syncPrinterRequiredNotice();
         refreshIcons();
         drawer.querySelector("[data-cart-close]")?.focus();
       }

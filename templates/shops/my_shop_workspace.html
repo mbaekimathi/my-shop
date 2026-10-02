@@ -84,6 +84,12 @@
     <p>Checkout is turned off in POS settings. Enable Sale, Credit, or Quotation (and a payment method for Sale) to sell from this shop.</p>
   </div>
   {% endif %}
+  {% if checkout_enabled and shop_day_can_trade != False and pos_settings.compulsory_print_on_sale %}
+  <div class="shop-floor-notice" data-printer-required-notice hidden role="alert">
+    <i data-lucide="printer" aria-hidden="true"></i>
+    <p data-printer-required-notice-text></p>
+  </div>
+  {% endif %}
   <div class="shop-floor-toolbar">
     <label class="item-search-field shop-floor-search">
       <i data-lucide="search" aria-hidden="true"></i>
@@ -694,7 +700,7 @@
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=73"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=74"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=38"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=matrix54"></script>

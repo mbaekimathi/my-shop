@@ -21679,6 +21679,39 @@ html[data-theme="light"] .low-stock-badge.is-low {
   padding-bottom: 5.5rem;
 }
 
+.shop-floor-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(220, 53, 69, 0.28);
+  background: rgba(220, 53, 69, 0.1);
+  color: var(--text-strong);
+}
+
+.shop-floor-notice[hidden] {
+  display: none !important;
+}
+
+.shop-floor-notice > svg,
+.shop-floor-notice > i {
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.1rem;
+  color: #c0392b;
+}
+
+.shop-floor-notice p {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--danger-text, #c0392b);
+}
+
 /* Fill the workspace frame so each category fits as many cards as the screen allows */
 .workspace-main:has(.shop-floor) {
   width: calc(100% - 1rem);
