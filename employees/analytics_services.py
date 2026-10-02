@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+from datetime import timezone as dt_timezone
 from decimal import Decimal
 
 from django.db.models import (
@@ -4342,8 +4344,26 @@ def _period_breakdown_config(filters) -> dict | None:
     }
 
 
-def _created_at_trunc(field: str, bucket_kind: str):
+def _trunc_tzinfo():
+    """
+    Fixed-offset tzinfo for MySQL Trunc*/CONVERT_TZ.
+
+    Named zones (Africa/Nairobi) need MySQL timezone tables, which shared
+    cPanel hosts often lack — CONVERT_TZ then returns NULL and Django raises
+    ValueError. Offset form (+03:00) works without those tables. Nairobi has
+    no DST, so a fixed offset matches TIME_ZONE.
+    """
     tz = timezone.get_current_timezone()
+    offset = tz.utcoffset(timezone.now()) or timedelta(0)
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = "-" if total_minutes < 0 else "+"
+    hours, minutes = divmod(abs(total_minutes), 60)
+    name = f"{sign}{hours:02d}:{minutes:02d}"
+    return dt_timezone(timedelta(minutes=total_minutes), name)
+
+
+def _created_at_trunc(field: str, bucket_kind: str):
+    tz = _trunc_tzinfo()
     if bucket_kind == "hour":
         return TruncHour(field, tzinfo=tz)
     if bucket_kind == "day":
