@@ -854,14 +854,23 @@ ${bodyHtml}
         ];
       },
       async connect(selected) {
-        const target = selected?.device || scanned;
+        let target = selected?.device || scanned;
+        // Pair + connect in one gesture when Connect is pressed without a prior Scan.
         if (!target) {
-          throw new Error("Scan for a Bluetooth printer first.");
+          const found = await this.scan();
+          target = found[0]?.device || scanned;
+        }
+        if (!target) {
+          throw new Error("No Bluetooth printer selected.");
         }
         if (!target.gatt) {
           throw new Error("Selected device does not support GATT.");
         }
         explicitDisconnect = false;
+        if (reconnectTimer) {
+          window.clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
         const onGone = () => {
           if (explicitDisconnect || pageUnloading) return;
           device = null;
@@ -871,7 +880,11 @@ ${bodyHtml}
         };
         target.removeEventListener("gattserverdisconnected", onGone);
         target.addEventListener("gattserverdisconnected", onGone);
-        server = await target.gatt.connect();
+        server = await withTimeout(
+          target.gatt.connect(),
+          15000,
+          "Bluetooth connect timed out. Keep the printer on and in range, then try again."
+        );
         characteristic = await findWritableCharacteristic(server);
         if (!characteristic) {
           try {
@@ -2228,35 +2241,51 @@ ${bodyHtml}
           const devices = await window.RichcomPrinter.scan(channel, card);
           renderDevices(card, devices);
 
-          setCardState(card, {
-            badge: "Found",
-            status:
-              channel === "wifi"
-                ? `${devices.length} Wi‑Fi printer${devices.length === 1 ? "" : "s"} found`
-                : devices[0]?.name || "Device found",
-            hint:
-              channel === "wifi"
-                ? devices.length === 1
-                  ? "Connecting to the Wi‑Fi printer…"
-                  : "Tap a Wi‑Fi printer to connect."
-                : "Select a device or press Connect.",
-            connected: false,
-          });
-
           const connectFound = async (device) => {
             if (typeof device.onSelect === "function") device.onSelect();
             await window.RichcomPrinter.connect(channel, device, card);
+            renderDevices(card, []);
             refreshAll();
             const hintEl = card.querySelector("[data-printer-hint]");
             if (hintEl) hintEl.textContent = "Connected. Use Test print to confirm.";
           };
 
-          // One Wi‑Fi result → connect immediately.
-          if (channel === "wifi" && devices.length === 1) {
-            await connectFound(devices[0]);
+          const shouldAutoConnect =
+            devices.length === 1 &&
+            (channel === "wifi" || channel === "bluetooth");
+
+          setCardState(card, {
+            badge: shouldAutoConnect ? "Connecting" : "Found",
+            status: shouldAutoConnect
+              ? `Connecting to ${devices[0]?.name || "printer"}…`
+              : channel === "wifi"
+                ? `${devices.length} Wi‑Fi printer${devices.length === 1 ? "" : "s"} found`
+                : devices[0]?.name || "Device found",
+            hint: shouldAutoConnect
+              ? channel === "bluetooth"
+                ? "Paired — connecting automatically…"
+                : "Connecting to the Wi‑Fi printer…"
+              : channel === "wifi"
+                ? "Tap a Wi‑Fi printer to connect."
+                : "Select a device or press Connect.",
+            connected: false,
+          });
+
+          // Bluetooth after pairing, or a single Wi‑Fi result → connect immediately.
+          if (shouldAutoConnect) {
+            try {
+              await connectFound(devices[0]);
+            } catch (connectErr) {
+              setCardState(card, {
+                badge: "Error",
+                status: "Not connected",
+                hint: connectErr?.message || "Could not connect.",
+                connected: false,
+              });
+            }
           }
 
-          if (channel === "wifi") {
+          if (channel === "wifi" && !shouldAutoConnect) {
             card.querySelectorAll(".printer-device-btn").forEach((btn, index) => {
               const device = devices[index];
               if (!device) return;

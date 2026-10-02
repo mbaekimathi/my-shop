@@ -345,6 +345,15 @@ def item_management(request, profile, meta, module, page_sidebar):
     from employees.access import role_url_segment
 
     item_count = Item.objects.count()
+    item_categories = [
+        category
+        for category in (
+            Item.objects.order_by("category")
+            .values_list("category", flat=True)
+            .distinct()
+        )
+        if category
+    ]
     item_catalog_url = reverse(
         "employees:item_management_catalog",
         kwargs={"role_segment": role_url_segment(profile.role)},
@@ -362,6 +371,7 @@ def item_management(request, profile, meta, module, page_sidebar):
             "page_sidebar": page_sidebar,
             "items_by_category": [],
             "item_count": item_count,
+            "item_categories": item_categories,
             "use_item_catalog_api": True,
             "item_catalog_url": item_catalog_url,
             "pricing_shops": pricing_shops,

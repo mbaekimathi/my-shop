@@ -93,6 +93,12 @@
 
 <input type="hidden" data-item-csrf value="{{ csrf_token }}">
 
+<datalist id="item-category-suggestions">
+  {% for category in item_categories %}
+  <option value="{{ category }}"></option>
+  {% endfor %}
+</datalist>
+
 <div
   class="workspace-modal"
   id="register-item-modal"
@@ -160,14 +166,28 @@
       {% csrf_token %}
       <input type="hidden" name="action" value="edit">
       <input type="hidden" name="item_id" value="{% if edit_item %}{{ edit_item.pk }}{% endif %}" data-edit-item-id>
-      <div class="item-current-image" data-current-image-wrap {% if not open_edit_modal or not edit_item or not edit_item.public_image_url %}hidden{% endif %}>
-        <img src="{% if edit_item %}{{ edit_item.public_image_url }}{% endif %}" alt="" width="56" height="56" data-current-image>
-        <label class="field field--checkbox">
-          <input type="checkbox" name="remove_image" value="1" data-remove-image>
-          <span>Remove current image</span>
-        </label>
+      <div class="item-image-editor" data-item-image-editor>
+        <div class="item-current-image" data-current-image-wrap {% if not open_edit_modal or not edit_item or not edit_item.public_image_url %}hidden{% endif %}>
+          <img src="{% if edit_item %}{{ edit_item.public_image_url }}{% endif %}" alt="" width="56" height="56" data-current-image>
+        </div>
+        <div class="item-image-editor-controls">
+          <label class="field">
+            <span class="field-label">Update item image <em>(optional)</em></span>
+            <input
+              type="file"
+              name="image"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              id="edit-image"
+              data-edit-image-input
+            >
+          </label>
+          <label class="field field--checkbox" data-remove-image-wrap {% if not open_edit_modal or not edit_item or not edit_item.public_image_url %}hidden{% endif %}>
+            <input type="checkbox" name="remove_image" value="1" data-remove-image>
+            <span>Remove current image</span>
+          </label>
+        </div>
       </div>
-      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="edit-" pricing_shops=edit_pricing_shops pricing_shops_empty_message="No shops are allocated to your account." %}
+      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="edit-" pricing_shops=edit_pricing_shops pricing_shops_empty_message="No shops are allocated to your account." hide_image_upload=True %}
       <div class="workspace-modal-actions">
         <button class="btn btn--ghost" type="button" data-modal-close>Cancel</button>
         <button class="btn btn--primary" type="submit">
@@ -184,6 +204,6 @@
 {{ block.super }}
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/item-catalog.js' %}?v=12"></script>
-<script defer src="{% static 'js/item-management.js' %}?v=10"></script>
+<script defer src="{% static 'js/item-management.js' %}?v=11"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=2"></script>
 {% endblock %}

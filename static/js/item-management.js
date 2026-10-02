@@ -102,6 +102,71 @@
   const imageWrap = editForm?.querySelector("[data-current-image-wrap]");
   const currentImage = editForm?.querySelector("[data-current-image]");
   const removeImage = editForm?.querySelector("[data-remove-image]");
+  const removeImageWrap = editForm?.querySelector("[data-remove-image-wrap]");
+  const editImageInput = editForm?.querySelector("[data-edit-image-input]");
+  let editImageObjectUrl = "";
+  let editOriginalImageUrl = "";
+
+  const revokeEditImagePreview = () => {
+    if (editImageObjectUrl) {
+      URL.revokeObjectURL(editImageObjectUrl);
+      editImageObjectUrl = "";
+    }
+  };
+
+  const showCurrentImage = (url) => {
+    if (!imageWrap || !currentImage) return;
+    if (url) {
+      currentImage.src = url;
+      imageWrap.hidden = false;
+      if (removeImageWrap) removeImageWrap.hidden = false;
+    } else {
+      currentImage.removeAttribute("src");
+      imageWrap.hidden = true;
+      if (removeImageWrap) removeImageWrap.hidden = true;
+    }
+  };
+
+  const resetEditImageControls = (imageUrl = "") => {
+    revokeEditImagePreview();
+    editOriginalImageUrl = imageUrl || "";
+    if (editImageInput) editImageInput.value = "";
+    if (removeImage) removeImage.checked = false;
+    showCurrentImage(editOriginalImageUrl);
+  };
+
+  if (editImageInput) {
+    editImageInput.addEventListener("change", () => {
+      const file = editImageInput.files?.[0];
+      if (!file) {
+        showCurrentImage(editOriginalImageUrl);
+        return;
+      }
+      if (removeImage) removeImage.checked = false;
+      revokeEditImagePreview();
+      editImageObjectUrl = URL.createObjectURL(file);
+      showCurrentImage(editImageObjectUrl);
+    });
+  }
+
+  if (removeImage) {
+    removeImage.addEventListener("change", () => {
+      if (!removeImage.checked) {
+        if (editImageInput?.files?.length) {
+          revokeEditImagePreview();
+          editImageObjectUrl = URL.createObjectURL(editImageInput.files[0]);
+          showCurrentImage(editImageObjectUrl);
+        } else {
+          showCurrentImage(editOriginalImageUrl);
+        }
+        return;
+      }
+      if (editImageInput) editImageInput.value = "";
+      revokeEditImagePreview();
+      showCurrentImage("");
+      if (removeImageWrap) removeImageWrap.hidden = false;
+    });
+  }
 
   const setField = (name, value) => {
     const field = editForm?.querySelector(`[name="${name}"]`);
@@ -157,17 +222,7 @@
 
     if (window.initUppercaseInputs) window.initUppercaseInputs(editForm);
 
-    const fileInput = editForm.querySelector('input[type="file"][name="image"]');
-    if (fileInput) fileInput.value = "";
-    if (removeImage) removeImage.checked = false;
-
-    if (dataset.imageUrl && imageWrap && currentImage) {
-      currentImage.src = dataset.imageUrl;
-      imageWrap.hidden = false;
-    } else if (imageWrap) {
-      imageWrap.hidden = true;
-      if (currentImage) currentImage.removeAttribute("src");
-    }
+    resetEditImageControls(dataset.imageUrl || "");
 
     setModalOpen(editModal, true);
   };

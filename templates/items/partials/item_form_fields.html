@@ -1,6 +1,16 @@
 <label class="field">
   <span class="field-label">Item category</span>
-  <input type="text" name="category" value="{{ form_data.category }}" required placeholder="e.g. BEVERAGES" id="{{ prefix }}category" data-uppercase autocomplete="off">
+  <input
+    type="text"
+    name="category"
+    value="{{ form_data.category }}"
+    required
+    placeholder="e.g. BEVERAGES"
+    id="{{ prefix }}category"
+    list="item-category-suggestions"
+    data-uppercase
+    autocomplete="off"
+  >
 </label>
 <label class="field">
   <span class="field-label">Item name</span>
@@ -125,7 +135,9 @@
     </span>
   </span>
 </label>
+{% if not hide_image_upload %}
 <label class="field">
   <span class="field-label">Upload item image <em>(optional)</em></span>
   <input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif" id="{{ prefix }}image">
 </label>
+{% endif %}
