@@ -10374,11 +10374,13 @@ html[data-theme="light"] .low-stock-badge.is-low {
   line-height: 1.25;
 }
 
-.ax--list-table[data-ax-section="supply"] .ax-entity-meta {
-  font-size: 0.72rem;
-  font-weight: 500;
+.ax--list-table[data-ax-section="supply"] .ax-table--supply th.ax-th--phone,
+.ax--list-table[data-ax-section="supply"] .ax-table--supply td.ax-cell--phone {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   color: var(--mist-dim);
-  line-height: 1.2;
+  font-size: 0.84rem;
+  font-weight: 550;
 }
 
 .ax-supply-detail-btn {
@@ -12479,12 +12481,15 @@ html[data-theme="light"] .low-stock-badge.is-low {
   line-height: 1.25;
 }
 
-.ax--list-table[data-ax-section="credits"] .ax-entity-meta,
-.ax--list-table[data-ax-section="clients"] .ax-entity-meta {
-  font-size: 0.72rem;
-  font-weight: 500;
+.ax--list-table[data-ax-section="credits"] .ax-table th.ax-th--phone,
+.ax--list-table[data-ax-section="credits"] .ax-table td.ax-cell--phone,
+.ax--list-table[data-ax-section="clients"] .ax-table th.ax-th--phone,
+.ax--list-table[data-ax-section="clients"] .ax-table td.ax-cell--phone {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   color: var(--mist-dim);
-  line-height: 1.2;
+  font-size: 0.84rem;
+  font-weight: 550;
 }
 
 .ax--list-table[data-ax-section="credits"] .ax-entity-link:hover .ax-entity-name,

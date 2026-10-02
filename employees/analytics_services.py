@@ -7814,9 +7814,11 @@ def _build_clients(filters):
             ),
             "label": name,
         }
-        if phone:
-            client_cell["sub"] = phone
-        cells = [client_cell]
+        phone_cell = {
+            "label": phone or "—",
+            "title": phone or "No phone on file",
+        }
+        cells = [client_cell, phone_cell]
         for shop in shops:
             shop_credits, shop_balance = by_shop.get(shop.pk, (0, _zero()))
             cells.append(
@@ -7841,9 +7843,21 @@ def _build_clients(filters):
                 ),
             )
         )
-        client_rows.append(cells)
+        client_rows.append(
+            {
+                "cells": cells,
+                "search_text": f"{name} {phone}".strip(),
+            }
+        )
 
-    columns = ["Client"]
+    columns = [
+        "Name",
+        {
+            "label": "Phone",
+            "phone": True,
+            "title": "Client phone number",
+        },
+    ]
     for shop in shops:
         columns.append(
             _shop_col(shop, pair=True, pair_qty="Txns", pair_amt="Owed")

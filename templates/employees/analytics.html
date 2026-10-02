@@ -511,8 +511,8 @@
               {% for col in table.columns %}
               <th
                 {% if col.title %}title="{{ col.title }}"{% endif %}
-                {% if forloop.first or col.compact or col.pair or col.total or col.band %}
-                class="{% if forloop.first %}ax-th--item{% endif %}{% if col.compact %} ax-th--shop{% endif %}{% if col.pair %} ax-th--pair{% endif %}{% if col.pair_stack %} ax-th--pair-stack{% endif %}{% if col.money %} ax-th--money{% endif %}{% if col.total %} ax-th--total{% endif %}{% if col.band %} ax-th--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-th--band-start{% endif %}"
+                {% if forloop.first or col.compact or col.pair or col.total or col.band or col.phone or col.money %}
+                class="{% if forloop.first %}ax-th--item{% endif %}{% if col.compact %} ax-th--shop{% endif %}{% if col.pair %} ax-th--pair{% endif %}{% if col.pair_stack %} ax-th--pair-stack{% endif %}{% if col.money %} ax-th--money{% endif %}{% if col.phone %} ax-th--phone{% endif %}{% if col.total %} ax-th--total{% endif %}{% if col.band %} ax-th--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-th--band-start{% endif %}"
                 {% endif %}
               >
                 {% if col.pair %}
@@ -551,7 +551,7 @@
               {% for col in table.columns %}
               {% if forloop.parentloop.counter0 == forloop.counter0 %}
               <td
-                class="{% if forloop.parentloop.first %}ax-cell--primary{% endif %}{% if col.compact or col.pair %} ax-cell--shop{% endif %}{% if cell.kind == 'qty_amount' or col.pair %} ax-cell--pair{% endif %}{% if col.pair_stack %} ax-cell--pair-stack{% endif %}{% if cell.kind == 'money' or cell.kind == 'pct' or col.money %} ax-cell--money{% endif %}{% if col.total %} ax-cell--total{% endif %}{% if col.band %} ax-cell--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-cell--band-start{% endif %}"
+                class="{% if forloop.parentloop.first %}ax-cell--primary{% endif %}{% if col.compact or col.pair %} ax-cell--shop{% endif %}{% if cell.kind == 'qty_amount' or col.pair %} ax-cell--pair{% endif %}{% if col.pair_stack %} ax-cell--pair-stack{% endif %}{% if cell.kind == 'money' or cell.kind == 'pct' or col.money %} ax-cell--money{% endif %}{% if col.phone %} ax-cell--phone{% endif %}{% if col.total %} ax-cell--total{% endif %}{% if col.band %} ax-cell--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-cell--band-start{% endif %}"
                 data-label="{% if col.label %}{{ col.title|default:col.label }}{% else %}{{ col }}{% endif %}"
               >
                 {% if cell.href %}

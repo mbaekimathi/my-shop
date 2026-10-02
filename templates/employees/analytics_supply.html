@@ -76,7 +76,7 @@
       <span class="ax-card-hint">Deliveries · units · spend · avg price</span>
     </header>
     <div class="ax-band-legend ax-band-legend--supply" aria-label="Column groups">
-      <span class="is-flow">Supplier</span>
+      <span class="is-flow">Name · Phone</span>
       <span class="is-total">Volume</span>
       <span class="is-result">Pricing</span>
       <span class="is-action">History</span>
@@ -86,7 +86,8 @@
       <table class="ax-table ax-table--supply">
         <thead>
           <tr>
-            <th class="ax-th--item">Supplier</th>
+            <th class="ax-th--item">Name</th>
+            <th class="ax-th--phone">Phone</th>
             <th class="ax-th--num">Deliveries</th>
             <th class="ax-th--num">Units</th>
             <th class="ax-th--money">Total spend</th>
@@ -97,9 +98,11 @@
         <tbody>
           {% for supplier in page.supplier_rows %}
           <tr>
-            <td class="ax-cell--primary" data-label="Supplier">
+            <td class="ax-cell--primary" data-label="Name">
               <span class="ax-entity-name">{{ supplier.name }}</span>
-              {% if supplier.phone %}<span class="ax-entity-meta">{{ supplier.phone }}</span>{% endif %}
+            </td>
+            <td class="ax-cell--phone" data-label="Phone">
+              {% if supplier.phone %}{{ supplier.phone }}{% else %}—{% endif %}
             </td>
             <td class="ax-cell--num" data-label="Deliveries">{{ supplier.supply_count }}</td>
             <td class="ax-cell--num" data-label="Units">{{ supplier.quantity }}</td>
@@ -122,6 +125,7 @@
           {% if page.totals %}
           <tr class="ax-row--total">
             <td class="ax-cell--primary">Total</td>
+            <td class="ax-cell--phone" aria-hidden="true">—</td>
             <td class="ax-cell--num">{{ page.totals.supply_count }}</td>
             <td class="ax-cell--num">{{ page.totals.quantity }}</td>
             <td class="ax-cell--money"><span class="ax-money">{{ page.totals.total_value }}</span></td>
