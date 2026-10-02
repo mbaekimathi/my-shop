@@ -137,7 +137,7 @@
   {% if page.metric_groups %}
   <div class="ax-till-board" aria-label="Key metrics">
     {% for group in page.metric_groups %}
-    <section class="ax-till-card is-{{ group.tone|default:'neutral' }}">
+    <section class="ax-till-card is-{{ group.tone|default:'neutral' }}{% if group.wide %} is-wide{% endif %}">
       <header class="ax-till-card-head">
         {% if group.icon %}<i data-lucide="{{ group.icon }}" aria-hidden="true"></i>{% endif %}
         <h3>{{ group.label }}</h3>
@@ -453,25 +453,23 @@
       {% elif table.shop_grid and section_slug == "balances" %}
       <div class="ax-band-legend ax-band-legend--balances" aria-label="Column groups">
         {% if table.title == "Live cashbox by shop" %}
-        <span class="is-cash-open">Cash · activity</span>
-        <span class="is-cash-close">Cash · live / close</span>
-        <span class="is-mpesa-open">M-Pesa · activity</span>
-        <span class="is-mpesa-close">M-Pesa · live / close</span>
+        <span class="is-cash-open">Cash</span>
+        <span class="is-mpesa-open">M-Pesa</span>
+        <span class="is-cash-close">Live / close</span>
         {% else %}
-        <span class="is-cash-open">Cash · opening</span>
-        <span class="is-cash-close">Cash · closing</span>
-        <span class="is-mpesa-open">M-Pesa · opening</span>
-        <span class="is-mpesa-close">M-Pesa · closing</span>
+        <span class="is-cash-open">Cash</span>
+        <span class="is-mpesa-open">M-Pesa</span>
+        <span class="is-cash-close">Opening → closing</span>
         {% endif %}
       </div>
       {% elif table.shop_grid and section_slug == "sales" %}
       <div class="ax-band-legend ax-band-legend--sales" aria-label="Column groups">
         <span class="is-cash">Cash</span>
         <span class="is-mpesa">M-Pesa</span>
-        <span class="is-credits">Paid</span>
+        <span class="is-credits">Paid total</span>
         <span class="is-unpaid">Unpaid</span>
-        <span class="is-total">Total</span>
-        <span class="is-result">Stock · Profit</span>
+        <span class="is-total">General total</span>
+        <span class="is-result">Stock · Expected · Actual</span>
       </div>
       {% elif table.shop_grid and section_slug == "items" %}
       <div class="ax-band-legend ax-band-legend--items" aria-label="Column groups">

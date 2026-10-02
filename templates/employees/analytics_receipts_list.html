@@ -4,7 +4,7 @@
 {% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
-<section class="ax" data-animate="rise" data-analytics>
+<section class="ax" data-animate="rise" data-analytics data-ax-section="receipts-list">
   <header class="ax-top">
     <div class="ax-top-main">
       <div class="ax-title">
@@ -14,50 +14,50 @@
       <div class="ax-top-actions">
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back" }}</a>
       </div>
+      <form class="ax-filters" method="get" data-analytics-filters>
+        <select data-receipt-kind-switch aria-label="Receipt type">
+          {% for option in kind_options %}
+          <option value="{{ option.slug }}"{% if option.slug == kind.slug %} selected{% endif %}>{{ option.short_label }}</option>
+          {% endfor %}
+        </select>
+        <input
+          type="search"
+          name="q"
+          value="{{ search }}"
+          placeholder="Search receipt, client, supplier, shop…"
+          aria-label="Search"
+        >
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="range" data-analytics-range aria-label="Time range">
+          <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == 'month' %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == 'year' %} selected{% endif %}>Year</option>
+        </select>
+        <input type="date" name="date" value="{{ report_date_value }}" data-range-field="day"{% if report_range != 'day' %} hidden disabled{% endif %} required aria-label="Date">
+        <input type="date" name="date_from" value="{{ report_date_from }}" data-range-field="period"{% if report_range != 'period' %} hidden disabled{% endif %} required aria-label="From">
+        <input type="date" name="date_to" value="{{ report_date_to }}" data-range-field="period"{% if report_range != 'period' %} hidden disabled{% endif %} required aria-label="To">
+        <input type="month" name="month" value="{{ report_month_value }}" data-range-field="month"{% if report_range != 'month' %} hidden disabled{% endif %} required aria-label="Month">
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          data-range-field="year"
+          {% if report_range != 'year' %}hidden disabled{% endif %}
+          required
+          aria-label="Year"
+        >
+        <button type="submit" class="ax-apply">Apply</button>
+      </form>
     </div>
-    <form class="ax-filters" method="get" data-analytics-filters>
-      <select data-receipt-kind-switch aria-label="Receipt type">
-        {% for option in kind_options %}
-        <option value="{{ option.slug }}"{% if option.slug == kind.slug %} selected{% endif %}>{{ option.short_label }}</option>
-        {% endfor %}
-      </select>
-      <input
-        type="search"
-        name="q"
-        value="{{ search }}"
-        placeholder="Search receipt, client, supplier, shop…"
-        aria-label="Search"
-      >
-      <select name="shop_id" aria-label="Shop">
-        <option value="">All shops</option>
-        {% for shop in filter_shops %}
-        <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
-        {% endfor %}
-      </select>
-      <select name="range" data-analytics-range aria-label="Time range">
-        <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
-        <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
-        <option value="month"{% if report_range == 'month' %} selected{% endif %}>Month</option>
-        <option value="year"{% if report_range == 'year' %} selected{% endif %}>Year</option>
-      </select>
-      <input type="date" name="date" value="{{ report_date_value }}" data-range-field="day"{% if report_range != 'day' %} hidden disabled{% endif %} required aria-label="Date">
-      <input type="date" name="date_from" value="{{ report_date_from }}" data-range-field="period"{% if report_range != 'period' %} hidden disabled{% endif %} required aria-label="From">
-      <input type="date" name="date_to" value="{{ report_date_to }}" data-range-field="period"{% if report_range != 'period' %} hidden disabled{% endif %} required aria-label="To">
-      <input type="month" name="month" value="{{ report_month_value }}" data-range-field="month"{% if report_range != 'month' %} hidden disabled{% endif %} required aria-label="Month">
-      <input
-        type="number"
-        name="year"
-        min="2000"
-        max="2100"
-        step="1"
-        value="{{ report_year_value|slice:':4' }}"
-        data-range-field="year"
-        {% if report_range != 'year' %}hidden disabled{% endif %}
-        required
-        aria-label="Year"
-      >
-      <button type="submit" class="ax-apply">Apply</button>
-    </form>
   </header>
 
   <p class="ax-footnote">

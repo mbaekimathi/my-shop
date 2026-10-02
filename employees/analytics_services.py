@@ -74,7 +74,7 @@ ANALYTICS_SECTIONS = (
         "slug": "sales",
         "label": "Sales",
         "icon": "shopping-bag",
-        "summary": "Sales receipts by shop — cash, M-Pesa, paid/unpaid credits, stock, and profit.",
+        "summary": "Sales by shop — cash, M-Pesa, paid total, unpaid, general total, stock, expected and actual profit.",
     },
     {
         "slug": "credits",
@@ -98,7 +98,7 @@ ANALYTICS_SECTIONS = (
         "slug": "supply",
         "label": "Supply analytics",
         "icon": "truck",
-        "summary": "Buy-items supplier activity, purchase frequency, and prices.",
+        "summary": "Buy items suppliers — deliveries, spend, and price history per item.",
     },
     {
         "slug": "quotations",
@@ -1611,7 +1611,8 @@ def _sales_summary_board(
     paid_credit_amount,
     unpaid_credit_amount,
     stock_amount,
-    profit_amount,
+    expected_profit_amount,
+    actual_profit_amount,
     active_shops: int,
     shop_count: int,
 ) -> dict:
@@ -1621,31 +1622,38 @@ def _sales_summary_board(
     paid_credit = Decimal(paid_credit_amount or 0)
     unpaid_credit = Decimal(unpaid_credit_amount or 0)
     stock = Decimal(stock_amount or 0)
-    profit = Decimal(profit_amount or 0)
+    expected_profit = Decimal(expected_profit_amount or 0)
+    actual_profit = Decimal(actual_profit_amount or 0)
     cash_share = (
-        f"{((cash / total) * Decimal('100')).quantize(Decimal('0.1'))}% of total"
+        f"{((cash / total) * Decimal('100')).quantize(Decimal('0.1'))}% of general"
         if total > 0
         else "No sales yet"
     )
     mpesa_share = (
-        f"{((mpesa / total) * Decimal('100')).quantize(Decimal('0.1'))}% of total"
+        f"{((mpesa / total) * Decimal('100')).quantize(Decimal('0.1'))}% of general"
         if total > 0
         else "No sales yet"
     )
     paid_credit_share = (
-        f"{((paid_credit / total) * Decimal('100')).quantize(Decimal('0.1'))}% of total"
+        f"{((paid_credit / total) * Decimal('100')).quantize(Decimal('0.1'))}% of general"
         if total > 0
         else "No sales yet"
     )
-    margin = (
-        f"{((profit / total) * Decimal('100')).quantize(Decimal('0.1'))}%"
+    expected_margin = (
+        f"{((expected_profit / total) * Decimal('100')).quantize(Decimal('0.1'))}%"
         if total > 0
+        else "—"
+    )
+    collected = cash + mpesa + paid_credit
+    actual_margin = (
+        f"{((actual_profit / collected) * Decimal('100')).quantize(Decimal('0.1'))}%"
+        if collected > 0
         else "—"
     )
     shops = active_shops or shop_count
     return {
         "hero": {
-            "label": "Total sales",
+            "label": "General total",
             "value": _money_ksh(total),
             "hint": f"{int(total_docs or 0)} receipts · {shops} shop{'s' if shops != 1 else ''}",
         },
@@ -1665,7 +1673,7 @@ def _sales_summary_board(
                 "tone": "mpesa",
             },
             {
-                "label": "Paid",
+                "label": "Paid total",
                 "value": _money_ksh(paid_credit),
                 "hint": paid_credit_share,
                 "icon": "credit-card",
@@ -1686,11 +1694,18 @@ def _sales_summary_board(
                 "tone": "cost",
             },
             {
-                "label": "Profit",
-                "value": _money_ksh(profit),
-                "hint": f"Margin {margin}",
+                "label": "Expected profit",
+                "value": _money_ksh(expected_profit),
+                "hint": f"Selling − stock · {expected_margin}",
                 "icon": "trending-up",
-                "tone": "good" if profit >= 0 else "warn",
+                "tone": "good" if expected_profit >= 0 else "warn",
+            },
+            {
+                "label": "Actual profit",
+                "value": _money_ksh(actual_profit),
+                "hint": f"Collected − stock · {actual_margin}",
+                "icon": "wallet",
+                "tone": "good" if actual_profit >= 0 else "warn",
             },
         ],
     }
@@ -3541,7 +3556,14 @@ def _day_balance_data(filters) -> dict:
             shop_id__in=shop_ids,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
-        ).values("shop_id", "created_at", "amount_paid", "category"):
+        ).values(
+            "shop_id",
+            "created_at",
+            "amount_paid",
+            "cash_amount",
+            "mpesa_amount",
+            "category",
+        ):
             expenses_by_shop[row["shop_id"]].append(row)
         for row in StockMovement.objects.filter(
             shop_id__in=shop_ids,
@@ -3578,6 +3600,8 @@ def _day_balance_data(filters) -> dict:
 
         expenses_paid = _zero()
         drawings_paid = _zero()
+        drawings_cash = _zero()
+        drawings_mpesa = _zero()
         for expense in expenses_by_shop.get(session.shop_id, []):
             when = expense["created_at"]
             if session.opened_at <= when < window_end:
@@ -3586,7 +3610,13 @@ def _day_balance_data(filters) -> dict:
                     str(expense.get("category") or "").strip().lower()
                     == ExpenseCategory.OWNER_DRAWINGS
                 ):
-                    drawings_paid += paid
+                    cash_part = Decimal(expense.get("cash_amount") or 0)
+                    mpesa_part = Decimal(expense.get("mpesa_amount") or 0)
+                    if cash_part == 0 and mpesa_part == 0:
+                        cash_part = paid
+                    drawings_cash += cash_part
+                    drawings_mpesa += mpesa_part
+                    drawings_paid += cash_part + mpesa_part
                 else:
                     expenses_paid += paid
 
@@ -3603,10 +3633,12 @@ def _day_balance_data(filters) -> dict:
             + cash_sales
             - cash_refunds
             - expenses_paid
-            - drawings_paid
+            - drawings_cash
             - suppliers_paid
         )
-        expected_mpesa = opening_mpesa + mpesa_sales - mpesa_refunds
+        expected_mpesa = (
+            opening_mpesa + mpesa_sales - mpesa_refunds - drawings_mpesa
+        )
         return {
             "cash_sales": cash_sales,
             "mpesa_sales": mpesa_sales,
@@ -3614,6 +3646,8 @@ def _day_balance_data(filters) -> dict:
             "mpesa_refunds": mpesa_refunds,
             "expenses_paid": expenses_paid,
             "drawings_paid": drawings_paid,
+            "drawings_cash": drawings_cash,
+            "drawings_mpesa": drawings_mpesa,
             "suppliers_paid": suppliers_paid,
             "expected_cash": expected_cash,
             "expected_mpesa": expected_mpesa,
@@ -5041,19 +5075,19 @@ def _build_balances(filters):
 
     live_metrics = [
         _metric(
-            "Live cashbox",
+            "Total",
             _money_ksh(live_total),
             hint=f"{open_shop_count} shop{'s' if open_shop_count != 1 else ''} open",
             tone="bad" if live_total < 0 else "good",
         ),
         _metric(
-            "Live cash",
+            "Cash",
             _money_ksh(live_cash_total),
             hint="Open + cash sales − paid out",
             tone="bad" if live_cash_total < 0 else "neutral",
         ),
         _metric(
-            "Live M-Pesa",
+            "M-Pesa",
             _money_ksh(live_mpesa_total),
             hint="Open + M-Pesa sales",
             tone="bad" if live_mpesa_total < 0 else "neutral",
@@ -5080,14 +5114,15 @@ def _build_balances(filters):
     live_metric_group = {
         "label": "Live cashbox",
         "icon": "wallet",
-        "tone": "cash",
+        "tone": "live",
+        "wide": True,
         "rows": [
             {
                 "label": "In till",
                 "metrics": [
-                    live_metrics[0],
-                    live_metrics[1],
+                    live_metrics[1],  # Cash first for cash|M-Pesa compare
                     live_metrics[2],
+                    live_metrics[0],
                 ],
             },
             {
@@ -5177,6 +5212,7 @@ def _build_balances(filters):
         ),
     )
 
+    # Columns interleaved Cash | M-Pesa at each stage for side-by-side compare.
     live_columns = [
         "Shop",
         "Status",
@@ -5185,8 +5221,10 @@ def _build_balances(filters):
             "band": "cash-open",
             "band_start": True,
         },
-        {"label": "Cash sales", "band": "cash-open"},
-        {"label": "Expenses paid", "band": "cash-open"},
+        {"label": "Open M-Pesa", "band": "mpesa-open"},
+        {"label": "Cash sales", "band": "cash-open", "band_start": True},
+        {"label": "M-Pesa sales", "band": "mpesa-open"},
+        {"label": "Expenses paid", "band": "cash-open", "band_start": True},
         {"label": "Drawings paid", "band": "cash-open"},
         {"label": "Suppliers paid", "band": "cash-open"},
         {
@@ -5194,22 +5232,13 @@ def _build_balances(filters):
             "band": "cash-close",
             "band_start": True,
         },
-        {"label": "Close cash", "band": "cash-close"},
-        {
-            "label": "Open M-Pesa",
-            "band": "mpesa-open",
-            "band_start": True,
-        },
-        {"label": "M-Pesa sales", "band": "mpesa-open"},
-        {
-            "label": "Live M-Pesa",
-            "band": "mpesa-close",
-            "band_start": True,
-        },
+        {"label": "Live M-Pesa", "band": "mpesa-close"},
+        {"label": "Close cash", "band": "cash-close", "band_start": True},
         {"label": "Close M-Pesa", "band": "mpesa-close"},
         {
             "label": "Live total",
             "band": "cash-close",
+            "band_start": True,
         },
     ]
 
@@ -5232,7 +5261,11 @@ def _build_balances(filters):
                 _money_ksh(live.get("opening_cash") or 0)
                 if is_open
                 else "—",
+                _money_ksh(live.get("opening_mpesa") or 0)
+                if is_open
+                else "—",
                 _money_ksh(live.get("cash_sales") or 0) if is_open else "—",
+                _money_ksh(live.get("mpesa_sales") or 0) if is_open else "—",
                 _money_ksh(live.get("expenses_paid") or 0) if is_open else "—",
                 _money_ksh(live.get("drawings_paid") or 0) if is_open else "—",
                 _money_ksh(live.get("suppliers_paid") or 0) if is_open else "—",
@@ -5242,19 +5275,15 @@ def _build_balances(filters):
                     if Decimal(live.get("live_cash") or 0) < 0
                     else "good",
                 },
-                _money_ksh(close_cash)
-                if close_cash is not None and not is_open
-                else ("—" if is_open else _money_ksh(0)),
-                _money_ksh(live.get("opening_mpesa") or 0)
-                if is_open
-                else "—",
-                _money_ksh(live.get("mpesa_sales") or 0) if is_open else "—",
                 {
                     "label": _money_ksh(live.get("live_mpesa") or 0),
                     "tone": "bad"
                     if Decimal(live.get("live_mpesa") or 0) < 0
                     else "good",
                 },
+                _money_ksh(close_cash)
+                if close_cash is not None and not is_open
+                else ("—" if is_open else _money_ksh(0)),
                 _money_ksh(close_mpesa)
                 if close_mpesa is not None and not is_open
                 else ("—" if is_open else _money_ksh(0)),
@@ -5274,14 +5303,14 @@ def _build_balances(filters):
                 f"{open_shop_count} open",
                 "—",
                 "—",
+                "—",
+                "—",
                 _money_ksh(expenses_paid_live),
                 _money_ksh(drawings_paid_live),
                 _money_ksh(suppliers_paid_live),
                 _money_ksh(live_cash_total),
-                "—",
-                "—",
-                "—",
                 _money_ksh(live_mpesa_total),
+                "—",
                 "—",
                 {
                     "label": _money_ksh(live_total),
@@ -5300,27 +5329,36 @@ def _build_balances(filters):
             "band": "cash-open",
             "band_start": True,
         },
-        {"label": "Open cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "cash-open"},
-        {"label": "Open var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "cash-open"},
-        {
-            "label": "Exp. close cash",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "cash-close",
-            "band_start": True,
-        },
-        {"label": "Close cash", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "cash-close"},
-        {"label": "Close var", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "cash-close"},
         {
             "label": "Exp. open M-Pesa",
             "pair": True,
             "pair_qty": "Days",
             "pair_amt": "Amt",
             "band": "mpesa-open",
+        },
+        {
+            "label": "Open cash",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "cash-open",
             "band_start": True,
         },
-        {"label": "Open M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "mpesa-open"},
+        {
+            "label": "Open M-Pesa",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "mpesa-open",
+        },
+        {
+            "label": "Open cash var",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "cash-open",
+            "band_start": True,
+        },
         {
             "label": "Open M-Pesa var",
             "pair": True,
@@ -5329,14 +5367,43 @@ def _build_balances(filters):
             "band": "mpesa-open",
         },
         {
+            "label": "Exp. close cash",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "cash-close",
+            "band_start": True,
+        },
+        {
             "label": "Exp. close M-Pesa",
             "pair": True,
             "pair_qty": "Days",
             "pair_amt": "Amt",
             "band": "mpesa-close",
+        },
+        {
+            "label": "Close cash",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "cash-close",
             "band_start": True,
         },
-        {"label": "Close M-Pesa", "pair": True, "pair_qty": "Days", "pair_amt": "Amt", "band": "mpesa-close"},
+        {
+            "label": "Close M-Pesa",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "mpesa-close",
+        },
+        {
+            "label": "Close cash var",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "cash-close",
+            "band_start": True,
+        },
         {
             "label": "Close M-Pesa var",
             "pair": True,
@@ -5389,31 +5456,31 @@ def _build_balances(filters):
             [
                 shop.name,
                 _pair(shop.pk, "open_sessions", "expected_opening_cash"),
+                _pair(shop.pk, "open_sessions", "expected_opening_mpesa"),
                 _pair(shop.pk, "open_sessions", "opening_cash"),
+                _pair(shop.pk, "open_sessions", "opening_mpesa"),
                 _pair(
                     shop.pk,
                     "open_sessions",
                     "opening_cash_variance",
                     variance=True,
                 ),
-                _pair(shop.pk, "close_sessions", "expected_cash"),
-                _pair(shop.pk, "close_sessions", "closing_cash"),
-                _pair(
-                    shop.pk,
-                    "close_sessions",
-                    "cash_variance",
-                    variance=True,
-                ),
-                _pair(shop.pk, "open_sessions", "expected_opening_mpesa"),
-                _pair(shop.pk, "open_sessions", "opening_mpesa"),
                 _pair(
                     shop.pk,
                     "open_sessions",
                     "opening_mpesa_variance",
                     variance=True,
                 ),
+                _pair(shop.pk, "close_sessions", "expected_cash"),
                 _pair(shop.pk, "close_sessions", "expected_mpesa"),
+                _pair(shop.pk, "close_sessions", "closing_cash"),
                 _pair(shop.pk, "close_sessions", "closing_mpesa"),
+                _pair(
+                    shop.pk,
+                    "close_sessions",
+                    "cash_variance",
+                    variance=True,
+                ),
                 _pair(
                     shop.pk,
                     "close_sessions",
@@ -5431,7 +5498,13 @@ def _build_balances(filters):
                     totals["open_sessions"], totals["expected_opening_cash"]
                 ),
                 _qty_amount_cell(
+                    totals["open_sessions"], totals["expected_opening_mpesa"]
+                ),
+                _qty_amount_cell(
                     totals["open_sessions"], totals["opening_cash"]
+                ),
+                _qty_amount_cell(
+                    totals["open_sessions"], totals["opening_mpesa"]
                 ),
                 _qty_amount_cell(
                     totals["open_sessions"],
@@ -5439,32 +5512,26 @@ def _build_balances(filters):
                     tone=_variance_tone(totals["opening_cash_variance"]),
                 ),
                 _qty_amount_cell(
-                    totals["close_sessions"], totals["expected_cash"]
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"], totals["closing_cash"]
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"],
-                    totals["cash_variance"],
-                    tone=_variance_tone(totals["cash_variance"]),
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"], totals["expected_opening_mpesa"]
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"], totals["opening_mpesa"]
-                ),
-                _qty_amount_cell(
                     totals["open_sessions"],
                     totals["opening_mpesa_variance"],
                     tone=_variance_tone(totals["opening_mpesa_variance"]),
                 ),
                 _qty_amount_cell(
+                    totals["close_sessions"], totals["expected_cash"]
+                ),
+                _qty_amount_cell(
                     totals["close_sessions"], totals["expected_mpesa"]
                 ),
                 _qty_amount_cell(
+                    totals["close_sessions"], totals["closing_cash"]
+                ),
+                _qty_amount_cell(
                     totals["close_sessions"], totals["closing_mpesa"]
+                ),
+                _qty_amount_cell(
+                    totals["close_sessions"],
+                    totals["cash_variance"],
+                    tone=_variance_tone(totals["cash_variance"]),
                 ),
                 _qty_amount_cell(
                     totals["close_sessions"],
@@ -5480,21 +5547,21 @@ def _build_balances(filters):
         "Opened",
         "Closed",
         "Exp. open cash",
+        "Exp. open M-Pesa",
         "Open cash",
-        "Open var",
+        "Open M-Pesa",
+        "Open cash var",
+        "Open M-Pesa var",
         "Cash sales",
+        "M-Pesa sales",
         "Expenses paid",
         "Drawings paid",
         "Suppliers paid",
         "Exp. close cash",
-        "Close cash",
-        "Close var",
-        "Exp. open M-Pesa",
-        "Open M-Pesa",
-        "Open M-Pesa var",
-        "M-Pesa sales",
         "Exp. close M-Pesa",
+        "Close cash",
         "Close M-Pesa",
+        "Close cash var",
         "Close M-Pesa var",
     ]
     session_rows = []
@@ -5521,30 +5588,30 @@ def _build_balances(filters):
                 opened,
                 closed,
                 _money_ksh(row["expected_opening_cash"]),
+                _money_ksh(row["expected_opening_mpesa"]),
                 _money_ksh(row["opening_cash"]),
+                _money_ksh(row["opening_mpesa"]),
                 {
                     "label": _money_ksh(open_cash_var),
                     "tone": _variance_tone(open_cash_var),
                 },
-                _money_ksh(row["cash_sales"]),
-                _money_ksh(row.get("expenses_paid", row.get("expenses"))),
-                _money_ksh(row.get("drawings_paid") or 0),
-                _money_ksh(row.get("suppliers_paid") or 0),
-                _money_ksh(row["expected_cash"]),
-                "—" if is_open_row else _money_ksh(row["closing_cash"]),
-                {
-                    "label": "—" if is_open_row else _money_ksh(cash_var),
-                    "tone": "neutral" if is_open_row else _variance_tone(cash_var),
-                },
-                _money_ksh(row["expected_opening_mpesa"]),
-                _money_ksh(row["opening_mpesa"]),
                 {
                     "label": _money_ksh(open_mpesa_var),
                     "tone": _variance_tone(open_mpesa_var),
                 },
+                _money_ksh(row["cash_sales"]),
                 _money_ksh(row["mpesa_sales"]),
+                _money_ksh(row.get("expenses_paid", row.get("expenses"))),
+                _money_ksh(row.get("drawings_paid") or 0),
+                _money_ksh(row.get("suppliers_paid") or 0),
+                _money_ksh(row["expected_cash"]),
                 _money_ksh(row["expected_mpesa"]),
+                "—" if is_open_row else _money_ksh(row["closing_cash"]),
                 "—" if is_open_row else _money_ksh(row["closing_mpesa"]),
+                {
+                    "label": "—" if is_open_row else _money_ksh(cash_var),
+                    "tone": "neutral" if is_open_row else _variance_tone(cash_var),
+                },
                 {
                     "label": "—" if is_open_row else _money_ksh(mpesa_var),
                     "tone": "neutral"
@@ -5589,7 +5656,8 @@ def _build_balances(filters):
                     "Open shops: live cash = opening cash + cash sales − expenses paid "
                     "− owner drawings − suppliers paid; live M-Pesa = opening M-Pesa + M-Pesa sales. "
                     "Owner drawings reduce cash but are equity, not operating expense. "
-                    "Closed shops: live amounts are the last recorded closing balances."
+                    "Closed shops: live amounts are the last recorded closing balances. "
+                    "Cash and M-Pesa columns sit side by side at each stage for easier compare."
                 ),
                 shop_grid=True,
             ),
@@ -5602,7 +5670,7 @@ def _build_balances(filters):
                     "Expected opening = previous day's closing balance. "
                     "Expected closing cash = opening + cash sales − expenses paid "
                     "− owner drawings − suppliers paid. Expected closing M-Pesa = opening + M-Pesa sales. "
-                    "Variance = actual − expected."
+                    "Variance = actual − expected. Cash and M-Pesa sit side by side at each stage."
                 ),
                 shop_grid=True,
             ),
@@ -5712,19 +5780,34 @@ def _sales_breakdown_table(
         kinds=[ShopReceiptKind.SALE],
     )
 
+    general_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    for label in labels:
+        sale_docs, _sale_amt = total_by_bucket.get(label, (0, _zero()))
+        unpaid_docs, unpaid_amt = unpaid_credit_by_bucket.get(label, (0, _zero()))
+        cash_amt = cash_by_bucket.get(label, (0, _zero()))[1]
+        mpesa_amt = mpesa_by_bucket.get(label, (0, _zero()))[1]
+        paid_amt = paid_credit_by_bucket.get(label, (0, _zero()))[1]
+        general_by_bucket[label] = (
+            int(sale_docs or 0) + int(unpaid_docs or 0),
+            Decimal(cash_amt or 0)
+            + Decimal(mpesa_amt or 0)
+            + Decimal(paid_amt or 0)
+            + Decimal(unpaid_amt or 0),
+        )
+
     metric_maps = [
         ("Cash", cash_by_bucket, "cash", "money"),
         ("M-Pesa", mpesa_by_bucket, "mpesa", "money"),
-        ("Paid", paid_credit_by_bucket, "credits", "pair"),
+        ("Paid total", paid_credit_by_bucket, "credits", "pair"),
         ("Unpaid", unpaid_credit_by_bucket, "unpaid", "pair"),
-        ("Total", total_by_bucket, "total", "pair"),
+        ("General total", general_by_bucket, "total", "pair"),
     ]
     column_titles = {
         "Cash": "POS cash payments on sale receipts",
         "M-Pesa": "POS M-Pesa payments on sale receipts",
-        "Paid": "Fully paid credit receipts converted to sales",
+        "Paid total": "Fully paid credit receipts converted to sales",
         "Unpaid": "Outstanding balance on open credit receipts this bucket",
-        "Total": "Cash + M-Pesa + Paid credits",
+        "General total": "Cash + M-Pesa + Paid total + Unpaid",
     }
 
     columns = [config["column_label"]]
@@ -5746,7 +5829,7 @@ def _sales_breakdown_table(
                     "pair": True,
                     "pair_qty": "Docs",
                     "pair_amt": "Amt",
-                    "total": label == "Total",
+                    "total": label == "General total",
                     "band": band,
                     "band_start": True,
                     "title": column_titles.get(label, ""),
@@ -5761,8 +5844,13 @@ def _sales_breakdown_table(
                 "band_start": True,
             },
             {
-                "label": "Profit",
+                "label": "Expected profit",
                 "title": "Selling value − stock (ex-tax, this bucket)",
+                "band": "result",
+            },
+            {
+                "label": "Actual profit",
+                "title": "Cash + M-Pesa + Paid total − stock (this bucket)",
                 "band": "result",
             },
         ]
@@ -5779,7 +5867,7 @@ def _sales_breakdown_table(
 
     table_rows = []
     for label in labels:
-        total_docs, total_amt = total_by_bucket.get(label, (0, _zero()))
+        total_docs, total_amt = general_by_bucket.get(label, (0, _zero()))
         unpaid_docs, unpaid_amt = unpaid_credit_by_bucket.get(label, (0, _zero()))
         row = trading.get(label) or {}
         selling = Decimal(row.get("value") or 0)
@@ -5793,10 +5881,21 @@ def _sales_breakdown_table(
             and stock == 0
         ):
             continue
-        profit = selling - stock
-        margin = (
-            ((profit / selling) * Decimal("100")).quantize(Decimal("0.1"))
+        collected = (
+            cash_by_bucket.get(label, (0, _zero()))[1]
+            + mpesa_by_bucket.get(label, (0, _zero()))[1]
+            + paid_credit_by_bucket.get(label, (0, _zero()))[1]
+        )
+        expected_profit = selling - stock
+        actual_profit = collected - stock
+        expected_margin = (
+            ((expected_profit / selling) * Decimal("100")).quantize(Decimal("0.1"))
             if selling > 0
+            else _zero()
+        )
+        actual_margin = (
+            ((actual_profit / collected) * Decimal("100")).quantize(Decimal("0.1"))
+            if collected > 0
             else _zero()
         )
         cells = [label]
@@ -5806,9 +5905,22 @@ def _sales_breakdown_table(
         cells.append(_money_cell(stock, title=f"Stock value {_money_ksh(stock)}"))
         cells.append(
             _money_cell(
-                profit,
-                tone="good" if profit >= 0 else "bad",
-                title=f"Profit {_money_ksh(profit)} · margin {margin}%",
+                expected_profit,
+                tone="good" if expected_profit >= 0 else "bad",
+                title=(
+                    f"Expected profit {_money_ksh(expected_profit)} · "
+                    f"margin {expected_margin}%"
+                ),
+            )
+        )
+        cells.append(
+            _money_cell(
+                actual_profit,
+                tone="good" if actual_profit >= 0 else "bad",
+                title=(
+                    f"Actual profit {_money_ksh(actual_profit)} · "
+                    f"margin {actual_margin}%"
+                ),
             )
         )
         table_rows.append(cells)
@@ -5822,9 +5934,11 @@ def _sales_breakdown_table(
         footnote=(
             f"{config['title']} for the selected range. "
             "Same rules as sales by shop: Cash and M-Pesa are POS sale payments; "
-            "Paid = settled credits converted to sales (in Total); "
-            "Unpaid = open credit balances (not in Total); "
-            "Total = Cash + M-Pesa + Paid; Profit = selling value − stock."
+            "Paid total = settled credits converted to sales; "
+            "Unpaid = open credit balances; "
+            "General total = Cash + M-Pesa + Paid total + Unpaid; "
+            "Expected profit = selling value − stock; "
+            "Actual profit = Cash + M-Pesa + Paid total − stock."
         ),
     )
 
@@ -5905,34 +6019,48 @@ def _build_sales(filters):
     )
     stock_by_shop: dict[int, Decimal] = {}
     selling_by_shop: dict[int, Decimal] = {}
-    profit_by_shop: dict[int, Decimal] = {}
+    expected_profit_by_shop: dict[int, Decimal] = {}
+    actual_profit_by_shop: dict[int, Decimal] = {}
+    general_by_shop: dict[int, tuple[int, Decimal]] = {}
     for shop in shops:
         row = trading.get(shop.pk) or {}
         selling = Decimal(row.get("value") or 0)
         stock = Decimal(row.get("cogs") or 0)
+        cash_amt = cash_by_shop.get(shop.pk, (0, _zero()))[1]
+        mpesa_amt = mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
+        _paid_docs, paid_amt = paid_credit_by_shop.get(shop.pk, (0, _zero()))
+        unpaid_docs, unpaid_amt = unpaid_credit_by_shop.get(shop.pk, (0, _zero()))
+        sale_docs = total_by_shop.get(shop.pk, (0, _zero()))[0]
+        collected = Decimal(cash_amt or 0) + Decimal(mpesa_amt or 0) + Decimal(paid_amt or 0)
+        general_amt = collected + Decimal(unpaid_amt or 0)
         selling_by_shop[shop.pk] = selling
         stock_by_shop[shop.pk] = stock
-        profit_by_shop[shop.pk] = selling - stock
+        expected_profit_by_shop[shop.pk] = selling - stock
+        actual_profit_by_shop[shop.pk] = collected - stock
+        general_by_shop[shop.pk] = (
+            int(sale_docs or 0) + int(unpaid_docs or 0),
+            general_amt,
+        )
 
     metric_maps = [
         ("Cash", cash_by_shop, "cash", "money"),
         ("M-Pesa", mpesa_by_shop, "mpesa", "money"),
-        ("Paid", paid_credit_by_shop, "credits", "pair"),
+        ("Paid total", paid_credit_by_shop, "credits", "pair"),
         ("Unpaid", unpaid_credit_by_shop, "unpaid", "pair"),
-        ("Total", total_by_shop, "total", "pair"),
+        ("General total", general_by_shop, "total", "pair"),
     ]
     column_titles = {
         "Cash": "POS cash payments on sale receipts",
         "M-Pesa": "POS M-Pesa payments on sale receipts",
-        "Paid": "Fully paid credit receipts converted to sales",
+        "Paid total": "Fully paid credit receipts converted to sales",
         "Unpaid": "Outstanding balance on open credit receipts this period",
-        "Total": "Cash + M-Pesa + Paid credits",
+        "General total": "Cash + M-Pesa + Paid total + Unpaid",
     }
 
     shops_sorted = sorted(
         shops,
         key=lambda shop: (
-            -total_by_shop.get(shop.pk, (0, _zero()))[1],
+            -general_by_shop.get(shop.pk, (0, _zero()))[1],
             shop.name.lower(),
         ),
     )
@@ -5956,7 +6084,7 @@ def _build_sales(filters):
                     "pair": True,
                     "pair_qty": "Docs",
                     "pair_amt": "Amt",
-                    "total": label == "Total",
+                    "total": label == "General total",
                     "band": band,
                     "band_start": True,
                     "title": column_titles.get(label, ""),
@@ -5971,8 +6099,13 @@ def _build_sales(filters):
                 "band_start": True,
             },
             {
-                "label": "Profit",
+                "label": "Expected profit",
                 "title": "Selling value − stock (ex-tax, this period)",
+                "band": "result",
+            },
+            {
+                "label": "Actual profit",
+                "title": "Cash + M-Pesa + Paid total − stock (this period)",
                 "band": "result",
             },
         ]
@@ -5994,19 +6127,43 @@ def _build_sales(filters):
             qty, amount = by_shop.get(shop.pk, (0, _zero()))
             cells.append(_metric_cell(cell_kind, qty, amount))
         stock = stock_by_shop.get(shop.pk, _zero())
-        profit = profit_by_shop.get(shop.pk, _zero())
+        expected_profit = expected_profit_by_shop.get(shop.pk, _zero())
+        actual_profit = actual_profit_by_shop.get(shop.pk, _zero())
         revenue = selling_by_shop.get(shop.pk, _zero())
-        margin = (
-            ((profit / revenue) * Decimal("100")).quantize(Decimal("0.1"))
+        collected = (
+            cash_by_shop.get(shop.pk, (0, _zero()))[1]
+            + mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
+            + paid_credit_by_shop.get(shop.pk, (0, _zero()))[1]
+        )
+        expected_margin = (
+            ((expected_profit / revenue) * Decimal("100")).quantize(Decimal("0.1"))
             if revenue > 0
+            else _zero()
+        )
+        actual_margin = (
+            ((actual_profit / collected) * Decimal("100")).quantize(Decimal("0.1"))
+            if collected > 0
             else _zero()
         )
         cells.append(_money_cell(stock, title=f"Stock value {_money_ksh(stock)}"))
         cells.append(
             _money_cell(
-                profit,
-                tone="good" if profit >= 0 else "bad",
-                title=f"Profit {_money_ksh(profit)} · margin {margin}%",
+                expected_profit,
+                tone="good" if expected_profit >= 0 else "bad",
+                title=(
+                    f"Expected profit {_money_ksh(expected_profit)} · "
+                    f"margin {expected_margin}%"
+                ),
+            )
+        )
+        cells.append(
+            _money_cell(
+                actual_profit,
+                tone="good" if actual_profit >= 0 else "bad",
+                title=(
+                    f"Actual profit {_money_ksh(actual_profit)} · "
+                    f"margin {actual_margin}%"
+                ),
             )
         )
         table_rows.append(cells)
@@ -6018,7 +6175,7 @@ def _build_sales(filters):
     paid_credit_amount = _zero()
     unpaid_credit_amount = _zero()
     for shop in shops_sorted:
-        qty, amount = total_by_shop.get(shop.pk, (0, _zero()))
+        qty, amount = general_by_shop.get(shop.pk, (0, _zero()))
         total_docs += int(qty or 0)
         total_amount += Decimal(amount or 0)
         cash_amount += cash_by_shop.get(shop.pk, (0, _zero()))[1]
@@ -6029,10 +6186,17 @@ def _build_sales(filters):
     total_selling = sum(
         (selling_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero()
     )
-    total_profit = total_selling - total_stock
-    margin_pct = (
-        ((total_profit / total_selling) * Decimal("100")).quantize(Decimal("0.1"))
+    total_collected = cash_amount + mpesa_amount + paid_credit_amount
+    total_expected_profit = total_selling - total_stock
+    total_actual_profit = total_collected - total_stock
+    expected_margin_pct = (
+        ((total_expected_profit / total_selling) * Decimal("100")).quantize(Decimal("0.1"))
         if total_selling > 0
+        else _zero()
+    )
+    actual_margin_pct = (
+        ((total_actual_profit / total_collected) * Decimal("100")).quantize(Decimal("0.1"))
+        if total_collected > 0
         else _zero()
     )
 
@@ -6051,9 +6215,22 @@ def _build_sales(filters):
         )
         total_cells.append(
             _money_cell(
-                total_profit,
-                tone="good" if total_profit >= 0 else "bad",
-                title=f"Profit {_money_ksh(total_profit)} · margin {margin_pct}%",
+                total_expected_profit,
+                tone="good" if total_expected_profit >= 0 else "bad",
+                title=(
+                    f"Expected profit {_money_ksh(total_expected_profit)} · "
+                    f"margin {expected_margin_pct}%"
+                ),
+            )
+        )
+        total_cells.append(
+            _money_cell(
+                total_actual_profit,
+                tone="good" if total_actual_profit >= 0 else "bad",
+                title=(
+                    f"Actual profit {_money_ksh(total_actual_profit)} · "
+                    f"margin {actual_margin_pct}%"
+                ),
             )
         )
         table_rows.append(total_cells)
@@ -6061,15 +6238,15 @@ def _build_sales(filters):
     active_shops = sum(
         1
         for shop in shops_sorted
-        if total_by_shop.get(shop.pk, (0, _zero()))[0] > 0
+        if general_by_shop.get(shop.pk, (0, _zero()))[0] > 0
         or unpaid_credit_by_shop.get(shop.pk, (0, _zero()))[0] > 0
     )
 
     page = {
         "headline": "Sales",
         "lead": (
-            "Sale receipts by shop — cash, M-Pesa, paid and unpaid credits, "
-            "stock value, and profit. "
+            "Sale receipts by shop — cash, M-Pesa, paid total, unpaid, "
+            "general total, stock, expected profit, and actual profit. "
             "Day shows hourly, month shows daily, year shows monthly."
         ),
         "alerts": [],
@@ -6081,7 +6258,8 @@ def _build_sales(filters):
             paid_credit_amount=paid_credit_amount,
             unpaid_credit_amount=unpaid_credit_amount,
             stock_amount=total_stock,
-            profit_amount=total_profit,
+            expected_profit_amount=total_expected_profit,
+            actual_profit_amount=total_actual_profit,
             active_shops=active_shops,
             shop_count=len(shops_sorted),
         ),
@@ -6095,10 +6273,11 @@ def _build_sales(filters):
                 shop_grid=True,
                 footnote=(
                     "Cash and M-Pesa are POS sale payments. "
-                    "Paid = settled credits converted to sales (in Total). "
-                    "Unpaid = open credit balances this period (not in Total). "
-                    "Total = Cash + M-Pesa + Paid. "
-                    "Profit = selling value − stock."
+                    "Paid total = settled credits converted to sales. "
+                    "Unpaid = open credit balances this period. "
+                    "General total = Cash + M-Pesa + Paid total + Unpaid. "
+                    "Expected profit = selling value − stock. "
+                    "Actual profit = Cash + M-Pesa + Paid total − stock."
                 ),
             )
         ],
@@ -6498,8 +6677,74 @@ def _build_stock(filters):
     }
 
 
+def _supply_summary_board(
+    *,
+    item_name: str,
+    delivery_count: int,
+    unit_count: int,
+    supplier_count: int,
+    total_spend,
+    average_price,
+) -> dict:
+    spend = Decimal(total_spend or 0)
+    avg = Decimal(average_price or 0)
+    return {
+        "hero": {
+            "label": "Buy items item",
+            "value": item_name,
+            "hint": (
+                f"{int(delivery_count or 0)} deliveries · "
+                f"{int(unit_count or 0)} units · "
+                f"{int(supplier_count or 0)} supplier"
+                f"{'s' if int(supplier_count or 0) != 1 else ''}"
+            ),
+        },
+        "tiles": [
+            {
+                "label": "Suppliers",
+                "value": str(int(supplier_count or 0)),
+                "hint": "Distinct suppliers recorded",
+                "icon": "truck",
+                "tone": "neutral",
+            },
+            {
+                "label": "Deliveries",
+                "value": str(int(delivery_count or 0)),
+                "hint": "Buy items stock-ins",
+                "icon": "package-plus",
+                "tone": "flow",
+            },
+            {
+                "label": "Units",
+                "value": str(int(unit_count or 0)),
+                "hint": "Total quantity received",
+                "icon": "layers",
+                "tone": "neutral",
+            },
+            {
+                "label": "Total spend",
+                "value": _money_ksh(spend),
+                "hint": "Sum of line totals at buying price",
+                "icon": "banknote",
+                "tone": "cost",
+            },
+            {
+                "label": "Avg unit price",
+                "value": _money_ksh(avg),
+                "hint": "Weighted by units received",
+                "icon": "scale",
+                "tone": "good",
+            },
+        ],
+    }
+
+
 def _build_supply(filters):
     """Supplier performance for stock received through the My Shop Buy items flow."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
     shop_ids = filters["active_shop_ids"]
     start, end = filters["start"], filters["end"]
     try:
@@ -6517,6 +6762,18 @@ def _build_supply(filters):
         end,
         lookup="movement__created_at",
     )
+    item_choices = [
+        {
+            "id": row["item_id"],
+            "name": row["item__name"],
+            "label": (
+                f"{row['item__name']} · {int(row['transaction_count'] or 0)} deliveries"
+            ),
+        }
+        for row in buy_lines.values("item_id", "item__name")
+        .annotate(transaction_count=Count("movement_id", distinct=True))
+        .order_by("-transaction_count", "item__name")[:30]
+    ]
     top_item = (
         buy_lines.values("item_id", "item__name")
         .annotate(
@@ -6534,6 +6791,13 @@ def _build_supply(filters):
         if selected_item_id
         else None
     )
+    back_href = reverse(
+        "employees:analytics_section",
+        kwargs={
+            "role_segment": role_url_segment(filters["role"]),
+            "section": "stock",
+        },
+    )
     if selected_item is None:
         return {
             "headline": "Supply analytics",
@@ -6541,10 +6805,15 @@ def _build_supply(filters):
                 "Supplier data is calculated only from stock added through "
                 "the My Shop Buy items popup."
             ),
+            "back_href": back_href,
+            "back_label": "Stock on hand",
             "top_item": None,
             "selected_item": None,
+            "item_choices": item_choices,
             "supplier_rows": [],
             "supply_history": {},
+            "totals": None,
+            "summary_board": None,
         }
 
     grouped = {}
@@ -6616,19 +6885,47 @@ def _build_supply(filters):
                 "supply_count": len(entry["movement_ids"]),
                 "quantity": entry["quantity"],
                 "average_price": _money_ksh(average_price),
+                "total_value": _money_ksh(entry["amount"]),
             }
         )
+
+    total_deliveries = sum(row["supply_count"] for row in supplier_rows)
+    total_units = sum(row["quantity"] for row in supplier_rows)
+    total_spend = sum(
+        (Decimal(entry["amount"] or 0) for entry in grouped.values()), _zero()
+    )
+    weighted_avg = (
+        total_spend / total_units if total_units else _zero()
+    )
+    totals = {
+        "supply_count": total_deliveries,
+        "quantity": total_units,
+        "total_value": _money_ksh(total_spend),
+        "average_price": _money_ksh(weighted_avg),
+    }
 
     return {
         "headline": "Supply analytics",
         "lead": (
-            "Supplier history for the most frequently bought item. "
-            "Average price is weighted by the supplied quantity."
+            "Who supplied this item, how often, and at what price — "
+            "from My Shop Buy items stock-ins only."
         ),
+        "back_href": back_href,
+        "back_label": "Stock on hand",
         "top_item": top_item,
         "selected_item": selected_item,
+        "item_choices": item_choices,
         "supplier_rows": supplier_rows,
         "supply_history": supply_history,
+        "totals": totals,
+        "summary_board": _supply_summary_board(
+            item_name=selected_item.name,
+            delivery_count=total_deliveries,
+            unit_count=total_units,
+            supplier_count=len(supplier_rows),
+            total_spend=total_spend,
+            average_price=weighted_avg,
+        ),
     }
 
 

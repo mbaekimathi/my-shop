@@ -4,7 +4,7 @@
 {% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
-<section class="ax ax--account" data-animate="rise" data-ax-section="supplier-account">
+<section class="ax ax--account ax--list-table" data-animate="rise" data-ax-section="supplier-account">
   <header class="ax-top">
     <div class="ax-top-main">
       <div class="ax-title">
@@ -15,24 +15,24 @@
         <button type="button" class="ax-apply" data-ax-pay-open data-pay-all="1">Pay all</button>
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back to suppliers" }}</a>
       </div>
-    </div>
-    <form class="ax-filters" method="get" data-analytics-filters>
-      {% for key, values in request.GET.lists %}
-        {% if key != "shop_id" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" %}
-          {% for value in values %}
-          <input type="hidden" name="{{ key }}" value="{{ value }}">
-          {% endfor %}
-        {% endif %}
-      {% endfor %}
-      <select name="shop_id" aria-label="Shop">
-        <option value="">All shops</option>
-        {% for shop in filter_shops %}
-        <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+      <form class="ax-filters" method="get" data-analytics-filters>
+        {% for key, values in request.GET.lists %}
+          {% if key != "shop_id" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" %}
+            {% for value in values %}
+            <input type="hidden" name="{{ key }}" value="{{ value }}">
+            {% endfor %}
+          {% endif %}
         {% endfor %}
-      </select>
-      {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
-      <button type="submit" class="ax-apply">Apply</button>
-    </form>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+        {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
+        <button type="submit" class="ax-apply">Apply</button>
+      </form>
+    </div>
     <p class="ax-lead">
       {{ supplier_phone|default:"—" }}
       · {{ entries }} receipt{{ entries|pluralize }}

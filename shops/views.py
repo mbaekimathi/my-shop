@@ -2192,9 +2192,11 @@ def my_shop_day_toggle(request, shop_id):
         "login_code": "",
     }
     drawing_data = {
-        "amount": "",
+        "cash_amount": "",
+        "mpesa_amount": "",
         "name": "",
         "login_code": "",
+        "drawer_login_code": "",
     }
 
     from employees.module_permissions import employee_may
@@ -2212,9 +2214,14 @@ def my_shop_day_toggle(request, shop_id):
 
         if action == "drawing":
             drawing_data = {
+                "cash_amount": (request.POST.get("cash_amount") or "").strip(),
+                "mpesa_amount": (request.POST.get("mpesa_amount") or "").strip(),
                 "amount": (request.POST.get("amount") or "").strip(),
                 "name": (request.POST.get("name") or "").strip(),
                 "login_code": (request.POST.get("login_code") or "").strip(),
+                "drawer_login_code": (
+                    request.POST.get("drawer_login_code") or ""
+                ).strip(),
             }
             denied_drawing = _require_my_shop_permission(
                 request,

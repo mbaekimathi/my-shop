@@ -156,48 +156,157 @@
   const drawingForm = root.querySelector("[data-shop-day-drawing-form]");
   if (drawingForm) {
     const drawingCode = drawingForm.querySelector("[data-drawing-login-code]");
+    const drawerCode = drawingForm.querySelector("[data-drawing-drawer-code]");
+    const drawingCashAmount = drawingForm.querySelector(
+      "[data-drawing-cash-amount]"
+    );
+    const drawingMpesaAmount = drawingForm.querySelector(
+      "[data-drawing-mpesa-amount]"
+    );
     const drawingAmount = drawingForm.querySelector("[data-drawing-amount]");
     const drawingStatus = drawingForm.querySelector("[data-drawing-status]");
     const drawingSubmit = drawingForm.querySelector("[data-drawing-submit]");
-    let drawingVerified = false;
-    let drawingTimer = null;
-    let drawingSeq = 0;
+    let staffVerified = false;
+    let drawerVerified = false;
+    let staffName = "";
+    let drawerName = "";
+    let staffEmployeeId = "";
+    let drawerEmployeeId = "";
+    let staffTimer = null;
+    let drawerTimer = null;
+    let staffSeq = 0;
+    let drawerSeq = 0;
+
+    const parseAmount = (input) => {
+      const raw = (input?.value || "").trim();
+      if (!raw) return 0;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : NaN;
+    };
+
+    const drawingTotal = () => {
+      const parts = [];
+      if (drawingCashAmount) parts.push(parseAmount(drawingCashAmount));
+      if (drawingMpesaAmount) parts.push(parseAmount(drawingMpesaAmount));
+      if (!parts.length && drawingAmount) {
+        parts.push(parseAmount(drawingAmount));
+      }
+      if (parts.some((value) => Number.isNaN(value) || value < 0)) return NaN;
+      return parts.reduce((sum, value) => sum + value, 0);
+    };
+
+    const amountOk = () => {
+      const total = drawingTotal();
+      return Number.isFinite(total) && total > 0;
+    };
 
     const setDrawingStatus = (message, { ok = false, error = false } = {}) => {
       if (!drawingStatus) return;
       drawingStatus.textContent =
         message ||
-        "Enter an active staff member’s 6-digit ID to authorise the drawing.";
+        "Enter both 6-digit codes — employee and person drawing.";
       drawingStatus.classList.toggle("is-ok", ok);
       drawingStatus.classList.toggle("is-error", error);
     };
 
     const syncDrawingSubmit = () => {
-      const amountOk = Boolean((drawingAmount?.value || "").trim());
-      if (drawingSubmit) drawingSubmit.disabled = !(drawingVerified && amountOk);
+      const codesDistinct =
+        staffEmployeeId &&
+        drawerEmployeeId &&
+        staffEmployeeId !== drawerEmployeeId;
+      if (drawingSubmit) {
+        drawingSubmit.disabled = !(
+          staffVerified &&
+          drawerVerified &&
+          codesDistinct &&
+          amountOk()
+        );
+      }
     };
 
-    const verifyDrawingCode = async () => {
-      const code = (drawingCode?.value || "").trim();
-      const current = ++drawingSeq;
-      if (code.length < 6) {
-        drawingVerified = false;
+    const refreshDrawingStatus = () => {
+      const staffPartial = (drawingCode?.value || "").trim();
+      const drawerPartial = (drawerCode?.value || "").trim();
+      if (
+        staffVerified &&
+        drawerVerified &&
+        staffEmployeeId &&
+        drawerEmployeeId &&
+        staffEmployeeId === drawerEmployeeId
+      ) {
         setDrawingStatus(
-          code.length
-            ? `Enter ${6 - code.length} more digit${6 - code.length === 1 ? "" : "s"}.`
-            : ""
+          "Employee code and person drawing code must be different.",
+          { error: true }
+        );
+        syncDrawingSubmit();
+        return;
+      }
+      if (staffVerified && drawerVerified) {
+        const cash = drawingCashAmount ? parseAmount(drawingCashAmount) : 0;
+        const mpesa = drawingMpesaAmount ? parseAmount(drawingMpesaAmount) : 0;
+        let channelNote = "funds";
+        if (cash > 0 && mpesa > 0) channelNote = "cash + M-Pesa";
+        else if (cash > 0) channelNote = "cash";
+        else if (mpesa > 0) channelNote = "M-Pesa";
+        setDrawingStatus(
+          `Ready: ${staffName || "employee"} releases · ${
+            drawerName || "person drawing"
+          } takes the ${channelNote}.`,
+          { ok: true }
+        );
+        syncDrawingSubmit();
+        return;
+      }
+      if (!staffPartial && !drawerPartial) {
+        setDrawingStatus("");
+        syncDrawingSubmit();
+        return;
+      }
+      const waiting = [];
+      if (!staffVerified) waiting.push("employee code");
+      if (!drawerVerified) waiting.push("person drawing code");
+      setDrawingStatus(`Verify ${waiting.join(" and ")}.`);
+      syncDrawingSubmit();
+    };
+
+    const verifyOneCode = async (input, role) => {
+      const code = (input?.value || "").trim();
+      const current =
+        role === "staff" ? ++staffSeq : ++drawerSeq;
+      if (role === "staff") {
+        staffVerified = false;
+        staffName = "";
+        staffEmployeeId = "";
+      } else {
+        drawerVerified = false;
+        drawerName = "";
+        drawerEmployeeId = "";
+      }
+
+      if (code.length < 6) {
+        refreshDrawingStatus();
+        if (code.length) {
+          setDrawingStatus(
+            `Enter ${6 - code.length} more digit${
+              6 - code.length === 1 ? "" : "s"
+            } for ${
+              role === "staff" ? "employee code" : "person drawing code"
+            }.`
+          );
+        }
+        return false;
+      }
+      if (!/^\d{6}$/.test(code)) {
+        setDrawingStatus(
+          `${
+            role === "staff" ? "Employee code" : "Person drawing code"
+          } must be exactly 6 digits.`,
+          { error: true }
         );
         syncDrawingSubmit();
         return false;
       }
-      if (!/^\d{6}$/.test(code)) {
-        drawingVerified = false;
-        setDrawingStatus("Staff ID must be exactly 6 digits.", { error: true });
-        syncDrawingSubmit();
-        return false;
-      }
       if (!verifyUrl) {
-        drawingVerified = false;
         setDrawingStatus("Verification is unavailable. Refresh and try again.", {
           error: true,
         });
@@ -216,64 +325,136 @@
           body,
         });
         const data = await response.json().catch(() => ({}));
-        if (current !== drawingSeq) return false;
+        if (current !== (role === "staff" ? staffSeq : drawerSeq)) {
+          return false;
+        }
         if (!response.ok || !data.ok) {
-          drawingVerified = false;
-          setDrawingStatus(data.error || "Not a valid active staff ID.", {
-            error: true,
-          });
+          setDrawingStatus(
+            data.error ||
+              `Not a valid active ${
+                role === "staff" ? "employee" : "person drawing"
+              } code.`,
+            { error: true }
+          );
           syncDrawingSubmit();
           return false;
         }
-        drawingVerified = true;
-        setDrawingStatus(
-          `Verified: ${data.name || "staff"} (${data.employee_id || code}).`,
-          { ok: true }
-        );
-        syncDrawingSubmit();
+        if (role === "staff") {
+          staffVerified = true;
+          staffName = data.name || "staff";
+          staffEmployeeId = data.employee_id || code;
+        } else {
+          drawerVerified = true;
+          drawerName = data.name || "drawer";
+          drawerEmployeeId = data.employee_id || code;
+        }
+        refreshDrawingStatus();
         return true;
       } catch (_) {
-        if (current !== drawingSeq) return false;
-        drawingVerified = false;
-        setDrawingStatus("Could not verify staff ID. Try again.", {
-          error: true,
-        });
+        if (current !== (role === "staff" ? staffSeq : drawerSeq)) {
+          return false;
+        }
+        setDrawingStatus(
+          `Could not verify ${
+            role === "staff" ? "staff" : "drawer"
+          } ID. Try again.`,
+          { error: true }
+        );
         syncDrawingSubmit();
         return false;
       }
     };
 
-    drawingCode?.addEventListener("input", () => {
-      drawingVerified = false;
+    const scheduleVerify = (input, role) => {
+      if (role === "staff") {
+        staffVerified = false;
+        staffName = "";
+        staffEmployeeId = "";
+      } else {
+        drawerVerified = false;
+        drawerName = "";
+        drawerEmployeeId = "";
+      }
       syncDrawingSubmit();
-      window.clearTimeout(drawingTimer);
-      drawingTimer = window.setTimeout(() => {
-        verifyDrawingCode();
-      }, 220);
+      if (role === "staff") {
+        window.clearTimeout(staffTimer);
+        staffTimer = window.setTimeout(() => {
+          verifyOneCode(input, role);
+        }, 220);
+      } else {
+        window.clearTimeout(drawerTimer);
+        drawerTimer = window.setTimeout(() => {
+          verifyOneCode(input, role);
+        }, 220);
+      }
+    };
+
+    drawingCode?.addEventListener("input", () => {
+      scheduleVerify(drawingCode, "staff");
     });
     drawingCode?.addEventListener("blur", () => {
-      verifyDrawingCode();
+      verifyOneCode(drawingCode, "staff");
+    });
+    drawerCode?.addEventListener("input", () => {
+      scheduleVerify(drawerCode, "drawer");
+    });
+    drawerCode?.addEventListener("blur", () => {
+      verifyOneCode(drawerCode, "drawer");
+    });
+    drawingCashAmount?.addEventListener("input", () => {
+      syncDrawingSubmit();
+      if (staffVerified && drawerVerified) refreshDrawingStatus();
+    });
+    drawingMpesaAmount?.addEventListener("input", () => {
+      syncDrawingSubmit();
+      if (staffVerified && drawerVerified) refreshDrawingStatus();
     });
     drawingAmount?.addEventListener("input", syncDrawingSubmit);
 
     drawingForm.addEventListener("submit", async (event) => {
-      if (!(drawingAmount?.value || "").trim()) {
+      if (!amountOk()) {
         event.preventDefault();
-        setDrawingStatus("Enter the drawing amount.", { error: true });
-        drawingAmount?.focus();
+        const message =
+          drawingCashAmount && drawingMpesaAmount
+            ? "Enter a cash and/or M-Pesa amount to draw."
+            : drawingMpesaAmount
+              ? "Enter the M-Pesa amount drawn from the counter."
+              : "Enter the cash amount drawn from the counter.";
+        setDrawingStatus(message, { error: true });
+        (drawingCashAmount || drawingMpesaAmount || drawingAmount)?.focus();
         return;
       }
-      if (!drawingVerified) {
+      if (!staffVerified) {
         event.preventDefault();
-        const ok = await verifyDrawingCode();
+        const ok = await verifyOneCode(drawingCode, "staff");
         if (!ok) return;
+      }
+      if (!drawerVerified) {
+        event.preventDefault();
+        const ok = await verifyOneCode(drawerCode, "drawer");
+        if (!ok) return;
+      }
+      if (
+        staffEmployeeId &&
+        drawerEmployeeId &&
+        staffEmployeeId === drawerEmployeeId
+      ) {
+        event.preventDefault();
+        setDrawingStatus(
+          "Employee code and person drawing code must be different.",
+          { error: true }
+        );
+        return;
       }
       if (drawingSubmit) drawingSubmit.disabled = true;
     });
 
     syncDrawingSubmit();
     if ((drawingCode?.value || "").trim().length === 6) {
-      verifyDrawingCode();
+      verifyOneCode(drawingCode, "staff");
+    }
+    if ((drawerCode?.value || "").trim().length === 6) {
+      verifyOneCode(drawerCode, "drawer");
     }
   }
 

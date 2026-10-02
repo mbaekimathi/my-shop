@@ -4,66 +4,94 @@
 {% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
-<section class="ax ax--list-table" data-supply-analytics>
+<section
+  class="ax ax--list-table"
+  data-animate="rise"
+  data-analytics
+  data-ax-section="supply"
+  data-supply-analytics
+>
   <header class="ax-top">
     <div class="ax-top-main">
       <div class="ax-title">
         <h2>{{ page.headline }}</h2>
         <span class="ax-period">{{ report_period_label }}</span>
       </div>
-      <form class="ax-filters" method="get">
+      {% if page.back_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ page.back_href }}">{{ page.back_label|default:"Back" }}</a>
+      </div>
+      {% endif %}
+      <form class="ax-filters" method="get" data-analytics-filters>
         <select name="shop_id" aria-label="Shop">
-          <option value="">All shops</option>
+          <option value=""{% if not selected_shop_ids %} selected{% endif %}>All shops</option>
           {% for shop in filter_shops %}
           <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
           {% endfor %}
         </select>
+        {% if page.item_choices %}
+        <select name="item_id" aria-label="Item">
+          {% for item in page.item_choices %}
+          <option value="{{ item.id }}"{% if page.selected_item and item.id == page.selected_item.pk %} selected{% endif %}>{{ item.label }}</option>
+          {% endfor %}
+        </select>
+        {% endif %}
         {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
-        {% if selected_item %}<input type="hidden" name="item_id" value="{{ selected_item.pk }}">{% endif %}
         <button type="submit" class="ax-apply">Apply</button>
       </form>
     </div>
     <p class="ax-lead">{{ page.lead }}</p>
   </header>
 
-  {% if page.selected_item %}
-  <section class="ax-summary-board" aria-label="Selected item">
+  {% if page.summary_board %}
+  <section
+    class="ax-summary-board ax-summary-board--one ax-summary-board--supply"
+    aria-label="Selected item summary"
+  >
     <article class="ax-summary-hero">
-      <span class="ax-summary-hero-label">Most frequently bought item</span>
-      <strong class="ax-summary-hero-value">{{ page.selected_item.name }}</strong>
-      {% if page.top_item %}
-      <em class="ax-summary-hero-hint">{{ page.top_item.transaction_count }} Buy items transactions · {{ page.top_item.quantity }} units</em>
-      {% endif %}
+      <span class="ax-summary-hero-label">{{ page.summary_board.hero.label }}</span>
+      <strong class="ax-summary-hero-value">{{ page.summary_board.hero.value }}</strong>
+      {% if page.summary_board.hero.hint %}<em class="ax-summary-hero-hint">{{ page.summary_board.hero.hint }}</em>{% endif %}
     </article>
     <div class="ax-summary-tiles">
-      <article class="ax-summary-tile is-neutral">
-        <i data-lucide="truck" aria-hidden="true"></i>
+      {% for tile in page.summary_board.tiles %}
+      <article class="ax-summary-tile is-{{ tile.tone|default:'neutral' }}">
+        {% if tile.icon %}<i data-lucide="{{ tile.icon }}" aria-hidden="true"></i>{% endif %}
         <div class="ax-summary-tile-body">
-          <span class="ax-summary-tile-label">Suppliers</span>
-          <strong class="ax-summary-tile-value">{{ page.supplier_rows|length }}</strong>
-          <em class="ax-summary-tile-hint">Select the eye to view each delivery.</em>
+          <span class="ax-summary-tile-label">{{ tile.label }}</span>
+          <strong class="ax-summary-tile-value">{{ tile.value }}</strong>
+          {% if tile.hint %}<em class="ax-summary-tile-hint">{{ tile.hint }}</em>{% endif %}
         </div>
       </article>
+      {% endfor %}
     </div>
   </section>
 
   <section class="ax-card ax-card--wide">
     <header class="ax-card-head">
       <div class="ax-card-head-main">
-        <h3>Suppliers for {{ page.selected_item.name }}</h3>
+        <h3>Suppliers</h3>
+        <p class="ax-card-sub">Ranked by number of deliveries for this item.</p>
       </div>
-      <span class="ax-card-hint">Supplies · units · average unit price</span>
+      <span class="ax-card-hint">Deliveries · units · spend · avg price</span>
     </header>
+    <div class="ax-band-legend ax-band-legend--supply" aria-label="Column groups">
+      <span class="is-flow">Supplier</span>
+      <span class="is-total">Volume</span>
+      <span class="is-result">Pricing</span>
+      <span class="is-action">History</span>
+    </div>
     <div class="ax-table-wrap ax-table-wrap--scroll ax-table-wrap--list">
       {% if page.supplier_rows %}
-      <table class="ax-table">
+      <table class="ax-table ax-table--supply">
         <thead>
           <tr>
             <th class="ax-th--item">Supplier</th>
-            <th>Supplies</th>
-            <th>Units</th>
-            <th>Average unit price</th>
-            <th>Details</th>
+            <th class="ax-th--num">Deliveries</th>
+            <th class="ax-th--num">Units</th>
+            <th class="ax-th--money">Total spend</th>
+            <th class="ax-th--money">Avg unit price</th>
+            <th class="ax-th--action">Details</th>
           </tr>
         </thead>
         <tbody>
@@ -73,21 +101,34 @@
               <span class="ax-entity-name">{{ supplier.name }}</span>
               {% if supplier.phone %}<span class="ax-entity-meta">{{ supplier.phone }}</span>{% endif %}
             </td>
-            <td data-label="Supplies">{{ supplier.supply_count }}</td>
-            <td data-label="Units">{{ supplier.quantity }}</td>
-            <td class="ax-cell--money" data-label="Average unit price"><span class="ax-money">{{ supplier.average_price }}</span></td>
-            <td data-label="Details">
+            <td class="ax-cell--num" data-label="Deliveries">{{ supplier.supply_count }}</td>
+            <td class="ax-cell--num" data-label="Units">{{ supplier.quantity }}</td>
+            <td class="ax-cell--money" data-label="Total spend"><span class="ax-money">{{ supplier.total_value }}</span></td>
+            <td class="ax-cell--money" data-label="Avg unit price"><span class="ax-money">{{ supplier.average_price }}</span></td>
+            <td class="ax-cell--action" data-label="Details">
               <button
-                class="workspace-icon-btn"
+                class="ax-supply-detail-btn"
                 type="button"
                 data-supply-history-open="{{ supplier.history_key }}"
                 data-supply-name="{{ supplier.name }}"
-                aria-label="View {{ supplier.name }} supply details"
-                title="View supply details"
-              ><i data-lucide="eye" aria-hidden="true"></i></button>
+                aria-label="View {{ supplier.name }} supply history"
+              >
+                <i data-lucide="eye" aria-hidden="true"></i>
+                <span>History</span>
+              </button>
             </td>
           </tr>
           {% endfor %}
+          {% if page.totals %}
+          <tr class="ax-row--total">
+            <td class="ax-cell--primary">Total</td>
+            <td class="ax-cell--num">{{ page.totals.supply_count }}</td>
+            <td class="ax-cell--num">{{ page.totals.quantity }}</td>
+            <td class="ax-cell--money"><span class="ax-money">{{ page.totals.total_value }}</span></td>
+            <td class="ax-cell--money"><span class="ax-money">{{ page.totals.average_price }}</span></td>
+            <td class="ax-cell--action" aria-hidden="true">—</td>
+          </tr>
+          {% endif %}
         </tbody>
       </table>
       {% else %}
@@ -97,16 +138,37 @@
   </section>
   {{ page.supply_history|json_script:"supply-history-data" }}
   {% else %}
-  <section class="ax-card ax-card--wide">
-    <p class="ax-empty">No Buy items stock-ins match these filters yet. Stock-ins made before entry-source tracking cannot be classified as Buy items.</p>
+  <section class="ax-card ax-card--wide ax-card--empty">
+    <div class="ax-empty-state">
+      <i data-lucide="package-search" aria-hidden="true"></i>
+      <h3>No Buy items supply data</h3>
+      <p>
+        Nothing matches these filters yet, or stock-ins predate Buy items tracking.
+        Try <strong>All time</strong>, another shop, or record stock through
+        <strong>My Shop → Buy items</strong>.
+      </p>
+      {% if page.back_href %}
+      <p class="ax-empty-state-action">
+        <a class="ax-apply ax-apply--ghost" href="{{ page.back_href }}">Open stock on hand</a>
+      </p>
+      {% endif %}
+    </div>
   </section>
   {% endif %}
 </section>
+{% endblock %}
 
-<div class="workspace-modal" data-supply-history-modal hidden aria-hidden="true">
+{% block workspace_overlays %}
+{{ block.super }}
+<div class="workspace-modal shop-receipt-modal" data-supply-history-modal hidden aria-hidden="true">
   <div class="workspace-modal-backdrop" data-supply-history-close></div>
-  <div class="workspace-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="supply-history-title">
-    <div class="workspace-modal-head">
+  <div
+    class="workspace-modal-dialog shop-receipt-modal-dialog ax-supply-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="supply-history-title"
+  >
+    <div class="workspace-modal-head shop-receipt-modal-head">
       <div>
         <p class="shop-receipt-modal-kicker">Supply history</p>
         <h2 id="supply-history-title" data-supply-history-title>Supplier details</h2>
@@ -116,9 +178,17 @@
       </button>
     </div>
     <div class="shop-receipt-modal-body">
-      <div class="ax-table-wrap ax-table-wrap--scroll">
-        <table class="ax-table">
-          <thead><tr><th>Date</th><th>Shop</th><th>Units</th><th>Unit price</th><th>Total</th></tr></thead>
+      <div class="ax-table-wrap ax-table-wrap--scroll ax-table-wrap--list">
+        <table class="ax-table ax-table--supply-history">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Shop</th>
+              <th class="ax-th--num">Units</th>
+              <th class="ax-th--money">Unit price</th>
+              <th class="ax-th--money">Total</th>
+            </tr>
+          </thead>
           <tbody data-supply-history-body></tbody>
         </table>
       </div>
@@ -131,6 +201,25 @@
 {{ block.super }}
 <script>
   (() => {
+    const root = document.querySelector("[data-analytics]");
+    if (root) {
+      root.querySelectorAll("[data-analytics-filters]").forEach((form) => {
+        const rangeSelect = form.querySelector("[data-analytics-range]");
+        const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+        const syncRange = () => {
+          const range = rangeSelect?.value || "day";
+          rangeFields.forEach((field) => {
+            const match = field.getAttribute("data-range-field") === range;
+            field.hidden = !match;
+            field.disabled = !match;
+            field.required = match;
+          });
+        };
+        rangeSelect?.addEventListener("change", syncRange);
+        syncRange();
+      });
+    }
+
     const modal = document.querySelector("[data-supply-history-modal]");
     const payload = document.getElementById("supply-history-data");
     if (!modal || !payload) return;
@@ -145,12 +234,26 @@
     document.querySelectorAll("[data-supply-history-open]").forEach((button) => {
       button.addEventListener("click", () => {
         const rows = history[button.dataset.supplyHistoryOpen] || [];
-        title.textContent = `${button.dataset.supplyName} · supply details`;
+        title.textContent = `${button.dataset.supplyName} · supply history`;
         body.replaceChildren(...rows.map((row) => {
           const tr = document.createElement("tr");
-          [row.date, row.shop, row.quantity, row.unit_price, row.amount].forEach((value) => {
+          [
+            { value: row.date, className: "" },
+            { value: row.shop, className: "ax-cell--primary" },
+            { value: row.quantity, className: "ax-cell--num" },
+            { value: row.unit_price, className: "ax-cell--money ax-money" },
+            { value: row.amount, className: "ax-cell--money ax-money" },
+          ].forEach(({ value, className }) => {
             const cell = document.createElement("td");
-            cell.textContent = value;
+            if (className) cell.className = className;
+            if (className.includes("ax-money")) {
+              const span = document.createElement("span");
+              span.className = "ax-money";
+              span.textContent = value;
+              cell.appendChild(span);
+            } else {
+              cell.textContent = value;
+            }
             tr.appendChild(cell);
           });
           return tr;
@@ -158,6 +261,7 @@
         modal.hidden = false;
         modal.setAttribute("aria-hidden", "false");
         document.body.classList.add("workspace-modal-open");
+        if (window.lucide?.createIcons) window.lucide.createIcons();
       });
     });
     modal.querySelectorAll("[data-supply-history-close]").forEach((button) => {

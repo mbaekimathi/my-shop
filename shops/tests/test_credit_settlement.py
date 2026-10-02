@@ -336,9 +336,12 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         board = {tile["label"]: tile["value"] for tile in page["summary_board"]["tiles"]}
         self.assertEqual(board["Cash"], "KSh 100.00")
         self.assertEqual(board["M-Pesa"], "KSh 50.00")
-        self.assertEqual(board["Paid"], "KSh 80.00")
+        self.assertEqual(board["Paid total"], "KSh 80.00")
         self.assertEqual(board["Unpaid"], "KSh 100.00")
-        self.assertEqual(page["summary_board"]["hero"]["value"], "KSh 230.00")
+        self.assertEqual(page["summary_board"]["hero"]["label"], "General total")
+        self.assertEqual(page["summary_board"]["hero"]["value"], "KSh 330.00")
+        self.assertIn("Expected profit", board)
+        self.assertIn("Actual profit", board)
 
         columns = [
             col["label"] if isinstance(col, dict) else col
@@ -346,8 +349,10 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         ]
         self.assertEqual(
             columns[:6],
-            ["Shop", "Cash", "M-Pesa", "Paid", "Unpaid", "Total"],
+            ["Shop", "Cash", "M-Pesa", "Paid total", "Unpaid", "General total"],
         )
+        self.assertIn("Expected profit", columns)
+        self.assertIn("Actual profit", columns)
         shop_row = page["tables"][0]["rows"][0]
         self.assertEqual(shop_row[1]["kind"], "money")
         self.assertEqual(shop_row[1]["label"], "100")
@@ -357,4 +362,4 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         self.assertEqual(shop_row[3]["qty"], "1")
         self.assertEqual(shop_row[4]["amount"], "100")
         self.assertEqual(shop_row[4]["qty"], "1")
-        self.assertEqual(shop_row[5]["amount"], "230")
+        self.assertEqual(shop_row[5]["amount"], "330")

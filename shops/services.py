@@ -4797,9 +4797,10 @@ def _session_activity_totals(
     """Cash/M-Pesa sales and paid outflows inside a day session window.
 
     Cashbox expected cash = opening cash + cash sales − return refunds
-    − expenses paid − owner drawings paid − suppliers paid.
-    M-Pesa expected = opening M-Pesa + M-Pesa sales − M-Pesa return refunds.
-    Owner drawings reduce cash but are equity, not operating expense.
+    − expenses paid − owner drawings (cash) − suppliers paid.
+    M-Pesa expected = opening M-Pesa + M-Pesa sales − M-Pesa return refunds
+    − owner drawings (M-Pesa).
+    Owner drawings are equity, not operating expense.
 
     Sales use original tender (including later-returned receipts). Refunds are
     subtracted on the day the return happened.
@@ -4814,6 +4815,8 @@ def _session_activity_totals(
     mpesa_refunds = Decimal("0.00")
     expenses_paid = Decimal("0.00")
     drawings_paid = Decimal("0.00")
+    drawings_cash = Decimal("0.00")
+    drawings_mpesa = Decimal("0.00")
     suppliers_paid = Decimal("0.00")
 
     for sale in sales or []:
@@ -4848,7 +4851,13 @@ def _session_activity_totals(
                 str(expense.get("category") or "").strip().lower()
                 == ExpenseCategory.OWNER_DRAWINGS
             ):
-                drawings_paid += paid
+                cash_part = Decimal(expense.get("cash_amount") or 0)
+                mpesa_part = Decimal(expense.get("mpesa_amount") or 0)
+                if cash_part == 0 and mpesa_part == 0:
+                    cash_part = paid
+                drawings_cash += cash_part
+                drawings_mpesa += mpesa_part
+                drawings_paid += cash_part + mpesa_part
             else:
                 expenses_paid += paid
 
@@ -4865,10 +4874,12 @@ def _session_activity_totals(
         + cash_sales
         - cash_refunds
         - expenses_paid
-        - drawings_paid
+        - drawings_cash
         - suppliers_paid
     )
-    expected_mpesa = opening_mpesa + mpesa_sales - mpesa_refunds
+    expected_mpesa = (
+        opening_mpesa + mpesa_sales - mpesa_refunds - drawings_mpesa
+    )
 
     closing_cash = (
         Decimal(session.closing_cash)
@@ -4907,6 +4918,8 @@ def _session_activity_totals(
         "expenses": expenses_paid,
         "expenses_paid": expenses_paid,
         "drawings_paid": drawings_paid,
+        "drawings_cash": drawings_cash,
+        "drawings_mpesa": drawings_mpesa,
         "suppliers_paid": suppliers_paid,
         "expected_cash": expected_cash,
         "expected_mpesa": expected_mpesa,
@@ -4974,7 +4987,7 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
             shop=shop,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
-        ).values("created_at", "amount_paid", "category")
+        ).values("created_at", "amount_paid", "cash_amount", "mpesa_amount", "category")
     )
     supplier_payments = list(
         StockMovement.objects.filter(
@@ -5040,7 +5053,13 @@ def day_session_balance_summary(session) -> dict:
             shop_id=session.shop_id,
             created_at__gte=session.opened_at,
             created_at__lt=closed,
-        ).values("created_at", "amount_paid", "category")
+        ).values(
+            "created_at",
+            "amount_paid",
+            "cash_amount",
+            "mpesa_amount",
+            "category",
+        )
     )
     supplier_payments = list(
         StockMovement.objects.filter(
@@ -5515,6 +5534,12 @@ def register_shop_expense(*, shop: Shop, profile, payload: dict) -> dict:
                     if payment_status == ExpensePaymentStatus.PAID
                     else _money(0)
                 ),
+                cash_amount=(
+                    line["amount"]
+                    if payment_status == ExpensePaymentStatus.PAID
+                    else _money(0)
+                ),
+                mpesa_amount=_money(0),
                 payment_status=payment_status,
                 supplier=supplier,
                 supplier_name=supplier_name,
@@ -5551,7 +5576,13 @@ def register_shop_expense(*, shop: Shop, profile, payload: dict) -> dict:
 
 @transaction.atomic
 def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
-    """Record an owner cash drawing against the open shop day (equity, not opex)."""
+    """Record an owner drawing against the open shop day (equity, not opex).
+
+    Cash and/or M-Pesa amounts can be drawn from the counter. Requires two
+    distinct active employee 6-digit codes:
+    - login_code: employee releasing funds from the counter
+    - drawer_login_code: person taking the drawing
+    """
     from employees.services import verify_active_employee_code
 
     from .models import Expense, ShopDaySession
@@ -5568,9 +5599,21 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
         raise ValidationError("Open the shop day before recording a drawing.")
 
     login_code = (payload.get("login_code") or "").strip()
+    drawer_login_code = (payload.get("drawer_login_code") or "").strip()
     authorising = verify_active_employee_code(login_code)
     if authorising is None:
-        raise ValidationError("Enter a valid active staff 6-digit ID.")
+        raise ValidationError("Enter a valid active employee code.")
+
+    drawer = verify_active_employee_code(drawer_login_code)
+    if drawer is None:
+        raise ValidationError(
+            "Enter a valid active person drawing code."
+        )
+
+    if authorising.pk == drawer.pk:
+        raise ValidationError(
+            "Employee code and person drawing code must be different."
+        )
 
     from employees.module_permissions import ensure_employee_may
 
@@ -5581,18 +5624,73 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
         message="You do not have permission to record owner drawings.",
     )
 
+    staff_name = (
+        authorising.user.get_full_name() or authorising.user.username
+    ).strip()
+    drawer_name = (drawer.user.get_full_name() or drawer.user.username).strip()
+
+    channels = shop_day_balance_channels(shop=shop)
+    zero = Decimal("0.00")
+
+    def _optional_amount(raw, *, label: str) -> Decimal:
+        text = "" if raw is None else str(raw).strip()
+        if text == "":
+            return zero
+        try:
+            return _money(text)
+        except ValidationError as exc:
+            raise ValidationError(f"Enter a valid {label} amount.") from exc
+
+    cash_amount = (
+        _optional_amount(payload.get("cash_amount"), label="cash")
+        if channels["cash"]
+        else zero
+    )
+    mpesa_amount = (
+        _optional_amount(payload.get("mpesa_amount"), label="M-Pesa")
+        if channels["mpesa"]
+        else zero
+    )
+
+    # Backward-compatible single "amount" field → cash when cash is enabled.
+    legacy_raw = payload.get("amount")
+    if (
+        cash_amount == zero
+        and mpesa_amount == zero
+        and legacy_raw is not None
+        and str(legacy_raw).strip() != ""
+    ):
+        try:
+            legacy_amount = _money(legacy_raw)
+        except ValidationError as exc:
+            raise ValidationError("Enter a valid drawing amount.") from exc
+        if channels["cash"]:
+            cash_amount = legacy_amount
+        elif channels["mpesa"]:
+            mpesa_amount = legacy_amount
+        else:
+            cash_amount = legacy_amount
+
+    if cash_amount < 0 or mpesa_amount < 0:
+        raise ValidationError("Drawing amounts cannot be negative.")
+    amount = cash_amount + mpesa_amount
+    if amount <= 0:
+        if channels["cash"] and channels["mpesa"]:
+            raise ValidationError("Enter a cash and/or M-Pesa amount to draw.")
+        if channels["mpesa"]:
+            raise ValidationError("Enter an M-Pesa amount to draw.")
+        raise ValidationError("Enter a cash amount to draw.")
+
     name = (payload.get("name") or payload.get("note") or "").strip().upper()
-    if not name:
-        name = "OWNER DRAWING"
+    parts = [f"OWNER DRAWING · {drawer_name}"]
+    if cash_amount > 0:
+        parts.append(f"CASH {cash_amount.quantize(Decimal('1'))}")
+    if mpesa_amount > 0:
+        parts.append(f"MPESA {mpesa_amount.quantize(Decimal('1'))}")
+    if not name or name == "OWNER DRAWING":
+        name = " · ".join(parts).upper()
     if len(name) > 200:
         raise ValidationError("Drawing note is too long.")
-
-    try:
-        amount = _money(payload.get("amount"))
-    except ValidationError as exc:
-        raise ValidationError("Enter a valid drawing amount.") from exc
-    if amount <= 0:
-        raise ValidationError("Drawing amount must be greater than zero.")
 
     expense = Expense.objects.create(
         shop=shop,
@@ -5600,6 +5698,8 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
         name=name,
         amount=amount,
         amount_paid=amount,
+        cash_amount=cash_amount,
+        mpesa_amount=mpesa_amount,
         payment_status=ExpensePaymentStatus.PAID,
         supplier=None,
         supplier_name="",
@@ -5607,14 +5707,23 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
         supplier_phone_number="",
         created_by=authorising,
     )
+    amount_label = amount.quantize(Decimal("1"))
+    breakdown = []
+    if cash_amount > 0:
+        breakdown.append(f"cash KSh {cash_amount.quantize(Decimal('1'))}")
+    if mpesa_amount > 0:
+        breakdown.append(f"M-Pesa KSh {mpesa_amount.quantize(Decimal('1'))}")
+    breakdown_label = " + ".join(breakdown) if breakdown else f"KSh {amount_label}"
     return {
         "expense": expense,
         "session": open_session,
-        "authorised_by": authorising.user.get_full_name()
-        or authorising.user.username,
+        "authorised_by": staff_name,
+        "drawn_by": drawer_name,
+        "cash_amount": cash_amount,
+        "mpesa_amount": mpesa_amount,
         "message": (
-            f"Owner drawing of KSh {amount.quantize(Decimal('1'))} "
-            f"recorded for {shop.name}."
+            f"Owner drawing of {breakdown_label} recorded for {shop.name} "
+            f"(released by {staff_name}, taken by {drawer_name})."
         ),
     }
 

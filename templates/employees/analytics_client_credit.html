@@ -37,24 +37,24 @@
         {% endif %}
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back" }}</a>
       </div>
-    </div>
-    <form class="ax-filters" method="get" data-analytics-filters>
-      {% for key, values in request.GET.lists %}
-        {% if key != "shop_id" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" %}
-          {% for value in values %}
-          <input type="hidden" name="{{ key }}" value="{{ value }}">
-          {% endfor %}
-        {% endif %}
-      {% endfor %}
-      <select name="shop_id" aria-label="Shop">
-        <option value="">All shops</option>
-        {% for shop in filter_shops %}
-        <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+      <form class="ax-filters" method="get" data-analytics-filters>
+        {% for key, values in request.GET.lists %}
+          {% if key != "shop_id" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" %}
+            {% for value in values %}
+            <input type="hidden" name="{{ key }}" value="{{ value }}">
+            {% endfor %}
+          {% endif %}
         {% endfor %}
-      </select>
-      {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
-      <button type="submit" class="ax-apply">Apply</button>
-    </form>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+        {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
+        <button type="submit" class="ax-apply">Apply</button>
+      </form>
+    </div>
     <p class="ax-lead">
       Select one or more credit receipts to pay, or use Pay amount to clear the oldest credits first
       · {{ scope_hint|default:"All shops" }}
@@ -121,7 +121,8 @@
       {% endif %}
     </header>
     {% if transaction_rows %}
-    <div class="ax-table-wrap">
+    <p class="ax-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
+    <div class="ax-table-wrap ax-table-wrap--scroll ax-table-wrap--list">
       <table class="ax-table ax-table--account ax-table--audit">
         <thead>
           <tr>

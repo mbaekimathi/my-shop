@@ -1302,6 +1302,18 @@ class Expense(models.Model):
     name = models.CharField(max_length=200)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    cash_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Cash portion paid from the till (used for owner drawings).",
+    )
+    mpesa_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="M-Pesa portion paid from the till (used for owner drawings).",
+    )
     payment_status = models.CharField(
         max_length=16,
         choices=ExpensePaymentStatus.choices,
