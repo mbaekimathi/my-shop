@@ -33,7 +33,7 @@ class Item(models.Model):
         default=0,
         help_text="KSh off the list price per unit when the volume quantity is met.",
     )
-    stock = models.PositiveIntegerField(default=0)
+    stock = models.DecimalField(max_digits=12, decimal_places=3, default=0)
     low_stock_notify = models.BooleanField(default=False, db_index=True)
     low_stock_threshold = models.PositiveIntegerField(
         default=0,
@@ -167,7 +167,7 @@ class ShopStock(models.Model):
         on_delete=models.CASCADE,
         related_name="shop_stocks",
     )
-    quantity = models.PositiveIntegerField(default=0)
+    quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
     low_stock_threshold = models.PositiveIntegerField(
         default=0,
         help_text="Alert when this shop's on-hand quantity is at or below this value.",
@@ -383,7 +383,7 @@ class StockMovementLine(models.Model):
         on_delete=models.PROTECT,
         related_name="stock_movement_lines",
     )
-    quantity = models.PositiveIntegerField()
+    quantity = models.DecimalField(max_digits=12, decimal_places=3)
     buying_price = models.DecimalField(
         max_digits=12,
         decimal_places=2,

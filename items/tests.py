@@ -1430,3 +1430,158 @@ class StockSerialDetailShopFilterTests(TestCase):
         self.assertEqual(filtered.context["in_stock_count"], 1)
         serials = [row["serial_number"] for row in filtered.context["rows"]]
         self.assertEqual(serials, ["SDA-OUT-1"])
+
+
+class DecimalStockQuantityTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="840099",
+            password="decimal-pass",
+            email="decimal-stock@test.local",
+            first_name="DECIMAL",
+            last_name="STOCK",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840099",
+            phone_country_code="+254",
+            phone_number="700000999",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="DECIMAL SHOP",
+            location="NAIROBI",
+            email="decimal-shop@test.local",
+            phone_number="0700000999",
+            login_code="840999",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        from items.models import Item
+        from shops.models import CompanyStockSettings
+
+        settings_row, _ = CompanyStockSettings.objects.get_or_create(pk=1)
+        settings_row.require_buying_price_on_in = True
+        settings_row.require_supplier_on_in = False
+        settings_row.require_payment_status_on_in = False
+        settings_row.require_reason_on_out = False
+        settings_row.require_refund_on_out = False
+        settings_row.save()
+
+        self.item = Item.objects.create(
+            category="BULK",
+            name="DECIMAL RICE",
+            minimum_selling_price=Decimal("20.00"),
+            shop_price=Decimal("30.00"),
+            created_by=self.profile,
+        )
+        self.serial_item = Item.objects.create(
+            category="PHONES",
+            name="SERIAL PHONE",
+            minimum_selling_price=Decimal("1000.00"),
+            shop_price=Decimal("1200.00"),
+            track_serial_number=True,
+            created_by=self.profile,
+        )
+
+    def test_decimal_stock_in_updates_qty_and_average_cost(self):
+        from django.http import QueryDict
+
+        from items.models import ShopStock, StockMovementType
+        from items.services import apply_stock_movement
+
+        data = QueryDict(mutable=True)
+        data.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.item.pk),
+                "quantity": "1.5",
+                "buying_price": "12.50",
+            }
+        )
+        apply_stock_movement(self.profile, StockMovementType.IN, data)
+
+        stock = ShopStock.objects.get(shop=self.shop, item=self.item)
+        self.item.refresh_from_db()
+        self.assertEqual(stock.quantity, Decimal("1.500"))
+        self.assertEqual(self.item.stock, Decimal("1.500"))
+        self.assertEqual(stock.average_cost, Decimal("12.50"))
+
+    def test_decimal_stock_out_after_decimal_in(self):
+        from django.http import QueryDict
+
+        from items.models import ShopStock, StockMovementType
+        from items.services import apply_stock_movement
+
+        inbound = QueryDict(mutable=True)
+        inbound.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.item.pk),
+                "quantity": "1.5",
+                "buying_price": "12.50",
+            }
+        )
+        apply_stock_movement(self.profile, StockMovementType.IN, inbound)
+
+        outbound = QueryDict(mutable=True)
+        outbound.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.item.pk),
+                "quantity": "0.5",
+            }
+        )
+        apply_stock_movement(self.profile, StockMovementType.OUT, outbound)
+
+        stock = ShopStock.objects.get(shop=self.shop, item=self.item)
+        self.item.refresh_from_db()
+        self.assertEqual(stock.quantity, Decimal("1.000"))
+        self.assertEqual(self.item.stock, Decimal("1.000"))
+
+    def test_serial_stock_in_stays_whole_units_from_serial_count(self):
+        from django.core.exceptions import ValidationError
+        from django.http import QueryDict
+
+        from items.models import ShopStock, StockMovementType
+        from items.services import apply_stock_movement
+
+        missing_serials = QueryDict(mutable=True)
+        missing_serials.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.serial_item.pk),
+                "quantity": "1.5",
+                "buying_price": "900.00",
+            }
+        )
+        with self.assertRaises(ValidationError):
+            apply_stock_movement(self.profile, StockMovementType.IN, missing_serials)
+
+        too_precise = QueryDict(mutable=True)
+        too_precise.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.item.pk),
+                "quantity": "1.2345",
+                "buying_price": "12.50",
+            }
+        )
+        with self.assertRaises(ValidationError):
+            apply_stock_movement(self.profile, StockMovementType.IN, too_precise)
+
+        good = QueryDict(mutable=True)
+        good.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.serial_item.pk),
+                "quantity": "1",
+                "serial_numbers": "SN-A1",
+                "buying_price": "900.00",
+            }
+        )
+        apply_stock_movement(self.profile, StockMovementType.IN, good)
+        stock = ShopStock.objects.get(shop=self.shop, item=self.serial_item)
+        self.assertEqual(stock.quantity, Decimal("1.000"))

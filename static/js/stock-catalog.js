@@ -100,7 +100,14 @@
   const money = (value) => {
     if (value == null || value === "") return null;
     const n = Number(value);
-    return Number.isFinite(n) ? String(Math.round(n)) : null;
+    if (!Number.isFinite(n)) return null;
+    return (Math.round(n * 100) / 100).toFixed(2);
+  };
+
+  const normalizeStockQty = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return Math.round(n * 1000) / 1000;
   };
 
   const simpleMode = panel.hasAttribute("data-stock-catalog-simple");
@@ -959,7 +966,7 @@
         </div>`
       : `<label class="stock-inline-field">
           <span>${qtyLabel}</span>
-          <input type="number" name="quantity" min="1" step="1" placeholder="0" inputmode="numeric" data-stock-qty data-stock-field disabled>
+          <input type="number" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
         </label>`;
     const priceBlock = `<label class="stock-inline-field">
           <span class="stock-inline-label-row">
@@ -974,9 +981,9 @@
             type="number"
             name="buying_price"
             min="0"
-            step="1"
+            step="0.01"
             placeholder="${prev || "0"}"
-            inputmode="numeric"
+            inputmode="decimal"
             data-stock-buying-price
             data-stock-field
             ${prev ? `data-stock-prev-buying="${prev}"` : ""}
@@ -1002,7 +1009,7 @@
         </div>`
         : `<label class="stock-inline-field">
           <span>Qty</span>
-          <input type="number" name="quantity" min="1" step="1" placeholder="0" inputmode="numeric" data-stock-qty data-stock-field disabled>
+          <input type="number" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
         </label>`;
       const priceBlockSimple = `<label class="stock-inline-field stock-inline-field--buy">
           <span>Unit buy</span>
@@ -1011,9 +1018,9 @@
               type="number"
               name="buying_price"
               min="0"
-              step="1"
+              step="0.01"
               placeholder="${prev || " "}"
-              inputmode="numeric"
+              inputmode="decimal"
               data-stock-buying-price
               data-stock-field
               ${prev ? `data-stock-prev-buying="${prev}"` : ""}
@@ -1083,7 +1090,7 @@
         </div>`
       : `<label class="stock-inline-field">
           <span>Qty to stock out</span>
-          <input type="number" name="quantity" min="1" step="1" placeholder="0" inputmode="numeric" data-stock-qty data-stock-field disabled>
+          <input type="number" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
         </label>`;
     return `
       <div class="stock-in-field-row">
@@ -1143,7 +1150,7 @@
   const buildRequestFields = () => `
     <label class="stock-inline-field">
       <span>Qty to request</span>
-      <input type="number" name="quantity" min="1" step="1" placeholder="0" inputmode="numeric" data-stock-qty data-stock-field disabled>
+      <input type="number" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
     </label>
     <input type="hidden" name="serial_numbers" value="" data-stock-field disabled>`;
 
@@ -1164,10 +1171,10 @@
           type="number"
           class="stock-list-input"
           name="quantity"
-          min="1"
-          step="1"
+          min="0.001"
+          step="0.001"
           placeholder="0"
-          inputmode="numeric"
+          inputmode="decimal"
           aria-label="Quantity at ${shopLabel}"
           data-stock-qty
         >`
@@ -1192,9 +1199,9 @@
             class="stock-list-input stock-list-input--price"
             name="buying_price"
             min="0"
-            step="1"
+            step="0.01"
             placeholder="${prev || "0"}"
-            inputmode="numeric"
+            inputmode="decimal"
             aria-label="Unit buying price at ${shopLabel}"
             title="${prev ? `Previous unit ${prev}` : "Unit buying price"}"
             data-stock-buying-price
@@ -1248,8 +1255,8 @@
   };
 
   const buildPair = (item) => {
-    const stock = Math.max(0, Math.floor(Number(item.shop_qty) || 0));
-    const fromQty = Math.max(0, Math.floor(Number(item.requested_from_qty) || 0));
+    const stock = normalizeStockQty(item.shop_qty);
+    const fromQty = normalizeStockQty(item.requested_from_qty);
     const track =
       item.track_serial && mode !== "request" ? "1" : "0";
     const name = String(item.name || "");
@@ -1259,7 +1266,7 @@
 
     if (editableMatrix) {
       const quantities = Array.isArray(item.shop_quantities)
-        ? item.shop_quantities.map((q) => Math.max(0, Math.floor(Number(q) || 0)))
+        ? item.shop_quantities.map((q) => normalizeStockQty(q))
         : viewShops.map(() => stock);
       const cells = viewShops
         .map((shop, index) =>
@@ -1297,11 +1304,11 @@
 
     if (readOnlyMatrix) {
       const quantities = Array.isArray(item.shop_quantities)
-        ? item.shop_quantities.map((q) => Math.max(0, Math.floor(Number(q) || 0)))
+        ? item.shop_quantities.map((q) => normalizeStockQty(q))
         : [stock];
       const rowTotal = Number.isFinite(Number(item.row_total))
-        ? Math.max(0, Math.floor(Number(item.row_total) || 0))
-        : quantities.reduce((sum, q) => sum + q, 0);
+        ? normalizeStockQty(item.row_total)
+        : normalizeStockQty(quantities.reduce((sum, q) => sum + q, 0));
       const qtyCells = showAllShops
         ? quantities
             .map(
@@ -1491,10 +1498,14 @@
     const text = cell?.querySelector(".stock-matrix-qty")?.textContent?.trim() || "";
     if (!text || text === "—") return 0;
     const value = Number(String(text).replace(/,/g, ""));
-    return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+    return normalizeStockQty(value);
   };
 
-  const formatQty = (value) => (value === 0 ? "—" : value.toLocaleString());
+  const formatQty = (value) => {
+    const n = normalizeStockQty(value);
+    if (n === 0) return "—";
+    return String(n);
+  };
 
   const refreshCategorySubtotals = () => {
     if (!readOnlyMatrix) return;

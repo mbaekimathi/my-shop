@@ -810,7 +810,7 @@
     const cellQty = (cell) => {
       const raw = cell.querySelector("[data-stock-qty]")?.value || "";
       const n = Number(raw);
-      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+      return Number.isFinite(n) && n > 0 ? n : 0;
     };
 
     const cellHasPrice = (cell) => {
@@ -819,7 +819,7 @@
       const raw = cell.querySelector("[data-stock-buying-price]")?.value;
       if (raw == null || String(raw).trim() === "") return false;
       const n = Number(raw);
-      return Number.isFinite(n) && n >= 0 && Number.isInteger(n);
+      return Number.isFinite(n) && n >= 0;
     };
 
     const tracksSerial = (cell) => cell.getAttribute("data-track-serial") === "1";
@@ -3220,8 +3220,8 @@
     const raw = (getInputsRow(row)?.querySelector("[data-stock-buying-price]")?.value || "").trim();
     if (!raw) return false;
     const n = Number(raw);
-    // Must be an entered whole number (0 allowed only if explicitly typed).
-    return Number.isFinite(n) && n >= 0 && Number.isInteger(n);
+    // Entered unit price (decimals allowed; 0 allowed if explicitly typed).
+    return Number.isFinite(n) && n >= 0;
   };
 
   const rowHasSupplierDetails = (row) => {

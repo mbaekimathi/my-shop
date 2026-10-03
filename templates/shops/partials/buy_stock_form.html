@@ -175,10 +175,10 @@
                       type="number"
                       class="stock-list-input"
                       name="quantity"
-                      min="1"
-                      step="1"
+                      min="0.001"
+                      step="0.001"
                       placeholder="0"
-                      inputmode="numeric"
+                      inputmode="decimal"
                       aria-label="Quantity at {{ shop.name }}"
                       data-stock-qty
                     >
@@ -188,9 +188,9 @@
                       class="stock-list-input stock-list-input--price"
                       name="buying_price"
                       min="0"
-                      step="1"
+                      step="0.01"
                       placeholder="0"
-                      inputmode="numeric"
+                      inputmode="decimal"
                       aria-label="Unit buying price at {{ shop.name }}"
                       data-stock-buying-price
                     >

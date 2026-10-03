@@ -95,16 +95,54 @@ def _money_cost(value) -> Decimal:
     return amount.quantize(Decimal("0.01"))
 
 
+_QTY_QUANTUM = Decimal("0.001")
+_ZERO_QTY = Decimal("0.000")
+
+
+def _quantize_qty(value) -> Decimal:
+    try:
+        amount = Decimal(str(value if value is not None else 0))
+    except (InvalidOperation, TypeError, ValueError):
+        amount = _ZERO_QTY
+    if amount < 0:
+        amount = _ZERO_QTY
+    return amount.quantize(_QTY_QUANTUM)
+
+
+def _format_qty(value) -> str:
+    """JSON/UI-friendly qty string without trailing zeros."""
+    text = format(_quantize_qty(value), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _parse_qty(raw_value: str, label: str = "Quantity") -> Decimal:
+    value = (raw_value or "").strip()
+    if not value:
+        raise ValidationError(f"{label} is required.")
+    try:
+        amount = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValidationError(f"Enter a valid {label.lower()}.") from exc
+    if amount <= 0:
+        raise ValidationError(f"{label} must be greater than zero.")
+    # Reject more than 3 decimal places before quantize rounding hides them.
+    if amount != amount.quantize(_QTY_QUANTUM):
+        raise ValidationError(f"{label} allows up to 3 decimal places.")
+    return amount.quantize(_QTY_QUANTUM)
+
+
 def weighted_average_cost(
     *,
-    old_qty: int,
+    old_qty,
     old_avg,
-    in_qty: int,
+    in_qty,
     in_price,
 ) -> Decimal:
     """Blend existing average cost with an incoming quantity at a unit price."""
-    old_q = max(0, int(old_qty or 0))
-    new_q = max(0, int(in_qty or 0))
+    old_q = _quantize_qty(old_qty)
+    new_q = _quantize_qty(in_qty)
     old_avg_dec = _money_cost(old_avg)
     in_price_dec = _money_cost(in_price)
     if new_q <= 0:
@@ -113,10 +151,10 @@ def weighted_average_cost(
         return in_price_dec
     total_qty = old_q + new_q
     blended = (old_avg_dec * old_q) + (in_price_dec * new_q)
-    return (blended / Decimal(total_qty)).quantize(Decimal("0.01"))
+    return (blended / total_qty).quantize(Decimal("0.01"))
 
 
-def apply_stock_in_average_cost(shop_stock: ShopStock, *, qty: int, unit_cost) -> Decimal:
+def apply_stock_in_average_cost(shop_stock: ShopStock, *, qty, unit_cost) -> Decimal:
     """
     Update shop stock weighted average for an inbound quantity.
 
@@ -124,12 +162,12 @@ def apply_stock_in_average_cost(shop_stock: ShopStock, *, qty: int, unit_cost) -
     Zero/missing unit cost leaves the existing average unchanged so unpriced
     stock-ins do not dilute COGS.
     """
-    qty = max(0, int(qty or 0))
+    qty = _quantize_qty(qty)
     unit = _money_cost(unit_cost)
     current = _money_cost(getattr(shop_stock, "average_cost", 0))
     if qty <= 0 or unit <= 0:
         return current
-    old_qty = max(0, int(shop_stock.quantity or 0))
+    old_qty = _quantize_qty(shop_stock.quantity)
     new_avg = weighted_average_cost(
         old_qty=old_qty,
         old_avg=current,
@@ -174,13 +212,13 @@ def resolve_sale_unit_cost(
 def _effective_in_unit_cost(buying_price, qty, sell_ceiling=None) -> Decimal:
     """Unit buy for WAC. Drops zeros; splits likely invoice totals by qty."""
     buy = _money_cost(buying_price)
-    units = max(0, int(qty or 0))
+    units = _quantize_qty(qty)
     ceiling = _money_cost(sell_ceiling)
     if buy <= 0 or units <= 0:
         return Decimal("0.00")
     if ceiling > 0 and buy > ceiling:
         if units > 1:
-            unit = (buy / Decimal(units)).quantize(Decimal("0.01"))
+            unit = (buy / units).quantize(Decimal("0.01"))
             if unit > 0 and unit <= ceiling:
                 return unit
         return Decimal("0.00")
@@ -245,7 +283,7 @@ def recalc_shop_stock_average_costs(*, shop_id=None, item_ids=None) -> dict:
         if price and price > sell_ceiling_by_item.get(item_id, 0):
             sell_ceiling_by_item[item_id] = price
 
-    wac_by_shop_item: dict[tuple[int, int], tuple[int, Decimal]] = {}
+    wac_by_shop_item: dict[tuple[int, int], tuple[Decimal, Decimal]] = {}
     last_by_item: dict[int, Decimal] = {}
     lines = line_qs.order_by("movement__created_at", "id").values_list(
         "movement__shop_id", "item_id", "quantity", "buying_price"
@@ -254,9 +292,11 @@ def recalc_shop_stock_average_costs(*, shop_id=None, item_ids=None) -> dict:
         unit = _effective_in_unit_cost(buy, qty, sell_ceiling_by_item.get(iid))
         if unit <= 0:
             continue
-        units = max(0, int(qty or 0))
+        units = _quantize_qty(qty)
         key = (int(sid), int(iid))
-        old_qty, old_avg = wac_by_shop_item.get(key, (0, Decimal("0.00")))
+        old_qty, old_avg = wac_by_shop_item.get(
+            key, (_ZERO_QTY, Decimal("0.00"))
+        )
         new_avg = weighted_average_cost(
             old_qty=old_qty, old_avg=old_avg, in_qty=units, in_price=unit
         )
@@ -355,12 +395,12 @@ def session_average_buying_prices_for_items(item_ids, shop_ids=None) -> dict:
     for item_id, qty, avg_cost in stock_qs.values_list(
         "item_id", "quantity", "average_cost"
     ):
-        units = max(0, int(qty or 0))
+        units = _quantize_qty(qty)
         cost = _money_cost(avg_cost)
         if cost <= 0:
             continue
-        weight = units if units > 0 else 1
-        bucket = totals.setdefault(item_id, [Decimal("0"), 0])
+        weight = units if units > 0 else Decimal("1")
+        bucket = totals.setdefault(item_id, [Decimal("0"), _ZERO_QTY])
         bucket[0] += cost * weight
         bucket[1] += weight
 
@@ -368,7 +408,7 @@ def session_average_buying_prices_for_items(item_ids, shop_ids=None) -> dict:
     for item_id, (cost_sum, weight_sum) in totals.items():
         if weight_sum <= 0:
             continue
-        result[item_id] = (cost_sum / Decimal(weight_sum)).quantize(Decimal("0.01"))
+        result[item_id] = (cost_sum / weight_sum).quantize(Decimal("0.01"))
 
     missing = [pk for pk in ids if pk not in result]
     if missing:
@@ -474,7 +514,7 @@ def build_stock_catalog_page(
         for item_id, sid, qty in ShopStock.objects.filter(
             shop_id__in=view_shop_ids, item_id__in=item_ids
         ).values_list("item_id", "shop_id", "quantity"):
-            multi_qty_map.setdefault(item_id, {})[sid] = int(qty)
+            multi_qty_map.setdefault(item_id, {})[sid] = _quantize_qty(qty)
 
     last_buying = {}
     if mode == "in" and item_ids:
@@ -518,8 +558,8 @@ def build_stock_catalog_page(
             "name": item.name,
             "category": item.category,
             "description": description,
-            "shop_qty": int(shop_qty_map.get(item.pk, 0)),
-            "requested_from_qty": int(from_qty_map.get(item.pk, 0)),
+            "shop_qty": _format_qty(shop_qty_map.get(item.pk, 0)),
+            "requested_from_qty": _format_qty(from_qty_map.get(item.pk, 0)),
             "track_serial": bool(item.track_serial_number),
             "is_suspended": bool(item.is_suspended),
             "last_buying_price": (
@@ -529,12 +569,18 @@ def build_stock_catalog_page(
         }
         if use_multi_shop:
             quantities = [
-                int(multi_qty_map.get(item.pk, {}).get(sid, 0)) for sid in view_shop_ids
+                _format_qty(multi_qty_map.get(item.pk, {}).get(sid, 0))
+                for sid in view_shop_ids
             ]
             row["shop_quantities"] = quantities
-            row["row_total"] = sum(quantities)
+            row["row_total"] = _format_qty(
+                sum(
+                    (_quantize_qty(q) for q in quantities),
+                    _ZERO_QTY,
+                )
+            )
             if len(view_shop_ids) == 1:
-                row["shop_qty"] = quantities[0] if quantities else 0
+                row["shop_qty"] = quantities[0] if quantities else "0"
             selling_prices = []
             for sid in view_shop_ids:
                 shop_override = (
@@ -573,7 +619,7 @@ def build_stock_catalog_page(
         "page_size": page_size,
         "has_more": has_more,
         "next_page": next_page,
-        "total_units": int(total_units),
+        "total_units": _format_qty(total_units),
         "items": rows,
         "q": query,
         "shop_id": shop_id,
@@ -828,14 +874,14 @@ def _adjust_serial_shop_stock(serial: ItemSerial, *, delta: int, unit_cost=0) ->
             qty=1,
             unit_cost=unit_cost if unit_cost else stock.average_cost,
         )
-        stock.quantity = int(stock.quantity or 0) + 1
+        stock.quantity = _quantize_qty(stock.quantity) + 1
         stock.save(update_fields=["quantity", "average_cost", "updated_at"])
-        serial.item.stock = int(serial.item.stock or 0) + 1
+        serial.item.stock = _quantize_qty(serial.item.stock) + 1
         serial.item.save(update_fields=["stock", "updated_at"])
         return
-    stock.quantity = max(0, int(stock.quantity or 0) - 1)
+    stock.quantity = max(_ZERO_QTY, _quantize_qty(stock.quantity) - 1)
     stock.save(update_fields=["quantity", "updated_at"])
-    serial.item.stock = max(0, int(serial.item.stock or 0) - 1)
+    serial.item.stock = max(_ZERO_QTY, _quantize_qty(serial.item.stock) - 1)
     serial.item.save(update_fields=["stock", "updated_at"])
 
 
@@ -929,10 +975,10 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
             qty=1,
             unit_cost=Decimal(target.unit_cost or 0),
         )
-        stock.quantity = int(stock.quantity or 0) + 1
+        stock.quantity = _quantize_qty(stock.quantity) + 1
         stock.save(update_fields=["quantity", "average_cost", "updated_at"])
         item = serial.item
-        item.stock = int(item.stock or 0) + 1
+        item.stock = _quantize_qty(item.stock) + 1
         item.save(update_fields=["stock", "updated_at"])
         if serial.shop_id != shop.pk:
             serial.shop = shop
@@ -1931,17 +1977,18 @@ def _parse_movement_lines(data, movement_type: str):
             if len(serials) != len(set(serials)):
                 errors.append(f"{line_label}: duplicate serial numbers are not allowed.")
                 continue
-            quantity = len(serials)
+            quantity = _quantize_qty(len(serials))
         else:
             qty_raw = (raw_qtys[index] if index < len(raw_qtys) else "").strip()
             if not qty_raw:
                 continue
             try:
-                quantity = int(qty_raw)
-            except (TypeError, ValueError):
-                errors.append(f"{line_label}: enter a valid quantity.")
-                continue
-            if quantity <= 0:
+                quantity = _parse_qty(qty_raw)
+            except ValidationError as exc:
+                message = (
+                    exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+                )
+                errors.append(f"{line_label}: {message}")
                 continue
             serials = []
 
@@ -2152,7 +2199,8 @@ def actionable_shops_for_profile(profile):
 def _enrich_stock_request_movements(rows):
     for movement in rows:
         movement.units_total = sum(
-            int(line.quantity or 0) for line in movement.lines.all()
+            (_quantize_qty(line.quantity) for line in movement.lines.all()),
+            _ZERO_QTY,
         )
     return rows
 
@@ -2435,7 +2483,7 @@ def _shop_stock_alert_payload(stock, threshold):
         "item_id": stock.item_id,
         "name": stock.item.name,
         "category": stock.item.category,
-        "quantity": int(stock.quantity or 0),
+        "quantity": _format_qty(stock.quantity),
         "threshold": int(threshold or 0),
     }
 
@@ -2489,7 +2537,7 @@ def list_shop_low_stock_alerts(shop, *, limit=80):
         threshold = threshold_from_weekly_avg(
             usage.get((stock.item_id, shop.pk), 0)
         )
-        if int(stock.quantity or 0) > threshold:
+        if _quantize_qty(stock.quantity) > threshold:
             continue
         alerts.append(_shop_stock_alert_payload(stock, threshold))
         seen.add(stock.item_id)
@@ -2527,7 +2575,7 @@ def shop_has_low_stock_alerts(shop) -> bool:
     )
     for item_id, quantity in auto_rows:
         threshold = threshold_from_weekly_avg(usage.get((item_id, shop.pk), 0))
-        if int(quantity or 0) <= threshold:
+        if _quantize_qty(quantity) <= threshold:
             return True
     return False
 
@@ -2766,7 +2814,7 @@ def apply_stock_movement(
                 if movement_type == StockMovementType.IN:
                     status = (line.get("payment_status") or "").strip()
                     if status == StockPaymentStatus.PAID:
-                        qty = int(line["quantity"] or 0)
+                        qty = _quantize_qty(line["quantity"])
                         unit = Decimal(line.get("buying_price") or 0)
                         paid_total += (unit * qty).quantize(Decimal("0.01"))
 
@@ -2804,11 +2852,13 @@ def apply_stock_movement(
                         qty=line["quantity"],
                         unit_cost=line.get("buying_price") or 0,
                     )
-                    shop_stock.quantity += line["quantity"]
+                    shop_stock.quantity = _quantize_qty(shop_stock.quantity) + line[
+                        "quantity"
+                    ]
                     shop_stock.save(
                         update_fields=["quantity", "average_cost", "updated_at"]
                     )
-                    item.stock += line["quantity"]
+                    item.stock = _quantize_qty(item.stock) + line["quantity"]
                     item.save(update_fields=["stock", "updated_at"])
 
                 elif movement_type == StockMovementType.OUT:
@@ -2818,9 +2868,13 @@ def apply_stock_movement(
                             obj = serial_objects[serial]
                             obj.is_available = False
                             obj.save(update_fields=["is_available", "updated_at"])
-                    shop_stock.quantity -= line["quantity"]
+                    shop_stock.quantity = _quantize_qty(shop_stock.quantity) - line[
+                        "quantity"
+                    ]
                     shop_stock.save(update_fields=["quantity", "updated_at"])
-                    item.stock = max(0, item.stock - line["quantity"])
+                    item.stock = max(
+                        _ZERO_QTY, _quantize_qty(item.stock) - line["quantity"]
+                    )
                     item.save(update_fields=["stock", "updated_at"])
                     # average_cost is unchanged on outbound; unit_cost was stamped on the line.
 
@@ -2958,14 +3012,20 @@ def respond_to_stock_request(
         requested_qty = line.quantity
         raw_qty = quantities_by_line.get(str(line.pk))
         if raw_qty in (None, ""):
-            transfer_qty = requested_qty
+            transfer_qty = _quantize_qty(requested_qty)
         else:
             try:
-                transfer_qty = int(str(raw_qty).strip())
-            except (TypeError, ValueError):
-                errors.append(f"“{item.name}”: enter a valid transfer quantity.")
-                continue
+                transfer_qty = _parse_qty(str(raw_qty).strip(), "Transfer quantity")
+            except ValidationError:
+                # Allow explicit zero to skip a line during fulfill.
+                raw = str(raw_qty).strip()
+                if raw in {"0", "0.0", "0.00", "0.000"}:
+                    transfer_qty = _ZERO_QTY
+                else:
+                    errors.append(f"“{item.name}”: enter a valid transfer quantity.")
+                    continue
 
+        requested_qty = _quantize_qty(requested_qty)
         if transfer_qty < 0:
             errors.append(f"“{item.name}”: transfer quantity cannot be negative.")
             continue
@@ -3172,13 +3232,13 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
         )
     )
 
-    stock_map: dict[tuple[int, int], int] = {}
+    stock_map: dict[tuple[int, int], Decimal] = {}
     if layout == "stock" and shop_ids and items:
         item_ids = [item.pk for item in items]
         for item_id, shop_id, qty in ShopStock.objects.filter(
             item_id__in=item_ids, shop_id__in=shop_ids
         ).values_list("item_id", "shop_id", "quantity"):
-            stock_map[(item_id, shop_id)] = int(qty or 0)
+            stock_map[(item_id, shop_id)] = _quantize_qty(qty)
 
     price_overrides: dict[tuple[int, int], Decimal] = {}
     if layout == "prices" and shop_ids and items:
@@ -3229,19 +3289,19 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
                 row["price"] = prices[0]["price"] if prices else "0.00"
         elif layout == "stock":
             quantities = []
-            row_total = 0
+            row_total = _ZERO_QTY
             for shop in shops:
-                qty = stock_map.get((item.pk, shop.pk), 0)
+                qty = stock_map.get((item.pk, shop.pk), _ZERO_QTY)
                 row_total += qty
                 quantities.append(
                     {
                         "shop_id": shop.pk,
                         "shop_name": shop.name,
-                        "qty": qty,
+                        "qty": _format_qty(qty),
                     }
                 )
             row["quantities"] = quantities
-            row["total"] = row_total
+            row["total"] = _format_qty(row_total)
 
         current_rows.append(row)
 

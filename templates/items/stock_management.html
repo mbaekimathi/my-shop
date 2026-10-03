@@ -543,10 +543,10 @@
                         <input
                           type="number"
                           name="quantity"
-                          min="1"
-                          step="1"
+                          min="0.001"
+                          step="0.001"
                           placeholder="0"
-                          inputmode="numeric"
+                          inputmode="decimal"
                           data-stock-qty
                           data-stock-field
                           disabled
@@ -557,7 +557,7 @@
                         <span class="stock-inline-label-row">
                           <span>Unit buying price</span>
                           {% if row.last_buying_price is not None %}
-                          <em class="stock-prev-price">Prev {{ row.last_buying_price|floatformat:0 }}</em>
+                          <em class="stock-prev-price">Prev {{ row.last_buying_price|floatformat:2 }}</em>
                           {% else %}
                           <em class="stock-prev-price is-empty">No previous</em>
                           {% endif %}
@@ -566,12 +566,12 @@
                           type="number"
                           name="buying_price"
                           min="0"
-                          step="1"
-                          placeholder="{% if row.last_buying_price is not None %}{{ row.last_buying_price|floatformat:0 }}{% else %}0{% endif %}"
-                          inputmode="numeric"
+                          step="0.01"
+                          placeholder="{% if row.last_buying_price is not None %}{{ row.last_buying_price|floatformat:2 }}{% else %}0{% endif %}"
+                          inputmode="decimal"
                           data-stock-buying-price
                           data-stock-field
-                          {% if row.last_buying_price is not None %}data-stock-prev-buying="{{ row.last_buying_price|floatformat:0 }}"{% endif %}
+                          {% if row.last_buying_price is not None %}data-stock-prev-buying="{{ row.last_buying_price|floatformat:2 }}"{% endif %}
                           disabled
                         >
                       </label>
@@ -708,10 +708,10 @@
                         <input
                           type="number"
                           name="quantity"
-                          min="1"
-                          step="1"
+                          min="0.001"
+                          step="0.001"
                           placeholder="0"
-                          inputmode="numeric"
+                          inputmode="decimal"
                           data-stock-qty
                           data-stock-field
                           disabled
@@ -809,10 +809,10 @@
                       <input
                         type="number"
                         name="quantity"
-                        min="1"
-                        step="1"
+                        min="0.001"
+                        step="0.001"
                         placeholder="0"
-                        inputmode="numeric"
+                        inputmode="decimal"
                         data-stock-qty
                         data-stock-field
                         disabled
