@@ -1326,3 +1326,107 @@ class StockSerialMovementsShopFilterTests(TestCase):
         self.assertEqual(stock_out.context["event_filter"], "out")
         self.assertContains(stock_out, "SNA-OUT-1")
         self.assertNotContains(stock_out, "SNA-001")
+
+
+class StockSerialDetailShopFilterTests(TestCase):
+    def setUp(self):
+        self.password = "serial-detail-pass"
+        self.user = User.objects.create_user(
+            username="840032",
+            password=self.password,
+            email="serial-detail@test.local",
+            first_name="SERIAL",
+            last_name="DETAIL",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840032",
+            phone_country_code="+254",
+            phone_number="700000945",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop_a = Shop.objects.create(
+            name="DETAIL SHOP A",
+            location="NAIROBI",
+            email="detail-a@test.local",
+            phone_number="0700000945",
+            login_code="840145",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.shop_b = Shop.objects.create(
+            name="DETAIL SHOP B",
+            location="MOMBASA",
+            email="detail-b@test.local",
+            phone_number="0700000946",
+            login_code="840146",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        from items.models import Item, ItemSerial, ItemSerialStatus
+
+        self.item = Item.objects.create(
+            category="PHONES",
+            name="DETAIL HANDSET",
+            minimum_selling_price=Decimal("1000.00"),
+            shop_price=Decimal("1500.00"),
+            track_serial_number=True,
+            created_by=self.profile,
+        )
+        ItemSerial.objects.create(
+            item=self.item,
+            shop=self.shop_a,
+            serial_number="SDA-IN-1",
+            is_available=True,
+        )
+        ItemSerial.objects.create(
+            item=self.item,
+            shop=self.shop_b,
+            serial_number="SDB-IN-1",
+            is_available=True,
+        )
+        ItemSerial.objects.create(
+            item=self.item,
+            shop=self.shop_a,
+            serial_number="SDA-OUT-1",
+            is_available=False,
+            status_override=ItemSerialStatus.OUT,
+        )
+        ItemSerial.objects.create(
+            item=self.item,
+            shop=self.shop_b,
+            serial_number="SDB-OUT-1",
+            is_available=False,
+            status_override=ItemSerialStatus.OUT,
+        )
+        self.detail_url = f"/it-support/stock-management/serials/{self.item.pk}/"
+
+    def test_shop_dropdown_and_filter(self):
+        self.client.login(username="840032", password=self.password)
+        all_resp = self.client.get(self.detail_url, {"status": "out", "q": ""})
+        self.assertEqual(all_resp.status_code, 200)
+        self.assertContains(all_resp, 'name="shop_id"')
+        self.assertContains(all_resp, "All shops")
+        self.assertContains(all_resp, "DETAIL SHOP A")
+        self.assertContains(all_resp, "DETAIL SHOP B")
+        self.assertEqual(all_resp.context["selected_shop_ids"], set())
+        self.assertContains(all_resp, "SDA-OUT-1")
+        self.assertContains(all_resp, "SDB-OUT-1")
+        self.assertNotContains(all_resp, "SDA-IN-1")
+        self.assertNotContains(all_resp, "SDB-IN-1")
+        self.assertEqual(all_resp.context["out_count"], 2)
+
+        filtered = self.client.get(
+            self.detail_url,
+            {"status": "out", "q": "", "shop_id": self.shop_a.pk},
+        )
+        self.assertEqual(filtered.status_code, 200)
+        self.assertEqual(filtered.context["selected_shop_ids"], {self.shop_a.pk})
+        self.assertContains(filtered, "SDA-OUT-1")
+        self.assertNotContains(filtered, "SDB-OUT-1")
+        self.assertEqual(filtered.context["out_count"], 1)
+        self.assertEqual(filtered.context["in_stock_count"], 1)
+        serials = [row["serial_number"] for row in filtered.context["rows"]]
+        self.assertEqual(serials, ["SDA-OUT-1"])

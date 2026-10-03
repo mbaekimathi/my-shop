@@ -36,6 +36,16 @@
       <a class="stock-report-apply stock-report-apply--ghost" href="{{ list_href }}">Back</a>
 
       <label class="stock-report-field">
+        <span>Shop</span>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="stock-report-field">
         <span>Status</span>
         <select name="status" aria-label="Status">
           <option value="all"{% if status_filter == "all" %} selected{% endif %}>All</option>

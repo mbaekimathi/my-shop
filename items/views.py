@@ -6918,8 +6918,18 @@ def stock_serial_detail(request, profile, meta, module, item_id):
         profile=profile,
     )
 
-    display_shops = _serial_shops_for_profile(profile)
-    shop_ids = {shop.pk for shop in display_shops}
+    filter_shops = _serial_shops_for_profile(profile)
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+    selected_shop_ids = [
+        pk for pk in _parse_id_list(request.GET.getlist("shop_id")) if pk in shops_by_id
+    ]
+    active_shop_ids = selected_shop_ids or [shop.pk for shop in filter_shops]
+    display_shops = (
+        [shops_by_id[pk] for pk in selected_shop_ids]
+        if selected_shop_ids
+        else list(filter_shops)
+    )
+    shop_ids = set(active_shop_ids)
     shops_label = _serial_shops_label(display_shops)
 
     serials_qs = ItemSerial.objects.filter(item=item).select_related("shop")
@@ -7011,6 +7021,8 @@ def stock_serial_detail(request, profile, meta, module, item_id):
             "search": search,
             "status_filter": status_filter,
             "list_href": list_href,
+            "filter_shops": filter_shops,
+            "selected_shop_ids": set(selected_shop_ids),
             "display_shops": display_shops,
             "shops_label": shops_label,
             "stock_mode": "serials",
