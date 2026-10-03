@@ -18644,6 +18644,19 @@ html[data-theme="light"] .low-stock-badge.is-low {
   white-space: normal;
 }
 
+.stock-panel--report .stock-report-table--items-daily th[data-col="date"],
+.stock-panel--report .stock-report-table--items-daily td[data-label="Date"] {
+  width: 7.5rem;
+  text-align: left;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-panel--report .stock-report-table--items-daily th[data-col="item"],
+.stock-panel--report .stock-report-table--items-daily td[data-label="Item"] {
+  width: 18%;
+}
+
 .stock-panel--report .stock-report-table--items th[data-col="shop"],
 .stock-panel--report .stock-report-table--items-summary th[data-col="shop"],
 .stock-panel--report .stock-report-table--items td[data-label="Shop"],

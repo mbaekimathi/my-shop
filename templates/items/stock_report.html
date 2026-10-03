@@ -15,7 +15,7 @@
 
     <form class="stock-report-filters" method="get" data-stock-report-filters{% if item_picker_url %} data-item-picker-url="{{ item_picker_url }}"{% endif %}>
       <input type="hidden" name="mode" value="{{ stock_mode }}">
-      {% if not is_movements_page %}
+      {% if not is_movements_page and report_range == 'day' %}
       <input type="hidden" name="view_by" value="item">
       {% endif %}
 
@@ -87,6 +87,14 @@
           <option value="sale"{% if event_filter == 'sale' %} selected{% endif %}>Sale</option>
           <option value="transfer"{% if event_filter == 'transfer' %} selected{% endif %}>Transfer</option>
           <option value="return"{% if event_filter == 'return' %} selected{% endif %}>Return</option>
+        </select>
+      </label>
+      {% elif report_range != 'day' %}
+      <label class="stock-report-field">
+        <span>View by</span>
+        <select name="view_by" aria-label="View report by">
+          <option value="item"{% if view_by != 'day' %} selected{% endif %}>Period summary</option>
+          <option value="day"{% if view_by == 'day' %} selected{% endif %}>Daily breakdown</option>
         </select>
       </label>
       {% endif %}
@@ -498,10 +506,15 @@
     {% else %}
       {% if item_report_rows %}
       <div class="staff-table-wrap stock-report-table-wrap stock-report-table-wrap--items">
-        <table class="staff-table stock-report-table stock-report-table--items{% if item_report_group_by_shop %} stock-report-table--items-by-shop{% endif %}">
+        <table class="staff-table stock-report-table stock-report-table--items{% if is_daily_report %} stock-report-table--items-daily{% endif %}{% if item_report_group_by_shop %} stock-report-table--items-by-shop{% endif %}">
           <thead>
             <tr>
+              {% if is_daily_report %}
+              <th scope="col" data-col="date">Date</th>
+              {% endif %}
+              {% if not is_daily_report or item_report_show_item_col %}
               <th scope="col" data-col="item">Item</th>
+              {% endif %}
               {% if item_report_group_by_shop %}
               <th scope="col" data-col="shop">Shop</th>
               {% endif %}
@@ -521,9 +534,15 @@
             <tr
               data-stock-live-row
               data-item-group="{{ row.item.pk }}"
-              data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }} {{ row.shop_name|lower }}"
+              data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }} {{ row.shop_name|lower }}{% if row.report_date %} {{ row.report_date|date:'Y-m-d' }}{% endif %}"
               class="{% if row.item.is_suspended %}is-suspended{% endif %}{% if item_report_group_by_shop %}{% if row.is_item_total %} is-item-total{% elif row.is_item_start %} is-item-start{% else %} is-shop-follow{% endif %}{% endif %}"
             >
+              {% if is_daily_report %}
+              <td data-label="Date">
+                <time datetime="{{ row.report_date|date:'Y-m-d' }}">{{ row.report_date|date:"d M Y" }}</time>
+              </td>
+              {% endif %}
+              {% if not is_daily_report or item_report_show_item_col %}
               <td data-label="Item">
                 {% if not item_report_group_by_shop or row.is_item_start %}
                 <strong>{{ row.item.name }}</strong>
@@ -532,6 +551,7 @@
                 {% endif %}
                 {% endif %}
               </td>
+              {% endif %}
               {% if item_report_group_by_shop %}
               <td data-label="Shop">{% if row.is_item_total %}<strong>Total</strong>{% else %}{{ row.shop_name }}{% endif %}</td>
               {% endif %}
@@ -567,11 +587,20 @@
           </tbody>
           <tfoot>
             <tr>
-              <td data-label="Item"><strong>Total</strong></td>
+              {% if is_daily_report %}
+              <td data-label="Date"><strong>Total</strong></td>
+              {% endif %}
+              {% if not is_daily_report or item_report_show_item_col %}
+              <td data-label="Item">{% if not is_daily_report %}<strong>Total</strong>{% endif %}</td>
+              {% endif %}
               {% if item_report_group_by_shop %}
               <td data-label="Shop"></td>
               {% endif %}
-              <td data-label="Starting stock"><span class="stock-matrix-qty">{{ item_report_totals.starting_stock }}</span></td>
+              <td data-label="Starting stock">
+                {% if not is_daily_report or not item_report_show_item_col %}
+                <span class="stock-matrix-qty">{{ item_report_totals.starting_stock }}</span>
+                {% endif %}
+              </td>
               <td data-label="Stock in"><span class="stock-matrix-qty stock-report-qty--in">{{ item_report_totals.stock_in }}</span></td>
               <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--transfer-in">{{ item_report_totals.stock_transfer_in }}</span></td>
               <td data-label="Stock out"><span class="stock-matrix-qty stock-report-qty--out">{{ item_report_totals.stock_out }}</span></td>
@@ -581,7 +610,11 @@
                 <span class="stock-matrix-qty {% if item_report_totals.stock_return %}stock-report-qty--sale-returned{% else %}stock-report-qty--sale{% endif %}{% if item_report_totals.net_sale == 0 %} is-empty{% endif %}">{{ item_report_totals.net_sale }}</span>
               </td>
               <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ item_report_totals.stock_return }}</span></td>
-              <td data-label="Closing stock"><span class="stock-matrix-qty stock-matrix-qty--total">{{ item_report_totals.closing_stock }}</span></td>
+              <td data-label="Closing stock">
+                {% if not is_daily_report or not item_report_show_item_col %}
+                <span class="stock-matrix-qty stock-matrix-qty--total">{{ item_report_totals.closing_stock }}</span>
+                {% endif %}
+              </td>
             </tr>
           </tfoot>
         </table>
@@ -590,7 +623,11 @@
       <nav class="stock-report-pagination" aria-label="Report pages">
         <p class="stock-report-pagination-meta">
           Page {{ report_page }} of {{ report_total_pages }}
+          {% if is_daily_report %}
+          · {{ report_total_groups }} day row{{ report_total_groups|pluralize }}
+          {% else %}
           · {{ report_total_groups }} item{{ report_total_groups|pluralize }}
+          {% endif %}
         </p>
         <div class="stock-report-pagination-links">
           {% if report_prev_url %}

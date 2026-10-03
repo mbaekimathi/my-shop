@@ -273,6 +273,97 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(dest_rows[0]["stock_transfer_out"], 0)
         self.assertEqual(dest_rows[0]["closing_stock"], 2)
 
+    def _stock_in(self, *, shop, qty, at):
+        from items.models import StockMovement, StockMovementLine, StockMovementType
+
+        movement = StockMovement.objects.create(
+            movement_type=StockMovementType.IN,
+            shop=shop,
+            created_by=self.profile,
+        )
+        StockMovement.objects.filter(pk=movement.pk).update(created_at=at)
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=self.item,
+            quantity=qty,
+        )
+        return movement
+
+    def test_daily_rows_chain_start_close_and_skip_quiet_days(self):
+        from datetime import datetime, time, timedelta
+
+        from django.utils import timezone
+        from items.models import Item, ShopStock
+        from items.views import _build_item_report_daily_rows
+
+        tz = timezone.get_current_timezone()
+        day1 = timezone.localdate() - timedelta(days=4)
+        day2 = day1 + timedelta(days=2)  # quiet day in between
+        period_start = timezone.make_aware(datetime.combine(day1, time.min), tz)
+        period_end = timezone.make_aware(
+            datetime.combine(day2 + timedelta(days=1), time.min), tz
+        )
+
+        # Reset known stock so starting is deterministic after movements.
+        ShopStock.objects.filter(item=self.item, shop=self.shop_a).update(quantity=10)
+        self._stock_in(
+            shop=self.shop_a,
+            qty=3,
+            at=timezone.make_aware(datetime.combine(day1, time(10, 0)), tz),
+        )
+        self._stock_in(
+            shop=self.shop_a,
+            qty=2,
+            at=timezone.make_aware(datetime.combine(day2, time(11, 0)), tz),
+        )
+        # Current stock already includes both ins in live DB? ShopStock is manual
+        # in tests — bump it to match "after" both receipts for closing math.
+        ShopStock.objects.filter(item=self.item, shop=self.shop_a).update(quantity=15)
+
+        rows = _build_item_report_daily_rows(
+            [self.item],
+            [self.shop_a.pk],
+            period_start,
+            period_end,
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["report_date"], day1)
+        self.assertEqual(rows[1]["report_date"], day2)
+        self.assertNotIn(day1 + timedelta(days=1), [row["report_date"] for row in rows])
+        self.assertEqual(rows[0]["stock_in"], 3)
+        self.assertEqual(rows[1]["stock_in"], 2)
+        self.assertEqual(rows[0]["starting_stock"], 10)
+        self.assertEqual(rows[0]["closing_stock"], 13)
+        self.assertEqual(rows[1]["starting_stock"], 13)
+        self.assertEqual(rows[1]["closing_stock"], 15)
+        self.assertTrue(rows[0]["is_daily_row"])
+
+        other = Item.objects.create(
+            category="ROUTERS",
+            name="TENDA F6",
+            minimum_selling_price=Decimal("100.00"),
+            shop_price=Decimal("150.00"),
+            created_by=self.profile,
+        )
+        from items.views import _filter_items_by_search
+
+        matched = _filter_items_by_search([self.item, other], "tenda")
+        self.assertEqual([item.pk for item in matched], [other.pk])
+        empty = _build_item_report_daily_rows(
+            matched,
+            [self.shop_a.pk],
+            period_start,
+            period_end,
+        )
+        self.assertEqual(empty, [])
+
+    def test_parse_report_view_by_forces_item_for_single_day(self):
+        from items.views import _parse_report_view_by
+
+        self.assertEqual(_parse_report_view_by("day", range_type="period"), "day")
+        self.assertEqual(_parse_report_view_by("day", range_type="day"), "item")
+        self.assertEqual(_parse_report_view_by("bogus", range_type="month"), "item")
+
     def test_movements_item_view_splits_shops_and_totals(self):
         from django.utils import timezone
         from items.views import _group_movement_events_by_item
@@ -1086,3 +1177,152 @@ class ShopPriceIsolationTests(TestCase):
         self.assertEqual(item.price_for_shop(self.shop_a), Decimal("120.00"))
         self.assertEqual(item.price_for_shop(self.shop_b), Decimal("95.00"))
         self.assertEqual(ShopItemPrice.objects.filter(item=item).count(), 2)
+
+
+class StockSerialMovementsShopFilterTests(TestCase):
+    def setUp(self):
+        self.password = "serial-mov-pass"
+        self.user = User.objects.create_user(
+            username="840031",
+            password=self.password,
+            email="serial-mov@test.local",
+            first_name="SERIAL",
+            last_name="MOV",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840031",
+            phone_country_code="+254",
+            phone_number="700000943",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop_a = Shop.objects.create(
+            name="SERIAL SHOP A",
+            location="NAIROBI",
+            email="serial-a@test.local",
+            phone_number="0700000943",
+            login_code="840131",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.shop_b = Shop.objects.create(
+            name="SERIAL SHOP B",
+            location="MOMBASA",
+            email="serial-b@test.local",
+            phone_number="0700000944",
+            login_code="840132",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        from items.models import Item, StockMovement, StockMovementLine, StockMovementType
+
+        self.item = Item.objects.create(
+            category="PHONES",
+            name="SERIAL HANDSET",
+            minimum_selling_price=Decimal("1000.00"),
+            shop_price=Decimal("1500.00"),
+            track_serial_number=True,
+            created_by=self.profile,
+        )
+        for shop, serial in ((self.shop_a, "SNA-001"), (self.shop_b, "SNB-001")):
+            movement = StockMovement.objects.create(
+                movement_type=StockMovementType.IN,
+                shop=shop,
+                created_by=self.profile,
+            )
+            StockMovementLine.objects.create(
+                movement=movement,
+                item=self.item,
+                quantity=1,
+                serial_numbers=[serial],
+            )
+
+    def test_shop_dropdown_and_filter(self):
+        self.client.login(username="840031", password=self.password)
+        year = timezone.localdate().year
+        all_resp = self.client.get(
+            "/it-support/stock-management/",
+            {"mode": "serial-movements", "range": "year", "year": year},
+        )
+        self.assertEqual(all_resp.status_code, 200)
+        self.assertContains(all_resp, 'name="shop_id"')
+        self.assertContains(all_resp, "All shops")
+        self.assertContains(all_resp, "SERIAL SHOP A")
+        self.assertContains(all_resp, "SERIAL SHOP B")
+        self.assertContains(all_resp, "SNA-001")
+        self.assertContains(all_resp, "SNB-001")
+        self.assertEqual(all_resp.context["selected_shop_ids"], set())
+
+        filtered = self.client.get(
+            "/it-support/stock-management/",
+            {
+                "mode": "serial-movements",
+                "range": "year",
+                "year": year,
+                "shop_id": self.shop_a.pk,
+            },
+        )
+        self.assertEqual(filtered.status_code, 200)
+        self.assertEqual(filtered.context["selected_shop_ids"], {self.shop_a.pk})
+        self.assertContains(filtered, "SNA-001")
+        self.assertNotContains(filtered, "SNB-001")
+        serials = [row["serial_number"] for row in filtered.context["rows"]]
+        self.assertEqual(serials, ["SNA-001"])
+
+    def test_status_filter(self):
+        from items.models import StockMovement, StockMovementLine, StockMovementType
+
+        out_movement = StockMovement.objects.create(
+            movement_type=StockMovementType.OUT,
+            shop=self.shop_a,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=out_movement,
+            item=self.item,
+            quantity=1,
+            serial_numbers=["SNA-OUT-1"],
+        )
+
+        self.client.login(username="840031", password=self.password)
+        year = timezone.localdate().year
+        page = self.client.get(
+            "/it-support/stock-management/",
+            {"mode": "serial-movements", "range": "year", "year": year},
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'name="event_type"')
+        self.assertContains(page, "Status")
+        self.assertEqual(page.context["event_filter"], "all")
+        self.assertContains(page, "SNA-001")
+        self.assertContains(page, "SNA-OUT-1")
+
+        stock_in = self.client.get(
+            "/it-support/stock-management/",
+            {
+                "mode": "serial-movements",
+                "range": "year",
+                "year": year,
+                "event_type": "in",
+            },
+        )
+        self.assertEqual(stock_in.status_code, 200)
+        self.assertEqual(stock_in.context["event_filter"], "in")
+        self.assertContains(stock_in, "SNA-001")
+        self.assertNotContains(stock_in, "SNA-OUT-1")
+
+        stock_out = self.client.get(
+            "/it-support/stock-management/",
+            {
+                "mode": "serial-movements",
+                "range": "year",
+                "year": year,
+                "event_type": "out",
+            },
+        )
+        self.assertEqual(stock_out.status_code, 200)
+        self.assertEqual(stock_out.context["event_filter"], "out")
+        self.assertContains(stock_out, "SNA-OUT-1")
+        self.assertNotContains(stock_out, "SNA-001")

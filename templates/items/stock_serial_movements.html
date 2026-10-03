@@ -30,6 +30,28 @@
       <input type="hidden" name="mode" value="serial-movements">
 
       <label class="stock-report-field">
+        <span>Shop</span>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="stock-report-field">
+        <span>Status</span>
+        <select name="event_type" aria-label="Movement status">
+          <option value="all"{% if event_filter == 'all' %} selected{% endif %}>All</option>
+          <option value="in"{% if event_filter == 'in' %} selected{% endif %}>Stock in</option>
+          <option value="out"{% if event_filter == 'out' %} selected{% endif %}>Stock out</option>
+          <option value="sale"{% if event_filter == 'sale' %} selected{% endif %}>Sale</option>
+          <option value="transfer"{% if event_filter == 'transfer' %} selected{% endif %}>Transfer</option>
+          <option value="return"{% if event_filter == 'return' %} selected{% endif %}>Return</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field">
         <span>Time</span>
         <select name="range" data-stock-report-range aria-label="Time range">
           <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
