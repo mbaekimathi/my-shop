@@ -3330,6 +3330,7 @@ def _movements_report_params(
     selected_shop_ids,
     selected_categories=None,
     selected_item_ids=None,
+    search_q="",
     **overrides,
 ):
     params = {
@@ -3353,12 +3354,99 @@ def _movements_report_params(
         params["category"] = selected_categories[0]
     if item_mode == "items" and selected_item_ids:
         params["item_id"] = selected_item_ids[0]
+    if (item_mode or "all") == "all" and (search_q or "").strip():
+        params["q"] = (search_q or "").strip()
     params.update(overrides)
     return {
         key: value
         for key, value in params.items()
         if value not in (None, "")
     }
+
+
+def _normalize_report_search_q(raw):
+    return (raw or "").strip()
+
+
+def _filter_item_report_rows_by_search(rows, query):
+    """Keep item report rows whose name/category/shop match q (whole item groups)."""
+    q = (query or "").strip().lower()
+    if not q or not rows:
+        return list(rows or [])
+
+    matched_ids = set()
+    for row in rows:
+        item = row.get("item")
+        hay = " ".join(
+            [
+                getattr(item, "name", "") or "",
+                getattr(item, "category", "") or "",
+                row.get("shop_name") or "",
+            ]
+        ).lower()
+        if q in hay:
+            item_id = getattr(item, "pk", None)
+            if item_id is not None:
+                matched_ids.add(item_id)
+
+    if not matched_ids:
+        return []
+
+    return [
+        row
+        for row in rows
+        if getattr(row.get("item"), "pk", None) in matched_ids
+    ]
+
+
+def _filter_movement_item_rows_by_search(rows, query):
+    """Keep movement item-summary rows matching q (whole item groups)."""
+    q = (query or "").strip().lower()
+    if not q or not rows:
+        return list(rows or [])
+
+    matched_keys = set()
+    for row in rows:
+        hay = " ".join(
+            [
+                row.get("item_name") or "",
+                row.get("item_category") or "",
+                row.get("shop_name") or "",
+            ]
+        ).lower()
+        if q in hay:
+            item_id = row.get("item_id")
+            matched_keys.add(
+                item_id
+                if item_id is not None
+                else f"name:{(row.get('item_name') or '').lower()}"
+            )
+
+    if not matched_keys:
+        return []
+
+    kept = []
+    for row in rows:
+        item_id = row.get("item_id")
+        key = (
+            item_id
+            if item_id is not None
+            else f"name:{(row.get('item_name') or '').lower()}"
+        )
+        if key in matched_keys:
+            kept.append(row)
+    return kept
+
+
+def _filter_movement_events_by_search(events, query):
+    q = (query or "").strip().lower()
+    if not q or not events:
+        return list(events or [])
+    return [
+        event
+        for event in events
+        if q in _timeline_event_search_text(event)
+    ]
 
 
 def _stock_report_download_filename(
@@ -3724,7 +3812,7 @@ def _stock_report_pdf_response(*, filename, pdf_bytes):
 
 
 def _build_audit_detail_rows(events, *, shop_ids, day_end):
-    """Audit PDF activity rows: When, Type, Qty, Seller, Status, Note, Shop qty."""
+    """Audit PDF rows: When, Type, Item, Reason, Qty, Actual qty, Missing, Excess, Note."""
     detail_events = sorted(
         events or [],
         key=lambda event: (
@@ -3733,10 +3821,17 @@ def _build_audit_detail_rows(events, *, shop_ids, day_end):
             event.get("event_type") or "",
         ),
     )
-    headers = ["When", "Type", "Qty", "Seller", "Status", "Note", "Shop qty"]
-    shop_qty_map = _audit_shop_qty_after_events(
-        detail_events, shop_ids=shop_ids, day_end=day_end
-    )
+    headers = [
+        "When",
+        "Type",
+        "Item",
+        "Reason",
+        "Qty",
+        "Actual qty",
+        "Missing",
+        "Excess",
+        "Note",
+    ]
     rows = []
     for event in detail_events:
         date_value, time_value = _format_movement_pdf_date_time(
@@ -3747,11 +3842,13 @@ def _build_audit_detail_rows(events, *, shop_ids, day_end):
             [
                 when,
                 event.get("event_label") or event.get("event_type") or "",
-                event.get("quantity") or 0,
-                _movement_event_seller_label(event),
-                _movement_event_status_label(event),
+                event.get("item_name") or "—",
                 _movement_event_note_label(event),
-                shop_qty_map.get(id(event), 0),
+                event.get("quantity") or 0,
+                "",
+                "",
+                "",
+                "",
             ]
         )
     return headers, rows
@@ -4125,6 +4222,10 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     if item_mode not in ("all", "category", "items"):
         item_mode = "all"
 
+    search_q = _normalize_report_search_q(request.GET.get("q"))
+    if item_mode != "all":
+        search_q = ""
+
     categories = list(
         Item.objects.order_by("category")
         .values_list("category", flat=True)
@@ -4296,11 +4397,19 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             movement_events = _filter_movement_events(movement_events, event_filter)
         if view_by == "timeline":
             movement_events = _filter_timeline_display_events(movement_events)
+            if search_q:
+                movement_events = _filter_movement_events_by_search(
+                    movement_events, search_q
+                )
             movement_event_groups = _group_timeline_events_by_receipt(
                 movement_events
             )
         elif is_item_movement_summary:
             movement_events = _filter_item_summary_movement_events(movement_events)
+            if search_q:
+                movement_events = _filter_movement_events_by_search(
+                    movement_events, search_q
+                )
         (
             units_in,
             units_out,
@@ -4317,6 +4426,10 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
                 shops_by_id=shops_by_id,
                 require_events=True,
             )
+            if search_q:
+                movement_item_rows = _filter_movement_item_rows_by_search(
+                    movement_item_rows, search_q
+                )
             for row in movement_item_rows:
                 if row.get("is_item_total"):
                     continue
@@ -4360,6 +4473,10 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             day_end,
             shops_by_id=shops_by_id,
         )
+        if search_q:
+            item_report_rows = _filter_item_report_rows_by_search(
+                item_report_rows, search_q
+            )
         for row in item_report_rows:
             if row.get("is_item_total"):
                 continue
@@ -4423,6 +4540,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         selected_shop_ids=selected_shop_ids,
         selected_categories=selected_categories,
         selected_item_ids=selected_item_ids,
+        search_q=search_q,
     )
     movements_back_url = ""
     if is_item_movement_detail:
@@ -4435,6 +4553,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             selected_shop_ids=selected_shop_ids,
             selected_categories=selected_categories,
             selected_item_ids=[],
+            search_q=search_q,
         )
         movements_back_url = stock_management_url(
             profile.role, "movements", report_params=back_params
@@ -4457,6 +4576,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
                 selected_categories=selected_categories,
                 selected_item_ids=[row["item_id"]],
                 item_id=row["item_id"],
+                search_q="",
             )
             row["detail_url"] = stock_management_url(
                 profile.role, "movements", report_params=detail_params
@@ -4569,6 +4689,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             ),
             "selected_filter_items": selected_filter_items,
             "selected_item_ids": set(selected_item_ids),
+            "search_q": search_q,
             "event_filter": event_filter,
             "view_by": view_by,
             "report_kind": _parse_report_kind(request.GET.get("report_kind")),

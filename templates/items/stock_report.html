@@ -100,17 +100,22 @@
         </select>
       </label>
 
-      <label class="stock-report-field stock-report-live-search" data-item-mode-panel="all"{% if item_mode == 'category' or item_mode == 'items' %} hidden{% endif %}>
+      <div class="stock-report-field stock-report-live-search" data-item-mode-panel="all"{% if item_mode == 'category' or item_mode == 'items' %} hidden{% endif %}>
         <span>Search</span>
-        <input
-          type="search"
-          placeholder="Live search items…"
-          autocomplete="off"
-          data-stock-live-search
-          {% if item_mode == 'category' or item_mode == 'items' %}disabled{% endif %}
-          aria-label="Live search items"
-        >
-      </label>
+        <div class="stock-report-item-picker-box" data-stock-live-suggest>
+          <input
+            type="search"
+            name="q"
+            value="{{ search_q }}"
+            placeholder="Type to search items…"
+            autocomplete="off"
+            data-stock-live-search
+            {% if item_mode == 'category' or item_mode == 'items' %}disabled{% endif %}
+            aria-label="Search items"
+          >
+          <div class="stock-report-item-results" data-stock-live-results hidden></div>
+        </div>
+      </div>
 
       <label class="stock-report-field" data-item-mode-panel="category"{% if item_mode != 'category' %} hidden{% endif %}>
         <span>Category</span>
@@ -480,7 +485,9 @@
       <div class="dashboard-placeholder">
         <i data-lucide="arrow-down-up" aria-hidden="true"></i>
         <p>
-          {% if event_filter != 'all' %}
+          {% if search_q %}
+          No movements match “{{ search_q }}” in {{ report_period_label }} for these filters.
+          {% elif event_filter != 'all' %}
           No {{ event_filter }} movements in {{ report_period_label }} for these filters.
           {% else %}
           No stock movements in {{ report_period_label }} for these filters.
@@ -488,7 +495,6 @@
         </p>
       </div>
       {% endif %}
-      <p class="stock-report-live-empty" data-stock-live-empty hidden>No rows match your search.</p>
     {% else %}
       {% if item_report_rows %}
       <div class="staff-table-wrap stock-report-table-wrap stock-report-table-wrap--items">
@@ -600,10 +606,15 @@
       {% else %}
       <div class="dashboard-placeholder">
         <i data-lucide="bar-chart-3" aria-hidden="true"></i>
-        <p>No shop stock or movement in {{ report_period_label }} for these filters.</p>
+        <p>
+          {% if search_q %}
+          No items match “{{ search_q }}” in {{ report_period_label }} for these filters.
+          {% else %}
+          No shop stock or movement in {{ report_period_label }} for these filters.
+          {% endif %}
+        </p>
       </div>
       {% endif %}
-      <p class="stock-report-live-empty" data-stock-live-empty hidden>No rows match your search.</p>
     {% endif %}
   </div>
 </section>
@@ -671,46 +682,8 @@
     };
 
     const liveSearchInput = form.querySelector("[data-stock-live-search]");
-    const liveRows = [...document.querySelectorAll("[data-stock-live-row]")];
-    const liveEmpty = document.querySelector("[data-stock-live-empty]");
-    const liveTables = [...document.querySelectorAll(".stock-report-table")];
-
-    const applyLiveSearch = () => {
-      if (!liveRows.length) return;
-      const q = (liveSearchInput?.value || "").trim().toLowerCase();
-      let visible = 0;
-      liveRows.forEach((row) => {
-        const hay = (row.getAttribute("data-search-text") || "").toLowerCase();
-        const match = !q || hay.includes(q);
-        row.hidden = !match;
-        if (match) visible += 1;
-      });
-      liveTables.forEach((table) => {
-        const wrap = table.closest(".stock-report-table-wrap");
-        if (wrap) wrap.hidden = Boolean(q && visible === 0);
-        table.querySelectorAll("tfoot").forEach((tfoot) => {
-          tfoot.hidden = Boolean(q);
-        });
-      });
-      if (liveEmpty) {
-        liveEmpty.hidden = !(q && visible === 0);
-      }
-    };
-
-    const resetLiveSearch = () => {
-      if (liveSearchInput) liveSearchInput.value = "";
-      liveRows.forEach((row) => {
-        row.hidden = false;
-      });
-      liveTables.forEach((table) => {
-        const wrap = table.closest(".stock-report-table-wrap");
-        if (wrap) wrap.hidden = false;
-        table.querySelectorAll("tfoot").forEach((tfoot) => {
-          tfoot.hidden = false;
-        });
-      });
-      if (liveEmpty) liveEmpty.hidden = true;
-    };
+    const liveSuggestRoot = form.querySelector("[data-stock-live-suggest]");
+    const liveResultsEl = form.querySelector("[data-stock-live-results]");
 
     const syncItemMode = (mode) => {
       itemPanels.forEach((panel) => {
@@ -732,8 +705,10 @@
           }
         });
       });
-      if (mode === "all") applyLiveSearch();
-      else resetLiveSearch();
+      if (mode !== "all" && liveSearchInput) {
+        liveSearchInput.value = "";
+        hideLiveResults();
+      }
     };
 
     const picker = form.querySelector("[data-stock-item-picker]");
@@ -780,10 +755,6 @@
         )
       );
 
-    const renderChips = () => {
-      // chips already in DOM via add/remove
-    };
-
     const addItem = (item) => {
       if (!chipsEl || selectedIds().has(String(item.id))) return;
       const chip = document.createElement("span");
@@ -804,15 +775,28 @@
       resultsEl.innerHTML = "";
     };
 
-    const showResults = (query) => {
-      if (!resultsEl || !searchInput || searchInput.disabled) return;
+    const hideLiveResults = () => {
+      if (!liveResultsEl) return;
+      liveResultsEl.hidden = true;
+      liveResultsEl.innerHTML = "";
+    };
+
+    const escapeAttr = (value) =>
+      String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;");
+
+    const showCatalogResults = ({ resultsNode, inputNode, query, excludeSelected }) => {
+      if (!resultsNode || !inputNode || inputNode.disabled) return;
       const q = query.trim().toLowerCase();
       if (!q) {
-        hideResults();
+        resultsNode.hidden = true;
+        resultsNode.innerHTML = "";
         return;
       }
       const renderMatches = () => {
-        const selected = selectedIds();
+        const selected = excludeSelected ? selectedIds() : new Set();
         const matches = catalog
           .filter((item) => {
             if (selected.has(String(item.id))) return false;
@@ -822,26 +806,26 @@
           .slice(0, 8);
 
         if (!matches.length) {
-          resultsEl.innerHTML = `<p class="stock-report-item-empty">No matches</p>`;
-          resultsEl.hidden = false;
+          resultsNode.innerHTML = `<p class="stock-report-item-empty">No matches</p>`;
+          resultsNode.hidden = false;
           return;
         }
 
-        resultsEl.innerHTML = matches
+        resultsNode.innerHTML = matches
           .map(
             (item) =>
-              `<button type="button" class="stock-report-item-result" data-item-id="${item.id}" data-item-name="${item.name.replace(/"/g, "&quot;")}">
-              <strong>${item.name}</strong>
-              <em>${item.category}</em>
+              `<button type="button" class="stock-report-item-result" data-item-id="${item.id}" data-item-name="${escapeAttr(item.name)}">
+              <strong>${escapeAttr(item.name)}</strong>
+              <em>${escapeAttr(item.category)}</em>
             </button>`
           )
           .join("");
-        resultsEl.hidden = false;
+        resultsNode.hidden = false;
       };
 
       if (!catalog.length && itemPickerUrl) {
-        resultsEl.innerHTML = `<p class="stock-report-item-empty">Loading items…</p>`;
-        resultsEl.hidden = false;
+        resultsNode.innerHTML = `<p class="stock-report-item-empty">Loading items…</p>`;
+        resultsNode.hidden = false;
         ensureCatalog().then(renderMatches);
         return;
       }
@@ -849,11 +833,23 @@
     };
 
     searchInput?.addEventListener("input", () => {
-      showResults(searchInput.value);
+      showCatalogResults({
+        resultsNode: resultsEl,
+        inputNode: searchInput,
+        query: searchInput.value,
+        excludeSelected: true,
+      });
     });
 
     searchInput?.addEventListener("focus", () => {
-      if (searchInput.value.trim()) showResults(searchInput.value);
+      if (searchInput.value.trim()) {
+        showCatalogResults({
+          resultsNode: resultsEl,
+          inputNode: searchInput,
+          query: searchInput.value,
+          excludeSelected: true,
+        });
+      }
     });
 
     resultsEl?.addEventListener("click", (event) => {
@@ -867,6 +863,35 @@
       hideResults();
     });
 
+    liveSearchInput?.addEventListener("input", () => {
+      showCatalogResults({
+        resultsNode: liveResultsEl,
+        inputNode: liveSearchInput,
+        query: liveSearchInput.value,
+        excludeSelected: false,
+      });
+    });
+
+    liveSearchInput?.addEventListener("focus", () => {
+      if (liveSearchInput.value.trim()) {
+        showCatalogResults({
+          resultsNode: liveResultsEl,
+          inputNode: liveSearchInput,
+          query: liveSearchInput.value,
+          excludeSelected: false,
+        });
+      } else {
+        ensureCatalog();
+      }
+    });
+
+    liveResultsEl?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-item-name]");
+      if (!btn || !liveSearchInput) return;
+      liveSearchInput.value = btn.getAttribute("data-item-name") || "";
+      hideLiveResults();
+    });
+
     chipsEl?.addEventListener("click", (event) => {
       const removeBtn = event.target.closest("[data-stock-item-remove]");
       if (!removeBtn) return;
@@ -875,12 +900,13 @@
 
     document.addEventListener("click", (event) => {
       if (picker && !picker.contains(event.target)) hideResults();
+      if (liveSuggestRoot && !liveSuggestRoot.contains(event.target)) {
+        hideLiveResults();
+      }
     });
 
     syncRangeFields(rangeSelect?.value || "day");
     syncItemMode(itemModeSelect?.value || "all");
-
-    liveSearchInput?.addEventListener("input", applyLiveSearch);
 
     rangeSelect?.addEventListener("change", () => {
       syncRangeFields(rangeSelect.value);
@@ -889,19 +915,10 @@
     itemModeSelect?.addEventListener("change", () => {
       syncItemMode(itemModeSelect.value);
       hideResults();
-      if (itemModeSelect.value === "items") ensureCatalog();
-    });
-
-    form.querySelectorAll("[data-stock-report-calendar]").forEach((input) => {
-      input.addEventListener("change", () => {
-        if (input.disabled) return;
-        if (rangeSelect?.value === "period") {
-          const from = form.querySelector('[name="date_from"]');
-          const to = form.querySelector('[name="date_to"]');
-          if (!from?.value || !to?.value) return;
-        }
-        form.submit();
-      });
+      hideLiveResults();
+      if (itemModeSelect.value === "items" || itemModeSelect.value === "all") {
+        ensureCatalog();
+      }
     });
   })();
 

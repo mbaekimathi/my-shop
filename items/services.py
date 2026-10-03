@@ -3621,7 +3621,7 @@ def build_stock_report_pdf(
 
     Actual reports include item summaries and operational activity columns.
     Audit PDFs are a separate trail document: amber chrome, event KPIs, and
-    When/Type/Qty/Seller/Status/Note/Shop qty — no buy-price summary.
+    When/Type/Item/Reason/Qty/Actual qty/Missing/Excess/Note — no buy-price summary.
     """
     from io import BytesIO
     from pathlib import Path
@@ -4076,9 +4076,10 @@ def build_stock_report_pdf(
 
     if is_audit:
         audit_qty = 0
+        # Audit rows: When, Type, Item, Reason, Qty, Actual qty, Missing, Excess, Note
         for row in detail_rows or []:
             try:
-                audit_qty += int(row[2] or 0)
+                audit_qty += int(row[4] or 0)
             except (TypeError, ValueError, IndexError):
                 pass
         kpi_data = [
@@ -4249,17 +4250,19 @@ def build_stock_report_pdf(
             _section(
                 "AUDIT LEDGER",
                 "Activity details",
-                "When · Type · Qty · Seller · Status · Note · Shop qty after each event.",
+                "When · Type · Item · Reason · Qty · Actual qty · Missing · Excess · Note.",
             )
         )
         headers = list(detail_headers) if detail_headers else [
             "When",
             "Type",
+            "Item",
+            "Reason",
             "Qty",
-            "Seller",
-            "Status",
+            "Actual qty",
+            "Missing",
+            "Excess",
             "Note",
-            "Shop qty",
         ]
         detail_data = [list(row) for row in (detail_rows or [])]
         if not detail_data:
@@ -4269,13 +4272,15 @@ def build_stock_report_pdf(
         else:
             usable = doc.width
             detail_widths = [
-                usable * 0.16,
                 usable * 0.12,
-                usable * 0.08,
-                usable * 0.16,
+                usable * 0.09,
+                usable * 0.15,
                 usable * 0.12,
-                usable * 0.22,
-                usable * 0.14,
+                usable * 0.07,
+                usable * 0.09,
+                usable * 0.09,
+                usable * 0.09,
+                usable * 0.18,
             ]
             story.append(
                 _styled_table(
@@ -4283,7 +4288,7 @@ def build_stock_report_pdf(
                     detail_data,
                     col_widths=detail_widths,
                     type_col=1,
-                    qty_col=2,
+                    qty_col=4,
                 )
             )
         doc.build(story, canvasmaker=_NumberedCanvas)
@@ -4374,18 +4379,16 @@ def build_stock_report_pdf(
             cat_w = doc.width * 0.12
             rest = (doc.width - item_w - cat_w) / max(1, n - 2)
             sum_widths = [item_w, cat_w] + [rest] * (n - 2)
+    # Do not KeepTogether the full summary table — large item lists were
+    # pushed to page 2, leaving only the section title on page 1.
     story.append(
-        KeepTogether(
-            [
-                _styled_table(
-                    sum_headers,
-                    sum_rows,
-                    col_widths=sum_widths,
-                    emphasize_last=bool(sum_rows),
-                    numeric_from=2,
-                    qty_col=None,
-                )
-            ]
+        _styled_table(
+            sum_headers,
+            sum_rows,
+            col_widths=sum_widths,
+            emphasize_last=bool(sum_rows),
+            numeric_from=2,
+            qty_col=None,
         )
     )
     story.append(Spacer(1, 3 * mm))
