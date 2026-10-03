@@ -1059,15 +1059,6 @@ def sidebar_for_stock_management(
                     ),
                 ),
                 (
-                    "request-audits",
-                    _link(
-                        "Request audits",
-                        "scroll-text",
-                        href=stock_management_url(role, "request-audits"),
-                        active=active_mode == "request-audits",
-                    ),
-                ),
-                (
                     "serials",
                     _link(
                         "Serials",

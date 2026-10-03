@@ -6148,12 +6148,6 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "pending_stock_requests": list_stock_requests_for_profile(
                 profile, status=StockRequestStatus.PENDING, limit=25
             ),
-            "approved_stock_requests": list_stock_requests_for_profile(
-                profile, status=StockRequestStatus.FULFILLED, limit=25
-            ),
-            "declined_stock_requests": list_stock_requests_for_profile(
-                profile, status=StockRequestStatus.DECLINED, limit=25
-            ),
             "request_summary": summarize_stock_requests_for_profile(profile),
             "stock_request_audits_url": stock_management_url(
                 profile.role, "request-audits"
