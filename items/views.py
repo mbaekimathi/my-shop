@@ -5634,11 +5634,16 @@ def stock_settings(request, profile, meta, module):
 
 @require_http_methods(["GET"])
 def stock_request_audits(request, profile, meta, module):
+    from urllib.parse import urlencode
+
+    from django.http import JsonResponse
+
     from employees.models import EmployeeRole
     from employees.module_permissions import require_module_permission
     from employees.workspace import sidebar_for_stock_management, stock_management_url
 
-    from .models import StockRequestStatus
+    from .models import Item
+    from .services import build_request_item_audit_rows
 
     denied = require_module_permission(request, profile, "stock-management", "request")
     if denied is not None:
@@ -5649,6 +5654,13 @@ def stock_request_audits(request, profile, meta, module):
         EmployeeRole.IT_SUPPORT,
     ):
         return _stock_redirect(request.path, "view")
+
+    # Lazy item-picker catalog (same pattern as stock report/movements).
+    if (request.GET.get("item_picker") or "").strip() == "1":
+        picker_items = list(
+            Item.objects.order_by("category", "name").values("id", "name", "category")
+        )
+        return JsonResponse({"items": picker_items})
 
     range_type, day_start, day_end, filter_context = _report_range_bounds(request)
     filter_shops = actionable_shops_for_profile(profile)
@@ -5665,6 +5677,16 @@ def stock_request_audits(request, profile, meta, module):
     if status_filter not in ("all", "pending", "fulfilled", "declined", "approved"):
         status_filter = "all"
 
+    selected_item_ids = _parse_id_list(request.GET.getlist("item_id"))
+    selected_item_id = selected_item_ids[0] if selected_item_ids else 0
+    selected_item = None
+    if selected_item_id:
+        selected_item = (
+            Item.objects.filter(pk=selected_item_id).only("id", "name", "category").first()
+        )
+        if selected_item is None:
+            selected_item_id = 0
+
     list_status = None if status_filter == "all" else status_filter
     audit_requests = list_stock_requests_for_profile(
         profile,
@@ -5672,8 +5694,18 @@ def stock_request_audits(request, profile, meta, module):
         start=day_start,
         end=day_end,
         shop_id=shop_filter_id or None,
+        item_id=selected_item_id or None,
         limit=250,
     )
+
+    item_audit_rows = []
+    item_audit_summary = None
+    if selected_item_id:
+        item_audit_rows, audit_item, item_audit_summary = build_request_item_audit_rows(
+            audit_requests, selected_item_id
+        )
+        if selected_item is None:
+            selected_item = audit_item
 
     page_sidebar = sidebar_for_stock_management(
         profile.role,
@@ -5688,6 +5720,35 @@ def stock_request_audits(request, profile, meta, module):
         "year": "Year",
     }
     summary = summarize_stock_requests_for_profile(profile)
+
+    movements_url = ""
+    if selected_item_id:
+        mov_params = {
+            "mode": "movements",
+            "range": filter_context["report_range"],
+            "view_by": "timeline",
+            "event_type": "all",
+            "item_mode": "items",
+            "item_id": selected_item_id,
+            "report_kind": "actual",
+        }
+        if shop_filter_id:
+            mov_params["shop_id"] = shop_filter_id
+        if filter_context["report_range"] == "day":
+            mov_params["date"] = filter_context["report_date_value"]
+        elif filter_context["report_range"] == "period":
+            mov_params["date_from"] = filter_context["report_date_from"]
+            mov_params["date_to"] = filter_context["report_date_to"]
+        elif filter_context["report_range"] == "month":
+            mov_params["month"] = filter_context["report_month_value"]
+        elif filter_context["report_range"] == "year":
+            mov_params["year"] = str(filter_context["report_year_value"])[:4]
+        movements_url = f"{request.path}?{urlencode(mov_params)}"
+
+    clear_item_params = request.GET.copy()
+    if "item_id" in clear_item_params:
+        clear_item_params.setlist("item_id", [])
+    clear_item_url = f"{request.path}?{clear_item_params.urlencode()}"
 
     return render(
         request,
@@ -5706,6 +5767,14 @@ def stock_request_audits(request, profile, meta, module):
             "filter_shops": filter_shops,
             "selected_shop_id": shop_filter_id,
             "status_filter": status_filter,
+            "selected_item": selected_item,
+            "selected_item_id": selected_item_id,
+            "item_audit_rows": item_audit_rows,
+            "item_audit_summary": item_audit_summary,
+            "item_movements_url": movements_url,
+            "clear_item_url": clear_item_url,
+            "item_picker_url": f"{request.path}?mode=request-audits&item_picker=1",
+            "filter_items_json": "[]",
             "report_range": filter_context["report_range"],
             "report_range_label": range_labels.get(
                 filter_context["report_range"], "Single day"

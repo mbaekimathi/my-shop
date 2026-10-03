@@ -2235,12 +2235,15 @@ def list_stock_requests_for_profile(
     start=None,
     end=None,
     shop_id=None,
+    item_id=None,
 ):
     from django.db.models import Q
 
     qs = stock_request_qs_for_profile(profile)
     if shop_id:
         qs = qs.filter(Q(shop_id=shop_id) | Q(requested_from_shop_id=shop_id))
+    if item_id:
+        qs = qs.filter(lines__item_id=item_id).distinct()
     if status:
         if status == "approved":
             qs = qs.filter(request_status=StockRequestStatus.FULFILLED)
@@ -2261,6 +2264,87 @@ def list_stock_requests_for_profile(
     if limit:
         qs = qs[:limit]
     return _enrich_stock_request_movements(list(qs))
+
+
+def build_request_item_audit_rows(requests, item_id):
+    """Flatten request lines for one item into an audit transaction list."""
+    from django.utils import timezone
+
+    try:
+        item_pk = int(item_id)
+    except (TypeError, ValueError):
+        return [], None, {
+            "pending": _ZERO_QTY,
+            "fulfilled": _ZERO_QTY,
+            "declined": _ZERO_QTY,
+            "total": _ZERO_QTY,
+            "count": 0,
+        }
+
+    rows = []
+    selected_item = None
+    units_pending = _ZERO_QTY
+    units_fulfilled = _ZERO_QTY
+    units_declined = _ZERO_QTY
+
+    for req in requests or []:
+        for line in req.lines.all():
+            if int(line.item_id or 0) != item_pk:
+                continue
+            if selected_item is None:
+                selected_item = line.item
+            qty = _quantize_qty(line.quantity)
+            status = (req.request_status or "").strip().lower()
+            if status == StockRequestStatus.FULFILLED:
+                units_fulfilled += qty
+            elif status == StockRequestStatus.DECLINED:
+                units_declined += qty
+            else:
+                units_pending += qty
+            when = req.responded_at or req.created_at
+            if status == StockRequestStatus.PENDING and req.created_by:
+                actor = req.created_by
+                actor_label = "Requested"
+            elif req.responded_by:
+                actor = req.responded_by
+                actor_label = (
+                    "Approved"
+                    if status == StockRequestStatus.FULFILLED
+                    else "Declined"
+                )
+            else:
+                actor = req.created_by
+                actor_label = "Requested"
+            rows.append(
+                {
+                    "request": req,
+                    "line": line,
+                    "item": line.item,
+                    "quantity": qty,
+                    "status": status,
+                    "when": when,
+                    "actor": actor,
+                    "actor_label": actor_label,
+                    "note": (line.note or req.notes or "").strip(),
+                }
+            )
+
+    rows.sort(
+        key=lambda row: (
+            row["when"] or timezone.now(),
+            int(getattr(row["request"], "pk", 0) or 0),
+            int(getattr(row["line"], "pk", 0) or 0),
+        ),
+        reverse=True,
+    )
+    summary = {
+        "pending": units_pending,
+        "fulfilled": units_fulfilled,
+        "declined": units_declined,
+        "total": units_pending + units_fulfilled + units_declined,
+        "count": len(rows),
+    }
+    return rows, selected_item, summary
 
 
 def summarize_stock_requests_for_profile(profile):

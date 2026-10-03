@@ -1585,3 +1585,100 @@ class DecimalStockQuantityTests(TestCase):
         apply_stock_movement(self.profile, StockMovementType.IN, good)
         stock = ShopStock.objects.get(shop=self.shop, item=self.serial_item)
         self.assertEqual(stock.quantity, Decimal("1.000"))
+
+
+class RequestItemAuditTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="840088",
+            password="audit-pass",
+            email="request-audit@test.local",
+            first_name="REQUEST",
+            last_name="AUDIT",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840088",
+            phone_country_code="+254",
+            phone_number="700000888",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop_a = Shop.objects.create(
+            name="AUDIT SHOP A",
+            location="NAIROBI",
+            email="audit-a@test.local",
+            phone_number="0700000888",
+            login_code="840888",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.shop_b = Shop.objects.create(
+            name="AUDIT SHOP B",
+            location="MOMBASA",
+            email="audit-b@test.local",
+            phone_number="0700000889",
+            login_code="840889",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        from items.models import Item, StockMovement, StockMovementLine, StockMovementType, StockRequestStatus
+
+        self.item = Item.objects.create(
+            category="BULK",
+            name="AUDIT CABLE",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        self.other = Item.objects.create(
+            category="BULK",
+            name="OTHER CABLE",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        self.movement = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_a,
+            requested_from_shop=self.shop_b,
+            request_status=StockRequestStatus.FULFILLED,
+            created_by=self.profile,
+            responded_by=self.profile,
+            responded_at=timezone.now(),
+        )
+        StockMovementLine.objects.create(
+            movement=self.movement,
+            item=self.item,
+            quantity=Decimal("2.500"),
+        )
+        StockMovementLine.objects.create(
+            movement=self.movement,
+            item=self.other,
+            quantity=Decimal("1"),
+        )
+
+    def test_list_requests_filters_by_item(self):
+        from items.services import list_stock_requests_for_profile
+
+        rows = list_stock_requests_for_profile(self.profile, item_id=self.item.pk)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].pk, self.movement.pk)
+
+        empty = list_stock_requests_for_profile(self.profile, item_id=999999)
+        self.assertEqual(empty, [])
+
+    def test_build_request_item_audit_rows(self):
+        from items.services import (
+            build_request_item_audit_rows,
+            list_stock_requests_for_profile,
+        )
+
+        requests = list_stock_requests_for_profile(self.profile, item_id=self.item.pk)
+        rows, item, summary = build_request_item_audit_rows(requests, self.item.pk)
+        self.assertEqual(item.pk, self.item.pk)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["quantity"], Decimal("2.500"))
+        self.assertEqual(summary["fulfilled"], Decimal("2.500"))
+        self.assertEqual(summary["count"], 1)

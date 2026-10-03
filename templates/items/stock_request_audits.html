@@ -9,10 +9,34 @@
     <div class="stock-panel-head-top">
       <div>
         <p class="stock-kicker">Stock requests · Audit trail</p>
-        <h2>Request audits</h2>
+        <h2>
+          {% if selected_item %}
+          Item audit · {{ selected_item.name }}
+          {% else %}
+          Request audits
+          {% endif %}
+        </h2>
         <p>{{ report_range_label }} · {{ report_period_label }}</p>
       </div>
       <div class="stock-stats">
+        {% if selected_item and item_audit_summary %}
+        <p class="stock-stat">
+          <strong>{{ item_audit_summary.count }}</strong>
+          <span>transactions</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ item_audit_summary.pending }}</strong>
+          <span>pending units</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ item_audit_summary.fulfilled }}</strong>
+          <span>approved units</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ item_audit_summary.declined }}</strong>
+          <span>declined units</span>
+        </p>
+        {% else %}
         <p class="stock-stat">
           <strong>{{ request_summary.pending }}</strong>
           <span>pending</span>
@@ -29,10 +53,16 @@
           <strong>{{ audit_request_count }}</strong>
           <span>in view</span>
         </p>
+        {% endif %}
       </div>
     </div>
 
-    <form class="stock-report-filters" method="get">
+    <form
+      class="stock-report-filters"
+      method="get"
+      data-stock-report-filters
+      {% if item_picker_url %}data-item-picker-url="{{ item_picker_url }}"{% endif %}
+    >
       <input type="hidden" name="mode" value="request-audits">
 
       <label class="stock-report-field">
@@ -96,14 +126,118 @@
         >
       </label>
 
+      <div class="stock-report-field stock-report-item-picker">
+        <span>Item audit</span>
+        <div class="stock-report-item-picker-box" data-stock-item-picker data-stock-item-picker-single>
+          <input
+            type="search"
+            placeholder="Search one item to audit…"
+            autocomplete="off"
+            data-stock-item-search
+            aria-label="Search item to audit"
+          >
+          <div class="stock-report-item-results" data-stock-item-results hidden></div>
+        </div>
+        <div class="stock-report-item-chips" data-stock-item-chips>
+          {% if selected_item %}
+          <span class="stock-report-item-chip" data-item-id="{{ selected_item.pk }}">
+            {{ selected_item.name }}
+            <button type="button" aria-label="Remove {{ selected_item.name }}" data-stock-item-remove>&times;</button>
+            <input type="hidden" name="item_id" value="{{ selected_item.pk }}">
+          </span>
+          {% endif %}
+        </div>
+        <script type="application/json" data-stock-item-catalog>{{ filter_items_json|safe }}</script>
+      </div>
+
       <button type="submit" class="btn btn--primary stock-report-apply">Apply</button>
+      {% if selected_item %}
+      <a class="btn btn--ghost" href="{{ clear_item_url }}">Clear item</a>
+      {% endif %}
+      {% if item_movements_url %}
+      <a class="btn btn--ghost" href="{{ item_movements_url }}">All stock movements</a>
+      {% endif %}
       <a class="btn btn--ghost" href="{{ stock_request_url }}">New request</a>
     </form>
   </header>
 
-  <section class="stock-request-history stock-request-history--audits" aria-label="Request audit trail">
-  {% include "items/partials/stock_request_table.html" with requests=audit_requests empty_message="No stock requests match these filters." %}
+  {% if selected_item %}
+  <section class="stock-request-history stock-request-history--audits" aria-label="Item request transactions">
+    <div class="stock-request-history-head">
+      <h3>Request transactions for {{ selected_item.name }}</h3>
+      <p>Every stock-request line for this item in the filtered period.</p>
+    </div>
+    {% if item_audit_rows %}
+    <div class="item-table-wrap stock-request-table-wrap">
+      <table class="stock-request-table stock-request-table--item-audit">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Status</th>
+            <th>Qty</th>
+            <th>Requesting shop</th>
+            <th>From shop</th>
+            <th>By</th>
+            <th>Note</th>
+            <th>Request</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in item_audit_rows %}
+          <tr>
+            <td class="stock-request-table-when" data-label="When">
+              {% if row.when %}{{ row.when|date:"d M Y · H:i" }}{% else %}—{% endif %}
+            </td>
+            <td data-label="Status">
+              {% if row.status == "fulfilled" %}
+              <span class="stock-request-status is-accepted">Approved</span>
+              {% elif row.status == "declined" %}
+              <span class="stock-request-status is-declined">Declined</span>
+              {% else %}
+              <span class="stock-request-status is-pending">Pending</span>
+              {% endif %}
+            </td>
+            <td class="stock-request-table-units" data-label="Qty">{{ row.quantity }}</td>
+            <td data-label="Requesting shop">
+              <strong>{% if row.request.shop %}{{ row.request.shop.name }}{% else %}—{% endif %}</strong>
+            </td>
+            <td data-label="From shop">
+              <strong>{% if row.request.requested_from_shop %}{{ row.request.requested_from_shop.name }}{% else %}—{% endif %}</strong>
+            </td>
+            <td class="stock-request-table-by" data-label="By">
+              {% if row.actor %}
+              <strong>{{ row.actor.user.get_full_name|default:row.actor.user.username }}</strong>
+              <span class="stock-request-table-sub">{{ row.actor_label }}</span>
+              {% else %}
+              <span class="stock-request-table-sub">—</span>
+              {% endif %}
+            </td>
+            <td class="stock-request-table-note" data-label="Note">
+              {% if row.note %}{{ row.note }}{% else %}
+              <span class="stock-request-table-sub">—</span>
+              {% endif %}
+            </td>
+            <td data-label="Request">
+              <span class="stock-request-table-sub">#{{ row.request.pk }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="stock-request-history-empty">No request transactions for this item in the selected filters.</p>
+    {% endif %}
   </section>
+  {% else %}
+  <section class="stock-request-history stock-request-history--audits" aria-label="Request audit trail">
+    <div class="stock-request-history-head">
+      <h3>All requests</h3>
+      <p>Pick an item above to audit every request transaction for that item.</p>
+    </div>
+    {% include "items/partials/stock_request_table.html" with requests=audit_requests empty_message="No stock requests match these filters." %}
+  </section>
+  {% endif %}
 </section>
 {% endblock %}
 
@@ -113,6 +247,7 @@
   (() => {
     const form = document.querySelector(".stock-panel--request-audits .stock-report-filters");
     if (!form) return;
+
     const rangeSelect = form.querySelector("[data-stock-report-range]");
     const rangeFields = [...form.querySelectorAll("[data-range-field]")];
     const syncRangeFields = (range) => {
@@ -130,6 +265,131 @@
       syncRangeFields(rangeSelect.value || "day");
       rangeSelect.addEventListener("change", () => syncRangeFields(rangeSelect.value));
     }
+
+    const picker = form.querySelector("[data-stock-item-picker]");
+    const searchInput = form.querySelector("[data-stock-item-search]");
+    const resultsEl = form.querySelector("[data-stock-item-results]");
+    const chipsEl = form.querySelector("[data-stock-item-chips]");
+    const catalogEl = form.querySelector("[data-stock-item-catalog]");
+    const itemPickerUrl = form.getAttribute("data-item-picker-url") || "";
+    const singleSelect = Boolean(picker?.hasAttribute("data-stock-item-picker-single"));
+    let catalog = [];
+    let catalogLoading = null;
+    try {
+      catalog = JSON.parse(catalogEl?.textContent || "[]");
+    } catch (_e) {
+      catalog = [];
+    }
+
+    const ensureCatalog = () => {
+      if (catalog.length || !itemPickerUrl) return Promise.resolve(catalog);
+      if (catalogLoading) return catalogLoading;
+      catalogLoading = fetch(itemPickerUrl, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      })
+        .then((res) => (res.ok ? res.json() : { items: [] }))
+        .then((data) => {
+          catalog = Array.isArray(data.items) ? data.items : [];
+          if (catalogEl) catalogEl.textContent = JSON.stringify(catalog);
+          return catalog;
+        })
+        .catch(() => {
+          catalog = [];
+          return catalog;
+        })
+        .finally(() => {
+          catalogLoading = null;
+        });
+      return catalogLoading;
+    };
+
+    const selectedIds = () =>
+      new Set(
+        [...(chipsEl?.querySelectorAll("[data-item-id]") || [])].map((chip) =>
+          String(chip.getAttribute("data-item-id"))
+        )
+      );
+
+    const addItem = (item) => {
+      if (!chipsEl) return;
+      if (singleSelect) {
+        chipsEl.innerHTML = "";
+      } else if (selectedIds().has(String(item.id))) {
+        return;
+      }
+      const chip = document.createElement("span");
+      chip.className = "stock-report-item-chip";
+      chip.setAttribute("data-item-id", String(item.id));
+      chip.innerHTML = `${item.name} <button type="button" aria-label="Remove ${item.name}" data-stock-item-remove>&times;</button>`;
+      const hidden = document.createElement("input");
+      hidden.type = "hidden";
+      hidden.name = "item_id";
+      hidden.value = String(item.id);
+      chip.appendChild(hidden);
+      chipsEl.appendChild(chip);
+    };
+
+    const hideResults = () => {
+      if (!resultsEl) return;
+      resultsEl.hidden = true;
+      resultsEl.innerHTML = "";
+    };
+
+    const showResults = (query) => {
+      if (!resultsEl || !searchInput || searchInput.disabled) return;
+      const q = query.trim().toLowerCase();
+      if (!q) {
+        hideResults();
+        return;
+      }
+      const renderMatches = () => {
+        const selected = singleSelect ? new Set() : selectedIds();
+        const matches = catalog
+          .filter((item) => {
+            if (selected.has(String(item.id))) return false;
+            const hay = `${item.name} ${item.category}`.toLowerCase();
+            return hay.includes(q);
+          })
+          .slice(0, 8);
+
+        if (!matches.length) {
+          resultsEl.innerHTML = `<p class="stock-report-item-empty">No matches</p>`;
+          resultsEl.hidden = false;
+          return;
+        }
+        resultsEl.innerHTML = matches
+          .map(
+            (item) =>
+              `<button type="button" class="stock-report-item-result" data-item-pick data-item-id="${item.id}" data-item-name="${String(item.name || "").replace(/"/g, "&quot;")}">${item.name}<small>${item.category || ""}</small></button>`
+          )
+          .join("");
+        resultsEl.hidden = false;
+      };
+      ensureCatalog().then(renderMatches);
+    };
+
+    searchInput?.addEventListener("focus", () => ensureCatalog());
+    searchInput?.addEventListener("input", () => showResults(searchInput.value || ""));
+    resultsEl?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-item-pick]");
+      if (!btn) return;
+      addItem({
+        id: btn.getAttribute("data-item-id"),
+        name: btn.getAttribute("data-item-name") || "Item",
+      });
+      if (searchInput) searchInput.value = "";
+      hideResults();
+      if (singleSelect) form.requestSubmit();
+    });
+    chipsEl?.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest("[data-stock-item-remove]");
+      if (!removeBtn) return;
+      removeBtn.closest("[data-item-id]")?.remove();
+    });
+    document.addEventListener("click", (event) => {
+      if (!picker?.contains(event.target)) hideResults();
+    });
   })();
 </script>
 {% endblock %}
