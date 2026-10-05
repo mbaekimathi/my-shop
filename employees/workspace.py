@@ -839,7 +839,7 @@ def sidebar_for_item_management(role, profile=None, *, active_mode="view"):
 
     dashboard_url = reverse(role_home_url_name(role))
     mode = (active_mode or "view").strip().lower()
-    if mode not in {"view", "discounts"}:
+    if mode not in {"view", "discounts", "activity-audits"}:
         mode = "view"
     primary = [
         _link("Dashboard", "layout-dashboard", href=dashboard_url),
@@ -854,6 +854,12 @@ def sidebar_for_item_management(role, profile=None, *, active_mode="view"):
             "badge-percent",
             href=item_management_url(role, "discounts"),
             active=mode == "discounts",
+        ),
+        _link(
+            "Activity analytics",
+            "activity",
+            href=item_management_url(role, "activity-audits"),
+            active=mode == "activity-audits",
         ),
     ]
     if mode == "view" and (
@@ -1011,6 +1017,12 @@ def sidebar_for_stock_management(
                             href=stock_management_url(role, "request-audits"),
                             active=active_mode == "request-audits",
                         ),
+                        _link(
+                            "Activity analytics",
+                            "activity",
+                            href=stock_management_url(role, "activity-audits"),
+                            active=False,
+                        ),
                     ]
                 )
             else:
@@ -1105,6 +1117,15 @@ def sidebar_for_stock_management(
                 ),
                 ]
                 primary.extend(link for mode, link in candidates if _allowed(mode))
+                if _allowed("view"):
+                    primary.append(
+                        _link(
+                            "Activity analytics",
+                            "activity",
+                            href=stock_management_url(role, "activity-audits"),
+                            active=active_mode == "activity-audits",
+                        )
+                    )
                 if active_mode == "view" and _allowed("print"):
                     primary.append(
                         _action("Print stock", "printer", action="print-stock")
@@ -1524,8 +1545,8 @@ def sidebar_for_credits(role, *, profile=None, active="credits"):
                     active=active == "credits",
                 ),
                 _link(
-                    "Credit audits",
-                    "history",
+                    "Activity analytics",
+                    "activity",
                     href=audits_href,
                     active=active == "audits",
                 ),

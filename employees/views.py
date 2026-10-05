@@ -206,7 +206,7 @@ def workspace_module(request, role_segment, module_slug):
         from employees.workspace import sidebar_for_item_management
 
         item_mode = (request.GET.get("mode") or "view").strip().lower()
-        if item_mode not in {"view", "discounts"}:
+        if item_mode not in {"view", "discounts", "activity-audits"}:
             item_mode = "view"
         page_sidebar = sidebar_for_item_management(
             profile.role, profile=profile, active_mode=item_mode

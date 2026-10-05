@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Item, ItemSerial, ShopItemPrice, ShopStock, StockMovement, StockMovementLine, Supplier
+from .models import Item, ItemActivityEvent, ItemSerial, ShopItemPrice, ShopStock, StockMovement, StockMovementLine, Supplier
 
 
 class StockMovementLineInline(admin.TabularInline):
@@ -55,6 +55,22 @@ class ShopItemPriceAdmin(admin.ModelAdmin):
     list_filter = ("shop",)
     search_fields = ("item__name", "shop__name")
     autocomplete_fields = ("item", "shop")
+
+
+@admin.register(ItemActivityEvent)
+class ItemActivityEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "occurred_at",
+        "kind",
+        "item_name",
+        "actor",
+        "detail",
+    )
+    list_filter = ("kind", "occurred_at")
+    search_fields = ("item_name", "item_category", "detail")
+    autocomplete_fields = ("item", "actor")
+    filter_horizontal = ("shops",)
+    readonly_fields = ("created_at",)
 
 
 @admin.register(ShopStock)

@@ -155,6 +155,66 @@ class ShopItemPrice(models.Model):
         return f"{self.item.name} @ {self.shop.name}: {self.price}"
 
 
+class ItemActivityKind(models.TextChoices):
+    REGISTERED = "registered", "Registered"
+    EDITED = "edited", "Edited"
+    DISCOUNT_UPDATED = "discount_updated", "Discount updated"
+    SUSPENDED = "suspended", "Suspended"
+    UNSUSPENDED = "unsuspended", "Unsuspended"
+    DELETED = "deleted", "Deleted"
+
+
+class ItemActivityEvent(models.Model):
+    """Audit trail for item-management register / edit / suspend / delete actions."""
+
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="activity_events",
+    )
+    item_name = models.CharField(max_length=200, blank=True, default="")
+    item_category = models.CharField(max_length=120, blank=True, default="")
+    kind = models.CharField(
+        max_length=32,
+        choices=ItemActivityKind.choices,
+        db_index=True,
+    )
+    detail = models.CharField(max_length=255, blank=True, default="")
+    meta = models.JSONField(default=dict, blank=True)
+    actor = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="item_activity_events",
+    )
+    shops = models.ManyToManyField(
+        "shops.Shop",
+        blank=True,
+        related_name="item_activity_events",
+    )
+    occurred_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-occurred_at", "-pk"]
+        indexes = [
+            models.Index(
+                fields=["kind", "-occurred_at"],
+                name="items_itema_kind_occurred_idx",
+            ),
+            models.Index(
+                fields=["actor", "-occurred_at"],
+                name="items_itema_actor_occurred_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_kind_display()} · {self.item_name or self.item_id}"
+
+
 class ShopStock(models.Model):
     shop = models.ForeignKey(
         "shops.Shop",

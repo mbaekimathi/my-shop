@@ -253,10 +253,12 @@ def item_management(request, profile, meta, module, page_sidebar):
     from employees.workspace import item_management_url
 
     mode = (request.GET.get("mode") or "view").strip().lower()
-    if mode not in {"view", "discounts"}:
+    if mode not in {"view", "discounts", "activity-audits"}:
         mode = "view"
     if mode == "discounts":
         return item_discounts(request, profile, meta, module)
+    if mode == "activity-audits":
+        return item_activity_audits(request, profile, meta, module)
 
     form_data = dict(EMPTY_FORM)
     form_errors = []
@@ -305,6 +307,7 @@ def item_management(request, profile, meta, module, page_sidebar):
                     request.POST,
                     request.FILES,
                     editable_shop_ids=editable_shop_ids,
+                    actor=profile,
                 )
             except ValidationError as exc:
                 form_errors = _validation_errors(exc)
@@ -315,7 +318,7 @@ def item_management(request, profile, meta, module, page_sidebar):
 
         elif action == "toggle_suspend":
             item = get_object_or_404(Item, pk=item_id)
-            toggle_item_suspended(item)
+            toggle_item_suspended(item, actor=profile)
             state = "suspended" if item.is_suspended else "unsuspended"
             messages.success(request, f"Item “{item.name}” {state}.")
             return redirect(request.path)
@@ -324,7 +327,7 @@ def item_management(request, profile, meta, module, page_sidebar):
             item = get_object_or_404(Item, pk=item_id)
             name = item.name
             try:
-                delete_item(item)
+                delete_item(item, actor=profile)
             except ValidationError as exc:
                 for msg in _validation_errors(exc):
                     messages.error(request, msg)
@@ -343,6 +346,7 @@ def item_management(request, profile, meta, module, page_sidebar):
     pricing_shops = _pricing_shops_for_profile(profile)
     edit_pricing_shops = pricing_shops
     from employees.access import role_url_segment
+    from employees.workspace import sidebar_for_item_management
 
     item_count = Item.objects.count()
     item_categories = [
@@ -357,6 +361,9 @@ def item_management(request, profile, meta, module, page_sidebar):
     item_catalog_url = reverse(
         "employees:item_management_catalog",
         kwargs={"role_segment": role_url_segment(profile.role)},
+    )
+    page_sidebar = sidebar_for_item_management(
+        profile.role, profile=profile, active_mode="view"
     )
 
     return render(
@@ -383,6 +390,9 @@ def item_management(request, profile, meta, module, page_sidebar):
             "edit_item": edit_item,
             "module_permissions": caps,
             "item_discounts_url": item_management_url(profile.role, "discounts"),
+            "item_activity_audits_url": item_management_url(
+                profile.role, "activity-audits"
+            ),
         },
     )
 
@@ -559,6 +569,8 @@ def item_discounts(request, profile, meta, module):
                 messages.error(request, error)
             return redirect(item_management_url(profile.role, "discounts"))
 
+        before_discount_min_qty = int(item.discount_min_qty or 0)
+        before_discount_amount = item.discount_amount or Decimal("0")
         item.avg_buy_qty = avg_buy_qty
         item.discount_min_qty = wholesale_from_qty
         item.discount_amount = discount_amount
@@ -569,6 +581,16 @@ def item_discounts(request, profile, meta, module):
                 "discount_amount",
                 "updated_at",
             ]
+        )
+        from items.activity_audit import log_item_discount_updated
+
+        log_item_discount_updated(
+            item,
+            actor=profile,
+            before={
+                "discount_min_qty": before_discount_min_qty,
+                "discount_amount": f"{before_discount_amount:.2f}",
+            },
         )
 
         payload = {
@@ -691,6 +713,104 @@ def item_discounts(request, profile, meta, module):
             "item_management_url": item_management_url(profile.role, "view"),
             "can_edit_discounts": can_edit,
             "module_permissions": module_capabilities(profile, "item-management"),
+        },
+    )
+
+
+@require_http_methods(["GET"])
+def item_activity_audits(request, profile, meta, module):
+    """Item-management activity audits with period, shop, and employee filters."""
+    from employees.models import EmployeeProfile, EmployeeStatus
+    from employees.module_permissions import require_module_permission
+    from employees.workspace import item_management_url, sidebar_for_item_management
+
+    from items.activity_audit import build_item_activity_audits
+
+    denied = require_module_permission(request, profile, "item-management", "view")
+    if denied is not None:
+        return denied
+
+    range_type, day_start, day_end, filter_context = _report_range_bounds(request)
+    filter_shops = list(_pricing_shops_for_profile(profile))
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+
+    try:
+        shop_filter_id = int(request.GET.get("shop_id") or 0)
+    except (TypeError, ValueError):
+        shop_filter_id = 0
+    if shop_filter_id and shop_filter_id not in shops_by_id:
+        shop_filter_id = 0
+
+    try:
+        employee_filter_id = int(request.GET.get("employee_id") or 0)
+    except (TypeError, ValueError):
+        employee_filter_id = 0
+
+    kind_filter = (request.GET.get("kind") or "all").strip().lower()
+
+    filter_employees = list(
+        EmployeeProfile.objects.filter(status=EmployeeStatus.ACTIVE)
+        .select_related("user")
+        .order_by("employee_id")[:300]
+    )
+    if employee_filter_id and not any(
+        emp.pk == employee_filter_id for emp in filter_employees
+    ):
+        employee_filter_id = 0
+
+    trail = build_item_activity_audits(
+        profile=profile,
+        request=request,
+        start=day_start,
+        end=day_end,
+        shop_id=shop_filter_id,
+        employee_id=employee_filter_id,
+        kind=kind_filter,
+        shops=filter_shops,
+        employees=filter_employees,
+    )
+
+    range_labels = {
+        "day": "Single day",
+        "period": "Period",
+        "month": "Month",
+        "year": "Year",
+    }
+    page_sidebar = sidebar_for_item_management(
+        profile.role, profile=profile, active_mode="activity-audits"
+    )
+    meta = {
+        **meta,
+        "title": "Activity analytics",
+        "headline": "Activity analytics",
+        "summary": (
+            "Register, edit, suspend, and delete actions from employee login, "
+            "filterable by period, shop, and employee."
+        ),
+    }
+
+    return render(
+        request,
+        "items/item_activity_audits.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "headline": "Activity analytics",
+            "lead": meta["summary"],
+            "item_management_url": item_management_url(profile.role, "view"),
+            "report_range": filter_context["report_range"],
+            "report_range_label": range_labels.get(range_type, "Day"),
+            "report_period_label": filter_context.get("report_period_label") or "",
+            "report_date_value": filter_context["report_date_value"],
+            "report_date_from": filter_context["report_date_from"],
+            "report_date_to": filter_context["report_date_to"],
+            "report_month_value": filter_context["report_month_value"],
+            "report_year_value": filter_context["report_year_value"],
+            **trail,
         },
     )
 
@@ -5714,6 +5834,111 @@ def stock_settings(request, profile, meta, module):
 
 
 @require_http_methods(["GET"])
+def stock_activity_audits(request, profile, meta, module):
+    """Stock-management activity analytics with period, shop, and employee filters."""
+    from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+    from employees.module_permissions import require_module_permission
+    from employees.workspace import sidebar_for_stock_management, stock_management_url
+
+    from items.stock_activity_audit import build_stock_activity_audits
+
+    denied = require_module_permission(request, profile, "stock-management", "view")
+    if denied is not None:
+        return denied
+
+    if profile.role not in (
+        EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.IT_SUPPORT,
+    ):
+        return _stock_redirect(request.path, "view")
+
+    range_type, day_start, day_end, filter_context = _report_range_bounds(request)
+    filter_shops = list(actionable_shops_for_profile(profile))
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+
+    try:
+        shop_filter_id = int(request.GET.get("shop_id") or 0)
+    except (TypeError, ValueError):
+        shop_filter_id = 0
+    if shop_filter_id and shop_filter_id not in shops_by_id:
+        shop_filter_id = 0
+
+    try:
+        employee_filter_id = int(request.GET.get("employee_id") or 0)
+    except (TypeError, ValueError):
+        employee_filter_id = 0
+
+    kind_filter = (request.GET.get("kind") or "all").strip().lower()
+    filter_employees = list(
+        EmployeeProfile.objects.filter(status=EmployeeStatus.ACTIVE)
+        .select_related("user")
+        .order_by("employee_id")[:300]
+    )
+    if employee_filter_id and not any(
+        emp.pk == employee_filter_id for emp in filter_employees
+    ):
+        employee_filter_id = 0
+
+    trail = build_stock_activity_audits(
+        profile=profile,
+        start=day_start,
+        end=day_end,
+        shop_id=shop_filter_id,
+        employee_id=employee_filter_id,
+        kind=kind_filter,
+        shops=filter_shops,
+        employees=filter_employees,
+    )
+
+    range_labels = {
+        "day": "Single day",
+        "period": "Period",
+        "month": "Month",
+        "year": "Year",
+    }
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="activity-audits",
+        profile=profile,
+    )
+    meta = {
+        **meta,
+        "title": "Activity analytics",
+        "headline": "Activity analytics",
+        "summary": (
+            "Stock in, stock out, and request actions from employee login, "
+            "filterable by period, shop, and employee."
+        ),
+    }
+
+    return render(
+        request,
+        "items/stock_activity_audits.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "headline": "Activity analytics",
+            "lead": meta["summary"],
+            "stock_mode": "activity-audits",
+            "stock_view_url": stock_management_url(profile.role, "view"),
+            "report_range": filter_context["report_range"],
+            "report_range_label": range_labels.get(range_type, "Day"),
+            "report_period_label": filter_context.get("report_period_label") or "",
+            "report_date_value": filter_context["report_date_value"],
+            "report_date_from": filter_context["report_date_from"],
+            "report_date_to": filter_context["report_date_to"],
+            "report_month_value": filter_context["report_month_value"],
+            "report_year_value": filter_context["report_year_value"],
+            **trail,
+        },
+    )
+
+
+@require_http_methods(["GET"])
 def stock_request_audits(request, profile, meta, module):
     from urllib.parse import urlencode
 
@@ -5892,6 +6117,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         "settings",
         "low-stock",
         "request-audits",
+        "activity-audits",
     ):
         mode = "view"
 
@@ -5914,6 +6140,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if mode == "low-stock":
         return stock_low_stock_settings(request, profile, meta, module)
+
+    if mode == "activity-audits":
+        return stock_activity_audits(request, profile, meta, module)
 
     if mode == "request-audits":
         return stock_request_audits(request, profile, meta, module)

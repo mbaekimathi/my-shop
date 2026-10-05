@@ -864,10 +864,10 @@ def analytics_credit_audits(request, role_segment):
         {
             "profile": profile,
             "meta": {
-                "title": "Credit audits · Analytics",
-                "headline": "Credit audits",
-                "summary": "Payments and changes made to credit receipts.",
-                "icon": "history",
+                "title": "Activity analytics · Credits",
+                "headline": "Activity analytics",
+                "summary": "Credit payments and changes by period, shop, and employee.",
+                "icon": "activity",
             },
             "module": module,
             "role_label": profile.get_role_display(),

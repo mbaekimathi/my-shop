@@ -1747,13 +1747,23 @@ def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
             created_by=profile,
         )
         _sync_shop_item_prices(item, cleaned["shop_prices"])
+        from items.activity_audit import log_item_registered
+
+        log_item_registered(
+            item,
+            actor=profile,
+            shop_ids=list(cleaned["shop_prices"].keys()),
+        )
     from communications.automations import maybe_send_new_item_catalogue
 
     maybe_send_new_item_catalogue(item)
     return item
 
 
-def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
+def update_item(item: Item, data, files, *, editable_shop_ids=None, actor=None) -> Item:
+    from items.activity_audit import log_item_edited, snapshot_item_for_audit
+
+    before = snapshot_item_for_audit(item)
     cleaned = validate_item_payload(
         data,
         files,
@@ -1796,6 +1806,12 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
         if old_name and old_name != new_name:
             _sync_item_name_history(item, old_name=old_name, new_name=new_name)
         _sync_shop_item_prices(item, cleaned["shop_prices"])
+        log_item_edited(
+            item,
+            actor=actor or item.created_by,
+            before=before,
+            after=snapshot_item_for_audit(item),
+        )
         return item
 
 
@@ -1812,27 +1828,47 @@ def _sync_item_name_history(item: Item, *, old_name: str, new_name: str) -> None
     SaleLine.objects.filter(product_name=old_name).update(product_name=new_name)
 
 
-def toggle_item_suspended(item: Item) -> Item:
+def toggle_item_suspended(item: Item, *, actor=None) -> Item:
     item.is_suspended = not item.is_suspended
     item.save(update_fields=["is_suspended", "updated_at"])
+    from items.activity_audit import log_item_suspend_toggled
+
+    log_item_suspend_toggled(item, actor=actor)
     return item
 
 
-def delete_item(item: Item) -> None:
+def delete_item(item: Item, *, actor=None) -> None:
     if item.stock_movement_lines.exists():
         raise ValidationError(
             f"“{item.name}” cannot be deleted because it has stock movement history. "
             "Suspend it instead to hide it from sales."
         )
+    from items.activity_audit import log_item_activity
+    from items.models import ItemActivityKind
+
+    item_name = item.name or ""
+    item_category = item.category or ""
+    item_id = item.pk
+    shop_ids = list(item.shop_prices.values_list("shop_id", flat=True))
     if item.image:
         item.image.delete(save=False)
     try:
         item.delete()
     except ProtectedError as exc:
         raise ValidationError(
-            f"“{item.name}” cannot be deleted because related records still reference it. "
+            f"“{item_name}” cannot be deleted because related records still reference it. "
             "Suspend it instead to hide it from sales."
         ) from exc
+    log_item_activity(
+        kind=ItemActivityKind.DELETED,
+        actor=actor,
+        item=None,
+        item_name=item_name,
+        item_category=item_category,
+        detail=f"Deleted from {item_category}" if item_category else "Deleted item",
+        meta={"item_id": item_id},
+        shop_ids=shop_ids,
+    )
 
 
 def _parse_serial_numbers(raw_value: str) -> list[str]:

@@ -1369,6 +1369,253 @@ class ShopPriceIsolationTests(TestCase):
         self.assertEqual(item.price_for_shop(self.shop_b), Decimal("130.00"))
 
 
+class ItemActivityAuditTests(TestCase):
+    def setUp(self):
+        self.password = "activity-pass"
+        self.user = User.objects.create_user(
+            username="840041",
+            password=self.password,
+            email="item-activity@test.local",
+            first_name="Audit",
+            last_name="User",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840041",
+            phone_country_code="+254",
+            phone_number="700000971",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop_a = Shop.objects.create(
+            name="AUDIT SHOP A",
+            location="NAIROBI",
+            email="audit-a@test.local",
+            phone_number="0700000971",
+            login_code="840141",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.shop_b = Shop.objects.create(
+            name="AUDIT SHOP B",
+            location="KISUMU",
+            email="audit-b@test.local",
+            phone_number="0700000972",
+            login_code="840142",
+            password_hash="x",
+            created_by=self.profile,
+        )
+
+    def test_create_edit_suspend_delete_write_activity_events(self):
+        from items.models import ItemActivityEvent, ItemActivityKind
+        from items.services import create_item, delete_item, toggle_item_suspended, update_item
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "SODA AUDIT",
+                "description": "",
+                "minimum_selling_price": "100",
+                "shop_price": "150",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        self.assertTrue(
+            ItemActivityEvent.objects.filter(
+                item=item, kind=ItemActivityKind.REGISTERED, actor=self.profile
+            ).exists()
+        )
+
+        update_item(
+            item,
+            {
+                "category": "DRINKS",
+                "name": "SODA AUDIT XL",
+                "description": "",
+                "minimum_selling_price": "100",
+                "shop_price": "160",
+                "pricing_mode": "single",
+            },
+            {},
+            actor=self.profile,
+            editable_shop_ids={self.shop_a.pk},
+        )
+        edited = ItemActivityEvent.objects.filter(
+            item=item, kind=ItemActivityKind.EDITED, actor=self.profile
+        ).latest("pk")
+        self.assertIn("name", edited.detail.lower())
+
+        toggle_item_suspended(item, actor=self.profile)
+        self.assertTrue(
+            ItemActivityEvent.objects.filter(
+                item=item, kind=ItemActivityKind.SUSPENDED, actor=self.profile
+            ).exists()
+        )
+
+        delete_item(item, actor=self.profile)
+        deleted = ItemActivityEvent.objects.filter(
+            kind=ItemActivityKind.DELETED, actor=self.profile, item_name="SODA AUDIT XL"
+        ).latest("pk")
+        self.assertIsNone(deleted.item_id)
+
+    def test_activity_audits_page_filters_by_employee_and_period(self):
+        from django.utils import timezone
+
+        from items.activity_audit import log_item_activity
+        from items.models import ItemActivityKind
+
+        now = timezone.now()
+        log_item_activity(
+            kind=ItemActivityKind.REGISTERED,
+            actor=self.profile,
+            item_name="FILTER ITEM",
+            item_category="TOOLS",
+            detail="Registered item",
+            shop_ids=[self.shop_a.pk],
+            occurred_at=now,
+        )
+        other_user = User.objects.create_user(
+            username="840042",
+            password="x",
+            email="other-activity@test.local",
+            is_active=True,
+        )
+        other = EmployeeProfile.objects.create(
+            user=other_user,
+            employee_id="840042",
+            phone_country_code="+254",
+            phone_number="700000973",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        log_item_activity(
+            kind=ItemActivityKind.EDITED,
+            actor=other,
+            item_name="OTHER ITEM",
+            item_category="TOOLS",
+            detail="Updated name",
+            shop_ids=[self.shop_b.pk],
+            occurred_at=now,
+        )
+
+        self.client.login(username="840041", password=self.password)
+        response = self.client.get(
+            "/it-support/item-management/",
+            {
+                "mode": "activity-audits",
+                "range": "day",
+                "date": timezone.localdate().isoformat(),
+                "employee_id": self.profile.pk,
+                "shop_id": self.shop_a.pk,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Activity analytics")
+        self.assertContains(response, "FILTER ITEM")
+        self.assertNotContains(response, "OTHER ITEM")
+        self.assertContains(response, "Activity analytics")
+
+
+class StockActivityAnalyticsTests(TestCase):
+    def setUp(self):
+        from items.models import Item
+
+        self.password = "stock-act-pass"
+        self.user = User.objects.create_user(
+            username="840051",
+            password=self.password,
+            email="stock-activity@test.local",
+            first_name="Stock",
+            last_name="Audit",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840051",
+            phone_country_code="+254",
+            phone_number="700000981",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="STOCK ACT SHOP",
+            location="NAIROBI",
+            email="stock-act@test.local",
+            phone_number="0700000981",
+            login_code="840151",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.item = Item.objects.create(
+            category="TOOLS",
+            name="STOCK ACT ITEM",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+
+    def test_stock_activity_page_lists_movements_and_filters(self):
+        from django.utils import timezone
+
+        from items.models import StockMovement, StockMovementLine, StockMovementType
+        from items.stock_activity_audit import build_stock_activity_audits
+
+        movement = StockMovement.objects.create(
+            movement_type=StockMovementType.IN,
+            shop=self.shop,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=self.item,
+            quantity=3,
+        )
+        other_user = User.objects.create_user(
+            username="840052",
+            password="x",
+            email="stock-other@test.local",
+            is_active=True,
+        )
+        other = EmployeeProfile.objects.create(
+            user=other_user,
+            employee_id="840052",
+            phone_country_code="+254",
+            phone_number="700000982",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        StockMovement.objects.create(
+            movement_type=StockMovementType.OUT,
+            shop=self.shop,
+            created_by=other,
+        )
+
+        page = build_stock_activity_audits(
+            profile=self.profile,
+            shops=[self.shop],
+            employee_id=self.profile.pk,
+            kind="in",
+        )
+        self.assertEqual(page["event_count"], 1)
+        self.assertIn("Stock In", page["rows"][0]["kind_label"])
+
+        self.client.login(username="840051", password=self.password)
+        response = self.client.get(
+            "/it-support/stock-management/",
+            {
+                "mode": "activity-audits",
+                "range": "day",
+                "date": timezone.localdate().isoformat(),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Activity analytics")
+        self.assertContains(response, "STOCK ACT SHOP")
+
+
 class StockSerialMovementsShopFilterTests(TestCase):
     def setUp(self):
         self.password = "serial-mov-pass"

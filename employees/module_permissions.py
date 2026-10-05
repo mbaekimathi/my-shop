@@ -42,9 +42,12 @@ def normalize_submodule(module_slug: str, submodule_slug: str) -> str:
         "serial-movements",
         "return-clients",
         "request-audits",
+        "activity-audits",
     }:
         if slug == "request-audits":
             return "request"
+        if slug == "activity-audits":
+            return "view"
         return "serials"
     return slug
 
