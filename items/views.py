@@ -1561,6 +1561,53 @@ def _return_qty_by_item_shop(item_ids, shop_ids, start, end):
     return totals
 
 
+def _item_name_alias_map(items):
+    """
+    Map sale name strings to item ids.
+
+    Includes current Item.name plus historical ShopReceiptLine.item_name snapshots
+    so legacy POS rows still resolve after an item rename.
+    """
+    name_to_ids = {}
+    raw_names = set()
+    for item in items:
+        name = (item.name or "").strip()
+        if not name:
+            continue
+        raw_names.add(name)
+        name_to_ids.setdefault(name.lower(), []).append(item.pk)
+
+    item_ids = [item.pk for item in items]
+    if item_ids:
+        from shops.models import ShopReceiptLine
+
+        for item_id, item_name in (
+            ShopReceiptLine.objects.filter(item_id__in=item_ids)
+            .exclude(item_name="")
+            .values_list("item_id", "item_name")
+            .distinct()
+            .iterator(chunk_size=500)
+        ):
+            name = (item_name or "").strip()
+            if not name:
+                continue
+            raw_names.add(name)
+            ids = name_to_ids.setdefault(name.lower(), [])
+            if item_id not in ids:
+                ids.append(item_id)
+    return name_to_ids, sorted(raw_names)
+
+
+def _movement_item_display_name(matched, snapshot_name=""):
+    """Prefer live Item.name; fall back to the sale-time snapshot."""
+    if matched is not None:
+        live = (matched.name or "").strip()
+        if live:
+            return live
+    snap = (snapshot_name or "").strip()
+    return snap or "—"
+
+
 def _pos_sale_qty_by_item(items, shop_ids, start, end):
     """Legacy POS SaleLine quantities by item name (no shop on the sale)."""
     from django.db.models import Sum
@@ -1571,15 +1618,10 @@ def _pos_sale_qty_by_item(items, shop_ids, start, end):
     if not items or not shop_ids or start >= end:
         return totals
 
-    name_to_ids = {}
-    for item in items:
-        key = (item.name or "").strip().lower()
-        if key:
-            name_to_ids.setdefault(key, []).append(item.pk)
+    name_to_ids, names = _item_name_alias_map(items)
     if not name_to_ids:
         return totals
 
-    names = [(item.name or "").strip() for item in items if (item.name or "").strip()]
     sale_lines = SaleLine.objects.filter(
         sale__sold_at__gte=start,
         sale__sold_at__lt=end,
@@ -2176,15 +2218,10 @@ def _daily_activity_by_item(items, shop_ids, day_start, day_end):
     for row in sale_qs.values("item_id", "quantity", "receipt__created_at"):
         add_qty(row["item_id"], row["receipt__created_at"], "sale", row["quantity"])
 
-    # Legacy POS sales by product name.
+    # Legacy POS sales by product name (current + historical receipt aliases).
     from pos.models import SaleLine
 
-    name_to_ids = {}
-    for item in items:
-        key = (item.name or "").strip().lower()
-        if key:
-            name_to_ids.setdefault(key, []).append(item.pk)
-    names = [(item.name or "").strip() for item in items if (item.name or "").strip()]
+    name_to_ids, names = _item_name_alias_map(items)
     if names:
         pos_qs = SaleLine.objects.filter(
             sale__sold_at__gte=day_start,
@@ -2886,7 +2923,10 @@ def _build_movement_timeline(
         (item.name or "").strip().lower(): item for item in report_items
     }
     item_by_id = {item.pk: item for item in report_items}
-    item_name_set = set(item_by_name)
+    pos_name_to_ids, pos_raw_names = _item_name_alias_map(report_items)
+    for key, item_ids in pos_name_to_ids.items():
+        if key not in item_by_name and item_ids:
+            item_by_name[key] = item_by_id.get(item_ids[0])
 
     if need_receipt_sales:
         receipt_lines = (
@@ -2917,6 +2957,8 @@ def _build_movement_timeline(
             matched = item_by_id.get(line.item_id) or item_by_name.get(
                 (line.item_name or "").strip().lower()
             )
+            if matched is None and line.item_id and line.item:
+                matched = line.item
             parties = _movement_parties_for_receipt(receipt=line.receipt)
             receipt_status = line.receipt.status
             sale_label = "Stock sale"
@@ -2928,6 +2970,7 @@ def _build_movement_timeline(
                 sale_label = sale_label.replace("Sale", "Credit sale").replace(
                     "Stock sale", "Credit sale"
                 )
+            snapshot_name = (line.item_name or "").strip()
             events.append(
                 {
                     "happened_at": line.receipt.created_at,
@@ -2939,8 +2982,8 @@ def _build_movement_timeline(
                     "shop_id": line.receipt.shop_id,
                     "source_shop_id": None,
                     "from_shop_name": "",
-                    "item_name": line.item_name
-                    or (matched.name if matched else "—"),
+                    "item_name": _movement_item_display_name(matched, snapshot_name),
+                    "item_name_snapshot": snapshot_name,
                     "item_category": (
                         matched.category
                         if matched
@@ -3008,8 +3051,11 @@ def _build_movement_timeline(
             matched = item_by_id.get(line.item_id) or item_by_name.get(
                 (line.item_name or "").strip().lower()
             )
+            if matched is None and line.item_id and line.item:
+                matched = line.item
             parties = _movement_parties_for_receipt(receipt=line.receipt)
             receipt_status = line.receipt.status
+            snapshot_name = (line.item_name or "").strip()
             batches = line.return_batches or []
             if isinstance(batches, list) and batches:
                 # Restocked returns with an item already appear via StockMovement.
@@ -3044,8 +3090,10 @@ def _build_movement_timeline(
                             "shop_id": line.receipt.shop_id,
                             "source_shop_id": None,
                             "from_shop_name": "",
-                            "item_name": line.item_name
-                            or (matched.name if matched else "—"),
+                            "item_name": _movement_item_display_name(
+                                matched, snapshot_name
+                            ),
+                            "item_name_snapshot": snapshot_name,
                             "item_category": (
                                 matched.category
                                 if matched
@@ -3098,8 +3146,8 @@ def _build_movement_timeline(
                     "shop_id": line.receipt.shop_id,
                     "source_shop_id": None,
                     "from_shop_name": "",
-                    "item_name": line.item_name
-                    or (matched.name if matched else "—"),
+                    "item_name": _movement_item_display_name(matched, snapshot_name),
+                    "item_name_snapshot": snapshot_name,
                     "item_category": (
                         matched.category
                         if matched
@@ -3133,20 +3181,26 @@ def _build_movement_timeline(
 
     if need_pos_sales:
         if item_mode == "category" and selected_categories:
-            allowed_names = {
-                (item.name or "").strip().lower()
+            allowed_item_ids = {
+                item.pk
                 for item in report_items
                 if item.category in selected_categories
             }
         elif item_mode == "items" and selected_item_ids:
-            selected_set = set(selected_item_ids)
-            allowed_names = {
-                (item.name or "").strip().lower()
-                for item in report_items
-                if item.pk in selected_set
-            }
+            allowed_item_ids = set(selected_item_ids)
         else:
-            allowed_names = item_name_set
+            allowed_item_ids = {item.pk for item in report_items}
+
+        allowed_names = {
+            key
+            for key, ids in pos_name_to_ids.items()
+            if any(item_id in allowed_item_ids for item_id in ids)
+        }
+        allowed_raw_names = [
+            name
+            for name in pos_raw_names
+            if name.lower() in allowed_names
+        ]
 
         sale_lines = (
             SaleLine.objects.filter(
@@ -3161,14 +3215,8 @@ def _build_movement_timeline(
             sale_lines = sale_lines.filter(
                 sale__employee__assigned_shops__in=shop_ids
             ).distinct()
-        if allowed_names:
-            sale_lines = sale_lines.filter(
-                product_name__in=[
-                    (item.name or "").strip()
-                    for item in report_items
-                    if (item.name or "").strip().lower() in allowed_names
-                ]
-            )
+        if allowed_raw_names:
+            sale_lines = sale_lines.filter(product_name__in=allowed_raw_names)
 
         shop_id_set = set(shop_ids)
         # Do not use iterator() here — it drops prefetch of assigned_shops.
@@ -3176,7 +3224,15 @@ def _build_movement_timeline(
             key = (line.product_name or "").strip().lower()
             if allowed_names and key not in allowed_names:
                 continue
-            matched = item_by_name.get(key)
+            matched_ids = pos_name_to_ids.get(key) or []
+            matched = None
+            for item_id in matched_ids:
+                if item_id in allowed_item_ids:
+                    matched = item_by_id.get(item_id)
+                    if matched is not None:
+                        break
+            if matched is None:
+                matched = item_by_name.get(key)
             sale_shop_id = None
             sale_shop_name = "—"
             employee = line.sale.employee if line.sale.employee_id else None
@@ -3188,6 +3244,7 @@ def _build_movement_timeline(
                         sale_shop_name = shop.name
                         break
             parties = _movement_parties_for_pos_sale(sale=line.sale)
+            snapshot_name = (line.product_name or "").strip()
             events.append(
                 {
                     "happened_at": line.sale.sold_at,
@@ -3197,8 +3254,8 @@ def _build_movement_timeline(
                     "shop_id": sale_shop_id,
                     "source_shop_id": None,
                     "from_shop_name": "",
-                    "item_name": line.product_name
-                    or (matched.name if matched else "—"),
+                    "item_name": _movement_item_display_name(matched, snapshot_name),
+                    "item_name_snapshot": snapshot_name,
                     "item_category": matched.category if matched else "",
                     "item_id": matched.pk if matched else None,
                     "quantity": line.quantity,
@@ -3387,6 +3444,7 @@ def _filter_timeline_display_events(events):
 def _timeline_event_search_text(event):
     parts = [
         event.get("item_name") or "",
+        event.get("item_name_snapshot") or "",
         event.get("item_category") or "",
         event.get("event_label") or "",
         event.get("from_label") or "",
@@ -4159,6 +4217,16 @@ def _event_matches_summary_filter(event, event_filter):
     return event.get("event_type") in allowed
 
 
+def _item_qty_summary_group_key(event):
+    """Group summary rows by item_id when present; else by name/category."""
+    item_id = event.get("item_id")
+    name = (event.get("item_name") or "—").strip() or "—"
+    category = (event.get("item_category") or "").strip()
+    if item_id is not None:
+        return ("id", item_id)
+    return ("name", name.lower(), category.lower(), name, category)
+
+
 def _item_qty_summary_rows(events, event_filter="all"):
     """Per-item quantity totals for the active movement type."""
     totals = {}
@@ -4168,7 +4236,7 @@ def _item_qty_summary_rows(events, event_filter="all"):
         name = (event.get("item_name") or "—").strip() or "—"
         category = (event.get("item_category") or "").strip()
         item_id = event.get("item_id")
-        key = (name.lower(), category.lower(), name, category)
+        key = _item_qty_summary_group_key(event)
         qty = int(event.get("quantity") or 0)
         row = totals.get(key)
         if row is None:
@@ -4182,6 +4250,13 @@ def _item_qty_summary_rows(events, event_filter="all"):
             row["quantity"] += qty
             if row.get("item_id") is None and item_id is not None:
                 row["item_id"] = item_id
+            # Prefer a non-empty live display name if later events have one.
+            if name and name != "—" and (
+                not row.get("item_name") or row.get("item_name") == "—"
+            ):
+                row["item_name"] = name
+            if category and not row.get("item_category"):
+                row["item_category"] = category
 
     rows = sorted(
         totals.values(),
@@ -4215,7 +4290,7 @@ def _item_qty_summary_by_type_rows(events):
         name = (event.get("item_name") or "—").strip() or "—"
         category = (event.get("item_category") or "").strip()
         item_id = event.get("item_id")
-        key = (name.lower(), category.lower(), name, category)
+        key = _item_qty_summary_group_key(event)
         row = totals.get(key)
         if row is None:
             row = {
@@ -4228,6 +4303,12 @@ def _item_qty_summary_by_type_rows(events):
         row[bucket] += int(event.get("quantity") or 0)
         if row.get("item_id") is None and item_id is not None:
             row["item_id"] = item_id
+        if name and name != "—" and (
+            not row.get("item_name") or row.get("item_name") == "—"
+        ):
+            row["item_name"] = name
+        if category and not row.get("item_category"):
+            row["item_category"] = category
 
     return sorted(
         totals.values(),
@@ -4568,7 +4649,7 @@ def _stock_report_download(
             "Receipt",
             "From",
             "To",
-            "Seller",
+            "By",
         ]
         detail_rows = []
         for event in detail_events:

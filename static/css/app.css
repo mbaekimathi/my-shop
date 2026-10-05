@@ -19310,22 +19310,27 @@ html[data-theme="light"] .low-stock-badge.is-low {
 
 .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="from"],
 .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="From"] {
-  width: 11%;
+  width: 9.5%;
 }
 
 .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="to"],
 .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="To"] {
-  width: 11%;
+  width: 9.5%;
+}
+
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="by"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="By"] {
+  width: 9%;
 }
 
 .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="request"],
 .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Request"] {
-  width: 8.5%;
+  width: 7.5%;
 }
 
 .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="receive"],
 .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Receive"] {
-  width: 8.5%;
+  width: 7.5%;
 }
 
 .stock-panel--report .stock-report-table--timeline-detail th[data-col="receipt"],
@@ -19355,22 +19360,27 @@ html[data-theme="light"] .low-stock-badge.is-low {
 
 .stock-panel--report .stock-report-table--timeline-detail th[data-col="from"],
 .stock-panel--report .stock-report-table--timeline-detail td[data-label="From"] {
-  width: 13%;
+  width: 11%;
 }
 
 .stock-panel--report .stock-report-table--timeline-detail th[data-col="to"],
 .stock-panel--report .stock-report-table--timeline-detail td[data-label="To"] {
-  width: 13%;
+  width: 11%;
+}
+
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="by"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="By"] {
+  width: 10%;
 }
 
 .stock-panel--report .stock-report-table--timeline-detail th[data-col="request"],
 .stock-panel--report .stock-report-table--timeline-detail td[data-label="Request"] {
-  width: 10%;
+  width: 9%;
 }
 
 .stock-panel--report .stock-report-table--timeline-detail th[data-col="receive"],
 .stock-panel--report .stock-report-table--timeline-detail td[data-label="Receive"] {
-  width: 10%;
+  width: 9%;
 }
 
 .stock-panel--report .stock-report-table--timeline tbody tr:last-child td {
@@ -23088,6 +23098,29 @@ html[data-theme="light"] .low-stock-badge.is-low {
   border-radius: 8px;
   font-size: 0.82rem;
   cursor: pointer;
+}
+
+.shop-receipt-return-reason {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.shop-receipt-return-reason textarea {
+  width: 100%;
+  min-height: 4.25rem;
+  resize: vertical;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+  line-height: 1.35;
+}
+
+.shop-receipt-return-reason textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent, #2563eb) 45%, transparent);
+  outline-offset: 1px;
 }
 
 .shop-receipt-return-code {

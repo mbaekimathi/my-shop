@@ -101,13 +101,12 @@ class Item(models.Model):
         return self.minimum_selling_price
 
     def price_for_shop(self, shop):
-        """Resolve selling price for a shop (override → shop_price → min)."""
-        override = None
-        if self.use_individual_shop_prices:
-            row = self.shop_prices.filter(shop_id=getattr(shop, "pk", shop)).first()
-            if row is not None:
-                override = row.price
-        return self.resolve_list_price(override)
+        """Resolve selling price for a shop (per-shop row → shop_price → min)."""
+        shop_id = getattr(shop, "pk", shop)
+        row = self.shop_prices.filter(shop_id=shop_id).first()
+        if row is not None:
+            return self.resolve_list_price(row.price)
+        return self.resolve_list_price(None)
 
     def volume_unit_price(self, list_price, qty):
         """List price after volume discount when qty meets the threshold."""

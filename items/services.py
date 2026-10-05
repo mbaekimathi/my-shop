@@ -702,11 +702,12 @@ def build_item_management_catalog_page(
             )
         shop_price_rows = []
         for shop in active_shops:
-            if item.use_individual_shop_prices:
-                override = item_shop_map.get(shop.pk)
-                resolved = item.resolve_list_price(override)
-            else:
-                resolved = item.resolve_list_price(None)
+            override = item_shop_map.get(shop.pk)
+            resolved = (
+                item.resolve_list_price(override)
+                if override is not None
+                else item.resolve_list_price(None)
+            )
             shop_price_rows.append(
                 {
                     "shop_id": shop.pk,
@@ -1570,11 +1571,14 @@ def _expand_single_price_to_shops(
     existing_item=None,
     editable_shop_ids=None,
     minimum_price=None,
+    baseline_single_price=None,
 ) -> dict:
     """Map a single submitted price onto per-shop rows without touching others.
 
-    Editable shops receive ``single_price``. Non-editable shops keep their
-    existing/materialized price so one shop's edit never changes another.
+    Editable shops receive ``single_price`` when they still match
+    ``baseline_single_price`` (the list price shown in the form). Shops that
+    already had a higher or lower override keep it so one edit never reprices
+    every shop. Non-editable shops keep their existing/materialized price.
     On create, non-editable shops are also seeded with ``single_price`` so
     every active shop starts with an isolated row.
     """
@@ -1588,10 +1592,21 @@ def _expand_single_price_to_shops(
         else {}
     )
     applied = _clamp_price(single_price, minimum_price)
+    if baseline_single_price is None and existing_item is not None:
+        if existing_item.shop_price is not None:
+            baseline_single_price = existing_item.shop_price.quantize(Decimal("0.01"))
 
     for shop in shops:
         if _can_edit_shop_price(shop.pk, editable_shop_ids):
-            prices_by_shop[shop.pk] = applied
+            if (
+                existing_item is not None
+                and baseline_single_price is not None
+                and shop.pk in existing
+                and existing[shop.pk] != baseline_single_price
+            ):
+                prices_by_shop[shop.pk] = _clamp_price(existing[shop.pk], minimum_price)
+            else:
+                prices_by_shop[shop.pk] = applied
         elif shop.pk in existing:
             prices_by_shop[shop.pk] = _clamp_price(existing[shop.pk], minimum_price)
         else:
@@ -1746,8 +1761,10 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
         editable_shop_ids=editable_shop_ids,
     )
     with transaction.atomic():
+        old_name = (item.name or "").strip()
+        new_name = cleaned["name"]
         item.category = cleaned["category"]
-        item.name = cleaned["name"]
+        item.name = new_name
         item.description = cleaned["description"]
         item.minimum_selling_price = cleaned["minimum_selling_price"]
         item.shop_price = cleaned["shop_price"]
@@ -1776,8 +1793,23 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None) -> Item:
                 item.image.storage.delete(old_image_name)
             except OSError:
                 pass
+        if old_name and old_name != new_name:
+            _sync_item_name_history(item, old_name=old_name, new_name=new_name)
         _sync_shop_item_prices(item, cleaned["shop_prices"])
         return item
+
+
+def _sync_item_name_history(item: Item, *, old_name: str, new_name: str) -> None:
+    """Keep sale snapshots and legacy POS rows aligned after a rename."""
+    from shops.models import ShopReceiptLine
+
+    ShopReceiptLine.objects.filter(item_id=item.pk).exclude(
+        item_name=new_name
+    ).update(item_name=new_name)
+
+    from pos.models import SaleLine
+
+    SaleLine.objects.filter(product_name=old_name).update(product_name=new_name)
 
 
 def toggle_item_suspended(item: Item) -> Item:
@@ -4552,7 +4584,7 @@ def build_stock_report_pdf(
         "Receipt",
         "From",
         "To",
-        "Seller",
+        "By",
     ]
 
     detail_data = []

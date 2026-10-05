@@ -1400,6 +1400,8 @@ def analytics_receipt_return(request, role_segment, shop_id, receipt_id):
         else:
             payload = {
                 "login_code": request.POST.get("login_code"),
+                "reason": request.POST.get("reason")
+                or request.POST.get("return_reason"),
                 "lines": json.loads(request.POST.get("lines") or "[]"),
             }
     except (TypeError, ValueError, json.JSONDecodeError):

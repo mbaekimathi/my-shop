@@ -70,6 +70,7 @@
           <thead>
             <tr>
               <th class="ax-th--item">Receipt</th>
+              <th>Client</th>
               <th>Status</th>
               <th>Type</th>
               <th>Shop</th>
@@ -85,6 +86,7 @@
               tabindex="0"
             >
               <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
+              <td data-label="Client">{{ row.client }}</td>
               <td data-label="Status">
                 <span class="shop-receipt-status {% if row.status == 'cancelled' %}is-cancelled{% elif row.status == 'partial_return' %}is-partial{% elif row.status == 'confirmed' %}is-confirmed{% else %}is-pending{% endif %}">
                   {{ row.status_label }}

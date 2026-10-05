@@ -616,6 +616,164 @@ class ItemStockReportRowsTests(TestCase):
         self.assertIn("Requested: STOCK REPORT", event["by"])
         self.assertIn("Received: STOCK RECEIVER", event["by"])
 
+    def test_timeline_sale_keeps_item_after_rename(self):
+        from shops.models import (
+            ShopPaymentMethod,
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptLine,
+            ShopReceiptStatus,
+        )
+        from items.views import (
+            _build_movement_timeline,
+            _filter_movement_events_by_search,
+            _item_qty_summary_by_type_rows,
+        )
+
+        receipt = ShopReceipt.objects.create(
+            shop=self.shop_a,
+            receipt_number="REP-RENAME-1",
+            kind=ShopReceiptKind.SALE,
+            payment_method=ShopPaymentMethod.CASH,
+            subtotal=Decimal("300.00"),
+            total=Decimal("300.00"),
+            amount_paid=Decimal("300.00"),
+            cash_amount=Decimal("300.00"),
+            created_by=self.profile,
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item=self.item,
+            item_name="OLD CABLE NAME",
+            quantity=2,
+            unit_price=Decimal("150.00"),
+            line_total=Decimal("300.00"),
+        )
+        self.item.name = "NEW CABLE NAME"
+        self.item.save(update_fields=["name", "updated_at"])
+
+        events, *_ = _build_movement_timeline(
+            shop_ids=[self.shop_a.pk],
+            day_start=self.day_start,
+            day_end=self.day_end,
+            item_mode="all",
+            selected_categories=[],
+            selected_item_ids=[],
+            report_items=[self.item],
+        )
+        sales = [event for event in events if event.get("event_type") == "sale"]
+        self.assertEqual(len(sales), 1)
+        self.assertEqual(sales[0]["item_id"], self.item.pk)
+        self.assertEqual(sales[0]["item_name"], "NEW CABLE NAME")
+        self.assertEqual(sales[0]["item_name_snapshot"], "OLD CABLE NAME")
+
+        searched = _filter_movement_events_by_search(events, "NEW CABLE")
+        self.assertEqual(
+            [event["event_type"] for event in searched if event.get("event_type") == "sale"],
+            ["sale"],
+        )
+        old_searched = _filter_movement_events_by_search(events, "OLD CABLE")
+        self.assertEqual(
+            [event["event_type"] for event in old_searched if event.get("event_type") == "sale"],
+            ["sale"],
+        )
+
+        summary = _item_qty_summary_by_type_rows(
+            [
+                {
+                    "event_type": "in",
+                    "item_id": self.item.pk,
+                    "item_name": "NEW CABLE NAME",
+                    "item_category": self.item.category,
+                    "quantity": 5,
+                },
+                {
+                    "event_type": "sale",
+                    "item_id": self.item.pk,
+                    "item_name": "OLD CABLE NAME",
+                    "item_category": self.item.category,
+                    "quantity": 2,
+                },
+            ]
+        )
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0]["in"], 5)
+        self.assertEqual(summary[0]["sale"], 2)
+
+    def test_update_item_renames_receipt_and_pos_snapshots(self):
+        from pos.models import Product, Sale, SaleLine, SaleSource
+        from shops.models import (
+            ShopPaymentMethod,
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptLine,
+            ShopReceiptStatus,
+        )
+        from items.services import update_item
+
+        receipt = ShopReceipt.objects.create(
+            shop=self.shop_a,
+            receipt_number="REP-RENAME-2",
+            kind=ShopReceiptKind.SALE,
+            payment_method=ShopPaymentMethod.CASH,
+            subtotal=Decimal("150.00"),
+            total=Decimal("150.00"),
+            amount_paid=Decimal("150.00"),
+            cash_amount=Decimal("150.00"),
+            created_by=self.profile,
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        line = ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item=self.item,
+            item_name=self.item.name,
+            quantity=1,
+            unit_price=Decimal("150.00"),
+            line_total=Decimal("150.00"),
+        )
+        product = Product.objects.create(
+            sku="POS-RENAME-1",
+            name=self.item.name,
+            price=Decimal("150.00"),
+            stock=1,
+        )
+        sale = Sale.objects.create(
+            client_id="rename-sale-1",
+            employee=self.profile,
+            total=Decimal("150.00"),
+            source=SaleSource.ONLINE,
+            sold_at=self.now,
+        )
+        pos_line = SaleLine.objects.create(
+            sale=sale,
+            product=product,
+            product_sku=product.sku,
+            product_name=self.item.name,
+            quantity=1,
+            unit_price=Decimal("150.00"),
+            line_total=Decimal("150.00"),
+        )
+
+        update_item(
+            self.item,
+            {
+                "category": self.item.category,
+                "name": "RENAMED REPORT CABLE",
+                "description": "",
+                "minimum_selling_price": "100.00",
+                "shop_price": "150.00",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        self.item.refresh_from_db()
+        line.refresh_from_db()
+        pos_line.refresh_from_db()
+        self.assertEqual(self.item.name, "RENAMED REPORT CABLE")
+        self.assertEqual(line.item_name, "RENAMED REPORT CABLE")
+        self.assertEqual(pos_line.product_name, "RENAMED REPORT CABLE")
+
     def test_timeline_groups_sale_and_return_by_receipt(self):
         from datetime import timedelta
 
@@ -1177,6 +1335,38 @@ class ShopPriceIsolationTests(TestCase):
         self.assertEqual(item.price_for_shop(self.shop_a), Decimal("120.00"))
         self.assertEqual(item.price_for_shop(self.shop_b), Decimal("95.00"))
         self.assertEqual(ShopItemPrice.objects.filter(item=item).count(), 2)
+
+    def test_single_edit_with_all_shops_keeps_other_shop_override(self):
+        from items.models import Item, ShopItemPrice
+        from items.services import update_item
+
+        item = Item.objects.create(
+            category="DRINKS",
+            name="TEA 500ML",
+            minimum_selling_price=Decimal("50.00"),
+            shop_price=Decimal("100.00"),
+            use_individual_shop_prices=True,
+            created_by=self.profile,
+        )
+        ShopItemPrice.objects.create(shop=self.shop_a, item=item, price=Decimal("100.00"))
+        ShopItemPrice.objects.create(shop=self.shop_b, item=item, price=Decimal("130.00"))
+
+        update_item(
+            item,
+            {
+                "category": "DRINKS",
+                "name": "TEA 500ML",
+                "description": "",
+                "minimum_selling_price": "50",
+                "shop_price": "115",
+                "pricing_mode": "single",
+            },
+            {},
+            editable_shop_ids={self.shop_a.pk, self.shop_b.pk},
+        )
+        item.refresh_from_db()
+        self.assertEqual(item.price_for_shop(self.shop_a), Decimal("115.00"))
+        self.assertEqual(item.price_for_shop(self.shop_b), Decimal("130.00"))
 
 
 class StockSerialMovementsShopFilterTests(TestCase):

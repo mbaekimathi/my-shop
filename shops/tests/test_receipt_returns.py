@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
@@ -71,9 +72,10 @@ class ReceiptReturnScenarioTests(TestCase):
         )
         self._n = 0
 
-    def _return_payload(self, lines):
+    def _return_payload(self, lines, reason="Customer changed mind"):
         return {
             "login_code": self.staff.employee_id,
+            "reason": reason,
             "lines": lines,
         }
 
@@ -175,13 +177,29 @@ class ReceiptReturnScenarioTests(TestCase):
             Decimal(receipt.return_payment_events[0]["cash"]),
             Decimal("100.00"),
         )
-        self.assertTrue(
-            StockMovement.objects.filter(
-                shop=self.shop,
-                entry_source=StockEntrySource.CUSTOMER_RETURN,
-            ).exists()
-        )
+        self.assertEqual(len(line.return_batches), 1)
+        self.assertEqual(line.return_batches[0]["reason"], "Customer changed mind")
+        movement = StockMovement.objects.filter(
+            shop=self.shop,
+            entry_source=StockEntrySource.CUSTOMER_RETURN,
+        ).first()
+        self.assertIsNotNone(movement)
+        self.assertIn("Customer changed mind", movement.notes)
         self.assertEqual(result["total"], "100.00")
+
+    def test_return_requires_reason(self):
+        receipt = self._sale_receipt(qty=1)
+        line = receipt.lines.get()
+        with self.assertRaises(ValidationError) as ctx:
+            return_shop_receipt_items(
+                shop=self.shop,
+                receipt_id=receipt.pk,
+                payload={
+                    "login_code": self.staff.employee_id,
+                    "lines": [{"line_id": line.pk, "qty": 1}],
+                },
+            )
+        self.assertIn("reason", "; ".join(ctx.exception.messages).lower())
 
     def test_credit_partial_return_after_partial_payment(self):
         """Credit 200, paid 80, return 1 × 100 → total 100, due 20, no till refund."""

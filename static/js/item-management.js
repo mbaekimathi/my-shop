@@ -186,13 +186,24 @@
     syncPricingMode(root);
   };
 
-  const setShopPrices = (prices) => {
-    let map = {};
+  const parseShopPriceMap = (prices) => {
     try {
-      map = prices ? JSON.parse(prices) : {};
+      return prices ? JSON.parse(prices) : {};
     } catch (_err) {
-      map = {};
+      return {};
     }
+  };
+
+  const shopPricesDiffer = (prices) => {
+    const map = parseShopPriceMap(prices);
+    const values = Object.values(map).filter((value) => String(value || "").trim() !== "");
+    if (values.length < 2) return false;
+    const first = String(values[0]);
+    return values.some((value) => String(value) !== first);
+  };
+
+  const setShopPrices = (prices) => {
+    const map = parseShopPriceMap(prices);
     editForm?.querySelectorAll("[data-shop-price-input]").forEach((input) => {
       const shopId = input.dataset.shopId;
       if (Object.prototype.hasOwnProperty.call(map, shopId)) {
@@ -213,7 +224,9 @@
     setField("description", dataset.description);
     setField("minimum_selling_price", dataset.minimumSellingPrice);
     setField("shop_price", dataset.shopPrice);
-    setPricingMode(dataset.pricingMode === "individual" ? "individual" : "single");
+    const useIndividual =
+      dataset.pricingMode === "individual" || shopPricesDiffer(dataset.shopPrices);
+    setPricingMode(useIndividual ? "individual" : "single");
     setShopPrices(dataset.shopPrices);
     setCheckbox(
       "track_serial_number",

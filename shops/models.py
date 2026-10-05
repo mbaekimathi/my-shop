@@ -248,7 +248,7 @@ class ShopReceiptLine(models.Model):
         default=list,
         blank=True,
         help_text=(
-            "Per-return events: [{qty, at, by_id, serials}, ...]. "
+            "Per-return events: [{qty, at, by_id, serials, reason}, ...]. "
             "Used so stock reports attribute returns to the day they happened."
         ),
     )

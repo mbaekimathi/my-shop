@@ -317,6 +317,7 @@
               <th scope="col" data-col="trade">Trade</th>
               <th scope="col" data-col="from">From</th>
               <th scope="col" data-col="to">To</th>
+              <th scope="col" data-col="by">By</th>
               <th scope="col" data-col="request">Request</th>
               <th scope="col" data-col="receive">Receive</th>
             </tr>
@@ -329,7 +330,7 @@
           >
             {% if group.is_multi %}
             <tr class="stock-report-receipt-head">
-              <td colspan="{% if is_item_movement_detail %}10{% else %}11{% endif %}">
+              <td colspan="{% if is_item_movement_detail %}11{% else %}12{% endif %}">
                 <div class="stock-report-receipt-head-inner">
                   <strong class="stock-report-receipt-number">{{ group.receipt_number }}</strong>
                   <span class="stock-report-receipt-meta">
@@ -440,6 +441,13 @@
                 {% if event.note %}
                 <span class="stock-report-from">{{ event.note }}</span>
                 {% endif %}
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="By">
+                {% if event.by and event.by != '—' %}
+                <span class="stock-report-seller">{{ event.by }}</span>
                 {% else %}
                 <span class="stock-report-empty">—</span>
                 {% endif %}

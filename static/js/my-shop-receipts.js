@@ -261,7 +261,9 @@
     verified = false;
     const codeInput = modalBody?.querySelector("[data-return-login-code]");
     if (codeInput) codeInput.value = "";
-    setReturnStatus("Enter an active staff 6-digit ID to authorise the return.");
+    const reasonInput = modalBody?.querySelector("[data-return-reason]");
+    if (reasonInput) reasonInput.value = "";
+    setReturnStatus("Enter a return reason and an active staff 6-digit ID.");
     syncConfirmReturn();
     refreshIcons();
   };
@@ -297,10 +299,18 @@
     return lines;
   };
 
+  const returnReason = () =>
+    (modalBody?.querySelector("[data-return-reason]")?.value || "").trim();
+
   const syncConfirmReturn = () => {
     if (!confirmReturnBtn) return;
     const lines = selectedReturnLines();
-    confirmReturnBtn.disabled = !(returnMode && verified && lines.length);
+    confirmReturnBtn.disabled = !(
+      returnMode &&
+      verified &&
+      lines.length &&
+      returnReason()
+    );
   };
 
   const verifyReturnCode = async () => {
@@ -538,6 +548,16 @@
       `<p class="shop-receipt-muted">Nothing left to return on this receipt.</p>`
     }
   </div>
+  <label class="shop-cart-input shop-receipt-return-reason">
+    <span>Reason for return</span>
+    <textarea
+      rows="2"
+      maxlength="500"
+      placeholder="Why is this being returned?"
+      data-return-reason
+      required
+    ></textarea>
+  </label>
   <label class="shop-cart-input shop-receipt-return-code">
     <span>Staff 6-digit ID</span>
     <input
@@ -549,7 +569,7 @@
       data-return-login-code
     >
   </label>
-  <p class="shop-receipts-status" data-return-status>Enter an active staff 6-digit ID to authorise the return.</p>
+  <p class="shop-receipts-status" data-return-status>Enter a return reason and an active staff 6-digit ID.</p>
 </div>`;
     }
 
@@ -679,10 +699,14 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
   const submitReturn = async () => {
     if (!currentDetail?.receipt?.id || !returnUrlTemplate) return;
     const lines = selectedReturnLines();
+    const reason = returnReason();
     const code = (
       modalBody?.querySelector("[data-return-login-code]")?.value || ""
     ).trim();
-    if (!verified || !lines.length || code.length !== 6) {
+    if (!verified || !lines.length || !reason || code.length !== 6) {
+      if (!reason) {
+        setReturnStatus("Enter a reason for the return.", { error: true });
+      }
       syncConfirmReturn();
       return;
     }
@@ -697,7 +721,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
           "X-CSRFToken": getCsrf(),
         },
         credentials: "same-origin",
-        body: JSON.stringify({ login_code: code, lines }),
+        body: JSON.stringify({ login_code: code, reason, lines }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
@@ -779,6 +803,10 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     if (target?.matches?.("[data-return-login-code]")) {
       verified = false;
       scheduleVerify();
+      syncConfirmReturn();
+      return;
+    }
+    if (target?.matches?.("[data-return-reason]")) {
       syncConfirmReturn();
       return;
     }

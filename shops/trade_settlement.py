@@ -411,7 +411,7 @@ def record_trade_return(receipt, *, lines, actor=None) -> dict:
     result = return_shop_receipt_items(
         shop=receipt.shop,
         receipt_id=receipt.pk,
-        payload={"lines": lines},
+        payload={"lines": lines, "reason": "Trade return"},
         actor=actor,
     )
     receipt.refresh_from_db()

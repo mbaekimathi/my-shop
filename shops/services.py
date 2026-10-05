@@ -6426,21 +6426,25 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
     raise ValidationError("Unknown receipt source.")
 
 
-def _append_receipt_return_batch(line, *, qty: int, serials: list, at, by_id) -> None:
+def _append_receipt_return_batch(
+    line, *, qty: int, serials: list, at, by_id, reason: str = ""
+) -> None:
     """Record one return event on the line for date-accurate stock reports."""
     batches = [
         batch
         for batch in (line.return_batches or [])
         if isinstance(batch, dict)
     ]
-    batches.append(
-        {
-            "qty": int(qty),
-            "at": at.isoformat(),
-            "by_id": by_id,
-            "serials": [str(s).strip() for s in (serials or []) if str(s).strip()],
-        }
-    )
+    batch = {
+        "qty": int(qty),
+        "at": at.isoformat(),
+        "by_id": by_id,
+        "serials": [str(s).strip() for s in (serials or []) if str(s).strip()],
+    }
+    reason_text = (reason or "").strip()
+    if reason_text:
+        batch["reason"] = reason_text
+    batches.append(batch)
     line.return_batches = batches
 
 
@@ -6499,6 +6503,7 @@ def _create_customer_return_stock_movement(
     actor,
     occurred_at,
     lines: list[dict],
+    reason: str = "",
 ):
     """
     Ledger-only stock-in for a customer return.
@@ -6517,6 +6522,7 @@ def _create_customer_return_stock_movement(
     if not prepared:
         return None
 
+    reason_text = (reason or "").strip()
     kind = getattr(receipt, "kind", "") or ""
     if kind == ShopReceiptKind.TRADE_OUT or getattr(receipt, "settled_from_trade", False):
         movement_notes = f"Trade return on {receipt.receipt_number}"
@@ -6524,6 +6530,8 @@ def _create_customer_return_stock_movement(
     else:
         movement_notes = f"Customer return on {receipt.receipt_number}"
         line_note_prefix = "Return on"
+    if reason_text:
+        movement_notes = f"{movement_notes}: {reason_text}"
 
     movement = StockMovement.objects.create(
         movement_type=StockMovementType.IN,
@@ -6544,13 +6552,16 @@ def _create_customer_return_stock_movement(
         serials = [
             str(s).strip() for s in (row.get("serial_numbers") or []) if str(s).strip()
         ]
+        line_note = f"{line_note_prefix} {receipt.receipt_number}"
+        if reason_text:
+            line_note = f"{line_note}: {reason_text}"
         StockMovementLine.objects.create(
             movement=movement,
             item=item,
             quantity=qty,
             buying_price=unit_cost,
             unit_cost=unit_cost,
-            note=f"{line_note_prefix} {receipt.receipt_number}",
+            note=line_note,
             serial_numbers=serials,
         )
     return movement
@@ -6605,6 +6616,12 @@ def return_shop_receipt_items(
         raise ValidationError("Quotations cannot be returned.")
     if receipt.status == ShopReceiptStatus.CANCELLED:
         raise ValidationError("This receipt is already fully returned.")
+
+    reason = (payload.get("reason") or payload.get("return_reason") or "").strip()
+    if not reason:
+        raise ValidationError("Enter a reason for the return.")
+    if len(reason) > 500:
+        raise ValidationError("Return reason must be 500 characters or fewer.")
 
     raw_lines = payload.get("lines") or []
     if not isinstance(raw_lines, list) or not raw_lines:
@@ -6767,6 +6784,7 @@ def return_shop_receipt_items(
             serials=serials,
             at=now,
             by_id=authorising.pk if authorising else None,
+            reason=reason,
         )
         lines_to_update.append(line)
 
@@ -6842,6 +6860,7 @@ def return_shop_receipt_items(
         actor=authorising,
         occurred_at=now,
         lines=movement_lines,
+        reason=reason,
     )
 
     # Refresh remaining totals from all lines on this receipt.
@@ -7085,7 +7104,7 @@ def cancel_pending_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
     return return_shop_receipt_items(
         shop=shop,
         receipt_id=receipt_pk,
-        payload={"lines": lines_payload},
+        payload={"lines": lines_payload, "reason": "Receipt cancelled"},
         actor=actor,
     )
 
