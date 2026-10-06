@@ -90,7 +90,7 @@ class ItemStockReportRowsTests(TestCase):
         self._fulfill_transfer(qty=2)
         rows = _build_item_report_rows(
             [self.item],
-            [self.shop_a.pk],
+            [self.shop_b.pk],
             self.day_start,
             self.day_end,
         )
@@ -98,8 +98,8 @@ class ItemStockReportRowsTests(TestCase):
         row = rows[0]
         self.assertEqual(row["stock_transfer_in"], 2)
         self.assertEqual(row["stock_transfer_out"], 0)
-        self.assertEqual(row["starting_stock"], 0)
-        self.assertEqual(row["closing_stock"], 2)
+        self.assertEqual(row["starting_stock"], 6)
+        self.assertEqual(row["closing_stock"], 8)
 
     def test_source_shop_counts_transfer_out(self):
         from items.views import _build_item_report_rows
@@ -107,7 +107,7 @@ class ItemStockReportRowsTests(TestCase):
         self._fulfill_transfer(qty=2)
         rows = _build_item_report_rows(
             [self.item],
-            [self.shop_b.pk],
+            [self.shop_a.pk],
             self.day_start,
             self.day_end,
         )
@@ -115,8 +115,8 @@ class ItemStockReportRowsTests(TestCase):
         row = rows[0]
         self.assertEqual(row["stock_transfer_in"], 0)
         self.assertEqual(row["stock_transfer_out"], 2)
-        self.assertEqual(row["starting_stock"], 10)
-        self.assertEqual(row["closing_stock"], 8)
+        self.assertEqual(row["starting_stock"], 4)
+        self.assertEqual(row["closing_stock"], 2)
 
     def test_all_shops_show_each_shop_transfer_side(self):
         from items.views import _build_item_report_rows
@@ -137,10 +137,10 @@ class ItemStockReportRowsTests(TestCase):
         self.assertTrue(rows[-1]["is_item_total"])
         self.assertEqual(rows[-1]["stock_transfer_in"], 2)
         self.assertEqual(rows[-1]["stock_transfer_out"], 2)
-        self.assertEqual(by_shop[self.shop_a.name]["stock_transfer_in"], 2)
-        self.assertEqual(by_shop[self.shop_a.name]["stock_transfer_out"], 0)
-        self.assertEqual(by_shop[self.shop_b.name]["stock_transfer_in"], 0)
-        self.assertEqual(by_shop[self.shop_b.name]["stock_transfer_out"], 2)
+        self.assertEqual(by_shop[self.shop_a.name]["stock_transfer_in"], 0)
+        self.assertEqual(by_shop[self.shop_a.name]["stock_transfer_out"], 2)
+        self.assertEqual(by_shop[self.shop_b.name]["stock_transfer_in"], 2)
+        self.assertEqual(by_shop[self.shop_b.name]["stock_transfer_out"], 0)
 
     def test_all_shops_list_every_shop_under_the_item(self):
         from items.models import ShopStock

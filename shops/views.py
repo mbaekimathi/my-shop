@@ -65,9 +65,12 @@ from .services import (
     authenticate_shop_login,
     build_expense_supplier_receipt,
     build_stock_in_supplier_receipt,
-    build_stock_request_delivery_note,
+    build_stock_request_dispatch_note,
+    build_stock_request_goods_received,
     build_shop_day_prompt,
     close_shop_day,
+    ITEM_ACTIVE_COUNT_CACHE_KEY,
+    ITEM_ACTIVE_COUNT_CACHE_TTL,
     list_shop_day_prompts,
     shop_day_floor_state,
     shop_working_hours_status_map,
@@ -322,7 +325,7 @@ def _shops_for_login(profile):
     return list(Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name"))
 
 
-def _shop_day_prompt_context(shop, profile, *, active=None):
+def _shop_day_prompt_context(shop, profile, *, active=None, day_state=None, pos=None):
     if shop is None:
         return {}
     from employees.module_permissions import employee_may
@@ -331,7 +334,7 @@ def _shop_day_prompt_context(shop, profile, *, active=None):
     if active == "day_toggle":
         return {}
 
-    day_state = shop_day_floor_state(shop=shop)
+    day_state = day_state if day_state is not None else shop_day_floor_state(shop=shop, pos=pos)
     day_toggle_url = reverse(
         "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
     )
@@ -366,7 +369,7 @@ def _shop_day_prompt_context(shop, profile, *, active=None):
             "shop_day_is_open": True,
         }
 
-    prompt = build_shop_day_prompt(shop=shop)
+    prompt = build_shop_day_prompt(shop=shop, state=day_state, pos=pos)
     if not prompt.get("show"):
         return {
             "shop_day_can_trade": True,
@@ -411,25 +414,30 @@ def _low_stock_alert_force_key(shop):
 
 
 def _shop_floor_chrome(
-    shop, profile, shops, *, active, print_channels=None, request=None
+    shop, profile, shops, *, active, print_channels=None, request=None,
+    pending_request_count=None, pos=None,
 ):
     portal = profile is None
-    pending_request_count = 0
     stock_request_status_url = ""
     if shop is not None:
-        pending_request_count = (
-            StockMovement.objects.filter(
-                movement_type=StockMovementType.REQUEST,
-                requested_from_shop=shop,
-                request_status=StockRequestStatus.PENDING,
+        if pending_request_count is None:
+            pending_request_count = (
+                StockMovement.objects.filter(
+                    movement_type=StockMovementType.REQUEST,
+                    requested_from_shop=shop,
+                    request_status=StockRequestStatus.PENDING,
+                )
+                .order_by()
+                .count()
             )
-            .order_by()
-            .count()
-        )
         stock_request_status_url = reverse(
             "employees:my_shop_stock_request_status", kwargs={"shop_id": shop.pk}
         )
-    day_state = shop_day_floor_state(shop=shop) if shop is not None else {}
+    else:
+        pending_request_count = pending_request_count or 0
+    day_state = (
+        shop_day_floor_state(shop=shop, pos=pos) if shop is not None else {}
+    )
     open_session = day_state.get("open_session") if day_state else None
     low_stock_alerts = []
     low_stock_alert_force = False
@@ -467,7 +475,9 @@ def _shop_floor_chrome(
         "low_stock_alert_force": low_stock_alert_force,
         "low_stock_alert_on_selling": False,
         "low_stock_open_session_id": open_session.pk if open_session else "",
-        **_shop_day_prompt_context(shop, profile, active=active),
+        **_shop_day_prompt_context(
+            shop, profile, active=active, day_state=day_state, pos=pos
+        ),
     }
 
 
@@ -938,13 +948,7 @@ def build_shop_catalog_page(
     page_data = _paginate_queryset(qs, page=page, page_size=page_size)
     rows = _catalog_rows_for_items(shop, page_data["items"])
 
-    categories = list(
-        Item.objects.filter(is_suspended=False)
-        .order_by("category")
-        .values_list("category", flat=True)
-        .distinct()
-    )
-
+    # Categories are unused by the floor JS; skip the distinct scan.
     return {
         "ok": True,
         "total": page_data["total"],
@@ -952,7 +956,7 @@ def build_shop_catalog_page(
         "page_size": page_size,
         "has_more": page_data["has_more"],
         "next_page": page_data["next_page"],
-        "categories": categories,
+        "categories": [],
         "items": rows,
         "q": (q or "").strip(),
         "category": (category or "").strip(),
@@ -960,6 +964,7 @@ def build_shop_catalog_page(
 
 
 def _pending_stock_requests_for_shop(shop):
+    """Incoming transfers waiting for this shop to confirm receipt."""
     requests = list(
         StockMovement.objects.filter(
             movement_type=StockMovementType.REQUEST,
@@ -970,27 +975,16 @@ def _pending_stock_requests_for_shop(shop):
         .prefetch_related("lines__item")
         .order_by("-created_at")
     )
-    item_ids = {
-        line.item_id
-        for movement in requests
-        for line in movement.lines.all()
-    }
-    stock_by_item = {
-        item_id: qty
-        for item_id, qty in ShopStock.objects.filter(
-            shop=shop, item_id__in=item_ids
-        ).values_list("item_id", "quantity")
-    }
     for movement in requests:
         for line in movement.lines.all():
-            available = stock_by_item.get(line.item_id, 0)
-            line.available_qty = available
-            line.transfer_max = min(line.quantity, available)
+            # Receiver confirms against sent qty (stock leaves the sender on accept).
+            line.available_qty = line.quantity
+            line.transfer_max = line.quantity
     return requests
 
 
 def _outgoing_pending_stock_requests_for_shop(shop):
-    """Pending requests this shop sent to other shops (awaiting their response)."""
+    """Pending transfers this shop sent to other shops (awaiting confirmation)."""
     rows = list(
         StockMovement.objects.filter(
             movement_type=StockMovementType.REQUEST,
@@ -1014,6 +1008,8 @@ def _outgoing_pending_stock_requests_for_shop(shop):
 
 def _stock_request_status_payload(shop):
     """Lean JSON for floor polling: incoming alerts + decision updates."""
+    from django.db.models import Sum
+
     pending = list(
         StockMovement.objects.filter(
             movement_type=StockMovementType.REQUEST,
@@ -1021,18 +1017,26 @@ def _stock_request_status_payload(shop):
             request_status=StockRequestStatus.PENDING,
         )
         .select_related("shop")
-        .prefetch_related("lines")
+        .annotate(units=Sum("lines__quantity"))
         .order_by("-created_at")
+        .values(
+            "id",
+            "created_at",
+            "supplier_notified",
+            "shop_id",
+            "shop__name",
+            "units",
+        )
     )
     alerts = []
     for movement in pending:
-        units = sum(int(line.quantity or 0) for line in movement.lines.all())
+        created = movement.get("created_at")
         entry = {
-            "id": movement.pk,
-            "from_shop": movement.shop.name if movement.shop_id else "Another shop",
-            "units": units,
-            "created_at": movement.created_at.isoformat() if movement.created_at else "",
-            "unseen": not movement.supplier_notified,
+            "id": movement["id"],
+            "from_shop": movement["shop__name"] or "Another shop",
+            "units": int(movement["units"] or 0),
+            "created_at": created.isoformat() if created else "",
+            "unseen": not movement["supplier_notified"],
         }
         alerts.append(entry)
     decisions = list(
@@ -1047,15 +1051,19 @@ def _stock_request_status_payload(shop):
         )
         .select_related("requested_from_shop")
         .order_by("-responded_at", "-created_at")
+        .values(
+            "id",
+            "request_status",
+            "requested_from_shop__name",
+        )
     )
     decision_alerts = []
     for movement in decisions:
-        supplier = movement.requested_from_shop
         decision_alerts.append(
             {
-                "id": movement.pk,
-                "status": movement.request_status,
-                "from_shop": supplier.name if supplier else "another shop",
+                "id": movement["id"],
+                "status": movement["request_status"],
+                "from_shop": movement["requested_from_shop__name"] or "another shop",
             }
         )
     unseen_count = sum(1 for row in alerts if row["unseen"])
@@ -1214,14 +1222,12 @@ def my_shop_workspace(request, shop_id):
         return denied
 
     shops = _shops_for_floor(profile, shop)
-    item_count = Item.objects.filter(is_suspended=False).count()
-    category_count = (
-        Item.objects.filter(is_suspended=False)
-        .order_by("category")
-        .values("category")
-        .distinct()
-        .count()
-    )
+    from django.core.cache import cache
+
+    item_count = cache.get(ITEM_ACTIVE_COUNT_CACHE_KEY)
+    if item_count is None:
+        item_count = Item.objects.filter(is_suspended=False).count()
+        cache.set(ITEM_ACTIVE_COUNT_CACHE_KEY, item_count, ITEM_ACTIVE_COUNT_CACHE_TTL)
     pending_requests = _pending_stock_requests_for_shop(shop)
     request_decisions = _stock_request_decisions_for_shop(shop)
     pos_settings = get_effective_pos_settings(shop)
@@ -1273,10 +1279,12 @@ def my_shop_workspace(request, shop_id):
                 active="workspace",
                 print_channels=enabled_print_channels,
                 request=request,
+                pending_request_count=len(pending_requests),
+                pos=pos_settings,
             ),
             "meta": meta,
             "item_count": item_count,
-            "category_count": category_count,
+            "category_count": 0,
             "pending_stock_requests": pending_requests,
             "pending_request_count": len(pending_requests),
             "stock_request_decisions": request_decisions,
@@ -1413,6 +1421,7 @@ def _render_my_shop_tool_page(
     icon,
     template_name,
     extra_context=None,
+    pending_request_count=None,
 ):
     meta = {
         "title": title,
@@ -1422,7 +1431,12 @@ def _render_my_shop_tool_page(
     }
     context = {
         **_shop_floor_chrome(
-            shop, profile, shops, active=active, request=request
+            shop,
+            profile,
+            shops,
+            active=active,
+            request=request,
+            pending_request_count=pending_request_count,
         ),
         "meta": meta,
     }
@@ -1620,7 +1634,7 @@ def my_shop_buy_stock(request, shop_id):
 @shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_stock_requests(request, shop_id):
-    """Review incoming stock requests and request decision updates."""
+    """Review incoming stock transfers and decision updates."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return denied
@@ -1639,11 +1653,11 @@ def my_shop_stock_requests(request, shop_id):
         profile=profile,
         shops=shops,
         active="stock_requests",
-        title=f"Stock requests — {shop.name}",
-        headline="Stock requests",
+        title=f"Stock transfers — {shop.name}",
+        headline="Stock transfers",
         summary=(
-            f"Request stock from another shop, review incoming transfers, "
-            f"and see previous requests for {shop.name}."
+            f"Send stock to another shop, confirm incoming transfers, "
+            f"and see previous transfers for {shop.name}."
         ),
         icon="clipboard-list",
         template_name="shops/my_shop_stock_requests.html",
@@ -1679,19 +1693,17 @@ def my_shop_stock_requests(request, shop_id):
                 .order_by("name")
                 .only("id", "name", "location")
             ),
-            "request_items": list(
-                Item.objects.filter(is_suspended=False)
-                .order_by("name")
-                .values("id", "name")[:800]
-            ),
+            # Item rows load via from-stock JSON when the create modal opens.
+            "request_items": [],
         },
+        pending_request_count=len(pending_requests),
     )
 
 
 @shop_floor_required
 @require_http_methods(["POST"])
 def my_shop_stock_request_create(request, shop_id):
-    """Create an outgoing stock request from this shop to another shop."""
+    """Create an outgoing stock transfer from this shop to another shop."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         if _wants_json_response(request):
@@ -1720,11 +1732,12 @@ def my_shop_stock_request_create(request, shop_id):
     if denied:
         return denied
 
-    from_shop_id = (request.POST.get("requested_from_shop_id") or "").strip()
+    to_shop_id = (request.POST.get("requested_from_shop_id") or "").strip()
     notes = (request.POST.get("notes") or "").strip()
+    rider_name = (request.POST.get("rider_name") or "").strip()[:120]
     post = request.POST.copy()
     post["shop_id"] = str(shop.pk)
-    post["requested_from_shop_id"] = from_shop_id
+    post["requested_from_shop_id"] = to_shop_id
     post["mode"] = "request"
 
     try:
@@ -1735,7 +1748,7 @@ def my_shop_stock_request_create(request, shop_id):
             return JsonResponse(
                 {
                     "ok": False,
-                    "error": errors[0] if errors else "Could not create stock request.",
+                    "error": errors[0] if errors else "Could not create stock transfer.",
                 },
                 status=400,
             )
@@ -1743,30 +1756,48 @@ def my_shop_stock_request_create(request, shop_id):
             messages.error(request, message)
         return redirect("employees:my_shop_stock_requests", shop_id=shop.pk)
 
+    update_fields = []
     if notes and not (movement.notes or "").strip():
         movement.notes = notes[:2000]
-        movement.save(update_fields=["notes"])
+        update_fields.append("notes")
+    if rider_name:
+        movement.rider_name = rider_name
+        update_fields.append("rider_name")
+    if update_fields:
+        movement.save(update_fields=update_fields)
 
     line_count = movement.lines.count()
-    from_name = (
+    to_name = (
         movement.requested_from_shop.name
         if movement.requested_from_shop_id
         else "another shop"
     )
     success = (
-        f"Requested {line_count} item{'' if line_count == 1 else 's'} "
-        f"from {from_name}. They will be notified."
+        f"Sent transfer of {line_count} item{'' if line_count == 1 else 's'} "
+        f"to {to_name}. They will confirm on receipt."
     )
     messages.success(request, success)
     if wants_json:
-        return JsonResponse({"ok": True, "message": success, "request_id": movement.pk})
+        payload = {
+            "ok": True,
+            "message": success,
+            "request_id": movement.pk,
+            "next": reverse(
+                "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
+            ),
+        }
+        print_payload = build_stock_request_dispatch_note(
+            movement, shop=shop, authorised_by=authorising
+        )
+        payload.update(print_payload)
+        return JsonResponse(payload)
     return redirect("employees:my_shop_stock_requests", shop_id=shop.pk)
 
 
 @shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_stock_request_from_stock(request, shop_id):
-    """Return on-hand quantities at the shop being requested from."""
+    """Return catalog + on-hand quantities for the transfer create modal."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
@@ -1776,41 +1807,31 @@ def my_shop_stock_request_from_stock(request, shop_id):
     if denied:
         return denied
 
-    from_shop_id = (request.GET.get("from_shop_id") or "").strip()
-    if not from_shop_id:
+    to_shop_id = (request.GET.get("from_shop_id") or "").strip()
+    if to_shop_id and str(to_shop_id) == str(shop.pk):
         return JsonResponse(
-            {"ok": False, "error": "Select a shop to request from."}, status=400
-        )
-    if str(from_shop_id) == str(shop.pk):
-        return JsonResponse(
-            {"ok": False, "error": "Choose a different shop to request from."},
+            {"ok": False, "error": "Choose a different shop to transfer to."},
             status=400,
-        )
-
-    from_shop = (
-        Shop.objects.filter(
-            pk=from_shop_id, is_hidden=False, is_suspended=False
-        )
-        .only("id", "name")
-        .first()
-    )
-    if from_shop is None:
-        return JsonResponse(
-            {"ok": False, "error": "That shop is not available."}, status=404
         )
 
     stocks = {
         str(item_id): int(qty or 0)
-        for item_id, qty in ShopStock.objects.filter(shop=from_shop).values_list(
+        for item_id, qty in ShopStock.objects.filter(shop=shop).values_list(
             "item_id", "quantity"
         )
     }
+    items = list(
+        Item.objects.filter(is_suspended=False)
+        .order_by("name")
+        .values("id", "name")[:800]
+    )
     return JsonResponse(
         {
             "ok": True,
-            "from_shop_id": from_shop.pk,
-            "from_shop_name": from_shop.name,
+            "from_shop_id": shop.pk,
+            "from_shop_name": shop.name,
             "stocks": stocks,
+            "items": items,
         }
     )
 
@@ -2931,7 +2952,7 @@ def my_shop_client_lookup(request, shop_id):
 @shop_floor_required
 @require_POST
 def my_shop_stock_request_respond(request, shop_id, request_id):
-    """Accept or decline a pending stock request (requires shop login code)."""
+    """Confirm or decline a pending stock transfer (requires shop login code)."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         if _wants_json_response(request):
@@ -2983,14 +3004,14 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
             messages.error(request, message)
         return redirect("employees:my_shop_workspace", shop_id=shop.pk)
 
-    requester_name = movement.shop.name if movement.shop else "the requesting shop"
+    sender_name = movement.shop.name if movement.shop else "the sending shop"
     if decision == "accept":
         success_message = (
-            f"Stock request from {requester_name} accepted. Stock transferred."
+            f"Transfer from {sender_name} confirmed. Stock updated."
         )
     else:
         success_message = (
-            f"Stock request from {requester_name} declined. They will be notified."
+            f"Transfer from {sender_name} declined. They will be notified."
         )
     messages.success(request, success_message)
 
@@ -3004,7 +3025,7 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
         }
         if decision == "accept":
             authorising = getattr(movement, "responded_by", None)
-            print_payload = build_stock_request_delivery_note(
+            print_payload = build_stock_request_goods_received(
                 movement, shop=shop, authorised_by=authorising
             )
             payload.update(print_payload)

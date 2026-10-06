@@ -34,6 +34,7 @@
       <span class="receipt-ticket-party-label">Transfer</span>
       {% if p.route_from %}<strong>From: {{ p.route_from }}</strong>{% endif %}
       {% if p.route_to %}<strong>To: {{ p.route_to }}</strong>{% endif %}
+      {% if p.rider %}<em>Rider: {{ p.rider }}</em>{% endif %}
       {% else %}
       <span class="receipt-ticket-party-label">{{ p.party_label|default:"Customer" }}</span>
       <strong>{{ p.client|default:"—" }}</strong>

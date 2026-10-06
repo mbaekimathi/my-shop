@@ -62,7 +62,7 @@
             {% if stock_mode == 'out' %}
             Stock out · {{ shop_filter_label }}
             {% elif stock_mode == 'request' %}
-            Request stock · {{ shop_filter_label }}
+            Transfer stock · {{ shop_filter_label }}
             {% elif stock_mode == 'in' %}
             Stock in · {{ shop_filter_label }}
             {% else %}
@@ -73,7 +73,7 @@
             {% if stock_mode == 'out' %}
             Remove stock
             {% elif stock_mode == 'request' %}
-            Request stock
+            Transfer stock
             {% elif stock_mode == 'in' %}
             Add stock
             {% else %}
@@ -84,7 +84,7 @@
             {% if stock_mode == 'out' %}
             Enter quantity{% if shop_filter_active %} for {{ shop_filter_label }}{% else %} per shop{% endif %}. Serial items open a popup. Set reason and refund in the submit panel.
             {% elif stock_mode == 'request' %}
-            Choose the shop that needs stock and the shop you are requesting from. Enter quantities under the supplying shop.
+            Choose the sending shop and the receiving shop. Enter quantities under the sending shop.
             {% elif stock_mode == 'in' %}
             Enter quantity and buying price{% if shop_filter_active %} for {{ shop_filter_label }}{% else %} per shop{% endif %}. Serial items open a popup. Set supplier details in the submit panel.
             {% else %}
@@ -253,8 +253,8 @@
         {% elif stock_mode == 'request' %}
         <div class="stock-request-pair" data-stock-request-pair-bar>
           <label class="stock-shop-pick">
-            <span>Requesting shop</span>
-            <select data-stock-shop-nav aria-label="Shop that needs stock">
+            <span>Sending shop</span>
+            <select data-stock-shop-nav aria-label="Shop sending stock">
               <option value="">Choose shop…</option>
               {% for shop in shops %}
               <option
@@ -265,11 +265,11 @@
             </select>
           </label>
           <div class="stock-request-pair-arrow" aria-hidden="true">
-            <i data-lucide="arrow-left"></i>
+            <i data-lucide="arrow-right"></i>
           </div>
           <label class="stock-shop-pick">
-            <span>From shop</span>
-            <select data-stock-from-nav aria-label="Shop to request stock from">
+            <span>To shop</span>
+            <select data-stock-from-nav aria-label="Shop receiving the transfer">
               <option value="">Choose shop…</option>
               {% for shop in request_from_shops %}
               <option
@@ -285,8 +285,8 @@
         <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
           <i data-lucide="package" aria-hidden="true"></i>
           <span>
-            <strong>{{ selected_shop.name }}</strong> is requesting from
-            <strong>{{ requested_from_shop.name }}</strong> — enter qty under From.
+            <strong>{{ selected_shop.name }}</strong> is sending to
+            <strong>{{ requested_from_shop.name }}</strong> — enter qty under Sending.
           </span>
         </p>
         {% else %}
@@ -327,7 +327,7 @@
     {% elif stock_mode == 'request' and not request_pair_ready %}
     <div class="dashboard-placeholder">
       <i data-lucide="arrow-left-right" aria-hidden="true"></i>
-      <p>Choose the requesting shop and the shop to request from to continue.</p>
+      <p>Choose the sending shop and the receiving shop to continue.</p>
     </div>
     {% elif use_stock_catalog_api and item_count %}
     <div class="stock-matrix-wrap" data-item-list>
@@ -902,12 +902,12 @@
         <div class="stock-float-shops">
           {% if stock_mode == 'request' %}
           <p class="stock-float-shop-readout">
-            <span>Requesting</span>
-            <strong data-stock-float-requesting-label>{% if selected_shop %}{{ selected_shop.name }}{% else %}Choose requesting shop{% endif %}</strong>
+            <span>Sending</span>
+            <strong data-stock-float-requesting-label>{% if selected_shop %}{{ selected_shop.name }}{% else %}Choose sending shop{% endif %}</strong>
           </p>
           <p class="stock-float-shop-readout">
-            <span>From</span>
-            <strong data-stock-float-shop-label">{% if requested_from_shop %}{{ requested_from_shop.name }}{% else %}Choose from shop{% endif %}</strong>
+            <span>To</span>
+            <strong data-stock-float-shop-label">{% if requested_from_shop %}{{ requested_from_shop.name }}{% else %}Choose receiving shop{% endif %}</strong>
           </p>
           {% else %}
           <p class="stock-float-shop-readout">
@@ -924,7 +924,7 @@
             {% elif stock_mode == 'out' %}
             Enter qty per shop. Use autofill below for reason and refund.
             {% else %}
-            Enter qty under the From shop column, then submit the request.
+            Enter qty under the Sending shop column, then submit the transfer.
             {% endif %}
           </p>
         </div>

@@ -1,13 +1,19 @@
 """Active shop session helpers for MY-SHOP workspace entry."""
 
 from functools import wraps
+import time
 
 from items.services import actionable_shops_for_profile
 
 SESSION_SHOP_KEY = "active_shop_id"
 SESSION_SHOP_PORTAL_KEY = "shop_portal_auth"
+SESSION_SHOP_PORTAL_TOUCH_KEY = "_shop_portal_touch"
 # Shop portal stays signed in until explicit logout. Refreshed on each use.
 SHOP_PORTAL_SESSION_AGE = 60 * 60 * 24 * 365 * 10
+# Avoid writing the session row on every poll/ping — refresh at most hourly.
+SHOP_PORTAL_TOUCH_INTERVAL = 60 * 60
+
+_UNSET = object()
 
 
 def shops_for_profile(profile):
@@ -33,33 +39,56 @@ def is_shop_portal_session(request) -> bool:
     return bool(request.session.get(SESSION_SHOP_PORTAL_KEY))
 
 
-def persist_shop_portal_session(request):
-    """Keep the shop portal cookie alive until the user signs out."""
-    request.session.set_expiry(SHOP_PORTAL_SESSION_AGE)
-    request.session.modified = True
+def persist_shop_portal_session(request, *, force: bool = False):
+    """Keep the shop portal cookie alive until the user signs out.
+
+    Skips session writes when expiry was refreshed recently, so lightweight
+    polls (stock-request status, ping) do not hit the session store every time.
+    """
+    session = request.session
+    now = int(time.time())
+    if not force:
+        last = session.get(SESSION_SHOP_PORTAL_TOUCH_KEY)
+        try:
+            last_ts = int(last) if last is not None else 0
+        except (TypeError, ValueError):
+            last_ts = 0
+        if last_ts and (now - last_ts) < SHOP_PORTAL_TOUCH_INTERVAL:
+            return
+    session.set_expiry(SHOP_PORTAL_SESSION_AGE)
+    session[SESSION_SHOP_PORTAL_TOUCH_KEY] = now
+    session.modified = True
 
 
 def set_shop_portal_session(request, shop):
     """Mark the browser as signed in to a shop via the public shop portal."""
     set_active_shop(request, shop)
     request.session[SESSION_SHOP_PORTAL_KEY] = True
-    persist_shop_portal_session(request)
+    persist_shop_portal_session(request, force=True)
 
 
 def clear_shop_portal_session(request):
     clear_active_shop(request)
     if SESSION_SHOP_PORTAL_KEY in request.session:
         del request.session[SESSION_SHOP_PORTAL_KEY]
+    if SESSION_SHOP_PORTAL_TOUCH_KEY in request.session:
+        del request.session[SESSION_SHOP_PORTAL_TOUCH_KEY]
 
 
 def resolve_portal_shop(request):
     """Return the portal-authenticated shop, or None."""
+    cached = getattr(request, "_portal_shop_cache", _UNSET)
+    if cached is not _UNSET:
+        return cached
+
     if not is_shop_portal_session(request):
+        request._portal_shop_cache = None
         return None
 
     shop_id = get_active_shop_id(request)
     if not shop_id:
         clear_shop_portal_session(request)
+        request._portal_shop_cache = None
         return None
 
     from .models import Shop
@@ -71,8 +100,10 @@ def resolve_portal_shop(request):
     )
     if shop is None:
         clear_shop_portal_session(request)
+        request._portal_shop_cache = None
         return None
     persist_shop_portal_session(request)
+    request._portal_shop_cache = shop
     return shop
 
 
@@ -140,10 +171,13 @@ def get_shop_for_profile(profile, shop_id):
     shop_id = str(shop_id or "").strip()
     if not shop_id:
         return None
-    for shop in shops_for_profile(profile):
-        if str(shop.pk) == shop_id:
-            return shop
-    return None
+    from employees.models import SHOP_ASSIGNABLE_ROLES
+    from shops.models import Shop
+
+    qs = Shop.objects.filter(pk=shop_id, is_hidden=False, is_suspended=False)
+    if profile is not None and profile.role in SHOP_ASSIGNABLE_ROLES:
+        qs = qs.filter(assigned_employees=profile)
+    return qs.first()
 
 
 def shop_floor_required(view_func):

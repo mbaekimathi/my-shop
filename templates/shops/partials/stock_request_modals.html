@@ -16,7 +16,7 @@
     <div class="workspace-modal-head stock-transfer-head">
       <div>
         <p class="stock-transfer-kicker">Stock transfer</p>
-        <h2 id="stock-request-modal-title">Incoming requests</h2>
+        <h2 id="stock-request-modal-title">Incoming transfers</h2>
       </div>
       <button
         type="button"
@@ -30,9 +30,9 @@
 
     <div class="stock-request-modal-body stock-transfer-body">
       <p class="stock-request-modal-lead">
-        Review and edit quantities to send from <strong>{{ shop.name }}</strong>.
-        Accepting prints a delivery note (from this shop to the requesting shop).
-        Declining notifies the requesting shop that the request was declined.
+        Confirm receipt at <strong>{{ shop.name }}</strong>.
+        Enter quantities received below. Confirm only when they match what was sent —
+        otherwise Decline (no stock change).
         Dismiss hides this for 5 minutes; refresh brings it back.
       </p>
 
@@ -44,22 +44,14 @@
             action="{% url 'employees:my_shop_stock_request_respond' shop.id req.pk %}"
             class="stock-request-form"
             data-request-form
-            data-requesting-shop="{% if req.shop %}{{ req.shop.name }}{% else %}the requesting shop{% endif %}"
+            data-requesting-shop="{% if req.shop %}{{ req.shop.name }}{% else %}the sending shop{% endif %}"
             novalidate
           >
             {% csrf_token %}
 
             <header class="stock-transfer-form-head">
               <div class="stock-transfer-party">
-                <span class="stock-transfer-party-label">Supplying shop</span>
-                <strong>{{ shop.name }}</strong>
-                <span class="stock-transfer-party-meta">Edit transfer qty below</span>
-              </div>
-              <div class="stock-transfer-route" aria-hidden="true">
-                <i data-lucide="arrow-right"></i>
-              </div>
-              <div class="stock-transfer-party">
-                <span class="stock-transfer-party-label">Requesting shop</span>
+                <span class="stock-transfer-party-label">Sending shop</span>
                 <strong>{% if req.shop %}{{ req.shop.name }}{% else %}Unknown shop{% endif %}</strong>
                 <span class="stock-transfer-party-meta">
                   {% if req.created_by %}
@@ -69,6 +61,14 @@
                   {{ req.created_at|timesince }} ago
                 </span>
               </div>
+              <div class="stock-transfer-route" aria-hidden="true">
+                <i data-lucide="arrow-right"></i>
+              </div>
+              <div class="stock-transfer-party">
+                <span class="stock-transfer-party-label">Receiving shop</span>
+                <strong>{{ shop.name }}</strong>
+                <span class="stock-transfer-party-meta">Enter qty received below</span>
+              </div>
             </header>
 
             <div class="stock-transfer-table-wrap">
@@ -76,9 +76,8 @@
                 <thead>
                   <tr>
                     <th scope="col">Item</th>
-                    <th scope="col">Requested</th>
-                    <th scope="col">Available</th>
-                    <th scope="col">Transfer</th>
+                    <th scope="col">Sent</th>
+                    <th scope="col">Received</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -88,7 +87,7 @@
                     data-line-id="{{ line.pk }}"
                     data-item-id="{{ line.item_id }}"
                     data-requested="{{ line.quantity }}"
-                    data-available="{{ line.available_qty }}"
+                    data-available="{{ line.quantity }}"
                     data-track-serial="{% if line.item.track_serial_number %}1{% else %}0{% endif %}"
                   >
                     <td data-label="Item">
@@ -99,28 +98,24 @@
                         {% endif %}
                       </div>
                     </td>
-                    <td data-label="Requested">{{ line.quantity }}</td>
-                    <td class="{% if line.available_qty < line.quantity %}is-low{% endif %}" data-label="Available">
-                      {{ line.available_qty }}
+                    <td data-label="Sent">
+                      <strong class="stock-transfer-qty-readonly">{{ line.quantity }}</strong>
                     </td>
-                    <td data-label="Transfer">
+                    <td data-label="Received">
                       <label class="stock-transfer-qty-field">
-                        <span class="visually-hidden">Transfer quantity for {{ line.item.name }}</span>
+                        <span class="visually-hidden">Received quantity for {{ line.item.name }}</span>
                         <input
                           type="number"
                           name="qty_{{ line.pk }}"
                           min="0"
-                          max="{{ line.transfer_max }}"
+                          max="{{ line.quantity }}"
                           step="1"
-                          value="{% if line.item.track_serial_number %}0{% else %}{{ line.transfer_max }}{% endif %}"
+                          value=""
+                          placeholder="0"
                           inputmode="numeric"
                           data-transfer-qty
                           data-line-id="{{ line.pk }}"
-                          {% if line.item.track_serial_number %}
-                          data-qty-from-serial="1"
-                          readonly
-                          title="Set by selected serial numbers"
-                          {% endif %}
+                          data-must-match="{{ line.quantity }}"
                         >
                       </label>
                     </td>
@@ -133,50 +128,6 @@
             {% if req.notes %}
             <p class="stock-request-notes">{{ req.notes }}</p>
             {% endif %}
-
-            <div class="stock-request-serial-panel" data-serial-panel hidden>
-              <div class="stock-transfer-section-label">
-                <i data-lucide="scan-barcode" aria-hidden="true"></i>
-                <span>Serial numbers to transfer</span>
-              </div>
-              <p class="stock-request-code-hint">
-                Scan or search each serial — press Enter after each. Transfer quantity follows the serials you add.
-              </p>
-              {% for line in req.lines.all %}
-              {% if line.item.track_serial_number %}
-              <div
-                class="stock-request-serial-block"
-                data-serial-block
-                data-serial-scan-continuous
-                data-line-id="{{ line.pk }}"
-                data-item-id="{{ line.item_id }}"
-                data-qty="{{ line.transfer_max }}"
-                data-max-qty="{{ line.transfer_max }}"
-              >
-                <p class="stock-request-serial-label">
-                  {{ line.item.name }}
-                  <span data-serial-need>0 / {{ line.transfer_max }} selected</span>
-                </p>
-                <div class="stock-request-serial-entry-wrap" data-serial-search-root>
-                  <div class="stock-serial-row">
-                    <div class="stock-serial-input-wrap stock-request-serial-wrap">
-                      <input
-                        type="text"
-                        placeholder="Search serial to transfer"
-                        autocomplete="off"
-                        spellcheck="false"
-                        data-serial-entry
-                        data-serial-input
-                      >
-                    </div>
-                  </div>
-                  <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
-                </div>
-                <ul class="stock-request-serial-scanned" data-serial-scanned aria-live="polite"></ul>
-              </div>
-              {% endif %}
-              {% endfor %}
-            </div>
 
             <div class="stock-request-code-panel" data-code-panel>
               <div class="stock-transfer-section-label">
@@ -196,8 +147,8 @@
                 >
               </label>
               <p class="stock-request-code-hint" data-verify-status>
-                Enter any active staff member’s 6-digit ID (any role) to unlock Accept and Decline.
-                Decline notifies the requesting shop.
+                Enter quantities received, then your staff ID.
+                Confirm only when received matches sent — otherwise Decline.
               </p>
             </div>
 
@@ -222,7 +173,7 @@
                   data-decision-submit="accept"
                   disabled
                 >
-                  Accept &amp; print
+                  Confirm received
                 </button>
               </div>
             </footer>
@@ -249,11 +200,11 @@
   aria-labelledby="stock-decision-modal-title"
 >
   <div class="workspace-modal-backdrop" data-stock-decision-close></div>
-  <div class="workspace-modal-dialog stock-request-dialog stock-transfer-dialog">
+  <div class="workspace-modal-dialog stock-request-dialog stock-transfer-dialog stock-decision-dialog">
     <div class="workspace-modal-head stock-transfer-head">
       <div>
         <p class="stock-transfer-kicker">Notification</p>
-        <h2 id="stock-decision-modal-title">Request updates</h2>
+        <h2 id="stock-decision-modal-title">Transfer updates</h2>
       </div>
       <button
         type="button"
@@ -266,29 +217,26 @@
     </div>
     <div class="stock-request-modal-body stock-transfer-body">
       <p class="stock-request-modal-lead">
-        Accept and decline updates for stock you requested for <strong>{{ shop.name }}</strong>.
+        Results for stock you sent from <strong>{{ shop.name }}</strong>.
       </p>
-      <div class="stock-transfer-stack">
+      <div class="stock-transfer-stack stock-decision-stack">
         {% for req in stock_request_decisions %}
-        <article class="stock-transfer-form-card stock-decision-card">
-          <header class="stock-transfer-form-head stock-decision-head">
-            <div>
+        <article
+          class="stock-decision-card{% if req.request_status == 'fulfilled' %} is-confirmed{% else %} is-declined{% endif %}"
+        >
+          <header class="stock-decision-card-head">
+            <div class="stock-decision-card-titles">
               {% if req.request_status == "fulfilled" %}
-              <span class="stock-request-status is-accepted">Accepted</span>
+              <span class="stock-request-status is-accepted">Confirmed</span>
               {% else %}
               <span class="stock-request-status is-declined">Declined</span>
               {% endif %}
-              <p class="stock-request-from">
-                by
-                <strong>
-                  {% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}another shop{% endif %}
-                </strong>
+              <p class="stock-decision-card-shop">
+                {% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}Another shop{% endif %}
               </p>
-              <p class="stock-request-meta">
-                {% if req.request_status == "fulfilled" %}Accepted{% else %}Declined{% endif %}
+              <p class="stock-decision-card-meta">
                 {% if req.responded_by %}
-                by
-                <strong>{{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}</strong>
+                {{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}
                 ·
                 {% endif %}
                 {% if req.responded_at %}{{ req.responded_at|timesince }} ago{% else %}recently{% endif %}
@@ -297,31 +245,47 @@
             <form
               method="post"
               action="{% url 'employees:my_shop_stock_request_result_ack' shop.id req.pk %}"
+              class="stock-decision-ack-form"
             >
               {% csrf_token %}
-              <button type="submit" class="btn btn--ghost btn--sm">Got it</button>
+              <button type="submit" class="btn btn--ghost btn--sm stock-decision-ack-btn">Got it</button>
             </form>
           </header>
 
-          <ul class="stock-request-lines">
+          <div class="stock-decision-route" aria-hidden="true">
+            <span>{{ shop.name }}</span>
+            <i data-lucide="arrow-right"></i>
+            <span>{% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}Receiving shop{% endif %}</span>
+          </div>
+
+          <ul class="stock-decision-lines">
             {% for line in req.lines.all %}
             <li>
-              <span>{{ line.item.name }}</span>
-              <strong>× {{ line.quantity }}</strong>
+              <span class="stock-decision-line-name">{{ line.item.name }}</span>
+              <span class="stock-decision-line-qty">{{ line.quantity }}</span>
             </li>
+            {% empty %}
+            <li class="stock-decision-lines-empty">No line items</li>
             {% endfor %}
           </ul>
+
           {% if req.request_status == "fulfilled" %}
-          <p class="stock-request-notes">Stock has been transferred into this shop.</p>
+          <p class="stock-decision-foot is-ok">
+            <i data-lucide="check-circle-2" aria-hidden="true"></i>
+            <span>Stock has been transferred out of this shop.</span>
+          </p>
           {% else %}
-          <p class="stock-request-notes">
-            {% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}The supplying shop{% endif %}
-            declined this request. No stock was transferred.
+          <p class="stock-decision-foot is-warn">
+            <i data-lucide="circle-alert" aria-hidden="true"></i>
+            <span>
+              {% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}The receiving shop{% endif %}
+              declined this transfer. No stock was moved.
+            </span>
           </p>
           {% endif %}
           {% for line in req.lines.all %}
             {% if line.note %}
-            <p class="stock-request-notes">{{ line.item.name }}: {{ line.note }}</p>
+            <p class="stock-decision-note">{{ line.item.name }}: {{ line.note }}</p>
             {% endif %}
           {% endfor %}
         </article>

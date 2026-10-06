@@ -14,7 +14,7 @@
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
-        <p class="stock-kicker">{{ shop.name }} · Stock requests</p>
+        <p class="stock-kicker">{{ shop.name }} · Stock transfers</p>
         <h2>{{ meta.headline }}</h2>
         <p>{{ meta.summary }}</p>
       </div>
@@ -45,7 +45,7 @@
   <div class="stock-requests-banner">
     <i data-lucide="clipboard-list" aria-hidden="true"></i>
     <p>
-      Open panels to accept, decline, or acknowledge updates.
+      Open panels to confirm, decline, or acknowledge updates.
       {% if pending_request_count %}
       <button type="button" class="stock-requests-banner-link" data-stock-request-open>
         Review incoming
@@ -57,8 +57,8 @@
 
   <section class="stock-request-history" aria-labelledby="outgoing-pending-title">
     <div class="stock-request-history-head">
-      <h3 id="outgoing-pending-title">Sent requests</h3>
-      <p>Waiting for another shop to accept or decline.</p>
+      <h3 id="outgoing-pending-title">Sent transfers</h3>
+      <p>Waiting for another shop to confirm receipt or decline.</p>
     </div>
 
     {% if outgoing_pending_requests %}
@@ -67,7 +67,7 @@
         <thead>
           <tr>
             <th>Status</th>
-            <th>From shop</th>
+            <th>To shop</th>
             <th>By</th>
             <th>Items</th>
             <th>Units</th>
@@ -81,7 +81,7 @@
             <td data-label="Status">
               <span class="stock-request-status is-pending">Pending</span>
             </td>
-            <td data-label="From shop">
+            <td data-label="To shop">
               <strong>
                 {% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}Another shop{% endif %}
               </strong>
@@ -118,15 +118,15 @@
     </div>
     {% else %}
     <p class="stock-request-history-empty">
-      No pending sent requests. Use <strong>Request stock</strong> to ask another shop.
+      No pending sent transfers. Use <strong>Transfer stock</strong> to send to another shop.
     </p>
     {% endif %}
   </section>
 
   <section class="stock-request-history" aria-labelledby="previous-requests-title">
     <div class="stock-request-history-head">
-      <h3 id="previous-requests-title">Previous requests</h3>
-      <p>Accepted and declined transfers involving {{ shop.name }}.</p>
+      <h3 id="previous-requests-title">Previous transfers</h3>
+      <p>Confirmed and declined transfers involving {{ shop.name }}.</p>
     </div>
 
     {% if previous_stock_requests %}
@@ -149,7 +149,7 @@
           <tr>
             <td data-label="Status">
               {% if req.request_status == "fulfilled" %}
-              <span class="stock-request-status is-accepted">Accepted</span>
+              <span class="stock-request-status is-accepted">Confirmed</span>
               {% else %}
               <span class="stock-request-status is-declined">Declined</span>
               {% endif %}
@@ -172,7 +172,7 @@
                 {{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}
               </strong>
               <span class="stock-request-table-sub">
-                {% if req.request_status == "fulfilled" %}Accepted{% else %}Declined{% endif %}
+                {% if req.request_status == "fulfilled" %}Confirmed{% else %}Declined{% endif %}
               </span>
               {% else %}
               <span class="stock-request-table-sub">—</span>
@@ -195,7 +195,7 @@
             </td>
             <td class="stock-request-table-note" data-label="Note">
               {% if req.request_status == "fulfilled" %}
-                {% if req.is_incoming %}Transferred out{% else %}Transferred in{% endif %}
+                {% if req.is_incoming %}Transferred in{% else %}Transferred out{% endif %}
               {% else %}
               No transfer
               {% endif %}
@@ -211,7 +211,7 @@
       </table>
     </div>
     {% else %}
-    <p class="stock-request-history-empty">No previous requests yet for this shop.</p>
+    <p class="stock-request-history-empty">No previous transfers yet for this shop.</p>
     {% endif %}
   </section>
 </section>
@@ -222,7 +222,9 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/my-shop.js' %}?v=64"></script>
+<script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=22"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=81"></script>
 <script
   defer
   src="{% static 'js/serial-scan.js' %}?v=8"

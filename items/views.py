@@ -1234,8 +1234,8 @@ def _transfer_qty_by_item_shop(item_ids, shop_ids, start, end):
     """
     Fulfilled inter-shop transfers by (item, shop), counted when stock moved.
 
-    Transfer in: selected shop is the destination (movement.shop).
-    Transfer out: selected shop is the source (movement.requested_from_shop).
+    Transfer out: selected shop is the sender (movement.shop).
+    Transfer in: selected shop is the receiver (movement.requested_from_shop).
     """
     from django.db.models import Sum
 
@@ -1256,27 +1256,27 @@ def _transfer_qty_by_item_shop(item_ids, shop_ids, start, end):
     if sql_item_ids is not None:
         base = base.filter(item_id__in=sql_item_ids)
 
-    in_rows = (
+    out_rows = (
         base.filter(movement__shop_id__in=shop_ids)
         .values("item_id", "movement__shop_id")
         .annotate(total=Sum("quantity"))
     )
-    for row in in_rows:
+    for row in out_rows:
         _add_item_shop_qty(
-            totals, row["item_id"], row["movement__shop_id"], "in", row["total"]
+            totals, row["item_id"], row["movement__shop_id"], "out", row["total"]
         )
 
-    out_rows = (
+    in_rows = (
         base.filter(movement__requested_from_shop_id__in=shop_ids)
         .values("item_id", "movement__requested_from_shop_id")
         .annotate(total=Sum("quantity"))
     )
-    for row in out_rows:
+    for row in in_rows:
         _add_item_shop_qty(
             totals,
             row["item_id"],
             row["movement__requested_from_shop_id"],
-            "out",
+            "in",
             row["total"],
         )
     return totals
@@ -2376,7 +2376,7 @@ def _daily_activity_by_item(items, shop_ids, day_start, day_end):
         add_qty(
             row["item_id"],
             row["movement__responded_at"],
-            "transfer_in",
+            "transfer_out",
             row["quantity"],
         )
 
@@ -2386,7 +2386,7 @@ def _daily_activity_by_item(items, shop_ids, day_start, day_end):
         add_qty(
             row["item_id"],
             row["movement__responded_at"],
-            "transfer_out",
+            "transfer_in",
             row["quantity"],
         )
 
@@ -2705,8 +2705,9 @@ def _transfer_direction(movement, shop_ids):
     if movement.movement_type != StockMovementType.REQUEST or not shop_ids:
         return ""
     shop_set = set(shop_ids)
-    dest_match = movement.shop_id in shop_set
-    source_match = (
+    # shop = sender (out), requested_from_shop = receiver (in)
+    source_match = movement.shop_id in shop_set
+    dest_match = (
         movement.requested_from_shop_id in shop_set
         if movement.requested_from_shop_id
         else False
@@ -2728,19 +2729,19 @@ def _transfer_event_label(*, event_type, direction):
     else:
         base = "Transfer"
     if event_type == "request":
-        return f"{base} (requested)"
+        return f"{base} (sent)"
     return base
 
 
 def _request_transfer_counts_toward_units(movement) -> bool:
-    """Fulfilled requests are counted when stock moves (responded_at), not when submitted."""
+    """Fulfilled transfers are counted when stock moves (responded_at), not when submitted."""
     from .models import StockRequestStatus
 
     return movement.request_status != StockRequestStatus.FULFILLED
 
 
 def _transfer_people_for_movement(movement):
-    """Requester and receiver names for inter-shop transfer movements."""
+    """Sender and receiver names for inter-shop transfer movements."""
     from .models import StockMovementType
 
     if movement.movement_type != StockMovementType.REQUEST:
@@ -2749,17 +2750,6 @@ def _transfer_people_for_movement(movement):
         _employee_display_name(movement.created_by),
         _employee_display_name(movement.responded_by),
     )
-
-
-def _format_transfer_by_label(*, requested_by, received_by):
-    req = (requested_by or "").strip()
-    rec = (received_by or "").strip()
-    parts = []
-    if req and req != "—":
-        parts.append(f"Requested: {req}")
-    if rec and rec != "—":
-        parts.append(f"Received: {rec}")
-    return " · ".join(parts) if parts else "—"
 
 
 def _timeline_trade_label(*, movement=None, line=None, receipt=None, note=""):
@@ -2830,13 +2820,6 @@ def _timeline_event_from_movement_line(
 
     requested_by, received_by = _transfer_people_for_movement(movement)
     by_label = _employee_display_name(actor)
-    if movement.movement_type == StockMovementType.REQUEST and (
-        transfer_direction or event_type == "transfer_fulfilled"
-    ):
-        by_label = _format_transfer_by_label(
-            requested_by=requested_by,
-            received_by=received_by,
-        )
 
     note = line.note or ""
     trade_label = _timeline_trade_label(
@@ -2852,8 +2835,14 @@ def _timeline_event_from_movement_line(
         "event_label": event_label,
         "shop_name": movement.shop.name if movement.shop else "—",
         "shop_id": movement.shop_id,
-        "source_shop_id": movement.requested_from_shop_id,
+        "source_shop_id": movement.shop_id,
+        "destination_shop_id": movement.requested_from_shop_id,
         "from_shop_name": (
+            movement.shop.name
+            if movement.movement_type == StockMovementType.REQUEST and movement.shop
+            else ""
+        ),
+        "to_shop_name": (
             movement.requested_from_shop.name
             if movement.movement_type == StockMovementType.REQUEST
             and movement.requested_from_shop
@@ -2992,7 +2981,7 @@ def _build_movement_timeline(
         type_labels = {
             StockMovementType.IN: "Stock in",
             StockMovementType.OUT: "Stock out",
-            StockMovementType.REQUEST: "Stock request",
+            StockMovementType.REQUEST: "Stock transfer",
         }
 
         for movement in movements:
@@ -4383,6 +4372,8 @@ def _movement_event_shop_stock_key(event):
     direction = (event.get("transfer_direction") or "").strip()
     if direction == "out" and event.get("source_shop_id"):
         return (item_id, event.get("source_shop_id"))
+    if direction == "in" and event.get("destination_shop_id"):
+        return (item_id, event.get("destination_shop_id"))
     shop_id = event.get("shop_id")
     if not shop_id:
         return None
@@ -6118,22 +6109,22 @@ def stock_settings(request, profile, meta, module):
                 },
             ),
         },
-        {
+            {
             "key": "request",
-            "title": "Request Stock",
-            "summary": "Asking another shop for stock",
+            "title": "Transfer Stock",
+            "summary": "Send stock to another shop for confirmation",
             "icon": "clipboard-list",
             "open_url": stock_management_url(profile.role, "request"),
-            "open_label": "Open Request",
+            "open_label": "Open Transfer",
             "always_required": (
                 (
                     "Quantity",
                     "At least one line with quantity greater than zero",
                 ),
-                ("Requesting shop", "Who is requesting"),
+                ("Sending shop", "Who is sending the stock"),
                 (
-                    "From shop",
-                    "Shop(s) you are requesting from (must differ)",
+                    "To shop",
+                    "Shop receiving the transfer (must differ)",
                 ),
             ),
             "toggles": (),
@@ -6551,11 +6542,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
                 return JsonResponse(
                     {
                         "ok": False,
-                        "error": "Choose Stock In, Stock Out, or Request Stock first.",
+                        "error": "Choose Stock In, Stock Out, or Transfer Stock first.",
                     },
                     status=400,
                 )
-            messages.error(request, "Choose Stock In, Stock Out, or Request Stock first.")
+            messages.error(request, "Choose Stock In, Stock Out, or Transfer Stock first.")
             return _stock_redirect(
                 request.path, "view", shop_ids=selected_shop_ids[:1]
             )
@@ -6620,7 +6611,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         labels = {
             "in": "Stock in submitted successfully.",
             "out": "Stock out submitted successfully.",
-            "request": "Stock request submitted successfully.",
+            "request": "Stock transfer submitted. The receiving shop will confirm.",
         }
         success_message = labels[action_mode]
         if wants_json:
@@ -6640,7 +6631,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         )
 
     if mode == "request":
-        # Request mode uses shop_id as the requesting shop (single).
+        # Request/transfer mode uses shop_id as the sending shop (single).
         selected_shop = _resolve_shop(
             requested_shop_ids[0] if requested_shop_ids else ""
         )
@@ -6718,7 +6709,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             Item.objects.order_by("category").values("category").distinct().count()
         )
     elif mode == "request" and request_pair_ready:
-        # Only the requesting shop and the shop being asked to supply.
+        # Sending shop and receiving shop.
         display_shops = [selected_shop, requested_from_shop]
         shop_total_units = (
             ShopStock.objects.filter(
@@ -6774,7 +6765,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         else:
             shop_filter_label = f"{len(selected_shops)} shops"
     elif mode == "request" and request_pair_ready:
-        shop_filter_label = f"{selected_shop.name} ← {requested_from_shop.name}"
+        shop_filter_label = f"{selected_shop.name} → {requested_from_shop.name}"
     elif mode == "request":
         shop_filter_label = "Choose shops"
     else:
@@ -6911,7 +6902,7 @@ def stock_management_catalog(request, role_segment):
 
     action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}
     # Stock in/out: optional multi shop_id filter.
-    # Request: only the requesting shop + the shop being asked to supply.
+    # Transfer: sending shop + receiving shop.
     if mode in ("in", "out", "request"):
         if not action_shops:
             return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
@@ -7751,7 +7742,7 @@ def _build_serial_history_events(*, item, serial, shop_ids):
     type_labels = {
         StockMovementType.IN: "Stock in",
         StockMovementType.OUT: "Stock out",
-        StockMovementType.REQUEST: "Stock request",
+        StockMovementType.REQUEST: "Stock transfer",
     }
 
     lines = (

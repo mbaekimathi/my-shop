@@ -688,7 +688,7 @@ def sidebar_for_my_shop(
             if _allowed("stock_requests"):
                 primary.append(
                     _link(
-                        "Stock requests",
+                        "Stock transfers",
                         "clipboard-list",
                         href=reverse(
                             "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
@@ -765,7 +765,7 @@ def sidebar_for_my_shop(
         elif active == "stock_requests" and _allowed("stock_requests"):
             primary.append(
                 _action(
-                    "Request stock",
+                    "Transfer stock",
                     "plus",
                     action="request-stock",
                 )
@@ -1015,13 +1015,13 @@ def sidebar_for_stock_management(
                 primary.extend(
                     [
                         _link(
-                            "Request stock",
+                            "Transfer stock",
                             "clipboard-list",
                             href=stock_management_url(role, "request", **shop_kwargs),
                             active=active_mode == "request",
                         ),
                         _link(
-                            "Request audits",
+                            "Transfer audits",
                             "scroll-text",
                             href=stock_management_url(role, "request-audits"),
                             active=active_mode == "request-audits",
@@ -1073,7 +1073,7 @@ def sidebar_for_stock_management(
                 (
                     "request",
                     _link(
-                        "Request Stock",
+                        "Transfer Stock",
                         "clipboard-list",
                         href=stock_management_url(role, "request", **shop_kwargs),
                         active=active_mode == "request",

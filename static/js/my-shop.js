@@ -287,38 +287,29 @@
 
   if (createModal) {
     const searchInput = createModal.querySelector("[data-stock-create-search]");
-    const rows = [...createModal.querySelectorAll("[data-stock-create-row]")];
+    const itemsRoot = createModal.querySelector("[data-stock-create-items]");
     const form = createModal.querySelector("[data-stock-create-form]");
     const fromSelect = createModal.querySelector("[data-stock-create-from]");
     const itemsHint = createModal.querySelector("[data-stock-create-items-hint]");
     const showEmptyToggle = createModal.querySelector("[data-stock-create-show-empty]");
     const filterWrap = createModal.querySelector("[data-stock-create-filter-wrap]");
     const noStockMsg = createModal.querySelector("[data-stock-create-no-stock]");
+    const selectedBadge = createModal.querySelector("[data-stock-create-selected]");
+    const selectedCount = createModal.querySelector("[data-stock-create-selected-count]");
+    const noResults = createModal.querySelector("[data-stock-create-no-results]");
     const fromStockUrl =
       createModal.getAttribute("data-stock-create-from-stock-url") || "";
     let fromStockSeq = 0;
     let stockLoaded = false;
+    let rows = [];
+    let itemsBuilt = false;
 
-    document.querySelectorAll('[data-modal-open="request-stock"]').forEach((btn) => {
-      btn.addEventListener("click", (event) => {
-        event.preventDefault();
-        createControls?.open();
-        window.setTimeout(() => {
-          createModal.querySelector("[data-stock-create-from]")?.focus();
-        }, 40);
-      });
-    });
-
-    const params = new URLSearchParams(window.location.search);
-    if ((params.get("modal") || "").trim() === "request-stock") {
-      createControls?.open();
-      params.delete("modal");
-      const query = params.toString();
-      const next = `${window.location.pathname}${query ? `?${query}` : ""}${
-        window.location.hash || ""
-      }`;
-      window.history.replaceState({}, "", next);
-    }
+    const escapeHtml = (value) =>
+      String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
 
     const syncRowEnabled = (row) => {
       const qty = row.querySelector("[data-stock-create-qty]");
@@ -329,9 +320,20 @@
       row.classList.toggle("is-active", hasQty);
     };
 
-    const selectedBadge = createModal.querySelector("[data-stock-create-selected]");
-    const selectedCount = createModal.querySelector("[data-stock-create-selected-count]");
-    const noResults = createModal.querySelector("[data-stock-create-no-results]");
+    const bindRowQty = (row) => {
+      const qty = row.querySelector("[data-stock-create-qty]");
+      if (!qty) return;
+      qty.disabled = false;
+      qty.addEventListener("input", () => {
+        syncRowEnabled(row);
+        syncSelectedCount();
+      });
+      qty.addEventListener("change", () => {
+        syncRowEnabled(row);
+        syncSelectedCount();
+      });
+      syncRowEnabled(row);
+    };
 
     const syncSelectedCount = () => {
       const count = rows.filter((row) => {
@@ -392,7 +394,7 @@
         row.setAttribute("data-avail", "");
         el.textContent = "—";
         el.classList.add("is-empty");
-        if (text) text.textContent = "Pick a shop to check stock";
+        if (text) text.textContent = "Loading your stock…";
         return;
       }
       const qty = Number(value) || 0;
@@ -400,14 +402,69 @@
       el.textContent = String(qty);
       if (qty <= 0) {
         el.classList.add("is-empty");
-        if (text) text.textContent = "Out of stock at this shop";
+        if (text) text.textContent = "Out of stock here";
       } else if (qty <= 3) {
         el.classList.add("is-low");
-        if (text) text.textContent = `Only ${qty} left at this shop`;
+        if (text) text.textContent = `Only ${qty} left here`;
       } else {
         el.classList.add("is-ok");
-        if (text) text.textContent = `${qty} available at this shop`;
+        if (text) text.textContent = `${qty} available here`;
       }
+    };
+
+    const buildItemRows = (items) => {
+      if (!itemsRoot) return;
+      const list = Array.isArray(items) ? items : [];
+      const frag = document.createDocumentFragment();
+      list.forEach((item) => {
+        const id = String(item?.id ?? "").trim();
+        const name = String(item?.name || "").trim();
+        if (!id || !name) return;
+        const row = document.createElement("label");
+        row.className = "stock-create-item-row";
+        row.setAttribute("data-stock-create-row", "");
+        row.setAttribute("data-item-id", id);
+        row.setAttribute("data-item-name", name.toLowerCase());
+        row.setAttribute("data-avail", "");
+        row.innerHTML = `
+          <span class="stock-create-item-main">
+            <span class="stock-create-item-name">${escapeHtml(name)}</span>
+            <span class="stock-create-item-avail-text" data-stock-create-avail-text>
+              Loading your stock…
+            </span>
+            <input type="hidden" name="item_id" value="${escapeHtml(id)}" disabled data-stock-create-id>
+          </span>
+          <span
+            class="stock-create-item-stock"
+            data-stock-create-avail
+            title="On-hand at this shop"
+          >—</span>
+          <input
+            type="number"
+            name="quantity"
+            min="1"
+            step="1"
+            inputmode="numeric"
+            placeholder="0"
+            data-stock-create-qty
+            aria-label="Quantity to send for ${escapeHtml(name)}"
+          >
+        `;
+        frag.appendChild(row);
+      });
+      itemsRoot.innerHTML = "";
+      if (!frag.childNodes.length) {
+        itemsRoot.innerHTML =
+          '<p class="stock-create-empty">No items available to transfer.</p>';
+        rows = [];
+        itemsBuilt = true;
+        return;
+      }
+      itemsRoot.appendChild(frag);
+      rows = [...itemsRoot.querySelectorAll("[data-stock-create-row]")];
+      rows.forEach(bindRowQty);
+      itemsBuilt = true;
+      syncSelectedCount();
     };
 
     const clearFromStock = () => {
@@ -418,11 +475,14 @@
         setAvailDisplay(row, null);
         row.classList.remove("is-out");
         const qty = row.querySelector("[data-stock-create-qty]");
-        if (qty) qty.removeAttribute("max");
+        if (qty) {
+          qty.disabled = false;
+          qty.removeAttribute("max");
+        }
       });
       if (itemsHint) {
         itemsHint.textContent =
-          "Choose a shop first to see what they have in stock.";
+          "Enter how many to send from your stock. Choose a destination above before sending.";
       }
       syncRowVisibility();
     };
@@ -440,6 +500,7 @@
         row.classList.toggle("is-out", avail <= 0);
         const qty = row.querySelector("[data-stock-create-qty]");
         if (qty) {
+          qty.disabled = false;
           if (avail > 0) qty.setAttribute("max", String(avail));
           else qty.removeAttribute("max");
         }
@@ -447,27 +508,36 @@
       if (itemsHint) {
         itemsHint.textContent = shopName
           ? withStock
-            ? `Showing items in stock at ${shopName}. Enter how many you need.`
+            ? `Showing your stock at ${shopName}. Enter how many to send.`
             : `${shopName} has no stock on these items right now.`
-          : "Enter how many you need for each item.";
+          : "Enter how many to send for each item.";
       }
       syncRowVisibility();
     };
 
     const loadFromStock = async () => {
-      const fromId = String(fromSelect?.value || "").trim();
-      if (!fromId || !fromStockUrl) {
+      if (!fromStockUrl) {
         clearFromStock();
         return;
       }
+      const toId = String(fromSelect?.value || "").trim();
       const seq = ++fromStockSeq;
       stockLoaded = false;
-      rows.forEach((row) => {
-        setAvailDisplay(row, null, { loading: true });
-      });
-      if (itemsHint) itemsHint.textContent = "Loading stock levels…";
+      if (itemsHint) itemsHint.textContent = "Loading your stock levels…";
+      if (!itemsBuilt && itemsRoot) {
+        itemsRoot.innerHTML =
+          '<p class="stock-create-empty" data-stock-create-loading>Loading items…</p>';
+      } else {
+        rows.forEach((row) => {
+          setAvailDisplay(row, null, { loading: true });
+          const qty = row.querySelector("[data-stock-create-qty]");
+          if (qty) qty.disabled = false;
+        });
+      }
       try {
-        const url = `${fromStockUrl}?from_shop_id=${encodeURIComponent(fromId)}`;
+        const url = toId
+          ? `${fromStockUrl}?from_shop_id=${encodeURIComponent(toId)}`
+          : fromStockUrl;
         const response = await fetch(url, {
           headers: {
             Accept: "application/json",
@@ -486,12 +556,41 @@
           clearFromStock();
           return;
         }
+        if (!itemsBuilt || (Array.isArray(data.items) && data.items.length)) {
+          buildItemRows(data.items || []);
+        }
         applyFromStock(data.stocks || {}, data.from_shop_name || "");
       } catch {
         if (seq !== fromStockSeq) return;
         clearFromStock();
       }
     };
+
+    const openCreateAndLoadStock = () => {
+      createControls?.open();
+      loadFromStock();
+      window.setTimeout(() => {
+        createModal.querySelector("[data-stock-create-from]")?.focus();
+      }, 40);
+    };
+
+    document.querySelectorAll('[data-modal-open="request-stock"]').forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        openCreateAndLoadStock();
+      });
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    if ((params.get("modal") || "").trim() === "request-stock") {
+      openCreateAndLoadStock();
+      params.delete("modal");
+      const query = params.toString();
+      const next = `${window.location.pathname}${query ? `?${query}` : ""}${
+        window.location.hash || ""
+      }`;
+      window.history.replaceState({}, "", next);
+    }
 
     fromSelect?.addEventListener("change", () => {
       loadFromStock();
@@ -501,28 +600,14 @@
       syncRowVisibility();
     });
 
-    rows.forEach((row) => {
-      const qty = row.querySelector("[data-stock-create-qty]");
-      if (!qty) return;
-      qty.disabled = false;
-      qty.addEventListener("input", () => {
-        syncRowEnabled(row);
-        syncSelectedCount();
-      });
-      qty.addEventListener("change", () => {
-        syncRowEnabled(row);
-        syncSelectedCount();
-      });
-      syncRowEnabled(row);
-    });
     syncSelectedCount();
-    clearFromStock();
-
     searchInput?.addEventListener("input", syncRowVisibility);
 
-    form?.addEventListener("submit", (event) => {
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
       const fromShop = form.querySelector("[data-stock-create-from]");
       const code = form.querySelector("[data-stock-create-code]");
+      const submitBtn = form.querySelector("[data-stock-create-submit]");
       rows.forEach((row) => {
         const qty = row.querySelector("[data-stock-create-qty]");
         const idInput = row.querySelector("[data-stock-create-id]");
@@ -535,27 +620,112 @@
         return Number(qty?.value || 0) > 0 && !qty.disabled;
       });
       if (!fromShop?.value) {
-        event.preventDefault();
         rows.forEach((row) => syncRowEnabled(row));
-        window.alert("Choose which shop the stock should come from.");
+        window.alert("Choose which shop should receive the stock.");
         fromShop?.focus();
         return;
       }
       if (!activeRows.length) {
-        event.preventDefault();
         rows.forEach((row) => syncRowEnabled(row));
-        window.alert("Enter how many you need for at least one item.");
+        window.alert("Enter how many to send for at least one item.");
         return;
       }
       if (!String(code?.value || "").trim()) {
-        event.preventDefault();
         rows.forEach((row) => syncRowEnabled(row));
-        window.alert("Enter your 6-digit staff ID to send the request.");
+        window.alert("Enter your 6-digit staff ID to send the transfer.");
         code?.focus();
+        return;
+      }
+
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        const body = new FormData(form);
+        body.set("ajax", "1");
+        const response = await fetch(form.getAttribute("action") || window.location.href, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "same-origin",
+          body,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          const errorText = data.error || "Could not send this transfer.";
+          if (
+            data.code === "unauthorized" ||
+            window.MyshopUnauthorized?.isUnauthorizedText?.(errorText)
+          ) {
+            window.MyshopUnauthorized?.show(errorText);
+          } else {
+            window.alert(errorText);
+          }
+          rows.forEach((row) => syncRowEnabled(row));
+          if (submitBtn) submitBtn.disabled = false;
+          return;
+        }
+
+        const goNext = () => {
+          const next =
+            data.next ||
+            window.location.pathname ||
+            window.location.href;
+          try {
+            const url = new URL(next, window.location.origin);
+            url.searchParams.set("_r", String(Date.now()));
+            window.location.replace(url.pathname + url.search + url.hash);
+          } catch {
+            window.location.href = next;
+          }
+        };
+
+        if (data.receipt_text) {
+          if (submitBtn) {
+            const label = submitBtn.querySelector("span");
+            if (label) label.textContent = "Printing delivery note…";
+          }
+          try {
+            if (window.RichcomPrinter?.printReceipt) {
+              await Promise.race([
+                window.RichcomPrinter.printReceipt({
+                  text: data.receipt_text,
+                  channel: data.print_via || "",
+                  qr: data.receipt_qr || null,
+                  fontStyle: data.receipt_font || null,
+                  ticket: data.receipt_ticket || null,
+                  paperWidth: data.receipt_paper_width || "",
+                }),
+                new Promise((resolve) => window.setTimeout(resolve, 2500)),
+              ]);
+            } else {
+              // Last-resort browser print when shop printer JS is unavailable.
+              const win = window.open("", "_blank", "noopener,noreferrer,width=480,height=720");
+              if (win) {
+                const safe = String(data.receipt_text)
+                  .replace(/&/g, "&amp;")
+                  .replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;");
+                win.document.write(
+                  `<pre style="font:12px/1.35 monospace;white-space:pre-wrap;padding:12px">${safe}</pre>`
+                );
+                win.document.close();
+                win.focus();
+                win.print();
+              }
+            }
+          } catch (_printError) {
+            /* Transfer already succeeded; continue. */
+          }
+        }
+
+        goNext();
+      } catch (_error) {
+        window.alert("Network error while sending transfer. Try again.");
+        rows.forEach((row) => syncRowEnabled(row));
+        if (submitBtn) submitBtn.disabled = false;
       }
     });
-
-    if (fromSelect?.value) loadFromStock();
   }
 
   window.addEventListener("keydown", (event) => {
@@ -713,8 +883,8 @@
           const count = newRows.length;
           const message =
             count === 1
-              ? `New stock request from ${fromName}.`
-              : `${count} new stock requests, including from ${fromName}.`;
+              ? `New stock transfer from ${fromName}.`
+              : `${count} new stock transfers, including from ${fromName}.`;
           pushStockRequestToast(message);
           notifyBrowser("Stock request", message);
           seedKnown(pending);
@@ -733,18 +903,18 @@
           const allAccepted = newDecisions.every((row) => row.status === "fulfilled");
           let message;
           if (newDecisions.length === 1 && allDeclined) {
-            message = `${fromName} declined your stock request.`;
+            message = `${fromName} declined your stock transfer.`;
           } else if (newDecisions.length === 1 && allAccepted) {
-            message = `${fromName} accepted your stock request.`;
+            message = `${fromName} confirmed your stock transfer.`;
           } else if (allDeclined) {
-            message = `${newDecisions.length} stock requests were declined.`;
+            message = `${newDecisions.length} stock transfers were declined.`;
           } else if (allAccepted) {
-            message = `${newDecisions.length} stock requests were accepted.`;
+            message = `${newDecisions.length} stock transfers were confirmed.`;
           } else {
-            message = `Updates on your stock requests, including from ${fromName}.`;
+            message = `Updates on your stock transfers, including from ${fromName}.`;
           }
           pushStockRequestToast(message, allDeclined ? "error" : "success");
-          notifyBrowser("Stock request update", message);
+          notifyBrowser("Stock transfer update", message);
           seedKnown(pending);
           seedKnownDecisions(decisions);
           window.setTimeout(() => {
@@ -979,20 +1149,6 @@
     refreshIcons();
   };
 
-  const clampTransferQty = (input) => {
-    if (input.dataset.qtyFromSerial === "1") {
-      return Number(input.value || 0);
-    }
-    const row = input.closest("[data-request-line]");
-    const max = Number(input.max || row?.dataset.available || 0);
-    let value = Number(input.value || 0);
-    if (!Number.isFinite(value) || value < 0) value = 0;
-    value = Math.floor(value);
-    if (value > max) value = max;
-    input.value = String(value);
-    return value;
-  };
-
   const applySerialChoice = (input, serial) => {
     const block = input?.closest?.("[data-serial-block]");
     const form = block?.closest?.("[data-request-form]");
@@ -1077,22 +1233,82 @@
       ?.split("=")[1] ||
     "";
 
+  const clampTransferQty = (input) => {
+    if (input.dataset.qtyFromSerial === "1") {
+      return Number(input.value || 0);
+    }
+    const row = input.closest("[data-request-line]");
+    const max = Number(
+      input.getAttribute("data-must-match") ||
+        input.max ||
+        row?.dataset.available ||
+        row?.dataset.requested ||
+        0
+    );
+    const raw = String(input.value || "").trim();
+    if (raw === "") {
+      input.value = "";
+      return NaN;
+    }
+    let value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) value = 0;
+    value = Math.floor(value);
+    if (max > 0 && value > max) value = max;
+    input.value = String(value);
+    return value;
+  };
+
+  const quantitiesMatch = (form) => {
+    const qtyInputs = [...form.querySelectorAll("[data-transfer-qty]")];
+    if (!qtyInputs.length) return false;
+    return qtyInputs.every((input) => {
+      const received = Number(input.value);
+      const mustMatch = Number(
+        input.getAttribute("data-must-match") ||
+          input.getAttribute("data-requested") ||
+          0
+      );
+      return (
+        String(input.value).trim() !== "" &&
+        Number.isFinite(received) &&
+        Number.isFinite(mustMatch) &&
+        received === mustMatch
+      );
+    });
+  };
+
+  const syncDecisionButtons = (form) => {
+    const verified = form.dataset.codeVerified === "1";
+    const matched = quantitiesMatch(form);
+    const declineBtn = form.querySelector('[data-decision-submit="decline"]');
+    const acceptBtn = form.querySelector('[data-decision-submit="accept"]');
+    if (declineBtn) declineBtn.disabled = !verified;
+    if (acceptBtn) acceptBtn.disabled = !(verified && matched);
+    form.dataset.qtyMatched = matched ? "1" : "0";
+  };
+
   const setVerified = (form, verified, message = "") => {
     form.dataset.codeVerified = verified ? "1" : "0";
     const actions = form.querySelector("[data-decision-actions]");
     const status = form.querySelector("[data-verify-status]");
-    const buttons = form.querySelectorAll("[data-decision-submit]");
     if (actions) actions.removeAttribute("hidden");
-    buttons.forEach((btn) => {
-      btn.disabled = !verified;
-    });
+    syncDecisionButtons(form);
     if (status) {
-      status.textContent =
-        message ||
-        (verified
-          ? "Staff verified. You can Accept or Decline."
-          : "Enter any active staff member’s 6-digit ID (any role) to unlock Accept and Decline.");
-      status.classList.toggle("is-ok", verified);
+      const matched = quantitiesMatch(form);
+      let text = message;
+      if (!text) {
+        text = verified
+          ? matched
+            ? "Staff verified. Quantities match — you can Confirm or Decline."
+            : "Staff verified. Enter received quantities that match sent to Confirm, or Decline."
+          : "Enter quantities received, then your staff ID. Confirm only when received matches sent.";
+      } else if (verified) {
+        text = matched
+          ? `${message} Quantities match — you can Confirm or Decline.`
+          : `${message} Enter received quantities that match sent to Confirm, or Decline.`;
+      }
+      status.textContent = text;
+      status.classList.toggle("is-ok", verified && matched);
       status.classList.toggle("is-error", Boolean(message) && !verified);
     }
   };
@@ -1147,7 +1363,7 @@
         : data.name
           ? `Verified: ${data.name} (${data.employee_id}).`
           : `Verified staff ${data.employee_id}.`;
-      setVerified(form, true, `${label} You can Accept or Decline.`);
+      setVerified(form, true, label);
       return true;
     } catch (_error) {
       if (seq !== employeeVerifySeq) return false;
@@ -1182,10 +1398,10 @@
 
     if (decision === "decline") {
       const shopName =
-        form.getAttribute("data-requesting-shop") || "the requesting shop";
+        form.getAttribute("data-requesting-shop") || "the sending shop";
       if (
         !window.confirm(
-          `Decline this stock request from ${shopName}? They will be notified that it was declined.`
+          `Decline this stock transfer from ${shopName}? They will be notified and no stock will move.`
         )
       ) {
         return false;
@@ -1194,48 +1410,23 @@
     }
 
     if (decision === "accept") {
-      form.querySelectorAll("[data-serial-block]").forEach((block) => {
-        syncSerialBlockQty(form, block);
-      });
-
-      let total = 0;
       const qtyInputs = [...form.querySelectorAll("[data-transfer-qty]")];
-      for (const input of qtyInputs) {
-        const qty = clampTransferQty(input);
-        const max = Number(input.max || 0);
-        if (qty > max) {
-          window.alert("Transfer quantity cannot exceed available stock.");
-          input.focus();
-          return false;
-        }
-        total += qty;
-      }
-      if (total <= 0) {
-        window.alert(
-          form.querySelector("[data-serial-block]")
-            ? "Select at least one serial number to transfer."
-            : "Enter at least one quantity to transfer."
-        );
-        form.querySelector("[data-serial-entry]")?.focus();
+      if (!qtyInputs.length) {
+        window.alert("This transfer has no items.");
         return false;
       }
-
-      for (const block of form.querySelectorAll("[data-serial-block]")) {
-        const max = Number(block.dataset.maxQty || 0);
-        if (max <= 0) continue;
-        const filled = filledSerialsInBlock(block);
-        const qtyInput = getQtyInput(form, block.dataset.lineId);
-        const qty = Number(qtyInput?.value || 0);
-        if (qty > 0 && filled.length !== qty) {
+      for (const input of qtyInputs) {
+        const qty = Number(input.value);
+        const mustMatch = Number(
+          input.getAttribute("data-must-match") ||
+            input.getAttribute("data-requested") ||
+            0
+        );
+        if (input.value === "" || !Number.isFinite(qty) || qty !== mustMatch) {
           window.alert(
-            `Select ${qty} serial number${qty === 1 ? "" : "s"} for this item before accepting.`
+            "Received quantity must match what was sent. Decline if the quantities do not match."
           );
-          block.querySelector("[data-serial-entry]")?.focus();
-          return false;
-        }
-        if (qty > 0 && filled.length === 0) {
-          window.alert("Serial-tracked items require serial numbers to transfer.");
-          block.querySelector("[data-serial-entry]")?.focus();
+          input.focus();
           return false;
         }
       }
@@ -1249,7 +1440,15 @@
 
     form.querySelectorAll("[data-transfer-qty]").forEach((input) => {
       if (input.dataset.qtyFromSerial === "1") return;
-      input.addEventListener("change", () => clampTransferQty(input));
+      const onQtyChange = () => {
+        if (input.value !== "") clampTransferQty(input);
+        syncDecisionButtons(form);
+        if (form.dataset.codeVerified === "1") {
+          setVerified(form, true);
+        }
+      };
+      input.addEventListener("input", onQtyChange);
+      input.addEventListener("change", onQtyChange);
     });
 
     form.querySelector("[data-login-code]")?.addEventListener("input", (event) => {
@@ -1271,7 +1470,7 @@
         return;
       }
 
-      // Accept: transfer stock then print a From → To delivery note.
+      // Accept: move stock then print goods-received receipt.
       event.preventDefault();
       const buttons = form.querySelectorAll("[data-decision-submit]");
       buttons.forEach((btn) => {
@@ -1281,7 +1480,7 @@
       if (status) {
         status.textContent =
           decision === "accept"
-            ? "Accepting request and printing delivery note…"
+            ? "Confirming receipt and printing goods received slip…"
             : "Declining request…";
         status.classList.add("is-ok");
         status.classList.remove("is-error");
@@ -1314,34 +1513,59 @@
             window.alert(errorText);
           }
           buttons.forEach((btn) => {
-            btn.disabled = form.dataset.codeVerified !== "1";
+            btn.disabled = true;
           });
+          syncDecisionButtons(form);
           return;
         }
 
-        if (
-          decision === "accept" &&
-          data.receipt_text &&
-          window.RichcomPrinter?.printReceipt
-        ) {
-          if (status) {
-            status.textContent = "Printing delivery note…";
-          }
-          try {
-            await window.RichcomPrinter.printReceipt({
-              text: data.receipt_text,
-              channel: data.print_via || "",
-              qr: data.receipt_qr || null,
-              fontStyle: data.receipt_font || null,
-              ticket: data.receipt_ticket || null,
-              paperWidth: data.receipt_paper_width || "",
-            });
-          } catch (_printError) {
-            /* Transfer already succeeded; continue to workspace. */
-          }
+        if (status) {
+          status.textContent = data.message || "Done. Refreshing…";
+          status.classList.add("is-ok");
+          status.classList.remove("is-error");
         }
 
-        window.location.assign(data.next || window.location.href);
+        const goNext = () => {
+          const next = data.next || window.location.href;
+          try {
+            const url = new URL(next, window.location.origin);
+            // Bust cache so pending transfer UI and stock counts refresh.
+            url.searchParams.set("_r", String(Date.now()));
+            window.location.replace(url.pathname + url.search + url.hash);
+          } catch {
+            window.location.href = next;
+          }
+        };
+
+        const printThenRefresh = async () => {
+          if (
+            decision === "accept" &&
+            data.receipt_text &&
+            window.RichcomPrinter?.printReceipt
+          ) {
+            if (status) {
+              status.textContent = "Printing goods received receipt…";
+            }
+            try {
+              await Promise.race([
+                window.RichcomPrinter.printReceipt({
+                  text: data.receipt_text,
+                  channel: data.print_via || "",
+                  qr: data.receipt_qr || null,
+                  fontStyle: data.receipt_font || null,
+                  ticket: data.receipt_ticket || null,
+                  paperWidth: data.receipt_paper_width || "",
+                }),
+                new Promise((resolve) => window.setTimeout(resolve, 2500)),
+              ]);
+            } catch (_printError) {
+              /* Transfer already succeeded; continue to refresh. */
+            }
+          }
+          goNext();
+        };
+
+        await printThenRefresh();
       } catch (_error) {
         if (status) {
           status.textContent = "Network error while responding. Try again.";
@@ -1350,9 +1574,7 @@
         } else {
           window.alert("Network error while responding. Try again.");
         }
-        buttons.forEach((btn) => {
-          btn.disabled = form.dataset.codeVerified !== "1";
-        });
+        syncDecisionButtons(form);
       }
     });
   });

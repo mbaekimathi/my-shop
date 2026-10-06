@@ -773,7 +773,7 @@
                 ).trim();
                 const isRequesting =
                   requestingId && String(shop.id) === requestingId;
-                const roleLabel = isRequesting ? "Requesting" : "From";
+                const roleLabel = isRequesting ? "Sending" : "To";
                 if (pairLocked) {
                   return `<th
                   scope="col"
@@ -795,7 +795,7 @@
                 return `<th
                   scope="col"
                   class="stock-matrix-shop-col stock-th--pair stock-th--request"
-                  title="Click to set ${name} as requesting shop"
+                  title="Click to set ${name} as sending shop"
                   data-stock-request-shop-header
                   data-shop-id="${shopIdAttr}"
                   data-shop-name="${name}"
@@ -804,7 +804,7 @@
                 >
                   <span class="stock-th-pair">
                     <span class="stock-th-pair-name">${name}</span>
-                    <span class="stock-th-pair-role" data-stock-request-role>From</span>
+                    <span class="stock-th-pair-role" data-stock-request-role>To</span>
                     <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span></span>
                   </span>
                 </th>`;

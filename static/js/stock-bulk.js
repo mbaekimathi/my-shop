@@ -1027,7 +1027,7 @@
         .map((cell) => {
           const qty = cellQty(cell);
           if (!qty) return null;
-          if (mode === "request" && requestingShopId && cell.dataset.shopId === requestingShopId) {
+          if (mode === "request" && requestingShopId && cell.dataset.shopId !== requestingShopId) {
             return null;
           }
           return {
@@ -1118,23 +1118,25 @@
         const isRequesting = requestingShopId && header.dataset.shopId === requestingShopId;
         header.classList.toggle("is-requesting", Boolean(isRequesting));
         const roleEl = header.querySelector("[data-stock-request-role]");
-        if (roleEl) roleEl.textContent = isRequesting ? "Requesting" : "From";
+        if (roleEl) roleEl.textContent = isRequesting ? "Sending" : "To";
         if (isRequesting) requestingShopName = header.dataset.shopName || requestingShopName;
       });
       if (requestingLabelEl) {
         requestingLabelEl.textContent =
-          requestingShopName || "Choose requesting shop";
+          requestingShopName || "Choose sending shop";
       }
       cells().forEach((cell) => {
-        const isRequesting =
+        const isSending =
           requestingShopId && cell.dataset.shopId === requestingShopId;
-        cell.classList.toggle("is-requesting-shop", Boolean(isRequesting));
+        const isReceiving = Boolean(requestingShopId) && !isSending;
+        cell.classList.toggle("is-requesting-shop", Boolean(isSending));
+        cell.classList.toggle("is-receiving-shop", isReceiving);
         const qty = cell.querySelector("[data-stock-qty]");
         if (!qty) return;
-        if (isRequesting) {
+        if (isReceiving) {
           qty.value = "";
           qty.disabled = true;
-          qty.setAttribute("title", "This is the requesting shop");
+          qty.setAttribute("title", "This is the receiving shop");
         } else {
           qty.disabled = false;
           qty.removeAttribute("title");
@@ -1366,7 +1368,7 @@
       }
       if (mode === "request" && !requestingShopId) {
         return blockSubmit(
-          "Choose requesting shop first — click a shop column header.",
+          "Choose sending shop first — click a shop column header.",
           document.querySelector("[data-stock-request-shop-header]") || requestingLabelEl
         );
       }
@@ -1499,7 +1501,7 @@
           shopLabelEl.textContent =
             fromShopFixedName ||
             (shopIds.size === 0
-              ? "Choose from shop"
+              ? "Choose receiving shop"
               : shopIds.size === 1
                 ? ready.find((item) => item.shopId)?.shopName || "1 shop"
                 : `${shopIds.size} shops`);
@@ -2479,17 +2481,23 @@
 
     const restoreMatrixFields = () => {
       cells().forEach((cell) => {
-        const isRequesting =
+        const isDestination =
+          mode === "request" &&
+          requestingShopId &&
+          cell.dataset.shopId !== requestingShopId;
+        const isSending =
           mode === "request" &&
           requestingShopId &&
           cell.dataset.shopId === requestingShopId;
+        cell.classList.toggle("is-requesting-shop", Boolean(isSending));
+        cell.classList.toggle("is-receiving-shop", Boolean(isDestination));
         cell
           .querySelectorAll("[data-stock-qty], [data-stock-buying-price]")
           .forEach((field) => {
-            field.disabled = Boolean(isRequesting);
+            field.disabled = Boolean(isDestination);
           });
         // Keep hidden line meta enabled only when the cell still has qty.
-        const filled = cellQty(cell) > 0 && !isRequesting;
+        const filled = cellQty(cell) > 0 && !isDestination;
         cell.querySelectorAll("[data-stock-field]").forEach((field) => {
           field.disabled = !filled;
         });

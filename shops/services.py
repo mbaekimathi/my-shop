@@ -154,6 +154,7 @@ RECEIPT_FORMAT_DEFAULTS = {
 DOC_NUMBER_PREFIX = {
     "stock_in": "I",
     "delivery": "D",
+    "goods_received": "G",
     "expense": "E",
 }
 RECEIPT_FORMAT_RE = re.compile(r"^[A-Za-z0-9]{1,8}$")
@@ -163,10 +164,13 @@ WEBSITE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 POS_SETTINGS_CACHE_KEY = "company_pos_settings:v2"
 SHOP_POS_SETTINGS_CACHE_KEY = "shop_pos_settings:v1:{shop_id}"
 POS_SETTINGS_CACHE_TTL = 300
+WORKING_HOURS_SETTINGS_CACHE_KEY = "company_working_hours:v1"
 DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v2"
 COMMUNICATIONS_SETTINGS_CACHE_KEY = "company_communications_settings:v1"
 RECEIPT_QR_PREVIEW_CACHE_KEY = "receipt_qr_preview:v1"
 RECEIPT_QR_PREVIEW_CACHE_TTL = 300
+ITEM_ACTIVE_COUNT_CACHE_KEY = "items:active_count:v1"
+ITEM_ACTIVE_COUNT_CACHE_TTL = 60
 
 COMMUNICATIONS_TOGGLE_FIELDS = {
     "enable_whatsapp",
@@ -246,10 +250,15 @@ def _invalidate_communications_settings_cache() -> None:
 
 
 def get_company_pos_settings() -> CompanyPosSettings:
-    # Always read from DB. LocMemCache is per-process on cPanel, so a cached
-    # model instance can keep serving toggles (e.g. client data) after another
-    # worker already saved the change.
+    # Cached with short TTL; writers call _invalidate_pos_settings_cache().
+    # LocMemCache is per-process on cPanel, so toggles may lag a few seconds
+    # across workers — acceptable vs repeated get_or_create on every permission
+    # check / floor render.
+    cached = cache.get(POS_SETTINGS_CACHE_KEY)
+    if cached is not None:
+        return cached
     settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
+    cache.set(POS_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
     return settings_row
 
 
@@ -605,8 +614,16 @@ def _parse_working_time(raw: str):
     raise ValidationError("Use a valid time (HH:MM).")
 
 
+def _invalidate_working_hours_settings_cache() -> None:
+    cache.delete(WORKING_HOURS_SETTINGS_CACHE_KEY)
+
+
 def get_company_working_hours_settings() -> CompanyWorkingHoursSettings:
+    cached = cache.get(WORKING_HOURS_SETTINGS_CACHE_KEY)
+    if cached is not None:
+        return cached
     settings_row, _ = CompanyWorkingHoursSettings.objects.get_or_create(pk=1)
+    cache.set(WORKING_HOURS_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
     return settings_row
 
 
@@ -649,6 +666,9 @@ def validate_working_hours_payload(data) -> dict:
 
 
 def get_shop_working_hours_settings(shop: Shop) -> ShopWorkingHoursSettings:
+    existing = ShopWorkingHoursSettings.objects.filter(shop_id=shop.pk).first()
+    if existing is not None:
+        return existing
     company = get_company_working_hours_settings()
     row, _ = ShopWorkingHoursSettings.objects.get_or_create(
         shop=shop,
@@ -715,7 +735,8 @@ def update_shop_working_hours_from_post(data, shops) -> None:
 
 
 def update_company_working_hours(data) -> CompanyWorkingHoursSettings:
-    settings_row = get_company_working_hours_settings()
+    _invalidate_working_hours_settings_cache()
+    settings_row, _ = CompanyWorkingHoursSettings.objects.get_or_create(pk=1)
     cleaned = validate_working_hours_payload(data)
     for field in WORKING_HOURS_DAY_FIELDS:
         setattr(settings_row, field, cleaned[field])
@@ -727,7 +748,8 @@ def update_company_working_hours(data) -> CompanyWorkingHoursSettings:
             "updated_at",
         ]
     )
-    return settings_row
+    _invalidate_working_hours_settings_cache()
+    return get_company_working_hours_settings()
 
 
 def save_working_hours_settings(data) -> CompanyWorkingHoursSettings:
@@ -737,13 +759,17 @@ def save_working_hours_settings(data) -> CompanyWorkingHoursSettings:
     return settings_row
 
 
-def shop_day_compulsory_enabled(*, shop: Shop | None = None) -> bool:
+def shop_day_compulsory_enabled(
+    *, shop: Shop | None = None, pos: CompanyPosSettings | None = None
+) -> bool:
     """Whether open/close day is required before selling and on login."""
-    pos = get_effective_pos_settings(shop)
-    return bool(getattr(pos, "enable_open_close", True))
+    settings_row = pos if pos is not None else get_effective_pos_settings(shop)
+    return bool(getattr(settings_row, "enable_open_close", True))
 
 
-def shop_day_floor_state(*, shop: Shop) -> dict:
+def shop_day_floor_state(
+    *, shop: Shop, pos: CompanyPosSettings | None = None
+) -> dict:
     """Compulsory open/close state for floor trading.
 
     Trading requires an open day session started today when open/close is
@@ -757,7 +783,7 @@ def shop_day_floor_state(*, shop: Shop) -> dict:
     start_time = shop_hours.start_time
     end_time = shop_hours.end_time
 
-    if not shop_day_compulsory_enabled(shop=shop):
+    if not shop_day_compulsory_enabled(shop=shop, pos=pos):
         return {
             "is_open": open_session is not None,
             "can_trade": True,
@@ -841,12 +867,14 @@ def require_shop_day_for_sale(*, shop: Shop) -> dict:
     raise ValidationError("Open the shop day before selling.")
 
 
-def build_shop_day_prompt(*, shop: Shop) -> dict:
+def build_shop_day_prompt(
+    *, shop: Shop, state: dict | None = None, pos: CompanyPosSettings | None = None
+) -> dict:
     """Whether the shop floor should prompt for compulsory open/close."""
-    if not shop_day_compulsory_enabled(shop=shop):
+    if state is None and not shop_day_compulsory_enabled(shop=shop, pos=pos):
         return {"show": False}
 
-    state = shop_day_floor_state(shop=shop)
+    state = state if state is not None else shop_day_floor_state(shop=shop, pos=pos)
     if not state.get("needs_action") or not state.get("mode"):
         return {"show": False}
 
@@ -1811,6 +1839,9 @@ def update_nexus_stk_settings(
 
 
 def get_developer_payment_settings() -> CompanyDeveloperPaymentSettings:
+    # Not cached as a model instance: LocMemCache survives Django TestCase
+    # rollbacks and setUp deletes, which breaks get_or_create + save flows.
+    # One row read per HTML request is cheap next to floor queries.
     settings_row, _ = CompanyDeveloperPaymentSettings.objects.get_or_create(pk=1)
     return settings_row
 
@@ -2341,11 +2372,12 @@ def update_company_and_shop_profiles(data, files, *, shops=None) -> CompanyProfi
 def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")
-    settings_row = get_company_pos_settings()
+    _invalidate_pos_settings_cache()
+    settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
     setattr(settings_row, field, bool(enabled))
     settings_row.save(update_fields=[field, "updated_at"])
     _invalidate_pos_settings_cache()
-    return settings_row
+    return get_company_pos_settings()
 
 
 def set_company_tax_percent(*, percent) -> CompanyPosSettings:
@@ -3618,6 +3650,8 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
         rows.append(_receipt_pad_line("From", ticket["route_from"], width))
     if ticket.get("route_to"):
         rows.append(_receipt_pad_line("To", ticket["route_to"], width))
+    if ticket.get("rider"):
+        rows.append(_receipt_pad_line("Rider", ticket["rider"], width))
     if ticket.get("receiving_branch"):
         rows.append(
             _receipt_pad_line("Branch", ticket["receiving_branch"], width)
@@ -3892,18 +3926,35 @@ def build_stock_in_supplier_receipt(movement, *, shop: Shop, authorised_by=None)
 
 
 def build_stock_request_delivery_note(
-    movement, *, shop: Shop, authorised_by=None
+    movement,
+    *,
+    shop: Shop,
+    authorised_by=None,
+    variant: str = "received",
 ) -> dict:
-    """Build a delivery note after accepting an inter-shop stock request."""
+    """Build a transfer slip for dispatch (send) or goods received (confirm).
+
+    variant:
+      - \"dispatch\": printed when the sending shop creates the transfer
+      - \"received\": printed when the receiving shop confirms receipt
+    """
     pos = get_effective_pos_settings(shop)
     lines = list(movement.lines.select_related("item").all())
-    from_shop = movement.requested_from_shop or shop
-    to_shop = movement.shop
+    from_shop = movement.shop or shop
+    to_shop = movement.requested_from_shop
     from_name = (getattr(from_shop, "name", None) or "").strip() or "—"
     to_name = (getattr(to_shop, "name", None) or "").strip() or "—"
+    rider = (getattr(movement, "rider_name", None) or "").strip()
+    is_dispatch = (variant or "").strip().lower() == "dispatch"
 
     cashier = ""
-    profile = authorised_by or getattr(movement, "responded_by", None)
+    profile = authorised_by
+    if profile is None:
+        profile = (
+            getattr(movement, "created_by", None)
+            if is_dispatch
+            else getattr(movement, "responded_by", None)
+        )
     if profile is not None and getattr(profile, "user", None) is not None:
         cashier = (
             profile.user.get_full_name()
@@ -3932,17 +3983,35 @@ def build_stock_request_delivery_note(
             }
         )
 
-    stamped = getattr(movement, "responded_at", None) or movement.created_at
+    if is_dispatch:
+        stamped = movement.created_at
+        header_shop = from_shop
+        prefix = DOC_NUMBER_PREFIX["delivery"]
+        kind = "Delivery note"
+        doc_type = "delivery"
+        document_title = "Delivery note / dispatch voucher"
+        doc_number_label = "Delivery No."
+        status = "In transit"
+        footer = "Delivery note · Awaiting confirmation"
+    else:
+        stamped = getattr(movement, "responded_at", None) or movement.created_at
+        header_shop = to_shop or shop
+        prefix = DOC_NUMBER_PREFIX["goods_received"]
+        kind = "Goods received"
+        doc_type = "goods_received"
+        document_title = "Goods received / transfer receipt"
+        doc_number_label = "GRN No."
+        status = "Received"
+        footer = "Goods received · Transfer confirmed"
+
     stamped = timezone.localtime(stamped)
     ticket = {
-        **_supplier_receipt_shop_header(from_shop),
-        "receipt_number": format_simple_doc_number(
-            DOC_NUMBER_PREFIX["delivery"], movement.pk
-        ),
-        "kind": "Delivery note",
-        "doc_type": "delivery",
-        "document_title": "Delivery note / transfer voucher",
-        "doc_number_label": "Delivery No.",
+        **_supplier_receipt_shop_header(header_shop),
+        "receipt_number": format_simple_doc_number(prefix, movement.pk),
+        "kind": kind,
+        "doc_type": doc_type,
+        "document_title": document_title,
+        "doc_number_label": doc_number_label,
         "authorised_label": "Authorised by",
         "date": stamped.strftime("%d %b %Y · %H:%M"),
         "party_label": "",
@@ -3950,8 +4019,9 @@ def build_stock_request_delivery_note(
         "party_phone": "",
         "route_from": from_name,
         "route_to": to_name,
+        "rider": rider,
         "cashier": cashier,
-        "status": "Transferred",
+        "status": status,
         "lines": ticket_lines,
         "cancelled": False,
         "qty_only": True,
@@ -3963,7 +4033,7 @@ def build_stock_request_delivery_note(
         "total": "0",
         "payment": "",
         "payment_details": {"label": "", "lines": []},
-        "footer": "Delivery note · Goods transferred",
+        "footer": footer,
     }
     paper = (
         pos.receipt_paper_width
@@ -3977,6 +4047,30 @@ def build_stock_request_delivery_note(
         "receipt_ticket": ticket,
         **meta,
     }
+
+
+def build_stock_request_dispatch_note(
+    movement, *, shop: Shop, authorised_by=None
+) -> dict:
+    """Delivery note printed when the sending shop dispatches a transfer."""
+    return build_stock_request_delivery_note(
+        movement,
+        shop=shop,
+        authorised_by=authorised_by,
+        variant="dispatch",
+    )
+
+
+def build_stock_request_goods_received(
+    movement, *, shop: Shop, authorised_by=None
+) -> dict:
+    """Receipt printed when the receiving shop confirms goods received."""
+    return build_stock_request_delivery_note(
+        movement,
+        shop=shop,
+        authorised_by=authorised_by,
+        variant="received",
+    )
 
 
 def build_expense_supplier_receipt(

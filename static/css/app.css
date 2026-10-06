@@ -17183,10 +17183,14 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 .stock-shop-cell.is-requesting-shop {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.stock-shop-cell.is-receiving-shop {
   opacity: 0.55;
 }
 
-.stock-shop-cell.is-requesting-shop .stock-list-input {
+.stock-shop-cell.is-receiving-shop .stock-list-input {
   background: color-mix(in srgb, var(--mist-dim) 12%, var(--input-bg));
   cursor: not-allowed;
 }
@@ -19478,19 +19482,14 @@ html[data-theme="light"] .low-stock-badge.is-low {
   width: 9.5%;
 }
 
-.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="by"],
-.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="By"] {
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="sent"],
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Sent"] {
   width: 9%;
 }
 
-.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="request"],
-.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Request"] {
-  width: 7.5%;
-}
-
 .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) th[data-col="receive"],
-.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Receive"] {
-  width: 7.5%;
+.stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) td[data-label="Received"] {
+  width: 9%;
 }
 
 .stock-panel--report .stock-report-table--timeline-detail th[data-col="receipt"],
@@ -19528,19 +19527,14 @@ html[data-theme="light"] .low-stock-badge.is-low {
   width: 11%;
 }
 
-.stock-panel--report .stock-report-table--timeline-detail th[data-col="by"],
-.stock-panel--report .stock-report-table--timeline-detail td[data-label="By"] {
+.stock-panel--report .stock-report-table--timeline-detail th[data-col="sent"],
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="Sent"] {
   width: 10%;
 }
 
-.stock-panel--report .stock-report-table--timeline-detail th[data-col="request"],
-.stock-panel--report .stock-report-table--timeline-detail td[data-label="Request"] {
-  width: 9%;
-}
-
 .stock-panel--report .stock-report-table--timeline-detail th[data-col="receive"],
-.stock-panel--report .stock-report-table--timeline-detail td[data-label="Receive"] {
-  width: 9%;
+.stock-panel--report .stock-report-table--timeline-detail td[data-label="Received"] {
+  width: 10%;
 }
 
 .stock-panel--report .stock-report-table--timeline tbody tr:last-child td {
@@ -28916,6 +28910,219 @@ body.workspace-modal-open .stock-country-menu {
   grid-template-columns: 1fr auto;
 }
 
+.stock-decision-dialog .stock-transfer-body {
+  gap: 0.85rem;
+}
+
+.stock-decision-stack {
+  gap: 0.9rem;
+}
+
+.stock-decision-card {
+  display: grid;
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, var(--text-strong));
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent);
+}
+
+.stock-decision-card.is-confirmed {
+  border-color: color-mix(in srgb, #2f7d4a 28%, var(--line));
+}
+
+.stock-decision-card.is-declined {
+  border-color: color-mix(in srgb, var(--danger, #b42318) 28%, var(--line));
+}
+
+.stock-decision-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding: 0.85rem 0.95rem 0.75rem;
+  background: color-mix(in srgb, var(--panel-muted, var(--line)) 35%, var(--surface));
+  border-bottom: 1px solid var(--line);
+}
+
+.stock-decision-card.is-confirmed .stock-decision-card-head {
+  background: color-mix(in srgb, #2f7d4a 7%, var(--surface));
+}
+
+.stock-decision-card.is-declined .stock-decision-card-head {
+  background: color-mix(in srgb, var(--danger, #b42318) 7%, var(--surface));
+}
+
+.stock-decision-card-titles {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.stock-decision-card-shop {
+  margin: 0;
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.stock-decision-card-meta {
+  margin: 0;
+  color: var(--mist-dim);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.stock-decision-ack-form {
+  flex-shrink: 0;
+}
+
+.stock-decision-ack-btn {
+  min-height: 2rem;
+  padding-inline: 0.85rem;
+  white-space: nowrap;
+}
+
+.stock-decision-route {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.95rem;
+  color: var(--mist-dim);
+  font-size: 0.74rem;
+  font-weight: 650;
+  border-bottom: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, var(--panel-muted, var(--line)));
+}
+
+.stock-decision-route span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 42%;
+}
+
+.stock-decision-route i {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.stock-decision-lines {
+  margin: 0;
+  padding: 0.35rem 0;
+  list-style: none;
+  display: grid;
+}
+
+.stock-decision-lines li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.85rem;
+  align-items: baseline;
+  padding: 0.48rem 0.95rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.stock-decision-lines li:last-child {
+  border-bottom: 0;
+}
+
+.stock-decision-line-name {
+  color: var(--text-strong);
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stock-decision-line-qty {
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.stock-decision-line-qty::before {
+  content: "× ";
+  color: color-mix(in srgb, var(--accent) 70%, var(--mist-dim));
+  font-weight: 650;
+}
+
+.stock-decision-lines-empty {
+  padding: 0.75rem 0.95rem;
+  color: var(--mist-dim);
+  font-size: 0.82rem;
+}
+
+.stock-decision-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.7rem 0.95rem 0.85rem;
+  border-top: 1px solid var(--line);
+  color: var(--text-strong);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  background: color-mix(in srgb, var(--panel-muted, var(--line)) 22%, var(--surface));
+}
+
+.stock-decision-foot i {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.stock-decision-foot.is-ok {
+  color: #1f5c35;
+  background: color-mix(in srgb, #2f7d4a 8%, var(--surface));
+}
+
+.stock-decision-foot.is-ok i {
+  color: #2f7d4a;
+}
+
+.stock-decision-foot.is-warn {
+  color: color-mix(in srgb, var(--danger, #b42318) 85%, var(--text-strong));
+  background: color-mix(in srgb, var(--danger, #b42318) 7%, var(--surface));
+}
+
+.stock-decision-foot.is-warn i {
+  color: var(--danger, #b42318);
+}
+
+.stock-decision-note {
+  margin: 0;
+  padding: 0 0.95rem 0.7rem;
+  color: var(--mist-dim);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 560px) {
+  .stock-decision-card-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .stock-decision-ack-btn {
+    width: 100%;
+  }
+
+  .stock-decision-route span {
+    max-width: 38%;
+  }
+}
+
 .stock-transfer-party {
   display: grid;
   gap: 0.15rem;
@@ -28996,6 +29203,12 @@ body.workspace-modal-open .stock-country-menu {
 
 .stock-transfer-table tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.stock-transfer-qty-readonly {
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  color: var(--text-strong);
 }
 
 .stock-transfer-table td.is-low {
@@ -29895,8 +30108,14 @@ body.workspace-modal-open .stock-country-menu {
 
 .stock-create-confirm-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(8.5rem, 0.7fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(8.5rem, 0.7fr);
   gap: 0.7rem;
+}
+
+@media (max-width: 720px) {
+  .stock-create-confirm-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .stock-create-empty {

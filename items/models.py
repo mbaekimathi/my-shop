@@ -306,7 +306,7 @@ class ItemSerial(models.Model):
 class StockMovementType(models.TextChoices):
     IN = "in", "Stock In"
     OUT = "out", "Stock Out"
-    REQUEST = "request", "Request Stock"
+    REQUEST = "request", "Transfer Stock"
 
 
 class StockEntrySource(models.TextChoices):
@@ -363,7 +363,7 @@ class StockMovement(models.Model):
         related_name="stock_movements",
         null=True,
         blank=True,
-        help_text="Shop performing stock in/out, or the shop requesting stock.",
+        help_text="Shop performing stock in/out, or the shop sending a transfer.",
     )
     requested_from_shop = models.ForeignKey(
         "shops.Shop",
@@ -371,7 +371,7 @@ class StockMovement(models.Model):
         related_name="stock_requests_received",
         null=True,
         blank=True,
-        help_text="For requests: the shop being asked to supply stock.",
+        help_text="For transfers: the shop receiving the stock (notified to confirm).",
     )
     request_status = models.CharField(
         max_length=16,
@@ -379,15 +379,15 @@ class StockMovement(models.Model):
         blank=True,
         default="",
         db_index=True,
-        help_text="Used for stock requests only.",
+        help_text="Used for inter-shop transfers only.",
     )
     requester_notified = models.BooleanField(
         default=True,
-        help_text="False after a decision until the requesting shop acknowledges it.",
+        help_text="False after a decision until the sending shop acknowledges it.",
     )
     supplier_notified = models.BooleanField(
         default=True,
-        help_text="False after a new request until the supplying shop acknowledges it.",
+        help_text="False after a new transfer until the receiving shop acknowledges it.",
     )
     responded_by = models.ForeignKey(
         "employees.EmployeeProfile",
@@ -405,6 +405,12 @@ class StockMovement(models.Model):
     )
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     notes = models.TextField(blank=True)
+    rider_name = models.CharField(
+        max_length=120,
+        blank=True,
+        default="",
+        help_text="Optional rider / courier name on inter-shop transfers.",
+    )
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
         on_delete=models.SET_NULL,

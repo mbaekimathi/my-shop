@@ -4,8 +4,8 @@
     <thead>
       <tr>
         <th>Status</th>
-        <th>Requesting shop</th>
-        <th>From shop</th>
+        <th>Sending shop</th>
+        <th>To shop</th>
         <th>By</th>
         <th>Items</th>
         <th>Units</th>
@@ -18,17 +18,17 @@
       <tr>
         <td data-label="Status">
           {% if req.request_status == "fulfilled" %}
-          <span class="stock-request-status is-accepted">Approved</span>
+          <span class="stock-request-status is-accepted">Confirmed</span>
           {% elif req.request_status == "declined" %}
           <span class="stock-request-status is-declined">Declined</span>
           {% else %}
           <span class="stock-request-status is-pending">Pending</span>
           {% endif %}
         </td>
-        <td data-label="Requesting shop">
+        <td data-label="Sending shop">
           <strong>{% if req.shop %}{{ req.shop.name }}{% else %}—{% endif %}</strong>
         </td>
-        <td data-label="From shop">
+        <td data-label="To shop">
           <strong>
             {% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}—{% endif %}
           </strong>

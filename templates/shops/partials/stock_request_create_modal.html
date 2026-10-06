@@ -13,10 +13,10 @@
     <div class="workspace-modal-head stock-create-head">
       <div class="stock-create-head-copy">
         <p class="stock-transfer-kicker">{{ shop.name }}</p>
-        <h2 id="stock-create-modal-title">Request stock</h2>
+        <h2 id="stock-create-modal-title">Transfer stock</h2>
         <p class="stock-create-head-summary">
-          Choose a shop, pick what you need, then send. Stock arrives at
-          <strong>{{ shop.name }}</strong> after they accept.
+          Choose a destination, pick what to send from
+          <strong>{{ shop.name }}</strong>, then send. Stock updates after they confirm receipt.
         </p>
       </div>
       <button
@@ -43,14 +43,14 @@
           <div class="stock-create-step-head">
             <span class="stock-create-step-num" aria-hidden="true">1</span>
             <div>
-              <h3 id="stock-create-step1-title">Where should the stock come from?</h3>
-              <p>Pick the shop that currently has the items.</p>
+              <h3 id="stock-create-step1-title">Where is the stock going?</h3>
+              <p>Pick the shop that should receive these items.</p>
             </div>
           </div>
 
           <div class="stock-create-source">
             <label class="stock-create-source-field">
-              <span class="field-label">Supplying shop</span>
+              <span class="field-label">Receiving shop</span>
               <select name="requested_from_shop_id" required data-stock-create-from>
                 <option value="">Choose a shop…</option>
                 {% for other in request_from_shops %}
@@ -58,8 +58,8 @@
                 {% endfor %}
               </select>
             </label>
-            <div class="stock-create-destination" aria-label="Destination shop">
-              <span class="stock-create-destination-label">Delivering to</span>
+            <div class="stock-create-destination" aria-label="Sending shop">
+              <span class="stock-create-destination-label">Sending from</span>
               <strong>{{ shop.name }}</strong>
               {% if shop.location %}
               <span class="stock-create-destination-meta">{{ shop.location }}</span>
@@ -76,9 +76,9 @@
           <div class="stock-create-step-head">
             <span class="stock-create-step-num" aria-hidden="true">2</span>
             <div>
-              <h3 id="stock-create-step2-title">What do you need?</h3>
+              <h3 id="stock-create-step2-title">What are you sending?</h3>
               <p data-stock-create-items-hint>
-                Choose a shop first to see what they have in stock.
+                Enter how many to send from your stock. Choose a destination above before sending.
               </p>
             </div>
             <p class="stock-create-selected" data-stock-create-selected hidden>
@@ -107,51 +107,20 @@
           <div class="stock-create-items-shell">
             <div class="stock-create-items-head" aria-hidden="true">
               <span>Item</span>
-              <span>They have</span>
-              <span>You need</span>
+              <span>You have</span>
+              <span>Send</span>
             </div>
 
             <div class="stock-create-items" data-stock-create-items>
-              {% for item in request_items %}
-              <label
-                class="stock-create-item-row"
-                data-stock-create-row
-                data-item-id="{{ item.id }}"
-                data-item-name="{{ item.name|lower }}"
-                data-avail=""
-              >
-                <span class="stock-create-item-main">
-                  <span class="stock-create-item-name">{{ item.name }}</span>
-                  <span class="stock-create-item-avail-text" data-stock-create-avail-text>
-                    Pick a shop to check stock
-                  </span>
-                  <input type="hidden" name="item_id" value="{{ item.id }}" disabled data-stock-create-id>
-                </span>
-                <span
-                  class="stock-create-item-stock"
-                  data-stock-create-avail
-                  title="On-hand at the selected shop"
-                >—</span>
-                <input
-                  type="number"
-                  name="quantity"
-                  min="1"
-                  step="1"
-                  inputmode="numeric"
-                  placeholder="0"
-                  data-stock-create-qty
-                  aria-label="Quantity needed for {{ item.name }}"
-                >
-              </label>
-              {% empty %}
-              <p class="stock-create-empty">No items available to request.</p>
-              {% endfor %}
+              <p class="stock-create-empty" data-stock-create-loading>
+                Open this panel to load items from your stock…
+              </p>
             </div>
             <p class="stock-create-empty stock-create-empty--search" data-stock-create-no-results hidden>
               No items match your search.
             </p>
             <p class="stock-create-empty stock-create-empty--stock" data-stock-create-no-stock hidden>
-              That shop has no stock for these items. Turn on
+              This shop has no stock for these items. Turn on
               <em>Show out-of-stock</em> to browse the full list anyway.
             </p>
           </div>
@@ -162,14 +131,26 @@
             <span class="stock-create-step-num" aria-hidden="true">3</span>
             <div>
               <h3 id="stock-create-step3-title">Confirm and send</h3>
-              <p>Add an optional note, then authorise with your staff ID.</p>
+              <p>Add rider and note if needed, then authorise with your staff ID.</p>
             </div>
           </div>
 
           <div class="stock-create-confirm-grid">
             <label class="field stock-create-field">
+              <span class="field-label">Rider name <em>(optional)</em></span>
+              <input
+                type="text"
+                name="rider_name"
+                maxlength="120"
+                placeholder="e.g. John Kamau"
+                autocomplete="name"
+                data-stock-create-rider
+              >
+            </label>
+
+            <label class="field stock-create-field">
               <span class="field-label">Note <em>(optional)</em></span>
-              <input type="text" name="notes" maxlength="500" placeholder="e.g. Needed for weekend sales">
+              <input type="text" name="notes" maxlength="500" placeholder="e.g. Restock for weekend">
             </label>
 
             <label class="field stock-create-field stock-create-field--code">
@@ -190,17 +171,17 @@
         {% else %}
         <div class="stock-create-empty stock-create-empty--block">
           <i data-lucide="store" aria-hidden="true"></i>
-          <p>No other shops are available to request from.</p>
+          <p>No other shops are available to transfer to.</p>
         </div>
         {% endif %}
       </div>
 
       <div class="workspace-modal-actions stock-request-modal-actions stock-create-actions">
         <button type="button" class="btn btn--ghost" data-stock-create-close>Cancel</button>
-        {% if request_from_shops and request_items %}
+        {% if request_from_shops %}
         <button type="submit" class="btn btn--primary" data-stock-create-submit>
           <i data-lucide="send" aria-hidden="true"></i>
-          <span>Send request</span>
+          <span>Send transfer</span>
         </button>
         {% endif %}
       </div>

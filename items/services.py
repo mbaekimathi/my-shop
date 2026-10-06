@@ -2758,33 +2758,31 @@ def apply_stock_movement(
     line_payloads = _parse_movement_lines(data, movement_type)
 
     if movement_type == StockMovementType.REQUEST:
-        # shop_id = requesting (destination). Per-line shop_id = from shop.
-        requesting_shop = _get_active_shop(
-            data.get("shop_id"), label="requesting shop"
+        # shop_id = sending shop. requested_from_shop_id = receiving shop.
+        sending_shop = _get_active_shop(
+            data.get("shop_id"), label="sending shop"
         )
-        _assert_shop_allowed(profile, requesting_shop, label="requesting shop")
-        fallback_from = str(data.get("requested_from_shop_id") or "").strip()
-        grouped_from: dict[str, list] = {}
+        _assert_shop_allowed(profile, sending_shop, label="sending shop")
+        dest_id = str(data.get("requested_from_shop_id") or "").strip()
+        if not dest_id:
+            # Fall back to a single line shop that differs from the sender.
+            for line in line_payloads:
+                sid = str(line.get("shop_id") or "").strip()
+                if sid and sid != str(sending_shop.pk):
+                    dest_id = sid
+                    break
+        if not dest_id:
+            raise ValidationError("Select a shop to transfer stock to.")
+        if str(dest_id) == str(sending_shop.pk):
+            raise ValidationError(
+                "Sending shop and receiving shop must be different."
+            )
+        destination = _get_active_shop(dest_id, label="receiving shop")
+        if destination.is_suspended:
+            raise ValidationError(f"Shop “{destination.name}” is suspended.")
         for line in line_payloads:
-            from_sid = str(line.get("shop_id") or fallback_from).strip()
-            if not from_sid:
-                raise ValidationError(
-                    "Select a shop to request from for each stock line."
-                )
-            if str(from_sid) == str(requesting_shop.pk):
-                raise ValidationError(
-                    "Requesting shop and requested shop must be different."
-                )
-            grouped_from.setdefault(from_sid, []).append(line)
-
-        shop_groups = []
-        for from_sid, lines in grouped_from.items():
-            from_shop = _get_active_shop(from_sid, label="shop to request from")
-            # Requester must be allowed on the destination shop only; the supply
-            # shop is the peer being asked, not a shop they must be assigned to.
-            if from_shop.is_suspended:
-                raise ValidationError(f"Shop “{from_shop.name}” is suspended.")
-            shop_groups.append((requesting_shop, lines, from_shop))
+            line["shop_id"] = str(sending_shop.pk)
+        shop_groups = [(sending_shop, line_payloads, destination)]
     else:
         # Group lines by shop (per-line shop_id from multi-shop matrix, else form shop_id).
         fallback_shop_id = str(data.get("shop_id") or "").strip()
@@ -2832,14 +2830,6 @@ def apply_stock_movement(
                     defaults={"quantity": 0},
                 )
                 line["shop_stock"] = shop_stock
-
-                if movement_type == StockMovementType.REQUEST:
-                    from_stock, _ = ShopStock.objects.select_for_update().get_or_create(
-                        shop=requested_from,
-                        item=item,
-                        defaults={"quantity": 0},
-                    )
-                    line["requested_from_stock"] = from_stock
 
                 serials = line.get("serial_numbers") or []
                 if item.track_serial_number and movement_type != StockMovementType.REQUEST:
@@ -2902,6 +2892,13 @@ def apply_stock_movement(
                         errors.append(
                             f"Insufficient stock for “{item.name}” at {shop.name} "
                             f"(available {shop_stock.quantity}, requested {line['quantity']})."
+                        )
+                        continue
+                if movement_type == StockMovementType.REQUEST:
+                    if shop_stock.quantity < line["quantity"]:
+                        errors.append(
+                            f"Insufficient stock for “{item.name}” at {shop.name} "
+                            f"(available {shop_stock.quantity}, transfer {line['quantity']})."
                         )
                         continue
                 prepared.append((item, line))
@@ -3084,7 +3081,11 @@ def respond_to_stock_request(
     serials_by_line: dict | None = None,
     quantities_by_line: dict | None = None,
 ):
-    """Accept or decline a pending stock request from the supplying shop."""
+    """Confirm or decline a pending transfer at the receiving shop.
+
+    On accept, received quantities must match what was sent — then stock moves
+    from the sending shop to the receiving shop. Decline leaves stock unchanged.
+    """
     from django.utils import timezone
 
     from employees.services import verify_active_employee_code
@@ -3100,19 +3101,19 @@ def respond_to_stock_request(
         .first()
     )
     if locked is None:
-        raise ValidationError("This stock request could not be found.")
+        raise ValidationError("This stock transfer could not be found.")
     movement = locked
 
     if (
         movement.movement_type != StockMovementType.REQUEST
         or movement.request_status != StockRequestStatus.PENDING
     ):
-        raise ValidationError("This stock request is no longer pending.")
+        raise ValidationError("This stock transfer is no longer pending.")
 
-    supplier = movement.requested_from_shop
-    requester = movement.shop
-    if supplier is None or requester is None:
-        raise ValidationError("This stock request is missing shop details.")
+    sender = movement.shop
+    receiver = movement.requested_from_shop
+    if sender is None or receiver is None:
+        raise ValidationError("This stock transfer is missing shop details.")
 
     authorising = verify_active_employee_code(login_code)
     if authorising is None:
@@ -3124,9 +3125,9 @@ def respond_to_stock_request(
         authorising,
         "my-shop",
         "respond_stock_request",
-        message="You do not have permission to accept or decline stock requests.",
+        message="You do not have permission to confirm or decline stock transfers.",
     )
-    _assert_shop_allowed(authorising, supplier, label="supplying shop")
+    _assert_shop_allowed(authorising, receiver, label="receiving shop")
 
     # Prefer the authorising employee as responder when available.
     if authorising is not None:
@@ -3155,107 +3156,95 @@ def respond_to_stock_request(
         movement.lines.select_related("item").select_for_update().order_by("pk")
     )
     if not lines:
-        raise ValidationError("This stock request has no items.")
+        raise ValidationError("This stock transfer has no items.")
 
     prepared = []
     errors = []
     for line in lines:
         item = line.item
-        requested_qty = line.quantity
+        sent_qty = _quantize_qty(line.quantity)
         raw_qty = quantities_by_line.get(str(line.pk))
         if raw_qty in (None, ""):
-            transfer_qty = _quantize_qty(requested_qty)
-        else:
-            try:
-                transfer_qty = _parse_qty(str(raw_qty).strip(), "Transfer quantity")
-            except ValidationError:
-                # Allow explicit zero to skip a line during fulfill.
-                raw = str(raw_qty).strip()
-                if raw in {"0", "0.0", "0.00", "0.000"}:
-                    transfer_qty = _ZERO_QTY
-                else:
-                    errors.append(f"“{item.name}”: enter a valid transfer quantity.")
-                    continue
-
-        requested_qty = _quantize_qty(requested_qty)
-        if transfer_qty < 0:
-            errors.append(f"“{item.name}”: transfer quantity cannot be negative.")
+            errors.append(f"“{item.name}”: enter the quantity received.")
             continue
-        if transfer_qty > requested_qty:
+        try:
+            received_qty = _parse_qty(str(raw_qty).strip(), "Received quantity")
+        except ValidationError:
+            errors.append(f"“{item.name}”: enter a valid received quantity.")
+            continue
+
+        if received_qty != sent_qty:
             errors.append(
-                f"“{item.name}”: cannot transfer more than requested ({requested_qty})."
+                f"“{item.name}”: received ({received_qty}) must match sent ({sent_qty}). "
+                f"Decline if the quantities do not match."
             )
             continue
 
-        supplier_stock, _ = ShopStock.objects.select_for_update().get_or_create(
-            shop=supplier,
+        sender_stock, _ = ShopStock.objects.select_for_update().get_or_create(
+            shop=sender,
             item=item,
             defaults={"quantity": 0},
         )
-        requester_stock, _ = ShopStock.objects.select_for_update().get_or_create(
-            shop=requester,
+        receiver_stock, _ = ShopStock.objects.select_for_update().get_or_create(
+            shop=receiver,
             item=item,
             defaults={"quantity": 0},
         )
 
-        if transfer_qty == 0:
-            prepared.append(
-                {
-                    "line": line,
-                    "item": item,
-                    "requested_qty": requested_qty,
-                    "transfer_qty": 0,
-                    "supplier_stock": supplier_stock,
-                    "requester_stock": requester_stock,
-                    "serials": [],
-                    "serial_objects": {},
-                }
-            )
-            continue
-
-        if supplier_stock.quantity < transfer_qty:
+        if sender_stock.quantity < sent_qty:
             errors.append(
-                f"Insufficient stock for “{item.name}” at {supplier.name} "
-                f"(available {supplier_stock.quantity}, transfer {transfer_qty})."
+                f"Insufficient stock for “{item.name}” at {sender.name} "
+                f"(available {sender_stock.quantity}, transfer {sent_qty})."
             )
             continue
 
         serial_objects = {}
         serials = []
-        if item.track_serial_number:
-            serials = _normalize_serial_list(serials_by_line.get(str(line.pk), []))
-            if len(serials) != transfer_qty:
+        if item.track_serial_number and sent_qty > 0:
+            serials = _normalize_serial_list(
+                serials_by_line.get(str(line.pk)) or line.serial_numbers or []
+            )
+            if not serials:
+                # Auto-pick available serials at the sending shop.
+                available_rows = list(
+                    ItemSerial.objects.select_for_update()
+                    .filter(item=item, shop=sender, is_available=True)
+                    .order_by("serial_number")[: int(sent_qty)]
+                )
+                serials = [row.serial_number for row in available_rows]
+                serial_objects = {row.serial_number: row for row in available_rows}
+            if len(serials) != sent_qty:
                 errors.append(
-                    f"“{item.name}”: select exactly {transfer_qty} serial number"
-                    f"{'s' if transfer_qty != 1 else ''}."
+                    f"“{item.name}”: need {sent_qty} serial number"
+                    f"{'s' if sent_qty != 1 else ''} available at {sender.name}."
                 )
                 continue
-            available = {
-                serial.serial_number: serial
-                for serial in ItemSerial.objects.select_for_update().filter(
-                    item=item,
-                    shop=supplier,
-                    serial_number__in=serials,
-                    is_available=True,
-                )
-            }
-            missing = [s for s in serials if s not in available]
-            if missing:
-                errors.append(
-                    f"“{item.name}”: serial not in stock at {supplier.name} "
-                    f"({', '.join(missing[:5])}{'…' if len(missing) > 5 else ''})."
-                )
-                continue
-            serial_objects = available
+            if not serial_objects:
+                available = {
+                    serial.serial_number: serial
+                    for serial in ItemSerial.objects.select_for_update().filter(
+                        item=item,
+                        shop=sender,
+                        serial_number__in=serials,
+                        is_available=True,
+                    )
+                }
+                missing = [s for s in serials if s not in available]
+                if missing:
+                    errors.append(
+                        f"“{item.name}”: serial not in stock at {sender.name} "
+                        f"({', '.join(missing[:5])}{'…' if len(missing) > 5 else ''})."
+                    )
+                    continue
+                serial_objects = available
 
         prepared.append(
             {
                 "line": line,
                 "item": item,
-                "requested_qty": requested_qty,
-                "transfer_qty": transfer_qty,
-                "supplier_stock": supplier_stock,
-                "requester_stock": requester_stock,
+                "sent_qty": sent_qty,
+                "sender_stock": sender_stock,
+                "receiver_stock": receiver_stock,
                 "serials": serials,
                 "serial_objects": serial_objects,
             }
@@ -3264,45 +3253,35 @@ def respond_to_stock_request(
     if errors:
         raise ValidationError(errors)
 
-    if not any(row["transfer_qty"] > 0 for row in prepared):
-        raise ValidationError("Enter at least one quantity to transfer before accepting.")
-
     for row in prepared:
         line = row["line"]
         item = row["item"]
-        qty = row["transfer_qty"]
-        requested_qty = row["requested_qty"]
-        supplier_stock = row["supplier_stock"]
-        requester_stock = row["requester_stock"]
+        qty = row["sent_qty"]
+        sender_stock = row["sender_stock"]
+        receiver_stock = row["receiver_stock"]
 
         if qty > 0 and item.track_serial_number:
             for serial in row["serials"]:
                 obj = row["serial_objects"][serial]
-                obj.shop = requester
+                obj.shop = receiver
                 obj.is_available = True
                 obj.save(update_fields=["shop", "is_available", "updated_at"])
             line.serial_numbers = row["serials"]
-
-        if qty != requested_qty:
-            note = f"Requested {requested_qty}; transferred {qty}."
-            line.note = f"{note} {line.note}".strip() if line.note else note
-
-        line.quantity = qty
-        line.save(update_fields=["quantity", "serial_numbers", "note"])
+            line.save(update_fields=["serial_numbers"])
 
         if qty <= 0:
             continue
 
-        transfer_unit_cost = _money_cost(getattr(supplier_stock, "average_cost", 0))
+        transfer_unit_cost = _money_cost(getattr(sender_stock, "average_cost", 0))
         apply_stock_in_average_cost(
-            requester_stock,
+            receiver_stock,
             qty=qty,
             unit_cost=transfer_unit_cost,
         )
-        supplier_stock.quantity -= qty
-        supplier_stock.save(update_fields=["quantity", "updated_at"])
-        requester_stock.quantity += qty
-        requester_stock.save(
+        sender_stock.quantity -= qty
+        sender_stock.save(update_fields=["quantity", "updated_at"])
+        receiver_stock.quantity += qty
+        receiver_stock.save(
             update_fields=["quantity", "average_cost", "updated_at"]
         )
 
