@@ -2920,14 +2920,30 @@ def _build_movement_timeline(
     if not shop_ids:
         return events, units_in, units_out, units_request, units_sale
 
-    event_filter = _parse_movement_event_filter(event_filter)
+    if isinstance(event_filter, (set, frozenset)):
+        cleaned = frozenset(
+            key for key in event_filter if key in MOVEMENT_EVENT_FILTER_TYPES or key == "all"
+        )
+        event_filters = (
+            frozenset({"all"})
+            if not cleaned or "all" in cleaned or len(cleaned) >= len(MOVEMENT_EVENT_TYPE_ORDER)
+            else cleaned
+        )
+    elif isinstance(event_filter, (list, tuple)):
+        event_filters = _parse_movement_event_filters(list(event_filter))
+    else:
+        event_filters = _parse_movement_event_filters([event_filter])
+    filters_all = _event_filters_are_all(event_filters)
+
     # Which sources this filter needs from the database.
-    need_stock_movements = event_filter in ("all", "in", "out", "return")
-    need_fulfilled_transfers = event_filter in ("all", "transfer")
+    need_stock_movements = filters_all or bool(
+        event_filters & {"in", "out", "return"}
+    )
+    need_fulfilled_transfers = filters_all or "transfer" in event_filters
     # Sale/return filters also need the companion type for receipt grouping.
-    need_receipt_sales = event_filter in ("all", "sale", "return")
-    need_legacy_returns = event_filter in ("all", "sale", "return")
-    need_pos_sales = event_filter in ("all", "sale")
+    need_receipt_sales = filters_all or bool(event_filters & {"sale", "return"})
+    need_legacy_returns = filters_all or bool(event_filters & {"sale", "return"})
+    need_pos_sales = filters_all or "sale" in event_filters
 
     line_qs = StockMovementLine.objects.select_related("item").order_by("id")
     movement_filter = Q(
@@ -2943,19 +2959,22 @@ def _build_movement_timeline(
         movement_filter &= Q(lines__item_id__in=selected_item_ids)
         line_qs = line_qs.filter(item_id__in=selected_item_ids)
 
-    if need_stock_movements:
-        if event_filter == "in":
-            movement_filter &= Q(movement_type=StockMovementType.IN) & ~Q(
+    if need_stock_movements and not filters_all:
+        type_q = Q()
+        if "in" in event_filters:
+            type_q |= Q(movement_type=StockMovementType.IN) & ~Q(
                 entry_source=StockEntrySource.CUSTOMER_RETURN
             )
-        elif event_filter == "out":
-            movement_filter &= Q(movement_type=StockMovementType.OUT)
-        elif event_filter == "return":
-            movement_filter &= Q(
+        if "out" in event_filters:
+            type_q |= Q(movement_type=StockMovementType.OUT)
+        if "return" in event_filters:
+            type_q |= Q(
                 movement_type=StockMovementType.IN,
                 entry_source=StockEntrySource.CUSTOMER_RETURN,
             )
-        # event_filter == "all": keep in/out/request submitted rows
+        if type_q:
+            movement_filter &= type_q
+        # filters_all: keep in/out/request submitted rows without narrowing
 
         movements = (
             StockMovement.objects.filter(movement_filter)
@@ -3571,6 +3590,7 @@ def _movement_parties_for_pos_sale(*, sale):
 
 
 MOVEMENT_EVENT_FILTERS = frozenset({"all", "in", "out", "sale", "transfer", "return"})
+MOVEMENT_EVENT_TYPE_ORDER = ("in", "out", "sale", "transfer", "return")
 
 MOVEMENT_EVENT_FILTER_TYPES = {
     "in": frozenset({"in"}),
@@ -3580,19 +3600,102 @@ MOVEMENT_EVENT_FILTER_TYPES = {
     "return": frozenset({"return"}),
 }
 
+MOVEMENT_EVENT_FILTER_LABELS = {
+    "all": "All movements",
+    "in": "Stock in",
+    "out": "Stock out",
+    "sale": "Sale",
+    "transfer": "Transfer",
+    "return": "Return",
+}
+
+
+def _parse_movement_event_filters(raw_values):
+    """Parse one or more event_type values into a frozenset of filter keys.
+
+    Accepts repeated query values and comma-separated lists. Returns
+    frozenset({'all'}) when empty, explicit all, or every type is selected.
+    """
+    values = []
+    for raw in raw_values or []:
+        for part in str(raw or "").replace(" ", "").split(","):
+            part = part.strip().lower()
+            if part:
+                values.append(part)
+    selected = []
+    seen = set()
+    for value in values:
+        if value == "all":
+            return frozenset({"all"})
+        if value in MOVEMENT_EVENT_FILTER_TYPES and value not in seen:
+            selected.append(value)
+            seen.add(value)
+    if not selected or len(selected) >= len(MOVEMENT_EVENT_TYPE_ORDER):
+        return frozenset({"all"})
+    return frozenset(selected)
+
 
 def _parse_movement_event_filter(raw):
-    event_filter = (raw or "all").strip().lower()
-    if event_filter not in MOVEMENT_EVENT_FILTERS:
+    """Single-value helper (serial pages / legacy callers)."""
+    filters = _parse_movement_event_filters([raw] if raw is not None else [])
+    if "all" in filters:
         return "all"
-    return event_filter
+    for key in MOVEMENT_EVENT_TYPE_ORDER:
+        if key in filters:
+            return key
+    return "all"
+
+
+def _event_filters_are_all(event_filters):
+    return not event_filters or "all" in event_filters
+
+
+def _ordered_event_filters(event_filters):
+    if _event_filters_are_all(event_filters):
+        return ["all"]
+    return [key for key in MOVEMENT_EVENT_TYPE_ORDER if key in event_filters]
+
+
+def _event_filters_query_value(event_filters):
+    """Value for URLs / report_params: 'all' or list of selected types."""
+    ordered = _ordered_event_filters(event_filters)
+    if ordered == ["all"]:
+        return "all"
+    if len(ordered) == 1:
+        return ordered[0]
+    return ordered
 
 
 def _filter_movement_events(events, event_filter):
-    allowed = MOVEMENT_EVENT_FILTER_TYPES.get(event_filter)
+    """Filter events by one type string or a set/list of type filters."""
+    if isinstance(event_filter, (set, frozenset, list, tuple)):
+        event_filters = (
+            frozenset(event_filter)
+            if not isinstance(event_filter, frozenset)
+            else event_filter
+        )
+        if _event_filters_are_all(event_filters):
+            event_filters = frozenset({"all"})
+        else:
+            event_filters = frozenset(
+                key for key in event_filters if key in MOVEMENT_EVENT_FILTER_TYPES
+            )
+            if not event_filters:
+                event_filters = frozenset({"all"})
+    else:
+        event_filters = _parse_movement_event_filters([event_filter])
+
+    if _event_filters_are_all(event_filters):
+        return events
+
+    allowed = frozenset()
+    for key in event_filters:
+        allowed |= MOVEMENT_EVENT_FILTER_TYPES.get(key, frozenset())
     if not allowed:
         return events
-    if event_filter not in ("sale", "return"):
+
+    want_companions = bool(event_filters & {"sale", "return"})
+    if not want_companions:
         return [event for event in events if event.get("event_type") in allowed]
 
     # Keep sale + return companions on the same receipt so they stay together.
@@ -4041,7 +4144,7 @@ def _movements_report_params(
     params = {
         "range": range_type,
         "item_mode": item_mode or "all",
-        "event_type": event_filter,
+        "event_type": _event_filters_query_value(event_filter),
         "view_by": view_by,
     }
     if selected_shop_ids:
@@ -4164,14 +4267,22 @@ def _stock_report_download_filename(
     label = (filter_context.get("report_period_label") or "export").strip()
     safe_period = re.sub(r"[^\w\-]+", "-", label, flags=re.UNICODE).strip("-").lower()
     safe_period = safe_period or "export"
-    type_slug = {
+    type_slug_map = {
         "in": "stock-in",
         "out": "stock-out",
         "sale": "sale",
         "transfer": "transfer",
         "return": "return",
         "all": "all",
-    }.get(event_filter or "all", "all")
+    }
+    if isinstance(event_filter, (set, frozenset, list, tuple)):
+        ordered = _ordered_event_filters(event_filter)
+    else:
+        ordered = _ordered_event_filters(_parse_movement_event_filters([event_filter]))
+    if ordered == ["all"]:
+        type_slug = "all"
+    else:
+        type_slug = "-".join(type_slug_map.get(key, key) for key in ordered)
     kind_slug = "audit" if report_kind == "audit" else "actual"
     stamp = dj_timezone.localtime(dj_timezone.now()).strftime("%Y-%m-%d-%H%M")
     prefix = "stock-movements" if page_mode == "movements" else "stock-report"
@@ -4374,31 +4485,46 @@ def _audit_shop_qty_after_events(events, *, shop_ids, day_end):
 
 
 def _movement_event_filter_label(event_filter):
-    return {
-        "all": "All movements",
-        "in": "Stock in",
-        "out": "Stock out",
-        "sale": "Sale",
-        "transfer": "Transfer",
-        "return": "Return",
-    }.get(event_filter or "all", "All movements")
+    if isinstance(event_filter, (set, frozenset, list, tuple)):
+        ordered = _ordered_event_filters(event_filter)
+    else:
+        ordered = _ordered_event_filters(_parse_movement_event_filters([event_filter]))
+    if ordered == ["all"]:
+        return MOVEMENT_EVENT_FILTER_LABELS["all"]
+    labels = [MOVEMENT_EVENT_FILTER_LABELS.get(key, key) for key in ordered]
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} + {labels[1]}"
+    return ", ".join(labels[:-1]) + f" + {labels[-1]}"
 
 
 def _movement_summary_qty_label(event_filter):
+    if isinstance(event_filter, (set, frozenset, list, tuple)):
+        ordered = _ordered_event_filters(event_filter)
+    else:
+        ordered = _ordered_event_filters(_parse_movement_event_filters([event_filter]))
+    if ordered == ["all"] or len(ordered) > 1:
+        return "Qty"
     return {
-        "all": "Qty",
         "in": "Stocked in",
         "out": "Stocked out",
         "sale": "Sold",
         "transfer": "Transferred",
         "return": "Returned",
-    }.get(event_filter or "all", "Qty")
+    }.get(ordered[0], "Qty")
 
 
 def _event_matches_summary_filter(event, event_filter):
-    allowed = MOVEMENT_EVENT_FILTER_TYPES.get(event_filter or "all")
-    if not allowed:
+    if isinstance(event_filter, (set, frozenset, list, tuple)):
+        event_filters = frozenset(event_filter)
+    else:
+        event_filters = _parse_movement_event_filters([event_filter])
+    if _event_filters_are_all(event_filters):
         return True
+    allowed = frozenset()
+    for key in event_filters:
+        allowed |= MOVEMENT_EVENT_FILTER_TYPES.get(key, frozenset())
     return event.get("event_type") in allowed
 
 
@@ -4539,8 +4665,93 @@ def _stock_report_pdf_response(*, filename, pdf_bytes):
     return response
 
 
-def _build_audit_detail_rows(events, *, shop_ids, day_end):
-    """Audit PDF rows: When, Type, Item, Reason, Qty, Actual qty, Missing, Excess, Note."""
+def _build_audit_summary_rows(events, *, event_filter="all", qty_label="Qty"):
+    """Per-item audit summary with blank Actual qty / Missing / Excess / Note."""
+    totals = {}
+    for event in events or []:
+        if not _event_matches_summary_filter(event, event_filter):
+            continue
+        name = (event.get("item_name") or "—").strip() or "—"
+        category = (event.get("item_category") or "").strip()
+        item_id = event.get("item_id")
+        key = _item_qty_summary_group_key(event)
+        qty = int(event.get("quantity") or 0)
+        row = totals.get(key)
+        if row is None:
+            totals[key] = {
+                "item_id": item_id,
+                "item_name": name,
+                "item_category": category,
+                "quantity": qty,
+                "event_count": 1,
+            }
+        else:
+            row["quantity"] += qty
+            row["event_count"] += 1
+            if row.get("item_id") is None and item_id is not None:
+                row["item_id"] = item_id
+            if name and name != "—" and (
+                not row.get("item_name") or row.get("item_name") == "—"
+            ):
+                row["item_name"] = name
+            if category and not row.get("item_category"):
+                row["item_category"] = category
+
+    sorted_rows = sorted(
+        totals.values(),
+        key=lambda row: (
+            (row.get("item_name") or "").lower(),
+            (row.get("item_category") or "").lower(),
+        ),
+    )
+    headers = [
+        "Item",
+        "Category",
+        "Transactions",
+        qty_label,
+        "Actual qty",
+        "Missing",
+        "Excess",
+        "Note",
+    ]
+    rows = []
+    total_events = 0
+    total_qty = 0
+    for row in sorted_rows:
+        events_count = int(row.get("event_count") or 0)
+        qty = int(row.get("quantity") or 0)
+        total_events += events_count
+        total_qty += qty
+        rows.append(
+            [
+                row.get("item_name") or "—",
+                row.get("item_category") or "",
+                events_count,
+                qty,
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+    if rows:
+        rows.append(
+            [
+                "Total",
+                "",
+                total_events,
+                total_qty,
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+    return headers, rows
+
+
+def _build_audit_detail_rows(events, *, shop_ids=None, day_end=None):
+    """Audit PDF transaction rows: When, Type, Item, Reason, Qty."""
     detail_events = sorted(
         events or [],
         key=lambda event: (
@@ -4555,10 +4766,6 @@ def _build_audit_detail_rows(events, *, shop_ids, day_end):
         "Item",
         "Reason",
         "Qty",
-        "Actual qty",
-        "Missing",
-        "Excess",
-        "Note",
     ]
     rows = []
     for event in detail_events:
@@ -4573,10 +4780,6 @@ def _build_audit_detail_rows(events, *, shop_ids, day_end):
                 event.get("item_name") or "—",
                 _movement_event_note_label(event),
                 event.get("quantity") or 0,
-                "",
-                "",
-                "",
-                "",
             ]
         )
     return headers, rows
@@ -4609,14 +4812,30 @@ def _stock_report_download(
     from django.utils import timezone as dj_timezone
 
     report_kind = _parse_report_kind(report_kind)
+    if isinstance(event_filter, (set, frozenset, list, tuple)):
+        event_filters = (
+            frozenset(event_filter)
+            if not isinstance(event_filter, frozenset)
+            else event_filter
+        )
+        if _event_filters_are_all(event_filters):
+            event_filters = frozenset({"all"})
+        event_filter_slug = (
+            "all"
+            if _event_filters_are_all(event_filters)
+            else "-".join(_ordered_event_filters(event_filters))
+        )
+    else:
+        event_filters = _parse_movement_event_filters([event_filter])
+        event_filter_slug = _parse_movement_event_filter(event_filter)
     filename = _stock_report_download_filename(
         page_mode,
         filter_context,
-        event_filter=event_filter,
+        event_filter=event_filters,
         report_kind=report_kind,
     )
     period_label = (filter_context.get("report_period_label") or "").strip() or "—"
-    event_label = _movement_event_filter_label(event_filter)
+    event_label = _movement_event_filter_label(event_filters)
     if page_mode == "report":
         view_label = "Daily breakdown" if view_by == "day" else "Period summary"
     else:
@@ -4631,10 +4850,16 @@ def _stock_report_download(
     item_summary_rows = None
     report_headers = None
     report_rows = None
-    qty_label = _movement_summary_qty_label(event_filter)
+    qty_label = _movement_summary_qty_label(event_filters)
+    event_filter = event_filters
 
-    # Audit downloads are a separate trail document — activity rows only.
+    # Audit downloads: item summary (with count blanks) then transaction ledger.
     if report_kind == "audit" and page_mode == "movements":
+        summary_headers, summary_rows = _build_audit_summary_rows(
+            movement_events,
+            event_filter=event_filter,
+            qty_label=qty_label,
+        )
         detail_headers, detail_rows = _build_audit_detail_rows(
             movement_events, shop_ids=shop_ids, day_end=day_end
         )
@@ -4642,7 +4867,7 @@ def _stock_report_download(
             company_name=company_name,
             page_mode=page_mode,
             period_label=period_label,
-            event_filter=event_filter,
+            event_filter=event_filter_slug,
             event_filter_label=event_label,
             view_by=view_by,
             view_label=view_label,
@@ -4653,8 +4878,8 @@ def _stock_report_download(
             company_phone=company_phone,
             company_email=company_email,
             company_location=company_location,
-            summary_rows=None,
-            summary_headers=None,
+            summary_rows=summary_rows,
+            summary_headers=summary_headers,
             summary_qty_label=qty_label,
             detail_rows=detail_rows,
             detail_headers=detail_headers,
@@ -4718,7 +4943,15 @@ def _stock_report_download(
             )
             item_summary_rows.append(line)
     elif page_mode == "movements":
-        if event_filter == "all":
+        use_typed_summary = (
+            _event_filters_are_all(event_filter)
+            if isinstance(event_filter, (set, frozenset, list, tuple))
+            else event_filter == "all"
+        ) or (
+            isinstance(event_filter, (set, frozenset, list, tuple))
+            and len(_ordered_event_filters(event_filter)) > 1
+        )
+        if use_typed_summary:
             typed = _item_qty_summary_by_type_rows(movement_events)
             buy_prices = _buying_prices_for_summary(typed, shop_ids=shop_ids)
             summary_headers = [
@@ -4926,7 +5159,7 @@ def _stock_report_download(
         company_name=company_name,
         page_mode=page_mode,
         period_label=period_label,
-        event_filter=event_filter,
+        event_filter=event_filter_slug,
         event_filter_label=event_label,
         view_by=view_by,
         view_label=view_label,
@@ -5001,8 +5234,20 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         item_mode = "all"
 
     is_movements = page_mode == "movements"
-    event_filter = _parse_movement_event_filter(
-        request.GET.get("event_type") if is_movements else "all"
+    event_filters = (
+        _parse_movement_event_filters(request.GET.getlist("event_type"))
+        if is_movements
+        else frozenset({"all"})
+    )
+    # Backward-compatible single string for templates/helpers that still expect one value.
+    event_filter = (
+        "all"
+        if _event_filters_are_all(event_filters)
+        else (
+            _ordered_event_filters(event_filters)[0]
+            if len(event_filters) == 1
+            else "multi"
+        )
     )
     if is_movements:
         view_by = _parse_movement_view_by(request.GET.get("view_by"))
@@ -5013,7 +5258,11 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
 
     # Only load the full catalog when the item picker or POS sale matching needs it.
     need_full_item_catalog = item_mode == "items" or (
-        is_movements and event_filter in ("all", "sale") and item_mode == "all"
+        is_movements
+        and (
+            _event_filters_are_all(event_filters) or "sale" in event_filters
+        )
+        and item_mode == "all"
     )
     if need_full_item_catalog:
         all_items = list(
@@ -5050,7 +5299,12 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     elif item_mode == "items":
         item_qs = item_qs.filter(pk__in=selected_item_ids)
 
-    if is_movements and item_mode == "all" and event_filter not in ("all", "sale"):
+    if (
+        is_movements
+        and item_mode == "all"
+        and not _event_filters_are_all(event_filters)
+        and "sale" not in event_filters
+    ):
         # Transfer/in/out/return filters don't need the full item list for matching.
         report_items = []
     elif item_mode == "all" and need_full_item_catalog:
@@ -5143,10 +5397,10 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             selected_categories=selected_categories,
             selected_item_ids=selected_item_ids,
             report_items=report_items,
-            event_filter=event_filter,
+            event_filter=event_filters,
         )
-        if event_filter != "all":
-            movement_events = _filter_movement_events(movement_events, event_filter)
+        if not _event_filters_are_all(event_filters):
+            movement_events = _filter_movement_events(movement_events, event_filters)
         if view_by == "timeline":
             movement_events = _filter_timeline_display_events(movement_events)
             if search_q:
@@ -5322,7 +5576,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         range_type=range_type,
         filter_context=filter_context,
         item_mode=item_mode,
-        event_filter=event_filter,
+        event_filter=event_filters,
         view_by=view_by,
         selected_shop_ids=selected_shop_ids,
         selected_categories=selected_categories,
@@ -5335,7 +5589,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             range_type=range_type,
             filter_context=filter_context,
             item_mode="all",
-            event_filter=event_filter,
+            event_filter=event_filters,
             view_by="item",
             selected_shop_ids=selected_shop_ids,
             selected_categories=selected_categories,
@@ -5357,7 +5611,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
                 range_type=range_type,
                 filter_context=filter_context,
                 item_mode="items",
-                event_filter=event_filter,
+                event_filter=event_filters,
                 view_by="timeline",
                 selected_shop_ids=shop_filter,
                 selected_categories=selected_categories,
@@ -5426,7 +5680,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             movement_item_group_by_shop=movement_item_group_by_shop,
             item_report_rows=item_report_rows,
             item_report_group_by_shop=item_report_group_by_shop,
-            event_filter=event_filter,
+            event_filter=event_filters,
             view_by=view_by,
             report_kind=report_kind,
             day_end=day_end,
@@ -5438,6 +5692,15 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             company_location=company_location,
             shop_ids=shop_ids_for_query,
         )
+
+    event_filter_options = [
+        {"value": key, "label": MOVEMENT_EVENT_FILTER_LABELS[key]}
+        for key in MOVEMENT_EVENT_TYPE_ORDER
+    ]
+    selected_event_types = set(_ordered_event_filters(event_filters))
+    if "all" in selected_event_types:
+        selected_event_types = set()
+    event_filter_label = _movement_event_filter_label(event_filters)
 
     return render(
         request,
@@ -5484,6 +5747,10 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "selected_item_ids": set(selected_item_ids),
             "search_q": search_q,
             "event_filter": event_filter,
+            "event_filters": event_filters,
+            "event_filter_options": event_filter_options,
+            "selected_event_types": selected_event_types,
+            "event_filter_label": event_filter_label,
             "view_by": view_by,
             "report_kind": _parse_report_kind(request.GET.get("report_kind")),
             "timeline_page": timeline_page,

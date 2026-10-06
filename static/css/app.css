@@ -17973,6 +17973,114 @@ html[data-theme="light"] .low-stock-badge.is-low {
   box-shadow: 0 0 0 3px rgba(217, 149, 31, 0.12);
 }
 
+.stock-report-type-multi {
+  position: relative;
+  z-index: 3;
+  min-width: 10.5rem;
+}
+
+.stock-report-type-multi.is-open {
+  z-index: 20;
+}
+
+.stock-report-type-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.86rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stock-report-type-trigger:hover,
+.stock-report-type-multi.is-open .stock-report-type-trigger {
+  border-color: rgba(217, 149, 31, 0.55);
+  box-shadow: 0 0 0 3px rgba(217, 149, 31, 0.12);
+}
+
+.stock-report-type-trigger span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: inherit;
+  font-weight: 550;
+  color: inherit;
+}
+
+.stock-report-type-trigger i,
+.stock-report-type-trigger svg {
+  flex: 0 0 auto;
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--mist-dim);
+}
+
+.stock-report-type-menu {
+  position: absolute;
+  top: calc(100% + 0.28rem);
+  left: 0;
+  right: 0;
+  min-width: 11.5rem;
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+}
+
+.stock-report-type-menu[hidden] {
+  display: none !important;
+}
+
+.stock-report-type-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.42rem 0.55rem;
+  border-radius: 8px;
+  color: var(--text-strong);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.stock-report-type-option span {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: inherit;
+  font-weight: 550;
+  color: inherit;
+}
+
+.stock-report-type-option:hover {
+  background: var(--panel-muted);
+}
+
+.stock-report-type-option:has(input:checked) {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: color-mix(in srgb, var(--accent-deep) 70%, var(--text-strong));
+}
+
+.stock-report-type-option input {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .stock-report-live-empty {
   margin: 0.75rem 0 0;
   padding: 0.85rem 1rem;

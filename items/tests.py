@@ -364,6 +364,122 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(_parse_report_view_by("day", range_type="day"), "item")
         self.assertEqual(_parse_report_view_by("bogus", range_type="month"), "item")
 
+    def test_movement_event_filters_support_multi_select(self):
+        from items.views import (
+            _event_filters_query_value,
+            _filter_movement_events,
+            _movement_event_filter_label,
+            _parse_movement_event_filters,
+        )
+
+        self.assertEqual(_parse_movement_event_filters([]), frozenset({"all"}))
+        self.assertEqual(
+            _parse_movement_event_filters(["out", "sale"]),
+            frozenset({"out", "sale"}),
+        )
+        self.assertEqual(
+            _parse_movement_event_filters(["out,sale"]),
+            frozenset({"out", "sale"}),
+        )
+        self.assertEqual(
+            _parse_movement_event_filters(
+                ["in", "out", "sale", "transfer", "return"]
+            ),
+            frozenset({"all"}),
+        )
+        events = [
+            {"event_type": "out", "quantity": 1, "receipt_number": ""},
+            {"event_type": "sale", "quantity": 2, "receipt_number": "R1"},
+            {"event_type": "return", "quantity": 1, "receipt_number": "R1"},
+            {"event_type": "in", "quantity": 3, "receipt_number": ""},
+        ]
+        filtered = _filter_movement_events(events, frozenset({"out", "sale"}))
+        self.assertEqual(
+            [event["event_type"] for event in filtered],
+            ["out", "sale", "return"],
+        )
+        self.assertEqual(
+            _movement_event_filter_label(frozenset({"out", "sale"})),
+            "Stock out + Sale",
+        )
+        self.assertEqual(
+            _event_filters_query_value(frozenset({"out", "sale"})),
+            ["out", "sale"],
+        )
+
+    def test_audit_pdf_summary_then_transaction_ledger(self):
+        from django.utils import timezone
+        from items.services import build_stock_report_pdf
+        from items.views import _build_audit_detail_rows, _build_audit_summary_rows
+
+        now = timezone.now()
+        events = [
+            {
+                "happened_at": now,
+                "event_type": "out",
+                "event_label": "Stock out",
+                "item_id": self.item.pk,
+                "item_name": self.item.name,
+                "item_category": self.item.category,
+                "quantity": 3,
+                "note": "Damaged",
+            },
+            {
+                "happened_at": now,
+                "event_type": "out",
+                "event_label": "Stock out",
+                "item_id": self.item.pk,
+                "item_name": self.item.name,
+                "item_category": self.item.category,
+                "quantity": 2,
+                "reason": "Expired",
+            },
+        ]
+        summary_headers, summary_rows = _build_audit_summary_rows(
+            events, event_filter="out", qty_label="Stocked out"
+        )
+        self.assertEqual(
+            summary_headers,
+            [
+                "Item",
+                "Category",
+                "Transactions",
+                "Stocked out",
+                "Actual qty",
+                "Missing",
+                "Excess",
+                "Note",
+            ],
+        )
+        self.assertEqual(summary_rows[0][:4], [self.item.name, self.item.category, 2, 5])
+        self.assertEqual(summary_rows[0][4:], ["", "", "", ""])
+        self.assertEqual(summary_rows[-1][:4], ["Total", "", 2, 5])
+
+        detail_headers, detail_rows = _build_audit_detail_rows(events)
+        self.assertEqual(detail_headers, ["When", "Type", "Item", "Reason", "Qty"])
+        self.assertEqual(len(detail_rows), 2)
+        self.assertEqual(len(detail_rows[0]), 5)
+
+        pdf = build_stock_report_pdf(
+            company_name="TEST SHOP",
+            page_mode="movements",
+            period_label="2026",
+            event_filter="out",
+            event_filter_label="Stock out",
+            view_by="timeline",
+            view_label="Timeline",
+            shop_label=self.shop_a.name,
+            report_kind="audit",
+            generated_at=now,
+            summary_rows=summary_rows,
+            summary_headers=summary_headers,
+            summary_qty_label="Stocked out",
+            detail_rows=detail_rows,
+            detail_headers=detail_headers,
+        )
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        self.assertGreater(len(pdf), 500)
+
     def test_movements_item_view_splits_shops_and_totals(self):
         from django.utils import timezone
         from items.views import _group_movement_events_by_item

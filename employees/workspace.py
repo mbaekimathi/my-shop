@@ -933,7 +933,13 @@ def stock_management_url(
         params.append(("requested_from_shop_id", str(requested_from_shop_id)))
     if mode in ("report", "movements") and report_params:
         for key, value in report_params.items():
-            if value:
+            if value in (None, "", [], (), False):
+                continue
+            if isinstance(value, (list, tuple)):
+                for item in value:
+                    if item not in (None, ""):
+                        params.append((key, item))
+            else:
                 params.append((key, value))
     return f"{base}?{urlencode(params)}"
 

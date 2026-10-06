@@ -2309,6 +2309,7 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
     filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
     filters["expense_category"] = (request.GET.get("category") or "").strip().lower()
     filters["supply_item_id"] = (request.GET.get("item_id") or "").strip()
+    filters["supplier_status"] = _parse_supplier_status(request.GET.get("status"))
     builders = {
         "overview": _build_overview,
         "revenue": _build_revenue,
@@ -8039,6 +8040,49 @@ def _build_employees(filters):
     }
 
 
+SUPPLIER_STATUS_FILTERS = (
+    ("pending", "Pending payment"),
+    ("all", "All"),
+    ("paid", "Paid"),
+    ("not_paid", "Not paid"),
+)
+
+
+def _parse_supplier_status(raw) -> str:
+    """Normalise suppliers analytics ?status=… (default: pending payment)."""
+    key = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "": "pending",
+        "pending": "pending",
+        "pending_payment": "pending",
+        "all": "all",
+        "paid": "paid",
+        "not_paid": "not_paid",
+        "unpaid": "not_paid",
+        "notpaid": "not_paid",
+    }
+    return aliases.get(key, "pending")
+
+
+def _supplier_status_label(status_key: str) -> str:
+    return dict(SUPPLIER_STATUS_FILTERS).get(status_key, "Pending payment")
+
+
+def _supplier_movement_matches_status(
+    *, status_key: str, total: Decimal, paid: Decimal, due: Decimal
+) -> bool:
+    """Whether a stock-in movement belongs in the selected payment status."""
+    if status_key == "all":
+        return True
+    if status_key == "pending":
+        return due > 0
+    if status_key == "not_paid":
+        return due > 0 and paid <= 0
+    if status_key == "paid":
+        return total > 0 and due <= 0
+    return due > 0
+
+
 def _supplier_entity_cell(role, kind, supplier, query: str) -> dict:
     phone = f"{supplier.phone_country_code} {supplier.phone_number}".strip()
     name = getattr(supplier, "name", None) or "Supplier"
@@ -8265,6 +8309,9 @@ def _build_suppliers(filters):
     role = filters["role"]
     start, end = filters.get("start"), filters.get("end")
     period_label = filters.get("report_period_label") or "All time"
+    status_key = _parse_supplier_status(filters.get("supplier_status"))
+    status_label = _supplier_status_label(status_key)
+    amount_is_paid = status_key == "paid"
 
     stock_suppliers = list(Supplier.objects.order_by("name", "id"))
     key_to_supplier_id = {
@@ -8323,56 +8370,120 @@ def _build_suppliers(filters):
 
     stock_by_supplier_shop: dict[int, dict[int, tuple[int, Decimal]]] = {}
     for bundle in movements.values():
+        total = Decimal(bundle["total"] or 0)
+        paid = Decimal(bundle["paid"] or 0)
+        due = _due_amount(total, paid)
+        if not _supplier_movement_matches_status(
+            status_key=status_key, total=total, paid=paid, due=due
+        ):
+            continue
+        amount = paid if amount_is_paid else due
         supplier_id = bundle["supplier_id"]
         shop_id = bundle["shop_id"]
-        due = _due_amount(bundle["total"], bundle["paid"])
         shop_map = stock_by_supplier_shop.setdefault(supplier_id, {})
         prev_entries, prev_balance = shop_map.get(shop_id, (0, _zero()))
-        shop_map[shop_id] = (prev_entries + 1, prev_balance + due)
+        shop_map[shop_id] = (prev_entries + 1, prev_balance + amount)
+
+    if status_key == "all":
+        suppliers_for_rows = stock_suppliers
+    else:
+        matched_ids = set(stock_by_supplier_shop.keys())
+        suppliers_for_rows = [s for s in stock_suppliers if s.pk in matched_ids]
 
     stock_rows, shop_totals = _supplier_shop_rows(
-        suppliers=stock_suppliers,
+        suppliers=suppliers_for_rows,
         shops=shops,
         by_supplier_shop=stock_by_supplier_shop,
         kind="stock",
         role=role,
         query=query,
     )
-    stats = _supplier_ledger_stats(stock_suppliers, stock_by_supplier_shop)
+    stats = _supplier_ledger_stats(suppliers_for_rows, stock_by_supplier_shop)
     shops_with_balance = sum(
         1 for shop in shops if shop_totals.get(shop.pk, (0, _zero()))[1] > 0
     )
 
+    bal_hint = "paid amount" if amount_is_paid else "unpaid amount still owed"
+    if status_key == "all":
+        lead = (
+            f"All stock suppliers for {period_label}. "
+            f"En = stock receipts; Bal = {bal_hint}."
+        )
+        empty = "No stock suppliers on file."
+        footnote = (
+            f"Click a supplier to review receipts and pay. "
+            f"All suppliers on file for {period_label}, "
+            f"sorted by highest outstanding balance."
+        )
+    elif status_key == "paid":
+        lead = (
+            f"Fully paid stock suppliers for {period_label}. "
+            f"En = paid receipts; Bal = amount paid."
+        )
+        empty = f"No paid supplier receipts for {period_label}."
+        footnote = (
+            f"Showing paid receipts for {period_label}, "
+            f"sorted by highest paid amount."
+        )
+    elif status_key == "not_paid":
+        lead = (
+            f"Not-paid stock suppliers for {period_label}. "
+            f"En = unpaid receipts; Bal = amount still owed."
+        )
+        empty = f"No not-paid supplier receipts for {period_label}."
+        footnote = (
+            f"Showing not-paid receipts for {period_label}, "
+            f"sorted by highest outstanding balance."
+        )
+    else:
+        lead = (
+            f"Pending-payment stock suppliers for {period_label}. "
+            f"En = open receipts; Bal = unpaid amount still owed."
+        )
+        empty = f"No pending supplier payments for {period_label}."
+        footnote = (
+            f"Showing pending payment (unpaid + partial) for {period_label}, "
+            f"sorted by highest outstanding balance."
+        )
+
+    summary = _supplier_summary_board(
+        stats,
+        shop_count=len(shops),
+        shops_with_balance=shops_with_balance,
+        entity_label="Suppliers",
+        icon="truck",
+    )
+    if amount_is_paid:
+        summary["hero"]["label"] = "Paid amount"
+        summary["hero"]["hint"] = (
+            f"{stats['entries']:,} paid receipt"
+            f"{'s' if stats['entries'] != 1 else ''} · "
+            f"{stats['active']} supplier"
+            f"{'s' if stats['active'] != 1 else ''}"
+        )
+        summary["hero"]["tone"] = "good" if stats["balance"] > 0 else "neutral"
+
     return {
         "headline": "All suppliers",
         "period_label": period_label,
-        "lead": (
-            f"All stock suppliers for {period_label}. "
-            "En = stock receipts; Bal = unpaid amount still owed."
-        ),
+        "lead": lead,
+        "status_filter": status_key,
+        "status_options": SUPPLIER_STATUS_FILTERS,
+        "status_label": status_label,
+        "bal_is_paid": amount_is_paid,
         "show_search": True,
         "search_placeholder": "Search suppliers…",
         "search_empty": "No suppliers match that search.",
         "alerts": [],
-        "summary_board": _supplier_summary_board(
-            stats,
-            shop_count=len(shops),
-            shops_with_balance=shops_with_balance,
-            entity_label="Suppliers",
-            icon="truck",
-        ),
+        "summary_board": summary,
         "insights": [],
         "tables": [
             _table(
                 "Suppliers by shop",
                 _supplier_pair_columns(shops),
                 stock_rows,
-                empty="No stock suppliers on file.",
-                footnote=(
-                    f"Click a supplier to review receipts and pay. "
-                    f"All suppliers on file for {period_label}, "
-                    f"sorted by highest outstanding balance."
-                ),
+                empty=empty,
+                footnote=footnote,
                 shop_grid=True,
                 searchable=True,
                 table_class="ax-table--suppliers",

@@ -4200,8 +4200,9 @@ def build_stock_report_pdf(
     Compact branded A4 PDF for stock movements / stock report downloads.
 
     Actual reports include item summaries and operational activity columns.
-    Audit PDFs are a separate trail document: amber chrome, event KPIs, and
-    When/Type/Item/Reason/Qty/Actual qty/Missing/Excess/Note — no buy-price summary.
+    Audit PDFs are a separate trail document: amber chrome, event KPIs, a
+    per-item summary (with Actual qty / Missing / Excess / Note blanks), then
+    the full When/Type/Item/Reason/Qty transaction ledger — no buy-price summary.
     """
     from io import BytesIO
     from pathlib import Path
@@ -4656,16 +4657,16 @@ def build_stock_report_pdf(
 
     if is_audit:
         audit_qty = 0
-        # Audit rows: When, Type, Item, Reason, Qty, Actual qty, Missing, Excess, Note
+        # Detail ledger rows: When, Type, Item, Reason, Qty
         for row in detail_rows or []:
             try:
                 audit_qty += int(row[4] or 0)
             except (TypeError, ValueError, IndexError):
                 pass
         kpi_data = [
+            ("ITEMS", str(_count_rows(summary_rows))),
             ("EVENTS", str(len(detail_rows or []))),
             ("UNITS", str(audit_qty)),
-            ("FILTER", event_filter_label),
             ("SHOP", shop_label or "All shops"),
         ]
     elif is_movements and view_by != "item":
@@ -4824,13 +4825,58 @@ def build_stock_report_pdf(
         table.setStyle(TableStyle(cmds))
         return table
 
-    # ---- Audit trail: activity ledger only (no financial summary) ----
+    # ---- Audit trail: item summary (count blanks) then activity ledger ----
     if is_audit and is_movements:
         story.append(
             _section(
-                "AUDIT LEDGER",
-                "Activity details",
-                "When · Type · Item · Reason · Qty · Actual qty · Missing · Excess · Note.",
+                "01  SUMMARY",
+                "Summary by item",
+                "Totals per item. Fill Actual qty · Missing · Excess · Note during the audit.",
+            )
+        )
+        sum_headers = list(summary_headers) if summary_headers else [
+            "Item",
+            "Category",
+            "Transactions",
+            summary_qty_label or "Qty",
+            "Actual qty",
+            "Missing",
+            "Excess",
+            "Note",
+        ]
+        sum_rows = [list(row) for row in (summary_rows or [])]
+        if not sum_rows:
+            story.append(
+                Paragraph("No audit activity for these filters.", empty_style)
+            )
+        else:
+            usable = doc.width
+            sum_widths = [
+                usable * 0.22,
+                usable * 0.12,
+                usable * 0.10,
+                usable * 0.09,
+                usable * 0.11,
+                usable * 0.10,
+                usable * 0.10,
+                usable * 0.16,
+            ]
+            story.append(
+                _styled_table(
+                    sum_headers,
+                    sum_rows,
+                    col_widths=sum_widths,
+                    emphasize_last=True,
+                    numeric_from=2,
+                )
+            )
+        story.append(Spacer(1, 3 * mm))
+
+        story.append(
+            _section(
+                "02  ACTIVITY LEDGER",
+                "All transactions",
+                "When · Type · Item · Reason · Qty for every filtered movement.",
             )
         )
         headers = list(detail_headers) if detail_headers else [
@@ -4839,28 +4885,20 @@ def build_stock_report_pdf(
             "Item",
             "Reason",
             "Qty",
-            "Actual qty",
-            "Missing",
-            "Excess",
-            "Note",
         ]
         detail_data = [list(row) for row in (detail_rows or [])]
         if not detail_data:
             story.append(
-                Paragraph("No audit activity for these filters.", empty_style)
+                Paragraph("No audit transactions for these filters.", empty_style)
             )
         else:
             usable = doc.width
             detail_widths = [
-                usable * 0.12,
-                usable * 0.09,
-                usable * 0.15,
-                usable * 0.12,
-                usable * 0.07,
-                usable * 0.09,
-                usable * 0.09,
-                usable * 0.09,
                 usable * 0.18,
+                usable * 0.12,
+                usable * 0.28,
+                usable * 0.30,
+                usable * 0.12,
             ]
             story.append(
                 _styled_table(

@@ -78,17 +78,43 @@
           <option value="item"{% if view_by == 'item' %} selected{% endif %}>Item summary</option>
         </select>
       </label>
-      <label class="stock-report-field">
+      <div class="stock-report-field stock-report-type-multi" data-stock-type-multi>
         <span>Type</span>
-        <select name="event_type" aria-label="Movement type">
-          <option value="all"{% if event_filter == 'all' %} selected{% endif %}>All</option>
-          <option value="in"{% if event_filter == 'in' %} selected{% endif %}>Stock in</option>
-          <option value="out"{% if event_filter == 'out' %} selected{% endif %}>Stock out</option>
-          <option value="sale"{% if event_filter == 'sale' %} selected{% endif %}>Sale</option>
-          <option value="transfer"{% if event_filter == 'transfer' %} selected{% endif %}>Transfer</option>
-          <option value="return"{% if event_filter == 'return' %} selected{% endif %}>Return</option>
-        </select>
-      </label>
+        <button
+          type="button"
+          class="stock-report-type-trigger"
+          data-stock-type-trigger
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          aria-label="Movement types"
+        >
+          <span data-stock-type-label>{% if event_filter_label and event_filter != 'all' %}{{ event_filter_label }}{% else %}All{% endif %}</span>
+          <i data-lucide="chevron-down" aria-hidden="true"></i>
+        </button>
+        <div class="stock-report-type-menu" data-stock-type-menu hidden role="listbox" aria-multiselectable="true">
+          <label class="stock-report-type-option stock-report-type-option--all">
+            <input
+              type="checkbox"
+              value="all"
+              data-stock-type-all
+              {% if not selected_event_types %}checked{% endif %}
+            >
+            <span>All</span>
+          </label>
+          {% for option in event_filter_options %}
+          <label class="stock-report-type-option">
+            <input
+              type="checkbox"
+              name="event_type"
+              value="{{ option.value }}"
+              data-stock-type-option
+              {% if option.value in selected_event_types %}checked{% endif %}
+            >
+            <span>{{ option.label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
       {% elif report_range != 'day' %}
       <label class="stock-report-field">
         <span>View by</span>
@@ -504,7 +530,7 @@
           {% if search_q %}
           No movements match “{{ search_q }}” in {{ report_period_label }} for these filters.
           {% elif event_filter != 'all' %}
-          No {{ event_filter }} movements in {{ report_period_label }} for these filters.
+          No {{ event_filter_label|default:event_filter }} movements in {{ report_period_label }} for these filters.
           {% else %}
           No stock movements in {{ report_period_label }} for these filters.
           {% endif %}
@@ -949,6 +975,112 @@
         hideLiveResults();
       }
     });
+
+    const typeMulti = form.querySelector("[data-stock-type-multi]");
+    if (typeMulti) {
+      const typeTrigger = typeMulti.querySelector("[data-stock-type-trigger]");
+      const typeMenu = typeMulti.querySelector("[data-stock-type-menu]");
+      const typeLabel = typeMulti.querySelector("[data-stock-type-label]");
+      const typeAll = typeMulti.querySelector("[data-stock-type-all]");
+      const typeOptions = [...typeMulti.querySelectorAll("[data-stock-type-option]")];
+      const typeLabels = Object.fromEntries(
+        typeOptions.map((input) => [
+          input.value,
+          (input.closest("label")?.querySelector("span")?.textContent || input.value).trim(),
+        ])
+      );
+
+      const selectedTypeValues = () =>
+        typeOptions.filter((input) => input.checked).map((input) => input.value);
+
+      const syncTypeLabel = () => {
+        const selected = selectedTypeValues();
+        if (!typeLabel) return;
+        if (!selected.length || (typeAll && typeAll.checked)) {
+          typeLabel.textContent = "All";
+          return;
+        }
+        const names = selected.map((value) => typeLabels[value] || value);
+        if (names.length === 1) typeLabel.textContent = names[0];
+        else if (names.length === 2) typeLabel.textContent = `${names[0]} + ${names[1]}`;
+        else typeLabel.textContent = `${names.length} types`;
+      };
+
+      const setTypeMenuOpen = (open) => {
+        if (!typeMenu || !typeTrigger) return;
+        typeMenu.hidden = !open;
+        typeTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+        typeMulti.classList.toggle("is-open", open);
+      };
+
+      const syncTypeAllState = () => {
+        const selected = selectedTypeValues();
+        if (!selected.length) {
+          if (typeAll) typeAll.checked = true;
+          typeOptions.forEach((input) => {
+            input.checked = false;
+          });
+        } else if (selected.length >= typeOptions.length) {
+          if (typeAll) typeAll.checked = true;
+          typeOptions.forEach((input) => {
+            input.checked = false;
+          });
+        } else if (typeAll) {
+          typeAll.checked = false;
+        }
+        syncTypeLabel();
+      };
+
+      typeTrigger?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setTypeMenuOpen(Boolean(typeMenu?.hidden));
+      });
+
+      typeMenu?.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+
+      typeAll?.addEventListener("change", () => {
+        if (typeAll.checked) {
+          typeOptions.forEach((input) => {
+            input.checked = false;
+          });
+        } else if (!selectedTypeValues().length) {
+          typeAll.checked = true;
+        }
+        syncTypeLabel();
+      });
+
+      typeOptions.forEach((input) => {
+        input.addEventListener("change", () => {
+          if (input.checked && typeAll) typeAll.checked = false;
+          syncTypeAllState();
+        });
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!typeMulti.contains(event.target)) setTypeMenuOpen(false);
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") setTypeMenuOpen(false);
+      });
+
+      form.addEventListener("submit", () => {
+        // When "All" is active, omit event_type so the server treats it as all.
+        if (typeAll?.checked || !selectedTypeValues().length) {
+          typeOptions.forEach((input) => {
+            input.disabled = true;
+          });
+        }
+      });
+
+      syncTypeAllState();
+      if (window.lucide?.createIcons) {
+        window.lucide.createIcons({ nodes: [typeMulti] });
+      }
+    }
 
     syncRangeFields(rangeSelect?.value || "day");
     syncItemMode(itemModeSelect?.value || "all");
