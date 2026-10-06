@@ -8041,31 +8041,31 @@ def _build_employees(filters):
 
 
 SUPPLIER_STATUS_FILTERS = (
-    ("pending", "Pending payment"),
     ("all", "All"),
-    ("paid", "Paid"),
     ("not_paid", "Not paid"),
+    ("paid", "Paid"),
 )
 
 
 def _parse_supplier_status(raw) -> str:
-    """Normalise suppliers analytics ?status=… (default: pending payment)."""
+    """Normalise suppliers analytics ?status=… (default: all = paid + not paid)."""
     key = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
     aliases = {
-        "": "pending",
-        "pending": "pending",
-        "pending_payment": "pending",
+        "": "all",
         "all": "all",
         "paid": "paid",
         "not_paid": "not_paid",
         "unpaid": "not_paid",
         "notpaid": "not_paid",
+        # Legacy aliases → not paid (any outstanding balance).
+        "pending": "not_paid",
+        "pending_payment": "not_paid",
     }
-    return aliases.get(key, "pending")
+    return aliases.get(key, "all")
 
 
 def _supplier_status_label(status_key: str) -> str:
-    return dict(SUPPLIER_STATUS_FILTERS).get(status_key, "Pending payment")
+    return dict(SUPPLIER_STATUS_FILTERS).get(status_key, "All")
 
 
 def _supplier_movement_matches_status(
@@ -8074,13 +8074,11 @@ def _supplier_movement_matches_status(
     """Whether a stock-in movement belongs in the selected payment status."""
     if status_key == "all":
         return True
-    if status_key == "pending":
-        return due > 0
     if status_key == "not_paid":
-        return due > 0 and paid <= 0
+        return due > 0
     if status_key == "paid":
         return total > 0 and due <= 0
-    return due > 0
+    return True
 
 
 def _supplier_entity_cell(role, kind, supplier, query: str) -> dict:
@@ -8146,8 +8144,13 @@ def _supplier_shop_rows(
     kind: str,
     role,
     query: str,
+    supplier_priority: dict | None = None,
 ) -> tuple[list, dict[int, tuple[int, Decimal]]]:
-    """Build matrix rows: supplier link + En/Bal per shop + total. Balance first."""
+    """Build matrix rows: supplier link + En/Bal per shop + total.
+
+    When supplier_priority is provided (0 = not paid, 1 = paid), not-paid
+    suppliers sort above paid ones; within each group, highest Bal first.
+    """
     shop_totals: dict[int, tuple[int, Decimal]] = {
         shop.pk: (0, _zero()) for shop in shops
     }
@@ -8159,8 +8162,12 @@ def _supplier_shop_rows(
         for entries, balance in by_shop.values():
             total_entries += int(entries or 0)
             total_balance += Decimal(balance or 0)
+        priority = 0
+        if supplier_priority is not None:
+            priority = int(supplier_priority.get(supplier.pk, 1))
         ranked.append(
             (
+                priority,
                 total_balance,
                 _supplier_label(supplier).lower(),
                 supplier,
@@ -8169,12 +8176,13 @@ def _supplier_shop_rows(
                 total_balance,
             )
         )
-    ranked.sort(key=lambda row: (-row[0], row[1]))
+    ranked.sort(key=lambda row: (row[0], -row[1], row[2]))
 
     rows = []
     grand_entries = 0
     grand_balance = _zero()
     for (
+        _priority,
         _balance,
         _sort_label,
         supplier,
@@ -8320,6 +8328,7 @@ def _build_suppliers(filters):
         ): supplier.pk
         for supplier in stock_suppliers
     }
+    suppliers_by_id = {supplier.pk: supplier for supplier in stock_suppliers}
 
     # movement_id -> {supplier_id, shop_id, total, paid}
     movements: dict[int, dict] = {}
@@ -8368,7 +8377,8 @@ def _build_suppliers(filters):
         else:
             bundle["total"] += line_total
 
-    stock_by_supplier_shop: dict[int, dict[int, tuple[int, Decimal]]] = {}
+    # supplier -> shop -> {entries, due, paid} for period supply only.
+    stock_detail: dict[int, dict[int, dict]] = {}
     for bundle in movements.values():
         total = Decimal(bundle["total"] or 0)
         paid = Decimal(bundle["paid"] or 0)
@@ -8377,18 +8387,43 @@ def _build_suppliers(filters):
             status_key=status_key, total=total, paid=paid, due=due
         ):
             continue
-        amount = paid if amount_is_paid else due
         supplier_id = bundle["supplier_id"]
         shop_id = bundle["shop_id"]
-        shop_map = stock_by_supplier_shop.setdefault(supplier_id, {})
-        prev_entries, prev_balance = shop_map.get(shop_id, (0, _zero()))
-        shop_map[shop_id] = (prev_entries + 1, prev_balance + amount)
+        cell = stock_detail.setdefault(supplier_id, {}).setdefault(
+            shop_id, {"entries": 0, "due": _zero(), "paid": _zero()}
+        )
+        cell["entries"] += 1
+        cell["due"] += due
+        cell["paid"] += paid
 
-    if status_key == "all":
-        suppliers_for_rows = stock_suppliers
-    else:
-        matched_ids = set(stock_by_supplier_shop.keys())
-        suppliers_for_rows = [s for s in stock_suppliers if s.pk in matched_ids]
+    stock_by_supplier_shop: dict[int, dict[int, tuple[int, Decimal]]] = {}
+    supplier_priority: dict[int, int] = {}
+    for supplier_id, shop_map in stock_detail.items():
+        supplier_due = sum(
+            (Decimal(cell["due"] or 0) for cell in shop_map.values()),
+            _zero(),
+        )
+        # 0 = not paid (any outstanding), 1 = fully paid — unpaid first in All.
+        supplier_priority[supplier_id] = 0 if supplier_due > 0 else 1
+        converted = {}
+        for shop_id, cell in shop_map.items():
+            entries = int(cell["entries"] or 0)
+            due = Decimal(cell["due"] or 0)
+            paid = Decimal(cell["paid"] or 0)
+            if status_key == "paid":
+                amount = paid
+            elif status_key == "all":
+                amount = due if supplier_due > 0 else paid
+            else:
+                amount = due
+            converted[shop_id] = (entries, amount)
+        stock_by_supplier_shop[supplier_id] = converted
+
+    # Only suppliers who supplied in this filtered period.
+    matched_ids = set(stock_by_supplier_shop.keys())
+    suppliers_for_rows = [
+        suppliers_by_id[sid] for sid in matched_ids if sid in suppliers_by_id
+    ]
 
     stock_rows, shop_totals = _supplier_shop_rows(
         suppliers=suppliers_for_rows,
@@ -8397,23 +8432,24 @@ def _build_suppliers(filters):
         kind="stock",
         role=role,
         query=query,
+        supplier_priority=supplier_priority if status_key == "all" else None,
     )
     stats = _supplier_ledger_stats(suppliers_for_rows, stock_by_supplier_shop)
     shops_with_balance = sum(
         1 for shop in shops if shop_totals.get(shop.pk, (0, _zero()))[1] > 0
     )
 
-    bal_hint = "paid amount" if amount_is_paid else "unpaid amount still owed"
     if status_key == "all":
         lead = (
-            f"All stock suppliers for {period_label}. "
-            f"En = stock receipts; Bal = {bal_hint}."
+            f"Stock suppliers who supplied in {period_label}. "
+            f"Not paid first, then paid. "
+            f"En = stock receipts; Bal = unpaid owed, or paid amount when settled."
         )
-        empty = "No stock suppliers on file."
+        empty = f"No supplier stock receipts for {period_label}."
         footnote = (
             f"Click a supplier to review receipts and pay. "
-            f"All suppliers on file for {period_label}, "
-            f"sorted by highest outstanding balance."
+            f"Only suppliers with supply in {period_label}; "
+            f"not paid at the top, then paid."
         )
     elif status_key == "paid":
         lead = (
@@ -8425,7 +8461,7 @@ def _build_suppliers(filters):
             f"Showing paid receipts for {period_label}, "
             f"sorted by highest paid amount."
         )
-    elif status_key == "not_paid":
+    else:
         lead = (
             f"Not-paid stock suppliers for {period_label}. "
             f"En = unpaid receipts; Bal = amount still owed."
@@ -8433,16 +8469,6 @@ def _build_suppliers(filters):
         empty = f"No not-paid supplier receipts for {period_label}."
         footnote = (
             f"Showing not-paid receipts for {period_label}, "
-            f"sorted by highest outstanding balance."
-        )
-    else:
-        lead = (
-            f"Pending-payment stock suppliers for {period_label}. "
-            f"En = open receipts; Bal = unpaid amount still owed."
-        )
-        empty = f"No pending supplier payments for {period_label}."
-        footnote = (
-            f"Showing pending payment (unpaid + partial) for {period_label}, "
             f"sorted by highest outstanding balance."
         )
 
@@ -8462,6 +8488,15 @@ def _build_suppliers(filters):
             f"{'s' if stats['active'] != 1 else ''}"
         )
         summary["hero"]["tone"] = "good" if stats["balance"] > 0 else "neutral"
+    elif status_key == "all":
+        summary["hero"]["label"] = "Balance"
+        summary["hero"]["hint"] = (
+            f"{stats['entries']:,} receipt"
+            f"{'s' if stats['entries'] != 1 else ''} · "
+            f"{stats['active']} supplier"
+            f"{'s' if stats['active'] != 1 else ''} with supply · "
+            "not paid first"
+        )
 
     return {
         "headline": "All suppliers",

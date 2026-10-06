@@ -415,7 +415,7 @@
           >
         </label>
         {% elif table.shop_grid and section_slug == "suppliers" %}
-        <span class="ax-card-hint">En · entries · Bal · {% if page.bal_is_paid %}paid{% else %}unpaid{% endif %}</span>
+        <span class="ax-card-hint">En · entries · Bal · {% if page.bal_is_paid %}paid{% elif page.status_filter == 'all' %}not paid first, then paid{% else %}unpaid{% endif %}</span>
         {% elif table.shop_grid and section_slug == "expenses" %}
         <span class="ax-card-hint">Docs · entries · Amt · total</span>
         {% elif table.shop_grid and section_slug == "sales" %}
