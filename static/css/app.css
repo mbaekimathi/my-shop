@@ -25438,7 +25438,8 @@ html[data-theme="dark"] .shop-cart-fab-count {
   font-weight: 700;
 }
 
-.shop-cart-input input {
+.shop-cart-input input,
+.shop-cart-input textarea {
   width: 100%;
   min-height: 2.25rem;
   padding: 0.4rem 0.65rem;
@@ -25450,12 +25451,19 @@ html[data-theme="dark"] .shop-cart-fab-count {
   font-size: 0.9rem;
 }
 
+.shop-cart-input textarea {
+  min-height: 4.5rem;
+  resize: vertical;
+  line-height: 1.35;
+}
+
 .shop-cart-name-input,
 .shop-cart-input input[data-cart-client-name] {
   text-transform: uppercase;
 }
 
-.shop-cart-input input:focus {
+.shop-cart-input input:focus,
+.shop-cart-input textarea:focus {
   outline: none;
   border-color: rgba(var(--accent-rgb), 0.55);
   box-shadow: var(--focus-ring);

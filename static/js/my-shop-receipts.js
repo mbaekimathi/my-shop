@@ -544,6 +544,16 @@
   </div>
 </div>
 <div class="shop-receipt-return" data-return-panel hidden>
+  <style>
+    .shop-receipt-return-reason{display:grid!important;gap:.35rem;margin:0;min-width:0}
+    .shop-receipt-return-reason>span{display:block;font-size:.72rem;font-weight:700;opacity:.85}
+    .shop-receipt-return-reason textarea{
+      display:block;box-sizing:border-box;width:100%;min-height:4.5rem;resize:vertical;
+      padding:.55rem .7rem;border:1px solid var(--line,#334155);border-radius:10px;
+      background:var(--input-bg,var(--surface,#0f172a));color:var(--text-strong,inherit);
+      font:inherit;font-size:.9rem;line-height:1.35
+    }
+  </style>
   <p class="shop-receipt-muted">Select items to return. Stock is restored and the sale/credit updates automatically.</p>
   <label class="shop-cart-input shop-receipt-return-reason">
     <span>Reason for return</span>
