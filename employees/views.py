@@ -16,6 +16,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 from items.views import (
     item_management,
     item_management_catalog,
+    item_management_price_list,
     stock_management,
     stock_management_catalog,
     stock_management_print,
@@ -409,6 +410,11 @@ def stock_serial_return_guest_page(request, role_segment):
 def item_management_catalog_proxy(request, role_segment):
     """JSON catalog for item-management list."""
     return item_management_catalog(request, role_segment)
+
+
+def item_management_price_list_proxy(request, role_segment):
+    """Printable / downloadable item price list."""
+    return item_management_price_list(request, role_segment)
 
 
 def _safe_login_next(request, raw_next):

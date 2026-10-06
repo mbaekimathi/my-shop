@@ -321,7 +321,10 @@ def _workspace_parent_url(request, role):
     }:
         return stock_management_url(role, "serials" if "serial" in view_name else "view")
 
-    if view_name == "employees:item_management_catalog":
+    if view_name in {
+        "employees:item_management_catalog",
+        "employees:item_management_price_list",
+    }:
         return reverse(
             "employees:workspace_module",
             kwargs={"role_segment": segment, "module_slug": "item-management"},

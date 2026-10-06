@@ -3802,6 +3802,374 @@ def build_stock_print_pdf(
     return buffer.getvalue()
 
 
+def build_item_price_list_document(*, shops=None) -> dict:
+    """Build printable item list with minimum and shop selling prices."""
+    shops = list(shops or [])
+    shop_ids = [shop.pk for shop in shops]
+
+    items = list(
+        Item.objects.order_by("category", "name").only(
+            "id",
+            "name",
+            "category",
+            "shop_price",
+            "minimum_selling_price",
+            "use_individual_shop_prices",
+            "is_suspended",
+        )
+    )
+
+    price_overrides: dict[tuple[int, int], Decimal] = {}
+    if shop_ids and items:
+        item_ids = [item.pk for item in items]
+        for item_id, shop_id, price in ShopItemPrice.objects.filter(
+            item_id__in=item_ids, shop_id__in=shop_ids
+        ).values_list("item_id", "shop_id", "price"):
+            if price is not None:
+                price_overrides[(item_id, shop_id)] = Decimal(price)
+
+    categories: list[dict] = []
+    current_category = None
+    current_rows: list[dict] = []
+
+    def flush_category():
+        nonlocal current_category, current_rows
+        if current_category is None:
+            return
+        categories.append({"name": current_category, "rows": current_rows})
+        current_rows = []
+
+    for item in items:
+        if item.category != current_category:
+            flush_category()
+            current_category = item.category or "Uncategorised"
+
+        display_name = item.name
+        if item.is_suspended:
+            display_name = f"{display_name} (suspended)"
+
+        shop_prices = []
+        for shop in shops:
+            override = None
+            if item.use_individual_shop_prices:
+                override = price_overrides.get((item.pk, shop.pk))
+            amount = item.resolve_list_price(override)
+            shop_prices.append(
+                {
+                    "shop_id": shop.pk,
+                    "shop_name": shop.name,
+                    "price": _format_print_money(amount),
+                }
+            )
+
+        if len(shops) == 1 and shop_prices:
+            shop_price_display = shop_prices[0]["price"]
+        elif shops:
+            shop_price_display = _format_print_money(item.shop_price)
+        else:
+            shop_price_display = _format_print_money(item.resolve_list_price(None))
+
+        current_rows.append(
+            {
+                "name": display_name,
+                "category": item.category or "Uncategorised",
+                "min_price": _format_print_money(item.minimum_selling_price),
+                "shop_price": shop_price_display,
+                "shop_prices": shop_prices,
+                "is_suspended": bool(item.is_suspended),
+            }
+        )
+
+    flush_category()
+
+    item_count = sum(len(group["rows"]) for group in categories)
+    document = {
+        "layout": "item-prices",
+        "title": "Item price list",
+        "shop_label": "",
+        "shops": [{"id": shop.pk, "name": shop.name} for shop in shops],
+        "categories": categories,
+        "item_count": item_count,
+    }
+    if len(shops) == 1:
+        document["shop_label"] = shops[0].name
+    elif shops:
+        document["shop_label"] = f"{len(shops)} shops"
+    document["a4_page_estimate"] = estimate_stock_print_a4_pages(document)
+    return document
+
+
+def build_item_price_list_pdf(
+    *,
+    document: dict,
+    company_name: str,
+    printed_at,
+) -> bytes:
+    """Render the item price list as an A4 PDF (min + shop prices)."""
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    from core.pdf_fonts import MANROPE_PDF, MANROPE_PDF_BOLD, register_manrope_pdf_fonts
+
+    register_manrope_pdf_fonts()
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=8 * mm,
+        rightMargin=8 * mm,
+        topMargin=8 * mm,
+        bottomMargin=9 * mm,
+        title=f"{company_name} — Item price list",
+        author=company_name or "MY-SHOP",
+    )
+
+    ink = colors.HexColor("#000000")
+    line = colors.HexColor("#000000")
+    line_soft = colors.HexColor("#333333")
+    head_fill = colors.HexColor("#d0d0d0")
+    category_fill = colors.HexColor("#b8b8b8")
+    row_alt = colors.HexColor("#ececec")
+    accent = colors.HexColor("#000000")
+
+    styles = getSampleStyleSheet()
+    kicker = ParagraphStyle(
+        "PriceListKicker",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7,
+        textColor=accent,
+        leading=9,
+        spaceAfter=1,
+    )
+    title_style = ParagraphStyle(
+        "PriceListTitle",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=14,
+        textColor=ink,
+        leading=17,
+        spaceAfter=1,
+    )
+    subtitle_style = ParagraphStyle(
+        "PriceListSubtitle",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=9,
+        textColor=ink,
+        leading=11,
+    )
+    meta_style = ParagraphStyle(
+        "PriceListMeta",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=8.5,
+        textColor=ink,
+        leading=11,
+        alignment=TA_RIGHT,
+    )
+    meta_sub = ParagraphStyle(
+        "PriceListMetaSub",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7.5,
+        textColor=ink,
+        leading=10,
+        alignment=TA_RIGHT,
+    )
+    cell_style = ParagraphStyle(
+        "PriceListCell",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=9,
+        textColor=ink,
+        leading=11,
+    )
+    head_cell = ParagraphStyle(
+        "PriceListHeadCell",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7.5,
+        textColor=ink,
+        leading=9,
+    )
+    foot_style = ParagraphStyle(
+        "PriceListFoot",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7,
+        textColor=ink,
+        leading=9,
+    )
+
+    shops = list(document.get("shops") or [])
+    item_count = int(document.get("item_count") or 0)
+    page_estimate = int(document.get("a4_page_estimate") or 1)
+    shop_label = (document.get("shop_label") or "").strip()
+    subtitle = document.get("title") or "Item price list"
+    if shop_label:
+        subtitle = f"{subtitle} · {shop_label}"
+
+    stamp = printed_at.strftime("%d %b %Y · %H:%M") if printed_at else ""
+    page_word = "page" if page_estimate == 1 else "pages"
+    item_word = "item" if item_count == 1 else "items"
+    meta_bits = f"{item_count} {item_word} · A4 · ≈ {page_estimate} {page_word}"
+
+    def _esc(text: str) -> str:
+        return (
+            str(text or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    header = Table(
+        [
+            [
+                [
+                    Paragraph("ITEM MANAGEMENT", kicker),
+                    Paragraph(_esc(company_name or "MY-SHOP"), title_style),
+                    Paragraph(_esc(subtitle), subtitle_style),
+                ],
+                [
+                    Paragraph(_esc(stamp), meta_style),
+                    Paragraph(_esc(meta_bits), meta_sub),
+                ],
+            ]
+        ],
+        colWidths=[doc.width * 0.62, doc.width * 0.38],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LINEBELOW", (0, 0), (-1, -1), 1.25, line),
+            ]
+        )
+    )
+
+    story: list = [header, Spacer(1, 4 * mm)]
+
+    labels = ["Item", "Min price"]
+    if len(shops) <= 1:
+        labels.append("Shop price")
+    else:
+        labels.extend([shop.get("name") or "Shop" for shop in shops])
+
+    ncols = len(labels)
+    usable = doc.width
+    if ncols <= 3:
+        col_widths = [usable * 0.5, usable * 0.25, usable * 0.25]
+    else:
+        item_w = usable * (0.28 if ncols > 5 else 0.34)
+        rest = (usable - item_w) / max(1, ncols - 1)
+        col_widths = [item_w] + [rest] * (ncols - 1)
+
+    categories = document.get("categories") or []
+    if not categories:
+        story.append(Paragraph("No items to print.", foot_style))
+    else:
+        for group in categories:
+            cat_name = _esc(str(group.get("name") or "Uncategorised").upper())
+            cat_row = [Paragraph(cat_name, head_cell)] + [""] * (ncols - 1)
+            head_row = [Paragraph(_esc(label), head_cell) for label in labels]
+
+            data = [cat_row, head_row]
+            for row in group.get("rows") or []:
+                values = [
+                    Paragraph(_esc(row.get("name") or ""), cell_style),
+                    _esc(row.get("min_price") or "0.00"),
+                ]
+                if len(shops) <= 1:
+                    values.append(_esc(row.get("shop_price") or "0.00"))
+                else:
+                    for price in row.get("shop_prices") or []:
+                        values.append(_esc(price.get("price") or "0.00"))
+                while len(values) < ncols:
+                    values.append("")
+                data.append(values[:ncols])
+
+            table = Table(data, colWidths=col_widths[:ncols], repeatRows=2)
+            style_cmds = [
+                ("FONTNAME", (0, 0), (-1, -1), MANROPE_PDF),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("TEXTCOLOR", (0, 0), (-1, -1), ink),
+                ("GRID", (0, 0), (-1, -1), 0.4, line_soft),
+                ("BOX", (0, 0), (-1, -1), 0.8, line),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 2.2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2),
+                ("BACKGROUND", (0, 0), (-1, 0), category_fill),
+                ("SPAN", (0, 0), (-1, 0)),
+                ("BACKGROUND", (0, 1), (-1, 1), head_fill),
+                ("FONTNAME", (0, 1), (-1, 1), MANROPE_PDF_BOLD),
+                ("FONTSIZE", (0, 1), (-1, 1), 7.5),
+                ("ALIGN", (1, 1), (-1, 1), "CENTER"),
+                ("ALIGN", (1, 2), (-1, -1), "RIGHT"),
+                ("LINEBEFORE", (1, 0), (1, -1), 0.7, line),
+            ]
+            for r in range(2, len(data)):
+                if (r - 2) % 2 == 1:
+                    style_cmds.append(("BACKGROUND", (0, r), (-1, r), row_alt))
+
+            table.setStyle(TableStyle(style_cmds))
+            story.append(table)
+            story.append(Spacer(1, 2.2 * mm))
+
+    foot = Table(
+        [
+            [
+                Paragraph(
+                    _esc("Generated from Item Management · Item price list"),
+                    foot_style,
+                ),
+                Paragraph(
+                    _esc(company_name or "MY-SHOP"),
+                    ParagraphStyle(
+                        "PriceListFootRight",
+                        parent=foot_style,
+                        alignment=TA_RIGHT,
+                    ),
+                ),
+            ]
+        ],
+        colWidths=[doc.width * 0.7, doc.width * 0.3],
+    )
+    foot.setStyle(
+        TableStyle(
+            [
+                ("LINEABOVE", (0, 0), (-1, -1), 0.5, line_soft),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    story.append(foot)
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
 def build_stock_report_pdf(
     *,
     company_name: str,

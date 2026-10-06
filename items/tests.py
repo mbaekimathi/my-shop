@@ -1369,6 +1369,90 @@ class ShopPriceIsolationTests(TestCase):
         self.assertEqual(item.price_for_shop(self.shop_b), Decimal("130.00"))
 
 
+class ItemPriceListTests(TestCase):
+    def setUp(self):
+        from items.models import Item, ShopItemPrice
+
+        self.password = "price-list-pass"
+        self.user = User.objects.create_user(
+            username="840033",
+            password=self.password,
+            email="price-list@test.local",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840033",
+            phone_country_code="+254",
+            phone_number="700000963",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="PRICE LIST SHOP",
+            location="NAIROBI",
+            email="price-list@test.local",
+            phone_number="0700000963",
+            login_code="840133",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.item = Item.objects.create(
+            category="DRINKS",
+            name="JUICE 1L",
+            minimum_selling_price=Decimal("80.00"),
+            shop_price=Decimal("100.00"),
+            use_individual_shop_prices=True,
+            created_by=self.profile,
+        )
+        ShopItemPrice.objects.create(
+            shop=self.shop,
+            item=self.item,
+            price=Decimal("110.00"),
+        )
+
+    def test_build_item_price_list_includes_min_and_shop_prices(self):
+        from items.services import build_item_price_list_document
+
+        document = build_item_price_list_document(shops=[self.shop])
+        rows = [
+            row
+            for group in document["categories"]
+            for row in group["rows"]
+            if row["name"] == "JUICE 1L"
+        ]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["min_price"], "80.00")
+        self.assertEqual(rows[0]["shop_price"], "110.00")
+
+    def test_price_list_page_and_pdf_download(self):
+        from django.urls import reverse
+
+        self.client.login(username="840033", password=self.password)
+        page_url = reverse(
+            "employees:item_management_price_list",
+            kwargs={"role_segment": "it-support"},
+        )
+        page = self.client.get(page_url)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "JUICE 1L")
+        self.assertContains(page, "Min price")
+        self.assertContains(page, "Shop price")
+
+        pdf = self.client.get(page_url, {"download": "1"})
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")
+        self.assertIn("item-price-list-", pdf["Content-Disposition"])
+        self.assertTrue(pdf.content.startswith(b"%PDF"))
+
+    def test_item_management_shows_download_price_list(self):
+        self.client.login(username="840033", password=self.password)
+        response = self.client.get("/it-support/item-management/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Download price list")
+        self.assertContains(response, "/it-support/item-management/price-list/")
+
+
 class ItemActivityAuditTests(TestCase):
     def setUp(self):
         self.password = "activity-pass"

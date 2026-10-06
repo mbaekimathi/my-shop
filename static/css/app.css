@@ -9374,11 +9374,13 @@ html[data-theme="light"] .low-stock-badge.is-low {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.35rem;
+  min-width: 0;
 }
 
 .ax-filters select,
 .ax-filters input {
   min-height: 2rem;
+  min-width: 0;
   padding: 0.28rem 0.5rem;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -9391,12 +9393,15 @@ html[data-theme="light"] .low-stock-badge.is-low {
 .ax-filters select {
   min-width: 7.5rem;
   max-width: 11rem;
+  flex: 0 1 11rem;
 }
 
 .ax-filters input[type="date"],
 .ax-filters input[type="month"],
 .ax-filters input[type="number"] {
   min-width: 8.2rem;
+  max-width: 12rem;
+  flex: 0 1 12rem;
 }
 
 .ax-filters input[type="search"] {
@@ -14606,10 +14611,17 @@ html[data-theme="light"] .low-stock-badge.is-low {
   }
 
   .ax--list-table[data-ax-section="suppliers"] .ax-filters select,
-  .ax--list-table[data-ax-section="expenses"] .ax-filters select {
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters input[type="number"],
+  .ax--list-table[data-ax-section="expenses"] .ax-filters select,
+  .ax--list-table[data-ax-section="expenses"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="expenses"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="expenses"] .ax-filters input[type="number"] {
     width: 100%;
     min-width: 0;
     max-width: none;
+    flex: none;
   }
 
   .ax--list-table[data-ax-section="suppliers"] .ax-filters .ax-apply,
@@ -16693,11 +16705,51 @@ html[data-theme="light"] .low-stock-badge.is-low {
 
 .stock-serial-in-stock-msg {
   grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.45rem;
   margin: 0;
   color: #b91c1c;
   font-size: 0.78rem;
   font-weight: 650;
   line-height: 1.25;
+}
+
+.stock-serial-in-stock-msg__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.stock-serial-in-stock-msg__dismiss {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  margin: -0.15rem -0.1rem 0 0;
+  padding: 0;
+  border: 1px solid #f87171;
+  border-radius: 0.4rem;
+  background: #fff;
+  color: #b91c1c;
+  cursor: pointer;
+}
+
+.stock-serial-in-stock-msg__dismiss:hover {
+  background: #fef2f2;
+  border-color: #ef4444;
+}
+
+.stock-serial-in-stock-msg__dismiss:focus-visible {
+  outline: 2px solid #dc2626;
+  outline-offset: 1px;
+}
+
+.stock-serial-in-stock-msg__dismiss svg {
+  width: 0.95rem;
+  height: 0.95rem;
 }
 
 .stock-serial-row.has-serial-scan {

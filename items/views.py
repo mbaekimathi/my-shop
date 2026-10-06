@@ -20,6 +20,8 @@ from .services import (
     actionable_shops_for_profile,
     apply_serial_status,
     apply_stock_movement,
+    build_item_price_list_document,
+    build_item_price_list_pdf,
     build_stock_catalog_page,
     build_stock_print_document,
     build_stock_print_pdf,
@@ -362,6 +364,10 @@ def item_management(request, profile, meta, module, page_sidebar):
         "employees:item_management_catalog",
         kwargs={"role_segment": role_url_segment(profile.role)},
     )
+    item_price_list_url = reverse(
+        "employees:item_management_price_list",
+        kwargs={"role_segment": role_url_segment(profile.role)},
+    )
     page_sidebar = sidebar_for_item_management(
         profile.role, profile=profile, active_mode="view"
     )
@@ -381,6 +387,7 @@ def item_management(request, profile, meta, module, page_sidebar):
             "item_categories": item_categories,
             "use_item_catalog_api": True,
             "item_catalog_url": item_catalog_url,
+            "item_price_list_url": item_price_list_url,
             "pricing_shops": pricing_shops,
             "edit_pricing_shops": edit_pricing_shops,
             "form_data": form_data,
@@ -844,6 +851,64 @@ def item_management_catalog(request, role_segment):
         shops=_pricing_shops_for_profile(profile),
     )
     return JsonResponse(payload)
+
+
+@active_employee_required
+@require_GET
+def item_management_price_list(request, role_segment):
+    """Printable / downloadable list of all items with min and shop prices."""
+    from employees.access import get_profile_for_request, role_url_segment
+    from employees.module_permissions import require_module_permission
+    from shops.services import get_company_profile
+    from django.utils import timezone
+
+    profile = get_profile_for_request(request)
+    if profile is None or not profile.is_active_employee:
+        raise Http404("Not found.")
+    if role_url_segment(profile.role) != role_segment:
+        raise Http404("Not found.")
+
+    denied = require_module_permission(request, profile, "item-management", "view")
+    if denied is not None:
+        return denied
+
+    shops = list(_pricing_shops_for_profile(profile))
+    document = build_item_price_list_document(shops=shops)
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    printed_at = timezone.localtime()
+    as_download = (request.GET.get("download") or "").strip() == "1"
+
+    if as_download:
+        pdf_bytes = build_item_price_list_pdf(
+            document=document,
+            company_name=company_name,
+            printed_at=printed_at,
+        )
+        stamp = printed_at.strftime("%Y-%m-%d")
+        filename = f"item-price-list-{stamp}.pdf"
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Content-Length"] = str(len(pdf_bytes))
+        return response
+
+    return render(
+        request,
+        "items/item_price_list.html",
+        {
+            "document": document,
+            "paper": "a4",
+            "error": "",
+            "printed_at": printed_at,
+            "company_name": company_name,
+            "a4_page_estimate": document.get("a4_page_estimate")
+            or estimate_stock_print_a4_pages(document),
+            "auto_print": (request.GET.get("auto") or "").strip() == "1",
+            "download_url": (
+                f"{request.path}?download=1"
+            ),
+        },
+    )
 
 
 def _parse_request_shop_ids(request, *, allow_csv=True):

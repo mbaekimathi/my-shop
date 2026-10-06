@@ -278,6 +278,11 @@ urlpatterns = [
         name="item_management_catalog",
     ),
     path(
+        "<role_segment:role_segment>/item-management/price-list/",
+        views.item_management_price_list_proxy,
+        name="item_management_price_list",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/account-pay/",
         analytics_views.analytics_account_pay,
         name="analytics_account_pay",

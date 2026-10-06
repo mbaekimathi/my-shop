@@ -257,18 +257,57 @@
     );
   };
 
+  const getSerialInStockMsgTextEl = (msg) =>
+    msg?.querySelector("[data-serial-in-stock-msg-text]") || msg;
+
   const ensureSerialCheckMessage = (host) => {
     if (!host) return null;
     let msg = host.querySelector("[data-serial-in-stock-msg]");
+    if (msg && !msg.querySelector("[data-serial-in-stock-dismiss]")) {
+      const previousText = (msg.textContent || "").trim();
+      msg.remove();
+      msg = null;
+      if (previousText) host.dataset.pendingSerialInStockMsg = previousText;
+    }
     if (!msg) {
-      msg = document.createElement("p");
+      msg = document.createElement("div");
       msg.className = "stock-serial-in-stock-msg";
       msg.setAttribute("data-serial-in-stock-msg", "");
+      msg.setAttribute("role", "alert");
       msg.hidden = true;
+      msg.innerHTML = `<span class="stock-serial-in-stock-msg__text" data-serial-in-stock-msg-text></span>
+        <button type="button" class="stock-serial-in-stock-msg__dismiss" data-serial-in-stock-dismiss aria-label="Dismiss">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>`;
       host.appendChild(msg);
+      window.lucide?.createIcons?.({ nodes: [msg] });
+      const pending = host.dataset.pendingSerialInStockMsg || "";
+      if (pending) {
+        const textEl = getSerialInStockMsgTextEl(msg);
+        if (textEl) textEl.textContent = pending;
+        delete host.dataset.pendingSerialInStockMsg;
+      }
     }
     return msg;
   };
+
+  const dismissSerialInStockMessage = (host) => {
+    if (!host) return;
+    clearSerialInStockState(host);
+    const input = host.querySelector(
+      "[data-stock-serial-entry], [data-stock-serial-input]"
+    );
+    input?.focus?.({ preventScroll: true });
+  };
+
+  document.addEventListener("click", (event) => {
+    const dismiss = event.target?.closest?.("[data-serial-in-stock-dismiss]");
+    if (!dismiss) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const host = dismiss.closest(".stock-serial-row, .stock-serial-entry-wrap");
+    dismissSerialInStockMessage(host);
+  });
 
   const clearSerialInStockState = (host) => {
     if (!host) return;
@@ -282,7 +321,8 @@
     const msg = host.querySelector("[data-serial-in-stock-msg]");
     if (msg) {
       msg.hidden = true;
-      msg.textContent = "";
+      const textEl = getSerialInStockMsgTextEl(msg);
+      if (textEl) textEl.textContent = "";
     }
   };
 
@@ -301,7 +341,8 @@
     const msg = ensureSerialCheckMessage(host);
     if (msg) {
       msg.hidden = false;
-      msg.textContent = message || "Already in stock — remove";
+      const textEl = getSerialInStockMsgTextEl(msg);
+      if (textEl) textEl.textContent = message || "Already in stock — remove";
     }
   };
 

@@ -2334,6 +2334,7 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         "section": section,
         "section_slug": section["slug"],
         "analytics_sections": ANALYTICS_SECTIONS,
+        "include_all_time": allow_all_time,
         "page": page,
     }
 
@@ -7144,10 +7145,10 @@ def _build_tradings(filters):
     query = filters.get("query") or ""
 
     qs = (
-        ShopReceipt.objects.filter(
-            shop_id__in=shop_ids,
-            created_at__gte=start,
-            created_at__lt=end,
+        _within_created_range(
+            ShopReceipt.objects.filter(shop_id__in=shop_ids),
+            start,
+            end,
         )
         .filter(
             Q(kind=ShopReceiptKind.TRADE_OUT)
