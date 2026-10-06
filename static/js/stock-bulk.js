@@ -3364,9 +3364,15 @@
           return;
         }
         if (field.type === "hidden" && !field.matches("[data-stock-qty]")) return;
+        if (field.matches("[data-stock-reason]") && mode === "out") {
+          field.value = "custom";
+          return;
+        }
         if (field.tagName === "SELECT") field.value = "";
         else field.value = "";
       });
+    const reason = getInputsRow(row)?.querySelector("[data-stock-reason]");
+    if (reason) syncCustomReasonFromSelect(reason);
     const countEl = getInputsRow(row)?.querySelector("[data-stock-serial-count]");
     if (countEl) countEl.textContent = "0";
   };
@@ -3419,11 +3425,17 @@
     if (tracksSerial(row)) resetSerialList(row);
     clearItemMeta(row);
     inputs?.querySelectorAll("[data-stock-field]").forEach((field) => {
+      if (field.matches("[data-stock-reason]") && mode === "out") {
+        field.value = "custom";
+        return;
+      }
       if (field.tagName === "SELECT") field.value = "";
       else if (field.type !== "hidden" || field.matches("[data-stock-qty]")) {
         field.value = "";
       }
     });
+    const reason = inputs?.querySelector("[data-stock-reason]");
+    if (reason) syncCustomReasonFromSelect(reason);
     const countEl = inputs?.querySelector("[data-stock-serial-count]");
     if (countEl) countEl.textContent = "0";
     row.classList.remove("is-selected", "is-filled", "is-open");
@@ -4512,12 +4524,12 @@
     if (name) name.value = "";
     if (phone) phone.value = "";
     if (supplierId) supplierId.value = "";
-    if (reason) reason.value = "";
+    if (reason) reason.value = mode === "out" ? "custom" : "";
     if (customReason) customReason.value = "";
     if (refund) refund.value = "";
     if (refundAmount) refundAmount.value = "";
     syncRefundAmountVisibility(inputs, "");
-    syncCustomReasonVisibility(inputs, "");
+    syncCustomReasonVisibility(inputs, reason?.value || "");
     setCountryOnField(inputs, "+254", "KE");
   };
 
@@ -4527,12 +4539,12 @@
     if (floatSupplierPhone) floatSupplierPhone.value = "";
     if (floatSupplierId) floatSupplierId.value = "";
     if (floatPayment) floatPayment.value = "";
-    if (floatReason) floatReason.value = "";
+    if (floatReason) floatReason.value = mode === "out" ? "custom" : "";
     if (floatCustomReason) floatCustomReason.value = "";
     if (floatRefund) floatRefund.value = "";
     if (floatRefundAmount) floatRefundAmount.value = "";
     syncRefundAmountVisibility(floatRoot, "");
-    syncCustomReasonVisibility(floatRoot, "");
+    syncCustomReasonVisibility(floatRoot, floatReason?.value || "");
     setCountryOnField(floatRoot?.querySelector("[data-stock-float-phone-wrap]"), "+254", "KE");
     setApplyStatus("");
 
@@ -5358,6 +5370,8 @@
       // parkSelectedRow / removeItemRow clear the marker when state changes.
       if (row.dataset.stockRowSynced === "1") return;
       row.dataset.stockRowSynced = "1";
+      const reason = getInputsRow(row)?.querySelector("[data-stock-reason]");
+      if (reason) syncCustomReasonFromSelect(reason);
       if (
         row.classList.contains("is-open") ||
         row.classList.contains("is-filled") ||
