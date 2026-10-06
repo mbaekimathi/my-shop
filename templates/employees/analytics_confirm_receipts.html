@@ -40,6 +40,11 @@
           <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
           {% endfor %}
         </select>
+        <select name="kind" aria-label="Type">
+          {% for value, label in kind_options %}
+          <option value="{{ value }}"{% if kind_filter == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
         <select name="status" aria-label="Status">
           {% for value, label in status_options %}
           <option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ label }}</option>
@@ -53,7 +58,7 @@
   </header>
 
   <p class="ax-footnote">
-    Showing {{ total_count }} sales receipt{{ total_count|pluralize }}
+    Showing {{ total_count }} {{ count_label }}{{ total_count|pluralize }}
     · pending first, then partial return, cancelled, confirmed
   </p>
 
@@ -83,6 +88,7 @@
               class="ax-receipt-row"
               data-receipt-id="{{ row.receipt_id }}"
               data-shop-id="{{ row.shop_id }}"
+              data-receipt-source="{{ row.source|default:'pos' }}"
               tabindex="0"
             >
               <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
@@ -92,7 +98,9 @@
                   {{ row.status_label }}
                 </span>
               </td>
-              <td data-label="Type">{{ row.kind_label }}</td>
+              <td data-label="Type">
+                <span class="shop-receipt-kind shop-receipt-kind--{{ row.kind }}">{{ row.kind_label }}</span>
+              </td>
               <td data-label="Shop">{{ row.shop }}</td>
               <td data-label="When">{{ row.when }}</td>
             </tr>
@@ -146,7 +154,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=2"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=3"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");

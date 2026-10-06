@@ -6327,7 +6327,13 @@ def _supplier_detail_from_print(
             )
     created = timezone.localtime(created_at)
     kind_label = ticket.get("kind") or (
-        "Stock purchase" if source == "stock" else "Expense"
+        "Stock purchase"
+        if source == "stock"
+        else "Delivery note"
+        if source == "delivery"
+        else "Goods received"
+        if source == "goods_received"
+        else "Expense"
     )
     return {
         "ok": True,
@@ -6515,6 +6521,94 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
                     "serials": [],
                 }
             ],
+        )
+
+    if source_key in ("delivery", "goods_received", "transfer"):
+        from items.models import StockRequestStatus
+
+        from django.db.models import Q
+
+        try:
+            movement = (
+                StockMovement.objects.select_related(
+                    "created_by__user",
+                    "responded_by__user",
+                    "shop",
+                    "requested_from_shop",
+                )
+                .prefetch_related("lines__item")
+                .get(
+                    Q(shop=shop) | Q(requested_from_shop=shop),
+                    pk=receipt_id,
+                    movement_type=StockMovementType.REQUEST,
+                )
+            )
+        except StockMovement.DoesNotExist as exc:
+            raise ValidationError(
+                "Transfer delivery receipt not found for this shop."
+            ) from exc
+
+        is_fulfilled = movement.request_status == StockRequestStatus.FULFILLED
+        is_declined = movement.request_status == StockRequestStatus.DECLINED
+        # Prefer explicit source; otherwise pick variant from movement status.
+        if source_key == "delivery" or (
+            source_key == "transfer" and not is_fulfilled
+        ):
+            variant = "dispatch"
+            source_out = "delivery"
+            if is_declined:
+                status, status_label = "cancelled", "Declined"
+            elif is_fulfilled:
+                status, status_label = "confirmed", "Received"
+            else:
+                status, status_label = "pending", "In transit"
+            stamp = movement.created_at
+            actor = movement.created_by
+        else:
+            variant = "received"
+            source_out = "goods_received"
+            status, status_label = "confirmed", "Received"
+            stamp = movement.responded_at or movement.created_at
+            actor = movement.responded_by or movement.created_by
+
+        print_payload = build_stock_request_delivery_note(
+            movement, shop=shop, authorised_by=actor, variant=variant
+        )
+        from_name = movement.shop.name if movement.shop else "—"
+        to_name = (
+            movement.requested_from_shop.name if movement.requested_from_shop else "—"
+        )
+        line_rows = []
+        for line in movement.lines.all():
+            serials = list(line.serial_numbers or [])
+            line_rows.append(
+                {
+                    "name": str(getattr(line.item, "name", None) or "Item"),
+                    "qty": int(line.quantity or 0),
+                    "unit": Decimal("0"),
+                    "serials": [str(s) for s in serials],
+                }
+            )
+        cashier = ""
+        if actor is not None and getattr(actor, "user", None) is not None:
+            cashier = (
+                actor.user.get_full_name()
+                or getattr(actor, "employee_id", "")
+                or actor.user.username
+                or ""
+            )
+        return _supplier_detail_from_print(
+            print_payload=print_payload,
+            source=source_out,
+            record_id=movement.pk,
+            client_name=f"{from_name} → {to_name}",
+            client_phone=(getattr(movement, "rider_name", None) or "").strip(),
+            status=status,
+            status_label=status_label,
+            total="0",
+            created_at=stamp,
+            cashier=cashier,
+            line_rows=line_rows,
         )
 
     raise ValidationError("Unknown receipt source.")

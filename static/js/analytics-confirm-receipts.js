@@ -132,7 +132,7 @@
   <div class="shop-receipt-summary">
     <div class="shop-receipt-summary-badges">
       <span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(
-        receipt.kind || ""
+        (receipt.kind || "").replace(/\s+/g, "_")
       )}">${escapeHtml(receipt.kind_label || "")}</span>
       <span class="shop-receipt-status ${statusClass(
         receipt.status
@@ -190,7 +190,7 @@
     refreshIcons();
   };
 
-  const loadDetail = async (shopId, receiptId) => {
+  const loadDetail = async (shopId, receiptId, source) => {
     if (!detailUrlTemplate || !shopId || !receiptId) return;
     const seq = ++detailSeq;
     currentShopId = shopId;
@@ -201,10 +201,14 @@
     }
     openModal();
     try {
-      const res = await fetch(urlFor(detailUrlTemplate, shopId, receiptId), {
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
-      });
+      const sourceKey = encodeURIComponent(source || "pos");
+      const res = await fetch(
+        `${urlFor(detailUrlTemplate, shopId, receiptId)}?source=${sourceKey}`,
+        {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        }
+      );
       const data = await res.json().catch(() => ({}));
       if (seq !== detailSeq) return;
       if (!res.ok || !data.ok) {
@@ -226,6 +230,10 @@
 
   const postAction = async (template, successFallback) => {
     if (busy || !currentDetail?.receipt?.id || !currentShopId || !template) return;
+    if ((currentDetail?.receipt?.source || "pos") !== "pos") {
+      window.alert("Only sales receipts can be confirmed or cancelled here.");
+      return;
+    }
     setActionBusy(true);
     try {
       const res = await fetch(
@@ -257,8 +265,9 @@
     const open = () => {
       const receiptId = Number(row.getAttribute("data-receipt-id") || 0);
       const shopId = Number(row.getAttribute("data-shop-id") || 0);
+      const source = row.getAttribute("data-receipt-source") || "pos";
       if (!receiptId || !shopId) return;
-      loadDetail(shopId, receiptId);
+      loadDetail(shopId, receiptId, source);
     };
     row.addEventListener("click", open);
     row.addEventListener("keydown", (event) => {

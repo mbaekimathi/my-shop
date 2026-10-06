@@ -4179,6 +4179,23 @@ html[data-theme="light"] .workspace-header {
   background: color-mix(in srgb, var(--accent) 4%, var(--surface));
 }
 
+/* HR management — use more of the frame on large screens (avoid 1120px squeeze). */
+.workspace-main:has(.item-panel--hr),
+.workspace-main:has(.hr--list-table),
+.workspace-main:has([data-hr-auth-panel]) {
+  width: min(1480px, calc(100% - 2rem));
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+@media (min-width: 980px) {
+  .workspace-main:has(.item-panel--hr),
+  .workspace-main:has(.hr--list-table),
+  .workspace-main:has([data-hr-auth-panel]) {
+    width: min(1480px, calc(100% - 3rem));
+  }
+}
+
 /* HR management — dense list matching stock/serials */
 .item-panel--hr {
   box-shadow: none;
@@ -4879,9 +4896,74 @@ html[data-theme="light"] .hr-auth-card {
 
   .hr--list-table .item-table--hr,
   .hr--list-table .item-table--approvals {
+    width: 100%;
+    min-width: 100%;
+    max-width: none;
+    table-layout: fixed;
+  }
+
+  .hr--list-table .item-table--hr .item-col--item,
+  .hr--list-table .item-table--hr .item-cell--item {
+    width: 38%;
+    min-width: 14rem;
+    max-width: none;
+  }
+
+  .hr--list-table .item-table--hr:not(.item-table--approvals) .item-col--id,
+  .hr--list-table .item-table--hr:not(.item-table--approvals) td[data-label="ID"] {
+    width: 14%;
+  }
+
+  .hr--list-table .item-table--hr:not(.item-table--approvals) th:nth-child(3),
+  .hr--list-table .item-table--hr:not(.item-table--approvals) td[data-label="Role"] {
+    width: 18%;
+  }
+
+  .hr--list-table .item-table--hr:not(.item-table--approvals) .item-col--status,
+  .hr--list-table .item-table--hr:not(.item-table--approvals) .item-cell--status {
+    width: 12%;
+  }
+
+  .hr--list-table .item-table--hr:not(.item-table--approvals) .item-col--actions,
+  .hr--list-table .item-table--hr:not(.item-table--approvals) .item-cell--actions {
+    width: 7.5rem;
+  }
+
+  .hr--list-table .item-table--approvals .item-col--item,
+  .hr--list-table .item-table--approvals .item-cell--item {
+    width: 42%;
+  }
+
+  .hr--list-table .item-table--approvals .hr-approve-col--role {
+    width: 28%;
+  }
+
+  .hr--list-table .item-table--approvals .hr-approve-col--status {
+    width: 18%;
+  }
+
+  .hr--list-table .item-table--approvals .hr-approve-col--save {
+    width: 6.5rem;
+  }
+
+  .hr--list-table .item-table--hr .item-person-copy {
     min-width: 0;
-    width: max-content;
-    max-width: 100%;
+  }
+
+  .hr--list-table .item-table--hr .item-person strong,
+  .hr--list-table .item-table--hr .item-person small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hr--list-table .item-table--hr th,
+  .hr--list-table .item-table--hr td {
+    padding: 0.48rem 0.75rem;
+  }
+
+  .hr--list-table .item-table--hr thead th {
+    padding: 0.5rem 0.75rem;
   }
 
   .hr--list-table .perm-table {
@@ -22769,6 +22851,16 @@ html[data-theme="light"] .low-stock-badge.is-low {
 .shop-receipt-kind--stock {
   background: color-mix(in srgb, #2f6fed 14%, var(--surface));
   color: #2f6fed;
+}
+
+.shop-receipt-kind--delivery {
+  background: color-mix(in srgb, #c2410c 14%, var(--surface));
+  color: #c2410c;
+}
+
+.shop-receipt-kind--goods_received {
+  background: color-mix(in srgb, #7c3aed 14%, var(--surface));
+  color: #7c3aed;
 }
 
 .shop-receipt-kind--expense {
