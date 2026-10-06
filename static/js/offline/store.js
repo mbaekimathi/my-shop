@@ -112,6 +112,18 @@ export async function pendingQuantitiesForShop(shopId) {
   return qty;
 }
 
+/** Soft TTL for money/qty catalogs — prefer network; longer hard TTL kept only offline. */
+export const CATALOG_CACHE_TTL_SECONDS = 60 * 15;
+/** Offline-friendly TTL when intentionally caching for disconnected use. */
+export const CATALOG_CACHE_OFFLINE_TTL_SECONDS = 60 * 60 * 12;
+
+const CATALOG_PREFIXES = [
+  "shop-catalog:",
+  "stock-catalog:",
+  "stock-catalog-preload:",
+  "item-catalog:",
+];
+
 export async function cacheSet(key, value, ttlSeconds = 300) {
   const expiresAt = Date.now() + ttlSeconds * 1000;
   const db = await openDb();
@@ -142,6 +154,113 @@ export async function cacheGet(key) {
     return null;
   }
   return row.value;
+}
+
+export async function cacheDelete(key) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(CACHE, "readwrite");
+    tx.objectStore(CACHE).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function cacheKeys() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(CACHE, "readonly");
+    const req = tx.objectStore(CACHE).getAllKeys();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function cacheDeletePrefix(prefix) {
+  const needle = String(prefix || "");
+  if (!needle) return 0;
+  const keys = await cacheKeys();
+  const matches = keys.filter((key) => String(key).startsWith(needle));
+  if (!matches.length) return 0;
+  const db = await openDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(CACHE, "readwrite");
+    const store = tx.objectStore(CACHE);
+    matches.forEach((key) => store.delete(key));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  return matches.length;
+}
+
+/**
+ * Drop catalog snapshots so the next online fetch paints fresh qty/prices.
+ * @param {{ scopes?: string[] }} [opts]
+ *   scopes: "shop" | "stock" | "item" | "all" (default all)
+ */
+export async function invalidateCatalogCaches({ scopes } = {}) {
+  const wanted = new Set(
+    (Array.isArray(scopes) && scopes.length ? scopes : ["all"]).map((s) =>
+      String(s || "").toLowerCase()
+    )
+  );
+  const all = wanted.has("all");
+  const prefixes = CATALOG_PREFIXES.filter((prefix) => {
+    if (all) return true;
+    if (prefix.startsWith("shop-catalog") && wanted.has("shop")) return true;
+    if (prefix.startsWith("stock-catalog") && wanted.has("stock")) return true;
+    if (prefix.startsWith("item-catalog") && wanted.has("item")) return true;
+    return false;
+  });
+  let removed = 0;
+  for (const prefix of prefixes) {
+    removed += await cacheDeletePrefix(prefix);
+  }
+  return removed;
+}
+
+/**
+ * Patch stock qty inside cached shop-catalog pages after a sale.
+ * Keeps offline fallback aligned with the live DOM.
+ */
+export async function patchCachedShopCatalogStock(shopId, updates) {
+  const id = String(shopId || "").trim();
+  if (!id || !Array.isArray(updates) || !updates.length) return 0;
+  const qtyById = new Map();
+  updates.forEach((row) => {
+    const itemId = String(row?.id ?? "").trim();
+    if (!itemId) return;
+    const qty = Math.max(0, Math.floor(Number(row.quantity) || 0));
+    qtyById.set(itemId, qty);
+  });
+  if (!qtyById.size) return 0;
+
+  const prefix = `shop-catalog:${id}:`;
+  const keys = (await cacheKeys()).filter((key) => String(key).startsWith(prefix));
+  let patched = 0;
+  for (const key of keys) {
+    const db = await openDb();
+    const row = await new Promise((resolve, reject) => {
+      const tx = db.transaction(CACHE, "readonly");
+      const req = tx.objectStore(CACHE).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!row?.value?.ok || !Array.isArray(row.value.items)) continue;
+    let changed = false;
+    const items = row.value.items.map((item) => {
+      const itemId = String(item?.id ?? "");
+      if (!qtyById.has(itemId)) return item;
+      changed = true;
+      return { ...item, stock: qtyById.get(itemId) };
+    });
+    if (!changed) continue;
+    const ttlMs = Math.max(0, (row.expiresAt || Date.now()) - Date.now());
+    const ttlSeconds = Math.max(60, Math.ceil(ttlMs / 1000));
+    await cacheSet(key, { ...row.value, items }, ttlSeconds);
+    patched += 1;
+  }
+  return patched;
 }
 
 export async function cacheEmployeeIdCheck(code, result) {
@@ -183,6 +302,20 @@ export async function mergeCachedShopSerials(shopId, itemId, serials) {
     .map((serial) => String(serial || "").trim().toUpperCase())
     .filter(Boolean);
   const next = [...new Set([...existing, ...extra])];
+  await cacheShopSerials(shopId, itemId, next);
+  return next;
+}
+
+/** Drop sold/transferred serials from the offline serial cache. */
+export async function removeCachedShopSerials(shopId, itemId, serials) {
+  const drop = new Set(
+    (serials || [])
+      .map((serial) => String(serial || "").trim().toUpperCase())
+      .filter(Boolean)
+  );
+  if (!drop.size) return getCachedShopSerials(shopId, itemId);
+  const existing = await getCachedShopSerials(shopId, itemId);
+  const next = existing.filter((serial) => !drop.has(serial));
   await cacheShopSerials(shopId, itemId, next);
   return next;
 }

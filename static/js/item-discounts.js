@@ -106,6 +106,15 @@
       );
       setStatus(row, "Saved", { ok: true });
       saveBtn.disabled = true;
+      import("./offline/catalog-cache.js")
+        .then((mod) =>
+          mod.notifyCatalogChanged?.({
+            scopes: ["all"],
+            reason: "item_discount",
+            softReload: true,
+          })
+        )
+        .catch(() => {});
       if (window.lucide?.createIcons) window.lucide.createIcons();
     } catch (error) {
       setStatus(row, error.message || "Save failed", { ok: false });

@@ -2967,37 +2967,57 @@
           const soldLines = [...cart.values()].map((line) => ({
             id: line.id,
             qty: line.qty,
+            serials: Array.isArray(line.serials) ? line.serials.slice() : [],
           }));
           cart.clear();
           renderCart();
           resetCheckoutForm();
+          let stockUpdates = [];
           if (Array.isArray(data.stock_updates) && data.stock_updates.length) {
+            stockUpdates = data.stock_updates;
             applyStockUpdates(data.stock_updates);
             applyPendingStockToCatalog();
           } else if (queued && kind !== "quotation") {
             await applyPendingStockToCatalog();
           } else if (kind !== "quotation") {
-            applyStockUpdates(
-              soldLines.map((line) => {
-                const card = cartRoot.querySelector(
-                  `[data-cart-item][data-item-id="${CSS.escape(String(line.id))}"]`
-                );
-                const base = Math.max(
-                  0,
-                  Math.floor(
-                    Number(
-                      card?.getAttribute("data-item-stock-base") ??
-                        card?.getAttribute("data-item-stock")
-                    ) || 0
-                  )
-                );
-                return {
-                  id: line.id,
-                  quantity: Math.max(0, base - Math.max(0, line.qty || 0)),
-                };
-              })
-            );
+            stockUpdates = soldLines.map((line) => {
+              const card = cartRoot.querySelector(
+                `[data-cart-item][data-item-id="${CSS.escape(String(line.id))}"]`
+              );
+              const base = Math.max(
+                0,
+                Math.floor(
+                  Number(
+                    card?.getAttribute("data-item-stock-base") ??
+                      card?.getAttribute("data-item-stock")
+                  ) || 0
+                )
+              );
+              return {
+                id: line.id,
+                quantity: Math.max(0, base - Math.max(0, line.qty || 0)),
+              };
+            });
+            applyStockUpdates(stockUpdates);
             applyPendingStockToCatalog();
+          }
+          if (kind !== "quotation") {
+            const shopId = cartRoot?.dataset?.shopId || "";
+            import("./offline/catalog-cache.js")
+              .then((mod) =>
+                mod.notifyCatalogChanged?.({
+                  mode: "sale",
+                  scopes: ["stock", "item"],
+                  shopId,
+                  stockUpdates,
+                  soldSerials: soldLines
+                    .filter((line) => line.serials?.length)
+                    .map((line) => ({ itemId: line.id, serials: line.serials })),
+                  reason: queued ? "offline_sale" : "sale",
+                  softReload: true,
+                })
+              )
+              .catch(() => {});
           }
           setCartOpen(false);
           setCartStatus(

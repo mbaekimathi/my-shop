@@ -256,4 +256,36 @@
     }
   });
 
+  // Flush offline catalogs before item register/edit/delete navigates away.
+  document.addEventListener(
+    "submit",
+    (event) => {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (form.dataset.catalogFlushed === "1") return;
+      const action = String(
+        form.querySelector('input[name="action"]')?.value || ""
+      ).toLowerCase();
+      if (!["register", "edit", "delete", "suspend", "unsuspend"].includes(action)) {
+        return;
+      }
+      event.preventDefault();
+      form.dataset.catalogFlushed = "1";
+      import("./offline/catalog-cache.js")
+        .then((mod) =>
+          mod.notifyCatalogChanged?.({
+            scopes: ["all"],
+            reason: `item_${action}`,
+            softReload: true,
+          })
+        )
+        .catch(() => {})
+        .finally(() => {
+          if (typeof form.requestSubmit === "function") form.requestSubmit();
+          else form.submit();
+        });
+    },
+    true
+  );
+
 })();

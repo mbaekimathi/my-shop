@@ -122,7 +122,16 @@
   let pickerCollapsed = false;
   const itemCache = new Map();
   const memoryCache = new Map();
+  /** Soft TTL — short enough that qty/price drift self-heals; offline still has hard fallback. */
+  let catalogCacheTtl = 60 * 15;
   let offlineStorePromise = null;
+  import("./offline/catalog-cache.js")
+    .then((mod) => {
+      if (mod?.CATALOG_CACHE_TTL_SECONDS) {
+        catalogCacheTtl = mod.CATALOG_CACHE_TTL_SECONDS;
+      }
+    })
+    .catch(() => {});
   let localCatalog = null;
   let localFiltered = null;
   let localVisibleLimit = pageSize;
@@ -252,7 +261,7 @@
     if (!response.ok || !data?.ok) throw new Error(data?.error || "preload_failed");
     memoryCache.set(preloadKeyFor(page), data);
     getOfflineStore().then((store) => {
-      if (store?.cacheSet) store.cacheSet(preloadKeyFor(page), data, 60 * 60 * 12);
+      if (store?.cacheSet) store.cacheSet(preloadKeyFor(page), data, catalogCacheTtl);
     });
     return data;
   };
@@ -290,12 +299,44 @@
     return all;
   };
 
+  const itemFreshnessToken = (item) => {
+    if (!item) return "";
+    const selling =
+      Array.isArray(item.selling_prices) && item.selling_prices.length
+        ? item.selling_prices.join("/")
+        : item.selling_price ?? "";
+    const shopQtys = Array.isArray(item.shop_quantities)
+      ? item.shop_quantities.join("/")
+      : item.shop_qty ?? "";
+    return [
+      item.id,
+      shopQtys,
+      item.last_buying_price || "",
+      selling,
+      item.name || "",
+      item.category || "",
+      item.updated_at || item.updatedAt || "",
+    ].join("|");
+  };
+
   const catalogSignature = (items) =>
     Array.isArray(items)
-      ? `${items.length}:${items
-          .map((item) => `${item.id}|${item.shop_qty}|${item.last_buying_price || ""}`)
-          .join(",")}`
+      ? `${items.length}:${items.map(itemFreshnessToken).join(",")}`
       : "";
+
+  const catalogPageSignature = (data) =>
+    data?.ok
+      ? `${data.total || 0}:${data.has_more ? 1 : 0}:${catalogSignature(data.items)}`
+      : "";
+
+  const clearLocalCaches = () => {
+    memoryCache.clear();
+    itemCache.clear();
+    localCatalog = null;
+    localFiltered = null;
+    localCatalogPromise = null;
+    localRevalidating = false;
+  };
 
   const setLocalCatalog = (items) => {
     items.forEach(indexItem);
@@ -1694,7 +1735,7 @@
       if (!response.ok || !data?.ok) return;
       memoryCache.set(cacheKey, data);
       getOfflineStore().then((store) => {
-        if (store?.cacheSet) store.cacheSet(cacheKey, data, 60 * 60 * 12);
+        if (store?.cacheSet) store.cacheSet(cacheKey, data, catalogCacheTtl);
       });
     } catch (_err) {
       /* optional warm-up */
@@ -1754,6 +1795,29 @@
       if (online && !append && memHit.has_more && memHit.next_page) {
         warmCatalogPage({ page: memHit.next_page, q: memHit.q || q || "" });
       }
+      // Stale-while-revalidate: never trust memory alone while online.
+      if (online && !append) {
+        const beforeSig = catalogPageSignature(memHit);
+        fetch(`${apiUrl}?${buildFetchParams(page, q).toString()}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        })
+          .then((response) => response.json().catch(() => ({})))
+          .then((data) => {
+            if (seq !== inFlight || !data?.ok) return;
+            memoryCache.set(cacheKey, data);
+            getOfflineStore().then((store) => {
+              if (store?.cacheSet) store.cacheSet(cacheKey, data, catalogCacheTtl);
+            });
+            if (catalogPageSignature(data) === beforeSig) return;
+            applyCatalogData(data, { q, append: false });
+            panel.removeAttribute("data-catalog-from-cache");
+            if (data.has_more && data.next_page) {
+              warmCatalogPage({ page: data.next_page, q: data.q || q || "" });
+            }
+          })
+          .catch(() => {});
+      }
       return;
     }
 
@@ -1772,7 +1836,7 @@
           if (!response.ok || !data.ok) throw new Error(data.error || "failed");
           memoryCache.set(cacheKey, data);
           getOfflineStore().then((store) => {
-            if (store?.cacheSet) store.cacheSet(cacheKey, data, 60 * 60 * 12);
+            if (store?.cacheSet) store.cacheSet(cacheKey, data, catalogCacheTtl);
           });
         } catch (_networkErr) {
           if (_networkErr?.name === "AbortError") throw _networkErr;
@@ -2019,4 +2083,38 @@
   } else {
     startCatalog();
   }
+
+  const softRefreshCatalog = () => {
+    clearLocalCaches();
+    if (localFilter) {
+      ensureLocalCatalog()
+        .then(() => {
+          if (activeQuery || browseOpen) reload(activeQuery, { forceBrowse: browseOpen });
+        })
+        .catch(() => {});
+      return;
+    }
+    if (panel.dataset.stockCatalogStarted === "1") {
+      reload(activeQuery, { forceBrowse: browseOpen || !searchFirst });
+    }
+  };
+
+  import("./offline/catalog-cache.js")
+    .then((mod) => {
+      mod.onCatalogInvalidate?.((detail) => {
+        const scopes = detail?.scopes || ["all"];
+        if (!scopes.includes("all") && !scopes.includes("stock")) return;
+        if (detail?.softReload === false) {
+          clearLocalCaches();
+          return;
+        }
+        softRefreshCatalog();
+      });
+      mod.watchCatalogVisibility?.(() => {
+        // Drop memory so the next paint/search refetches; avoid yanking mid-edit UI.
+        memoryCache.clear();
+        if (localFilter) revalidateLocalCatalog();
+      });
+    })
+    .catch(() => {});
 })();

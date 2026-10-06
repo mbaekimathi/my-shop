@@ -34,6 +34,14 @@
   const canEdit = panel.dataset.canEdit !== "0";
   const canToggleSuspend = panel.dataset.canToggleSuspend !== "0";
   const canDelete = panel.dataset.canDelete !== "0";
+  let catalogCacheTtl = 60 * 15;
+  import("./offline/catalog-cache.js")
+    .then((mod) => {
+      if (mod?.CATALOG_CACHE_TTL_SECONDS) {
+        catalogCacheTtl = mod.CATALOG_CACHE_TTL_SECONDS;
+      }
+    })
+    .catch(() => {});
 
   const escapeHtml = (value) =>
     String(value || "")
@@ -442,7 +450,7 @@
           }
           try {
             const store = await import("./offline/store.js");
-            await store.cacheSet(cacheKey, data, 60 * 60 * 12);
+            await store.cacheSet(cacheKey, data, catalogCacheTtl);
           } catch (_cacheErr) {
             /* cache optional */
           }
@@ -489,7 +497,7 @@
             if (!warmData?.ok) return;
             try {
               const store = await import("./offline/store.js");
-              await store.cacheSet(warmKey, warmData, 60 * 60 * 12);
+              await store.cacheSet(warmKey, warmData, catalogCacheTtl);
             } catch (_err) {
               /* optional */
             }
@@ -568,5 +576,22 @@
 
   syncSortUi();
   syncShopColumnsUi();
+
+  import("./offline/catalog-cache.js")
+    .then((mod) => {
+      mod.onCatalogInvalidate?.((detail) => {
+        const scopes = detail?.scopes || ["all"];
+        if (!scopes.includes("all") && !scopes.includes("item")) return;
+        if (detail?.softReload === false) return;
+        import("./offline/net.js")
+          .then(({ isAppOnline }) => isAppOnline())
+          .then((online) => {
+            if (online) reload(activeQuery, activeSort);
+          })
+          .catch(() => {});
+      });
+    })
+    .catch(() => {});
+
   reload("", "category");
 })();

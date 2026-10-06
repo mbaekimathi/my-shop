@@ -24,6 +24,14 @@
   let searchTimer = 0;
   let backgroundLoad = 0;
   const groupEls = new Map();
+  let catalogCacheTtl = 60 * 15;
+  import("./offline/catalog-cache.js")
+    .then((mod) => {
+      if (mod?.CATALOG_CACHE_TTL_SECONDS) {
+        catalogCacheTtl = mod.CATALOG_CACHE_TTL_SECONDS;
+      }
+    })
+    .catch(() => {});
 
   const money = (value) => {
     const n = Number(value);
@@ -402,7 +410,7 @@
         }
         try {
           const store = await import("./offline/store.js");
-          await store.cacheSet(cacheKey, data, 60 * 60 * 12);
+          await store.cacheSet(cacheKey, data, catalogCacheTtl);
         } catch (_cacheErr) {
           /* cache optional */
         }
@@ -562,6 +570,53 @@
     window.clearTimeout(searchTimer);
     reload(String(searchInput.value || "").trim());
   });
+
+  import("./offline/catalog-cache.js")
+    .then((mod) => {
+      mod.onCatalogInvalidate?.((detail) => {
+        const scopes = detail?.scopes || ["all"];
+        if (!scopes.includes("all") && !scopes.includes("shop")) return;
+        if (detail?.shopId && String(detail.shopId) !== String(shopId)) return;
+
+        const updates = Array.isArray(detail?.stockUpdates)
+          ? detail.stockUpdates
+          : [];
+        if (updates.length) {
+          updates.forEach((row) => {
+            const id = String(row?.id || "");
+            if (!id) return;
+            const qty = Math.max(0, Math.floor(Number(row.quantity) || 0));
+            root
+              .querySelectorAll(
+                `[data-cart-item][data-item-id="${CSS.escape(id)}"]`
+              )
+              .forEach((card) => {
+                card.setAttribute("data-item-stock-base", String(qty));
+                card.setAttribute("data-item-stock", String(qty));
+                const valueEl = card.querySelector(".shop-floor-stock-value");
+                if (valueEl) valueEl.textContent = String(qty);
+                const stockWrap = card.querySelector(".shop-floor-stock");
+                if (stockWrap) stockWrap.classList.toggle("is-empty", qty <= 0);
+                card.classList.toggle(
+                  "is-out",
+                  stockTrackingEnabled && qty <= 0
+                );
+              });
+          });
+          notifyRendered();
+        }
+
+        if (detail?.softReload === false) return;
+        if (detail?.mode === "sale") return;
+        import("./offline/net.js")
+          .then(({ isAppOnline }) => isAppOnline())
+          .then((online) => {
+            if (online) reload(activeQuery);
+          })
+          .catch(() => {});
+      });
+    })
+    .catch(() => {});
 
   reload("");
 })();

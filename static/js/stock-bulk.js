@@ -2567,7 +2567,19 @@
           return;
         }
         setApplyStatus(data.message || "Submitted successfully.");
-        window.location.assign(data.next || window.location.href);
+        import("./offline/catalog-cache.js")
+          .then((mod) =>
+            mod.notifyCatalogChanged?.({
+              scopes: ["all"],
+              reason: "stock_submit",
+              softReload: true,
+            })
+          )
+          .catch(() => {})
+          .finally(() => {
+            window.location.assign(data.next || window.location.href);
+          });
+        return;
       } catch (_error) {
         setApplyStatus(
           "Network error. Your entries were kept — try again.",
@@ -4430,6 +4442,16 @@
           paperWidth: data.receipt_paper_width || "",
         });
       }
+      try {
+        const mod = await import("./offline/catalog-cache.js");
+        await mod.notifyCatalogChanged?.({
+          scopes: ["all"],
+          reason: "stock_in",
+          softReload: true,
+        });
+      } catch (_err) {
+        /* optional */
+      }
       window.location.assign(data.next || window.location.href);
       return true;
     } catch (_) {
@@ -5547,7 +5569,19 @@
         return;
       }
       setApplyStatus(data.message || "Submitted successfully.");
-      window.location.assign(data.next || window.location.href);
+      import("./offline/catalog-cache.js")
+        .then((mod) =>
+          mod.notifyCatalogChanged?.({
+            scopes: ["all"],
+            reason: "stock_submit",
+            softReload: true,
+          })
+        )
+        .catch(() => {})
+        .finally(() => {
+          window.location.assign(data.next || window.location.href);
+        });
+      return;
     } catch (_error) {
       setApplyStatus("Network error. Your entries were kept — try again.", true);
       autoStockInFlight = false;
