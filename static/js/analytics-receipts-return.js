@@ -109,7 +109,10 @@
     const codeInput = modalBody?.querySelector("[data-return-login-code]");
     if (codeInput) codeInput.value = "";
     const reasonInput = modalBody?.querySelector("[data-return-reason]");
-    if (reasonInput) reasonInput.value = "";
+    if (reasonInput) {
+      reasonInput.value = "";
+      window.setTimeout(() => reasonInput.focus(), 40);
+    }
     setReturnStatus("Enter a return reason and an active staff 6-digit ID.");
     syncConfirmReturn();
     refreshIcons();
@@ -359,22 +362,23 @@
 </div>
 <div class="shop-receipt-return" data-return-panel hidden>
   <p class="shop-receipt-muted">Select items to return. Stock is restored and the sale/credit updates automatically.</p>
+  <label class="shop-cart-input shop-receipt-return-reason">
+    <span>Reason for return</span>
+    <textarea
+      rows="3"
+      maxlength="500"
+      placeholder="Why is this being returned?"
+      data-return-reason
+      required
+      aria-required="true"
+    ></textarea>
+  </label>
   <div class="shop-receipt-return-list">
     ${
       returnRows ||
       `<p class="shop-receipt-muted">Nothing left to return on this receipt.</p>`
     }
   </div>
-  <label class="shop-cart-input shop-receipt-return-reason">
-    <span>Reason for return</span>
-    <textarea
-      rows="2"
-      maxlength="500"
-      placeholder="Why is this being returned?"
-      data-return-reason
-      required
-    ></textarea>
-  </label>
   <label class="shop-cart-input shop-receipt-return-code">
     <span>Staff 6-digit ID</span>
     <input
