@@ -49,6 +49,7 @@ def sale_create_api(request):
     if profile.role not in (
         EmployeeRole.SHOP_CASHIER,
         EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.STORE_MANAGER,
         EmployeeRole.SUPER_ADMIN,
     ):
         return JsonResponse({"ok": False, "error": "forbidden"}, status=403)

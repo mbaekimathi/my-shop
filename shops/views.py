@@ -1194,6 +1194,7 @@ def _require_shop_read_access(request, shop_id):
         if profile.role in (
             EmployeeRole.SUPER_ADMIN,
             EmployeeRole.COMPANY_MANAGER,
+            EmployeeRole.STORE_MANAGER,
             EmployeeRole.IT_SUPPORT,
         ):
             shop = Shop.objects.filter(

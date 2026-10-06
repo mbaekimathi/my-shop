@@ -6159,7 +6159,11 @@ def stock_settings(request, profile, meta, module):
 @require_http_methods(["GET"])
 def stock_activity_audits(request, profile, meta, module):
     """Stock-management activity analytics with period, shop, and employee filters."""
-    from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+    from employees.models import (
+        FULL_STOCK_WORKFLOW_ROLES,
+        EmployeeProfile,
+        EmployeeStatus,
+    )
     from employees.module_permissions import require_module_permission
     from employees.workspace import sidebar_for_stock_management, stock_management_url
 
@@ -6169,10 +6173,7 @@ def stock_activity_audits(request, profile, meta, module):
     if denied is not None:
         return denied
 
-    if profile.role not in (
-        EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.IT_SUPPORT,
-    ):
+    if profile.role not in FULL_STOCK_WORKFLOW_ROLES:
         return _stock_redirect(request.path, "view")
 
     range_type, day_start, day_end, filter_context = _report_range_bounds(request)
@@ -6267,7 +6268,7 @@ def stock_request_audits(request, profile, meta, module):
 
     from django.http import JsonResponse
 
-    from employees.models import EmployeeRole
+    from employees.models import FULL_STOCK_WORKFLOW_ROLES
     from employees.module_permissions import require_module_permission
     from employees.workspace import sidebar_for_stock_management, stock_management_url
 
@@ -6278,10 +6279,7 @@ def stock_request_audits(request, profile, meta, module):
     if denied is not None:
         return denied
 
-    if profile.role not in (
-        EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.IT_SUPPORT,
-    ):
+    if profile.role not in FULL_STOCK_WORKFLOW_ROLES:
         return _stock_redirect(request.path, "view")
 
     # Lazy item-picker catalog (same pattern as stock report/movements).
@@ -6421,7 +6419,7 @@ def stock_request_audits(request, profile, meta, module):
 
 @require_http_methods(["GET", "POST"])
 def stock_management(request, profile, meta, module, page_sidebar):
-    from employees.models import EmployeeRole
+    from employees.models import FULL_STOCK_WORKFLOW_ROLES
     from employees.module_permissions import employee_may, require_module_permission
 
     from .models import ShopStock
@@ -6451,11 +6449,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
     if denied is not None:
         return denied
 
-    # Stock In / Out / Request / Report / Movements / Serials: shop-manager and IT support.
-    if mode not in ("view", "settings", "low-stock") and profile.role not in (
-        EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.IT_SUPPORT,
-    ):
+    # Stock In / Out / Request / Report / Movements / Serials: shop/store manager and IT.
+    if mode not in ("view", "settings", "low-stock") and profile.role not in FULL_STOCK_WORKFLOW_ROLES:
         return _stock_redirect(request.path, "view")
 
     if mode == "settings":
@@ -6841,7 +6836,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
 def stock_management_catalog(request, role_segment):
     """Paginated stock-management catalog for view/in/out/request modes."""
     from employees.access import get_profile_for_request, role_url_segment
-    from employees.models import EmployeeRole
+    from employees.models import FULL_STOCK_WORKFLOW_ROLES
     from employees.module_permissions import require_module_permission
 
     profile = get_profile_for_request(request)
@@ -6894,10 +6889,7 @@ def stock_management_catalog(request, role_segment):
         )
         return JsonResponse(payload)
 
-    if profile.role not in (
-        EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.IT_SUPPORT,
-    ):
+    if profile.role not in FULL_STOCK_WORKFLOW_ROLES:
         return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
 
     action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}

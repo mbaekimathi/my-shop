@@ -1,12 +1,15 @@
 """Runtime checks for EmployeeModulePermission (HR permissions matrix).
 
 Semantics match the permissions UI:
-- Missing row ⇒ allowed (default allow)
-- Explicit allowed=False ⇒ denied
+- Missing row ⇒ allowed (default allow) for most roles
+- Store Manager missing row ⇒ store-ops allow-list only (default deny elsewhere)
+- Explicit allowed=True / allowed=False always wins over role defaults
 - Super Admin always allowed (cannot be locked out of the system)
 - HR staff always keep access to hr-management/permissions so they can recover
-- Shop-scoped roles (employee / shop_manager / shop_cashier) must be allocated
-  to at least one active shop to open stock-management or analytics
+- Shop-scoped roles (employee / shop_manager / shop_cashier)
+  must be allocated to at least one active shop to open stock-management or analytics
+- Store Manager sees all shops (not shop-allocation scoped) but is limited to
+  store-ops modules via STORE_MANAGER_ALLOWED_KEYS
 """
 
 from __future__ import annotations
@@ -31,6 +34,61 @@ SHOP_ALLOCATION_GATED_MODULES = frozenset({"stock-management", "analytics"})
 NO_SHOP_ALLOCATION_MESSAGE = (
     "You must be allocated to at least one shop to use this module."
 )
+
+# Store Manager: only store / floor ops. Explicit HR rows still override.
+STORE_MANAGER_ALLOWED_KEYS = frozenset(
+    {
+        # Item Management — company catalog.
+        ("item-management", "view"),
+        ("item-management", "register"),
+        ("item-management", "edit"),
+        ("item-management", "toggle_suspend"),
+        ("item-management", "delete"),
+        # Stock ops across all shops (not company stock settings).
+        ("stock-management", "view"),
+        ("stock-management", "in"),
+        ("stock-management", "out"),
+        ("stock-management", "request"),
+        ("stock-management", "serials"),
+        ("stock-management", "movements"),
+        ("stock-management", "report"),
+        ("stock-management", "print"),
+        # Analytics — Items, Stock, and Trading only (no overview hub).
+        ("analytics", "items"),
+        ("analytics", "stock"),
+        ("analytics", "tradings"),
+        # MY-SHOP floor.
+        ("my-shop", "workspace"),
+        ("my-shop", "sale"),
+        ("my-shop", "credit"),
+        ("my-shop", "quotation"),
+        ("my-shop", "trade_out"),
+        ("my-shop", "buy_stock"),
+        ("my-shop", "stock_requests"),
+        ("my-shop", "respond_stock_request"),
+        ("my-shop", "register_expense"),
+        ("my-shop", "receipts"),
+        ("my-shop", "return_receipt"),
+        ("my-shop", "open_close"),
+        ("my-shop", "print"),
+        ("my-shop", "shop_settings"),
+    }
+)
+
+STORE_MANAGER_DASHBOARD_MODULES = frozenset(
+    {
+        "item-management",
+        "stock-management",
+        "analytics",
+    }
+)
+
+
+def role_default_permission(profile, module_slug: str, submodule_slug: str) -> bool:
+    """Default allow/deny when no EmployeeModulePermission row exists."""
+    if getattr(profile, "role", None) == EmployeeRole.STORE_MANAGER:
+        return (module_slug, submodule_slug) in STORE_MANAGER_ALLOWED_KEYS
+    return True
 
 
 def normalize_submodule(module_slug: str, submodule_slug: str) -> str:
@@ -99,7 +157,10 @@ def employee_may(profile, module_slug: str, submodule_slug: str) -> bool:
         return False
 
     cache = _cache_for(profile)
-    return cache.get((module_slug, submodule_slug), True)
+    key = (module_slug, submodule_slug)
+    if key in cache:
+        return cache[key]
+    return role_default_permission(profile, module_slug, submodule_slug)
 
 
 def profile_has_shop_allocation(profile) -> bool:

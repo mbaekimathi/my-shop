@@ -28,6 +28,12 @@ ROLE_PAGE_META = {
         "summary": "Your shop manager workspace.",
         "icon": "store",
     },
+    EmployeeRole.STORE_MANAGER: {
+        "title": "Store Manager",
+        "headline": "Store workspace",
+        "summary": "Manage all stores, stock, and floor operations across the company.",
+        "icon": "store",
+    },
     EmployeeRole.SHOP_CASHIER: {
         "title": "Shop Cashier",
         "headline": "Cashier workspace",
@@ -87,7 +93,16 @@ DASHBOARD_MODULE_BY_SLUG = {module["slug"]: module for module in DASHBOARD_MODUL
 
 def get_dashboard_modules(role):
     """Resolved module links for dashboard sidebar navigation."""
+    from .module_permissions import STORE_MANAGER_DASHBOARD_MODULES
+
     segment = role_url_segment(role)
+    modules = DASHBOARD_MODULES
+    if role == EmployeeRole.STORE_MANAGER:
+        modules = [
+            module
+            for module in DASHBOARD_MODULES
+            if module["slug"] in STORE_MANAGER_DASHBOARD_MODULES
+        ]
     return [
         {
             **module,
@@ -96,7 +111,7 @@ def get_dashboard_modules(role):
                 kwargs={"role_segment": segment, "module_slug": module["slug"]},
             ),
         }
-        for module in DASHBOARD_MODULES
+        for module in modules
     ]
 
 
@@ -122,6 +137,7 @@ WORKSPACE_DASHBOARD_VIEWS = frozenset(
         "employees:role_super_admin_page",
         "employees:role_company_manager",
         "employees:role_shop_manager",
+        "employees:role_store_manager",
         "employees:role_shop_cashier",
         "employees:role_it_support",
     }
@@ -495,6 +511,8 @@ def _dashboard_analytics_section_links(role, *, active_slug=None, profile=None):
     from .module_permissions import employee_may
 
     wanted = ("credits", "suppliers", "clients")
+    if role == EmployeeRole.STORE_MANAGER:
+        wanted = ()
     by_slug = {row["slug"]: row for row in ANALYTICS_SECTIONS}
     links = []
     for slug in wanted:
@@ -954,8 +972,9 @@ def sidebar_for_stock_management(
     report_params=None,
     profile=None,
 ):
-    """Sidebar for stock-management. Full workflow links for shop-manager and IT support."""
+    """Sidebar for stock-management. Full workflow links for shop/store manager and IT support."""
     from .module_permissions import employee_may
+    from .models import FULL_STOCK_WORKFLOW_ROLES
 
     dashboard_url = reverse(role_home_url_name(role))
     resolved_shop_ids = []
@@ -975,10 +994,7 @@ def sidebar_for_stock_management(
         role, "movements", report_params=report_params or default_report_params
     )
 
-    full_workflow_roles = {
-        EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.IT_SUPPORT,
-    }
+    full_workflow_roles = FULL_STOCK_WORKFLOW_ROLES
 
     def _allowed(mode):
         return profile is None or employee_may(profile, "stock-management", mode)
@@ -1347,6 +1363,7 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
     dashboard_url = reverse(role_home_url_name(role))
     home_url = analytics_url(role)
     active_view = (active_view or "overview").strip().lower()
+    show_overview = role != EmployeeRole.STORE_MANAGER
     section_links = []
     for section in ANALYTICS_SECTIONS:
         if section["slug"] == "overview":
@@ -1366,11 +1383,11 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
                 section["label"],
                 section["icon"],
                 href=analytics_section_url(role, section["slug"]),
-                active=False,
+                active=section["slug"] == active_view,
             )
         )
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-    if profile is None or employee_may(profile, "analytics", "view"):
+    if show_overview and (profile is None or employee_may(profile, "analytics", "view")):
         primary.append(
             _link(
                 "Overview",
@@ -1399,6 +1416,10 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
     """Focused sidebar for one analytics section page — Overview + this page."""
     from .analytics_services import ANALYTICS_SECTION_BY_SLUG
     from .module_permissions import employee_may
+
+    # Store Manager keeps Items / Stock / Tradings visible together (no Overview).
+    if role == EmployeeRole.STORE_MANAGER:
+        return sidebar_for_analytics(role, active_view=active_view, profile=profile)
 
     dashboard_url = reverse(role_home_url_name(role))
     home_url = analytics_url(role)

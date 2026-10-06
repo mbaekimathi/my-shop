@@ -147,8 +147,9 @@ class ConfirmSalesReceiptTests(TestCase):
         request.user = self.user
         context = build_confirm_receipts_page(profile=self.staff, request=request)
         kinds = {row["kind"] for row in context["rows"]}
-        self.assertEqual(kinds, {ShopReceiptKind.SALE})
-        self.assertNotIn("kind_options", context)
+        self.assertEqual(kinds, {"sale"})
+        self.assertEqual(context["kind_filter"], "sale")
+        self.assertIn("kind_options", context)
 
 
 class DashboardSidebarLinkTests(SimpleTestCase):
@@ -1362,3 +1363,153 @@ class ShopAllocationModuleGateTests(TestCase):
         analytics = self.client.get("/shop-cashier/analytics/")
         self.assertEqual(stock.status_code, 302)
         self.assertEqual(analytics.status_code, 302)
+
+
+@override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
+class StoreManagerRoleTests(TestCase):
+    """Store Manager is a separate role limited to store management capabilities."""
+
+    def setUp(self):
+        from employees.module_permissions import employee_may, profile_has_shop_allocation
+        from employees.workspace import get_dashboard_modules, sidebar_for_role_dashboard
+        from items.services import actionable_shops_for_profile
+        from shops.models import Shop
+
+        self.employee_may = employee_may
+        self.profile_has_shop_allocation = profile_has_shop_allocation
+        self.actionable_shops_for_profile = actionable_shops_for_profile
+        self.get_dashboard_modules = get_dashboard_modules
+        self.sidebar_for_role_dashboard = sidebar_for_role_dashboard
+
+        self.password = "store-mgr-pass"
+        self.user = User.objects.create_user(
+            username="830031",
+            password=self.password,
+            email="store-mgr@test.local",
+            first_name="STORE",
+            last_name="MANAGER",
+            is_active=True,
+        )
+        self.manager = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="830031",
+            phone_country_code="+254",
+            phone_number="700000931",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.STORE_MANAGER,
+        )
+        self.shop_a = Shop.objects.create(
+            name="STORE MGR SHOP A",
+            location="NAIROBI",
+            email="store-mgr-a@test.local",
+            phone_number="0700000931",
+            login_code="830131",
+            password_hash="x",
+            created_by=self.manager,
+        )
+        self.shop_b = Shop.objects.create(
+            name="STORE MGR SHOP B",
+            location="MOMBASA",
+            email="store-mgr-b@test.local",
+            phone_number="0700000932",
+            login_code="830132",
+            password_hash="x",
+            created_by=self.manager,
+        )
+
+    def test_role_label_and_portal_home(self):
+        self.assertEqual(self.manager.get_role_display(), "Store Manager")
+        self.client.login(username="830031", password=self.password)
+        response = self.client.get("/store-manager/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Store workspace")
+
+    def test_sees_all_shops_without_allocation(self):
+        self.assertFalse(self.manager.assigned_shops.exists())
+        self.assertTrue(self.profile_has_shop_allocation(self.manager))
+        shops = self.actionable_shops_for_profile(self.manager)
+        shop_ids = {shop.pk for shop in shops}
+        self.assertEqual(shop_ids, {self.shop_a.pk, self.shop_b.pk})
+
+    def test_dashboard_only_store_modules(self):
+        slugs = {m["slug"] for m in self.get_dashboard_modules(EmployeeRole.STORE_MANAGER)}
+        self.assertEqual(slugs, {"item-management", "stock-management", "analytics"})
+
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.STORE_MANAGER, profile=self.manager
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertIn("Item Management", labels)
+        self.assertIn("Stock Management", labels)
+        self.assertIn("Analytics", labels)
+        self.assertNotIn("Shop Management", labels)
+        self.assertNotIn("HR Management", labels)
+        self.assertNotIn("Communications", labels)
+        self.assertNotIn("Credits", labels)
+        self.assertNotIn("Clients", labels)
+        self.assertNotIn("Suppliers", labels)
+
+    def test_analytics_sections_limited_to_items_stock_trading(self):
+        may = self.employee_may
+        self.assertFalse(may(self.manager, "analytics", "view"))
+        self.assertTrue(may(self.manager, "analytics", "items"))
+        self.assertTrue(may(self.manager, "analytics", "stock"))
+        self.assertTrue(may(self.manager, "analytics", "tradings"))
+        self.assertFalse(may(self.manager, "analytics", "credits"))
+        self.assertFalse(may(self.manager, "analytics", "clients"))
+        self.assertFalse(may(self.manager, "analytics", "sales"))
+        self.assertFalse(may(self.manager, "analytics", "suppliers"))
+
+        from employees.workspace import sidebar_for_analytics
+
+        sidebar = sidebar_for_analytics(
+            EmployeeRole.STORE_MANAGER, active_view="items", profile=self.manager
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertNotIn("Overview", labels)
+        self.assertIn("Items", labels)
+        self.assertIn("Stock", labels)
+        self.assertIn("Tradings", labels)
+        self.assertNotIn("Credits", labels)
+        self.assertNotIn("Sales", labels)
+        self.assertNotIn("Revenue", labels)
+        self.assertNotIn("Clients", labels)
+        self.assertNotIn("Suppliers", labels)
+
+        self.client.login(username="830031", password=self.password)
+        response = self.client.get("/store-manager/analytics/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/store-manager/analytics/items/", response.url)
+        items = self.client.get("/store-manager/analytics/items/")
+        self.assertEqual(items.status_code, 200)
+
+    def test_default_permissions_are_store_only(self):
+        may = self.employee_may
+        self.assertTrue(may(self.manager, "item-management", "view"))
+        self.assertTrue(may(self.manager, "item-management", "register"))
+        self.assertTrue(may(self.manager, "item-management", "edit"))
+        self.assertFalse(may(self.manager, "shop-management", "view"))
+        self.assertFalse(may(self.manager, "shop-management", "edit"))
+        self.assertTrue(may(self.manager, "stock-management", "in"))
+        self.assertFalse(may(self.manager, "stock-management", "settings"))
+        self.assertTrue(may(self.manager, "my-shop", "workspace"))
+        self.assertTrue(may(self.manager, "my-shop", "shop_settings"))
+        self.assertFalse(may(self.manager, "settings", "home"))
+        self.assertFalse(may(self.manager, "whatsapp", "view"))
+        self.assertFalse(may(self.manager, "hr-management", "home"))
+
+    def test_company_modules_are_blocked(self):
+        self.client.login(username="830031", password=self.password)
+        shop_mgmt = self.client.get("/store-manager/shop-management/")
+        settings = self.client.get("/store-manager/")  # home ok
+        whatsapp = self.client.get("/store-manager/whatsapp/")
+        item_mgmt = self.client.get("/store-manager/item-management/")
+        self.assertEqual(shop_mgmt.status_code, 302)
+        self.assertEqual(settings.status_code, 200)
+        self.assertEqual(whatsapp.status_code, 302)
+        self.assertEqual(item_mgmt.status_code, 200)
+
+    def test_shop_manager_role_still_exists(self):
+        self.assertNotEqual(EmployeeRole.SHOP_MANAGER, EmployeeRole.STORE_MANAGER)
+        self.assertEqual(EmployeeRole.SHOP_MANAGER.label, "Shop Manager")
+        self.assertEqual(EmployeeRole.STORE_MANAGER.label, "Store Manager")

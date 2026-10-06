@@ -16,6 +16,7 @@ ROLE_HOME_URL_NAMES = {
     EmployeeRole.SUPER_ADMIN: "employees:role_super_admin",
     EmployeeRole.COMPANY_MANAGER: "employees:role_company_manager",
     EmployeeRole.SHOP_MANAGER: "employees:role_shop_manager",
+    EmployeeRole.STORE_MANAGER: "employees:role_store_manager",
     EmployeeRole.SHOP_CASHIER: "employees:role_shop_cashier",
     EmployeeRole.IT_SUPPORT: "employees:role_it_support",
 }
@@ -25,6 +26,7 @@ ROLE_URL_SEGMENTS = {
     EmployeeRole.SUPER_ADMIN: "super-admin",
     EmployeeRole.COMPANY_MANAGER: "company-manager",
     EmployeeRole.SHOP_MANAGER: "shop-manager",
+    EmployeeRole.STORE_MANAGER: "store-manager",
     EmployeeRole.SHOP_CASHIER: "shop-cashier",
     EmployeeRole.IT_SUPPORT: "it-support",
 }

@@ -214,6 +214,7 @@ urlpatterns = [
         name="role_company_manager",
     ),
     path("shop-manager/", views.role_shop_manager, name="role_shop_manager"),
+    path("store-manager/", views.role_store_manager, name="role_store_manager"),
     path("shop-cashier/", views.role_shop_cashier, name="role_shop_cashier"),
     path("it-support/", views.role_it_support, name="role_it_support"),
     path("it-support/marketing/", views.marketing_links, name="marketing_links"),

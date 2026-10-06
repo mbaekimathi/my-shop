@@ -191,6 +191,12 @@ def _render_analytics(request, profile, *, section_slug="overview"):
 
 def analytics_dashboard(request, profile, meta, module, page_sidebar=None):
     """Overview analytics page (/…/analytics/)."""
+    from .models import EmployeeRole
+    from .workspace import analytics_section_url
+
+    # Store Manager has no overview — open Items by default.
+    if getattr(profile, "role", None) == EmployeeRole.STORE_MANAGER:
+        return redirect(analytics_section_url(profile.role, "items"))
     return _render_analytics(request, profile, section_slug="overview")
 
 

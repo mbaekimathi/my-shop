@@ -20,6 +20,7 @@ class EmployeeRole(models.TextChoices):
     SUPER_ADMIN = "super_admin", "Super Admin"
     COMPANY_MANAGER = "company_manager", "Company Manager"
     SHOP_MANAGER = "shop_manager", "Shop Manager"
+    STORE_MANAGER = "store_manager", "Store Manager"
     SHOP_CASHIER = "shop_cashier", "Shop Cashier"
     IT_SUPPORT = "it_support", "IT Support"
 
@@ -37,6 +38,25 @@ SHOP_ASSIGNABLE_ROLES = frozenset(
 SHOP_ALLOCATION_ROLES = frozenset(
     {
         *SHOP_ASSIGNABLE_ROLES,
+        EmployeeRole.IT_SUPPORT,
+    }
+)
+
+# Roles with full stock workflow (in / out / transfer / serials / report).
+FULL_STOCK_WORKFLOW_ROLES = frozenset(
+    {
+        EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.STORE_MANAGER,
+        EmployeeRole.IT_SUPPORT,
+    }
+)
+
+# Roles that see every active shop (not limited by assigned_shops).
+COMPANY_WIDE_SHOP_ROLES = frozenset(
+    {
+        EmployeeRole.SUPER_ADMIN,
+        EmployeeRole.COMPANY_MANAGER,
+        EmployeeRole.STORE_MANAGER,
         EmployeeRole.IT_SUPPORT,
     }
 )

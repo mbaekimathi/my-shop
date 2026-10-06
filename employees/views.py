@@ -80,7 +80,7 @@ from .analytics_views import analytics_dashboard
 from communications.views import communications_dashboard
 from .countries import COUNTRY_DIAL_CODES
 from .hr_views import hr_management_page
-from .models import EmployeeProfile, EmployeeRole, EmployeeStatus, SHOP_ALLOCATION_ROLES
+from .models import EmployeeProfile, EmployeeRole, EmployeeStatus, FULL_STOCK_WORKFLOW_ROLES, SHOP_ALLOCATION_ROLES
 from .pagination import page_url, pagination_links, redirect_query_page
 from .services import (
     EMPLOYEE_ID_RE,
@@ -288,7 +288,7 @@ def stock_serial_detail_page(request, role_segment, item_id):
     if denied is not None:
         return denied
 
-    if profile.role not in (EmployeeRole.SHOP_MANAGER, EmployeeRole.IT_SUPPORT):
+    if profile.role not in FULL_STOCK_WORKFLOW_ROLES:
         return redirect_to_role_home(profile)
 
     meta = {
@@ -349,7 +349,7 @@ def _stock_serials_page_guard(request, role_segment):
     if denied is not None:
         return denied, None, None, None
 
-    if profile.role not in (EmployeeRole.SHOP_MANAGER, EmployeeRole.IT_SUPPORT):
+    if profile.role not in FULL_STOCK_WORKFLOW_ROLES:
         return redirect_to_role_home(profile), None, None, None
 
     meta = {
@@ -745,6 +745,11 @@ def role_company_manager(request):
 @role_required(EmployeeRole.SHOP_MANAGER)
 def role_shop_manager(request):
     return _render_role_page(request, EmployeeRole.SHOP_MANAGER)
+
+
+@role_required(EmployeeRole.STORE_MANAGER)
+def role_store_manager(request):
+    return _render_role_page(request, EmployeeRole.STORE_MANAGER)
 
 
 @role_required(EmployeeRole.SHOP_CASHIER)
