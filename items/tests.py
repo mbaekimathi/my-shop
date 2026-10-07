@@ -688,6 +688,44 @@ class ItemStockReportRowsTests(TestCase):
         }
         self.assertNotIn("ALL FILTER IDLE", filtered_names)
 
+    def test_all_event_filter_includes_stock_in_and_out(self):
+        from items.models import StockMovement, StockMovementLine, StockMovementType
+        from items.views import _build_movement_timeline
+
+        StockMovementLine.objects.create(
+            movement=StockMovement.objects.create(
+                movement_type=StockMovementType.IN,
+                shop=self.shop_a,
+                created_by=self.profile,
+            ),
+            item=self.item,
+            quantity=3,
+        )
+        StockMovementLine.objects.create(
+            movement=StockMovement.objects.create(
+                movement_type=StockMovementType.OUT,
+                shop=self.shop_a,
+                created_by=self.profile,
+            ),
+            item=self.item,
+            quantity=2,
+        )
+        events, units_in, units_out, *_ = _build_movement_timeline(
+            shop_ids=[self.shop_a.pk, self.shop_b.pk],
+            day_start=self.day_start,
+            day_end=self.day_end,
+            item_mode="all",
+            selected_categories=[],
+            selected_item_ids=[],
+            report_items=[self.item],
+            event_filter="all",
+        )
+        types = {event["event_type"] for event in events}
+        self.assertIn("in", types)
+        self.assertIn("out", types)
+        self.assertEqual(units_in, 3)
+        self.assertEqual(units_out, 2)
+
     def test_transfer_event_filter_matches_fulfilled_only(self):
         from items.views import MOVEMENT_EVENT_FILTER_TYPES, _filter_movement_events
 

@@ -2948,21 +2948,22 @@ def _build_movement_timeline(
         movement_filter &= Q(lines__item_id__in=selected_item_ids)
         line_qs = line_qs.filter(item_id__in=selected_item_ids)
 
-    if need_stock_movements and not filters_all:
-        type_q = Q()
-        if "in" in event_filters:
-            type_q |= Q(movement_type=StockMovementType.IN) & ~Q(
-                entry_source=StockEntrySource.CUSTOMER_RETURN
-            )
-        if "out" in event_filters:
-            type_q |= Q(movement_type=StockMovementType.OUT)
-        if "return" in event_filters:
-            type_q |= Q(
-                movement_type=StockMovementType.IN,
-                entry_source=StockEntrySource.CUSTOMER_RETURN,
-            )
-        if type_q:
-            movement_filter &= type_q
+    if need_stock_movements:
+        if not filters_all:
+            type_q = Q()
+            if "in" in event_filters:
+                type_q |= Q(movement_type=StockMovementType.IN) & ~Q(
+                    entry_source=StockEntrySource.CUSTOMER_RETURN
+                )
+            if "out" in event_filters:
+                type_q |= Q(movement_type=StockMovementType.OUT)
+            if "return" in event_filters:
+                type_q |= Q(
+                    movement_type=StockMovementType.IN,
+                    entry_source=StockEntrySource.CUSTOMER_RETURN,
+                )
+            if type_q:
+                movement_filter &= type_q
         # filters_all: keep in/out/request submitted rows without narrowing
 
         movements = (
