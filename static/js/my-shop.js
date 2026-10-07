@@ -586,9 +586,9 @@
                 ? `No new matches for “${query}”. Your selected items stay listed above.`
                 : `No matches for “${query}”.`;
           } else if (visibleCount) {
-            itemsHint.textContent = inStockCount
-              ? `Browse or search items at ${shopName || "this shop"}. Enter amounts in Send.`
-              : `${shopName || "This shop"} has no on-hand stock. Search the catalog, then send only items with stock.`;
+            itemsHint.textContent = includeEmpty
+              ? `Showing all items at ${shopName || "this shop"} (including out of stock). Search or scroll, then enter amounts to send.`
+              : `In-stock items at ${shopName || "this shop"}. Turn on Show out-of-stock to see the full catalog.`;
           } else {
             itemsHint.textContent =
               "Search an item name to load matches, then enter how many to send.";
