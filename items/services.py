@@ -2030,9 +2030,6 @@ def _parse_movement_lines(data, movement_type: str):
         item_id = str(item_id).strip()
         item_meta = item_meta_by_id.get(item_id) or {}
         tracks_serial = bool(item_meta.get("track"))
-        # Stock requests are quantity-only; serials are chosen when fulfilling later.
-        if movement_type == StockMovementType.REQUEST:
-            tracks_serial = False
         serials = _parse_serial_numbers(
             raw_serials[index] if index < len(raw_serials) else ""
         )
@@ -2832,7 +2829,11 @@ def apply_stock_movement(
                 line["shop_stock"] = shop_stock
 
                 serials = line.get("serial_numbers") or []
-                if item.track_serial_number and movement_type != StockMovementType.REQUEST:
+                if item.track_serial_number and movement_type in {
+                    StockMovementType.IN,
+                    StockMovementType.OUT,
+                    StockMovementType.REQUEST,
+                }:
                     if not serials:
                         errors.append(
                             f"“{item.name}” at {shop.name} requires serial numbers."
@@ -2868,7 +2869,10 @@ def apply_stock_movement(
                             if not row.is_available
                         }
 
-                    if movement_type == StockMovementType.OUT:
+                    if movement_type in {
+                        StockMovementType.OUT,
+                        StockMovementType.REQUEST,
+                    }:
                         available = {
                             serial.serial_number: serial
                             for serial in ItemSerial.objects.select_for_update().filter(
@@ -3201,11 +3205,13 @@ def respond_to_stock_request(
         serial_objects = {}
         serials = []
         if item.track_serial_number and sent_qty > 0:
-            serials = _normalize_serial_list(
-                serials_by_line.get(str(line.pk)) or line.serial_numbers or []
-            )
+            # Prefer serials chosen when the transfer was created; allow an
+            # explicit confirm-time override, then legacy auto-pick for older
+            # quantity-only transfers that have no serials stored yet.
+            posted = _normalize_serial_list(serials_by_line.get(str(line.pk)) or [])
+            stored = _normalize_serial_list(line.serial_numbers or [])
+            serials = posted or stored
             if not serials:
-                # Auto-pick available serials at the sending shop.
                 available_rows = list(
                     ItemSerial.objects.select_for_update()
                     .filter(item=item, shop=sender, is_available=True)

@@ -218,13 +218,67 @@
 
 {% include "shops/partials/stock_request_modals.html" %}
 {% include "shops/partials/stock_request_create_modal.html" %}
+
+<div
+  class="workspace-modal stock-serial-modal"
+  data-stock-create-serial-modal
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-stock-create-serial-close></div>
+  <div
+    class="workspace-modal-dialog stock-serial-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stock-create-serial-modal-title"
+  >
+    <header class="workspace-modal-head">
+      <div>
+        <p class="stock-serial-modal-kicker" data-stock-create-serial-shop></p>
+        <h2 id="stock-create-serial-modal-title" data-stock-create-serial-title>Serial numbers</h2>
+      </div>
+      <button type="button" class="workspace-modal-close" data-stock-create-serial-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+    <div class="stock-serial-modal-body" data-serial-scan-continuous>
+      <p class="stock-serial-qty-live">
+        Qty <span data-stock-create-serial-count>0</span>
+      </p>
+      <div class="stock-serial-modal-entry-wrap" data-serial-search-root>
+        <div class="stock-serial-row">
+          <div class="stock-serial-input-wrap">
+            <input
+              type="text"
+              placeholder="Search serial to transfer"
+              autocomplete="off"
+              spellcheck="false"
+              data-stock-create-serial-entry
+              data-stock-serial-input
+              data-serial-search
+            >
+          </div>
+        </div>
+        <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
+      </div>
+      <ul class="stock-serial-modal-scanned" data-stock-create-serial-scanned aria-live="polite"></ul>
+      <small class="stock-serial-hint">
+        Scan or search serials available at this shop — press Enter after each. Click Done when finished.
+      </small>
+    </div>
+    <div class="workspace-modal-actions">
+      <button type="button" class="btn btn--ghost" data-stock-create-serial-close>Cancel</button>
+      <button type="button" class="btn btn--primary" data-stock-create-serial-done>Done</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=22"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=83"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=84"></script>
 <script
   defer
   src="{% static 'js/serial-scan.js' %}?v=8"

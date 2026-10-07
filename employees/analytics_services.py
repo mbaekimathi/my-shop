@@ -3975,7 +3975,7 @@ def _day_balance_data(filters) -> dict:
         entry["is_open"] = True
         entry["live_cash"] = expected_cash
         entry["live_mpesa"] = expected_mpesa
-        entry["live_total"] = expected_cash + expected_mpesa + opening_credit
+        entry["live_total"] = expected_cash + expected_mpesa
 
         live_by_shop[session.shop_id] = {
             "is_open": True,
@@ -3992,7 +3992,7 @@ def _day_balance_data(filters) -> dict:
             "suppliers_paid": suppliers_paid,
             "live_cash": expected_cash,
             "live_mpesa": expected_mpesa,
-            "live_total": expected_cash + expected_mpesa + opening_credit,
+            "live_total": expected_cash + expected_mpesa,
             "closing_cash": None,
             "closing_mpesa": None,
         }
@@ -4054,11 +4054,10 @@ def _day_balance_data(filters) -> dict:
             continue
         closing_cash = Decimal(prior.closing_cash or 0)
         closing_mpesa = Decimal(prior.closing_mpesa or 0)
-        closing_credit = Decimal(prior.closing_credit or 0)
         entry = by_shop[shop_id]
         entry["live_cash"] = closing_cash
         entry["live_mpesa"] = closing_mpesa
-        entry["live_total"] = closing_cash + closing_mpesa + closing_credit
+        entry["live_total"] = closing_cash + closing_mpesa
         live_by_shop[shop_id] = {
             "is_open": False,
             "opened_at": None,
@@ -4072,7 +4071,7 @@ def _day_balance_data(filters) -> dict:
             "suppliers_paid": _zero(),
             "live_cash": closing_cash,
             "live_mpesa": closing_mpesa,
-            "live_total": closing_cash + closing_mpesa + closing_credit,
+            "live_total": closing_cash + closing_mpesa,
             "closing_cash": closing_cash,
             "closing_mpesa": closing_mpesa,
             "closed_at": prior.closed_at,

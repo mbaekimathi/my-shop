@@ -781,7 +781,8 @@
   };
 
   const scanTree = (root = document) => {
-    root.querySelectorAll?.(INPUT_SELECTOR)?.forEach(enhanceInput);
+    if (!root || typeof root.querySelectorAll !== "function") return;
+    root.querySelectorAll(INPUT_SELECTOR)?.forEach(enhanceInput);
     if (root instanceof HTMLInputElement && root.matches(INPUT_SELECTOR)) {
       enhanceInput(root);
     }

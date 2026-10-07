@@ -299,10 +299,38 @@
     const noResults = createModal.querySelector("[data-stock-create-no-results]");
     const fromStockUrl =
       createModal.getAttribute("data-stock-create-from-stock-url") || "";
+    const createSerialSearchUrl =
+      createModal.getAttribute("data-serial-search-url") || "";
+    const createSupplyShopId =
+      createModal.getAttribute("data-supply-shop-id") || "";
+    const createSerialModal = document.querySelector(
+      "[data-stock-create-serial-modal]"
+    );
+    const createSerialEntry = createSerialModal?.querySelector(
+      "[data-stock-create-serial-entry]"
+    );
+    const createSerialScanned = createSerialModal?.querySelector(
+      "[data-stock-create-serial-scanned]"
+    );
+    const createSerialCount = createSerialModal?.querySelector(
+      "[data-stock-create-serial-count]"
+    );
+    const createSerialTitle = createSerialModal?.querySelector(
+      "[data-stock-create-serial-title]"
+    );
+    const createSerialShop = createSerialModal?.querySelector(
+      "[data-stock-create-serial-shop]"
+    );
     let fromStockSeq = 0;
     let searchTimer = null;
     let rows = [];
     const selectedItems = new Map();
+    let activeCreateSerialRow = null;
+    let createSerialSearchTimer = 0;
+    let createSerialSearchSeq = 0;
+    let createSerialCommitBusy = false;
+    let lastCreateSerialCommit = "";
+    let lastCreateSerialCommitAt = 0;
 
     const escapeHtml = (value) =>
       String(value || "")
@@ -311,6 +339,29 @@
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
 
+    const normalizeCreateSerial = (value) =>
+      String(value || "").trim().toUpperCase();
+
+    const rowTracksSerial = (row) =>
+      row?.getAttribute("data-track-serial") === "1";
+
+    const rowSerials = (row) => {
+      const raw = row?.querySelector("[data-stock-create-serials]")?.value || "";
+      return raw
+        .split(/[\n,]+/)
+        .map((s) => normalizeCreateSerial(s))
+        .filter(Boolean);
+    };
+
+    const applyRowSerials = (row, serials) => {
+      const unique = [...new Set(serials.map(normalizeCreateSerial).filter(Boolean))];
+      const serialHidden = row.querySelector("[data-stock-create-serials]");
+      const qty = row.querySelector("[data-stock-create-qty]");
+      if (serialHidden) serialHidden.value = unique.join("\n");
+      if (qty) qty.value = unique.length ? String(unique.length) : "";
+      return unique;
+    };
+
     const captureSelectedQtys = () => {
       rows.forEach((row) => {
         const id = row.getAttribute("data-item-id") || "";
@@ -318,10 +369,18 @@
           row.querySelector(".stock-create-item-name")?.textContent?.trim() || "";
         const qty = row.querySelector("[data-stock-create-qty]");
         const avail = Number(row.getAttribute("data-avail") || 0) || 0;
+        const trackSerial = rowTracksSerial(row);
         if (!id || !qty) return;
         const value = String(qty.value || "").trim();
+        const serials = trackSerial ? rowSerials(row) : [];
         if (Number(value) > 0) {
-          selectedItems.set(id, { name, avail, qty: value });
+          selectedItems.set(id, {
+            name,
+            avail,
+            qty: value,
+            trackSerial,
+            serials,
+          });
         } else {
           selectedItems.delete(id);
         }
@@ -331,38 +390,320 @@
     const syncRowEnabled = (row) => {
       const qty = row.querySelector("[data-stock-create-qty]");
       const idInput = row.querySelector("[data-stock-create-id]");
+      const serialHidden = row.querySelector("[data-stock-create-serials]");
       const avail = Number(row.getAttribute("data-avail") || 0) || 0;
       const hasQty = Number(qty?.value || 0) > 0;
       const canSend = avail > 0;
       if (qty) {
         qty.disabled = !canSend;
-        if (!canSend) qty.value = "";
+        if (!canSend) {
+          qty.value = "";
+          if (serialHidden) serialHidden.value = "";
+        }
       }
       if (idInput) idInput.disabled = !(canSend && hasQty);
+      if (serialHidden) serialHidden.disabled = !(canSend && hasQty);
       row.classList.toggle("is-active", canSend && hasQty);
       row.classList.toggle("is-out", !canSend);
+    };
+
+    const refreshCreateIcons = () => {
+      if (window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    const modalCreateSerials = () =>
+      [
+        ...(createSerialScanned?.querySelectorAll(
+          "[data-stock-create-serial-scanned-value]"
+        ) || []),
+      ]
+        .map((el) => normalizeCreateSerial(el.textContent))
+        .filter(Boolean);
+
+    const syncCreateSerialModalCount = () => {
+      const serials = modalCreateSerials();
+      if (createSerialCount) createSerialCount.textContent = String(serials.length);
+      if (createSerialScanned) createSerialScanned.hidden = serials.length === 0;
+    };
+
+    const hideCreateSerialSuggest = () => {
+      const suggest = createSerialModal?.querySelector("[data-serial-suggest]");
+      if (!suggest) return;
+      suggest.hidden = true;
+      suggest.innerHTML = "";
+    };
+
+    const createModalScannedItem = (serial) => {
+      if (!createSerialScanned || !serial) return null;
+      const li = document.createElement("li");
+      li.className = "stock-serial-modal-scanned-item";
+      li.dataset.serialValue = serial;
+      const value = document.createElement("span");
+      value.className = "stock-serial-modal-scanned-value";
+      value.setAttribute("data-stock-create-serial-scanned-value", "");
+      value.textContent = serial;
+      li.appendChild(value);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "stock-serial-modal-scanned-remove";
+      remove.setAttribute("data-stock-create-serial-remove", "");
+      remove.setAttribute("aria-label", `Remove ${serial}`);
+      remove.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
+      li.appendChild(remove);
+      createSerialScanned.prepend(li);
+      refreshCreateIcons();
+      syncCreateSerialModalCount();
+      return li;
+    };
+
+    const renderCreateSerialSuggest = (results) => {
+      const suggest = createSerialModal?.querySelector("[data-serial-suggest]");
+      if (!suggest) return;
+      suggest.innerHTML = "";
+      if (!results.length) {
+        const empty = document.createElement("button");
+        empty.type = "button";
+        empty.className = "stock-supplier-suggest-option";
+        empty.disabled = true;
+        empty.innerHTML =
+          "<strong>No matching serials</strong><small>Available at this shop only</small>";
+        suggest.appendChild(empty);
+        suggest.hidden = false;
+        return;
+      }
+      results.forEach((serial) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "stock-supplier-suggest-option";
+        btn.innerHTML = "<strong></strong>";
+        btn.querySelector("strong").textContent = serial;
+        btn.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          commitCreateSerialEntry({ serial });
+        });
+        suggest.appendChild(btn);
+      });
+      suggest.hidden = false;
+    };
+
+    const runCreateSerialSearch = async () => {
+      if (!createSerialSearchUrl || !createSupplyShopId || !activeCreateSerialRow) {
+        return;
+      }
+      const itemId = activeCreateSerialRow.getAttribute("data-item-id") || "";
+      if (!itemId || !createSerialEntry) return;
+      const query = normalizeCreateSerial(createSerialEntry.value);
+      const seq = ++createSerialSearchSeq;
+      const params = new URLSearchParams({
+        item_id: itemId,
+        shop_id: createSupplyShopId,
+        q: query,
+      });
+      modalCreateSerials().forEach((serial) => params.append("exclude", serial));
+      try {
+        const response = await fetch(`${createSerialSearchUrl}?${params.toString()}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (seq !== createSerialSearchSeq) return;
+        renderCreateSerialSuggest(data.results || []);
+      } catch (_error) {
+        /* ignore */
+      }
+    };
+
+    const commitCreateSerialEntry = async ({ serial: override } = {}) => {
+      if (createSerialCommitBusy || !createSerialEntry || !activeCreateSerialRow) {
+        return false;
+      }
+      let serial = normalizeCreateSerial(override || createSerialEntry.value);
+      if (!serial) return false;
+      const now = Date.now();
+      if (
+        serial === lastCreateSerialCommit &&
+        now - lastCreateSerialCommitAt < 1000
+      ) {
+        createSerialEntry.value = "";
+        return false;
+      }
+      if (modalCreateSerials().includes(serial)) {
+        createSerialEntry.value = "";
+        createSerialEntry.classList.add("is-duplicate");
+        window.setTimeout(
+          () => createSerialEntry.classList.remove("is-duplicate"),
+          700
+        );
+        createSerialEntry.focus?.();
+        return false;
+      }
+      const avail = Number(activeCreateSerialRow.getAttribute("data-avail") || 0) || 0;
+      if (avail > 0 && modalCreateSerials().length >= avail) {
+        createSerialEntry.value = "";
+        createSerialEntry.focus?.();
+        return false;
+      }
+      const root = createSerialEntry.closest("[data-serial-search-root]");
+      const firstOption = root?.querySelector(
+        ".stock-supplier-suggest-option:not([disabled])"
+      );
+      if (firstOption) {
+        const picked = normalizeCreateSerial(firstOption.textContent);
+        if (picked) serial = picked;
+      }
+      createSerialEntry.value = "";
+      hideCreateSerialSuggest();
+      createSerialCommitBusy = true;
+      let ok = false;
+      try {
+        if (!createSerialSearchUrl) {
+          createModalScannedItem(serial);
+          ok = true;
+        } else {
+          const params = new URLSearchParams({
+            item_id: activeCreateSerialRow.getAttribute("data-item-id") || "",
+            shop_id: createSupplyShopId,
+            q: serial,
+          });
+          modalCreateSerials().forEach((s) => params.append("exclude", s));
+          const response = await fetch(
+            `${createSerialSearchUrl}?${params.toString()}`,
+            {
+              headers: { Accept: "application/json" },
+              credentials: "same-origin",
+            }
+          );
+          const data = await response.json().catch(() => ({}));
+          const results = Array.isArray(data.results) ? data.results : [];
+          const exact = results.find(
+            (row) => normalizeCreateSerial(row) === serial
+          );
+          const picked = exact || (results.length === 1 ? results[0] : "");
+          if (!picked) {
+            if (results.length > 1) {
+              createSerialEntry.value = serial;
+              renderCreateSerialSuggest(results);
+            }
+            return false;
+          }
+          createModalScannedItem(normalizeCreateSerial(picked));
+          ok = true;
+        }
+        if (ok) {
+          lastCreateSerialCommit = serial;
+          lastCreateSerialCommitAt = Date.now();
+        }
+        return ok;
+      } finally {
+        createSerialCommitBusy = false;
+        createSerialEntry.value = "";
+        createSerialEntry.focus?.();
+        createSerialEntry.dispatchEvent(
+          new CustomEvent("myshop:serial-commit-settled", {
+            bubbles: true,
+            detail: { ok, serial },
+          })
+        );
+      }
+    };
+
+    const openCreateSerialModal = (row) => {
+      if (!createSerialModal || !row || !rowTracksSerial(row)) return;
+      const avail = Number(row.getAttribute("data-avail") || 0) || 0;
+      if (avail <= 0) return;
+      activeCreateSerialRow = row;
+      const itemName =
+        row.querySelector(".stock-create-item-name")?.textContent?.trim() ||
+        "Item";
+      if (createSerialTitle) createSerialTitle.textContent = itemName;
+      if (createSerialShop) {
+        createSerialShop.textContent = "Select serials to transfer";
+      }
+      if (createSerialScanned) createSerialScanned.innerHTML = "";
+      if (createSerialEntry) createSerialEntry.value = "";
+      hideCreateSerialSuggest();
+      lastCreateSerialCommit = "";
+      lastCreateSerialCommitAt = 0;
+      rowSerials(row).forEach((serial) => createModalScannedItem(serial));
+      syncCreateSerialModalCount();
+      window.MyShopSerialScan?.enhance?.(createSerialModal);
+      createSerialModal.hidden = false;
+      createSerialModal.setAttribute("aria-hidden", "false");
+      document.body.classList.add("workspace-modal-open");
+      createSerialEntry?.focus({ preventScroll: true });
+    };
+
+    const closeCreateSerialModal = ({ save = false } = {}) => {
+      const row = activeCreateSerialRow;
+      if (save && row) {
+        const pending = String(createSerialEntry?.value || "").trim();
+        if (pending) {
+          commitCreateSerialEntry().then((ok) => {
+            if (ok) closeCreateSerialModal({ save: true });
+          });
+          return;
+        }
+        applyRowSerials(row, modalCreateSerials());
+        syncRowEnabled(row);
+        syncSelectedCount();
+        captureSelectedQtys();
+      }
+      activeCreateSerialRow = null;
+      if (createSerialModal) {
+        createSerialModal.hidden = true;
+        createSerialModal.setAttribute("aria-hidden", "true");
+      }
+      // Keep body lock while the transfer create modal is still open.
+      if (createModal?.hidden !== false) {
+        document.body.classList.remove("workspace-modal-open");
+      } else {
+        document.body.classList.add("workspace-modal-open");
+      }
+      if (row) {
+        row.querySelector("[data-stock-create-qty]")?.focus?.();
+      }
     };
 
     const bindRowQty = (row) => {
       const qty = row.querySelector("[data-stock-create-qty]");
       if (!qty) return;
+      const tracksSerial = rowTracksSerial(row);
       const focusQty = () => {
-        if (!qty.disabled) qty.focus();
+        if (qty.disabled) return;
+        if (tracksSerial) openCreateSerialModal(row);
+        else qty.focus();
       };
       row.addEventListener("click", (event) => {
         if (event.target === qty) return;
+        if (event.target.closest?.("[data-stock-create-serial-open]")) return;
         focusQty();
       });
-      qty.addEventListener("input", () => {
-        syncRowEnabled(row);
-        syncSelectedCount();
-        captureSelectedQtys();
-      });
-      qty.addEventListener("change", () => {
-        syncRowEnabled(row);
-        syncSelectedCount();
-        captureSelectedQtys();
-      });
+      if (tracksSerial) {
+        const openSerial = (event) => {
+          event.preventDefault();
+          openCreateSerialModal(row);
+        };
+        qty.addEventListener("click", openSerial);
+        qty.addEventListener("focus", openSerial);
+        qty.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openCreateSerialModal(row);
+          }
+        });
+      } else {
+        qty.addEventListener("input", () => {
+          syncRowEnabled(row);
+          syncSelectedCount();
+          captureSelectedQtys();
+        });
+        qty.addEventListener("change", () => {
+          syncRowEnabled(row);
+          syncSelectedCount();
+          captureSelectedQtys();
+        });
+      }
       syncRowEnabled(row);
     };
 
@@ -405,11 +746,20 @@
         return;
       }
       const qty = Number(value) || 0;
+      const tracksSerial = rowTracksSerial(row);
       row.setAttribute("data-avail", String(qty));
       el.textContent = String(qty);
       if (qty <= 0) {
         el.classList.add("is-empty");
         if (text) text.textContent = "Out of stock here — cannot send";
+      } else if (tracksSerial) {
+        el.classList.add(qty <= 3 ? "is-low" : "is-ok");
+        if (text) {
+          text.textContent =
+            qty <= 3
+              ? `Only ${qty} left — select serials to send`
+              : `${qty} available — select serials to send`;
+        }
       } else if (qty <= 3) {
         el.classList.add("is-low");
         if (text) text.textContent = `Only ${qty} left — enter amount to send`;
@@ -434,6 +784,8 @@
             name: saved.name,
             avail: Number(map[id] ?? saved.avail ?? 0) || 0,
             qty: saved.qty,
+            trackSerial: Boolean(saved.trackSerial),
+            serials: Array.isArray(saved.serials) ? saved.serials : [],
             pinned: true,
           });
           seen.add(String(id));
@@ -447,11 +799,16 @@
         seen.add(id);
         const avail = Number(map[id] ?? map[String(id)] ?? 0) || 0;
         const saved = selectedItems.get(id);
+        const trackSerial = Boolean(
+          saved?.trackSerial ?? item?.track_serial ?? item?.track_serial_number
+        );
         merged.push({
           id,
           name,
           avail,
           qty: saved?.qty || "",
+          trackSerial,
+          serials: Array.isArray(saved?.serials) ? saved.serials : [],
           pinned: false,
         });
       });
@@ -461,37 +818,67 @@
         const row = document.createElement("label");
         row.className = "stock-create-item-row";
         if (item.pinned) row.classList.add("is-pinned");
+        if (item.trackSerial) row.classList.add("is-serial");
         row.setAttribute("data-stock-create-row", "");
         row.setAttribute("data-item-id", item.id);
         row.setAttribute("data-item-name", item.name.toLowerCase());
         row.setAttribute("data-avail", String(item.avail));
+        row.setAttribute("data-track-serial", item.trackSerial ? "1" : "0");
+        const serialValue = (item.serials || []).join("\n");
+        const qtyValue = item.trackSerial
+          ? item.serials?.length
+            ? String(item.serials.length)
+            : ""
+          : item.qty || "";
+        const qtyControl = item.trackSerial
+          ? `<input
+            type="text"
+            class="stock-create-qty stock-create-qty--serial"
+            name="quantity"
+            value="${escapeHtml(qtyValue)}"
+            placeholder="0"
+            inputmode="numeric"
+            readonly
+            data-stock-create-qty
+            data-stock-create-serial-open
+            aria-label="Select serials to send for ${escapeHtml(item.name)}"
+            title="Click to select serial numbers"
+          >`
+          : `<input
+            type="number"
+            class="stock-create-qty"
+            name="quantity"
+            min="0.001"
+            step="any"
+            inputmode="decimal"
+            placeholder="0"
+            value="${escapeHtml(qtyValue)}"
+            data-stock-create-qty
+            aria-label="Quantity to send for ${escapeHtml(item.name)}"
+          >`;
         row.innerHTML = `
           <span class="stock-create-item-main">
             <span class="stock-create-item-name">${escapeHtml(item.name)}</span>
+            ${
+              item.trackSerial
+                ? '<span class="stock-create-serial-tag">Serial</span>'
+                : ""
+            }
             <span class="stock-create-item-avail-text" data-stock-create-avail-text></span>
             <input type="hidden" name="item_id" value="${escapeHtml(item.id)}" disabled data-stock-create-id>
+            <input type="hidden" name="serial_numbers" value="${escapeHtml(serialValue)}" disabled data-stock-create-serials>
           </span>
           <span
             class="stock-create-item-stock"
             data-stock-create-avail
             title="On-hand at this shop"
           >—</span>
-          <input
-            type="number"
-            name="quantity"
-            min="0.001"
-            step="any"
-            inputmode="decimal"
-            placeholder="0"
-            value="${escapeHtml(item.qty || "")}"
-            data-stock-create-qty
-            aria-label="Quantity to send for ${escapeHtml(item.name)}"
-          >
+          ${qtyControl}
         `;
         frag.appendChild(row);
         setAvailDisplay(row, item.avail);
         const qty = row.querySelector("[data-stock-create-qty]");
-        if (qty) {
+        if (qty && !item.trackSerial) {
           if (item.avail > 0) qty.setAttribute("max", String(item.avail));
           else qty.removeAttribute("max");
         }
@@ -512,6 +899,58 @@
       });
       syncSelectedCount();
     };
+
+    createSerialModal?.addEventListener("click", (event) => {
+      if (event.target.closest("[data-stock-create-serial-close]")) {
+        event.preventDefault();
+        closeCreateSerialModal({ save: false });
+        return;
+      }
+      if (event.target.closest("[data-stock-create-serial-done]")) {
+        event.preventDefault();
+        closeCreateSerialModal({ save: true });
+        return;
+      }
+      const remove = event.target.closest("[data-stock-create-serial-remove]");
+      if (remove) {
+        event.preventDefault();
+        remove.closest("li")?.remove();
+        syncCreateSerialModalCount();
+      }
+    });
+
+    createSerialEntry?.addEventListener("input", (event) => {
+      const raw = String(event.target.value || "");
+      if (/[\r\n]/.test(raw)) {
+        event.target.value = raw.replace(/[\r\n]+/g, "").trim().toUpperCase();
+        commitCreateSerialEntry();
+        return;
+      }
+      event.target.value = raw.toUpperCase();
+      event.target.classList.remove("is-duplicate");
+      window.clearTimeout(createSerialSearchTimer);
+      createSerialSearchTimer = window.setTimeout(runCreateSerialSearch, 220);
+    });
+
+    createSerialEntry?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitCreateSerialEntry();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        closeCreateSerialModal({ save: false });
+      }
+    });
+
+    createSerialModal?.addEventListener("myshop:serial-applied", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches("[data-stock-create-serial-entry]")) return;
+      const serial = normalizeCreateSerial(
+        event.detail?.serial || target.value || ""
+      );
+      commitCreateSerialEntry(serial ? { serial } : {});
+    });
 
     const loadItems = async ({ focusSearch = false } = {}) => {
       if (!fromStockUrl) {
@@ -581,17 +1020,17 @@
         if (itemsHint) {
           if (query) {
             itemsHint.textContent = items.length
-              ? `Matches for “${query}”. Enter how many to send in the Send column.`
+              ? `Matches for “${query}”. Enter qty to send — serial items open a picker.`
               : selectedItems.size
                 ? `No new matches for “${query}”. Your selected items stay listed above.`
                 : `No matches for “${query}”.`;
           } else if (visibleCount) {
             itemsHint.textContent = includeEmpty
-              ? `Showing all items at ${shopName || "this shop"} (including out of stock). Search or scroll, then enter amounts to send.`
-              : `In-stock items at ${shopName || "this shop"}. Turn on Show out-of-stock to see the full catalog.`;
+              ? `Showing all items at ${shopName || "this shop"} (including out of stock). Enter qty, or select serials for serial-tracked items.`
+              : `In-stock items at ${shopName || "this shop"}. Serial items require selecting serials; qty follows your selection.`;
           } else {
             itemsHint.textContent =
-              "Search an item name to load matches, then enter how many to send.";
+              "Search an item name to load matches, then enter qty or select serials to send.";
           }
         }
         setEmptyStates({
@@ -677,14 +1116,29 @@
       rows.forEach((row) => {
         const qty = row.querySelector("[data-stock-create-qty]");
         const idInput = row.querySelector("[data-stock-create-id]");
+        const serialHidden = row.querySelector("[data-stock-create-serials]");
         const hasQty = Number(qty?.value || 0) > 0;
         if (qty) qty.disabled = !hasQty;
         if (idInput) idInput.disabled = !hasQty;
+        if (serialHidden) serialHidden.disabled = !hasQty;
       });
       const activeRows = rows.filter((row) => {
         const qty = row.querySelector("[data-stock-create-qty]");
         return Number(qty?.value || 0) > 0 && !qty.disabled;
       });
+      for (const row of activeRows) {
+        if (!rowTracksSerial(row)) continue;
+        const serials = rowSerials(row);
+        const qty = Number(row.querySelector("[data-stock-create-qty]")?.value || 0);
+        if (!serials.length || serials.length !== qty) {
+          rows.forEach((r) => syncRowEnabled(r));
+          window.alert(
+            "Select serial numbers for serial-tracked items. Quantity follows the serials you pick."
+          );
+          openCreateSerialModal(row);
+          return;
+        }
+      }
       if (!fromShop?.value) {
         rows.forEach((row) => syncRowEnabled(row));
         window.alert("Choose which shop should receive the stock.");
@@ -693,7 +1147,9 @@
       }
       if (!activeRows.length) {
         rows.forEach((row) => syncRowEnabled(row));
-        window.alert("Search for an item and enter how many to send.");
+        window.alert(
+          "Search for an item and enter qty to send (or select serials for serial items)."
+        );
         searchInput?.focus();
         return;
       }

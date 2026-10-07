@@ -1666,7 +1666,7 @@
         return false;
       }
 
-      if (mode === "out") {
+      if (mode === "out" || mode === "request") {
         const root = serialModalEntry.closest("[data-serial-search-root]");
         const firstOption = root?.querySelector(
           ".stock-supplier-suggest button:not([disabled])"
@@ -1727,6 +1727,7 @@
     };
 
     const openSerialModal = (cell) => {
+      if (!serialModal) return;
       activeSerialCell = cell;
       const itemName = cell.dataset.itemName || "Item";
       const shopName = cell.dataset.shopName || "Shop";
@@ -1785,7 +1786,12 @@
     };
 
     const runSerialSearch = async (input) => {
-      if (mode !== "out" || !serialSearchUrl || !activeSerialCell) return;
+      if (
+        (mode !== "out" && mode !== "request") ||
+        !serialSearchUrl ||
+        !activeSerialCell
+      )
+        return;
       const itemId = activeSerialCell.dataset.itemId || "";
       const shopId = activeSerialCell.dataset.shopId || "";
       if (!itemId || !shopId) return;
@@ -1920,14 +1926,90 @@
       promoteRowAfterLeave(fromRow);
     });
 
-    const openSerialFromEvent = (event) => {
+    const serialCellFromEvent = (event) => {
       const openEl = event.target.closest?.("[data-stock-serial-open]");
-      if (!openEl) return false;
+      if (openEl) {
+        const cell = openEl.closest("[data-stock-shop-cell]");
+        if (cell && !cell.querySelector("[data-stock-qty]")?.disabled) return cell;
+      }
+      const qty = event.target.closest?.("[data-stock-qty]");
+      const cell = qty?.closest?.("[data-stock-shop-cell]");
+      if (
+        cell &&
+        cell.getAttribute("data-track-serial") === "1" &&
+        !qty.disabled
+      ) {
+        return cell;
+      }
+      return null;
+    };
+
+    const ensureSerialQtyControl = (cell) => {
+      if (!cell || cell.getAttribute("data-track-serial") !== "1") return;
+      const qty = cell.querySelector("[data-stock-qty]");
+      if (!qty) return;
+      if (!qty.hasAttribute("data-stock-serial-open")) {
+        qty.setAttribute("data-stock-serial-open", "");
+      }
+      if (!qty.hasAttribute("data-stock-serial-count")) {
+        qty.setAttribute("data-stock-serial-count", "");
+      }
+      qty.classList.add("stock-list-input--serial");
+      qty.readOnly = true;
+      if (qty.type === "number") {
+        // Convert leftover number inputs so qty can only come from serial pick.
+        const next = document.createElement("input");
+        next.type = "text";
+        next.className = qty.className;
+        next.name = qty.name || "quantity";
+        next.value = qty.value || "";
+        next.placeholder = qty.placeholder || "0";
+        next.inputMode = "numeric";
+        next.readOnly = true;
+        next.disabled = qty.disabled;
+        [...qty.attributes].forEach((attr) => {
+          if (attr.name === "type" || attr.name === "min" || attr.name === "step") {
+            return;
+          }
+          if (!next.hasAttribute(attr.name)) {
+            next.setAttribute(attr.name, attr.value);
+          }
+        });
+        next.setAttribute("data-stock-qty", "");
+        next.setAttribute("data-stock-serial-open", "");
+        next.setAttribute("data-stock-serial-count", "");
+        next.classList.add("stock-list-input--serial");
+        next.title = "Click to enter serial numbers";
+        qty.replaceWith(next);
+      } else {
+        qty.title = qty.title || "Click to enter serial numbers";
+      }
+    };
+
+    const openSerialFromEvent = (event) => {
+      const cell = serialCellFromEvent(event);
+      if (!cell) return false;
       event.preventDefault();
-      const cell = openEl.closest("[data-stock-shop-cell]");
-      if (cell) openSerialModal(cell);
+      ensureSerialQtyControl(cell);
+      openSerialModal(cell);
       return true;
     };
+
+    const enhanceSerialCells = () => {
+      cells().forEach((cell) => ensureSerialQtyControl(cell));
+    };
+    enhanceSerialCells();
+    document.addEventListener("stock-catalog:rendered", enhanceSerialCells);
+    panel.addEventListener("stock-catalog:load", enhanceSerialCells);
+    const catalogRoot = panel.querySelector("[data-stock-catalog-root]");
+    if (catalogRoot && typeof MutationObserver !== "undefined") {
+      let enhanceTimer = 0;
+      const catalogObserver = new MutationObserver(() => {
+        window.clearTimeout(enhanceTimer);
+        enhanceTimer = window.setTimeout(enhanceSerialCells, 30);
+      });
+      catalogObserver.observe(catalogRoot, { childList: true, subtree: true });
+    }
 
     panel.addEventListener("click", (event) => {
       openSerialFromEvent(event);
@@ -1936,7 +2018,8 @@
       openSerialFromEvent(event);
     });
     panel.addEventListener("keydown", (event) => {
-      if (!event.target.matches?.("[data-stock-serial-open]")) return;
+      const cell = serialCellFromEvent(event);
+      if (!cell) return;
       if (event.key === "Enter" || event.key === " ") {
         openSerialFromEvent(event);
       } else if (event.key.length === 1 || event.key === "Backspace") {
@@ -1987,7 +2070,10 @@
       }
       event.target.value = raw.toUpperCase();
       event.target.classList.remove("is-duplicate");
-      if (mode === "out" && event.target.matches("[data-serial-search]")) {
+      if (
+        (mode === "out" || mode === "request") &&
+        event.target.matches("[data-serial-search]")
+      ) {
         window.clearTimeout(serialSearchTimer);
         serialSearchTimer = window.setTimeout(
           () => runSerialSearch(event.target),
@@ -3180,23 +3266,31 @@
 
     const wrap = document.createElement("div");
     wrap.className = "stock-serial-input-wrap";
-    if (mode === "out") wrap.setAttribute("data-serial-search-root", "");
+    if (mode === "out" || mode === "request") {
+      wrap.setAttribute("data-serial-search-root", "");
+    }
     serialRow.appendChild(wrap);
 
     const input = document.createElement("input");
     input.type = "text";
     input.placeholder =
-      mode === "out" ? "Search serial to stock out" : "Enter serial number";
+      mode === "out"
+        ? "Search serial to stock out"
+        : mode === "request"
+          ? "Search serial to transfer"
+          : "Enter serial number";
     input.autocomplete = "off";
     input.spellcheck = false;
     input.setAttribute("data-stock-serial-input", "");
     input.setAttribute("data-stock-field", "");
-    if (mode === "out") input.setAttribute("data-serial-search", "");
+    if (mode === "out" || mode === "request") {
+      input.setAttribute("data-serial-search", "");
+    }
     input.value = serial;
     input.disabled = !enabled;
     wrap.appendChild(input);
 
-    if (mode === "out") {
+    if (mode === "out" || mode === "request") {
       const suggest = document.createElement("div");
       suggest.className = "stock-supplier-suggest";
       suggest.setAttribute("data-serial-suggest", "");
@@ -4918,7 +5012,10 @@
         }
       }
       if (target.matches("[data-supplier-search]")) queueSupplierSearch(target);
-      if (mode === "out" && target.matches("[data-serial-search], [data-stock-serial-entry]")) {
+      if (
+        (mode === "out" || mode === "request") &&
+        target.matches("[data-serial-search], [data-stock-serial-entry]")
+      ) {
         const start = target.selectionStart;
         const end = target.selectionEnd;
         target.value = target.value.toUpperCase();

@@ -78,6 +78,7 @@ from .services import (
     complete_shop_checkout,
     create_shop,
     day_session_balance_summary,
+    till_summary_payload,
     delete_shop,
     find_client_by_phone,
     format_kenya_phone,
@@ -1843,18 +1844,26 @@ def my_shop_stock_request_from_stock(request, shop_id):
         items_qs = items_qs.filter(
             Q(name__icontains=query) | Q(category__icontains=query)
         )
-        items = list(items_qs.order_by("name").values("id", "name")[:100])
+        items = list(
+            items_qs.order_by("name").values("id", "name", "track_serial_number")[:100]
+        )
         include_empty = True
     elif include_empty or not in_stock_ids:
         # No on-hand stock: still return a browseable list so staff can search/scroll.
-        items = list(items_qs.order_by("name").values("id", "name")[:150])
+        items = list(
+            items_qs.order_by("name").values("id", "name", "track_serial_number")[:150]
+        )
         include_empty = True
     else:
         items = list(
             items_qs.filter(pk__in=in_stock_ids)
             .order_by("name")
-            .values("id", "name")[:150]
+            .values("id", "name", "track_serial_number")[:150]
         )
+
+    for row in items:
+        row["track_serial"] = bool(row.pop("track_serial_number", False))
+        row["id"] = str(row["id"])
 
     return JsonResponse(
         {
@@ -2261,12 +2270,28 @@ def my_shop_day_toggle(request, shop_id):
     can_record_drawing = profile is None or employee_may(
         profile, "my-shop", "register_expense"
     )
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or "application/json" in (request.headers.get("Accept") or "")
+        or (request.GET.get("format") or "").strip().lower() == "json"
+    )
+
+    if request.method == "GET" and wants_json:
+        balance_channels = shop_day_balance_channels(shop=shop)
+        open_summary = (
+            day_session_balance_summary(open_session) if open_session else {}
+        )
+        return JsonResponse(
+            {
+                "ok": True,
+                "is_open": is_open,
+                "till": till_summary_payload(
+                    open_summary, channels=balance_channels
+                ),
+            }
+        )
 
     if request.method == "POST":
-        wants_json = (
-            request.headers.get("X-Requested-With") == "XMLHttpRequest"
-            or "application/json" in (request.headers.get("Accept") or "")
-        )
         action = (request.POST.get("action") or "").strip().lower()
 
         if action == "drawing":
@@ -2302,11 +2327,17 @@ def my_shop_day_toggle(request, shop_id):
                     )
             else:
                 if wants_json:
+                    balance_channels = shop_day_balance_channels(shop=shop)
+                    till = till_summary_payload(
+                        day_session_balance_summary(result["session"]),
+                        channels=balance_channels,
+                    )
                     return JsonResponse(
                         {
                             "ok": True,
                             "message": result["message"],
                             "action": "drawing",
+                            "till": till,
                         }
                     )
                 messages.success(request, result["message"])
@@ -2393,12 +2424,6 @@ def my_shop_day_toggle(request, shop_id):
             form_data["mpesa_amount"] = str(
                 int(open_summary["expected_mpesa"].quantize(Decimal("1")))
             )
-        if balance_channels["credit"] and not str(
-            form_data.get("credit_amount") or ""
-        ).strip():
-            form_data["credit_amount"] = str(
-                int(open_summary["expected_credit"].quantize(Decimal("1")))
-            )
     # Suggest last closing as opening balances when starting a new day.
     # Same rule: do not overwrite user-entered values.
     elif not is_open and last_closed and not form_errors:
@@ -2417,14 +2442,6 @@ def my_shop_day_toggle(request, shop_id):
         ):
             form_data["mpesa_amount"] = str(
                 int(Decimal(last_closed.closing_mpesa).quantize(Decimal("1")))
-            )
-        if (
-            balance_channels["credit"]
-            and not str(form_data.get("credit_amount") or "").strip()
-            and last_closed.closing_credit is not None
-        ):
-            form_data["credit_amount"] = str(
-                int(Decimal(last_closed.closing_credit).quantize(Decimal("1")))
             )
 
     if stale_open:

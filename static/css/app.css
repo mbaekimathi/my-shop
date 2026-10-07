@@ -23793,6 +23793,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
   font-variant-numeric: tabular-nums; letter-spacing: -0.03em; line-height: 1;
 }
 .shop-day-live-total span { color: var(--mist-dim); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; }
+.shop-day-live-total em { font-style: normal; font-weight: inherit; }
 .shop-day-live-split {
   grid-column: 1 / -1; margin: 0; padding: 0.65rem 0 0; list-style: none;
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem;
@@ -30310,7 +30311,8 @@ body.workspace-modal-open .stock-country-menu {
   font-weight: 600;
 }
 
-.stock-create-item-row input[type="number"] {
+.stock-create-item-row input[type="number"],
+.stock-create-item-row .stock-create-qty {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -30324,20 +30326,46 @@ body.workspace-modal-open .stock-country-menu {
   color: var(--text-strong);
 }
 
-.stock-create-item-row input[type="number"]:focus {
+.stock-create-item-row input[type="number"]:focus,
+.stock-create-item-row .stock-create-qty:focus {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
   outline: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-.stock-create-item-row input[type="number"]:disabled {
+.stock-create-item-row input[type="number"]:disabled,
+.stock-create-item-row .stock-create-qty:disabled {
   opacity: 0.55;
   cursor: not-allowed;
   background: color-mix(in srgb, var(--panel-muted) 55%, var(--surface));
 }
 
-.stock-create-item-row.is-active input[type="number"] {
+.stock-create-item-row.is-active input[type="number"],
+.stock-create-item-row.is-active .stock-create-qty {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.stock-create-item-row .stock-create-qty--serial {
+  cursor: pointer;
+  caret-color: transparent;
+}
+
+.stock-create-item-row .stock-create-qty--serial:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.stock-create-serial-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.35rem;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 85%, var(--text-strong));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
 
 .stock-create-confirm-grid {
@@ -30711,7 +30739,8 @@ body.workspace-modal-open .stock-country-menu {
     font-size: 0.78rem;
   }
 
-  .stock-create-modal .stock-create-item-row input[type="number"] {
+  .stock-create-modal .stock-create-item-row input[type="number"],
+  .stock-create-modal .stock-create-item-row .stock-create-qty {
     grid-area: qty;
     width: 4.75rem;
     min-height: 2.6rem;

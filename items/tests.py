@@ -2316,6 +2316,100 @@ class DecimalStockQuantityTests(TestCase):
         stock = ShopStock.objects.get(shop=self.shop, item=self.serial_item)
         self.assertEqual(stock.quantity, Decimal("1.000"))
 
+    def test_serial_transfer_requires_selected_serials(self):
+        from django.core.exceptions import ValidationError
+        from django.http import QueryDict
+
+        from items.models import (
+            ItemSerial,
+            ShopStock,
+            StockMovementType,
+            StockRequestStatus,
+        )
+        from items.services import apply_stock_movement, respond_to_stock_request
+
+        destination = Shop.objects.create(
+            name="DECIMAL DEST",
+            location="MOMBASA",
+            email="decimal-dest@test.local",
+            phone_number="0700000998",
+            login_code="840998",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        inbound = QueryDict(mutable=True)
+        inbound.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.serial_item.pk),
+                "serial_numbers": "SN-TX-1\nSN-TX-2",
+                "buying_price": "900.00",
+            }
+        )
+        apply_stock_movement(self.profile, StockMovementType.IN, inbound)
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop, item=self.serial_item).quantity,
+            Decimal("2.000"),
+        )
+
+        missing = QueryDict(mutable=True)
+        missing.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "requested_from_shop_id": str(destination.pk),
+                "item_id": str(self.serial_item.pk),
+                "quantity": "2",
+            }
+        )
+        with self.assertRaises(ValidationError):
+            apply_stock_movement(self.profile, StockMovementType.REQUEST, missing)
+
+        transfer = QueryDict(mutable=True)
+        transfer.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "requested_from_shop_id": str(destination.pk),
+                "item_id": str(self.serial_item.pk),
+                "serial_numbers": "SN-TX-1\nSN-TX-2",
+            }
+        )
+        movement = apply_stock_movement(
+            self.profile, StockMovementType.REQUEST, transfer
+        )
+        line = movement.lines.get()
+        self.assertEqual(line.quantity, Decimal("2.000"))
+        self.assertEqual(line.serial_numbers, ["SN-TX-1", "SN-TX-2"])
+        self.assertEqual(movement.request_status, StockRequestStatus.PENDING)
+        # Pending transfer does not move stock yet.
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop, item=self.serial_item).quantity,
+            Decimal("2.000"),
+        )
+
+        respond_to_stock_request(
+            movement=movement,
+            profile=self.profile,
+            decision="accept",
+            login_code=self.profile.employee_id,
+            quantities_by_line={str(line.pk): "2"},
+        )
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop, item=self.serial_item).quantity,
+            Decimal("0.000"),
+        )
+        self.assertEqual(
+            ShopStock.objects.get(shop=destination, item=self.serial_item).quantity,
+            Decimal("2.000"),
+        )
+        self.assertEqual(
+            set(
+                ItemSerial.objects.filter(
+                    item=self.serial_item, shop=destination, is_available=True
+                ).values_list("serial_number", flat=True)
+            ),
+            {"SN-TX-1", "SN-TX-2"},
+        )
+
 
 class RequestItemAuditTests(TestCase):
     def setUp(self):

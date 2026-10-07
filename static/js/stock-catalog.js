@@ -932,17 +932,23 @@
   };
 
   const buildSerialBlock = (item) => {
-    if (!item.track_serial || mode === "request") {
+    if (!item.track_serial) {
       return `<input type="hidden" name="serial_numbers" value="" data-stock-field disabled>`;
     }
+    const searchPlaceholder =
+      mode === "request"
+        ? "Search serial to transfer"
+        : mode === "out"
+          ? "Search serial to stock out"
+          : "Scan or type serial number";
     const entryWrap =
-      mode === "out"
+      mode === "out" || mode === "request"
         ? `<div class="stock-serial-entry-wrap" data-serial-search-root data-serial-scan-continuous>
             <div class="stock-serial-row">
               <div class="stock-serial-input-wrap">
                 <input
                   type="text"
-                  placeholder="Search serial to stock out"
+                  placeholder="${searchPlaceholder}"
                   autocomplete="off"
                   spellcheck="false"
                   data-stock-serial-entry
@@ -960,7 +966,7 @@
               <div class="stock-serial-input-wrap">
                 <input
                   type="text"
-                  placeholder="Scan or type serial number"
+                  placeholder="${searchPlaceholder}"
                   autocomplete="off"
                   spellcheck="false"
                   data-stock-serial-entry
@@ -986,8 +992,8 @@
         </div>
         <ul class="stock-serial-scanned" data-stock-serial-scanned aria-live="polite" hidden></ul>
         <small class="stock-serial-hint">${
-          mode === "out"
-            ? "Scan or search serials — press Enter or Add after each."
+          mode === "out" || mode === "request"
+            ? "Scan or search serials — press Enter or Add after each. Quantity follows your selection."
             : "Scan continuously — press Enter or Add after each serial."
         }</small>
         <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
@@ -1188,12 +1194,27 @@
       ${buildSerialBlock(item)}`;
   };
 
-  const buildRequestFields = () => `
+  const buildRequestFields = (item) => {
+    if (item?.track_serial) {
+      return `
+      <div class="stock-in-field-row">
+        <div class="stock-inline-field">
+          <span>Qty to transfer</span>
+          <strong class="stock-serial-qty-live stock-serial-qty-live--field">
+            <span data-stock-serial-count>0</span>
+          </strong>
+          <input type="hidden" name="quantity" value="" data-stock-qty data-stock-field disabled>
+        </div>
+      </div>
+      ${buildSerialBlock(item)}`;
+    }
+    return `
     <label class="stock-inline-field">
-      <span>Qty to request</span>
+      <span>Qty to transfer</span>
       <input type="number" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
     </label>
     <input type="hidden" name="serial_numbers" value="" data-stock-field disabled>`;
+  };
 
   const sellingPriceFor = (item, index) => {
     if (Array.isArray(item.selling_prices) && item.selling_prices[index] != null) {
@@ -1204,10 +1225,10 @@
 
   const buildShopCell = (item, shop, stockQty, sellingPrice = "") => {
     const prev = money(item.last_buying_price);
-    const track = item.track_serial && mode !== "request" ? "1" : "0";
+    const track = item.track_serial ? "1" : "0";
     const shopLabel = escapeHtml(shop.name || "Shop");
     const qtyControl =
-      mode === "request" || !item.track_serial
+      !item.track_serial
         ? `<input
           type="number"
           class="stock-list-input"
@@ -1298,8 +1319,7 @@
   const buildPair = (item) => {
     const stock = normalizeStockQty(item.shop_qty);
     const fromQty = normalizeStockQty(item.requested_from_qty);
-    const track =
-      item.track_serial && mode !== "request" ? "1" : "0";
+    const track = item.track_serial ? "1" : "0";
     const name = String(item.name || "");
     const category = String(item.category || "");
     const desc = String(item.description || "");
@@ -1505,7 +1525,7 @@
     let fields = "";
     if (mode === "in") fields = buildInFields(item);
     else if (mode === "out") fields = buildOutFields(item);
-    else fields = buildRequestFields();
+    else fields = buildRequestFields(item);
     formRow.innerHTML = `
       <td colspan="${colCount}">
         <div class="stock-item-inputs stock-item-inputs--matrix">

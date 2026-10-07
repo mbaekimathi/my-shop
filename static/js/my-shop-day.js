@@ -9,10 +9,14 @@
   const submitBtn = form.querySelector("[data-day-submit]");
   const verifyUrl = root.getAttribute("data-verify-login-url") || "";
   const mode = root.getAttribute("data-mode") || "open";
+  const tillRoot = root.querySelector("[data-till-live]");
+  const closeCashInput = form.querySelector("[data-close-cash-amount]");
+  const closeMpesaInput = form.querySelector("[data-close-mpesa-amount]");
 
   let verified = false;
   let timer = null;
   let seq = 0;
+  let tillPollTimer = null;
 
   const getCsrf = () =>
     form.querySelector("[name=csrfmiddlewaretoken]")?.value ||
@@ -22,6 +26,88 @@
       .find((row) => row.startsWith("csrftoken="))
       ?.split("=")[1] ||
     "";
+
+  const formatMoney = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "0";
+    return String(Math.round(n));
+  };
+
+  const setText = (selector, value) => {
+    const el = tillRoot?.querySelector(selector);
+    if (el) el.textContent = formatMoney(value);
+  };
+
+  const setRefundRow = (rowSel, valueSel, value) => {
+    const amount = Number(value) || 0;
+    const row = tillRoot?.querySelector(rowSel);
+    if (row) row.hidden = amount <= 0;
+    setText(valueSel, amount);
+  };
+
+  const applyTill = (till) => {
+    if (!till || !tillRoot) return;
+    setText("[data-till-total]", till.expected_total);
+    setText("[data-till-cash]", till.expected_cash);
+    setText("[data-till-mpesa]", till.expected_mpesa);
+    setText("[data-till-opening]", till.opening_total);
+    setText("[data-till-cash-sales]", till.cash_sales);
+    setText("[data-till-mpesa-sales]", till.mpesa_sales);
+    setRefundRow(
+      "[data-till-cash-refunds-row]",
+      "[data-till-cash-refunds]",
+      till.cash_refunds
+    );
+    setRefundRow(
+      "[data-till-mpesa-refunds-row]",
+      "[data-till-mpesa-refunds]",
+      till.mpesa_refunds
+    );
+    setText("[data-till-expenses]", till.expenses_paid);
+    setText("[data-till-drawings]", till.drawings_paid);
+    setText("[data-till-drawings-cash]", till.drawings_cash);
+    setText("[data-till-drawings-mpesa]", till.drawings_mpesa);
+    setText("[data-till-suppliers]", till.suppliers_paid);
+
+    // Keep close-form suggestions in sync when the user has not typed over them.
+    if (
+      closeCashInput &&
+      (!closeCashInput.dataset.userEdited || closeCashInput.dataset.userEdited === "0")
+    ) {
+      closeCashInput.value = formatMoney(till.expected_cash);
+    }
+    if (
+      closeMpesaInput &&
+      (!closeMpesaInput.dataset.userEdited ||
+        closeMpesaInput.dataset.userEdited === "0")
+    ) {
+      closeMpesaInput.value = formatMoney(till.expected_mpesa);
+    }
+  };
+
+  const fetchTill = async () => {
+    if (!tillRoot) return null;
+    try {
+      const response = await fetch(`${window.location.pathname}?format=json`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) return null;
+      if (data.till) applyTill(data.till);
+      return data.till || null;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  closeCashInput?.addEventListener("input", () => {
+    closeCashInput.dataset.userEdited = "1";
+  });
+  closeMpesaInput?.addEventListener("input", () => {
+    closeMpesaInput.dataset.userEdited = "1";
+  });
 
   const setStatus = (message, { ok = false, error = false } = {}) => {
     if (!statusEl) return;
@@ -116,21 +202,14 @@
   stockInput?.addEventListener("change", syncSubmit);
 
   form.addEventListener("submit", async (event) => {
-    const missing = ["cash_amount", "mpesa_amount", "credit_amount"].filter(
-      (name) => {
-        const input = form.querySelector(`[name="${name}"]`);
-        if (!input) return false;
-        return !(input.value || "").trim();
-      }
-    );
+    const missing = ["cash_amount", "mpesa_amount"].filter((name) => {
+      const input = form.querySelector(`[name="${name}"]`);
+      if (!input) return false;
+      return !(input.value || "").trim();
+    });
     if (missing.length) {
       event.preventDefault();
-      const label =
-        missing[0] === "cash_amount"
-          ? "cash"
-          : missing[0] === "mpesa_amount"
-            ? "M-Pesa"
-            : "credit";
+      const label = missing[0] === "cash_amount" ? "cash" : "M-Pesa";
       setStatus(`Enter the ${label} balance.`, { error: true });
       form.querySelector(`[name="${missing[0]}"]`)?.focus();
       return;
@@ -412,8 +491,8 @@
     drawingAmount?.addEventListener("input", syncDrawingSubmit);
 
     drawingForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
       if (!amountOk()) {
-        event.preventDefault();
         const message =
           drawingCashAmount && drawingMpesaAmount
             ? "Enter a cash and/or M-Pesa amount to draw."
@@ -425,12 +504,10 @@
         return;
       }
       if (!staffVerified) {
-        event.preventDefault();
         const ok = await verifyOneCode(drawingCode, "staff");
         if (!ok) return;
       }
       if (!drawerVerified) {
-        event.preventDefault();
         const ok = await verifyOneCode(drawerCode, "drawer");
         if (!ok) return;
       }
@@ -439,7 +516,6 @@
         drawerEmployeeId &&
         staffEmployeeId === drawerEmployeeId
       ) {
-        event.preventDefault();
         setDrawingStatus(
           "Employee code and person drawing code must be different.",
           { error: true }
@@ -447,6 +523,51 @@
         return;
       }
       if (drawingSubmit) drawingSubmit.disabled = true;
+      setDrawingStatus("Recording drawing…");
+      try {
+        const body = new FormData(drawingForm);
+        const response = await fetch(window.location.pathname, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRFToken": getCsrf(),
+          },
+          credentials: "same-origin",
+          body,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          const err =
+            (Array.isArray(data.errors) && data.errors[0]) ||
+            data.error ||
+            "Could not record drawing.";
+          setDrawingStatus(err, { error: true });
+          syncDrawingSubmit();
+          return;
+        }
+        if (data.till) applyTill(data.till);
+        if (drawingCashAmount) drawingCashAmount.value = "";
+        if (drawingMpesaAmount) drawingMpesaAmount.value = "";
+        if (drawingAmount) drawingAmount.value = "";
+        if (drawingCode) drawingCode.value = "";
+        if (drawerCode) drawerCode.value = "";
+        staffVerified = false;
+        drawerVerified = false;
+        staffName = "";
+        drawerName = "";
+        staffEmployeeId = "";
+        drawerEmployeeId = "";
+        setDrawingStatus(data.message || "Drawing recorded. Till updated.", {
+          ok: true,
+        });
+        syncDrawingSubmit();
+      } catch (_) {
+        setDrawingStatus("Could not record drawing. Try again.", {
+          error: true,
+        });
+        syncDrawingSubmit();
+      }
     });
 
     syncDrawingSubmit();
@@ -456,6 +577,17 @@
     if ((drawerCode?.value || "").trim().length === 6) {
       verifyOneCode(drawerCode, "drawer");
     }
+  }
+
+  if (tillRoot) {
+    fetchTill();
+    tillPollTimer = window.setInterval(fetchTill, 12000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") fetchTill();
+    });
+    window.addEventListener("beforeunload", () => {
+      if (tillPollTimer) window.clearInterval(tillPollTimer);
+    });
   }
 
   if (window.lucide?.createIcons) window.lucide.createIcons();

@@ -3,6 +3,9 @@
   data-stock-create-modal
   data-modal="request-stock"
   {% if stock_request_from_stock_url %}data-stock-create-from-stock-url="{{ stock_request_from_stock_url }}"{% endif %}
+  {% if serial_search_url %}data-serial-search-url="{{ serial_search_url }}"{% endif %}
+  data-supply-shop-id="{{ shop.id }}"
+  data-serial-scan-extract="gpon-sn"
   hidden
   role="dialog"
   aria-modal="true"
@@ -79,6 +82,7 @@
               <h3 id="stock-create-step2-title">Items</h3>
               <p class="stock-create-desktop-only" data-stock-create-items-hint>
                 All catalog items are listed. Search to find one, then enter how many to send.
+                Serial-tracked items open a picker — quantity follows the serials you select.
               </p>
             </div>
             <p class="stock-create-selected" data-stock-create-selected hidden>

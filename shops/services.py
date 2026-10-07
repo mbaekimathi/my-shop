@@ -903,13 +903,13 @@ def build_shop_day_prompt(
         summary = day_session_balance_summary(open_session)
         form_data["cash_amount"] = _amount_str(summary.get("expected_cash"))
         form_data["mpesa_amount"] = _amount_str(summary.get("expected_mpesa"))
-        form_data["credit_amount"] = _amount_str(summary.get("expected_credit"))
+        form_data["credit_amount"] = "0"
     elif mode == "open":
         last_closed = get_last_closed_shop_day(shop)
         if last_closed is not None:
             form_data["cash_amount"] = _amount_str(last_closed.closing_cash)
             form_data["mpesa_amount"] = _amount_str(last_closed.closing_mpesa)
-            form_data["credit_amount"] = _amount_str(last_closed.closing_credit)
+        form_data["credit_amount"] = "0"
 
     return {
         "show": True,
@@ -4974,6 +4974,9 @@ def _session_activity_totals(
     expected_mpesa = (
         opening_mpesa + mpesa_sales - mpesa_refunds - drawings_mpesa
     )
+    # Till tracks physical channels only (cash + M-Pesa). Credit sales are
+    # receivables, not money in the drawer.
+    expected_total = expected_cash + expected_mpesa
 
     closing_cash = (
         Decimal(session.closing_cash)
@@ -4990,20 +4993,21 @@ def _session_activity_totals(
         if session.closing_credit is not None
         else None
     )
+    closing_total = (
+        None
+        if closing_cash is None and closing_mpesa is None
+        else (closing_cash or 0) + (closing_mpesa or 0)
+    )
 
     return {
         "opening_cash": opening_cash,
         "opening_mpesa": opening_mpesa,
         "opening_credit": opening_credit,
-        "opening_total": opening_cash + opening_mpesa + opening_credit,
+        "opening_total": opening_cash + opening_mpesa,
         "closing_cash": closing_cash,
         "closing_mpesa": closing_mpesa,
         "closing_credit": closing_credit,
-        "closing_total": (
-            None
-            if closing_cash is None
-            else (closing_cash + (closing_mpesa or 0) + (closing_credit or 0))
-        ),
+        "closing_total": closing_total,
         "cash_sales": cash_sales,
         "mpesa_sales": mpesa_sales,
         "cash_refunds": cash_refunds,
@@ -5018,7 +5022,7 @@ def _session_activity_totals(
         "expected_cash": expected_cash,
         "expected_mpesa": expected_mpesa,
         "expected_credit": opening_credit,
-        "expected_total": expected_cash + expected_mpesa + opening_credit,
+        "expected_total": expected_total,
         "cash_variance": (
             None if closing_cash is None else closing_cash - expected_cash
         ),
@@ -5030,9 +5034,8 @@ def _session_activity_totals(
         ),
         "total_variance": (
             None
-            if closing_cash is None
-            else (closing_cash + (closing_mpesa or 0) + (closing_credit or 0))
-            - (expected_cash + expected_mpesa + opening_credit)
+            if closing_total is None
+            else closing_total - expected_total
         ),
     }
 
@@ -5177,37 +5180,66 @@ def shop_day_balance_channels(*, shop: Shop | None = None, pos=None) -> dict:
     """Which till channels to show on open/close, from activated POS methods.
 
     Cash / M-Pesa follow payment-method toggles (including Cash+M-Pesa).
-    Credit follows the credit transaction-type toggle.
+    Credit is never a till channel — it is not money in the drawer.
     """
     row = pos if pos is not None else get_effective_pos_settings(shop)
     show_cash = bool(getattr(row, "enable_cash", True) or getattr(row, "enable_cash_mpesa", True))
     show_mpesa = bool(
         getattr(row, "enable_mpesa", True) or getattr(row, "enable_cash_mpesa", True)
     )
-    show_credit = bool(getattr(row, "enable_credit", True))
-    # Keep open/close usable if every toggle is off.
-    if not (show_cash or show_mpesa or show_credit):
+    # Keep open/close usable if every till toggle is off.
+    if not (show_cash or show_mpesa):
         show_cash = True
     labels = []
     if show_cash:
         labels.append("cash")
     if show_mpesa:
         labels.append("M-Pesa")
-    if show_credit:
-        labels.append("credit")
     if len(labels) == 1:
         count_copy = labels[0]
-    elif len(labels) == 2:
-        count_copy = f"{labels[0]} and {labels[1]}"
     else:
-        count_copy = f"{', '.join(labels[:-1])}, and {labels[-1]}"
+        count_copy = f"{labels[0]} and {labels[1]}"
     return {
         "cash": show_cash,
         "mpesa": show_mpesa,
-        "credit": show_credit,
+        "credit": False,
         "count_copy": count_copy,
         "labels": labels,
     }
+
+
+def till_summary_payload(summary: dict, *, channels: dict | None = None) -> dict:
+    """JSON-friendly live till figures for the open shop day UI."""
+    if not summary:
+        return {}
+
+    def _int_money(value) -> int:
+        try:
+            return int(Decimal(value or 0).quantize(Decimal("1")))
+        except Exception:
+            return 0
+
+    payload = {
+        "expected_total": _int_money(summary.get("expected_total")),
+        "expected_cash": _int_money(summary.get("expected_cash")),
+        "expected_mpesa": _int_money(summary.get("expected_mpesa")),
+        "opening_total": _int_money(summary.get("opening_total")),
+        "cash_sales": _int_money(summary.get("cash_sales")),
+        "mpesa_sales": _int_money(summary.get("mpesa_sales")),
+        "cash_refunds": _int_money(summary.get("cash_refunds")),
+        "mpesa_refunds": _int_money(summary.get("mpesa_refunds")),
+        "expenses_paid": _int_money(summary.get("expenses_paid")),
+        "drawings_paid": _int_money(summary.get("drawings_paid")),
+        "drawings_cash": _int_money(summary.get("drawings_cash")),
+        "drawings_mpesa": _int_money(summary.get("drawings_mpesa")),
+        "suppliers_paid": _int_money(summary.get("suppliers_paid")),
+    }
+    if channels is not None:
+        payload["channels"] = {
+            "cash": bool(channels.get("cash")),
+            "mpesa": bool(channels.get("mpesa")),
+        }
+    return payload
 
 
 def _required_balance_amount(payload: dict, *, keys: tuple[str, ...], label: str) -> Decimal:
@@ -5250,13 +5282,8 @@ def _parse_balance_fields(
             if channels["mpesa"]
             else _default("mpesa")
         ),
-        "credit": (
-            _required_balance_amount(
-                payload, keys=("credit_amount", "credit"), label="credit"
-            )
-            if channels["credit"]
-            else _default("credit")
-        ),
+        # Credit is not a till channel; keep the column at zero.
+        "credit": zero,
     }
 
 

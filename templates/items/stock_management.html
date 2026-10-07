@@ -11,8 +11,8 @@
   data-stock-bulk-form
   {% if stock_mode == 'in' %}data-supplier-search-url="{{ supplier_search_url }}"{% endif %}
   {% if stock_mode == 'in' %}data-serial-check-url="{{ serial_check_url }}"{% endif %}
-  {% if stock_mode == 'in' or stock_mode == 'out' %}data-serial-scan-extract="gpon-sn"{% endif %}
-  {% if stock_mode == 'out' %}data-serial-search-url="{{ serial_search_url }}"{% endif %}
+  {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}data-serial-scan-extract="gpon-sn"{% endif %}
+  {% if stock_mode == 'out' or stock_mode == 'request' %}data-serial-search-url="{{ serial_search_url }}"{% endif %}
   {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}data-stock-multi-shop="1"{% endif %}
   {% if stock_requirements_json %}data-stock-requirements='{{ stock_requirements_json|escape }}'{% endif %}
 >
@@ -84,7 +84,7 @@
             {% if stock_mode == 'out' %}
             Enter quantity{% if shop_filter_active %} for {{ shop_filter_label }}{% else %} per shop{% endif %}. Serial items open a popup. Set reason and refund in the submit panel.
             {% elif stock_mode == 'request' %}
-            Choose the sending shop and the receiving shop. Enter quantities under the sending shop.
+            Choose the sending shop and the receiving shop. Enter quantities under the sending shop. Serial items open a picker — quantity follows the serials you select.
             {% elif stock_mode == 'in' %}
             Enter quantity and buying price{% if shop_filter_active %} for {{ shop_filter_label }}{% else %} per shop{% endif %}. Serial items open a popup. Set supplier details in the submit panel.
             {% else %}
@@ -484,7 +484,7 @@
                 data-item-name="{{ item.name }}"
                 data-item-stock="{{ row.shop_qty }}"
                 data-selling-price="{{ item.shop_price }}"
-                data-track-serial="{% if item.track_serial_number and stock_mode != 'request' %}1{% else %}0{% endif %}"
+                data-track-serial="{% if item.track_serial_number %}1{% else %}0{% endif %}"
                 data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
               >
                 <th scope="row" class="stock-matrix-item-col">
@@ -804,21 +804,65 @@
                     {% endif %}
 
                     {% else %}
-                    <label class="stock-inline-field">
-                      <span>Qty to request</span>
-                      <input
-                        type="number"
-                        name="quantity"
-                        min="0.001"
-                        step="0.001"
-                        placeholder="0"
-                        inputmode="decimal"
-                        data-stock-qty
-                        data-stock-field
-                        disabled
-                      >
-                    </label>
+                    <div class="stock-in-field-row">
+                      {% if item.track_serial_number %}
+                      <div class="stock-inline-field">
+                        <span>Qty to transfer</span>
+                        <strong class="stock-serial-qty-live stock-serial-qty-live--field">
+                          <span data-stock-serial-count>0</span>
+                        </strong>
+                        <input type="hidden" name="quantity" value="" data-stock-qty data-stock-field disabled>
+                      </div>
+                      {% else %}
+                      <label class="stock-inline-field">
+                        <span>Qty to transfer</span>
+                        <input
+                          type="number"
+                          name="quantity"
+                          min="0.001"
+                          step="0.001"
+                          placeholder="0"
+                          inputmode="decimal"
+                          data-stock-qty
+                          data-stock-field
+                          disabled
+                        >
+                      </label>
+                      {% endif %}
+                    </div>
+                    {% if item.track_serial_number %}
+                    <div class="stock-inline-field stock-inline-field--serial">
+                      <div class="stock-serial-head">
+                        <span>Serial number</span>
+                        <span class="visually-hidden">Remove</span>
+                      </div>
+                      <div class="stock-serial-entry-wrap" data-serial-search-root data-serial-scan-continuous>
+                        <div class="stock-serial-row">
+                          <div class="stock-serial-input-wrap">
+                            <input
+                              type="text"
+                              placeholder="Search serial to transfer"
+                              autocomplete="off"
+                              spellcheck="false"
+                              data-stock-serial-entry
+                              data-stock-serial-input
+                              data-serial-search
+                              data-stock-field
+                              disabled
+                            >
+                          </div>
+                        </div>
+                        <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
+                      </div>
+                      <ul class="stock-serial-scanned" data-stock-serial-scanned aria-live="polite"></ul>
+                      <small class="stock-serial-hint">
+                        Scan or search serials — press Enter after each. Quantity follows your selection.
+                      </small>
+                      <input type="hidden" name="serial_numbers" value="" data-stock-serials data-stock-field disabled>
+                    </div>
+                    {% else %}
                     <input type="hidden" name="serial_numbers" value="" data-stock-field disabled>
+                    {% endif %}
                     {% endif %}
                     {% endif %}
 
@@ -924,7 +968,7 @@
             {% elif stock_mode == 'out' %}
             Enter qty per shop. Use autofill below for reason and refund.
             {% else %}
-            Enter qty under the Sending shop column, then submit the transfer.
+            Enter qty under the Sending shop column (serial items: pick serials), then submit the transfer.
             {% endif %}
           </p>
         </div>
@@ -1222,7 +1266,7 @@
 </div>
 {% endif %}
 
-{% if stock_mode == 'in' or stock_mode == 'out' %}
+{% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
 <div
   class="workspace-modal stock-serial-modal"
   data-stock-serial-modal
@@ -1251,28 +1295,28 @@
       </p>
       <div
         class="stock-serial-modal-entry-wrap"
-        {% if stock_mode == 'out' %}data-serial-search-root{% endif %}
+        {% if stock_mode == 'out' or stock_mode == 'request' %}data-serial-search-root{% endif %}
       >
         <div class="stock-serial-row">
           <div class="stock-serial-input-wrap">
             <input
               type="text"
-              placeholder="{% if stock_mode == 'out' %}Search serial to stock out{% else %}Enter serial number{% endif %}"
+              placeholder="{% if stock_mode == 'out' %}Search serial to stock out{% elif stock_mode == 'request' %}Search serial to transfer{% else %}Enter serial number{% endif %}"
               autocomplete="off"
               spellcheck="false"
               data-stock-serial-modal-entry
               data-stock-serial-input
-              {% if stock_mode == 'out' %}data-serial-search{% endif %}
+              {% if stock_mode == 'out' or stock_mode == 'request' %}data-serial-search{% endif %}
             >
           </div>
         </div>
-        {% if stock_mode == 'out' %}
+        {% if stock_mode == 'out' or stock_mode == 'request' %}
         <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
         {% endif %}
       </div>
       <ul class="stock-serial-modal-scanned" data-stock-serial-modal-scanned aria-live="polite"></ul>
       <small class="stock-serial-hint">
-        {% if stock_mode == 'out' %}
+        {% if stock_mode == 'out' or stock_mode == 'request' %}
         Scan or search serials — press Enter after each. Click Done when finished.
         {% else %}
         Scan continuously — press Enter after each serial. Click Done when finished.
@@ -1290,13 +1334,13 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/stock-catalog.js' %}?v=39"></script>
+<script defer src="{% static 'js/stock-catalog.js' %}?v=42"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/stock-bulk.js' %}?v=matrix55"></script>
+<script defer src="{% static 'js/stock-bulk.js' %}?v=matrix58"></script>
 <script
   defer
-  src="{% static 'js/serial-scan.js' %}?v=8"
+  src="{% static 'js/serial-scan.js' %}?v=9"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% if stock_mode == 'view' %}
