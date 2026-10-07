@@ -4010,14 +4010,18 @@ def _group_movement_events_by_item(
         targets = []
         if event_type in ("request", "transfer_fulfilled"):
             direction = event.get("transfer_direction")
-            dest_id = event.get("shop_id")
-            source_id = event.get("source_shop_id")
+            # Match _timeline_event_from_movement_line: shop/source = sender,
+            # destination = receiver (requested_from_shop).
+            source_id = event.get("source_shop_id") or event.get("shop_id")
+            dest_id = event.get("destination_shop_id")
             if direction in ("in", "both") and dest_id in shop_id_set:
                 targets.append((dest_id, "in"))
             if direction in ("out", "both") and source_id in shop_id_set:
                 targets.append((source_id, "out"))
-            if not targets and dest_id in shop_id_set:
-                targets.append((dest_id, ""))
+            if not targets:
+                fallback_id = event.get("shop_id")
+                if fallback_id in shop_id_set:
+                    targets.append((fallback_id, ""))
         else:
             dest_id = event.get("shop_id")
             if dest_id in shop_id_set:
@@ -5417,11 +5421,20 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             units_return,
         ) = _summarize_movement_events(movement_events)
         if is_item_movement_summary:
+            # TYPE=All: include idle stock items across shops (like the stock report).
+            # Specific type filters: only items with matching transactions.
+            show_all_items = _event_filters_are_all(event_filters)
+            extra_items = None
+            if show_all_items and len(shop_ids_for_query) > 1:
+                extra_items = (
+                    report_items if item_mode != "all" else (all_items or report_items)
+                )
             movement_item_rows = _group_movement_events_by_item(
                 movement_events,
                 shop_ids_for_query,
                 shops_by_id=shops_by_id,
-                require_events=True,
+                extra_items=extra_items,
+                require_events=not show_all_items,
             )
             if search_q:
                 movement_item_rows = _filter_movement_item_rows_by_search(

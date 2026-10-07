@@ -503,8 +503,10 @@ class ItemStockReportRowsTests(TestCase):
                 "item_id": self.item.pk,
                 "item_name": self.item.name,
                 "item_category": self.item.category,
-                "shop_id": self.shop_a.pk,
+                # Sender B → receiver A (same shape as timeline events).
+                "shop_id": self.shop_b.pk,
                 "source_shop_id": self.shop_b.pk,
+                "destination_shop_id": self.shop_a.pk,
                 "quantity": 2,
                 "transfer_direction": "both",
             },
@@ -550,7 +552,7 @@ class ItemStockReportRowsTests(TestCase):
             sum(
                 1
                 for event in events
-                if event.get("event_type") == "request"
+                if event.get("event_type") == "transfer_fulfilled"
                 and event.get("movement_id")
             ),
             1,
@@ -572,16 +574,19 @@ class ItemStockReportRowsTests(TestCase):
             self.day_start,
             self.day_end,
         )
+        # shop_a sends, shop_b receives (_fulfill_transfer).
         self.assertEqual(
-            by_shop[self.shop_a.name]["units_transfer_in"],
-            truth[(self.item.pk, self.shop_a.pk)]["in"],
+            by_shop[self.shop_a.name]["units_transfer_out"],
+            truth[(self.item.pk, self.shop_a.pk)]["out"],
         )
         self.assertEqual(
-            by_shop[self.shop_b.name]["units_transfer_out"],
-            truth[(self.item.pk, self.shop_b.pk)]["out"],
+            by_shop[self.shop_b.name]["units_transfer_in"],
+            truth[(self.item.pk, self.shop_b.pk)]["in"],
         )
-        self.assertEqual(by_shop[self.shop_a.name]["units_transfer_in"], qty)
-        self.assertEqual(by_shop[self.shop_b.name]["units_transfer_out"], qty)
+        self.assertEqual(by_shop[self.shop_a.name]["units_transfer_out"], qty)
+        self.assertEqual(by_shop[self.shop_b.name]["units_transfer_in"], qty)
+        self.assertEqual(by_shop[self.shop_a.name]["units_transfer_in"], 0)
+        self.assertEqual(by_shop[self.shop_b.name]["units_transfer_out"], 0)
 
     def test_movements_item_view_lists_idle_stock_for_all_shops(self):
         from items.models import Item, ShopStock
@@ -632,6 +637,56 @@ class ItemStockReportRowsTests(TestCase):
             require_events=True,
         )
         self.assertEqual(rows, [])
+
+    def test_movements_item_summary_all_type_includes_idle_stock(self):
+        from items.models import Item, ShopStock
+
+        idle = Item.objects.create(
+            category="CABLES",
+            name="ALL FILTER IDLE",
+            minimum_selling_price=Decimal("100.00"),
+            shop_price=Decimal("150.00"),
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(shop=self.shop_a, item=idle, quantity=4)
+
+        self.client.force_login(self.user)
+        all_types = self.client.get(
+            "/it-support/stock-management/",
+            {
+                "mode": "movements",
+                "range": "day",
+                "item_mode": "all",
+                "view_by": "item",
+                "date": timezone.localdate().isoformat(),
+            },
+        )
+        self.assertEqual(all_types.status_code, 200)
+        idle_names = {
+            row["item_name"]
+            for row in all_types.context["movement_item_rows"]
+            if not row.get("is_item_total")
+        }
+        self.assertIn("ALL FILTER IDLE", idle_names)
+
+        stock_in_only = self.client.get(
+            "/it-support/stock-management/",
+            {
+                "mode": "movements",
+                "range": "day",
+                "item_mode": "all",
+                "view_by": "item",
+                "date": timezone.localdate().isoformat(),
+                "event_type": "in",
+            },
+        )
+        self.assertEqual(stock_in_only.status_code, 200)
+        filtered_names = {
+            row["item_name"]
+            for row in stock_in_only.context["movement_item_rows"]
+            if not row.get("is_item_total")
+        }
+        self.assertNotIn("ALL FILTER IDLE", filtered_names)
 
     def test_transfer_event_filter_matches_fulfilled_only(self):
         from items.views import MOVEMENT_EVENT_FILTER_TYPES, _filter_movement_events
