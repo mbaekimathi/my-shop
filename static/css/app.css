@@ -30077,13 +30077,15 @@ body.workspace-modal-open .stock-country-menu {
 .stock-create-items {
   display: grid;
   gap: 0.3rem;
-  max-height: min(34vh, 17.5rem);
+  max-height: min(48vh, 24rem);
   overflow: auto;
+  overscroll-behavior: contain;
   margin: 0;
   padding: 0.3rem;
   border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
   border-radius: 14px;
   background: color-mix(in srgb, var(--panel-muted) 42%, var(--surface));
+  -webkit-overflow-scrolling: touch;
 }
 
 .stock-create-item-row {

@@ -570,9 +570,13 @@
           return;
         }
         const items = Array.isArray(data.items) ? data.items : [];
+        const inStockCount = Number(data.in_stock_count || 0) || 0;
+        // Keep the out-of-stock toggle in sync when the API auto-includes empties.
+        if (showEmptyToggle && data.include_empty && !showEmptyToggle.checked) {
+          showEmptyToggle.checked = true;
+        }
         buildItemRows(items, data.stocks || {});
         const shopName = data.from_shop_name || "";
-        const inStockCount = Number(data.in_stock_count || 0) || 0;
         const visibleCount = rows.length;
         if (itemsHint) {
           if (query) {
@@ -582,13 +586,12 @@
                 ? `No new matches for “${query}”. Your selected items stay listed above.`
                 : `No matches for “${query}”.`;
           } else if (visibleCount) {
-            itemsHint.textContent = shopName
-              ? `In-stock items at ${shopName}. Search to find more, then enter amounts to send.`
-              : "Enter how many to send for each item.";
+            itemsHint.textContent = inStockCount
+              ? `Browse or search items at ${shopName || "this shop"}. Enter amounts in Send.`
+              : `${shopName || "This shop"} has no on-hand stock. Search the catalog, then send only items with stock.`;
           } else {
-            itemsHint.textContent = shopName
-              ? `${shopName} has no in-stock items right now. Search by name or show out-of-stock.`
-              : "Search by item name to find what to send.";
+            itemsHint.textContent =
+              "Search an item name to load matches, then enter how many to send.";
           }
         }
         setEmptyStates({

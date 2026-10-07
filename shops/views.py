@@ -1839,28 +1839,21 @@ def my_shop_stock_request_from_stock(request, shop_id):
 
     items_qs = Item.objects.filter(is_suspended=False)
     if query:
-        items_qs = items_qs.filter(name__icontains=query)
-        if not include_empty:
-            # Prefer in-stock matches; fall back to all name matches so search is useful.
-            preferred = list(
-                items_qs.filter(pk__in=in_stock_ids)
-                .order_by("name")
-                .values("id", "name")[:80]
-            )
-            if preferred:
-                items = preferred
-            else:
-                items = list(items_qs.order_by("name").values("id", "name")[:80])
-                include_empty = True
-        else:
-            items = list(items_qs.order_by("name").values("id", "name")[:80])
-    elif include_empty:
-        items = list(items_qs.order_by("name").values("id", "name")[:120])
+        # Live search always scans the full catalog (name + category).
+        items_qs = items_qs.filter(
+            Q(name__icontains=query) | Q(category__icontains=query)
+        )
+        items = list(items_qs.order_by("name").values("id", "name")[:100])
+        include_empty = True
+    elif include_empty or not in_stock_ids:
+        # No on-hand stock: still return a browseable list so staff can search/scroll.
+        items = list(items_qs.order_by("name").values("id", "name")[:150])
+        include_empty = True
     else:
         items = list(
             items_qs.filter(pk__in=in_stock_ids)
             .order_by("name")
-            .values("id", "name")[:120]
+            .values("id", "name")[:150]
         )
 
     return JsonResponse(
