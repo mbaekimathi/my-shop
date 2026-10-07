@@ -288,11 +288,11 @@
   if (createModal) {
     const searchInput = createModal.querySelector("[data-stock-create-search]");
     const itemsRoot = createModal.querySelector("[data-stock-create-items]");
+    const itemsHead = createModal.querySelector("[data-stock-create-items-head]");
     const form = createModal.querySelector("[data-stock-create-form]");
     const fromSelect = createModal.querySelector("[data-stock-create-from]");
     const itemsHint = createModal.querySelector("[data-stock-create-items-hint]");
     const showEmptyToggle = createModal.querySelector("[data-stock-create-show-empty]");
-    const filterWrap = createModal.querySelector("[data-stock-create-filter-wrap]");
     const noStockMsg = createModal.querySelector("[data-stock-create-no-stock]");
     const selectedBadge = createModal.querySelector("[data-stock-create-selected]");
     const selectedCount = createModal.querySelector("[data-stock-create-selected-count]");
@@ -300,9 +300,9 @@
     const fromStockUrl =
       createModal.getAttribute("data-stock-create-from-stock-url") || "";
     let fromStockSeq = 0;
-    let stockLoaded = false;
+    let searchTimer = null;
     let rows = [];
-    let itemsBuilt = false;
+    const selectedItems = new Map();
 
     const escapeHtml = (value) =>
       String(value || "")
@@ -311,70 +311,84 @@
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
 
+    const captureSelectedQtys = () => {
+      rows.forEach((row) => {
+        const id = row.getAttribute("data-item-id") || "";
+        const name =
+          row.querySelector(".stock-create-item-name")?.textContent?.trim() || "";
+        const qty = row.querySelector("[data-stock-create-qty]");
+        const avail = Number(row.getAttribute("data-avail") || 0) || 0;
+        if (!id || !qty) return;
+        const value = String(qty.value || "").trim();
+        if (Number(value) > 0) {
+          selectedItems.set(id, { name, avail, qty: value });
+        } else {
+          selectedItems.delete(id);
+        }
+      });
+    };
+
     const syncRowEnabled = (row) => {
       const qty = row.querySelector("[data-stock-create-qty]");
       const idInput = row.querySelector("[data-stock-create-id]");
+      const avail = Number(row.getAttribute("data-avail") || 0) || 0;
       const hasQty = Number(qty?.value || 0) > 0;
-      if (idInput) idInput.disabled = !hasQty;
-      if (qty) qty.disabled = false;
-      row.classList.toggle("is-active", hasQty);
+      const canSend = avail > 0;
+      if (qty) {
+        qty.disabled = !canSend;
+        if (!canSend) qty.value = "";
+      }
+      if (idInput) idInput.disabled = !(canSend && hasQty);
+      row.classList.toggle("is-active", canSend && hasQty);
+      row.classList.toggle("is-out", !canSend);
     };
 
     const bindRowQty = (row) => {
       const qty = row.querySelector("[data-stock-create-qty]");
       if (!qty) return;
-      qty.disabled = false;
+      const focusQty = () => {
+        if (!qty.disabled) qty.focus();
+      };
+      row.addEventListener("click", (event) => {
+        if (event.target === qty) return;
+        focusQty();
+      });
       qty.addEventListener("input", () => {
         syncRowEnabled(row);
         syncSelectedCount();
+        captureSelectedQtys();
       });
       qty.addEventListener("change", () => {
         syncRowEnabled(row);
         syncSelectedCount();
+        captureSelectedQtys();
       });
       syncRowEnabled(row);
     };
 
     const syncSelectedCount = () => {
-      const count = rows.filter((row) => {
-        const qty = row.querySelector("[data-stock-create-qty]");
-        return Number(qty?.value || 0) > 0;
-      }).length;
+      const count = [...selectedItems.values()].filter(
+        (item) => Number(item.qty) > 0
+      ).length;
       if (selectedCount) selectedCount.textContent = String(count);
       if (selectedBadge) selectedBadge.hidden = count < 1;
     };
 
-    const showEmptyStock = () => Boolean(showEmptyToggle?.checked);
-
-    const syncRowVisibility = () => {
-      const q = String(searchInput?.value || "").trim().toLowerCase();
-      const allowEmpty = showEmptyStock();
-      let matchedSearch = 0;
-      let visible = 0;
-      let inStockCount = 0;
-
-      rows.forEach((row) => {
-        const name = row.getAttribute("data-item-name") || "";
-        const nameMatch = !q || name.includes(q);
-        const availRaw = row.getAttribute("data-avail");
-        const hasAvail = availRaw !== "" && availRaw != null;
-        const avail = hasAvail ? Number(availRaw) || 0 : null;
-        if (avail != null && avail > 0) inStockCount += 1;
-        const stockOk = !stockLoaded || allowEmpty || (avail != null && avail > 0);
-        const show = nameMatch && stockOk;
-        row.hidden = !show;
-        if (nameMatch) matchedSearch += 1;
-        if (show) visible += 1;
-      });
-
-      if (noResults) noResults.hidden = !q || matchedSearch > 0;
+    const setEmptyStates = ({ loading = false, query = "", itemCount = 0, inStockCount = 0 } = {}) => {
+      if (itemsHead) itemsHead.hidden = itemCount < 1;
+      if (noResults) {
+        noResults.hidden = loading || !query || itemCount > 0;
+        noResults.textContent = query
+          ? `No items match “${query}”.`
+          : "No items match your search.";
+      }
       if (noStockMsg) {
-        const searchingMiss = Boolean(q) && matchedSearch < 1;
         noStockMsg.hidden =
-          !stockLoaded || allowEmpty || searchingMiss || inStockCount > 0 || visible > 0;
-        if (stockLoaded && !allowEmpty && !searchingMiss && inStockCount < 1) {
-          noStockMsg.hidden = false;
-        }
+          loading ||
+          Boolean(query) ||
+          itemCount > 0 ||
+          showEmptyToggle?.checked ||
+          inStockCount > 0;
       }
     };
 
@@ -390,49 +404,72 @@
         if (text) text.textContent = "Checking stock…";
         return;
       }
-      if (value == null) {
-        row.setAttribute("data-avail", "");
-        el.textContent = "—";
-        el.classList.add("is-empty");
-        if (text) text.textContent = "Loading your stock…";
-        return;
-      }
       const qty = Number(value) || 0;
       row.setAttribute("data-avail", String(qty));
       el.textContent = String(qty);
       if (qty <= 0) {
         el.classList.add("is-empty");
-        if (text) text.textContent = "Out of stock here";
+        if (text) text.textContent = "Out of stock here — cannot send";
       } else if (qty <= 3) {
         el.classList.add("is-low");
-        if (text) text.textContent = `Only ${qty} left here`;
+        if (text) text.textContent = `Only ${qty} left — enter amount to send`;
       } else {
         el.classList.add("is-ok");
-        if (text) text.textContent = `${qty} available here`;
+        if (text) text.textContent = `${qty} available — enter amount to send`;
       }
     };
 
-    const buildItemRows = (items) => {
+    const buildItemRows = (items, stocks) => {
       if (!itemsRoot) return;
+      captureSelectedQtys();
       const list = Array.isArray(items) ? items : [];
-      const frag = document.createDocumentFragment();
+      const map = stocks && typeof stocks === "object" ? stocks : {};
+      const seen = new Set();
+      const merged = [];
+
+      selectedItems.forEach((saved, id) => {
+        if (Number(saved.qty) > 0) {
+          merged.push({
+            id,
+            name: saved.name,
+            avail: Number(map[id] ?? saved.avail ?? 0) || 0,
+            qty: saved.qty,
+            pinned: true,
+          });
+          seen.add(String(id));
+        }
+      });
+
       list.forEach((item) => {
         const id = String(item?.id ?? "").trim();
         const name = String(item?.name || "").trim();
-        if (!id || !name) return;
+        if (!id || !name || seen.has(id)) return;
+        seen.add(id);
+        const avail = Number(map[id] ?? map[String(id)] ?? 0) || 0;
+        const saved = selectedItems.get(id);
+        merged.push({
+          id,
+          name,
+          avail,
+          qty: saved?.qty || "",
+          pinned: false,
+        });
+      });
+
+      const frag = document.createDocumentFragment();
+      merged.forEach((item) => {
         const row = document.createElement("label");
         row.className = "stock-create-item-row";
+        if (item.pinned) row.classList.add("is-pinned");
         row.setAttribute("data-stock-create-row", "");
-        row.setAttribute("data-item-id", id);
-        row.setAttribute("data-item-name", name.toLowerCase());
-        row.setAttribute("data-avail", "");
+        row.setAttribute("data-item-id", item.id);
+        row.setAttribute("data-item-name", item.name.toLowerCase());
+        row.setAttribute("data-avail", String(item.avail));
         row.innerHTML = `
           <span class="stock-create-item-main">
-            <span class="stock-create-item-name">${escapeHtml(name)}</span>
-            <span class="stock-create-item-avail-text" data-stock-create-avail-text>
-              Loading your stock…
-            </span>
-            <input type="hidden" name="item_id" value="${escapeHtml(id)}" disabled data-stock-create-id>
+            <span class="stock-create-item-name">${escapeHtml(item.name)}</span>
+            <span class="stock-create-item-avail-text" data-stock-create-avail-text></span>
+            <input type="hidden" name="item_id" value="${escapeHtml(item.id)}" disabled data-stock-create-id>
           </span>
           <span
             class="stock-create-item-stock"
@@ -442,102 +479,69 @@
           <input
             type="number"
             name="quantity"
-            min="1"
-            step="1"
-            inputmode="numeric"
+            min="0.001"
+            step="any"
+            inputmode="decimal"
             placeholder="0"
+            value="${escapeHtml(item.qty || "")}"
             data-stock-create-qty
-            aria-label="Quantity to send for ${escapeHtml(name)}"
+            aria-label="Quantity to send for ${escapeHtml(item.name)}"
           >
         `;
         frag.appendChild(row);
+        setAvailDisplay(row, item.avail);
+        const qty = row.querySelector("[data-stock-create-qty]");
+        if (qty) {
+          if (item.avail > 0) qty.setAttribute("max", String(item.avail));
+          else qty.removeAttribute("max");
+        }
       });
       itemsRoot.innerHTML = "";
       if (!frag.childNodes.length) {
         itemsRoot.innerHTML =
-          '<p class="stock-create-empty">No items available to transfer.</p>';
+          '<p class="stock-create-empty">No items to show.</p>';
         rows = [];
-        itemsBuilt = true;
+        syncSelectedCount();
         return;
       }
       itemsRoot.appendChild(frag);
       rows = [...itemsRoot.querySelectorAll("[data-stock-create-row]")];
-      rows.forEach(bindRowQty);
-      itemsBuilt = true;
+      rows.forEach((row) => {
+        bindRowQty(row);
+        syncRowEnabled(row);
+      });
       syncSelectedCount();
     };
 
-    const clearFromStock = () => {
-      stockLoaded = false;
-      if (filterWrap) filterWrap.hidden = true;
-      if (showEmptyToggle) showEmptyToggle.checked = false;
-      rows.forEach((row) => {
-        setAvailDisplay(row, null);
-        row.classList.remove("is-out");
-        const qty = row.querySelector("[data-stock-create-qty]");
-        if (qty) {
-          qty.disabled = false;
-          qty.removeAttribute("max");
-        }
-      });
-      if (itemsHint) {
-        itemsHint.textContent =
-          "Enter how many to send from your stock. Choose a destination above before sending.";
-      }
-      syncRowVisibility();
-    };
-
-    const applyFromStock = (stocks, shopName) => {
-      const map = stocks && typeof stocks === "object" ? stocks : {};
-      stockLoaded = true;
-      if (filterWrap) filterWrap.hidden = false;
-      let withStock = 0;
-      rows.forEach((row) => {
-        const itemId = row.getAttribute("data-item-id") || "";
-        const avail = Number(map[itemId] ?? map[String(itemId)] ?? 0) || 0;
-        if (avail > 0) withStock += 1;
-        setAvailDisplay(row, avail);
-        row.classList.toggle("is-out", avail <= 0);
-        const qty = row.querySelector("[data-stock-create-qty]");
-        if (qty) {
-          qty.disabled = false;
-          if (avail > 0) qty.setAttribute("max", String(avail));
-          else qty.removeAttribute("max");
-        }
-      });
-      if (itemsHint) {
-        itemsHint.textContent = shopName
-          ? withStock
-            ? `Showing your stock at ${shopName}. Enter how many to send.`
-            : `${shopName} has no stock on these items right now.`
-          : "Enter how many to send for each item.";
-      }
-      syncRowVisibility();
-    };
-
-    const loadFromStock = async () => {
+    const loadItems = async ({ focusSearch = false } = {}) => {
       if (!fromStockUrl) {
-        clearFromStock();
+        if (itemsRoot) {
+          itemsRoot.innerHTML =
+            '<p class="stock-create-empty">Item search is unavailable right now.</p>';
+        }
+        setEmptyStates({ loading: false, itemCount: 0 });
         return;
       }
       const toId = String(fromSelect?.value || "").trim();
+      const query = String(searchInput?.value || "").trim();
+      const includeEmpty = Boolean(showEmptyToggle?.checked);
       const seq = ++fromStockSeq;
-      stockLoaded = false;
-      if (itemsHint) itemsHint.textContent = "Loading your stock levels…";
-      if (!itemsBuilt && itemsRoot) {
+      if (itemsHint) {
+        itemsHint.textContent = query
+          ? `Searching for “${query}”…`
+          : "Loading items you can send…";
+      }
+      if (itemsRoot) {
         itemsRoot.innerHTML =
           '<p class="stock-create-empty" data-stock-create-loading>Loading items…</p>';
-      } else {
-        rows.forEach((row) => {
-          setAvailDisplay(row, null, { loading: true });
-          const qty = row.querySelector("[data-stock-create-qty]");
-          if (qty) qty.disabled = false;
-        });
       }
+      setEmptyStates({ loading: true, query });
       try {
-        const url = toId
-          ? `${fromStockUrl}?from_shop_id=${encodeURIComponent(toId)}`
-          : fromStockUrl;
+        const params = new URLSearchParams();
+        if (toId) params.set("from_shop_id", toId);
+        if (query) params.set("q", query);
+        if (includeEmpty) params.set("include_empty", "1");
+        const url = `${fromStockUrl}${params.toString() ? `?${params}` : ""}`;
         const response = await fetch(url, {
           headers: {
             Accept: "application/json",
@@ -547,31 +551,78 @@
         });
         if (seq !== fromStockSeq) return;
         if (!response.ok) {
-          clearFromStock();
+          if (itemsRoot) {
+            itemsRoot.innerHTML =
+              '<p class="stock-create-empty">Could not load items. Try again.</p>';
+          }
+          setEmptyStates({ loading: false, query, itemCount: 0 });
           return;
         }
         const data = await response.json();
         if (seq !== fromStockSeq) return;
         if (!data?.ok) {
-          clearFromStock();
+          if (itemsRoot) {
+            itemsRoot.innerHTML = `<p class="stock-create-empty">${escapeHtml(
+              data.error || "Could not load items."
+            )}</p>`;
+          }
+          setEmptyStates({ loading: false, query, itemCount: 0 });
           return;
         }
-        if (!itemsBuilt || (Array.isArray(data.items) && data.items.length)) {
-          buildItemRows(data.items || []);
+        const items = Array.isArray(data.items) ? data.items : [];
+        buildItemRows(items, data.stocks || {});
+        const shopName = data.from_shop_name || "";
+        const inStockCount = Number(data.in_stock_count || 0) || 0;
+        const visibleCount = rows.length;
+        if (itemsHint) {
+          if (query) {
+            itemsHint.textContent = items.length
+              ? `Matches for “${query}”. Enter how many to send in the Send column.`
+              : selectedItems.size
+                ? `No new matches for “${query}”. Your selected items stay listed above.`
+                : `No matches for “${query}”.`;
+          } else if (visibleCount) {
+            itemsHint.textContent = shopName
+              ? `In-stock items at ${shopName}. Search to find more, then enter amounts to send.`
+              : "Enter how many to send for each item.";
+          } else {
+            itemsHint.textContent = shopName
+              ? `${shopName} has no in-stock items right now. Search by name or show out-of-stock.`
+              : "Search by item name to find what to send.";
+          }
         }
-        applyFromStock(data.stocks || {}, data.from_shop_name || "");
+        setEmptyStates({
+          loading: false,
+          query,
+          itemCount: visibleCount,
+          inStockCount,
+        });
+        if (noResults) {
+          noResults.hidden = !query || items.length > 0 || selectedItems.size > 0;
+        }
+        if (focusSearch) {
+          window.setTimeout(() => searchInput?.focus(), 40);
+        }
       } catch {
         if (seq !== fromStockSeq) return;
-        clearFromStock();
+        if (itemsRoot) {
+          itemsRoot.innerHTML =
+            '<p class="stock-create-empty">Network error while loading items.</p>';
+        }
+        setEmptyStates({ loading: false, query, itemCount: 0 });
       }
+    };
+
+    const scheduleSearch = () => {
+      window.clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(() => {
+        loadItems();
+      }, 220);
     };
 
     const openCreateAndLoadStock = () => {
       createControls?.open();
-      loadFromStock();
-      window.setTimeout(() => {
-        createModal.querySelector("[data-stock-create-from]")?.focus();
-      }, 40);
+      loadItems({ focusSearch: true });
     };
 
     document.querySelectorAll('[data-modal-open="request-stock"]').forEach((btn) => {
@@ -593,21 +644,33 @@
     }
 
     fromSelect?.addEventListener("change", () => {
-      loadFromStock();
+      // Destination only; stock is always from the current shop.
     });
 
     showEmptyToggle?.addEventListener("change", () => {
-      syncRowVisibility();
+      loadItems();
     });
 
     syncSelectedCount();
-    searchInput?.addEventListener("input", syncRowVisibility);
+    searchInput?.addEventListener("input", scheduleSearch);
+    searchInput?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        window.clearTimeout(searchTimer);
+        loadItems();
+        const firstQty = itemsRoot?.querySelector(
+          "[data-stock-create-qty]:not(:disabled)"
+        );
+        firstQty?.focus();
+      }
+    });
 
     form?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const fromShop = form.querySelector("[data-stock-create-from]");
       const code = form.querySelector("[data-stock-create-code]");
       const submitBtn = form.querySelector("[data-stock-create-submit]");
+      captureSelectedQtys();
       rows.forEach((row) => {
         const qty = row.querySelector("[data-stock-create-qty]");
         const idInput = row.querySelector("[data-stock-create-id]");
@@ -627,7 +690,8 @@
       }
       if (!activeRows.length) {
         rows.forEach((row) => syncRowEnabled(row));
-        window.alert("Enter how many to send for at least one item.");
+        window.alert("Search for an item and enter how many to send.");
+        searchInput?.focus();
         return;
       }
       if (!String(code?.value || "").trim()) {

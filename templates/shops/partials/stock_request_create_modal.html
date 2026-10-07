@@ -78,7 +78,7 @@
             <div>
               <h3 id="stock-create-step2-title">What are you sending?</h3>
               <p data-stock-create-items-hint>
-                Enter how many to send from your stock. Choose a destination above before sending.
+                Search for an item, then enter how many to send from your stock.
               </p>
             </div>
             <p class="stock-create-selected" data-stock-create-selected hidden>
@@ -92,20 +92,20 @@
               <i data-lucide="search" aria-hidden="true"></i>
               <input
                 type="search"
-                placeholder="Search by item name…"
+                placeholder="Search item to transfer…"
                 autocomplete="off"
                 data-stock-create-search
-                aria-label="Search items"
+                aria-label="Search items to transfer"
               >
             </label>
-            <label class="stock-create-filter" data-stock-create-filter-wrap hidden>
+            <label class="stock-create-filter" data-stock-create-filter-wrap>
               <input type="checkbox" data-stock-create-show-empty>
               <span>Show out-of-stock</span>
             </label>
           </div>
 
           <div class="stock-create-items-shell">
-            <div class="stock-create-items-head" aria-hidden="true">
+            <div class="stock-create-items-head" data-stock-create-items-head hidden>
               <span>Item</span>
               <span>You have</span>
               <span>Send</span>
@@ -113,15 +113,15 @@
 
             <div class="stock-create-items" data-stock-create-items>
               <p class="stock-create-empty" data-stock-create-loading>
-                Open this panel to load items from your stock…
+                Search an item name, then enter how many to send.
               </p>
             </div>
             <p class="stock-create-empty stock-create-empty--search" data-stock-create-no-results hidden>
               No items match your search.
             </p>
             <p class="stock-create-empty stock-create-empty--stock" data-stock-create-no-stock hidden>
-              This shop has no stock for these items. Turn on
-              <em>Show out-of-stock</em> to browse the full list anyway.
+              No in-stock items to send. Search by name, or turn on
+              <em>Show out-of-stock</em>.
             </p>
           </div>
         </section>

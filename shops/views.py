@@ -1798,7 +1798,9 @@ def my_shop_stock_request_create(request, shop_id):
 @shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_stock_request_from_stock(request, shop_id):
-    """Return catalog + on-hand quantities for the transfer create modal."""
+    """Return searchable catalog + on-hand quantities for the transfer create modal."""
+    from items.services import _format_qty, _quantize_qty
+
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
@@ -1815,17 +1817,52 @@ def my_shop_stock_request_from_stock(request, shop_id):
             status=400,
         )
 
-    stocks = {
-        str(item_id): int(qty or 0)
-        for item_id, qty in ShopStock.objects.filter(shop=shop).values_list(
-            "item_id", "quantity"
-        )
+    query = (request.GET.get("q") or "").strip()
+    include_empty = (request.GET.get("include_empty") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
     }
-    items = list(
-        Item.objects.filter(is_suspended=False)
-        .order_by("name")
-        .values("id", "name")[:800]
+
+    stock_rows = list(
+        ShopStock.objects.filter(shop=shop).values_list("item_id", "quantity")
     )
+    stocks = {
+        str(item_id): _format_qty(qty)
+        for item_id, qty in stock_rows
+    }
+    in_stock_ids = {
+        item_id
+        for item_id, qty in stock_rows
+        if _quantize_qty(qty) > 0
+    }
+
+    items_qs = Item.objects.filter(is_suspended=False)
+    if query:
+        items_qs = items_qs.filter(name__icontains=query)
+        if not include_empty:
+            # Prefer in-stock matches; fall back to all name matches so search is useful.
+            preferred = list(
+                items_qs.filter(pk__in=in_stock_ids)
+                .order_by("name")
+                .values("id", "name")[:80]
+            )
+            if preferred:
+                items = preferred
+            else:
+                items = list(items_qs.order_by("name").values("id", "name")[:80])
+                include_empty = True
+        else:
+            items = list(items_qs.order_by("name").values("id", "name")[:80])
+    elif include_empty:
+        items = list(items_qs.order_by("name").values("id", "name")[:120])
+    else:
+        items = list(
+            items_qs.filter(pk__in=in_stock_ids)
+            .order_by("name")
+            .values("id", "name")[:120]
+        )
+
     return JsonResponse(
         {
             "ok": True,
@@ -1833,6 +1870,9 @@ def my_shop_stock_request_from_stock(request, shop_id):
             "from_shop_name": shop.name,
             "stocks": stocks,
             "items": items,
+            "query": query,
+            "include_empty": include_empty,
+            "in_stock_count": len(in_stock_ids),
         }
     )
 

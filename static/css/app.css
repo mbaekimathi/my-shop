@@ -30114,6 +30114,10 @@ body.workspace-modal-open .stock-country-menu {
   opacity: 0.78;
 }
 
+.stock-create-item-row.is-pinned {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+}
+
 .stock-create-item-main {
   display: grid;
   gap: 0.12rem;
@@ -30191,6 +30195,12 @@ body.workspace-modal-open .stock-country-menu {
 .stock-create-item-row input[type="number"]:focus {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
   outline: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.stock-create-item-row input[type="number"]:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--panel-muted) 55%, var(--surface));
 }
 
 .stock-create-item-row.is-active input[type="number"] {
