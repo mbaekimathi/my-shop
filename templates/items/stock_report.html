@@ -240,7 +240,6 @@
                 {% if movement_item_group_by_shop %}
                 <th scope="col" data-col="shop">Shop</th>
                 {% endif %}
-                <th scope="col" data-col="num" class="is-center" title="Current stock">Stock</th>
                 <th scope="col" data-col="num" class="is-center">Events</th>
                 <th scope="col" data-col="num" class="is-center" title="Stock in">In</th>
                 <th scope="col" data-col="num" class="is-center" title="Stock out">Out</th>
@@ -249,6 +248,7 @@
                 <th scope="col" data-col="num" class="is-center" title="Trade out, exchange, return, or trade sale">Trade</th>
                 <th scope="col" data-col="num" class="is-center" title="Stock sale">Sale</th>
                 <th scope="col" data-col="num" class="is-center" title="Returned">Return</th>
+                <th scope="col" data-col="num" class="is-center" title="Current total quantity on hand">Stock</th>
                 <th scope="col" data-col="time">Last</th>
                 <th scope="col" data-col="action"><span class="visually-hidden">Actions</span></th>
               </tr>
@@ -272,9 +272,6 @@
                 {% if movement_item_group_by_shop %}
                 <td data-label="Shop">{% if row.is_item_total %}<strong>Total</strong>{% else %}{{ row.shop_name }}{% endif %}</td>
                 {% endif %}
-                <td data-label="Current stock">
-                  <span class="stock-matrix-qty stock-matrix-qty--total{% if row.current_stock == 0 %} is-empty{% endif %}">{{ row.current_stock }}</span>
-                </td>
                 <td data-label="Events">{{ row.event_count }}</td>
                 <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in{% if row.units_in == 0 %} is-empty{% endif %}">{{ row.units_in }}</span></td>
                 <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out{% if row.units_out == 0 %} is-empty{% endif %}">{{ row.units_out }}</span></td>
@@ -283,6 +280,9 @@
                 <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade{% if row.units_trade == 0 %} is-empty{% endif %}">{{ row.units_trade }}</span></td>
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if row.units_sale == 0 %} is-empty{% endif %}">{{ row.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return{% if row.units_return == 0 %} is-empty{% endif %}">{{ row.units_return }}</span></td>
+                <td data-label="Current stock">
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if row.current_stock == 0 %} is-empty{% endif %}">{{ row.current_stock }}</span>
+                </td>
                 <td data-label="Last activity">
                   {% if row.last_at %}
                     {% if report_range == 'day' %}
@@ -311,7 +311,6 @@
                 {% if movement_item_group_by_shop %}
                 <td data-label="Shop"></td>
                 {% endif %}
-                <td data-label="Current stock"><span class="stock-matrix-qty stock-matrix-qty--total">{{ movement_item_totals.current_stock }}</span></td>
                 <td data-label="Events">{{ movement_item_totals.event_count }}</td>
                 <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in">{{ movement_item_totals.units_in }}</span></td>
                 <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out">{{ movement_item_totals.units_out }}</span></td>
@@ -320,6 +319,7 @@
                 <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade">{{ movement_item_totals.units_trade }}</span></td>
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale">{{ movement_item_totals.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ movement_item_totals.units_return }}</span></td>
+                <td data-label="Current stock"><span class="stock-matrix-qty stock-matrix-qty--total">{{ movement_item_totals.current_stock }}</span></td>
                 <td data-label="Last activity"></td>
                 <td data-label="Actions"></td>
               </tr>
@@ -498,6 +498,20 @@
             {% endfor %}
           </tbody>
           {% endfor %}
+          <tfoot>
+            <tr class="stock-report-timeline-total">
+              <td
+                colspan="{% if is_item_movement_detail %}2{% else %}3{% endif %}"
+                data-label="When / Type"
+              >
+                <strong>Current stock</strong>
+              </td>
+              <td data-label="Qty" class="is-center">
+                <span class="stock-matrix-qty stock-report-qty--transfer-in">{{ timeline_current_stock|default:0 }}</span>
+              </td>
+              <td colspan="7" data-label=""></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
       {% if timeline_total_pages > 1 %}

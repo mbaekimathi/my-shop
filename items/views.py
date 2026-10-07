@@ -4892,7 +4892,6 @@ def _stock_report_download(
             item_summary_headers.append("Shop")
         item_summary_headers.extend(
             [
-                "Stock",
                 "Events",
                 "In",
                 "Out",
@@ -4901,6 +4900,7 @@ def _stock_report_download(
                 "Trade",
                 "Sale",
                 "Return",
+                "Stock",
                 "Last date",
                 "Last time",
             ]
@@ -4924,7 +4924,6 @@ def _stock_report_download(
                 line.append(row.get("shop_name") or "")
             line.extend(
                 [
-                    row.get("current_stock") or 0,
                     row.get("event_count") or 0,
                     row.get("units_in") or 0,
                     row.get("units_out") or 0,
@@ -4933,6 +4932,7 @@ def _stock_report_download(
                     row.get("units_trade") or 0,
                     row.get("units_sale") or 0,
                     row.get("units_return") or 0,
+                    row.get("current_stock") or 0,
                     last_date,
                     last_time,
                 ]
@@ -5371,6 +5371,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     timeline_total_pages = 1
     timeline_prev_url = ""
     timeline_next_url = ""
+    timeline_current_stock = 0
     report_page = 1
     report_page_size = 50
     report_total_groups = 0
@@ -5421,6 +5422,47 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             units_transfer_out,
             units_return,
         ) = _summarize_movement_events(movement_events)
+        if view_by == "timeline":
+            # Live on-hand total for items that appear in this timeline.
+            from django.db.models import Sum
+
+            timeline_item_ids = {
+                event.get("item_id")
+                for event in movement_events
+                if event.get("item_id")
+            }
+            if is_item_movement_detail and selected_item_ids:
+                timeline_item_ids = set(selected_item_ids)
+            elif not timeline_item_ids:
+                # Resolve catalog ids when events only carry item names (e.g. POS).
+                names = {
+                    (event.get("item_name") or "").strip().lower()
+                    for event in movement_events
+                    if (event.get("item_name") or "").strip()
+                }
+                if names:
+                    timeline_item_ids = {
+                        item.pk
+                        for item in Item.objects.only("id", "name")
+                        if (item.name or "").strip().lower() in names
+                    }
+            if timeline_item_ids and shop_ids_for_query:
+                stock_total = (
+                    ShopStock.objects.filter(
+                        shop_id__in=shop_ids_for_query,
+                        item_id__in=list(timeline_item_ids),
+                    ).aggregate(total=Sum("quantity"))["total"]
+                    or 0
+                )
+                try:
+                    as_float = float(stock_total)
+                    timeline_current_stock = (
+                        int(as_float)
+                        if as_float.is_integer()
+                        else round(as_float, 3)
+                    )
+                except (TypeError, ValueError):
+                    timeline_current_stock = stock_total
         if is_item_movement_summary:
             # TYPE=All: include idle stock items across shops (like the stock report).
             # Specific type filters: only items with matching transactions.
@@ -5764,6 +5806,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "timeline_total_pages": timeline_total_pages,
             "timeline_prev_url": timeline_prev_url,
             "timeline_next_url": timeline_next_url,
+            "timeline_current_stock": timeline_current_stock,
             "report_page": report_page,
             "report_page_size": report_page_size,
             "report_total_groups": report_total_groups,

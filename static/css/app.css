@@ -19637,6 +19637,28 @@ html[data-theme="light"] .low-stock-badge.is-low {
   font-variant-numeric: tabular-nums;
 }
 
+.stock-panel--report .stock-report-table--timeline tfoot td {
+  padding: 0.55rem 0.55rem;
+  border-top: 2px solid color-mix(in srgb, var(--text-strong) 18%, var(--line));
+  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
+  font-weight: 650;
+  vertical-align: middle;
+}
+
+.stock-panel--report .stock-report-table--timeline tfoot td[data-label="Qty"] {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-panel--report .stock-report-table--timeline tfoot .stock-matrix-qty {
+  display: inline-block;
+  min-width: 2.4rem;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 700;
+  text-align: center;
+}
+
 .stock-panel--report .stock-report-table--timeline td[data-label="Serial"],
 .stock-panel--report .stock-report-table--timeline td[data-label="Pay"],
 .stock-panel--report .stock-report-table--timeline thead th.is-center {
@@ -19939,7 +19961,8 @@ html[data-theme="light"] .low-stock-badge.is-low {
   }
 
   .stock-panel--report .stock-report-table--timeline tbody tr,
-  .stock-panel--report .stock-report-table--timeline tbody tr.stock-report-receipt-activity {
+  .stock-panel--report .stock-report-table--timeline tbody tr.stock-report-receipt-activity,
+  .stock-panel--report .stock-report-table--timeline tfoot tr {
     display: flex !important;
     flex-direction: column !important;
     width: 100% !important;
@@ -19954,8 +19977,19 @@ html[data-theme="light"] .low-stock-badge.is-low {
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   }
 
+  .stock-panel--report .stock-report-table--timeline tfoot tr {
+    margin-top: 0.35rem;
+    border-color: color-mix(in srgb, var(--text-strong) 20%, var(--line));
+    background: color-mix(in srgb, var(--panel-muted) 70%, var(--panel, #fff));
+  }
+
   .stock-panel--report .stock-report-table--timeline tbody tr:last-child {
     margin-bottom: 0;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tfoot td[colspan="7"],
+  .stock-panel--report .stock-report-table--timeline tfoot td:not([data-label="When / Type"]):not([data-label="Qty"]) {
+    display: none !important;
   }
 
   .stock-panel--report .stock-report-table--timeline tbody tr:hover td {
@@ -19989,7 +20023,9 @@ html[data-theme="light"] .low-stock-badge.is-low {
   .stock-panel--report .stock-report-table--timeline tbody td,
   .stock-panel--report .stock-report-table--timeline tbody td[data-label],
   .stock-panel--report .stock-report-table--timeline:not(.stock-report-table--timeline-detail) tbody td[data-label],
-  .stock-panel--report .stock-report-table--timeline-detail tbody td[data-label] {
+  .stock-panel--report .stock-report-table--timeline-detail tbody td[data-label],
+  .stock-panel--report .stock-report-table--timeline tfoot td[data-label="When / Type"],
+  .stock-panel--report .stock-report-table--timeline tfoot td[data-label="Qty"] {
     display: flex !important;
     flex-direction: row !important;
     align-items: flex-start;
@@ -20013,11 +20049,13 @@ html[data-theme="light"] .low-stock-badge.is-low {
     hyphens: manual;
   }
 
-  .stock-panel--report .stock-report-table--timeline tbody td:last-child {
+  .stock-panel--report .stock-report-table--timeline tbody td:last-child,
+  .stock-panel--report .stock-report-table--timeline tfoot td[data-label="Qty"] {
     border-bottom: 0 !important;
   }
 
-  .stock-panel--report .stock-report-table--timeline tbody td::before {
+  .stock-panel--report .stock-report-table--timeline tbody td::before,
+  .stock-panel--report .stock-report-table--timeline tfoot td[data-label="Qty"]::before {
     content: attr(data-label);
     flex: 0 0 4.75rem;
     width: 4.75rem;
@@ -20030,6 +20068,11 @@ html[data-theme="light"] .low-stock-badge.is-low {
     line-height: 1.35;
     white-space: normal !important;
     word-break: normal !important;
+  }
+
+  .stock-panel--report .stock-report-table--timeline tfoot td[data-label="When / Type"]::before {
+    content: none !important;
+    display: none !important;
   }
 
   .stock-panel--report .stock-report-table--timeline tbody td[data-label="When / Type"],
@@ -20221,6 +20264,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
   }
 
   .stock-panel--report .stock-report-table--timeline tbody tr,
+  .stock-panel--report .stock-report-table--timeline tfoot tr,
   .stock-panel--report .stock-report-table--items tbody tr,
   .stock-panel--report .stock-report-table--items tfoot tr,
   .stock-panel--report .stock-report-table--items-summary tbody tr,
@@ -20231,6 +20275,7 @@ html[data-theme="light"] .low-stock-badge.is-low {
   }
 
   .stock-panel--report .stock-report-table--timeline tbody td,
+  .stock-panel--report .stock-report-table--timeline tfoot td,
   .stock-panel--report .stock-report-table--items tbody td,
   .stock-panel--report .stock-report-table--items tfoot td,
   .stock-panel--report .stock-report-table--items-summary tbody td,
