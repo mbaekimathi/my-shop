@@ -431,11 +431,16 @@ def _shop_floor_chrome(
                 .order_by()
                 .count()
             )
+        # Icon badges = incoming only (this shop must confirm receipt).
         stock_request_status_url = reverse(
             "employees:my_shop_stock_request_status", kwargs={"shop_id": shop.pk}
         )
+        stock_transfers_url = reverse(
+            "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
+        )
     else:
         pending_request_count = pending_request_count or 0
+        stock_transfers_url = ""
     day_state = (
         shop_day_floor_state(shop=shop, pos=pos) if shop is not None else {}
     )
@@ -470,6 +475,7 @@ def _shop_floor_chrome(
         "shops": shops,
         "shop_portal": portal,
         "stock_request_status_url": stock_request_status_url,
+        "stock_transfers_url": stock_transfers_url,
         "sidebar_pending_request_count": pending_request_count,
         "low_stock_alerts": low_stock_alerts,
         "low_stock_alert_count": len(low_stock_alerts),
@@ -977,6 +983,9 @@ def _pending_stock_requests_for_shop(shop):
         .order_by("-created_at")
     )
     for movement in requests:
+        movement.units_total = sum(
+            int(line.quantity or 0) for line in movement.lines.all()
+        )
         for line in movement.lines.all():
             # Receiver confirms against sent qty (stock leaves the sender on accept).
             line.available_qty = line.quantity
@@ -1071,6 +1080,7 @@ def _stock_request_status_payload(shop):
     return {
         "ok": True,
         "pending_count": len(alerts),
+        "badge_count": len(alerts),
         "unseen_count": unseen_count,
         "pending": alerts,
         "decision_count": len(decision_alerts),
@@ -1697,6 +1707,9 @@ def my_shop_stock_requests(request, shop_id):
             ),
             # Item rows load via from-stock JSON when the create modal opens.
             "request_items": [],
+            "stock_request_respond_next": reverse(
+                "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
+            ),
         },
         pending_request_count=len(pending_requests),
     )
@@ -3066,7 +3079,16 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
         )
     messages.success(request, success_message)
 
-    next_url = reverse("employees:my_shop_workspace", kwargs={"shop_id": shop.pk})
+    workspace_url = reverse("employees:my_shop_workspace", kwargs={"shop_id": shop.pk})
+    stock_requests_url = reverse(
+        "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
+    )
+    requested_next = (request.POST.get("next") or "").strip()
+    next_url = (
+        requested_next
+        if requested_next in {workspace_url, stock_requests_url}
+        else workspace_url
+    )
     if wants_json:
         payload = {
             "ok": True,

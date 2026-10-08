@@ -25,13 +25,22 @@
       </button>
       {% else %}
       <a
-        class="workspace-nav-link{% if item.active %} is-active{% endif %}{% if item.muted %} workspace-nav-link--muted{% endif %}"
+        class="workspace-nav-link{% if item.active %} is-active{% endif %}{% if item.muted %} workspace-nav-link--muted{% endif %}{% if item.live_badge and item.badge %} has-live-badge{% endif %}"
         href="{{ item.href }}"
         data-workspace-nav
+        {% if item.nav_key %}data-nav-key="{{ item.nav_key }}"{% endif %}
+        {% if item.nav_key == "stock-transfers" %}data-stock-transfer-nav{% endif %}
       >
         <i data-lucide="{{ item.icon }}" aria-hidden="true"></i>
         <span>{{ item.label }}</span>
-        {% if item.badge %}
+        {% if item.live_badge %}
+        <span
+          class="workspace-nav-badge"
+          data-stock-transfer-nav-badge
+          aria-label="{{ item.badge }} incoming transfer{{ item.badge|pluralize }}"
+          {% if not item.badge %}hidden{% endif %}
+        >{{ item.badge }}</span>
+        {% elif item.badge %}
         <span class="workspace-nav-badge" aria-label="{{ item.badge }} pending">{{ item.badge }}</span>
         {% endif %}
       </a>

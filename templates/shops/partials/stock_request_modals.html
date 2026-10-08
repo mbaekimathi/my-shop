@@ -38,7 +38,11 @@
 
       <div class="stock-transfer-stack">
         {% for req in pending_stock_requests %}
-        <article class="stock-transfer-form-card" data-request-card>
+        <article
+          class="stock-transfer-form-card"
+          data-request-card
+          data-request-id="{{ req.pk }}"
+        >
           <form
             method="post"
             action="{% url 'employees:my_shop_stock_request_respond' shop.id req.pk %}"
@@ -48,6 +52,9 @@
             novalidate
           >
             {% csrf_token %}
+            {% if stock_request_respond_next %}
+            <input type="hidden" name="next" value="{{ stock_request_respond_next }}">
+            {% endif %}
 
             <header class="stock-transfer-form-head">
               <div class="stock-transfer-party">
@@ -72,11 +79,10 @@
             </header>
 
             <div class="stock-transfer-table-wrap">
-              <table class="stock-transfer-table">
+              <table class="stock-transfer-table stock-transfer-table--receive">
                 <thead>
                   <tr>
                     <th scope="col">Item</th>
-                    <th scope="col">Sent</th>
                     <th scope="col">Received</th>
                   </tr>
                 </thead>
@@ -97,9 +103,6 @@
                         <em class="stock-request-serial-tag">Serial tracked</em>
                         {% endif %}
                       </div>
-                    </td>
-                    <td data-label="Sent">
-                      <strong class="stock-transfer-qty-readonly">{{ line.quantity }}</strong>
                     </td>
                     <td data-label="Received">
                       <label class="stock-transfer-qty-field">

@@ -376,7 +376,19 @@ def workspace_back_url(request, role):
     return _workspace_parent_url(request, role)
 
 
-def _link(label, icon, *, url_name=None, href=None, active=False, danger=False, muted=False, badge=None):
+def _link(
+    label,
+    icon,
+    *,
+    url_name=None,
+    href=None,
+    active=False,
+    danger=False,
+    muted=False,
+    badge=None,
+    live_badge=False,
+    nav_key="",
+):
     item = {
         "type": "link",
         "label": label,
@@ -390,7 +402,12 @@ def _link(label, icon, *, url_name=None, href=None, active=False, danger=False, 
         item["href"] = reverse(url_name)
     elif href:
         item["href"] = href
-    if badge is not None and int(badge) > 0:
+    if nav_key:
+        item["nav_key"] = nav_key
+    if live_badge:
+        item["live_badge"] = True
+        item["badge"] = int(badge or 0)
+    elif badge is not None and int(badge) > 0:
         item["badge"] = int(badge)
     return item
 
@@ -713,6 +730,8 @@ def sidebar_for_my_shop(
                         ),
                         active=active == "stock_requests",
                         badge=pending_request_count,
+                        live_badge=True,
+                        nav_key="stock-transfers",
                     )
                 )
             if _allowed("register_expense"):
@@ -781,6 +800,19 @@ def sidebar_for_my_shop(
                 )
             )
         elif active == "stock_requests" and _allowed("stock_requests"):
+            primary.append(
+                _link(
+                    "Stock transfers",
+                    "clipboard-list",
+                    href=reverse(
+                        "employees:my_shop_stock_requests", kwargs={"shop_id": shop.pk}
+                    ),
+                    active=True,
+                    badge=pending_request_count,
+                    live_badge=True,
+                    nav_key="stock-transfers",
+                )
+            )
             primary.append(
                 _action(
                     "Transfer stock",

@@ -242,6 +242,23 @@
     }).catch(() => {});
   };
 
+  const focusIncomingRequest = (requestId) => {
+    if (!requestModal) return;
+    const targetId = String(requestId || "").trim();
+    requestModal.querySelectorAll("[data-request-card]").forEach((card) => {
+      const match =
+        Boolean(targetId) &&
+        String(card.getAttribute("data-request-id") || "") === targetId;
+      card.classList.toggle("is-focused", match);
+      if (!match) return;
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const qty = card.querySelector("[data-transfer-qty]");
+      if (qty && !qty.disabled) {
+        window.setTimeout(() => qty.focus(), 40);
+      }
+    });
+  };
+
   const requestControls = bindModal({
     modal: requestModal,
     openSelectors: "[data-stock-request-open]",
@@ -249,6 +266,9 @@
     autoOpen: requestModal?.getAttribute("data-auto-open") === "1",
     onClose: () => {
       ackSupplierSeen();
+      requestModal
+        ?.querySelectorAll("[data-request-card].is-focused")
+        .forEach((card) => card.classList.remove("is-focused"));
       window.clearTimeout(requestSnoozeTimer);
       requestSnoozeTimer = window.setTimeout(() => {
         if (requestModal && document.querySelector("[data-stock-request-open]")) {
@@ -256,6 +276,14 @@
         }
       }, SNOOZE_MS);
     },
+  });
+
+  document.querySelectorAll("[data-stock-request-open]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      window.requestAnimationFrame(() => {
+        focusIncomingRequest(btn.getAttribute("data-stock-request-focus") || "");
+      });
+    });
   });
 
   // If the incoming modal auto-opened, mark supplier alerts as seen.
@@ -1361,6 +1389,38 @@
       }
     };
 
+    const updateTransferBadges = (count, { pulse = false } = {}) => {
+      const n = Math.max(0, Number(count) || 0);
+      const label =
+        n === 1 ? "1 incoming stock transfer" : `${n} incoming stock transfers`;
+      document
+        .querySelectorAll(
+          "[data-stock-transfer-nav-badge], [data-stock-transfer-bell-badge]"
+        )
+        .forEach((el) => {
+          el.textContent = String(n);
+          if (n < 1) el.setAttribute("hidden", "");
+          else el.removeAttribute("hidden");
+          el.setAttribute("aria-label", label);
+        });
+      const nav = document.querySelector("[data-stock-transfer-nav]");
+      if (nav) {
+        nav.classList.toggle("has-live-badge", n > 0);
+      }
+      const bell = document.querySelector("[data-stock-transfer-bell]");
+      if (bell) {
+        bell.classList.toggle("has-pending", n > 0);
+        bell.setAttribute("aria-label", n > 0 ? label : "Stock transfers");
+        if (pulse && n > 0) {
+          bell.classList.remove("is-ringing");
+          // Force reflow so the ring animation can replay.
+          void bell.offsetWidth;
+          bell.classList.add("is-ringing");
+          window.setTimeout(() => bell.classList.remove("is-ringing"), 1200);
+        }
+      }
+    };
+
     let pollTimer = null;
     const stopPolling = () => {
       if (pollTimer) {
@@ -1388,6 +1448,13 @@
         if (!data?.ok) return;
         const pending = Array.isArray(data.pending) ? data.pending : [];
         const decisions = Array.isArray(data.decisions) ? data.decisions : [];
+        const pendingCount =
+          typeof data.pending_count === "number"
+            ? data.pending_count
+            : pending.length;
+        // Badge = incoming only (transfers this shop must confirm).
+        const badgeCount =
+          typeof data.badge_count === "number" ? data.badge_count : pendingCount;
         const newRows = pending.filter((row) => !knownIds.includes(String(row.id)));
         const newDecisions = decisions.filter(
           (row) => !knownDecisionIds.includes(String(row.id))
@@ -1397,8 +1464,11 @@
           seedKnown(pending);
           seedKnownDecisions(decisions);
           markSeeded();
+          updateTransferBadges(badgeCount);
           return;
         }
+
+        updateTransferBadges(badgeCount, { pulse: newRows.length > 0 });
 
         if (newRows.length) {
           const sample = newRows[0];
@@ -1412,7 +1482,7 @@
           notifyBrowser("Stock request", message);
           seedKnown(pending);
           seedKnownDecisions(decisions);
-          // Reload so incoming modal + badge HTML stay in sync.
+          // Reload so incoming confirm modal HTML stays in sync.
           window.setTimeout(() => {
             window.location.reload();
           }, 900);
@@ -1448,23 +1518,13 @@
 
         seedKnown(pending);
         seedKnownDecisions(decisions);
-
-        const badge = document.querySelector(".workspace-nav-badge");
-        if (badge && typeof data.pending_count === "number") {
-          if (data.pending_count > 0) {
-            badge.hidden = false;
-            badge.textContent = String(data.pending_count);
-          } else {
-            badge.hidden = true;
-          }
-        }
       } catch {
         /* ignore transient poll errors */
       }
     };
 
     pollTimer = window.setInterval(pollStockRequests, 12000);
-    window.setTimeout(pollStockRequests, 2500);
+    window.setTimeout(pollStockRequests, 1200);
   }
 
   const normalizeSerial = (value) => String(value || "").trim().toUpperCase();

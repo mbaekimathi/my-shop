@@ -2845,6 +2845,9 @@ body.workspace-lock {
 }
 
 .workspace-nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-left: auto;
   min-width: 1.35rem;
   padding: 0.12rem 0.42rem;
@@ -2855,6 +2858,77 @@ body.workspace-lock {
   font-weight: 800;
   line-height: 1.2;
   text-align: center;
+  flex-shrink: 0;
+}
+
+.workspace-nav-badge[hidden] {
+  display: none !important;
+}
+
+.workspace-nav-link.has-live-badge {
+  position: relative;
+}
+
+.workspace-header-bell {
+  position: relative;
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.workspace-header-bell-badge {
+  position: absolute;
+  top: -0.15rem;
+  right: -0.15rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  background: #e35d5d;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--surface, #fff);
+  pointer-events: none;
+}
+
+.workspace-header-bell-badge[hidden] {
+  display: none !important;
+}
+
+.workspace-header-bell.has-pending {
+  color: color-mix(in srgb, var(--accent, #c27a2d) 85%, var(--text-strong, #1a1a1a));
+}
+
+.workspace-header-bell.is-ringing {
+  animation: workspace-bell-ring 0.9s ease-in-out 1;
+}
+
+@keyframes workspace-bell-ring {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  15% {
+    transform: rotate(14deg);
+  }
+  30% {
+    transform: rotate(-12deg);
+  }
+  45% {
+    transform: rotate(10deg);
+  }
+  60% {
+    transform: rotate(-8deg);
+  }
+  75% {
+    transform: rotate(4deg);
+  }
 }
 
 .workspace-nav-link:hover {
@@ -29105,6 +29179,11 @@ body.workspace-modal-open .stock-country-menu {
   overflow: hidden;
 }
 
+.stock-transfer-form-card.is-focused {
+  border-color: color-mix(in srgb, var(--teal) 55%, var(--line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 22%, transparent);
+}
+
 .stock-request-form {
   display: grid;
   gap: 0.7rem;
@@ -29390,6 +29469,16 @@ body.workspace-modal-open .stock-country-menu {
   border-spacing: 0;
   min-width: 26rem;
   font-size: 0.8rem;
+}
+
+.stock-transfer-table--receive {
+  min-width: 0;
+}
+
+.stock-transfer-table--receive th:last-child,
+.stock-transfer-table--receive td:last-child {
+  width: 7.5rem;
+  text-align: right;
 }
 
 .stock-transfer-table th,
@@ -30954,6 +31043,15 @@ body.workspace-modal-open .stock-country-menu {
 .stock-request-table-note {
   white-space: normal;
   max-width: 12rem;
+}
+
+.stock-request-table-action {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.stock-request-table-action .btn {
+  min-width: 5.5rem;
 }
 
 .stock-request-history-card {

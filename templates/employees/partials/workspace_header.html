@@ -15,6 +15,22 @@
   </div>
 
   <div class="workspace-header-actions">
+    {% if stock_request_status_url and stock_transfers_url %}
+    <a
+      class="workspace-icon-btn workspace-header-bell{% if sidebar_pending_request_count %} has-pending{% endif %}"
+      href="{{ stock_transfers_url }}"
+      data-stock-transfer-bell
+      aria-label="{% if sidebar_pending_request_count %}{{ sidebar_pending_request_count }} incoming stock transfer{{ sidebar_pending_request_count|pluralize }}{% else %}Stock transfers{% endif %}"
+      title="Incoming stock transfers"
+    >
+      <i data-lucide="bell" aria-hidden="true"></i>
+      <span
+        class="workspace-header-bell-badge"
+        data-stock-transfer-bell-badge
+        {% if not sidebar_pending_request_count %}hidden{% endif %}
+      >{{ sidebar_pending_request_count|default:0 }}</span>
+    </a>
+    {% endif %}
     {% include "partials/connectivity_indicator.html" %}
     {% include "partials/theme_toggle.html" %}
 
