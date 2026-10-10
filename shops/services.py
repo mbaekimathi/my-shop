@@ -2085,6 +2085,64 @@ def get_company_profile() -> CompanyProfile:
     return profile_row
 
 
+def normalize_main_website_domain(value: str) -> str:
+    """Normalize apex domain input: strip scheme, path, port, and leading www."""
+    from urllib.parse import urlparse
+
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").strip().lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def main_website_host_matches(request_host: str, configured_domain: str) -> bool:
+    """True when the request host is the configured apex domain or its www variant."""
+    host = (request_host or "").split(":")[0].strip().lower()
+    domain = normalize_main_website_domain(configured_domain)
+    if not host or not domain:
+        return False
+    if host.startswith("www."):
+        host = host[4:]
+    return host == domain
+
+
+def get_main_website_shop():
+    """Return the active shop selected as the company main website, or None."""
+    profile = get_company_profile()
+    shop = getattr(profile, "main_website_shop", None)
+    if shop is None:
+        return None
+    if shop.is_hidden or shop.is_suspended:
+        return None
+    return shop
+
+
+def update_main_website_settings(*, shop_id=None, domain: str = "") -> CompanyProfile:
+    """Persist which shop catalogue appears on the main (apex) domain."""
+    profile = get_company_profile()
+    cleaned_domain = normalize_main_website_domain(domain)
+    shop = None
+    if shop_id not in (None, "", 0, "0"):
+        try:
+            shop = Shop.objects.get(
+                pk=int(shop_id),
+                is_hidden=False,
+                is_suspended=False,
+            )
+        except (TypeError, ValueError, Shop.DoesNotExist) as exc:
+            raise ValidationError("Select an active shop for the main website.") from exc
+    profile.main_website_shop = shop
+    profile.main_website_domain = cleaned_domain
+    profile.save(update_fields=["main_website_shop", "main_website_domain", "updated_at"])
+    return profile
+
+
 def get_company_display_name() -> str:
     """Company profile name for branding, with MY-SHOP as fallback."""
     cached_name = cache.get(COMPANY_DISPLAY_NAME_CACHE_KEY)

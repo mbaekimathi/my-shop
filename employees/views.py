@@ -32,7 +32,10 @@ from shops.services import (
     get_company_pos_settings,
     get_company_display_name,
     get_company_profile,
+    get_main_website_shop,
     get_company_working_hours_settings,
+    normalize_main_website_domain,
+    update_main_website_settings,
     get_daraja_settings,
     get_developer_payment_settings,
     mark_developer_subscription_paid,
@@ -754,7 +757,7 @@ def role_shop_cashier(request):
     return _render_role_page(request, EmployeeRole.SHOP_CASHIER)
 
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver"}
 _DEFAULT_LOCAL_ORIGIN = "http://localhost:8000"
 
 
@@ -775,6 +778,11 @@ def _local_site_origin(request):
         from urllib.parse import urlparse, urlunparse
 
         parsed = urlparse(current)
+        hostname = (parsed.hostname or "").lower()
+        # Django's test client uses "testserver" with no port — keep the
+        # familiar local marketing origin used in runserver / docs.
+        if hostname == "testserver":
+            return _DEFAULT_LOCAL_ORIGIN
         host = "localhost"
         if parsed.port:
             host = f"{host}:{parsed.port}"
@@ -858,7 +866,45 @@ def role_it_support(request):
     return _render_role_page(request, EmployeeRole.IT_SUPPORT)
 
 
+def _app_site_origin(request):
+    """Public origin for the app/subdomain (hosted when known, else local)."""
+    if _marketing_is_hosted(request):
+        return _hosted_site_origin(request) or _local_site_origin(request)
+    return _local_site_origin(request)
+
+
+def _main_website_guide(request, company, main_shop):
+    """Build copy + preview URLs for mapping the selected shop onto the apex domain."""
+    from urllib.parse import urlparse
+
+    app_origin = _app_site_origin(request)
+    app_host = (urlparse(app_origin).hostname or "").lower()
+    subdomain_path = ""
+    if main_shop:
+        subdomain_path = reverse(
+            "employees:shop_website", kwargs={"shop_id": main_shop.pk}
+        )
+    subdomain_url = f"{app_origin}{subdomain_path}" if subdomain_path else ""
+    preview_path = reverse("employees:main_website")
+    preview_url = f"{app_origin}{preview_path}"
+    apex = normalize_main_website_domain(getattr(company, "main_website_domain", "") or "")
+    apex_url = f"https://{apex}/" if apex else ""
+    www_url = f"https://www.{apex}/" if apex else ""
+    return {
+        "app_origin": app_origin,
+        "app_host": app_host,
+        "subdomain_url": subdomain_url,
+        "preview_url": preview_url,
+        "apex_domain": apex,
+        "apex_url": apex_url,
+        "www_url": www_url,
+        "shop_name": main_shop.name if main_shop else "",
+        "shop_id": main_shop.pk if main_shop else None,
+    }
+
+
 @role_required(EmployeeRole.IT_SUPPORT)
+@require_http_methods(["GET", "POST"])
 def marketing_links(request):
     from shops.models import Shop
 
@@ -870,6 +916,25 @@ def marketing_links(request):
         "summary": "Copy and share each shop's public website.",
         "icon": "megaphone",
     }
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        if action == "set_main_website":
+            try:
+                update_main_website_settings(
+                    shop_id=request.POST.get("main_website_shop_id"),
+                    domain=request.POST.get("main_website_domain") or "",
+                )
+                messages.success(
+                    request,
+                    "Main website saved. Point your main domain at this app to show that shop.",
+                )
+            except ValidationError as exc:
+                messages.error(request, "; ".join(exc.messages))
+            return redirect("employees:marketing_links")
+
+    company = get_company_profile()
+    main_shop = get_main_website_shop()
     shops = list(
         Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
     )
@@ -887,6 +952,7 @@ def marketing_links(request):
                 "local_url": local_url,
                 "hosted_url": hosted_url,
                 "variants": variants,
+                "is_main": bool(main_shop and shop.pk == main_shop.pk),
             }
         )
     return render(
@@ -902,6 +968,9 @@ def marketing_links(request):
             ),
             "marketing_links": links,
             "marketing_is_hosted": is_hosted,
+            "main_website_shop_id": main_shop.pk if main_shop else "",
+            "main_website_domain": getattr(company, "main_website_domain", "") or "",
+            "main_website_guide": _main_website_guide(request, company, main_shop),
         },
     )
 

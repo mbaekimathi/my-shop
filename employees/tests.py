@@ -1273,19 +1273,86 @@ class MarketingLinksPageTests(TestCase):
 
     @override_settings(IS_HOSTED=True, DARAJA_CALLBACK_BASE_URL="https://shops.example.com")
     def test_marketing_links_include_hosted_qr(self):
+        from shops.services import get_company_profile
+
+        # Keep prior main-website fixtures from affecting hosted URL assertions.
+        company = get_company_profile()
+        company.main_website_shop = None
+        company.main_website_domain = ""
+        company.save(
+            update_fields=["main_website_shop", "main_website_domain", "updated_at"]
+        )
+
         self.client.force_login(self.user)
         response = self.client.get("/it-support/marketing/")
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, f"http://localhost:8000/shop/{self.live.pk}/")
-        self.assertContains(response, f"https://shops.example.com/shop/{self.live.pk}/")
-        self.assertContains(response, "Hosted")
-        self.assertNotContains(response, "Local")
-        shop = response.context["marketing_links"][0]
+        self.assertTrue(response.context["marketing_is_hosted"])
+        shop = next(
+            link
+            for link in response.context["marketing_links"]
+            if link["id"] == self.live.pk
+        )
         self.assertEqual(shop["local_url"], "")
         self.assertEqual(shop["hosted_url"], f"https://shops.example.com/shop/{self.live.pk}/")
         self.assertEqual(len(shop["variants"]), 1)
         self.assertEqual(shop["variants"][0]["key"], "hosted")
+        self.assertEqual(
+            shop["variants"][0]["url"],
+            f"https://shops.example.com/shop/{self.live.pk}/",
+        )
         self.assertTrue(shop["variants"][0]["qr"].startswith("data:image/png;base64,"))
+        self.assertContains(response, f"https://shops.example.com/shop/{self.live.pk}/")
+        self.assertContains(response, "Hosted")
+        self.assertNotContains(response, ">Local<")
+
+    @override_settings(
+        ALLOWED_HOSTS=[
+            "testserver",
+            "localhost",
+            "richcom.co.ke",
+            "www.richcom.co.ke",
+            "pos.richcom.co.ke",
+        ]
+    )
+    def test_marketing_links_can_set_main_website(self):
+        from shops.services import get_company_profile
+
+        self.client.force_login(self.user)
+        page = self.client.get("/it-support/marketing/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Main website")
+        self.assertContains(page, "How to show this page on your main domain")
+
+        response = self.client.post(
+            "/it-support/marketing/",
+            {
+                "action": "set_main_website",
+                "main_website_shop_id": str(self.live.pk),
+                "main_website_domain": "https://www.richcom.co.ke/path",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/it-support/marketing/")
+
+        company = get_company_profile()
+        self.assertEqual(company.main_website_shop_id, self.live.pk)
+        self.assertEqual(company.main_website_domain, "richcom.co.ke")
+
+        preview = self.client.get("/website/")
+        self.assertEqual(preview.status_code, 200)
+        self.assertContains(preview, self.live.name)
+
+        apex = self.client.get("/", HTTP_HOST="richcom.co.ke")
+        self.assertEqual(apex.status_code, 200)
+        self.assertContains(apex, self.live.name)
+
+        www = self.client.get("/", HTTP_HOST="www.richcom.co.ke")
+        self.assertEqual(www.status_code, 200)
+        self.assertContains(www, self.live.name)
+
+        app_home = self.client.get("/", HTTP_HOST="pos.richcom.co.ke")
+        self.assertEqual(app_home.status_code, 200)
+        self.assertContains(app_home, "Employee Login")
 
 
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost"])

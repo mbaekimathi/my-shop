@@ -37,8 +37,17 @@ class ShopAdmin(admin.ModelAdmin):
 
 @admin.register(CompanyProfile)
 class CompanyProfileAdmin(admin.ModelAdmin):
-    list_display = ("name", "phone_number", "email", "location", "updated_at")
-    search_fields = ("name", "email", "phone_number", "location")
+    list_display = (
+        "name",
+        "phone_number",
+        "email",
+        "location",
+        "main_website_shop",
+        "main_website_domain",
+        "updated_at",
+    )
+    search_fields = ("name", "email", "phone_number", "location", "main_website_domain")
+    autocomplete_fields = ("main_website_shop",)
     readonly_fields = ("updated_at",)
 
 

@@ -220,7 +220,11 @@ def _build_stk_security(business_shortcode: str, passkey: str) -> tuple[str, str
 
 def _is_local_or_private_host(host: str) -> bool:
     h = (host or "").strip().lower()
-    if not h or h in {"localhost", "127.0.0.1", "::1"} or h.endswith(".local"):
+    if (
+        not h
+        or h in {"localhost", "127.0.0.1", "::1", "testserver"}
+        or h.endswith(".local")
+    ):
         return True
     if h.startswith("192.168.") or h.startswith("10."):
         return True

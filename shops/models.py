@@ -334,6 +334,20 @@ class CompanyProfile(models.Model):
     email = models.EmailField(blank=True, default="")
     location = models.CharField(max_length=255, blank=True, default="")
     logo = models.ImageField(upload_to=company_logo_path, blank=True, null=True)
+    main_website_shop = models.ForeignKey(
+        "shops.Shop",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text="Shop catalogue shown on the main (apex) domain.",
+    )
+    main_website_domain = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Apex domain that should show the main shop website, e.g. richcom.co.ke.",
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

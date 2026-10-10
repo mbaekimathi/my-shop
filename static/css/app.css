@@ -33875,6 +33875,133 @@ html:not([data-theme="light"]) .comms-chat-wallpaper {
   margin-top: 0;
 }
 
+.marketing-main-site {
+  margin-bottom: 1rem;
+}
+
+.marketing-main-form {
+  display: grid;
+  gap: 1rem;
+  padding: 0.85rem 0.85rem 0;
+}
+
+.marketing-main-form__fields {
+  display: grid;
+  gap: 0.85rem;
+}
+
+@media (min-width: 720px) {
+  .marketing-main-form__fields {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.marketing-main-form .field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.marketing-main-form .field select,
+.marketing-main-form .field input[type="text"] {
+  width: 100%;
+  min-height: 2.55rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.marketing-main-form .field-hint {
+  color: var(--mist-dim);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.marketing-main-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding-bottom: 0.25rem;
+}
+
+.marketing-guide {
+  margin: 0.85rem;
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-muted);
+  display: grid;
+  gap: 0.65rem;
+}
+
+.marketing-guide h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  color: var(--text-strong);
+}
+
+.marketing-guide > p {
+  margin: 0;
+  color: var(--mist-dim);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.marketing-guide__steps {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.55rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.marketing-guide__steps code,
+.marketing-guide__urls code {
+  font-size: 0.82em;
+  word-break: break-word;
+}
+
+.marketing-guide__urls {
+  margin: 0;
+  padding-top: 0.25rem;
+  border-top: 1px dashed var(--line);
+  color: var(--mist-dim);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.marketing-guide__urls a {
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.marketing-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.4rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.marketing-card.is-main-website {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
 .marketing-panel__head-actions {
   display: flex;
   flex-wrap: wrap;

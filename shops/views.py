@@ -783,6 +783,17 @@ def _catalog_rows_for_items(shop, items):
 
 
 @require_http_methods(["GET"])
+def main_website(request):
+    """Public catalogue for the company main-website shop (preview + apex domain)."""
+    from .services import get_main_website_shop
+
+    shop = get_main_website_shop()
+    if shop is None:
+        return redirect("core:landing")
+    return shop_website(request, shop.pk)
+
+
+@require_http_methods(["GET"])
 def shop_website(request, shop_id):
     """Public, shop-specific product catalogue."""
     shop = get_object_or_404(

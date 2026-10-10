@@ -19,7 +19,129 @@
   </p>
 </section>
 
-<section class="item-panel item-panel--dense marketing-panel" data-animate="rise" data-delay="1" data-marketing-links>
+<section class="item-panel item-panel--dense marketing-panel marketing-main-site" data-animate="rise" data-delay="1">
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Main website</h2>
+        <p>
+          Choose which shop catalogue appears on your <strong>main domain</strong>
+          (apex). Branch links below stay on the app subdomain.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <form class="marketing-main-form" method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="set_main_website">
+
+    <div class="marketing-main-form__fields">
+      <label class="field">
+        <span class="field-label">Shop website to show on the main domain</span>
+        <select name="main_website_shop_id" aria-label="Main website shop">
+          <option value="">— Not set —</option>
+          {% for link in marketing_links %}
+          <option value="{{ link.id }}"{% if link.id == main_website_shop_id %} selected{% endif %}>
+            {{ link.name }} · {{ link.location }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="field">
+        <span class="field-label">Main domain (apex)</span>
+        <input
+          type="text"
+          name="main_website_domain"
+          value="{{ main_website_domain }}"
+          placeholder="example.com"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Main website domain"
+        >
+        <span class="field-hint">No https:// — e.g. richcom.co.ke (www is accepted automatically).</span>
+      </label>
+    </div>
+
+    <div class="marketing-main-form__actions">
+      <button type="submit" class="btn btn--primary">
+        <i data-lucide="save" aria-hidden="true"></i>
+        <span>Save main website</span>
+      </button>
+      {% if main_website_guide.preview_url and main_website_shop_id %}
+      <a class="btn btn--ghost" href="{{ main_website_guide.preview_url }}" target="_blank" rel="noopener noreferrer">
+        <i data-lucide="external-link" aria-hidden="true"></i>
+        <span>Preview on this host</span>
+      </a>
+      {% endif %}
+    </div>
+  </form>
+
+  <div class="marketing-guide">
+    <h3>How to show this page on your main domain</h3>
+    <p>
+      Shop websites live on the app subdomain
+      {% if main_website_guide.app_host %}
+      (<code>{{ main_website_guide.app_host }}</code>)
+      {% endif %}
+      as <code>/shop/&lt;id&gt;/</code>.
+      Your main domain should hit the <em>same</em> Django app; when the host matches the apex you set above, <code>/</code> serves the selected shop catalogue.
+    </p>
+    <ol class="marketing-guide__steps">
+      <li>
+        <strong>Pick the shop</strong> and enter the apex domain, then save.
+        {% if main_website_guide.shop_name %}
+        Currently: <em>{{ main_website_guide.shop_name }}</em>
+        {% if main_website_guide.apex_domain %} on <code>{{ main_website_guide.apex_domain }}</code>{% endif %}.
+        {% endif %}
+      </li>
+      <li>
+        <strong>DNS</strong> — In your domain DNS (cPanel / registrar), point the apex
+        {% if main_website_guide.apex_domain %}<code>{{ main_website_guide.apex_domain }}</code>{% else %}(your main domain){% endif %}
+        and <code>www</code> to the same server that hosts
+        {% if main_website_guide.app_host %}<code>{{ main_website_guide.app_host }}</code>{% else %}the app subdomain{% endif %}
+        (same A record or CNAME alias as the subdomain).
+      </li>
+      <li>
+        <strong>Hosting</strong> — Add the apex (and www) as an <em>Alias</em> or <em>Addon Domain</em>
+        that uses the same document root / Passenger app as the subdomain. Do not point it at a different folder.
+      </li>
+      <li>
+        <strong>Django hosts</strong> — If <code>DJANGO_ALLOWED_HOSTS</code> is a fixed list (not <code>auto</code>),
+        add the apex and www. Also add
+        {% if main_website_guide.apex_url %}<code>{{ main_website_guide.apex_url|slice:":-1" }}</code>{% else %}<code>https://your-domain</code>{% endif %}
+        to <code>DJANGO_CSRF_TRUSTED_ORIGINS</code>.
+      </li>
+      <li>
+        <strong>Check</strong> —
+        {% if main_website_guide.apex_url %}
+        open <a href="{{ main_website_guide.apex_url }}" target="_blank" rel="noopener noreferrer">{{ main_website_guide.apex_url }}</a>
+        {% else %}
+        open <code>https://your-main-domain/</code>
+        {% endif %}
+        — visitors see the selected shop website.
+        Staff keep using the subdomain for the portal
+        {% if main_website_guide.app_origin %}(<code>{{ main_website_guide.app_origin }}</code>){% endif %}.
+      </li>
+    </ol>
+    {% if main_website_guide.subdomain_url %}
+    <p class="marketing-guide__urls">
+      Branch URL (subdomain path):
+      <a href="{{ main_website_guide.subdomain_url }}" target="_blank" rel="noopener noreferrer">{{ main_website_guide.subdomain_url }}</a><br>
+      Same catalogue preview on this host:
+      <a href="{{ main_website_guide.preview_url }}" target="_blank" rel="noopener noreferrer">{{ main_website_guide.preview_url }}</a>
+      {% if main_website_guide.apex_url %}
+      <br>
+      Main domain home (after DNS):
+      <a href="{{ main_website_guide.apex_url }}" target="_blank" rel="noopener noreferrer">{{ main_website_guide.apex_url }}</a>
+      {% endif %}
+    </p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="item-panel item-panel--dense marketing-panel" data-animate="rise" data-delay="2" data-marketing-links>
   <div class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
@@ -60,7 +182,7 @@
   <ul class="marketing-list">
     {% for link in marketing_links %}
     <li
-      class="marketing-card"
+      class="marketing-card{% if link.is_main %} is-main-website{% endif %}"
       data-marketing-card
       data-url="{{ link.url }}"
       data-search="{{ link.name|lower }} {{ link.location|lower }} {{ link.url|lower }}"
@@ -74,7 +196,12 @@
       </div>
       <div class="marketing-card__body">
         <div class="marketing-card__title">
-          <h3>{{ link.name }}</h3>
+          <h3>
+            {{ link.name }}
+            {% if link.is_main %}
+            <span class="marketing-badge">Main website</span>
+            {% endif %}
+          </h3>
           <p>{{ link.location }}{% if link.phone %} · {{ link.phone }}{% endif %}</p>
         </div>
         <div class="marketing-card__variants">

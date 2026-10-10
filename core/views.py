@@ -2,6 +2,23 @@ from django.shortcuts import render
 
 
 def landing(request):
+    """
+    Employee portal homepage on the app/subdomain.
+
+    On the configured main (apex) domain, show the selected shop catalogue instead.
+    """
+    from shops.services import (
+        get_company_profile,
+        get_main_website_shop,
+        main_website_host_matches,
+    )
+    from shops.views import shop_website
+
+    company = get_company_profile()
+    main_shop = get_main_website_shop()
+    domain = getattr(company, "main_website_domain", "") or ""
+    if main_shop and main_website_host_matches(request.get_host(), domain):
+        return shop_website(request, main_shop.pk)
     return render(request, "core/landing.html")
 
 

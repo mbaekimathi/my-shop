@@ -21,6 +21,7 @@ urlpatterns = [
         shop_views.shop_website_suggestions,
         name="shop_website_suggestions",
     ),
+    path("website/", shop_views.main_website, name="main_website"),
     path(
         "my-shop/<int:shop_id>/",
         shop_views.my_shop_workspace,
