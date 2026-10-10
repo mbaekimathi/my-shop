@@ -32,9 +32,31 @@ def _sync_actor(request):
 def ping_api(request):
     """Lightweight connectivity check for offline clients.
 
-    Also refreshes the CSRF cookie so long-lived stock-in pages keep a valid token.
+    Also refreshes the CSRF cookie so long-lived stock-in pages keep a valid token,
+    and reports whether the browser still has a live shop/employee session.
     """
-    return JsonResponse({"ok": True})
+    from django.urls import reverse
+
+    from shops.session import is_shop_portal_session, resolve_portal_shop
+
+    auth = "none"
+    login_url = reverse("employees:login")
+
+    portal_shop = resolve_portal_shop(request)
+    if portal_shop is not None:
+        auth = "shop"
+        login_url = reverse("employees:shop_login")
+    elif getattr(request, "user", None) is not None and request.user.is_authenticated:
+        meta = get_employee_meta_for_request(request) or {}
+        if meta.get("status") == EmployeeStatus.ACTIVE:
+            auth = "employee"
+        else:
+            login_url = reverse("employees:login")
+    elif is_shop_portal_session(request):
+        # Stale portal flag without a resolvable shop — treat as logged out.
+        login_url = reverse("employees:shop_login")
+
+    return JsonResponse({"ok": True, "auth": auth, "login_url": login_url})
 
 
 @rate_limit("sync")
@@ -43,13 +65,23 @@ def sync_api(request):
     """Batch sync for employee or shop-portal offline queues."""
     profile, portal_shop = _sync_actor(request)
     if profile is None and portal_shop is None:
+        from django.urls import reverse
+
+        from shops.session import is_shop_portal_session
+
+        login_url = reverse(
+            "employees:shop_login"
+            if is_shop_portal_session(request)
+            else "employees:login"
+        )
         return JsonResponse(
             {
                 "ok": False,
-                "error": "auth_required",
+                "error": "session_expired",
                 "message": "Sign in again to sync queued changes.",
+                "login_url": login_url,
             },
-            status=403,
+            status=401,
         )
 
     try:

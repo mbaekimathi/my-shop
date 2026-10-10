@@ -1164,12 +1164,18 @@ def _derived_serial_status(serial: ItemSerial, *, on_sale: bool, was_returned: b
     return ItemSerialStatus.OUT
 
 
-def apply_serial_status(*, profile, serial: ItemSerial, new_status: str) -> str:
+def apply_serial_status(
+    *, profile, serial: ItemSerial, new_status: str, reason: str = ""
+) -> str:
     """Correct a serial's displayed status and keep availability/stock consistent."""
     new_status = (new_status or "").strip().lower()
     labels = dict(ItemSerialStatus.choices)
     if new_status not in labels:
         raise ValidationError("Choose a valid serial status.")
+
+    reason_text = (reason or "").strip()
+    if len(reason_text) > 500:
+        raise ValidationError("Status reason must be 500 characters or fewer.")
 
     def _guard_serial_shop(locked_serial):
         if locked_serial.shop_id is None:
@@ -1212,8 +1218,15 @@ def apply_serial_status(*, profile, serial: ItemSerial, new_status: str) -> str:
             serial, on_sale=on_sale, was_returned=was_returned
         )
         serial.status_override = "" if derived == new_status else new_status
+        serial.status_reason = reason_text
         serial.save(
-            update_fields=["is_available", "shop", "status_override", "updated_at"]
+            update_fields=[
+                "is_available",
+                "shop",
+                "status_override",
+                "status_reason",
+                "updated_at",
+            ]
         )
 
     label = labels[new_status]

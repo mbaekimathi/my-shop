@@ -18556,6 +18556,25 @@ html[data-theme="light"] .low-stock-badge.is-low {
   max-width: 12rem;
 }
 
+.stock-serials-table--client-returns .stock-serials-col--actions {
+  white-space: nowrap;
+  width: 1%;
+}
+
+.stock-serials-reason {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 14rem;
+  line-height: 1.35;
+}
+
+.stock-report-apply--compact {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+}
+
 .stock-serials-col--serial {
   min-width: 8.5rem;
   max-width: 12rem;

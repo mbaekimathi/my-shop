@@ -71,10 +71,22 @@ export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
       return offlineFallback();
     }
     if (!response.ok || !data.ok) {
-      let error = data.error;
+      if (
+        data?.error === "session_expired" ||
+        data?.error === "auth_required" ||
+        ((response.status === 401 || response.status === 403) && data?.login_url)
+      ) {
+        const loginUrl = data.login_url || "/shops/login/";
+        window.location.replace(loginUrl);
+        return {
+          ok: false,
+          error: data.message || "Your session expired. Sign in again.",
+        };
+      }
+      let error = data.error || data.message;
       if (!error) {
         if (response.status === 403 || response.status === 401) {
-          error = "Shop session expired. Refresh and sign in again.";
+          error = "Your session expired. Sign in again.";
         } else {
           error = "Not a valid active staff ID.";
         }

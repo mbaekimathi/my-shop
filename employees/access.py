@@ -142,15 +142,44 @@ def redirect_to_role_home(profile):
     return redirect(role_home_url_name(role))
 
 
+def _wants_json(request) -> bool:
+    accept = (request.headers.get("Accept") or "").lower()
+    requested_with = (request.headers.get("X-Requested-With") or "").lower()
+    return (
+        "application/json" in accept
+        or requested_with == "xmlhttprequest"
+        or (request.POST.get("ajax") or "") == "1"
+    )
+
+
 def _login_redirect(request, *, message=None, level="error"):
     """Send anonymous / blocked users to employee login, preserving next."""
-    if message:
-        getattr(messages, level)(request, message)
     login_url = reverse("employees:login")
     next_path = request.get_full_path()
+    redirect_to = login_url
     if next_path and next_path != login_url:
-        return redirect(f"{login_url}?{urlencode({'next': next_path})}")
-    return redirect(login_url)
+        redirect_to = f"{login_url}?{urlencode({'next': next_path})}"
+
+    if _wants_json(request):
+        from django.contrib.auth import logout
+        from django.http import JsonResponse
+
+        if getattr(request, "user", None) is not None and request.user.is_authenticated:
+            logout(request)
+        clear_profile_session(request)
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "session_expired",
+                "message": message or "Your session expired. Sign in again.",
+                "login_url": redirect_to,
+            },
+            status=401,
+        )
+
+    if message:
+        getattr(messages, level)(request, message)
+    return redirect(redirect_to)
 
 
 def active_employee_required(view_func):
@@ -159,7 +188,11 @@ def active_employee_required(view_func):
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
         if not request.user.is_authenticated:
-            return _login_redirect(request)
+            return _login_redirect(
+                request,
+                message="Your session expired. Sign in again.",
+                level="info",
+            )
 
         meta = get_employee_meta_for_request(request)
         if meta is None:

@@ -286,6 +286,12 @@ class ItemSerial(models.Model):
         choices=ItemSerialStatus.choices,
         help_text="When set, serial pages use this status instead of inferring it from sales and stock.",
     )
+    status_reason = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Optional note when a serial status is set or corrected manually.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

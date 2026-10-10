@@ -362,7 +362,7 @@ def _stock_serials_page_guard(request, role_segment):
 
 
 @active_employee_required
-@require_GET
+@require_http_methods(["GET", "POST"])
 def stock_serial_return_client_page(request, role_segment, client_id):
     """Returned serial items for one registered client."""
     denied, profile, meta, module_or_expected = _stock_serials_page_guard(
@@ -382,7 +382,7 @@ def stock_serial_return_client_page(request, role_segment, client_id):
 
 
 @active_employee_required
-@require_GET
+@require_http_methods(["GET", "POST"])
 def stock_serial_return_guest_page(request, role_segment):
     """Returned serial items for a walk-in client (phone/name)."""
     denied, profile, meta, module_or_expected = _stock_serials_page_guard(
@@ -436,7 +436,6 @@ def _safe_login_next(request, raw_next):
 def employee_login(request):
     from .portal_auth import (
         begin_employee_session,
-        clear_opposite_for_employee_login,
         render_portal_login,
     )
 
@@ -455,10 +454,8 @@ def employee_login(request):
             return redirect("employees:pending")
         logout(request)
 
-    # Opening employee login ends any shop portal session (GET only — POST
-    # must keep the session so CSRF validation still succeeds).
-    if request.method == "GET":
-        clear_opposite_for_employee_login(request)
+    # Viewing the login form must not end an existing shop portal session.
+    # Successful employee sign-in still replaces it via begin_employee_session.
 
     error = None
     username = ""
@@ -2376,8 +2373,5 @@ def employee_logout(request):
 
 @require_http_methods(["GET", "POST"])
 def switch_to_employee_login(request):
-    """End shop or employee session and open the employee login page."""
-    from .portal_auth import end_all_portal_sessions
-
-    end_all_portal_sessions(request)
+    """Open the employee login page without ending the current session."""
     return redirect("employees:login")

@@ -165,6 +165,11 @@ async function pingOnce(signal) {
   if (!response.ok) throw new Error(`Ping failed (HTTP ${response.status})`);
   const data = await response.json().catch(() => ({}));
   if (data?.ok === false) throw new Error("Ping was rejected");
+  try {
+    document.dispatchEvent(new CustomEvent("myshop:ping", { detail: data }));
+  } catch (_err) {
+    /* ignore listener failures */
+  }
 }
 
 async function ping() {

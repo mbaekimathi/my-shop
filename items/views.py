@@ -7313,6 +7313,27 @@ def _client_info_from_receipt(receipt):
     }
 
 
+def _return_reason_for_serial(line, serial_number: str) -> str:
+    serial_key = str(serial_number or "").strip().upper()
+    if not serial_key:
+        return ""
+    reason = ""
+    for batch in line.return_batches or []:
+        if not isinstance(batch, dict):
+            continue
+        batch_serials = {
+            str(value).strip().upper()
+            for value in (batch.get("serials") or [])
+            if str(value).strip()
+        }
+        if serial_key not in batch_serials:
+            continue
+        batch_reason = str(batch.get("reason") or "").strip()
+        if batch_reason:
+            reason = batch_reason
+    return reason
+
+
 def _iter_returned_serial_rows(lines):
     for line in lines:
         returned_serials = [
@@ -7329,6 +7350,7 @@ def _iter_returned_serial_rows(lines):
         for serial in returned_serials:
             yield {
                 **client_info,
+                "item_id": line.item_id,
                 "item_name": item_name,
                 "item_category": item_category,
                 "serial_number": serial,
@@ -7340,6 +7362,7 @@ def _iter_returned_serial_rows(lines):
                 "served_by": _employee_display_name(receipt.created_by),
                 "returned_at": receipt.last_returned_at or receipt.created_at,
                 "received_by": _employee_display_name(receipt.last_returned_by),
+                "return_reason": _return_reason_for_serial(line, serial),
             }
 
 
@@ -7549,6 +7572,77 @@ def stock_serial_returns(request, profile, meta, module):
     )
 
 
+def _enrich_returned_serial_rows(rows, *, role_segment: str):
+    """Attach live serial status, reason, and history URL for return-client rows."""
+    from .models import ItemSerial, ItemSerialStatus
+
+    item_ids = {row["item_id"] for row in rows if row.get("item_id")}
+    serial_keys = {
+        (row["item_id"], str(row["serial_number"] or "").strip().upper())
+        for row in rows
+        if row.get("item_id") and str(row.get("serial_number") or "").strip()
+    }
+    serials = {}
+    if item_ids:
+        for serial in ItemSerial.objects.filter(item_id__in=item_ids).select_related(
+            "shop", "item"
+        ):
+            key = (serial.item_id, str(serial.serial_number or "").strip().upper())
+            if key in serial_keys:
+                serials[key] = serial
+
+    sale_lookups = {}
+    return_lookups = {}
+    for item_id in item_ids:
+        # Lazy caches keyed by item so status matches serial detail pages.
+        sale_lookups[item_id] = None
+        return_lookups[item_id] = None
+
+    labels = dict(ItemSerialStatus.choices)
+    enriched = []
+    for row in rows:
+        item_id = row.get("item_id")
+        serial_number = str(row.get("serial_number") or "").strip()
+        serial = serials.get((item_id, serial_number.upper())) if item_id else None
+        status = "returned"
+        status_label = "Returned"
+        status_reason = ""
+        history_url = ""
+        can_change_status = False
+        if serial is not None:
+            if sale_lookups.get(item_id) is None:
+                sale_lookups[item_id] = _serial_sale_lookup(serial.item)
+            if return_lookups.get(item_id) is None:
+                return_lookups[item_id] = _serial_return_lookup(serial.item)
+            status, status_label, _event = _serial_unit_state(
+                serial, sale_lookups[item_id], return_lookups[item_id]
+            )
+            status_reason = (serial.status_reason or "").strip()
+            can_change_status = True
+            history_url = reverse(
+                "employees:stock_serial_history",
+                kwargs={
+                    "role_segment": role_segment,
+                    "item_id": item_id,
+                    "serial_number": serial.serial_number,
+                },
+            )
+        display_reason = status_reason or row.get("return_reason") or ""
+        enriched.append(
+            {
+                **row,
+                "unit_status": status,
+                "unit_status_label": status_label or labels.get(status, status),
+                "status_reason": status_reason,
+                "display_reason": display_reason,
+                "history_url": history_url,
+                "can_change_status": can_change_status,
+                "serial_pk": serial.pk if serial is not None else None,
+            }
+        )
+    return enriched
+
+
 def stock_serial_return_client(
     request, profile, meta, module, *, client_id=None, guest_phone="", guest_name=""
 ):
@@ -7556,7 +7650,10 @@ def stock_serial_return_client(
     from employees.access import role_url_segment
     from shops.models import Client
 
+    from .models import ItemSerial, ItemSerialStatus
+
     search = (request.GET.get("q") or "").strip()
+    segment = role_url_segment(profile.role)
 
     page_sidebar = sidebar_for_stock_management(
         profile.role,
@@ -7588,6 +7685,65 @@ def stock_serial_return_client(
             shop_ids=allocated_shop_ids, client_phone=guest_phone or guest_name
         )
 
+    def _redirect_here():
+        if client_id is not None:
+            url = reverse(
+                "employees:stock_serial_return_client",
+                kwargs={"role_segment": segment, "client_id": client_id},
+            )
+        else:
+            from urllib.parse import urlencode
+
+            url = reverse(
+                "employees:stock_serial_return_guest",
+                kwargs={"role_segment": segment},
+            )
+            query = urlencode(
+                {
+                    key: value
+                    for key, value in {
+                        "phone": client_phone,
+                        "name": client_name if client_name != "Walk-in" else "",
+                        "q": search,
+                    }.items()
+                    if value
+                }
+            )
+            if query:
+                url = f"{url}?{query}"
+        if search and client_id is not None:
+            from urllib.parse import urlencode
+
+            url = f"{url}?{urlencode({'q': search})}"
+        return redirect(url)
+
+    if request.method == "POST":
+        item_id = (request.POST.get("item_id") or "").strip()
+        serial_number = (request.POST.get("serial_number") or "").strip()
+        new_status = (request.POST.get("status") or "").strip()
+        reason = (request.POST.get("reason") or "").strip()
+        try:
+            serial = ItemSerial.objects.select_related("item", "shop").get(
+                item_id=item_id,
+                serial_number__iexact=serial_number,
+            )
+            message = apply_serial_status(
+                profile=profile,
+                serial=serial,
+                new_status=new_status,
+                reason=reason,
+            )
+        except ItemSerial.DoesNotExist:
+            messages.error(request, "That returned serial could not be found.")
+        except ValidationError as exc:
+            messages.error(
+                request,
+                exc.messages[0] if getattr(exc, "messages", None) else str(exc),
+            )
+        else:
+            messages.success(request, message)
+        return _redirect_here()
+
     rows = []
     for row in _iter_returned_serial_rows(lines):
         if client_id is None:
@@ -7609,13 +7765,15 @@ def stock_serial_return_client(
                     row["shop_name"],
                     row["served_by"],
                     row["received_by"],
+                    row.get("return_reason") or "",
                 ]
             ).lower()
             if needle not in hay:
                 continue
         rows.append(row)
 
-    segment = role_url_segment(profile.role)
+    rows = _enrich_returned_serial_rows(rows, role_segment=segment)
+
     list_url = reverse(
         "employees:workspace_module",
         kwargs={"role_segment": segment, "module_slug": "stock-management"},
@@ -7640,6 +7798,7 @@ def stock_serial_return_client(
             "list_href": list_href,
             "shops_label": shops_label,
             "stock_mode": "return-clients",
+            "status_choices": ItemSerialStatus.choices,
         },
     )
 
@@ -7959,6 +8118,7 @@ def stock_serial_history(request, profile, meta, module, item_id, serial_number)
                 profile=profile,
                 serial=serial,
                 new_status=request.POST.get("status") or "",
+                reason=request.POST.get("reason") or "",
             )
         except ValidationError as exc:
             messages.error(
@@ -8021,6 +8181,7 @@ def stock_serial_history(request, profile, meta, module, item_id, serial_number)
             ),
             "status_choices": ItemSerialStatus.choices,
             "status_is_manual": bool((serial.status_override or "").strip()),
+            "status_reason": (serial.status_reason or "").strip(),
             "list_href": list_href,
             "stock_mode": "serials",
         },

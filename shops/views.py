@@ -539,7 +539,6 @@ def shop_portal_login(request):
     """Public shop portal: sign in with 6-digit shop code + password."""
     from employees.portal_auth import (
         begin_shop_portal_session,
-        clear_opposite_for_shop_login,
         render_portal_login,
     )
 
@@ -547,10 +546,8 @@ def shop_portal_login(request):
     if portal_shop is not None and request.method == "GET":
         return redirect(_shop_workspace_url(portal_shop))
 
-    # Opening shop login ends any employee session (do not flush on POST —
-    # that would invalidate the CSRF token on the submitted form).
-    if request.method == "GET":
-        clear_opposite_for_shop_login(request)
+    # Viewing the login form must not end an existing employee session.
+    # Successful shop sign-in still replaces it via begin_shop_portal_session.
 
     error = None
     login_code = ""
@@ -634,10 +631,7 @@ def _render_shop_login(
 
 @require_http_methods(["GET", "POST"])
 def my_shop_entry(request):
-    """MY-SHOP sidebar: end employee session and open shop portal login."""
-    from employees.portal_auth import end_all_portal_sessions
-
-    end_all_portal_sessions(request)
+    """MY-SHOP sidebar: open shop portal login without ending the current session."""
     return redirect("employees:shop_login")
 
 
@@ -1183,6 +1177,8 @@ def _require_shop_read_access(request, shop_id):
     assigned to the shop (so catalogs can be cached before the password unlock).
     Mutations still use _require_active_shop_session.
     """
+    from shops.session import session_expired_response
+
     portal_shop = resolve_portal_shop(request)
     if portal_shop is not None:
         if str(portal_shop.pk) != str(shop_id):
@@ -1193,9 +1189,7 @@ def _require_shop_read_access(request, shop_id):
 
     profile = get_profile_for_request(request)
     if profile is None or not profile.is_active_employee:
-        return None, None, JsonResponse(
-            {"ok": False, "error": "Shop session required."}, status=403
-        )
+        return None, None, session_expired_response(request, as_json=True)
 
     shop = get_shop_for_profile(profile, shop_id)
     if shop is None:
@@ -1528,16 +1522,9 @@ def my_shop_buy_stock(request, shop_id):
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         if _wants_json_response(request):
-            return JsonResponse(
-                {
-                    "ok": False,
-                    "error": (
-                        "Shop session expired. Re-open this shop from MY-SHOP "
-                        "with the shop password, then try again."
-                    ),
-                },
-                status=403,
-            )
+            from shops.session import session_expired_response
+
+            return session_expired_response(request, as_json=True)
         return denied
     denied = _require_my_shop_permission(
         request,

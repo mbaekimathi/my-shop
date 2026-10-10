@@ -2506,3 +2506,140 @@ class RequestItemAuditTests(TestCase):
         self.assertEqual(rows[0]["quantity"], Decimal("2.500"))
         self.assertEqual(summary["fulfilled"], Decimal("2.500"))
         self.assertEqual(summary["count"], 1)
+
+
+class StockSerialReturnClientStatusTests(TestCase):
+    def setUp(self):
+        from items.models import Item, ItemSerial, ShopStock
+        from shops.models import (
+            Client,
+            ShopPaymentMethod,
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptLine,
+            ShopReceiptStatus,
+        )
+
+        self.password = "return-status-pass"
+        self.user = User.objects.create_user(
+            username="840099",
+            password=self.password,
+            email="return-status@test.local",
+            first_name="RETURN",
+            last_name="STATUS",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840099",
+            phone_country_code="+254",
+            phone_number="700000999",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="RETURN STATUS SHOP",
+            location="NAIROBI",
+            email="return-status-shop@test.local",
+            phone_number="0700000999",
+            login_code="840199",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.customer = Client.objects.create(
+            full_name="RETURN STATUS CLIENT",
+            phone_number="0700004999",
+            phone_normalized="254700004999",
+            created_by=self.profile,
+        )
+        self.item = Item.objects.create(
+            category="ROUTERS",
+            name="RETURN STATUS ROUTER",
+            minimum_selling_price=Decimal("80.00"),
+            shop_price=Decimal("100.00"),
+            track_serial_number=True,
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(
+            shop=self.shop,
+            item=self.item,
+            quantity=Decimal("1"),
+            average_cost=Decimal("60.00"),
+        )
+        self.serial = ItemSerial.objects.create(
+            item=self.item,
+            shop=self.shop,
+            serial_number="RTR-RET-1",
+            is_available=True,
+        )
+        receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            client=self.customer,
+            receipt_number="SALE-RTR-1",
+            kind=ShopReceiptKind.SALE,
+            payment_method=ShopPaymentMethod.CASH,
+            subtotal=Decimal("100.00"),
+            tax_percent=Decimal("0.00"),
+            tax_amount=Decimal("0.00"),
+            total=Decimal("100.00"),
+            amount_paid=Decimal("100.00"),
+            cash_amount=Decimal("100.00"),
+            mpesa_amount=Decimal("0.00"),
+            created_by=self.profile,
+            status=ShopReceiptStatus.ACTIVE,
+            last_returned_by=self.profile,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item=self.item,
+            item_name=self.item.name,
+            quantity=1,
+            returned_quantity=1,
+            unit_price=Decimal("100.00"),
+            unit_cost=Decimal("60.00"),
+            line_total=Decimal("100.00"),
+            line_cogs=Decimal("60.00"),
+            serial_numbers=["RTR-RET-1"],
+            returned_serial_numbers=["RTR-RET-1"],
+            return_batches=[
+                {
+                    "qty": 1,
+                    "at": timezone.now().isoformat(),
+                    "by_id": self.profile.pk,
+                    "serials": ["RTR-RET-1"],
+                    "reason": "Faulty unit",
+                }
+            ],
+        )
+        self.url = f"/it-support/stock-management/serials/returns/{self.customer.pk}/"
+
+    def test_page_shows_status_reason_and_action(self):
+        self.client.login(username="840099", password=self.password)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "RTR-RET-1")
+        self.assertContains(response, "Returned")
+        self.assertContains(response, "Faulty unit")
+        self.assertContains(response, "Change status")
+        self.assertContains(response, 'name="reason"')
+
+    def test_post_updates_status_and_reason(self):
+        from items.models import ItemSerial, ItemSerialStatus
+
+        self.client.login(username="840099", password=self.password)
+        response = self.client.post(
+            self.url,
+            {
+                "item_id": self.item.pk,
+                "serial_number": "RTR-RET-1",
+                "status": ItemSerialStatus.IN_STOCK,
+                "reason": "Repaired and restocked",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        serial = ItemSerial.objects.get(pk=self.serial.pk)
+        self.assertTrue(serial.is_available)
+        self.assertEqual(serial.status_reason, "Repaired and restocked")
+        page = self.client.get(self.url)
+        self.assertContains(page, "In stock")
+        self.assertContains(page, "Repaired and restocked")

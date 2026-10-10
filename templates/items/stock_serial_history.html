@@ -139,6 +139,16 @@
           {% endfor %}
         </select>
       </label>
+      <label class="field">
+        <span class="field-label">Reason</span>
+        <textarea
+          name="reason"
+          rows="3"
+          maxlength="500"
+          placeholder="Why is this status changing? (optional)"
+          data-serial-status-reason
+        >{{ status_reason }}</textarea>
+      </label>
       <div class="workspace-modal-actions">
         <button class="btn btn--ghost" type="button" data-serial-status-close>Cancel</button>
         <button class="btn btn--primary" type="submit">

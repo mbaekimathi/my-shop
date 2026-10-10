@@ -138,7 +138,7 @@ class ShopPortalOfflineSyncTests(TestCase):
             content_type="application/json",
         )
 
-    def test_anonymous_sync_returns_json_403(self):
+    def test_anonymous_sync_returns_json_401(self):
         response = self._post_sync(
             Client(),
             [
@@ -149,10 +149,11 @@ class ShopPortalOfflineSyncTests(TestCase):
                 }
             ],
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
         data = response.json()
         self.assertFalse(data.get("ok"))
-        self.assertEqual(data.get("error"), "auth_required")
+        self.assertEqual(data.get("error"), "session_expired")
+        self.assertTrue(data.get("login_url"))
 
     def test_shop_portal_syncs_queued_checkout(self):
         client = self._portal_client()
@@ -213,10 +214,11 @@ class ShopPortalOfflineSyncTests(TestCase):
             {"login_code": self.profile.employee_id},
             HTTP_ACCEPT="application/json",
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
         data = response.json()
         self.assertFalse(data.get("ok"))
-        self.assertIn("session", data.get("error", "").lower())
+        self.assertEqual(data.get("error"), "session_expired")
+        self.assertEqual(data.get("login_url"), reverse("employees:shop_login"))
 
     def test_verify_login_code_accepts_active_cashier(self):
         response = self._portal_client().post(

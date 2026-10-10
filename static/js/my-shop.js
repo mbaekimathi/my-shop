@@ -1441,6 +1441,21 @@
         });
         if (response.status === 401 || response.status === 403) {
           stopPolling();
+          try {
+            const data = await response.clone().json();
+            if (
+              data?.login_url &&
+              (data.error === "session_expired" ||
+                data.error === "auth_required" ||
+                String(data.error || "")
+                  .toLowerCase()
+                  .includes("session"))
+            ) {
+              window.location.replace(data.login_url);
+            }
+          } catch (_err) {
+            /* ignore non-json */
+          }
           return;
         }
         if (!response.ok) return;

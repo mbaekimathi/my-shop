@@ -8,7 +8,14 @@
 {% endblock %}
 
 {% block body %}
-<div class="workspace" data-workspace data-dashboard-url="{{ page_sidebar.dashboard_url }}">
+<div
+  class="workspace"
+  data-workspace
+  data-auth-required="1"
+  data-auth-mode="{% if workspace.is_shop_portal %}shop{% else %}employee{% endif %}"
+  data-login-url="{% if workspace.is_shop_portal %}{% url 'employees:shop_login' %}{% else %}{% url 'employees:login' %}{% endif %}"
+  data-dashboard-url="{{ page_sidebar.dashboard_url }}"
+>
   <div class="workspace-overlay" data-workspace-overlay hidden></div>
 
   {% include "employees/partials/workspace_sidebar.html" %}
@@ -89,6 +96,7 @@
 <script defer src="{% static 'js/developer-payment-prompt.js' %}?v=2"></script>
 {% endif %}
 <script defer src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
+<script type="module" src="{% static 'js/session-guard.js' %}?v=1"></script>
 <script>
   (() => {
     const root = document.querySelector("[data-workspace]");

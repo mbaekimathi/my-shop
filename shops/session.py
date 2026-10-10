@@ -180,6 +180,56 @@ def get_shop_for_profile(profile, shop_id):
     return qs.first()
 
 
+def shop_portal_login_url() -> str:
+    from django.urls import reverse
+
+    return reverse("employees:shop_login")
+
+
+def clear_expired_portal_session(request):
+    """Drop leftover shop/employee auth so the browser is fully signed out."""
+    from employees.portal_auth import end_all_portal_sessions
+
+    end_all_portal_sessions(request)
+
+
+def session_expired_response(request, *, login_url=None, as_json=None):
+    """
+    Log the user out and send them to the login page.
+
+    JSON callers receive login_url so the client can navigate immediately.
+    """
+    from django.contrib import messages
+    from django.http import JsonResponse
+    from django.shortcuts import redirect
+
+    login_url = login_url or shop_portal_login_url()
+    if as_json is None:
+        accept = (request.headers.get("Accept") or "").lower()
+        requested_with = (request.headers.get("X-Requested-With") or "").lower()
+        as_json = (
+            "application/json" in accept
+            or requested_with == "xmlhttprequest"
+            or (request.POST.get("ajax") or "") == "1"
+        )
+
+    clear_expired_portal_session(request)
+
+    if as_json:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "session_expired",
+                "message": "Your session expired. Sign in again.",
+                "login_url": login_url,
+            },
+            status=401,
+        )
+
+    messages.info(request, "Your session expired. Sign in again.")
+    return redirect(login_url)
+
+
 def shop_floor_required(view_func):
     """
     Allow shop floor routes when either:
@@ -192,17 +242,8 @@ def shop_floor_required(view_func):
         if resolve_portal_shop(request) is not None:
             return view_func(request, *args, **kwargs)
 
-        wants_json = "application/json" in (request.headers.get("Accept") or "")
-        if wants_json and not getattr(request.user, "is_authenticated", False):
-            from django.http import JsonResponse
-
-            return JsonResponse(
-                {
-                    "ok": False,
-                    "error": "Shop session expired. Refresh and sign in again.",
-                },
-                status=403,
-            )
+        if not getattr(request.user, "is_authenticated", False):
+            return session_expired_response(request)
 
         from employees.access import active_employee_required
 

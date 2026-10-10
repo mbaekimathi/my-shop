@@ -158,13 +158,21 @@ export async function syncNow() {
         operations: authOps,
       });
       if (!ok) {
+        if (
+          data?.error === "session_expired" ||
+          data?.error === "auth_required"
+        ) {
+          if (data?.login_url) {
+            window.location.replace(data.login_url);
+          }
+        }
         failed += authOps.length;
         firstError =
           data?.message ||
-          (data?.error === "auth_required"
+          (data?.error === "session_expired" || data?.error === "auth_required"
             ? "Sign in again, then tap Sync now to replay queued changes."
             : data?.error) ||
-          (status === 403
+          (status === 403 || status === 401
             ? "Sync blocked (sign in again or refresh the page)."
             : `Sync failed (HTTP ${status}).`);
       } else {

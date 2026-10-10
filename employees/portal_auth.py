@@ -54,20 +54,8 @@ def clear_employee_auth(request):
         delattr(request, REQUEST_PROFILE_ATTR)
 
 
-def clear_opposite_for_shop_login(request):
-    """Drop employee auth when opening the shop portal login form (GET only)."""
-    clear_employee_auth(request)
-
-
-def clear_opposite_for_employee_login(request):
-    """Drop shop portal auth when opening the employee login form (GET only)."""
-    from shops.session import clear_shop_portal_session
-
-    clear_shop_portal_session(request)
-
-
 def end_all_portal_sessions(request):
-    """Fully end shop portal and employee sessions (switch / logout bridges)."""
+    """Fully end shop portal and employee sessions (explicit logout only)."""
     from shops.session import clear_shop_portal_session
 
     clear_shop_portal_session(request)

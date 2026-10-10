@@ -1,4 +1,4 @@
-"""Shop and employee portal sessions are mutually exclusive."""
+"""Shop and employee portal sessions stay alive until sign-in or logout."""
 
 from __future__ import annotations
 
@@ -11,7 +11,15 @@ from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
 from shops.models import Shop
 
 
-@override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
+@override_settings(
+    ALLOWED_HOSTS=["testserver", "localhost"],
+    RATE_LIMITS={
+        "login": {"max": 10_000, "window": 60},
+        "check_employee_id": {"max": 10_000, "window": 60},
+        "register": {"max": 10_000, "window": 60},
+        "sync": {"max": 10_000, "window": 60},
+    },
+)
 class PortalSessionExclusivityTests(TestCase):
     def setUp(self):
         self.password = "portal-exclusive-pass"
@@ -82,32 +90,30 @@ class PortalSessionExclusivityTests(TestCase):
         self.assertFalse(client.session.get("shop_portal_auth"))
         self.assertFalse(client.session.get("active_shop_id"))
 
-    def test_opening_employee_login_ends_shop_session(self):
+    def test_opening_employee_login_keeps_shop_session(self):
         client = self._login_shop()
         response = client.get(reverse("employees:login"))
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(client.session.get("shop_portal_auth"))
-        self.assertFalse(client.session.get("active_shop_id"))
+        self.assertTrue(client.session.get("shop_portal_auth"))
+        self.assertEqual(client.session.get("active_shop_id"), str(self.shop.pk))
 
-    def test_opening_shop_login_ends_employee_session(self):
+    def test_opening_shop_login_keeps_employee_session(self):
         client = self._login_employee()
         response = client.get(reverse("employees:shop_login"))
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(client.session.get("_auth_user_id"))
+        self.assertTrue(client.session.get("_auth_user_id"))
 
-    def test_switch_to_employee_login_ends_shop_session(self):
+    def test_switch_to_employee_login_keeps_shop_session(self):
         client = self._login_shop()
         response = client.get(reverse("employees:to_employee_login"))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("employees:login"))
-        self.assertFalse(client.session.get("shop_portal_auth"))
-        self.assertFalse(client.session.get("active_shop_id"))
-        self.assertFalse(client.session.get("_auth_user_id"))
+        self.assertTrue(client.session.get("shop_portal_auth"))
+        self.assertEqual(client.session.get("active_shop_id"), str(self.shop.pk))
 
-    def test_my_shop_entry_ends_employee_session(self):
+    def test_my_shop_entry_keeps_employee_session(self):
         client = self._login_employee()
         response = client.get(reverse("employees:my_shop"))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("employees:shop_login"))
-        self.assertFalse(client.session.get("_auth_user_id"))
-        self.assertFalse(client.session.get("shop_portal_auth"))
+        self.assertTrue(client.session.get("_auth_user_id"))

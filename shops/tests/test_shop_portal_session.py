@@ -15,7 +15,15 @@ from shops.models import Shop
 from shops.session import SHOP_PORTAL_SESSION_AGE
 
 
-@override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
+@override_settings(
+    ALLOWED_HOSTS=["testserver", "localhost"],
+    RATE_LIMITS={
+        "login": {"max": 10_000, "window": 60},
+        "check_employee_id": {"max": 10_000, "window": 60},
+        "register": {"max": 10_000, "window": 60},
+        "sync": {"max": 10_000, "window": 60},
+    },
+)
 class ShopPortalSessionLifetimeTests(TestCase):
     def setUp(self):
         self.password = "portal-session-pass"
@@ -112,3 +120,36 @@ class ShopPortalSessionLifetimeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("csrftoken", response.cookies)
         self.assertTrue(response.cookies["csrftoken"].value)
+
+    def test_ping_reports_shop_auth(self):
+        client = self._login()
+        response = client.get(reverse("employees:ping"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data.get("ok"))
+        self.assertEqual(data.get("auth"), "shop")
+        self.assertEqual(data.get("login_url"), reverse("employees:shop_login"))
+
+    def test_expired_shop_floor_json_logs_out_to_login(self):
+        url = reverse(
+            "employees:my_shop_verify_login_code",
+            kwargs={"shop_id": self.shop.pk},
+        )
+        response = Client().post(
+            url,
+            {"login_code": self.profile.employee_id},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 401)
+        data = response.json()
+        self.assertEqual(data.get("error"), "session_expired")
+        self.assertEqual(data.get("login_url"), reverse("employees:shop_login"))
+
+    def test_expired_shop_floor_html_redirects_to_login(self):
+        url = reverse(
+            "employees:my_shop_workspace",
+            kwargs={"shop_id": self.shop.pk},
+        )
+        response = Client().get(url)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("employees:shop_login"))
