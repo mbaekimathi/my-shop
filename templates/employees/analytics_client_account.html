@@ -1,0 +1,237 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="ax ax--account ax--list-table"
+  data-animate="rise"
+  data-ax-section="client-transactions"
+  data-ax-ledger
+>
+  <header class="ax-top">
+    <div class="ax-top-main">
+      <div class="ax-title ax-title--stack">
+        <span class="ax-account-kicker">Client transactions</span>
+        <h2>{{ client.full_name }}</h2>
+        <span class="ax-period">
+          {{ client.phone_number }}
+          · {{ shop_filter_label|default:"All shops" }}
+          · {{ report_period_label|default:"All time" }}
+        </span>
+      </div>
+      <div class="ax-top-actions">
+        <a class="ax-apply" href="{{ download_href }}">
+          <i data-lucide="download" aria-hidden="true"></i>
+          <span>Download</span>
+        </a>
+        <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back to clients" }}</a>
+      </div>
+      <form class="ax-filters" method="get" data-analytics-filters>
+        {% for key, values in request.GET.lists %}
+          {% if key != "shop_id" and key != "receipt_kind" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" and key != "download" %}
+            {% for value in values %}
+            <input type="hidden" name="{{ key }}" value="{{ value }}">
+            {% endfor %}
+          {% endif %}
+        {% endfor %}
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="receipt_kind" aria-label="Transaction type">
+          <option value="all"{% if receipt_kind == 'all' or not receipt_kind %} selected{% endif %}>All types</option>
+          <option value="sales"{% if receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
+          <option value="credits"{% if receipt_kind == 'credits' %} selected{% endif %}>Credits</option>
+          <option value="quotations"{% if receipt_kind == 'quotations' %} selected{% endif %}>Quotations</option>
+        </select>
+        {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
+        <button type="submit" class="ax-apply">Apply</button>
+      </form>
+    </div>
+    <p class="ax-lead">
+      All transactions for this client — filter by type, shop, or period, then download
+      · {{ scope_hint|default:"All shops" }}
+      · {{ report_period_label|default:"All time" }}.
+    </p>
+  </header>
+
+  {% if other_alert %}
+  <div class="ax-alerts" aria-label="Other transactions">
+    <article class="ax-alert is-{{ other_alert.level }}">
+      <div class="ax-alert-main">
+        <strong>{{ other_alert.title }}</strong>
+        <p>{{ other_alert.detail }}</p>
+      </div>
+      {% if other_alert.href %}
+      <p class="ax-alert-action">
+        <a class="ax-alert-link" href="{{ other_alert.href }}">
+          {{ other_alert.href_label|default:"View all time" }}
+        </a>
+      </p>
+      {% endif %}
+    </article>
+  </div>
+  {% endif %}
+
+  {% if summary_board %}
+  <section class="ax-summary-board" aria-label="Transaction summary">
+    <article class="ax-summary-hero{% if summary_board.hero.tone %} is-{{ summary_board.hero.tone }}{% endif %}">
+      <span class="ax-summary-hero-label">{{ summary_board.hero.label }}</span>
+      <strong class="ax-summary-hero-value">{{ summary_board.hero.value }}</strong>
+      {% if summary_board.hero.hint %}<em class="ax-summary-hero-hint">{{ summary_board.hero.hint }}</em>{% endif %}
+    </article>
+    <div class="ax-summary-tiles">
+      {% for tile in summary_board.tiles %}
+      <article class="ax-summary-tile is-{{ tile.tone|default:'neutral' }}">
+        {% if tile.icon %}<i data-lucide="{{ tile.icon }}" aria-hidden="true"></i>{% endif %}
+        <div class="ax-summary-tile-body">
+          <span class="ax-summary-tile-label">{{ tile.label }}</span>
+          <strong class="ax-summary-tile-value">{{ tile.value }}</strong>
+          {% if tile.hint %}<em class="ax-summary-tile-hint">{{ tile.hint }}</em>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="ax-card ax-card--wide ax-card--ledger" data-ax-ledger-card>
+    <header class="ax-card-head">
+      <div class="ax-card-head-main">
+        <h3>{{ ledger_title|default:"Transactions" }}</h3>
+        {% if receipt_count %}
+        <span class="ax-card-meta">{{ receipt_count }} transaction{{ receipt_count|pluralize }}</span>
+        {% endif %}
+      </div>
+      <label class="ax-table-search">
+        <span class="visually-hidden">Search transactions</span>
+        <input
+          type="search"
+          placeholder="Search transactions…"
+          autocomplete="off"
+          data-ax-ledger-search
+          aria-label="Search transactions"
+        >
+      </label>
+    </header>
+
+    <p class="ax-scroll-hint" data-ax-ledger-scroll-hint aria-hidden="true">Scroll sideways for all columns</p>
+
+    <div class="ax-table-wrap ax-table-wrap--list ax-table-wrap--scroll">
+      {% if rows %}
+      <table class="ax-table ax-table--list ax-table--account">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Type</th>
+            <th class="ax-th--item">Receipt</th>
+            <th>Shop</th>
+            <th>Items</th>
+            <th>Status</th>
+            <th>Total</th>
+            <th>Paid</th>
+            <th>Due</th>
+            <th>Cashier</th>
+            <th class="ax-col-actions">View</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          {{ row.lines|json_script:row.id }}
+          <tr
+            class="ax-receipt-row"
+            data-ax-receipt-row
+            data-row-id="{{ row.id }}"
+            data-search-text="{{ row.when_label }} {{ row.kind_label }} {{ row.number }} {{ row.shop }} {{ row.status }} {{ row.cashier }}"
+          >
+            <td data-label="When">{{ row.when_label|default:"—" }}</td>
+            <td data-label="Type">{{ row.kind_label }}</td>
+            <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
+            <td data-label="Shop">{{ row.shop }}</td>
+            <td data-label="Items">{{ row.item_count }}</td>
+            <td data-label="Status">
+              <span class="ax-status is-{{ row.status_tone|default:'neutral' }}">{{ row.status }}</span>
+            </td>
+            <td data-label="Total">{{ row.total }}</td>
+            <td data-label="Paid">{{ row.paid }}</td>
+            <td data-label="Due">{{ row.due }}</td>
+            <td data-label="Cashier">{{ row.cashier }}</td>
+            <td class="ax-col-actions" data-label="View">
+              <button
+                type="button"
+                class="ax-eye"
+                data-ax-receipt-view
+                data-lines-id="{{ row.id }}"
+                data-receipt-number="{{ row.number }}"
+                data-receipt-total="{{ row.total }}"
+                data-receipt-shop="{{ row.shop }}"
+                data-receipt-due="{{ row.due }}"
+                aria-label="View items on {{ row.number }}"
+              >
+                <i data-lucide="eye" aria-hidden="true"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="ax-empty ax-empty--search" data-ax-ledger-no-results hidden>No transactions match that search.</p>
+      {% else %}
+      <p class="ax-empty">{{ empty_message|default:"No transactions found." }}</p>
+      {% endif %}
+    </div>
+  </section>
+</section>
+{% endblock %}
+
+{% block workspace_overlays %}
+{{ block.super }}
+<div class="workspace-modal ax-receipt-modal" data-ax-receipt-modal hidden>
+  <div class="workspace-modal-backdrop" data-ax-receipt-modal-close></div>
+  <div
+    class="workspace-modal-dialog ax-receipt-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-receipt-modal-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <h2 id="ax-receipt-modal-title" data-ax-receipt-modal-title>Receipt items</h2>
+        <p class="ax-receipt-modal-meta" data-ax-receipt-modal-meta></p>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-ax-receipt-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="ax-receipt-modal-body" data-ax-receipt-modal-body></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=16"></script>
+<script>
+  (() => {
+    const form = document.querySelector("[data-analytics-filters]");
+    if (!form) return;
+    const rangeSelect = form.querySelector("[data-analytics-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const syncRange = () => {
+      const range = rangeSelect?.value || "day";
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.disabled = !match;
+        field.required = match;
+      });
+    };
+    rangeSelect?.addEventListener("change", syncRange);
+    syncRange();
+  })();
+</script>
+{% endblock %}

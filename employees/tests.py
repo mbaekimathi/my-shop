@@ -899,10 +899,13 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertEqual(all_account["other_credits_count"], 0)
         self.assertIsNone(all_account["other_credits_alert"])
 
-    def test_client_account_shows_sales_credits_and_quotations(self):
+    def test_client_transactions_page_filters_and_downloads(self):
         from django.test import RequestFactory
 
-        from employees.analytics_services import build_client_credit_account
+        from employees.analytics_services import (
+            build_client_transactions,
+            client_transactions_csv_response,
+        )
 
         self._make_receipt(
             self.client, kind=ShopReceiptKind.SALE, total=50, amount_paid=50
@@ -916,16 +919,14 @@ class ClientCreditAccountTableTests(TestCase):
             f"/shop-cashier/analytics/clients/{self.client.pk}/",
             {"shop_id": str(self.shop.pk), "range": "all"},
         )
-        account = build_client_credit_account(
+        account = build_client_transactions(
             profile=self.cashier, client_id=self.client.pk, request=request
         )
         self.assertEqual(account["receipt_kind"], "all")
         self.assertEqual(account["receipt_count"], 3)
-        self.assertTrue(account["ledger_show_type"])
         kinds = {row["kind_label"] for row in account["rows"]}
         self.assertEqual(kinds, {"Sale", "Credit", "Quotation"})
-        self.assertEqual(account["balance_raw"], "80.00")
-        self.assertTrue(account["can_pay"])
+        self.assertIn("download=csv", account["download_href"])
 
         sales_request = RequestFactory().get(
             f"/shop-cashier/analytics/clients/{self.client.pk}/",
@@ -935,30 +936,21 @@ class ClientCreditAccountTableTests(TestCase):
                 "receipt_kind": "sales",
             },
         )
-        sales_account = build_client_credit_account(
+        sales_account = build_client_transactions(
             profile=self.cashier, client_id=self.client.pk, request=sales_request
         )
         self.assertEqual(sales_account["receipt_kind"], "sales")
         self.assertEqual(sales_account["receipt_count"], 1)
         self.assertEqual(sales_account["rows"][0]["kind_label"], "Sale")
-        self.assertFalse(sales_account["ledger_show_type"])
-        self.assertFalse(sales_account["ledger_show_select"])
 
-        quotes_request = RequestFactory().get(
-            f"/shop-cashier/analytics/clients/{self.client.pk}/",
-            {
-                "shop_id": str(self.shop.pk),
-                "range": "all",
-                "receipt_kind": "quotations",
-            },
-        )
-        quotes_account = build_client_credit_account(
-            profile=self.cashier, client_id=self.client.pk, request=quotes_request
-        )
-        self.assertEqual(quotes_account["receipt_count"], 1)
-        self.assertEqual(quotes_account["rows"][0]["kind_label"], "Quotation")
-        self.assertFalse(quotes_account["rows"][0]["can_pay"])
-        self.assertFalse(quotes_account["rows"][0]["can_manage"])
+        csv_response = client_transactions_csv_response(account=account)
+        self.assertEqual(csv_response["Content-Type"], "text/csv; charset=utf-8")
+        self.assertIn("attachment;", csv_response["Content-Disposition"])
+        body = csv_response.content.decode("utf-8")
+        self.assertIn("When,Type,Receipt,Shop,Status,Items,Total,Paid,Due,Cashier", body)
+        self.assertIn("Sale", body)
+        self.assertIn("Credit", body)
+        self.assertIn("Quotation", body)
 
 
 class CreditsShopScopeTests(TestCase):

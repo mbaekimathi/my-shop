@@ -271,7 +271,7 @@ def _workspace_parent_url(request, role):
         client_id = kwargs.get("client_id")
         if client_id:
             href = reverse(
-                "employees:analytics_client_account",
+                "employees:analytics_client_credit",
                 kwargs={"role_segment": segment, "client_id": client_id},
             )
             return _with_request_query(href, request)

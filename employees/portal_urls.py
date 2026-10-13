@@ -321,7 +321,7 @@ urlpatterns = [
     ),
     path(
         "<role_segment:role_segment>/analytics/clients/<int:client_id>/",
-        analytics_views.analytics_client_credit,
+        analytics_views.analytics_client_account,
         name="analytics_client_account",
     ),
     path(

@@ -324,6 +324,32 @@ def _credit_account_receipts_q() -> Q:
     )
 
 
+def _parse_client_receipt_kind(raw: str) -> str:
+    kind = (raw or "").strip().lower()
+    if kind in ("sale", "sales"):
+        return "sales"
+    if kind in ("credit", "credits"):
+        return "credits"
+    if kind in ("quotation", "quotations", "quote"):
+        return "quotations"
+    return "all"
+
+
+def _client_activity_receipts_q(kind: str) -> Q:
+    """Receipt kinds shown on the Clients analytics pages."""
+    if kind == "credits":
+        return _credit_account_receipts_q()
+    if kind == "sales":
+        return Q(kind=ShopReceiptKind.SALE)
+    if kind == "quotations":
+        return Q(kind=ShopReceiptKind.QUOTATION)
+    return (
+        Q(kind=ShopReceiptKind.SALE)
+        | Q(kind=ShopReceiptKind.CREDIT)
+        | Q(kind=ShopReceiptKind.QUOTATION)
+    )
+
+
 def _payment_status_for_due(due: Decimal, paid: Decimal) -> str:
     if due <= 0:
         return "Paid"
@@ -3091,7 +3117,7 @@ def client_credit_account_url(
 
 
 def build_client_credit_account(*, profile, client_id: int, request=None) -> dict:
-    """Client ledger: sales, credits, and quotations (filterable by type/shop/period)."""
+    """Credit ledger and outstanding balance for one client (optionally period-scoped)."""
     shop_filter = _allocated_shop_filter(profile, request)
     shop_ids = shop_filter["active_shop_ids"]
     date_filter = _date_filter_context(request, allow_all_time=True)
@@ -3103,22 +3129,6 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
         else shop_filter["shop_filter_label"]
     )
 
-    from_credits = False
-    raw_kind = ""
-    query = ""
-    if request is not None:
-        getter = getattr(request, "GET", None)
-        if getter is not None:
-            query = getter.urlencode()
-            raw_kind = (getter.get("receipt_kind") or "").strip()
-        from_credits = "/analytics/credits/" in (getattr(request, "path", "") or "")
-    if raw_kind:
-        receipt_kind = _parse_client_receipt_kind(raw_kind)
-    elif from_credits:
-        receipt_kind = "credits"
-    else:
-        receipt_kind = "all"
-
     client = Client.objects.filter(pk=client_id).first()
     if client is None or not shop_ids:
         raise Http404("Client not found.")
@@ -3129,18 +3139,19 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
     ):
         raise Http404("Client not found.")
 
-    base_qs = ShopReceipt.objects.filter(
-        client_id=client.pk,
-        shop_id__in=shop_ids,
-    ).exclude(status=ShopReceiptStatus.CANCELLED)
+    all_credit_qs = (
+        ShopReceipt.objects.filter(
+            client_id=client.pk,
+            shop_id__in=shop_ids,
+        )
+        .filter(_credit_account_receipts_q())
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+    )
 
-    all_credit_qs = base_qs.filter(_credit_account_receipts_q())
-    all_activity_qs = base_qs.filter(_client_activity_receipts_q(receipt_kind))
-    period_credit_qs = _within_created_range(all_credit_qs, start, end)
-    period_activity_qs = _within_created_range(all_activity_qs, start, end)
-
+    all_count = all_credit_qs.count()
     receipts = list(
-        period_activity_qs.select_related("shop", "created_by", "created_by__user")
+        _within_created_range(all_credit_qs, start, end)
+        .select_related("shop", "created_by", "created_by__user")
         .prefetch_related("lines")
         .order_by("-created_at")
     )
@@ -3151,16 +3162,6 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
     open_count = 0
     total_paid = _zero()
     shop_ids_seen: set[int] = set()
-    # Outstanding balance always comes from credit receipts in the selected period.
-    for credit_row in period_credit_qs.only("total", "amount_paid", "shop_id"):
-        due = _due_amount(credit_row.total, credit_row.amount_paid)
-        balance += due
-        total_paid += Decimal(credit_row.amount_paid or 0)
-        if credit_row.shop_id:
-            shop_ids_seen.add(credit_row.shop_id)
-        if due > 0:
-            open_count += 1
-
     rows = []
     for row in receipts:
         cashier = ""
@@ -3186,54 +3187,36 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
             )
         total = Decimal(row.total or 0)
         paid = Decimal(row.amount_paid or 0)
-        is_credit = bool(
-            row.kind == ShopReceiptKind.CREDIT
-            or (row.kind == ShopReceiptKind.SALE and row.settled_from_credit)
-        )
-        is_quotation = row.kind == ShopReceiptKind.QUOTATION
-        due = _due_amount(total, paid) if is_credit else _zero()
-        if is_quotation:
-            kind_label = "Quotation"
-            status = "Quotation"
-            status_tone = "neutral"
-            paid_label = "—"
-            due_label = "—"
-        elif is_credit:
-            kind_label = "Credit"
-            status = _payment_status_for_due(due, paid)
-            status_tone = _status_tone(status)
-            paid_label = _money_ksh(paid)
-            due_label = _money_ksh(due)
-        else:
-            kind_label = "Sale"
-            status = _payment_status_for_due(_due_amount(total, paid), paid)
-            status_tone = _status_tone(status)
-            paid_label = _money_ksh(paid)
-            due_label = _money_ksh(_zero())
+        due = _due_amount(total, paid)
+        balance += due
+        total_paid += paid
+        if row.shop_id:
+            shop_ids_seen.add(row.shop_id)
+        if due > 0:
+            open_count += 1
+        status = _payment_status_for_due(due, paid)
         pay_by = ""
         pay_by_raw = ""
         pay_by_overdue = False
-        if is_credit and row.credit_due_date:
+        if row.credit_due_date:
             pay_by = row.credit_due_date.strftime("%d %b %Y")
             pay_by_raw = row.credit_due_date.isoformat()
             pay_by_overdue = due > 0 and row.credit_due_date < today
         rows.append(
             {
-                "id": f"{row.kind}-{row.pk}",
-                "pay_kind": "credit" if is_credit else row.kind,
+                "id": f"credit-{row.pk}",
+                "pay_kind": "credit",
                 "pay_id": row.pk,
                 "number": row.receipt_number,
                 "shop": row.shop.name if row.shop else "—",
-                "kind": row.kind,
-                "kind_label": kind_label,
                 "status": status,
-                "status_tone": status_tone,
+                "status_tone": _status_tone(status),
                 "total": _money_ksh(total),
-                "paid": paid_label,
-                "due": due_label,
+                "paid": _money_ksh(paid),
+                "due": _money_ksh(due),
                 "due_raw": str(due),
-                "can_pay": is_credit and due > 0,
-                "can_manage": is_credit,
+                "can_pay": due > 0,
+                "can_manage": True,
                 "when": row.created_at,
                 "pay_by": pay_by,
                 "pay_by_raw": pay_by_raw,
@@ -3244,97 +3227,52 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
             }
         )
 
-    if receipt_kind == "credits":
-        # Open balances first (newest → oldest), then paid/zero-due at the bottom.
-        rows.sort(
-            key=lambda item: (
-                Decimal(item.get("due_raw") or 0) <= 0,
-                -(item["when"].timestamp() if item.get("when") else 0),
-            )
+    # Open balances first (newest → oldest), then paid/zero-due at the bottom.
+    rows.sort(
+        key=lambda item: (
+            Decimal(item.get("due_raw") or 0) <= 0,
+            -(item["when"].timestamp() if item.get("when") else 0),
         )
-    else:
-        rows.sort(
-            key=lambda item: (
-                not item.get("can_pay"),
-                -(item["when"].timestamp() if item.get("when") else 0),
-            )
-        )
+    )
 
-    period_scoped = start is not None and end is not None
-    other_count = 0
+    other_count = max(0, all_count - len(rows))
     other_credits_alert = None
     all_credits_href = ""
-    if receipt_kind == "credits" and period_scoped:
-        other_count = max(0, all_credit_qs.count() - len(rows))
-        if other_count > 0:
-            all_query = _query_with_all_time(query)
-            all_credits_href = client_credit_account_url(
-                profile.role,
-                client.pk,
-                query=all_query,
-                from_credits=from_credits,
-            )
-            other_credits_alert = _alert(
-                "info",
-                "Other credits outside this period",
-                (
-                    f"{other_count} more credit receipt"
-                    f"{'' if other_count == 1 else 's'} for this client "
-                    f"outside {period_label}."
-                ),
-                href=all_credits_href,
-                href_label="View other credits",
-            )
-    elif receipt_kind != "credits" and period_scoped:
-        other_activity = max(0, all_activity_qs.count() - len(rows))
-        if other_activity > 0:
-            all_query = _query_with_all_time(query)
-            all_credits_href = client_credit_account_url(
-                profile.role,
-                client.pk,
-                query=all_query,
-                from_credits=from_credits,
-            )
-            kind_word = {
-                "all": "receipt",
-                "sales": "sale",
-                "quotations": "quotation",
-            }.get(receipt_kind, "receipt")
-            other_credits_alert = _alert(
-                "info",
-                f"Other {kind_word}s outside this period",
-                (
-                    f"{other_activity} more {kind_word}"
-                    f"{'' if other_activity == 1 else 's'} for this client "
-                    f"outside {period_label}."
-                ),
-                href=all_credits_href,
-                href_label="View all time",
-            )
-            other_count = other_activity
+    if start is not None and end is not None and other_count > 0:
+        query = ""
+        from_credits = False
+        if request is not None:
+            getter = getattr(request, "GET", None)
+            query = getter.urlencode() if getter is not None else ""
+            from_credits = "/analytics/credits/" in (getattr(request, "path", "") or "")
+        all_query = _query_with_all_time(query)
+        all_credits_href = client_credit_account_url(
+            profile.role,
+            client.pk,
+            query=all_query,
+            from_credits=from_credits,
+        )
+        other_credits_alert = _alert(
+            "info",
+            "Other credits outside this period",
+            (
+                f"{other_count} more credit receipt"
+                f"{'' if other_count == 1 else 's'} for this client "
+                f"outside {period_label}."
+            ),
+            href=all_credits_href,
+            href_label="View other credits",
+        )
 
     empty_scope = (
         f"at {scope_hint}" if shop_filter["selected_shop_ids"] else "in your shops"
     )
-    kind_titles = {
-        "all": "Sales, credits & quotations",
-        "sales": "Sales receipts",
-        "credits": "Credit receipts",
-        "quotations": "Quotations",
-    }
-    kind_empty = {
-        "all": "sales, credits, or quotations",
-        "sales": "sales",
-        "credits": "credit receipts",
-        "quotations": "quotations",
-    }
     return {
         "client": client,
         "balance": _money_ksh(balance),
         "balance_raw": str(balance),
         "credit_count": open_count,
         "receipt_count": len(rows),
-        "receipt_kind": receipt_kind,
         "summary_board": _client_account_summary_board(
             balance=balance,
             open_count=open_count,
@@ -3344,17 +3282,15 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
             period_label=period_label,
         ),
         "rows": rows,
-        "ledger_title": kind_titles.get(receipt_kind, "Receipts"),
+        "ledger_title": "Credit receipts",
         "empty_message": (
-            f"No {kind_empty.get(receipt_kind, 'receipts')} for this client "
-            f"{empty_scope} ({period_label})."
+            f"No credit receipts for this client {empty_scope} ({period_label})."
         ),
         "account_kind": "credit",
         "account_id": client.pk,
         "can_pay": balance > 0,
-        "ledger_show_receipt_pay": receipt_kind in ("all", "credits"),
-        "ledger_show_select": receipt_kind in ("all", "credits"),
-        "ledger_show_type": receipt_kind == "all",
+        "ledger_show_receipt_pay": True,
+        "ledger_show_select": True,
         "scope_hint": scope_hint,
         "other_credits_count": other_count,
         "other_credits_alert": other_credits_alert,
@@ -3362,6 +3298,333 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
         **shop_filter,
         **date_filter,
     }
+
+
+def _client_transaction_kind_meta(row) -> tuple[str, str, str, str, str, Decimal, bool]:
+    """Return kind_label, status, tone, paid_label, due_label, due_raw, is_credit."""
+    total = Decimal(row.total or 0)
+    paid = Decimal(row.amount_paid or 0)
+    is_credit = bool(
+        row.kind == ShopReceiptKind.CREDIT
+        or (row.kind == ShopReceiptKind.SALE and row.settled_from_credit)
+    )
+    if row.kind == ShopReceiptKind.QUOTATION:
+        return "Quotation", "Quotation", "neutral", "—", "—", _zero(), False
+    if is_credit:
+        due = _due_amount(total, paid)
+        status = _payment_status_for_due(due, paid)
+        return (
+            "Credit",
+            status,
+            _status_tone(status),
+            _money_ksh(paid),
+            _money_ksh(due),
+            due,
+            True,
+        )
+    sale_due = _due_amount(total, paid)
+    status = _payment_status_for_due(sale_due, paid)
+    return (
+        "Sale",
+        status,
+        _status_tone(status),
+        _money_ksh(paid),
+        _money_ksh(_zero()),
+        _zero(),
+        False,
+    )
+
+
+def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
+    """All client transactions (sales/credits/quotations) with filters for Clients analytics."""
+    shop_filter = _allocated_shop_filter(profile, request)
+    shop_ids = shop_filter["active_shop_ids"]
+    date_filter = _date_filter_context(request, allow_all_time=True, default_all_time=True)
+    start, end = date_filter["start"], date_filter["end"]
+    period_label = date_filter.get("report_period_label") or "All time"
+    scope_hint = (
+        shop_filter["selected_shops"][0].name
+        if len(shop_filter["selected_shops"]) == 1
+        else shop_filter["shop_filter_label"]
+    )
+
+    raw_kind = ""
+    query = ""
+    if request is not None:
+        getter = getattr(request, "GET", None)
+        if getter is not None:
+            query = getter.urlencode()
+            raw_kind = (getter.get("receipt_kind") or "").strip()
+    receipt_kind = _parse_client_receipt_kind(raw_kind)
+
+    client = Client.objects.filter(pk=client_id).first()
+    if client is None or not shop_ids:
+        raise Http404("Client not found.")
+    if not (
+        ShopReceipt.objects.filter(client_id=client.pk, shop_id__in=shop_ids)
+        .filter(_client_activity_receipts_q("all"))
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .exists()
+    ):
+        raise Http404("Client not found.")
+
+    base_qs = (
+        ShopReceipt.objects.filter(client_id=client.pk, shop_id__in=shop_ids)
+        .filter(_client_activity_receipts_q(receipt_kind))
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+    )
+    all_count = base_qs.count()
+    receipts = list(
+        _within_created_range(base_qs, start, end)
+        .select_related("shop", "created_by", "created_by__user")
+        .prefetch_related("lines")
+        .order_by("-created_at")
+    )
+
+    sales_total = _zero()
+    credits_total = _zero()
+    quotations_total = _zero()
+    sales_count = 0
+    credits_count = 0
+    quotations_count = 0
+    shop_ids_seen: set[int] = set()
+    rows = []
+    for row in receipts:
+        cashier = ""
+        if row.created_by and row.created_by.user:
+            cashier = (
+                row.created_by.user.get_full_name()
+                or row.created_by.employee_id
+                or row.created_by.user.username
+            )
+        lines = []
+        for line in row.lines.all():
+            qty = int(line.quantity or 0) - int(line.returned_quantity or 0)
+            if qty <= 0:
+                continue
+            unit = Decimal(line.unit_price or 0)
+            lines.append(
+                {
+                    "name": line.item_name or "Item",
+                    "qty": qty,
+                    "unit": _money_ksh(unit),
+                    "total": _money_ksh((unit * qty).quantize(Decimal("0.01"))),
+                }
+            )
+        total = Decimal(row.total or 0)
+        (
+            kind_label,
+            status,
+            status_tone,
+            paid_label,
+            due_label,
+            due,
+            is_credit,
+        ) = _client_transaction_kind_meta(row)
+        if row.kind == ShopReceiptKind.QUOTATION:
+            quotations_total += total
+            quotations_count += 1
+        elif is_credit:
+            credits_total += total
+            credits_count += 1
+        else:
+            sales_total += total
+            sales_count += 1
+        if row.shop_id:
+            shop_ids_seen.add(row.shop_id)
+        when_label = ""
+        if row.created_at:
+            when_label = timezone.localtime(row.created_at).strftime("%d %b %Y · %H:%M")
+        rows.append(
+            {
+                "id": f"{row.kind}-{row.pk}",
+                "pay_id": row.pk,
+                "number": row.receipt_number,
+                "shop": row.shop.name if row.shop else "—",
+                "kind": row.kind,
+                "kind_label": kind_label,
+                "status": status,
+                "status_tone": status_tone,
+                "total": _money_ksh(total),
+                "total_raw": str(total.quantize(Decimal("0.01"))),
+                "paid": paid_label,
+                "due": due_label,
+                "due_raw": str(due),
+                "when": row.created_at,
+                "when_label": when_label,
+                "cashier": cashier or "—",
+                "item_count": len(lines),
+                "lines": lines,
+                "can_pay": False,
+                "can_manage": False,
+            }
+        )
+
+    period_scoped = start is not None and end is not None
+    other_alert = None
+    all_time_href = ""
+    other_count = max(0, all_count - len(rows)) if period_scoped else 0
+    if period_scoped and other_count > 0:
+        all_query = _query_with_all_time(query)
+        all_time_href = client_credit_account_url(
+            profile.role, client.pk, query=all_query, from_credits=False
+        )
+        other_alert = _alert(
+            "info",
+            "Other transactions outside this period",
+            (
+                f"{other_count} more transaction"
+                f"{'' if other_count == 1 else 's'} for this client "
+                f"outside {period_label}."
+            ),
+            href=all_time_href,
+            href_label="View all time",
+        )
+
+    empty_scope = (
+        f"at {scope_hint}" if shop_filter["selected_shop_ids"] else "in your shops"
+    )
+    kind_titles = {
+        "all": "All transactions",
+        "sales": "Sales",
+        "credits": "Credits",
+        "quotations": "Quotations",
+    }
+    kind_empty = {
+        "all": "transactions",
+        "sales": "sales",
+        "credits": "credits",
+        "quotations": "quotations",
+    }
+    grand_total = sales_total + credits_total + quotations_total
+    from urllib.parse import parse_qs, urlencode
+
+    params = parse_qs(query, keep_blank_values=True) if query else {}
+    flat = {key: values[0] for key, values in params.items()}
+    flat.pop("download", None)
+    flat["download"] = "csv"
+    download_href = f"?{urlencode(flat)}"
+
+    return {
+        "client": client,
+        "receipt_count": len(rows),
+        "receipt_kind": receipt_kind,
+        "rows": rows,
+        "ledger_title": kind_titles.get(receipt_kind, "Transactions"),
+        "empty_message": (
+            f"No {kind_empty.get(receipt_kind, 'transactions')} for this client "
+            f"{empty_scope} ({period_label})."
+        ),
+        "scope_hint": scope_hint,
+        "other_count": other_count,
+        "other_alert": other_alert,
+        "all_time_href": all_time_href,
+        "download_href": download_href,
+        "summary_board": {
+            "hero": {
+                "label": "Transaction value",
+                "value": _money_ksh(grand_total),
+                "hint": (
+                    f"{len(rows)} transaction{'s' if len(rows) != 1 else ''}"
+                    f" · {period_label}"
+                ),
+                "tone": "neutral",
+            },
+            "tiles": [
+                {
+                    "label": "Sales",
+                    "value": _money_ksh(sales_total),
+                    "hint": f"{sales_count} receipt{'s' if sales_count != 1 else ''}",
+                    "icon": "shopping-bag",
+                    "tone": "cash",
+                },
+                {
+                    "label": "Credits",
+                    "value": _money_ksh(credits_total),
+                    "hint": f"{credits_count} receipt{'s' if credits_count != 1 else ''}",
+                    "icon": "credit-card",
+                    "tone": "warn" if credits_count else "neutral",
+                },
+                {
+                    "label": "Quotations",
+                    "value": _money_ksh(quotations_total),
+                    "hint": (
+                        f"{quotations_count} quote"
+                        f"{'' if quotations_count == 1 else 's'}"
+                    ),
+                    "icon": "file-text",
+                    "tone": "shops",
+                },
+            ],
+        },
+        "export_rows": [
+            {
+                "when": row["when_label"],
+                "type": row["kind_label"],
+                "receipt": row["number"],
+                "shop": row["shop"],
+                "status": row["status"],
+                "items": row["item_count"],
+                "total": row["total_raw"],
+                "paid": row["paid"] if row["paid"] != "—" else "",
+                "due": row["due"] if row["due"] != "—" else "",
+                "cashier": row["cashier"],
+            }
+            for row in rows
+        ],
+        **shop_filter,
+        **date_filter,
+    }
+
+
+def client_transactions_csv_response(*, account: dict):
+    """CSV download for filtered client transactions."""
+    import csv
+    from io import StringIO
+
+    from django.http import HttpResponse
+    from django.utils import timezone as dj_timezone
+    from django.utils.text import slugify
+
+    client = account["client"]
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "When",
+            "Type",
+            "Receipt",
+            "Shop",
+            "Status",
+            "Items",
+            "Total",
+            "Paid",
+            "Due",
+            "Cashier",
+        ]
+    )
+    for row in account.get("export_rows") or []:
+        writer.writerow(
+            [
+                row.get("when") or "",
+                row.get("type") or "",
+                row.get("receipt") or "",
+                row.get("shop") or "",
+                row.get("status") or "",
+                row.get("items") or 0,
+                row.get("total") or "",
+                row.get("paid") or "",
+                row.get("due") or "",
+                row.get("cashier") or "",
+            ]
+        )
+    stamp = dj_timezone.localtime().strftime("%Y%m%d-%H%M")
+    name = slugify(client.full_name or "client") or "client"
+    kind = account.get("receipt_kind") or "all"
+    filename = f"client-{name}-transactions-{kind}-{stamp}.csv"
+    response = HttpResponse(buffer.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
 
 def supplier_account_url(role, kind: str, supplier_id, *, query: str = "") -> str:
@@ -8009,32 +8272,6 @@ def _build_credits(filters):
         ]
         + clients_page["tables"],
     }
-
-
-def _parse_client_receipt_kind(raw: str) -> str:
-    kind = (raw or "").strip().lower()
-    if kind in ("sale", "sales"):
-        return "sales"
-    if kind in ("credit", "credits"):
-        return "credits"
-    if kind in ("quotation", "quotations", "quote"):
-        return "quotations"
-    return "all"
-
-
-def _client_activity_receipts_q(kind: str) -> Q:
-    """Receipt kinds shown on the Clients analytics page."""
-    if kind == "credits":
-        return _credit_account_receipts_q()
-    if kind == "sales":
-        return Q(kind=ShopReceiptKind.SALE)
-    if kind == "quotations":
-        return Q(kind=ShopReceiptKind.QUOTATION)
-    return (
-        Q(kind=ShopReceiptKind.SALE)
-        | Q(kind=ShopReceiptKind.CREDIT)
-        | Q(kind=ShopReceiptKind.QUOTATION)
-    )
 
 
 def _build_clients(filters):

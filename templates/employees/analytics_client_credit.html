@@ -14,7 +14,7 @@
   <header class="ax-top">
     <div class="ax-top-main">
       <div class="ax-title ax-title--stack">
-        <span class="ax-account-kicker">Client account</span>
+        <span class="ax-account-kicker">Credit account</span>
         <h2>{{ client.full_name }}</h2>
         <span class="ax-period">
           {{ client.phone_number }}
@@ -39,7 +39,7 @@
       </div>
       <form class="ax-filters" method="get" data-analytics-filters>
         {% for key, values in request.GET.lists %}
-          {% if key != "shop_id" and key != "receipt_kind" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" %}
+          {% if key != "shop_id" and key != "range" and key != "date" and key != "date_from" and key != "date_to" and key != "month" and key != "year" %}
             {% for value in values %}
             <input type="hidden" name="{{ key }}" value="{{ value }}">
             {% endfor %}
@@ -51,26 +51,12 @@
           <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
           {% endfor %}
         </select>
-        <select name="receipt_kind" aria-label="Receipt type">
-          <option value="all"{% if receipt_kind == 'all' or not receipt_kind %} selected{% endif %}>All types</option>
-          <option value="sales"{% if receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
-          <option value="credits"{% if receipt_kind == 'credits' %} selected{% endif %}>Credits</option>
-          <option value="quotations"{% if receipt_kind == 'quotations' %} selected{% endif %}>Quotations</option>
-        </select>
         {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
         <button type="submit" class="ax-apply">Apply</button>
       </form>
     </div>
     <p class="ax-lead">
-      {% if receipt_kind == 'credits' or not receipt_kind %}
       Select one or more credit receipts to pay, or use Pay amount to clear the oldest credits first
-      {% elif receipt_kind == 'sales' %}
-      Sales receipts for this client
-      {% elif receipt_kind == 'quotations' %}
-      Quotations for this client
-      {% else %}
-      Sales, credits, and quotations for this client — filter by type, shop, or period
-      {% endif %}
       · {{ scope_hint|default:"All shops" }}
       · {{ report_period_label|default:"All time" }}.
     </p>

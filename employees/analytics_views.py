@@ -21,11 +21,13 @@ from .analytics_services import (
     build_analytics_page,
     build_analytics_receipts_list,
     build_client_credit_account,
+    build_client_transactions,
     build_confirm_receipts_page,
     build_return_receipts_page,
     build_supplier_account,
     build_trade_out_detail,
     client_credit_account_url,
+    client_transactions_csv_response,
     get_analytics_receipt_kind,
     get_analytics_section,
     update_credit_receipt_due_date,
@@ -54,7 +56,7 @@ def _client_credit_nav(profile, client_id):
     segment = role_url_segment(profile.role)
     kwargs = {"role_segment": segment, "client_id": client_id}
     return {
-        "account_href": reverse("employees:analytics_client_account", kwargs=kwargs),
+        "account_href": reverse("employees:analytics_client_credit", kwargs=kwargs),
         "audit_href": client_credit_audit_url(profile.role, client_id),
     }
 
@@ -410,9 +412,10 @@ def analytics_return_receipts(request, role_segment):
 
 @active_employee_required
 @require_GET
-def analytics_client_credit(request, role_segment, client_id):
-    """Client account ledger (/…/analytics/clients/<id>/)."""
-    from .workspace import analytics_section_url
+def analytics_client_account(request, role_segment, client_id):
+    """Client transactions (/…/analytics/clients/<id>/) — filterable and downloadable."""
+    from .module_permissions import require_module_permission
+    from .workspace import analytics_section_url, sidebar_for_role_dashboard
 
     profile = get_profile_for_request(request)
     if role_from_url_segment(role_segment) is None:
@@ -434,12 +437,86 @@ def analytics_client_credit(request, role_segment, client_id):
 
         raise Http404("Module not found.")
 
-    from_credits = "/analytics/credits/" in (request.path or "")
-    back_section = "credits" if from_credits else "clients"
+    denied = require_module_permission(request, profile, "analytics", "clients")
+    if denied is not None:
+        return denied
+
+    account = build_client_transactions(
+        profile=profile, client_id=client_id, request=request
+    )
+    if (request.GET.get("download") or "").strip().lower() in ("1", "csv", "download"):
+        return client_transactions_csv_response(account=account)
+
+    query = request.GET.urlencode()
+    back_href = analytics_section_url(profile.role, "clients")
+    if query:
+        # Keep filters on back link, but drop download flag.
+        from urllib.parse import parse_qs, urlencode
+
+        params = parse_qs(query, keep_blank_values=True)
+        params.pop("download", None)
+        flat = {key: values[0] for key, values in params.items()}
+        cleaned = urlencode(flat)
+        if cleaned:
+            back_href = f"{back_href}?{cleaned}"
+
+    return render(
+        request,
+        "employees/analytics_client_account.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": f"{account['client'].full_name} · Client transactions",
+                "headline": "Client transactions",
+                "summary": "All sales, credits, and quotations for this client.",
+                "icon": "contact",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_role_dashboard(
+                profile.role,
+                profile=profile,
+                active_slug="clients",
+                omit_dashboard_link=False,
+            ),
+            "back_href": back_href,
+            "back_label": "Back to clients",
+            "include_all_time": True,
+            **account,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_client_credit(request, role_segment, client_id):
+    """Client credit account ledger (/…/analytics/credits/clients/<id>/)."""
+    from .workspace import analytics_section_url
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_client_credit",
+            role_segment=expected,
+            client_id=client_id,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
 
     from .module_permissions import require_module_permission
 
-    denied = require_module_permission(request, profile, "analytics", back_section)
+    denied = require_module_permission(request, profile, "analytics", "credits")
     if denied is not None:
         return denied
 
@@ -459,7 +536,7 @@ def analytics_client_credit(request, role_segment, client_id):
         profile=profile, client_id=client_id, request=request
     )
     query = request.GET.urlencode()
-    back_href = analytics_section_url(profile.role, back_section)
+    back_href = analytics_section_url(profile.role, "credits")
     if query:
         back_href = f"{back_href}?{query}"
 
@@ -469,9 +546,9 @@ def analytics_client_credit(request, role_segment, client_id):
         {
             "profile": profile,
             "meta": {
-                "title": f"{account['client'].full_name} · Client account",
-                "headline": "Client account",
-                "summary": "Sales, credits, and quotations for this client, with filters.",
+                "title": f"{account['client'].full_name} · Credit account",
+                "headline": "Credit account",
+                "summary": "Open credit receipts and outstanding balance for this client.",
                 "icon": "contact",
             },
             "module": module,
@@ -484,7 +561,7 @@ def analytics_client_credit(request, role_segment, client_id):
                 active="account",
             ),
             "back_href": back_href,
-            "back_label": "Back to credits" if from_credits else "Back to clients",
+            "back_label": "Back to credits",
             "pay_url": _pay_url_for(profile),
             "stk_ready": daraja_stk_ready(),
             "stk_off_label": (
@@ -499,7 +576,7 @@ def analytics_client_credit(request, role_segment, client_id):
                     profile.role,
                     client_id,
                     query=query,
-                    from_credits=from_credits,
+                    from_credits=True,
                 )
                 + "#transactions"
             ),
