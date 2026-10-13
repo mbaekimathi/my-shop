@@ -3392,6 +3392,7 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
     quotations_count = 0
     shop_ids_seen: set[int] = set()
     rows = []
+    item_rows = []
     for row in receipts:
         cashier = ""
         if row.created_by and row.created_by.user:
@@ -3406,12 +3407,13 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
             if qty <= 0:
                 continue
             unit = Decimal(line.unit_price or 0)
+            line_total = (unit * qty).quantize(Decimal("0.01"))
             lines.append(
                 {
                     "name": line.item_name or "Item",
                     "qty": qty,
                     "unit": _money_ksh(unit),
-                    "total": _money_ksh((unit * qty).quantize(Decimal("0.01"))),
+                    "total": _money_ksh(line_total),
                 }
             )
         total = Decimal(row.total or 0)
@@ -3436,14 +3438,37 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
         if row.shop_id:
             shop_ids_seen.add(row.shop_id)
         when_label = ""
+        date_label = ""
         if row.created_at:
-            when_label = timezone.localtime(row.created_at).strftime("%d %b %Y · %H:%M")
+            local_when = timezone.localtime(row.created_at)
+            when_label = local_when.strftime("%d %b %Y · %H:%M")
+            date_label = local_when.strftime("%d %b %Y")
+        shop_name = row.shop.name if row.shop else "—"
+        for line in lines:
+            item_rows.append(
+                {
+                    "date": date_label or "—",
+                    "when_label": when_label or "—",
+                    "type": kind_label,
+                    "receipt": row.receipt_number,
+                    "shop": shop_name,
+                    "item": line["name"],
+                    "qty": line["qty"],
+                    "unit": line["unit"],
+                    "total": line["total"],
+                    "status": status,
+                    "search_text": (
+                        f"{date_label} {when_label} {kind_label} "
+                        f"{row.receipt_number} {shop_name} {line['name']}"
+                    ).strip(),
+                }
+            )
         rows.append(
             {
                 "id": f"{row.kind}-{row.pk}",
                 "pay_id": row.pk,
                 "number": row.receipt_number,
-                "shop": row.shop.name if row.shop else "—",
+                "shop": shop_name,
                 "kind": row.kind,
                 "kind_label": kind_label,
                 "status": status,
@@ -3455,6 +3480,7 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
                 "due_raw": str(due),
                 "when": row.created_at,
                 "when_label": when_label,
+                "date_label": date_label,
                 "cashier": cashier or "—",
                 "item_count": len(lines),
                 "lines": lines,
@@ -3505,24 +3531,39 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
     params = parse_qs(query, keep_blank_values=True) if query else {}
     flat = {key: values[0] for key, values in params.items()}
     flat.pop("download", None)
-    flat["download"] = "csv"
+    flat["download"] = "pdf"
     download_href = f"?{urlencode(flat)}"
 
     return {
         "client": client,
         "receipt_count": len(rows),
+        "item_count": len(item_rows),
         "receipt_kind": receipt_kind,
         "rows": rows,
+        "item_rows": item_rows,
         "ledger_title": kind_titles.get(receipt_kind, "Transactions"),
+        "items_title": "Items by transaction",
         "empty_message": (
             f"No {kind_empty.get(receipt_kind, 'transactions')} for this client "
             f"{empty_scope} ({period_label})."
+        ),
+        "items_empty_message": (
+            f"No items for this client {empty_scope} ({period_label})."
         ),
         "scope_hint": scope_hint,
         "other_count": other_count,
         "other_alert": other_alert,
         "all_time_href": all_time_href,
         "download_href": download_href,
+        "export_totals": {
+            "sales_total": sales_total,
+            "credits_total": credits_total,
+            "quotations_total": quotations_total,
+            "grand_total": grand_total,
+            "sales_count": sales_count,
+            "credits_count": credits_count,
+            "quotations_count": quotations_count,
+        },
         "summary_board": {
             "hero": {
                 "label": "Transaction value",
@@ -3568,9 +3609,10 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
                 "shop": row["shop"],
                 "status": row["status"],
                 "items": row["item_count"],
-                "total": row["total_raw"],
-                "paid": row["paid"] if row["paid"] != "—" else "",
-                "due": row["due"] if row["due"] != "—" else "",
+                "total": row["total"],
+                "total_raw": row["total_raw"],
+                "paid": row["paid"] if row["paid"] != "—" else "—",
+                "due": row["due"] if row["due"] != "—" else "—",
                 "cashier": row["cashier"],
             }
             for row in rows
@@ -3580,53 +3622,461 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
     }
 
 
-def client_transactions_csv_response(*, account: dict):
-    """CSV download for filtered client transactions."""
-    import csv
-    from io import StringIO
+def build_client_transactions_pdf(*, account: dict, company_name: str = "") -> bytes:
+    """Modern branded A4 landscape PDF for filtered client transactions."""
+    from io import BytesIO
 
-    from django.http import HttpResponse
-    from django.utils import timezone as dj_timezone
-    from django.utils.text import slugify
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    from core.pdf_fonts import MANROPE_PDF, MANROPE_PDF_BOLD, register_manrope_pdf_fonts
+
+    register_manrope_pdf_fonts()
 
     client = account["client"]
-    buffer = StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(
-        [
-            "When",
-            "Type",
-            "Receipt",
-            "Shop",
-            "Status",
-            "Items",
-            "Total",
-            "Paid",
-            "Due",
-            "Cashier",
-        ]
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    period_label = account.get("report_period_label") or "All time"
+    shop_label = account.get("shop_filter_label") or account.get("scope_hint") or "All shops"
+    kind = account.get("receipt_kind") or "all"
+    kind_label = {
+        "all": "All types",
+        "sales": "Sales",
+        "credits": "Credits",
+        "quotations": "Quotations",
+    }.get(kind, "All types")
+    rows = list(account.get("export_rows") or [])
+    totals = account.get("export_totals") or {}
+    printed_at = timezone.localtime()
+
+    ink = colors.HexColor("#0b1220")
+    muted = colors.HexColor("#5b6b7c")
+    line = colors.HexColor("#e2e8f0")
+    line_strong = colors.HexColor("#cbd5e1")
+    surface = colors.HexColor("#f8fafc")
+    head_fill = colors.HexColor("#0f172a")
+    accent = colors.HexColor("#0f766e")
+    accent_soft = colors.HexColor("#ccfbf1")
+    white = colors.white
+    paid_tone = colors.HexColor("#047857")
+    unpaid_tone = colors.HexColor("#b45309")
+    quote_tone = colors.HexColor("#475569")
+
+    def _esc(text) -> str:
+        return (
+            str(text if text is not None else "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    buffer = BytesIO()
+    page_size = landscape(A4)
+    left_m = 10 * mm
+    right_m = 10 * mm
+    top_m = 12 * mm
+    bottom_m = 12 * mm
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=page_size,
+        leftMargin=left_m,
+        rightMargin=right_m,
+        topMargin=top_m,
+        bottomMargin=bottom_m,
+        title=f"{brand} — Client transactions · {client.full_name}",
+        author=brand,
     )
-    for row in account.get("export_rows") or []:
-        writer.writerow(
+
+    styles = getSampleStyleSheet()
+    brand_style = ParagraphStyle(
+        "ClientTxBrand",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=8,
+        textColor=accent,
+        leading=10,
+        spaceAfter=1,
+    )
+    title_style = ParagraphStyle(
+        "ClientTxTitle",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=16,
+        textColor=ink,
+        leading=19,
+        spaceAfter=1,
+    )
+    subtitle_style = ParagraphStyle(
+        "ClientTxSubtitle",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=9,
+        textColor=muted,
+        leading=12,
+    )
+    meta_right = ParagraphStyle(
+        "ClientTxMetaRight",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=8,
+        textColor=muted,
+        leading=10,
+        alignment=TA_RIGHT,
+    )
+    meta_right_strong = ParagraphStyle(
+        "ClientTxMetaRightStrong",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=9,
+        textColor=ink,
+        leading=11,
+        alignment=TA_RIGHT,
+    )
+    kpi_label = ParagraphStyle(
+        "ClientTxKpiLabel",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7,
+        textColor=muted,
+        leading=9,
+        alignment=TA_CENTER,
+    )
+    kpi_value = ParagraphStyle(
+        "ClientTxKpiValue",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=11,
+        textColor=ink,
+        leading=13,
+        alignment=TA_CENTER,
+    )
+    kpi_hint = ParagraphStyle(
+        "ClientTxKpiHint",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7,
+        textColor=muted,
+        leading=9,
+        alignment=TA_CENTER,
+    )
+    head_cell = ParagraphStyle(
+        "ClientTxHead",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7,
+        textColor=white,
+        leading=9,
+    )
+    cell = ParagraphStyle(
+        "ClientTxCell",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7.5,
+        textColor=ink,
+        leading=9.5,
+    )
+    cell_strong = ParagraphStyle(
+        "ClientTxCellStrong",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7.5,
+        textColor=ink,
+        leading=9.5,
+    )
+    cell_right = ParagraphStyle(
+        "ClientTxCellRight",
+        parent=cell,
+        alignment=TA_RIGHT,
+    )
+    cell_center = ParagraphStyle(
+        "ClientTxCellCenter",
+        parent=cell,
+        alignment=TA_CENTER,
+    )
+    empty_style = ParagraphStyle(
+        "ClientTxEmpty",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=9,
+        textColor=muted,
+        leading=12,
+        alignment=TA_CENTER,
+    )
+    foot_style = ParagraphStyle(
+        "ClientTxFoot",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7,
+        textColor=muted,
+        leading=9,
+    )
+
+    story = []
+    phone = (client.phone_number or "").strip() or "—"
+    header = Table(
+        [
             [
-                row.get("when") or "",
-                row.get("type") or "",
-                row.get("receipt") or "",
-                row.get("shop") or "",
-                row.get("status") or "",
-                row.get("items") or 0,
-                row.get("total") or "",
-                row.get("paid") or "",
-                row.get("due") or "",
-                row.get("cashier") or "",
+                [
+                    Paragraph(_esc(brand).upper(), brand_style),
+                    Paragraph("Client transactions", title_style),
+                    Paragraph(
+                        f"{_esc(client.full_name)} · {_esc(phone)}",
+                        subtitle_style,
+                    ),
+                ],
+                [
+                    Paragraph(_esc(shop_label), meta_right_strong),
+                    Paragraph(
+                        f"{_esc(period_label)} · {_esc(kind_label)}",
+                        meta_right,
+                    ),
+                    Paragraph(
+                        printed_at.strftime("Generated %d %b %Y · %H:%M"),
+                        meta_right,
+                    ),
+                ],
+            ]
+        ],
+        colWidths=[doc.width * 0.62, doc.width * 0.38],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("LINEBELOW", (0, 0), (-1, -1), 1.2, accent),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
             ]
         )
-    stamp = dj_timezone.localtime().strftime("%Y%m%d-%H%M")
+    )
+    story.append(header)
+    story.append(Spacer(1, 8 * mm))
+
+    sales_n = int(totals.get("sales_count") or 0)
+    credits_n = int(totals.get("credits_count") or 0)
+    quotes_n = int(totals.get("quotations_count") or 0)
+    kpi = Table(
+        [
+            [
+                [
+                    Paragraph("SALES", kpi_label),
+                    Paragraph(_esc(_money_ksh(totals.get("sales_total"))), kpi_value),
+                    Paragraph(
+                        f"{sales_n} receipt{'s' if sales_n != 1 else ''}",
+                        kpi_hint,
+                    ),
+                ],
+                [
+                    Paragraph("CREDITS", kpi_label),
+                    Paragraph(_esc(_money_ksh(totals.get("credits_total"))), kpi_value),
+                    Paragraph(
+                        f"{credits_n} receipt{'s' if credits_n != 1 else ''}",
+                        kpi_hint,
+                    ),
+                ],
+                [
+                    Paragraph("QUOTATIONS", kpi_label),
+                    Paragraph(
+                        _esc(_money_ksh(totals.get("quotations_total"))), kpi_value
+                    ),
+                    Paragraph(
+                        f"{quotes_n} quote{'' if quotes_n == 1 else 's'}",
+                        kpi_hint,
+                    ),
+                ],
+                [
+                    Paragraph("TOTAL VALUE", kpi_label),
+                    Paragraph(_esc(_money_ksh(totals.get("grand_total"))), kpi_value),
+                    Paragraph(
+                        f"{len(rows)} transaction{'s' if len(rows) != 1 else ''}",
+                        kpi_hint,
+                    ),
+                ],
+            ]
+        ],
+        colWidths=[doc.width / 4.0] * 4,
+    )
+    kpi.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), surface),
+                ("BOX", (0, 0), (-1, -1), 0.8, line_strong),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, line),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
+    story.append(kpi)
+    story.append(Spacer(1, 6 * mm))
+
+    usable = doc.width
+    col_widths = [
+        usable * 0.12,  # When
+        usable * 0.08,  # Type
+        usable * 0.12,  # Receipt
+        usable * 0.14,  # Shop
+        usable * 0.08,  # Status
+        usable * 0.05,  # Items
+        usable * 0.11,  # Total
+        usable * 0.10,  # Paid
+        usable * 0.10,  # Due
+        usable * 0.10,  # Cashier
+    ]
+    table_data = [
+        [
+            Paragraph("When", head_cell),
+            Paragraph("Type", head_cell),
+            Paragraph("Receipt", head_cell),
+            Paragraph("Shop", head_cell),
+            Paragraph("Status", head_cell),
+            Paragraph("Items", head_cell),
+            Paragraph("Total", head_cell),
+            Paragraph("Paid", head_cell),
+            Paragraph("Due", head_cell),
+            Paragraph("Cashier", head_cell),
+        ]
+    ]
+
+    for idx, row in enumerate(rows):
+        status = (row.get("status") or "").strip()
+        status_style = ParagraphStyle(
+            f"ClientTxStatus{idx}",
+            parent=cell_center,
+            fontName=MANROPE_PDF_BOLD,
+            textColor=(
+                paid_tone
+                if status.lower() == "paid"
+                else unpaid_tone
+                if status.lower() == "unpaid"
+                else quote_tone
+            ),
+        )
+        table_data.append(
+            [
+                Paragraph(_esc(row.get("when") or "—"), cell),
+                Paragraph(_esc(row.get("type") or "—"), cell_strong),
+                Paragraph(_esc(row.get("receipt") or "—"), cell_strong),
+                Paragraph(_esc(row.get("shop") or "—"), cell),
+                Paragraph(_esc(status or "—"), status_style),
+                Paragraph(_esc(row.get("items") or 0), cell_center),
+                Paragraph(_esc(row.get("total") or "—"), cell_right),
+                Paragraph(_esc(row.get("paid") or "—"), cell_right),
+                Paragraph(_esc(row.get("due") or "—"), cell_right),
+                Paragraph(_esc(row.get("cashier") or "—"), cell),
+            ]
+        )
+
+    if len(table_data) == 1:
+        story.append(
+            Paragraph(
+                _esc(account.get("empty_message") or "No transactions found."),
+                empty_style,
+            )
+        )
+    else:
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        style_cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), head_fill),
+            ("TEXTCOLOR", (0, 0), (-1, 0), white),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, 0), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+            ("TOPPADDING", (0, 1), (-1, -1), 4.5),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 4.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("LINEBELOW", (0, 0), (-1, 0), 0, head_fill),
+            ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.4, line),
+            ("BACKGROUND", (0, 1), (-1, -1), white),
+        ]
+        for row_idx in range(1, len(table_data)):
+            if row_idx % 2 == 0:
+                style_cmds.append(
+                    ("BACKGROUND", (0, row_idx), (-1, row_idx), surface)
+                )
+        table.setStyle(TableStyle(style_cmds))
+        story.append(table)
+
+    story.append(Spacer(1, 5 * mm))
+    story.append(
+        Paragraph(
+            (
+                f"{brand} · Confidential client transaction report · "
+                f"{len(rows)} row{'s' if len(rows) != 1 else ''} · "
+                f"{period_label} · {kind_label}"
+            ),
+            foot_style,
+        )
+    )
+
+    class _NumberedCanvas(pdf_canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            pdf_canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_page_states = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            page_count = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self._draw_page_number(page_count)
+                pdf_canvas.Canvas.showPage(self)
+            pdf_canvas.Canvas.save(self)
+
+        def _draw_page_number(self, page_count):
+            self.setFont(MANROPE_PDF, 7)
+            self.setFillColor(muted)
+            label = f"Page {self._pageNumber} of {page_count}"
+            self.drawRightString(page_size[0] - right_m, 6 * mm, label)
+            self.setStrokeColor(accent_soft)
+            self.setLineWidth(2)
+            self.line(left_m, 8.5 * mm, page_size[0] - right_m - 28 * mm, 8.5 * mm)
+
+    doc.build(story, canvasmaker=_NumberedCanvas)
+    return buffer.getvalue()
+
+
+def client_transactions_pdf_response(*, account: dict):
+    """PDF download for filtered client transactions."""
+    from django.http import HttpResponse
+    from django.utils.text import slugify
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    pdf_bytes = build_client_transactions_pdf(
+        account=account, company_name=company_name
+    )
+    client = account["client"]
+    stamp = timezone.localtime().strftime("%Y%m%d-%H%M")
     name = slugify(client.full_name or "client") or "client"
     kind = account.get("receipt_kind") or "all"
-    filename = f"client-{name}-transactions-{kind}-{stamp}.csv"
-    response = HttpResponse(buffer.getvalue(), content_type="text/csv; charset=utf-8")
+    filename = f"client-{name}-transactions-{kind}-{stamp}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["Content-Length"] = str(len(pdf_bytes))
     return response
 
 

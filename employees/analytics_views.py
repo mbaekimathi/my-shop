@@ -27,7 +27,7 @@ from .analytics_services import (
     build_supplier_account,
     build_trade_out_detail,
     client_credit_account_url,
-    client_transactions_csv_response,
+    client_transactions_pdf_response,
     get_analytics_receipt_kind,
     get_analytics_section,
     update_credit_receipt_due_date,
@@ -444,8 +444,13 @@ def analytics_client_account(request, role_segment, client_id):
     account = build_client_transactions(
         profile=profile, client_id=client_id, request=request
     )
-    if (request.GET.get("download") or "").strip().lower() in ("1", "csv", "download"):
-        return client_transactions_csv_response(account=account)
+    if (request.GET.get("download") or "").strip().lower() in (
+        "1",
+        "pdf",
+        "csv",
+        "download",
+    ):
+        return client_transactions_pdf_response(account=account)
 
     query = request.GET.urlencode()
     back_href = analytics_section_url(profile.role, "clients")

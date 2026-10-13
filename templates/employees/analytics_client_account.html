@@ -24,7 +24,7 @@
       <div class="ax-top-actions">
         <a class="ax-apply" href="{{ download_href }}">
           <i data-lucide="download" aria-hidden="true"></i>
-          <span>Download</span>
+          <span>Download PDF</span>
         </a>
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back to clients" }}</a>
       </div>
@@ -185,6 +185,68 @@
       {% endif %}
     </div>
   </section>
+
+  <section class="ax-card ax-card--wide ax-card--ledger" data-ax-items-card>
+    <header class="ax-card-head">
+      <div class="ax-card-head-main">
+        <h3>{{ items_title|default:"Items by transaction" }}</h3>
+        {% if item_count %}
+        <span class="ax-card-meta">{{ item_count }} item line{{ item_count|pluralize }}</span>
+        {% endif %}
+      </div>
+      <label class="ax-table-search">
+        <span class="visually-hidden">Search items</span>
+        <input
+          type="search"
+          placeholder="Search items…"
+          autocomplete="off"
+          data-ax-items-search
+          aria-label="Search items"
+        >
+      </label>
+    </header>
+
+    <p class="ax-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
+
+    <div class="ax-table-wrap ax-table-wrap--list ax-table-wrap--scroll">
+      {% if item_rows %}
+      <table class="ax-table ax-table--list ax-table--account">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th class="ax-th--item">Item</th>
+            <th>Receipt</th>
+            <th>Shop</th>
+            <th>Qty</th>
+            <th>Unit</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in item_rows %}
+          <tr
+            data-ax-items-row
+            data-search-text="{{ row.search_text }}"
+          >
+            <td data-label="Date">{{ row.date }}</td>
+            <td data-label="Type">{{ row.type }}</td>
+            <td class="ax-cell--primary" data-label="Item">{{ row.item }}</td>
+            <td data-label="Receipt">{{ row.receipt }}</td>
+            <td data-label="Shop">{{ row.shop }}</td>
+            <td data-label="Qty">{{ row.qty }}</td>
+            <td data-label="Unit">{{ row.unit }}</td>
+            <td data-label="Total">{{ row.total }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="ax-empty ax-empty--search" data-ax-items-no-results hidden>No items match that search.</p>
+      {% else %}
+      <p class="ax-empty">{{ items_empty_message|default:"No items found." }}</p>
+      {% endif %}
+    </div>
+  </section>
 </section>
 {% endblock %}
 
@@ -218,20 +280,37 @@
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");
-    if (!form) return;
-    const rangeSelect = form.querySelector("[data-analytics-range]");
-    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
-    const syncRange = () => {
-      const range = rangeSelect?.value || "day";
-      rangeFields.forEach((field) => {
-        const match = field.getAttribute("data-range-field") === range;
-        field.hidden = !match;
-        field.disabled = !match;
-        field.required = match;
+    if (form) {
+      const rangeSelect = form.querySelector("[data-analytics-range]");
+      const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+      const syncRange = () => {
+        const range = rangeSelect?.value || "day";
+        rangeFields.forEach((field) => {
+          const match = field.getAttribute("data-range-field") === range;
+          field.hidden = !match;
+          field.disabled = !match;
+          field.required = match;
+        });
+      };
+      rangeSelect?.addEventListener("change", syncRange);
+      syncRange();
+    }
+
+    const itemsCard = document.querySelector("[data-ax-items-card]");
+    const itemsSearch = itemsCard?.querySelector("[data-ax-items-search]");
+    const itemsRows = [...(itemsCard?.querySelectorAll("[data-ax-items-row]") || [])];
+    const itemsEmpty = itemsCard?.querySelector("[data-ax-items-no-results]");
+    itemsSearch?.addEventListener("input", () => {
+      const q = (itemsSearch.value || "").trim().toLowerCase();
+      let visible = 0;
+      itemsRows.forEach((row) => {
+        const hay = (row.getAttribute("data-search-text") || row.textContent || "").toLowerCase();
+        const show = !q || hay.includes(q);
+        row.hidden = !show;
+        if (show) visible += 1;
       });
-    };
-    rangeSelect?.addEventListener("change", syncRange);
-    syncRange();
+      if (itemsEmpty) itemsEmpty.hidden = !(q && visible === 0);
+    });
   })();
 </script>
 {% endblock %}

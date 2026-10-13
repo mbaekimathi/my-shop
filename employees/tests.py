@@ -904,7 +904,7 @@ class ClientCreditAccountTableTests(TestCase):
 
         from employees.analytics_services import (
             build_client_transactions,
-            client_transactions_csv_response,
+            client_transactions_pdf_response,
         )
 
         self._make_receipt(
@@ -928,7 +928,8 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertEqual(set(by_kind), {"Sale", "Credit", "Quotation"})
         self.assertEqual(by_kind["Sale"]["status"], "Paid")
         self.assertEqual(by_kind["Credit"]["status"], "Unpaid")
-        self.assertIn("download=csv", account["download_href"])
+        self.assertIn("download=pdf", account["download_href"])
+        self.assertIsInstance(account.get("item_rows"), list)
 
         paid_credit = self._make_receipt(self.client, total=40, amount_paid=40)
         paid_request = RequestFactory().get(
@@ -965,14 +966,12 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertEqual(sales_account["rows"][0]["kind_label"], "Sale")
         self.assertEqual(sales_account["rows"][0]["status"], "Paid")
 
-        csv_response = client_transactions_csv_response(account=account)
-        self.assertEqual(csv_response["Content-Type"], "text/csv; charset=utf-8")
-        self.assertIn("attachment;", csv_response["Content-Disposition"])
-        body = csv_response.content.decode("utf-8")
-        self.assertIn("When,Type,Receipt,Shop,Status,Items,Total,Paid,Due,Cashier", body)
-        self.assertIn("Sale", body)
-        self.assertIn("Credit", body)
-        self.assertIn("Quotation", body)
+        pdf_response = client_transactions_pdf_response(account=account)
+        self.assertEqual(pdf_response["Content-Type"], "application/pdf")
+        self.assertIn("attachment;", pdf_response["Content-Disposition"])
+        self.assertTrue(pdf_response["Content-Disposition"].endswith('.pdf"'))
+        self.assertTrue(pdf_response.content.startswith(b"%PDF"))
+        self.assertGreater(len(pdf_response.content), 500)
 
 
 class CreditsShopScopeTests(TestCase):
