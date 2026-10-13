@@ -3301,7 +3301,12 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
 
 
 def _client_transaction_kind_meta(row) -> tuple[str, str, str, str, str, Decimal, bool]:
-    """Return kind_label, status, tone, paid_label, due_label, due_raw, is_credit."""
+    """Return kind_label, status, tone, paid_label, due_label, due_raw, is_credit.
+
+    Status rules for the clients transactions page:
+    - Sales → Paid
+    - Credits → Paid when cleared, otherwise Unpaid
+    """
     total = Decimal(row.total or 0)
     paid = Decimal(row.amount_paid or 0)
     is_credit = bool(
@@ -3312,7 +3317,7 @@ def _client_transaction_kind_meta(row) -> tuple[str, str, str, str, str, Decimal
         return "Quotation", "Quotation", "neutral", "—", "—", _zero(), False
     if is_credit:
         due = _due_amount(total, paid)
-        status = _payment_status_for_due(due, paid)
+        status = "Paid" if due <= 0 else "Unpaid"
         return (
             "Credit",
             status,
@@ -3322,12 +3327,10 @@ def _client_transaction_kind_meta(row) -> tuple[str, str, str, str, str, Decimal
             due,
             True,
         )
-    sale_due = _due_amount(total, paid)
-    status = _payment_status_for_due(sale_due, paid)
     return (
         "Sale",
-        status,
-        _status_tone(status),
+        "Paid",
+        _status_tone("Paid"),
         _money_ksh(paid),
         _money_ksh(_zero()),
         _zero(),

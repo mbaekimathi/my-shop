@@ -924,9 +924,30 @@ class ClientCreditAccountTableTests(TestCase):
         )
         self.assertEqual(account["receipt_kind"], "all")
         self.assertEqual(account["receipt_count"], 3)
-        kinds = {row["kind_label"] for row in account["rows"]}
-        self.assertEqual(kinds, {"Sale", "Credit", "Quotation"})
+        by_kind = {row["kind_label"]: row for row in account["rows"]}
+        self.assertEqual(set(by_kind), {"Sale", "Credit", "Quotation"})
+        self.assertEqual(by_kind["Sale"]["status"], "Paid")
+        self.assertEqual(by_kind["Credit"]["status"], "Unpaid")
         self.assertIn("download=csv", account["download_href"])
+
+        paid_credit = self._make_receipt(self.client, total=40, amount_paid=40)
+        paid_request = RequestFactory().get(
+            f"/shop-cashier/analytics/clients/{self.client.pk}/",
+            {
+                "shop_id": str(self.shop.pk),
+                "range": "all",
+                "receipt_kind": "credits",
+            },
+        )
+        credits_account = build_client_transactions(
+            profile=self.cashier, client_id=self.client.pk, request=paid_request
+        )
+        paid_row = next(
+            row
+            for row in credits_account["rows"]
+            if row["pay_id"] == paid_credit.pk
+        )
+        self.assertEqual(paid_row["status"], "Paid")
 
         sales_request = RequestFactory().get(
             f"/shop-cashier/analytics/clients/{self.client.pk}/",
@@ -942,6 +963,7 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertEqual(sales_account["receipt_kind"], "sales")
         self.assertEqual(sales_account["receipt_count"], 1)
         self.assertEqual(sales_account["rows"][0]["kind_label"], "Sale")
+        self.assertEqual(sales_account["rows"][0]["status"], "Paid")
 
         csv_response = client_transactions_csv_response(account=account)
         self.assertEqual(csv_response["Content-Type"], "text/csv; charset=utf-8")
