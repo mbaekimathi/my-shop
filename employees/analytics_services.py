@@ -3656,6 +3656,7 @@ def build_client_transactions_pdf(*, account: dict, company_name: str = "") -> b
         "quotations": "Quotations",
     }.get(kind, "All types")
     rows = list(account.get("export_rows") or [])
+    item_rows = list(account.get("item_rows") or [])
     totals = account.get("export_totals") or {}
     printed_at = timezone.localtime()
 
@@ -3820,6 +3821,24 @@ def build_client_transactions_pdf(*, account: dict, company_name: str = "") -> b
         textColor=muted,
         leading=9,
     )
+    section_kicker = ParagraphStyle(
+        "ClientTxSectionKicker",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7,
+        textColor=accent,
+        leading=9,
+        spaceAfter=1,
+    )
+    section_title = ParagraphStyle(
+        "ClientTxSectionTitle",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=11,
+        textColor=ink,
+        leading=13,
+        spaceAfter=4,
+    )
 
     story = []
     phone = (client.phone_number or "").strip() or "—"
@@ -3926,7 +3945,37 @@ def build_client_transactions_pdf(*, account: dict, company_name: str = "") -> b
     story.append(kpi)
     story.append(Spacer(1, 6 * mm))
 
+    def _style_data_table(table_data):
+        style_cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), head_fill),
+            ("TEXTCOLOR", (0, 0), (-1, 0), white),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, 0), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+            ("TOPPADDING", (0, 1), (-1, -1), 4.5),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 4.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("LINEBELOW", (0, 0), (-1, 0), 0, head_fill),
+            ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.4, line),
+            ("BACKGROUND", (0, 1), (-1, -1), white),
+        ]
+        for row_idx in range(1, len(table_data)):
+            if row_idx % 2 == 0:
+                style_cmds.append(
+                    ("BACKGROUND", (0, row_idx), (-1, row_idx), surface)
+                )
+        return TableStyle(style_cmds)
+
     usable = doc.width
+    story.append(Paragraph("TRANSACTIONS", section_kicker))
+    story.append(
+        Paragraph(
+            account.get("ledger_title") or "All transactions",
+            section_title,
+        )
+    )
     col_widths = [
         usable * 0.12,  # When
         usable * 0.08,  # Type
@@ -3992,35 +4041,73 @@ def build_client_transactions_pdf(*, account: dict, company_name: str = "") -> b
         )
     else:
         table = Table(table_data, colWidths=col_widths, repeatRows=1)
-        style_cmds = [
-            ("BACKGROUND", (0, 0), (-1, 0), head_fill),
-            ("TEXTCOLOR", (0, 0), (-1, 0), white),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, 0), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-            ("TOPPADDING", (0, 1), (-1, -1), 4.5),
-            ("BOTTOMPADDING", (0, 1), (-1, -1), 4.5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("LINEBELOW", (0, 0), (-1, 0), 0, head_fill),
-            ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
-            ("LINEBELOW", (0, 1), (-1, -2), 0.4, line),
-            ("BACKGROUND", (0, 1), (-1, -1), white),
-        ]
-        for row_idx in range(1, len(table_data)):
-            if row_idx % 2 == 0:
-                style_cmds.append(
-                    ("BACKGROUND", (0, row_idx), (-1, row_idx), surface)
-                )
-        table.setStyle(TableStyle(style_cmds))
+        table.setStyle(_style_data_table(table_data))
         story.append(table)
+
+    story.append(Spacer(1, 7 * mm))
+    story.append(Paragraph("ITEM BREAKDOWN", section_kicker))
+    story.append(
+        Paragraph(
+            account.get("items_title") or "Items by transaction",
+            section_title,
+        )
+    )
+
+    item_col_widths = [
+        usable * 0.11,  # Date
+        usable * 0.08,  # Type
+        usable * 0.26,  # Item
+        usable * 0.12,  # Receipt
+        usable * 0.14,  # Shop
+        usable * 0.06,  # Qty
+        usable * 0.11,  # Unit
+        usable * 0.12,  # Total
+    ]
+    item_table_data = [
+        [
+            Paragraph("Date", head_cell),
+            Paragraph("Type", head_cell),
+            Paragraph("Item", head_cell),
+            Paragraph("Receipt", head_cell),
+            Paragraph("Shop", head_cell),
+            Paragraph("Qty", head_cell),
+            Paragraph("Unit", head_cell),
+            Paragraph("Total", head_cell),
+        ]
+    ]
+    for row in item_rows:
+        item_table_data.append(
+            [
+                Paragraph(_esc(row.get("date") or "—"), cell),
+                Paragraph(_esc(row.get("type") or "—"), cell_strong),
+                Paragraph(_esc(row.get("item") or "—"), cell_strong),
+                Paragraph(_esc(row.get("receipt") or "—"), cell),
+                Paragraph(_esc(row.get("shop") or "—"), cell),
+                Paragraph(_esc(row.get("qty") or 0), cell_center),
+                Paragraph(_esc(row.get("unit") or "—"), cell_right),
+                Paragraph(_esc(row.get("total") or "—"), cell_right),
+            ]
+        )
+
+    if len(item_table_data) == 1:
+        story.append(
+            Paragraph(
+                _esc(account.get("items_empty_message") or "No items found."),
+                empty_style,
+            )
+        )
+    else:
+        item_table = Table(item_table_data, colWidths=item_col_widths, repeatRows=1)
+        item_table.setStyle(_style_data_table(item_table_data))
+        story.append(item_table)
 
     story.append(Spacer(1, 5 * mm))
     story.append(
         Paragraph(
             (
                 f"{brand} · Confidential client transaction report · "
-                f"{len(rows)} row{'s' if len(rows) != 1 else ''} · "
+                f"{len(rows)} transaction{'s' if len(rows) != 1 else ''} · "
+                f"{len(item_rows)} item line{'s' if len(item_rows) != 1 else ''} · "
                 f"{period_label} · {kind_label}"
             ),
             foot_style,

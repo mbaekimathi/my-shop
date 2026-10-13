@@ -907,8 +907,17 @@ class ClientCreditAccountTableTests(TestCase):
             client_transactions_pdf_response,
         )
 
-        self._make_receipt(
+        from shops.models import ShopReceiptLine
+
+        sale = self._make_receipt(
             self.client, kind=ShopReceiptKind.SALE, total=50, amount_paid=50
+        )
+        ShopReceiptLine.objects.create(
+            receipt=sale,
+            item_name="HDMI CABLE",
+            quantity=2,
+            unit_price=25,
+            line_total=50,
         )
         self._make_receipt(self.client, total=80, amount_paid=0)
         self._make_receipt(
@@ -929,7 +938,9 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertEqual(by_kind["Sale"]["status"], "Paid")
         self.assertEqual(by_kind["Credit"]["status"], "Unpaid")
         self.assertIn("download=pdf", account["download_href"])
-        self.assertIsInstance(account.get("item_rows"), list)
+        self.assertEqual(account["item_count"], 1)
+        self.assertEqual(account["item_rows"][0]["item"], "HDMI CABLE")
+        self.assertTrue(account["item_rows"][0]["date"])
 
         paid_credit = self._make_receipt(self.client, total=40, amount_paid=40)
         paid_request = RequestFactory().get(
