@@ -3088,7 +3088,6 @@ def _normalize_serial_list(values) -> list[str]:
     return serials
 
 
-@transaction.atomic
 def _normalize_transfer_response_reason(reason: str) -> str:
     text = " ".join(str(reason or "").split()).strip()
     if not text:
@@ -3163,6 +3162,7 @@ def cancel_pending_stock_transfer(*, movement: StockMovement, profile, reason: s
         return movement
 
 
+@transaction.atomic
 def respond_to_stock_request(
     *,
     movement: StockMovement,
@@ -3212,14 +3212,17 @@ def respond_to_stock_request(
     if authorising is None:
         raise ValidationError("Enter a valid active staff 6-digit ID.")
 
-    from employees.module_permissions import ensure_employee_may
+    from employees.module_permissions import employee_may
 
-    ensure_employee_may(
-        authorising,
-        "my-shop",
-        "respond_stock_request",
-        message="You do not have permission to confirm or decline stock transfers.",
-    )
+    # Floor staff confirm via MY-SHOP; IT / managers may also complete from
+    # stock-management Transfer Stock.
+    if not (
+        employee_may(authorising, "my-shop", "respond_stock_request")
+        or employee_may(authorising, "stock-management", "request")
+    ):
+        raise ValidationError(
+            "You do not have permission to confirm or decline stock transfers."
+        )
     _assert_shop_allowed(authorising, receiver, label="receiving shop")
 
     # Prefer the authorising employee as responder when available.

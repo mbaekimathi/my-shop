@@ -12,6 +12,9 @@
         <th>When</th>
         <th>Note</th>
         <th>View</th>
+        {% if allow_confirm %}
+        <th>Confirm</th>
+        {% endif %}
         {% if allow_cancel %}
         <th>Cancel</th>
         {% endif %}
@@ -97,10 +100,38 @@
           </button>
           <ul class="stock-request-view-data" hidden>
             {% for line in req.lines.all %}
-            <li data-item-name="{{ line.item.name }}" data-item-qty="{{ line.quantity }}"></li>
+            <li data-item-name="{{ line.item.name }}" data-item-qty="{{ line.quantity }}" data-line-id="{{ line.pk }}"></li>
             {% endfor %}
           </ul>
         </td>
+        {% if allow_confirm %}
+        <td class="stock-request-table-action" data-label="Confirm">
+          {% if req.request_status == "pending" %}
+          <button
+            type="button"
+            class="btn btn--primary btn--sm"
+            data-stock-request-confirm
+            data-request-id="{{ req.pk }}"
+            data-from-shop="{% if req.shop %}{{ req.shop.name }}{% else %}sending shop{% endif %}"
+            data-to-shop="{% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}receiving shop{% endif %}"
+            aria-label="Confirm transfer #{{ req.pk }}"
+          >
+            Confirm
+          </button>
+          <ul class="stock-request-confirm-data" hidden>
+            {% for line in req.lines.all %}
+            <li
+              data-line-id="{{ line.pk }}"
+              data-item-name="{{ line.item.name }}"
+              data-item-qty="{{ line.quantity }}"
+            ></li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <span class="stock-request-table-sub">—</span>
+          {% endif %}
+        </td>
+        {% endif %}
         {% if allow_cancel %}
         <td class="stock-request-table-action" data-label="Cancel">
           {% if req.request_status == "pending" %}
@@ -124,6 +155,126 @@
     </tbody>
   </table>
 </div>
+
+{% if allow_confirm %}
+<div
+  class="workspace-modal stock-request-confirm-modal"
+  data-stock-request-confirm-modal
+  data-respond-url="{{ respond_transfer_url|default:request.path }}"
+  data-verify-login-url="{{ verify_login_code_url|default:request.path }}"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-stock-request-confirm-close></div>
+  <div
+    class="workspace-modal-dialog stock-request-confirm-dialog stock-transfer-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stock-request-confirm-title"
+  >
+    <header class="workspace-modal-head stock-transfer-head">
+      <div>
+        <p class="stock-transfer-kicker">Stock transfer</p>
+        <h2 id="stock-request-confirm-title">Confirm receipt</h2>
+      </div>
+      <button type="button" class="workspace-modal-close" data-stock-request-confirm-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+    <form
+      class="stock-request-confirm-form"
+      data-stock-request-confirm-form
+      method="post"
+      action="{{ respond_transfer_url|default:request.path }}"
+      novalidate
+    >
+      {% csrf_token %}
+      <input type="hidden" name="action" value="respond_transfer">
+      <input type="hidden" name="mode" value="request">
+      <input type="hidden" name="movement_id" value="" data-stock-request-confirm-id>
+      <input type="hidden" name="decision" value="accept" data-stock-request-confirm-decision>
+      <div class="stock-request-confirm-body stock-transfer-body">
+        <p class="stock-request-modal-lead" data-stock-request-confirm-lead>
+          Enter quantities received. Confirm only when they match what was sent —
+          otherwise Decline with a reason. No stock changes on decline.
+        </p>
+        <div class="stock-transfer-table-wrap">
+          <table class="stock-transfer-table stock-transfer-table--receive">
+            <thead>
+              <tr>
+                <th scope="col">Item</th>
+                <th scope="col">Sent</th>
+                <th scope="col">Received</th>
+              </tr>
+            </thead>
+            <tbody data-stock-request-confirm-lines></tbody>
+          </table>
+        </div>
+        <div class="stock-request-code-panel" data-code-panel>
+          <div class="stock-transfer-section-label">
+            <i data-lucide="shield-check" aria-hidden="true"></i>
+            <span>Validate staff access</span>
+          </div>
+          <label class="field">
+            <span class="field-label">Active staff ID (6 digits)</span>
+            <input
+              type="text"
+              name="login_code"
+              inputmode="numeric"
+              maxlength="6"
+              autocomplete="one-time-code"
+              placeholder="Enter 6-digit staff ID"
+              data-stock-request-confirm-login
+            >
+          </label>
+          <p class="stock-request-code-hint" data-stock-request-confirm-status>
+            Enter quantities received, then your staff ID. Confirm only when received matches sent.
+          </p>
+        </div>
+        <div class="stock-request-decline-reason" data-stock-request-confirm-decline-panel hidden>
+          <div class="stock-transfer-section-label">
+            <i data-lucide="circle-alert" aria-hidden="true"></i>
+            <span>Decline reason</span>
+          </div>
+          <div class="stock-request-cancel-presets" role="group" aria-label="Quick decline reasons">
+            <button type="button" class="btn btn--ghost btn--sm" data-confirm-decline-preset="Wrong quantity">Wrong quantity</button>
+            <button type="button" class="btn btn--ghost btn--sm" data-confirm-decline-preset="Wrong items">Wrong items</button>
+            <button type="button" class="btn btn--ghost btn--sm" data-confirm-decline-preset="Items damaged / missing">Damaged / missing</button>
+          </div>
+          <label class="field">
+            <span class="field-label">Why are you declining?</span>
+            <textarea
+              name="decline_reason"
+              rows="2"
+              maxlength="500"
+              placeholder="e.g. Wrong quantity — counted 3, transfer shows 5"
+              data-stock-request-confirm-decline-reason
+            ></textarea>
+          </label>
+        </div>
+      </div>
+      <div class="workspace-modal-actions stock-transfer-form-foot">
+        <button
+          type="button"
+          class="btn btn--ghost stock-request-decline-btn"
+          data-stock-request-confirm-decline
+          disabled
+        >
+          Decline
+        </button>
+        <button
+          type="submit"
+          class="btn btn--primary"
+          data-stock-request-confirm-accept
+          disabled
+        >
+          Confirm received
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 
 {% if allow_cancel %}
 <div
@@ -357,6 +508,398 @@
 
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !modal.hidden) setOpen(false);
+    });
+  })();
+
+  (() => {
+    const modal = document.querySelector("[data-stock-request-confirm-modal]");
+    if (!modal || modal.dataset.bound === "1") return;
+    modal.dataset.bound = "1";
+
+    const form = modal.querySelector("[data-stock-request-confirm-form]");
+    const idInput = modal.querySelector("[data-stock-request-confirm-id]");
+    const decisionInput = modal.querySelector("[data-stock-request-confirm-decision]");
+    const loginInput = modal.querySelector("[data-stock-request-confirm-login]");
+    const leadEl = modal.querySelector("[data-stock-request-confirm-lead]");
+    const statusEl = modal.querySelector("[data-stock-request-confirm-status]");
+    const linesEl = modal.querySelector("[data-stock-request-confirm-lines]");
+    const declinePanel = modal.querySelector("[data-stock-request-confirm-decline-panel]");
+    const declineReason = modal.querySelector("[data-stock-request-confirm-decline-reason]");
+    const declineBtn = modal.querySelector("[data-stock-request-confirm-decline]");
+    const acceptBtn = modal.querySelector("[data-stock-request-confirm-accept]");
+    const csrfInput = form?.querySelector("input[name=csrfmiddlewaretoken]");
+    const body = document.body;
+    const verifyUrl =
+      modal.getAttribute("data-verify-login-url") ||
+      form?.getAttribute("action") ||
+      window.location.href;
+    const respondUrl =
+      form?.getAttribute("action") ||
+      modal.getAttribute("data-respond-url") ||
+      window.location.href;
+
+    let codeVerified = false;
+    let verifyTimer = null;
+    let verifySeq = 0;
+
+    const escapeHtml = (value) =>
+      String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+    const setOpen = (open) => {
+      modal.hidden = !open;
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+      body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+      if (open && window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    const quantitiesMatch = () => {
+      const inputs = [...(linesEl?.querySelectorAll("[data-transfer-qty]") || [])];
+      if (!inputs.length) return false;
+      return inputs.every((input) => {
+        const received = Number(input.value);
+        const mustMatch = Number(input.getAttribute("data-must-match") || 0);
+        return (
+          String(input.value).trim() !== "" &&
+          Number.isFinite(received) &&
+          Number.isFinite(mustMatch) &&
+          received === mustMatch
+        );
+      });
+    };
+
+    const syncButtons = () => {
+      const matched = quantitiesMatch();
+      if (declineBtn) declineBtn.disabled = !codeVerified;
+      if (acceptBtn) acceptBtn.disabled = !(codeVerified && matched);
+    };
+
+    const setStatus = (message, { ok = false, error = false } = {}) => {
+      if (!statusEl) return;
+      const matched = quantitiesMatch();
+      let text = message;
+      if (!text) {
+        text = codeVerified
+          ? matched
+            ? "Staff verified. Quantities match — you can Confirm or Decline."
+            : "Staff verified. Enter received quantities that match sent to Confirm, or Decline."
+          : "Enter quantities received, then your staff ID. Confirm only when received matches sent.";
+      } else if (codeVerified && !error) {
+        text = matched
+          ? `${message} Quantities match — you can Confirm or Decline.`
+          : `${message} Enter received quantities that match sent to Confirm, or Decline.`;
+      }
+      statusEl.textContent = text;
+      statusEl.classList.toggle("is-ok", ok && matched);
+      statusEl.classList.toggle("is-error", error);
+    };
+
+    const clampQty = (input) => {
+      const max = Number(input.getAttribute("data-must-match") || 0);
+      const raw = String(input.value || "").trim();
+      if (raw === "") {
+        input.value = "";
+        return;
+      }
+      let value = Number(raw);
+      if (!Number.isFinite(value) || value < 0) value = 0;
+      value = Math.floor(value);
+      if (max > 0 && value > max) value = max;
+      input.value = String(value);
+    };
+
+    const verifyLogin = async () => {
+      const code = (loginInput?.value || "").trim();
+      const seq = ++verifySeq;
+      if (code.length < 6) {
+        codeVerified = false;
+        setStatus(
+          code.length
+            ? `Enter ${6 - code.length} more digit${6 - code.length === 1 ? "" : "s"}.`
+            : "",
+          { error: Boolean(code.length) }
+        );
+        syncButtons();
+        return false;
+      }
+      if (!/^\d{6}$/.test(code)) {
+        codeVerified = false;
+        setStatus("Staff ID must be exactly 6 digits.", { error: true });
+        syncButtons();
+        return false;
+      }
+      try {
+        const bodyData = new URLSearchParams({
+          action: "verify_login",
+          mode: "request",
+          login_code: code,
+        });
+        const response = await fetch(verifyUrl, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "X-CSRFToken": csrfInput?.value || "",
+          },
+          credentials: "same-origin",
+          body: bodyData,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (seq !== verifySeq) return false;
+        if (!response.ok || !data.ok) {
+          codeVerified = false;
+          setStatus(data.error || "Not a valid active staff ID.", { error: true });
+          syncButtons();
+          return false;
+        }
+        codeVerified = true;
+        setStatus(
+          data.message ||
+            `Verified: ${data.name || "staff"} (${data.employee_id || code}).`,
+          { ok: true }
+        );
+        syncButtons();
+        return true;
+      } catch (_error) {
+        if (seq !== verifySeq) return false;
+        codeVerified = false;
+        setStatus("Could not verify staff ID. Check your connection.", { error: true });
+        syncButtons();
+        return false;
+      }
+    };
+
+    const queueVerify = () => {
+      window.clearTimeout(verifyTimer);
+      verifyTimer = window.setTimeout(() => {
+        verifyLogin();
+      }, 180);
+    };
+
+    const openConfirm = (btn) => {
+      const cell = btn.closest(".stock-request-table-action");
+      const requestId = (btn.getAttribute("data-request-id") || "").trim();
+      const fromShop = (btn.getAttribute("data-from-shop") || "sending shop").trim();
+      const toShop = (btn.getAttribute("data-to-shop") || "receiving shop").trim();
+      const items = [...(cell?.querySelectorAll(".stock-request-confirm-data li") || [])].map(
+        (li) => ({
+          id: (li.getAttribute("data-line-id") || "").trim(),
+          name: (li.getAttribute("data-item-name") || "").trim(),
+          qty: (li.getAttribute("data-item-qty") || "").trim(),
+        })
+      ).filter((item) => item.id && item.name);
+      if (!requestId || !idInput || !linesEl) return;
+
+      idInput.value = requestId;
+      if (decisionInput) decisionInput.value = "accept";
+      if (loginInput) loginInput.value = "";
+      if (declineReason) declineReason.value = "";
+      if (declinePanel) declinePanel.hidden = true;
+      codeVerified = false;
+
+      if (leadEl) {
+        leadEl.innerHTML =
+          `Confirm receipt at <strong>${escapeHtml(toShop)}</strong> from <strong>${escapeHtml(
+            fromShop
+          )}</strong>. Enter quantities received below. Confirm only when they match what was sent — otherwise Decline with a reason.`;
+      }
+
+      if (!items.length) {
+        linesEl.innerHTML =
+          '<tr><td colspan="3">This transfer has no items.</td></tr>';
+      } else {
+        linesEl.innerHTML = items
+          .map(
+            (item) => `<tr data-request-line data-line-id="${escapeHtml(item.id)}">
+              <td data-label="Item"><div class="stock-transfer-item"><span>${escapeHtml(
+                item.name
+              )}</span></div></td>
+              <td data-label="Sent"><span class="stock-transfer-qty-readonly">${escapeHtml(
+                item.qty
+              )}</span></td>
+              <td data-label="Received">
+                <label class="stock-transfer-qty-field">
+                  <span class="visually-hidden">Received quantity for ${escapeHtml(
+                    item.name
+                  )}</span>
+                  <input
+                    type="number"
+                    name="qty_${escapeHtml(item.id)}"
+                    min="0"
+                    max="${escapeHtml(item.qty)}"
+                    step="1"
+                    value=""
+                    placeholder="${escapeHtml(item.qty)}"
+                    inputmode="numeric"
+                    data-transfer-qty
+                    data-line-id="${escapeHtml(item.id)}"
+                    data-must-match="${escapeHtml(item.qty)}"
+                  >
+                </label>
+              </td>
+            </tr>`
+          )
+          .join("");
+      }
+
+      setStatus("");
+      syncButtons();
+      setOpen(true);
+      linesEl.querySelector("[data-transfer-qty]")?.focus();
+    };
+
+    document.addEventListener("click", (event) => {
+      const openBtn = event.target.closest("[data-stock-request-confirm]");
+      if (openBtn) {
+        event.preventDefault();
+        openConfirm(openBtn);
+        return;
+      }
+      const preset = event.target.closest("[data-confirm-decline-preset]");
+      if (preset && modal.contains(preset) && declineReason) {
+        event.preventDefault();
+        declineReason.value = preset.getAttribute("data-confirm-decline-preset") || "";
+        declineReason.focus();
+        return;
+      }
+      if (event.target.closest("[data-stock-request-confirm-close]")) {
+        if (!modal.hidden) setOpen(false);
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) setOpen(false);
+    });
+
+    linesEl?.addEventListener("input", (event) => {
+      const input = event.target.closest?.("[data-transfer-qty]");
+      if (!input || !linesEl.contains(input)) return;
+      if (input.value !== "") clampQty(input);
+      syncButtons();
+      if (codeVerified) setStatus("", { ok: true });
+    });
+
+    loginInput?.addEventListener("input", () => {
+      loginInput.value = String(loginInput.value || "").replace(/\D/g, "").slice(0, 6);
+      codeVerified = false;
+      syncButtons();
+      queueVerify();
+    });
+
+    declineBtn?.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (!codeVerified) {
+        setStatus("Enter a valid active staff 6-digit ID first.", { error: true });
+        loginInput?.focus();
+        return;
+      }
+      if (declinePanel?.hidden) {
+        declinePanel.hidden = false;
+        if (window.lucide?.createIcons) window.lucide.createIcons();
+        declineReason?.focus();
+        setStatus("Enter a decline reason, then press Decline again.", { error: false });
+        return;
+      }
+      const reason = (declineReason?.value || "").trim();
+      if (reason.length < 3) {
+        setStatus("Enter a reason for declining (at least 3 characters).", { error: true });
+        declineReason?.focus();
+        return;
+      }
+      if (decisionInput) decisionInput.value = "decline";
+      if (typeof form.requestSubmit === "function") {
+        form.requestSubmit();
+      } else {
+        form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+      }
+    });
+
+    acceptBtn?.addEventListener("click", () => {
+      if (decisionInput) decisionInput.value = "accept";
+    });
+
+    acceptBtn?.addEventListener("click", () => {
+      if (decisionInput) decisionInput.value = "accept";
+    });
+
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      // Accept button always confirms; Decline path sets decisionInput before submit.
+      const decision = (
+        event.submitter === acceptBtn || event.submitter?.hasAttribute?.("data-stock-request-confirm-accept")
+          ? "accept"
+          : decisionInput?.value || "accept"
+      ).trim().toLowerCase();
+      if (decisionInput) decisionInput.value = decision;
+      if (!codeVerified) {
+        setStatus("Enter a valid active staff 6-digit ID first.", { error: true });
+        loginInput?.focus();
+        return;
+      }
+      if (decision === "accept" && !quantitiesMatch()) {
+        setStatus(
+          "Received quantity must match what was sent. Decline with a reason if they do not match.",
+          { error: true }
+        );
+        return;
+      }
+      if (decision === "decline") {
+        const reason = (declineReason?.value || "").trim();
+        if (reason.length < 3) {
+          if (declinePanel) declinePanel.hidden = false;
+          setStatus("Enter a reason for declining (at least 3 characters).", { error: true });
+          declineReason?.focus();
+          return;
+        }
+      }
+
+      if (acceptBtn) acceptBtn.disabled = true;
+      if (declineBtn) declineBtn.disabled = true;
+      setStatus(
+        decision === "accept"
+          ? "Confirming receipt and updating stock…"
+          : "Declining transfer…",
+        { ok: true }
+      );
+
+      try {
+        const bodyData = new FormData(form);
+        bodyData.set("decision", decision);
+        bodyData.set("ajax", "1");
+        const response = await fetch(respondUrl, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "X-CSRFToken": csrfInput?.value || "",
+          },
+          credentials: "same-origin",
+          body: bodyData,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          setStatus(data.error || "Could not complete this transfer.", { error: true });
+          syncButtons();
+          return;
+        }
+        setStatus(data.message || "Done. Refreshing…", { ok: true });
+        const next = data.next || window.location.href;
+        window.setTimeout(() => {
+          try {
+            const url = new URL(next, window.location.origin);
+            url.searchParams.set("_r", String(Date.now()));
+            window.location.replace(url.pathname + url.search + url.hash);
+          } catch {
+            window.location.href = next;
+          }
+        }, 350);
+      } catch (_error) {
+        setStatus("Network error. Try again.", { error: true });
+        syncButtons();
+      }
     });
   })();
 

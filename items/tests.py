@@ -2727,8 +2727,11 @@ class RequestItemAuditTests(TestCase):
         self.assertEqual(page.status_code, 200)
         body = page.content.decode()
         self.assertIn("data-stock-request-cancel-modal", body)
+        self.assertIn("data-stock-request-confirm-modal", body)
+        self.assertIn('data-stock-request-confirm', body)
         self.assertIn(f'data-request-id="{pending.pk}"', body)
         self.assertIn("Cancel transfer", body)
+        self.assertIn("Confirm receipt", body)
 
         cancel_pending_stock_transfer(
             movement=pending,
@@ -2772,6 +2775,74 @@ class RequestItemAuditTests(TestCase):
         other.refresh_from_db()
         self.assertEqual(other.request_status, StockRequestStatus.DECLINED)
         self.assertIn("Wrong quantity", other.response_note)
+
+    def test_confirm_pending_transfer_from_stock_management(self):
+        from items.models import (
+            ShopStock,
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+            StockRequestStatus,
+        )
+
+        ShopStock.objects.create(shop=self.shop_a, item=self.item, quantity=Decimal("5"))
+        pending = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_a,
+            requested_from_shop=self.shop_b,
+            request_status=StockRequestStatus.PENDING,
+            created_by=self.profile,
+        )
+        line = StockMovementLine.objects.create(
+            movement=pending,
+            item=self.item,
+            quantity=Decimal("2"),
+        )
+
+        self.client.force_login(self.user)
+        mismatch = self.client.post(
+            "/it-support/stock-management/?mode=request",
+            {
+                "action": "respond_transfer",
+                "mode": "request",
+                "movement_id": str(pending.pk),
+                "decision": "accept",
+                "login_code": self.profile.employee_id,
+                f"qty_{line.pk}": "1",
+                "ajax": "1",
+            },
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(mismatch.status_code, 400)
+        pending.refresh_from_db()
+        self.assertEqual(pending.request_status, StockRequestStatus.PENDING)
+
+        response = self.client.post(
+            "/it-support/stock-management/?mode=request",
+            {
+                "action": "respond_transfer",
+                "mode": "request",
+                "movement_id": str(pending.pk),
+                "decision": "accept",
+                "login_code": self.profile.employee_id,
+                f"qty_{line.pk}": "2",
+                "ajax": "1",
+            },
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        pending.refresh_from_db()
+        self.assertEqual(pending.request_status, StockRequestStatus.FULFILLED)
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop_a, item=self.item).quantity,
+            Decimal("3.000"),
+        )
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop_b, item=self.item).quantity,
+            Decimal("2.000"),
+        )
 
     def test_decline_transfer_requires_reason(self):
         from django.core.exceptions import ValidationError

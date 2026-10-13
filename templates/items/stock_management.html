@@ -896,8 +896,8 @@
       <div>
         <h3>Pending transfers</h3>
         <p>
-          Awaiting confirmation from the receiving shop. Cancel here if quantity or items were wrong —
-          receivers cannot confirm mismatched quantities.
+          Confirm receipt here to complete the transfer and move stock, or cancel if quantity or items were wrong.
+          Received quantities must match what was sent — otherwise decline with a reason.
         </p>
       </div>
     </header>
@@ -909,7 +909,7 @@
       </p>
     </div>
 
-    {% include "items/partials/stock_request_table.html" with requests=pending_stock_requests empty_message="No pending transfers." allow_cancel=allow_pending_transfer_cancel cancel_transfer_url=cancel_transfer_url %}
+    {% include "items/partials/stock_request_table.html" with requests=pending_stock_requests empty_message="No pending transfers." allow_cancel=allow_pending_transfer_cancel allow_confirm=allow_pending_transfer_confirm cancel_transfer_url=cancel_transfer_url respond_transfer_url=respond_transfer_url verify_login_code_url=verify_login_code_url %}
   </section>
   {% endif %}
 

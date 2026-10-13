@@ -1325,6 +1325,10 @@ def my_shop_workspace(request, shop_id):
                 "employees:my_shop_stock_request_supplier_ack",
                 kwargs={"shop_id": shop.pk},
             ),
+            "stock_request_decision_ack_url": reverse(
+                "employees:my_shop_stock_request_results_ack_all",
+                kwargs={"shop_id": shop.pk},
+            ),
             "checkout_url": reverse(
                 "employees:my_shop_checkout", kwargs={"shop_id": shop.pk}
             ),
@@ -1701,6 +1705,10 @@ def my_shop_stock_requests(request, shop_id):
             ),
             "stock_request_supplier_ack_url": reverse(
                 "employees:my_shop_stock_request_supplier_ack",
+                kwargs={"shop_id": shop.pk},
+            ),
+            "stock_request_decision_ack_url": reverse(
+                "employees:my_shop_stock_request_results_ack_all",
                 kwargs={"shop_id": shop.pk},
             ),
             "request_from_shops": list(
@@ -3147,12 +3155,20 @@ def my_shop_stock_request_result_ack(request, shop_id, request_id):
 @shop_floor_required
 @require_POST
 def my_shop_stock_request_results_ack_all(request, shop_id):
-    """Acknowledge all pending accept/decline notifications for this shop."""
+    """Acknowledge all pending accept/decline notifications for this shop.
+
+    Called when Transfer updates is shown or closed so the modal only appears
+    once after a confirm/decline (from the shop floor or stock-management).
+    """
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
+        if _wants_json_response(request):
+            return JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
         return denied
 
-    StockMovement.objects.filter(
+    updated = StockMovement.objects.filter(
         movement_type=StockMovementType.REQUEST,
         shop=shop,
         request_status__in=(
@@ -3161,6 +3177,8 @@ def my_shop_stock_request_results_ack_all(request, shop_id):
         ),
         requester_notified=False,
     ).update(requester_notified=True)
+    if _wants_json_response(request):
+        return JsonResponse({"ok": True, "acked": updated})
     return redirect("employees:my_shop_workspace", shop_id=shop.pk)
 
 

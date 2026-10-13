@@ -29568,9 +29568,11 @@ body.workspace-modal-open .stock-country-menu {
   min-width: 0;
 }
 
+.stock-transfer-table--receive th:nth-child(2),
+.stock-transfer-table--receive td:nth-child(2),
 .stock-transfer-table--receive th:last-child,
 .stock-transfer-table--receive td:last-child {
-  width: 7.5rem;
+  width: 5.5rem;
   text-align: right;
 }
 
@@ -31267,8 +31269,20 @@ body.workspace-modal-open .stock-country-menu {
   white-space: pre-wrap;
 }
 
-.stock-request-cancel-dialog {
-  width: min(28rem, calc(100vw - 1.5rem));
+.stock-request-cancel-dialog,
+.stock-request-confirm-dialog {
+  width: min(32rem, calc(100vw - 1.5rem));
+}
+
+.stock-request-confirm-body {
+  display: grid;
+  gap: 0.9rem;
+  padding: 0.15rem 0 0.35rem;
+}
+
+.stock-request-confirm-form .stock-transfer-form-foot {
+  justify-content: flex-end;
+  gap: 0.65rem;
 }
 
 .stock-request-cancel-body {

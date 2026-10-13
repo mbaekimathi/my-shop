@@ -6535,6 +6535,35 @@ def stock_management(request, profile, meta, module, page_sidebar):
     if request.method == "POST":
         wants_json = _wants_json_response(request)
         post_action = (request.POST.get("action") or "").strip().lower()
+        if post_action == "verify_login":
+            from employees.services import verify_active_employee_code
+
+            denied = require_module_permission(
+                request, profile, "stock-management", "request", as_json=True
+            )
+            if denied is not None:
+                return denied
+            code = (
+                request.POST.get("login_code")
+                or request.POST.get("employee_code")
+                or ""
+            ).strip()
+            authorising = verify_active_employee_code(code)
+            if authorising is None:
+                return JsonResponse(
+                    {"ok": False, "error": "Not a valid active staff ID."},
+                    status=400,
+                )
+            name = authorising.user.get_full_name() or authorising.user.username
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "employee_id": authorising.employee_id,
+                    "name": name,
+                    "message": f"Verified: {name} ({authorising.employee_id}).",
+                }
+            )
+
         if post_action == "cancel_transfer":
             from .models import StockMovement, StockMovementType, StockRequestStatus
             from .services import cancel_pending_stock_transfer
@@ -6609,6 +6638,113 @@ def stock_management(request, profile, meta, module, page_sidebar):
                     {"ok": True, "message": success_message, "next": cancel_next}
                 )
             return redirect(cancel_next)
+
+        if post_action == "respond_transfer":
+            from .models import StockMovement, StockMovementType, StockRequestStatus
+            from .services import respond_to_stock_request
+
+            denied = require_module_permission(
+                request, profile, "stock-management", "request", as_json=wants_json
+            )
+            if denied is not None:
+                return denied
+            try:
+                movement_id = int(request.POST.get("movement_id") or 0)
+            except (TypeError, ValueError):
+                movement_id = 0
+            movement = (
+                StockMovement.objects.select_related("shop", "requested_from_shop")
+                .filter(
+                    pk=movement_id,
+                    movement_type=StockMovementType.REQUEST,
+                    request_status=StockRequestStatus.PENDING,
+                )
+                .first()
+            )
+            respond_next = _stock_next_url(
+                request.path,
+                "request",
+                shop_ids=selected_shop_ids[:1],
+                requested_from_shop_id=requested_from_id,
+            )
+            if movement is None:
+                error = "That pending transfer could not be found."
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": error}, status=404)
+                messages.error(request, error)
+                return redirect(respond_next)
+
+            decision = (request.POST.get("decision") or "").strip().lower()
+            login_code = (request.POST.get("login_code") or "").strip()
+            decline_reason = (
+                request.POST.get("decline_reason")
+                or request.POST.get("cancel_reason")
+                or request.POST.get("reason")
+                or ""
+            ).strip()
+            serials_by_line = {}
+            quantities_by_line = {}
+            for key, values in request.POST.lists():
+                if key.startswith("serials_"):
+                    line_id = key.replace("serials_", "", 1).strip()
+                    if line_id:
+                        serials_by_line[line_id] = values
+                elif key.startswith("qty_"):
+                    line_id = key.replace("qty_", "", 1).strip()
+                    if line_id:
+                        quantities_by_line[line_id] = (
+                            values[0] if values else ""
+                        ).strip()
+
+            try:
+                movement = respond_to_stock_request(
+                    movement=movement,
+                    profile=profile,
+                    decision=decision,
+                    login_code=login_code,
+                    serials_by_line=serials_by_line,
+                    quantities_by_line=quantities_by_line,
+                    reason=decline_reason,
+                )
+            except ValidationError as exc:
+                errors = (
+                    list(exc.messages)
+                    if hasattr(exc, "messages")
+                    else [str(exc)]
+                )
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": errors[0] if errors else "Could not respond.",
+                            "errors": errors,
+                        },
+                        status=400,
+                    )
+                for message in errors:
+                    messages.error(request, message)
+                return redirect(respond_next)
+
+            sender_name = movement.shop.name if movement.shop else "the sending shop"
+            if decision == "accept":
+                success_message = (
+                    f"Transfer from {sender_name} confirmed. Stock updated."
+                )
+            else:
+                success_message = (
+                    f"Transfer from {sender_name} declined. No stock was moved."
+                )
+            messages.success(request, success_message)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "message": success_message,
+                        "next": respond_next,
+                        "decision": decision,
+                    }
+                )
+            return redirect(respond_next)
 
         action_mode = (request.POST.get("mode") or mode).strip().lower()
         if action_mode not in ("in", "out", "request"):
@@ -6860,7 +6996,10 @@ def stock_management(request, profile, meta, module, page_sidebar):
                 profile.role, "request-audits"
             ),
             "allow_pending_transfer_cancel": True,
+            "allow_pending_transfer_confirm": True,
             "cancel_transfer_url": request.path,
+            "respond_transfer_url": request.path,
+            "verify_login_code_url": request.path,
         }
 
     return render(

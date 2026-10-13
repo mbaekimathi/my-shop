@@ -218,13 +218,7 @@
     return match ? decodeURIComponent(match[1]) : "";
   };
 
-  const ackSupplierSeen = () => {
-    const ackUrl =
-      requestModal?.getAttribute("data-stock-request-supplier-ack-url") ||
-      document
-        .querySelector("[data-stock-request-supplier-ack-url]")
-        ?.getAttribute("data-stock-request-supplier-ack-url") ||
-      "";
+  const postAck = (ackUrl) => {
     if (!ackUrl) return;
     const token = csrfToken();
     const body = new URLSearchParams();
@@ -240,6 +234,28 @@
       body: body.toString(),
       credentials: "same-origin",
     }).catch(() => {});
+  };
+
+  const ackSupplierSeen = () => {
+    const ackUrl =
+      requestModal?.getAttribute("data-stock-request-supplier-ack-url") ||
+      document
+        .querySelector("[data-stock-request-supplier-ack-url]")
+        ?.getAttribute("data-stock-request-supplier-ack-url") ||
+      "";
+    postAck(ackUrl);
+  };
+
+  const ackDecisionSeen = () => {
+    const ackUrl =
+      document
+        .querySelector("[data-stock-decision-modal]")
+        ?.getAttribute("data-stock-decision-ack-url") ||
+      document
+        .querySelector("[data-stock-decision-ack-url]")
+        ?.getAttribute("data-stock-decision-ack-url") ||
+      "";
+    postAck(ackUrl);
   };
 
   const focusIncomingRequest = (requestId) => {
@@ -292,12 +308,27 @@
   }
 
   const decisionModal = document.querySelector("[data-stock-decision-modal]");
+  const decisionShouldAutoOpen =
+    decisionModal?.getAttribute("data-auto-open") === "1" && !requestModal;
   const decisionControls = bindModal({
     modal: decisionModal,
     openSelectors: "[data-stock-decision-open]",
     closeSelectors: "[data-stock-decision-close]",
-    autoOpen:
-      decisionModal?.getAttribute("data-auto-open") === "1" && !requestModal,
+    autoOpen: decisionShouldAutoOpen,
+    onClose: () => {
+      // Closing marks updates as seen so the modal only appears once.
+      ackDecisionSeen();
+    },
+  });
+
+  // Seeing the updates (auto-open or manual open) counts as acknowledged.
+  if (decisionModal && decisionShouldAutoOpen && decisionModal.hidden === false) {
+    ackDecisionSeen();
+  }
+  document.querySelectorAll("[data-stock-decision-open]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      ackDecisionSeen();
+    });
   });
 
   if (requestModal && decisionModal && requestModal.hidden === false) {
