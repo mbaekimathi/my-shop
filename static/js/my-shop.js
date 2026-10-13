@@ -1332,7 +1332,10 @@
     statusRoot?.getAttribute("data-stock-request-status-url") || "";
   const shopIdForAlerts = statusRoot?.getAttribute("data-shop-id") || "";
 
-  const pushStockRequestToast = (text, tone = "warning") => {
+  const TRANSFER_FLASH_KEY = "myshop:transfer-flash";
+
+  const pushStockRequestToast = (text, tone = "warning", { duration } = {}) => {
+    if (!text) return;
     let host = document.querySelector("[data-workspace-toast]");
     if (!host) {
       host = document.createElement("div");
@@ -1344,18 +1347,63 @@
       document.querySelector(".workspace-frame")?.appendChild(host) ||
         document.body.appendChild(host);
     }
+    host.classList.remove("is-hiding");
     const list = host.querySelector(".workspace-messages") || host;
     const item = document.createElement("li");
     const safeTone = tone === "error" ? "error" : tone === "success" ? "success" : "warning";
     item.className = `workspace-toast__item workspace-toast__item--${safeTone}`;
-    item.innerHTML = `<span class="workspace-toast__text"></span>`;
+    if (safeTone === "success") {
+      item.innerHTML = `<span class="workspace-toast__icon" aria-hidden="true">
+          <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
+            <circle class="workspace-toast__ring" cx="26" cy="26" r="24" fill="none" />
+            <path class="workspace-toast__mark workspace-toast__mark--check" fill="none" d="M14.5 27.2 l7.1 7.2 16.4-16.8" />
+          </svg>
+        </span>
+        <span class="workspace-toast__text"></span>`;
+    } else {
+      item.innerHTML = `<span class="workspace-toast__text"></span>`;
+    }
     item.querySelector(".workspace-toast__text").textContent = text;
     list.appendChild(item);
+    const hideAfter = Number(duration) > 0 ? Number(duration) : safeTone === "success" ? 4500 : 4200;
     window.setTimeout(() => {
       host.classList.add("is-hiding");
       window.setTimeout(() => host.remove(), 220);
-    }, 4200);
+    }, hideAfter);
   };
+
+  const stashTransferFlash = (text, tone = "success") => {
+    if (!text) return;
+    try {
+      sessionStorage.setItem(
+        TRANSFER_FLASH_KEY,
+        JSON.stringify({ text, tone, at: Date.now() })
+      );
+    } catch (_error) {
+      /* ignore quota / private mode */
+    }
+  };
+
+  const consumeTransferFlash = () => {
+    try {
+      const raw = sessionStorage.getItem(TRANSFER_FLASH_KEY);
+      if (!raw) return;
+      sessionStorage.removeItem(TRANSFER_FLASH_KEY);
+      const parsed = JSON.parse(raw);
+      if (!parsed?.text) return;
+      // Ignore stale flashes older than 2 minutes.
+      if (parsed.at && Date.now() - Number(parsed.at) > 120000) return;
+      pushStockRequestToast(parsed.text, parsed.tone || "success");
+    } catch (_error) {
+      try {
+        sessionStorage.removeItem(TRANSFER_FLASH_KEY);
+      } catch (_ignore) {
+        /* ignore */
+      }
+    }
+  };
+
+  consumeTransferFlash();
 
   if (statusUrl && shopIdForAlerts) {
     const storageKey = `myshop:stock-req:${shopIdForAlerts}`;
@@ -2218,11 +2266,19 @@
           return;
         }
 
+        const flashText =
+          data.message ||
+          (decision === "accept"
+            ? "Stock updated. Transfer confirmed."
+            : "Transfer declined. No stock was moved.");
+        const flashTone = decision === "accept" ? "success" : "warning";
         if (status) {
-          status.textContent = data.message || "Done. Refreshing…";
+          status.textContent = `${flashText} Refreshing…`;
           status.classList.add("is-ok");
           status.classList.remove("is-error");
         }
+        pushStockRequestToast(flashText, flashTone);
+        stashTransferFlash(flashText, flashTone);
 
         const goNext = () => {
           const next = data.next || window.location.href;
@@ -2255,12 +2311,14 @@
                   ticket: data.receipt_ticket || null,
                   paperWidth: data.receipt_paper_width || "",
                 }),
-                new Promise((resolve) => window.setTimeout(resolve, 2500)),
+                new Promise((resolve) => window.setTimeout(resolve, 1800)),
               ]);
             } catch (_printError) {
               /* Transfer already succeeded; continue to refresh. */
             }
           }
+          // Brief pause so the stock-updated popup is visible, then refresh.
+          await new Promise((resolve) => window.setTimeout(resolve, 450));
           goNext();
         };
 

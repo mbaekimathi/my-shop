@@ -3899,18 +3899,38 @@ STOCK_VIEW_BY_LABELS = {
 }
 
 
+def _stock_view_by_label(view_by, *, page_mode="report"):
+    """Display label for View by.
+
+    Report uses daily breakdown as Timeline (event timeline removed there).
+    Movements uses event timeline (daily breakdown removed there).
+    """
+    if page_mode != "movements" and view_by == "day":
+        return "Timeline"
+    return STOCK_VIEW_BY_LABELS.get(view_by, STOCK_VIEW_BY_LABELS["item"])
+
+
 def _parse_stock_view_by(raw, *, range_type="day", page_mode="report"):
     """Shared View by for report and movements pages.
 
-    Options: timeline | period summary (item) | daily breakdown (day).
-    Daily breakdown is only valid for multi-day ranges.
+    Report: timeline (daily breakdown / day) | period summary (item).
+    Legacy report view_by=timeline maps to daily breakdown.
+    Movements: event timeline | period summary (item).
+    Legacy movements view_by=day maps to event timeline.
+    Daily breakdown is only valid on report for multi-day ranges.
     """
     default = "timeline" if page_mode == "movements" else "item"
     view_by = (raw or default).strip().lower()
     if view_by not in STOCK_VIEW_BY:
         view_by = default
+    # Report: event timeline removed — treat as daily breakdown.
+    if page_mode != "movements" and view_by == "timeline":
+        view_by = "day"
+    # Movements: daily breakdown removed — treat as event timeline.
+    if page_mode == "movements" and view_by == "day":
+        view_by = "timeline"
     if view_by == "day" and range_type == "day":
-        return default if page_mode == "movements" else "item"
+        return "item"
     return view_by
 
 
@@ -4780,7 +4800,7 @@ def _stock_report_download(
     )
     period_label = (filter_context.get("report_period_label") or "").strip() or "—"
     event_label = _movement_event_filter_label(event_filters)
-    view_label = STOCK_VIEW_BY_LABELS.get(view_by, STOCK_VIEW_BY_LABELS["item"])
+    view_label = _stock_view_by_label(view_by, page_mode=page_mode)
     generated_at = dj_timezone.localtime(dj_timezone.now())
 
     summary_headers = None
@@ -6728,14 +6748,14 @@ def stock_management(request, profile, meta, module, page_sidebar):
             sender_name = movement.shop.name if movement.shop else "the sending shop"
             if decision == "accept":
                 success_message = (
-                    f"Transfer from {sender_name} confirmed. Stock updated."
+                    f"Stock updated. Transfer from {sender_name} confirmed."
                 )
             else:
                 success_message = (
                     f"Transfer from {sender_name} declined. No stock was moved."
                 )
-            messages.success(request, success_message)
             if wants_json:
+                # Client shows the popup then refreshes; avoid duplicate toast.
                 return JsonResponse(
                     {
                         "ok": True,
@@ -6744,6 +6764,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
                         "decision": decision,
                     }
                 )
+            messages.success(request, success_message)
             return redirect(respond_next)
 
         action_mode = (request.POST.get("mode") or mode).strip().lower()

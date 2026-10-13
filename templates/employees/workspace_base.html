@@ -80,7 +80,7 @@
           <span class="workspace-toast__text">{{ message }}</span>
         </li>
         {% else %}
-        <li class="workspace-toast__item workspace-toast__item--success" data-toast-duration="1000">
+        <li class="workspace-toast__item workspace-toast__item--success" data-toast-duration="4500">
           <span class="workspace-toast__icon" aria-hidden="true">
             <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
               <circle class="workspace-toast__ring" cx="26" cy="26" r="24" fill="none" />
@@ -273,6 +273,58 @@
         userMenuTrigger?.focus();
       }
     });
+
+    const TRANSFER_FLASH_KEY = "myshop:transfer-flash";
+    const showToastMessage = (text, tone = "success") => {
+      if (!text) return;
+      let host = document.querySelector("[data-workspace-toast]");
+      if (!host) {
+        host = document.createElement("div");
+        host.className = "workspace-toast";
+        host.setAttribute("role", "status");
+        host.setAttribute("aria-live", "polite");
+        host.setAttribute("data-workspace-toast", "");
+        host.innerHTML = '<ul class="message-list workspace-messages"></ul>';
+        document.querySelector(".workspace-frame")?.appendChild(host) ||
+          document.body.appendChild(host);
+      }
+      host.classList.remove("is-hiding");
+      const list = host.querySelector(".workspace-messages") || host;
+      const item = document.createElement("li");
+      const safeTone = tone === "error" ? "error" : tone === "warning" ? "warning" : "success";
+      item.className = `workspace-toast__item workspace-toast__item--${safeTone}`;
+      item.setAttribute("data-toast-duration", "4500");
+      if (safeTone === "success") {
+        item.innerHTML = `<span class="workspace-toast__icon" aria-hidden="true">
+            <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
+              <circle class="workspace-toast__ring" cx="26" cy="26" r="24" fill="none" />
+              <path class="workspace-toast__mark workspace-toast__mark--check" fill="none" d="M14.5 27.2 l7.1 7.2 16.4-16.8" />
+            </svg>
+          </span>
+          <span class="workspace-toast__text"></span>`;
+      } else {
+        item.innerHTML = `<span class="workspace-toast__text"></span>`;
+      }
+      item.querySelector(".workspace-toast__text").textContent = text;
+      list.appendChild(item);
+    };
+
+    try {
+      const raw = sessionStorage.getItem(TRANSFER_FLASH_KEY);
+      if (raw) {
+        sessionStorage.removeItem(TRANSFER_FLASH_KEY);
+        const parsed = JSON.parse(raw);
+        if (parsed?.text && (!parsed.at || Date.now() - Number(parsed.at) < 120000)) {
+          showToastMessage(parsed.text, parsed.tone || "success");
+        }
+      }
+    } catch (_error) {
+      try {
+        sessionStorage.removeItem(TRANSFER_FLASH_KEY);
+      } catch (_ignore) {
+        /* ignore */
+      }
+    }
 
     const toast = document.querySelector("[data-workspace-toast]");
     if (toast) {

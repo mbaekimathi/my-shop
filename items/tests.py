@@ -363,14 +363,19 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(_parse_report_view_by("day", range_type="period"), "day")
         self.assertEqual(_parse_report_view_by("day", range_type="day"), "item")
         self.assertEqual(_parse_report_view_by("bogus", range_type="month"), "item")
-        # Shared View by options on report and movements.
+        # Report: legacy event timeline maps to daily breakdown (labeled Timeline).
         self.assertEqual(
             _parse_stock_view_by("timeline", range_type="year", page_mode="report"),
-            "timeline",
+            "day",
         )
         self.assertEqual(
+            _parse_stock_view_by("timeline", range_type="day", page_mode="report"),
+            "item",
+        )
+        # Movements: daily breakdown removed — maps to event timeline.
+        self.assertEqual(
             _parse_stock_view_by("day", range_type="year", page_mode="movements"),
-            "day",
+            "timeline",
         )
         self.assertEqual(
             _parse_stock_view_by("item", range_type="year", page_mode="movements"),
@@ -378,6 +383,10 @@ class ItemStockReportRowsTests(TestCase):
         )
         self.assertEqual(
             _parse_stock_view_by("day", range_type="day", page_mode="movements"),
+            "timeline",
+        )
+        self.assertEqual(
+            _parse_stock_view_by("timeline", range_type="year", page_mode="movements"),
             "timeline",
         )
 

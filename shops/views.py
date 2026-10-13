@@ -3089,14 +3089,11 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
 
     sender_name = movement.shop.name if movement.shop else "the sending shop"
     if decision == "accept":
-        success_message = (
-            f"Transfer from {sender_name} confirmed. Stock updated."
-        )
+        success_message = f"Stock updated. Transfer from {sender_name} confirmed."
     else:
         success_message = (
-            f"Transfer from {sender_name} declined. They will be notified."
+            f"Transfer from {sender_name} declined. No stock was moved."
         )
-    messages.success(request, success_message)
 
     workspace_url = reverse("employees:my_shop_workspace", kwargs={"shop_id": shop.pk})
     stock_requests_url = reverse(
@@ -3109,6 +3106,8 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
         else workspace_url
     )
     if wants_json:
+        # Client shows the stock-updated popup then refreshes; skip session
+        # messages so the toast is not duplicated after reload.
         payload = {
             "ok": True,
             "message": success_message,
@@ -3122,6 +3121,7 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
             )
             payload.update(print_payload)
         return JsonResponse(payload)
+    messages.success(request, success_message)
     return redirect(next_url)
 
 

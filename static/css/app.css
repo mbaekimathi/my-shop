@@ -19498,10 +19498,13 @@ html[data-theme="light"] .low-stock-badge.is-low {
   }
 
   .stock-panel--report .stock-report-table--items .stock-report-qty--out:not(.is-empty),
-  .stock-panel--report .stock-report-table--items .stock-report-qty--transfer-out:not(.is-empty),
-  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--out:not(.is-empty),
-  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--transfer-out:not(.is-empty) {
+  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--out:not(.is-empty) {
     background: rgba(196, 74, 58, 0.12);
+  }
+
+  .stock-panel--report .stock-report-table--items .stock-report-qty--transfer-out:not(.is-empty),
+  .stock-panel--report .stock-report-table--items-summary .stock-report-qty--transfer-out:not(.is-empty) {
+    background: rgba(14, 116, 144, 0.16);
   }
 
   .stock-panel--report .stock-report-table--items .stock-report-qty--transfer-in:not(.is-empty),
@@ -19590,8 +19593,8 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 .stock-report-type--transfer-out {
-  background: rgba(196, 74, 58, 0.12);
-  color: #a33a2c;
+  background: rgba(14, 116, 144, 0.16);
+  color: #0e7490;
 }
 
 .stock-report-qty--transfer-in:not(.is-empty) {
@@ -19600,8 +19603,8 @@ html[data-theme="light"] .low-stock-badge.is-low {
 }
 
 .stock-report-qty--transfer-out:not(.is-empty) {
-  background: rgba(196, 74, 58, 0.12);
-  color: #a33a2c;
+  background: rgba(14, 116, 144, 0.16);
+  color: #0e7490;
 }
 
 .stock-report-qty--return:not(.is-empty) {
@@ -20555,9 +20558,12 @@ html[data-theme="light"] .low-stock-badge.is-low {
   background: rgba(34, 160, 107, 0.14);
 }
 
-.stock-panel--report .stock-report-table--timeline .stock-report-qty--out:not(.is-empty),
-.stock-panel--report .stock-report-table--timeline .stock-report-qty--transfer-out:not(.is-empty) {
+.stock-panel--report .stock-report-table--timeline .stock-report-qty--out:not(.is-empty) {
   background: rgba(196, 74, 58, 0.12);
+}
+
+.stock-panel--report .stock-report-table--timeline .stock-report-qty--transfer-out:not(.is-empty) {
+  background: rgba(14, 116, 144, 0.16);
 }
 
 .stock-panel--report .stock-report-table--timeline .stock-report-qty--transfer-in:not(.is-empty),

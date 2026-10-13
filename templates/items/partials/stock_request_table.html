@@ -885,7 +885,53 @@
           syncButtons();
           return;
         }
-        setStatus(data.message || "Done. Refreshing…", { ok: true });
+        const flashText =
+          data.message ||
+          (decision === "accept"
+            ? "Stock updated. Transfer confirmed."
+            : "Transfer declined. No stock was moved.");
+        setStatus(`${flashText} Refreshing…`, { ok: true });
+        try {
+          sessionStorage.setItem(
+            "myshop:transfer-flash",
+            JSON.stringify({
+              text: flashText,
+              tone: decision === "accept" ? "success" : "warning",
+              at: Date.now(),
+            })
+          );
+        } catch (_ignore) {
+          /* ignore */
+        }
+        let toastHost = document.querySelector("[data-workspace-toast]");
+        if (!toastHost) {
+          toastHost = document.createElement("div");
+          toastHost.className = "workspace-toast";
+          toastHost.setAttribute("role", "status");
+          toastHost.setAttribute("aria-live", "polite");
+          toastHost.setAttribute("data-workspace-toast", "");
+          toastHost.innerHTML = '<ul class="message-list workspace-messages"></ul>';
+          document.querySelector(".workspace-frame")?.appendChild(toastHost) ||
+            document.body.appendChild(toastHost);
+        }
+        const toastList = toastHost.querySelector(".workspace-messages") || toastHost;
+        const toastItem = document.createElement("li");
+        toastItem.className =
+          decision === "accept"
+            ? "workspace-toast__item workspace-toast__item--success"
+            : "workspace-toast__item workspace-toast__item--warning";
+        toastItem.innerHTML =
+          decision === "accept"
+            ? `<span class="workspace-toast__icon" aria-hidden="true">
+                <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
+                  <circle class="workspace-toast__ring" cx="26" cy="26" r="24" fill="none" />
+                  <path class="workspace-toast__mark workspace-toast__mark--check" fill="none" d="M14.5 27.2 l7.1 7.2 16.4-16.8" />
+                </svg>
+              </span>
+              <span class="workspace-toast__text"></span>`
+            : `<span class="workspace-toast__text"></span>`;
+        toastItem.querySelector(".workspace-toast__text").textContent = flashText;
+        toastList.appendChild(toastItem);
         const next = data.next || window.location.href;
         window.setTimeout(() => {
           try {
@@ -895,7 +941,7 @@
           } catch {
             window.location.href = next;
           }
-        }, 350);
+        }, 500);
       } catch (_error) {
         setStatus("Network error. Try again.", { error: true });
         syncButtons();
