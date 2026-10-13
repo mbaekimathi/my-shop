@@ -4,7 +4,7 @@
 {% block body_class %}page-workspace{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20261008-transfer-receive">
+<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20261012-session-tab-lock">
 {% endblock %}
 
 {% block body %}
@@ -17,6 +17,33 @@
   data-dashboard-url="{{ page_sidebar.dashboard_url }}"
 >
   <div class="workspace-overlay" data-workspace-overlay hidden></div>
+
+  <div
+    class="session-tab-block"
+    data-session-tab-block
+    hidden
+    aria-hidden="true"
+    role="alertdialog"
+    aria-modal="true"
+    aria-labelledby="session-tab-block-title"
+    aria-describedby="session-tab-block-detail"
+  >
+    <div class="session-tab-block__card">
+      <p class="session-tab-block__eyebrow">One tab per session</p>
+      <h2 id="session-tab-block-title" data-session-tab-block-title>
+        Session already open
+      </h2>
+      <p id="session-tab-block-detail" data-session-tab-block-detail>
+        This session is open in another tab. You can use one shop tab and one
+        employee tab at the same time, but not two of the same kind.
+      </p>
+      <div class="session-tab-block__actions">
+        <button class="btn btn--primary" type="button" data-session-tab-takeover>
+          Use this tab instead
+        </button>
+      </div>
+    </div>
+  </div>
 
   {% include "employees/partials/workspace_sidebar.html" %}
 
@@ -96,7 +123,7 @@
 <script defer src="{% static 'js/developer-payment-prompt.js' %}?v=2"></script>
 {% endif %}
 <script defer src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
-<script type="module" src="{% static 'js/session-guard.js' %}?v=1"></script>
+<script type="module" src="{% static 'js/session-guard.js' %}?v=3"></script>
 <script>
   (() => {
     const root = document.querySelector("[data-workspace]");

@@ -403,6 +403,11 @@ class StockMovement(models.Model):
         related_name="stock_request_responses",
     )
     responded_at = models.DateTimeField(null=True, blank=True)
+    response_note = models.TextField(
+        blank=True,
+        default="",
+        help_text="Reason when a pending transfer is declined or cancelled.",
+    )
     payment_status = models.CharField(
         max_length=16,
         choices=StockPaymentStatus.choices,

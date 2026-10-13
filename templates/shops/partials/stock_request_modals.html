@@ -32,7 +32,7 @@
       <p class="stock-request-modal-lead">
         Confirm receipt at <strong>{{ shop.name }}</strong>.
         Enter quantities received below. Confirm only when they match what was sent —
-        otherwise Decline (no stock change).
+        otherwise Decline with a reason (for example wrong quantity). No stock changes on decline.
         Dismiss hides this for 5 minutes; refresh brings it back.
       </p>
 
@@ -151,14 +151,36 @@
               </label>
               <p class="stock-request-code-hint" data-verify-status>
                 Enter quantities received, then your staff ID.
-                Confirm only when received matches sent — otherwise Decline.
+                Confirm only when received matches sent — otherwise Decline with a reason.
               </p>
+            </div>
+
+            <div class="stock-request-decline-reason" data-decline-reason-panel hidden>
+              <div class="stock-transfer-section-label">
+                <i data-lucide="circle-alert" aria-hidden="true"></i>
+                <span>Decline reason</span>
+              </div>
+              <div class="stock-request-cancel-presets" role="group" aria-label="Quick decline reasons">
+                <button type="button" class="btn btn--ghost btn--sm" data-decline-preset="Wrong quantity">Wrong quantity</button>
+                <button type="button" class="btn btn--ghost btn--sm" data-decline-preset="Wrong items">Wrong items</button>
+                <button type="button" class="btn btn--ghost btn--sm" data-decline-preset="Items damaged / missing">Damaged / missing</button>
+              </div>
+              <label class="field">
+                <span class="field-label">Why are you declining?</span>
+                <textarea
+                  name="decline_reason"
+                  rows="2"
+                  maxlength="500"
+                  placeholder="e.g. Wrong quantity — counted 3, transfer shows 5"
+                  data-decline-reason
+                ></textarea>
+              </label>
             </div>
 
             <footer class="stock-transfer-form-foot">
               <div class="stock-request-card-actions" data-decision-actions>
                 <button
-                  type="submit"
+                  type="button"
                   class="btn btn--ghost stock-request-decline-btn"
                   name="decision"
                   value="decline"
@@ -285,6 +307,9 @@
               declined this transfer. No stock was moved.
             </span>
           </p>
+          {% if req.response_note %}
+          <p class="stock-decision-note">Reason: {{ req.response_note }}</p>
+          {% endif %}
           {% endif %}
           {% for line in req.lines.all %}
             {% if line.note %}

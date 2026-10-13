@@ -15,10 +15,6 @@
 
     <form class="stock-report-filters" method="get" data-stock-report-filters{% if item_picker_url %} data-item-picker-url="{{ item_picker_url }}"{% endif %}>
       <input type="hidden" name="mode" value="{{ stock_mode }}">
-      {% if not is_movements_page and report_range == 'day' %}
-      <input type="hidden" name="view_by" value="item">
-      {% endif %}
-
       <label class="stock-report-field">
         <span>Shop</span>
         <select name="shop_id" aria-label="Shop">
@@ -70,14 +66,17 @@
         >
       </label>
 
-      {% if is_movements_page %}
       <label class="stock-report-field">
         <span>View by</span>
-        <select name="view_by" aria-label="View movements by">
+        <select name="view_by" aria-label="View by">
           <option value="timeline"{% if view_by == 'timeline' %} selected{% endif %}>Timeline</option>
-          <option value="item"{% if view_by == 'item' %} selected{% endif %}>Item summary</option>
+          <option value="item"{% if view_by == 'item' %} selected{% endif %}>Period summary</option>
+          {% if report_range != 'day' %}
+          <option value="day"{% if view_by == 'day' %} selected{% endif %}>Daily breakdown</option>
+          {% endif %}
         </select>
       </label>
+      {% if is_movements_page %}
       <div class="stock-report-field stock-report-type-multi" data-stock-type-multi>
         <span>Type</span>
         <button
@@ -115,14 +114,6 @@
           {% endfor %}
         </div>
       </div>
-      {% elif report_range != 'day' %}
-      <label class="stock-report-field">
-        <span>View by</span>
-        <select name="view_by" aria-label="View report by">
-          <option value="item"{% if view_by != 'day' %} selected{% endif %}>Period summary</option>
-          <option value="day"{% if view_by == 'day' %} selected{% endif %}>Daily breakdown</option>
-        </select>
-      </label>
       {% endif %}
 
       <label class="stock-report-field">
@@ -230,8 +221,8 @@
     </div>
     {% endif %}
 
-    {% if is_movements_page %}
-      {% if is_item_movement_summary and movement_item_rows %}
+    {% if is_item_movement_summary %}
+      {% if movement_item_rows %}
         <div class="staff-table-wrap stock-report-table-wrap stock-report-table-wrap--items">
           <table class="staff-table stock-report-table stock-report-table--items-summary{% if movement_item_group_by_shop %} stock-report-table--items-by-shop{% endif %}">
             <thead>
@@ -327,7 +318,22 @@
             {% endif %}
           </table>
         </div>
-      {% elif movement_event_groups %}
+      {% else %}
+      <div class="dashboard-placeholder">
+        <i data-lucide="package" aria-hidden="true"></i>
+        <p>
+          {% if search_q %}
+          No items match “{{ search_q }}” in {{ report_period_label }} for these filters.
+          {% elif event_filter != 'all' %}
+          No {{ event_filter_label|default:event_filter }} movements in {{ report_period_label }} for these filters.
+          {% else %}
+          No shop stock or movement in {{ report_period_label }} for these filters.
+          {% endif %}
+        </p>
+      </div>
+      {% endif %}
+    {% elif view_by == 'timeline' %}
+      {% if movement_event_groups %}
       <div class="staff-table-wrap stock-report-table-wrap stock-report-table-wrap--timeline">
         <table class="staff-table stock-report-table stock-report-table--timeline{% if is_item_movement_detail %} stock-report-table--timeline-detail{% endif %}">
           <thead>
@@ -369,7 +375,7 @@
                   </span>
                   <span class="stock-report-receipt-labels">
                     {% for badge in group.activity_labels %}
-                    <span class="stock-report-type stock-report-type--{{ badge.event_type }}">{{ badge.label }}</span>
+                    <span class="stock-report-type stock-report-type--{{ badge.type_class|default:badge.event_type }}">{{ badge.label }}</span>
                     {% endfor %}
                   </span>
                 </div>
@@ -391,7 +397,7 @@
                     <span class="stock-report-when-time">{{ event.happened_at|time:"H:i" }}</span>
                     {% endif %}
                   </time>
-                  <span class="stock-report-type stock-report-type--{% if event.transfer_direction == 'in' or event.transfer_direction == 'both' %}transfer-in{% else %}{{ event.event_type }}{% endif %}">
+                  <span class="stock-report-type stock-report-type--{{ event.type_class|default:event.event_type }}">
                     {{ event.event_label }}
                   </span>
                 </div>
@@ -412,7 +418,7 @@
                 {% endif %}
               </td>
               <td data-label="Qty">
-                <span class="stock-matrix-qty stock-report-qty--{% if event.transfer_direction == 'in' or event.transfer_direction == 'both' %}transfer-in{% else %}{{ event.event_type }}{% endif %}{% if event.quantity == 0 %} is-empty{% endif %}">
+                <span class="stock-matrix-qty stock-report-qty--{{ event.type_class|default:event.event_type }}{% if event.quantity == 0 %} is-empty{% endif %}">
                   {{ event.quantity }}
                 </span>
               </td>
@@ -454,16 +460,18 @@
                 {% endif %}
               </td>
               <td data-label="From">
-                {% if event.from_label %}
+                {% if event.from_shop_name %}
+                <span class="stock-report-party">{{ event.from_shop_name }}</span>
+                {% elif event.from_label %}
                 <span class="stock-report-party">{{ event.from_label }}</span>
                 {% else %}
                 <span class="stock-report-empty">—</span>
                 {% endif %}
               </td>
               <td data-label="To">
-                {% if event.to_label or event.note %}
-                <span class="stock-report-party">{% if event.to_label %}{{ event.to_label }}{% else %}—{% endif %}</span>
-                {% if event.note %}
+                {% if event.to_shop_name or event.to_label or event.note %}
+                <span class="stock-report-party">{% if event.to_shop_name %}{{ event.to_shop_name }}{% elif event.to_label %}{{ event.to_label }}{% else %}—{% endif %}</span>
+                {% if event.note and not event.to_shop_name %}
                 <span class="stock-report-from">{{ event.note }}</span>
                 {% endif %}
                 {% else %}
@@ -471,12 +479,14 @@
                 {% endif %}
               </td>
               <td data-label="Sent">
-                {% if event.transfer_direction or event.event_type == 'transfer_fulfilled' %}
-                  {% if event.requested_by and event.requested_by != '—' %}
-                  <span class="stock-report-seller">{{ event.requested_by }}</span>
+                {% if event.transfer_direction or event.event_type == 'transfer_fulfilled' or event.event_type == 'request' %}
+                  {% with sent_name=event.sent_by|default:event.requested_by %}
+                  {% if sent_name and sent_name != '—' %}
+                  <span class="stock-report-seller">{{ sent_name }}</span>
                   {% else %}
                   <span class="stock-report-empty">—</span>
                   {% endif %}
+                  {% endwith %}
                 {% elif event.by and event.by != '—' %}
                 <span class="stock-report-seller">{{ event.by }}</span>
                 {% else %}
@@ -484,7 +494,7 @@
                 {% endif %}
               </td>
               <td data-label="Received">
-                {% if event.transfer_direction or event.event_type == 'transfer_fulfilled' %}
+                {% if event.transfer_direction or event.event_type == 'transfer_fulfilled' or event.event_type == 'request' %}
                   {% if event.received_by and event.received_by != '—' %}
                   <span class="stock-report-seller">{{ event.received_by }}</span>
                   {% else %}
@@ -698,7 +708,7 @@
   </div>
 </section>
 
-{% if is_movements_page %}
+{% if view_by == 'timeline' or is_movements_page %}
 <div
   class="workspace-modal stock-report-serials-modal"
   data-stock-report-serials-modal

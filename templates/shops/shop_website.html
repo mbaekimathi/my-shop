@@ -6,10 +6,15 @@
 
 {% block extra_head %}
 <meta name="description" content="Browse {{ shop.name }} products and shop-specific prices.">
+{% if shop.image %}
+<link rel="preload" as="image" href="{{ shop.image.url }}" fetchpriority="high">
+{% else %}
+<link rel="preload" as="image" href="{% static 'img/hero-pos.webp' %}" type="image/webp" fetchpriority="high">
+{% endif %}
 {% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/shop-website.css' %}?v=15">
+<link rel="stylesheet" href="{% static 'css/shop-website.css' %}?v=20">
 {% endblock %}
 
 {% block body %}
@@ -20,10 +25,10 @@
   data-shop-name="{{ shop.name }}"
   data-whatsapp-phone="{{ whatsapp_phone }}"
 >
-  <header class="storefront__header">
-    <a class="storefront__brand" href="#catalogue" aria-label="{{ shop.name }} home">
-      <span class="storefront__brand-mark" aria-hidden="true">S</span>
-      <span>{{ shop.name }}</span>
+  <header class="storefront__header" data-storefront-header>
+    <a class="storefront__brand" href="{% url 'employees:login' %}" aria-label="{{ company_name|default:'MY-SHOP' }} login">
+      <span class="storefront__brand-mark" aria-hidden="true">{{ company_name|default:'MY-SHOP'|slice:":1"|upper }}</span>
+      <span>{{ company_name|default:"MY-SHOP" }}</span>
     </a>
     <label class="storefront__search">
       <i data-lucide="search" aria-hidden="true"></i>
@@ -51,12 +56,124 @@
     {% endif %}
   </header>
 
-  {% if categories %}
-  <nav class="storefront__nav" aria-label="Catalogue categories">
+  <section class="storefront__hero" aria-label="{{ shop.name }} introduction">
+    <div class="storefront__hero-media" aria-hidden="true">
+      {% if shop.image %}
+      <img
+        src="{{ shop.image.url }}"
+        alt=""
+        class="storefront__hero-image"
+        width="1600"
+        height="1000"
+        fetchpriority="high"
+        decoding="async"
+      >
+      {% else %}
+      <picture>
+        <source srcset="{% static 'img/hero-pos.webp' %}" type="image/webp">
+        <img
+          src="{% static 'img/hero-pos.jpg' %}"
+          alt=""
+          class="storefront__hero-image"
+          width="1536"
+          height="1024"
+          fetchpriority="high"
+          decoding="async"
+        >
+      </picture>
+      {% endif %}
+      <div class="storefront__hero-veil"></div>
+      <div class="storefront__hero-orbs">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+    </div>
+
+    <div class="storefront__hero-content">
+      <p class="storefront__hero-brand" data-hero-float style="--float-delay: 0ms">{{ company_name|default:"MY-SHOP" }}</p>
+      <h1 data-hero-float style="--float-delay: 90ms">Your shop floor, online.</h1>
+      <p class="storefront__intro" data-hero-float style="--float-delay: 180ms">
+        Browse live prices{% if item_count %} — {{ item_count }} item{{ item_count|pluralize }} ready to explore{% endif %}{% if branches %} across {{ branches|length }} branch{{ branches|length|pluralize:"es" }}{% endif %}.
+      </p>
+      <div class="storefront__hero-actions" data-hero-float style="--float-delay: 270ms">
+        <a class="storefront__button storefront__button--primary" href="#catalogue">
+          <i data-lucide="shopping-bag" aria-hidden="true"></i>
+          <span>Browse catalogue</span>
+        </a>
+        {% if branches %}
+        <a class="storefront__button storefront__button--ghost" href="#branches">
+          <i data-lucide="map-pinned" aria-hidden="true"></i>
+          <span>Find a branch</span>
+        </a>
+        {% elif shop.phone_number %}
+        <a class="storefront__button storefront__button--ghost" href="tel:{{ shop.phone_number }}">
+          <i data-lucide="phone-call" aria-hidden="true"></i>
+          <span>Call the shop</span>
+        </a>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="storefront__hero-scroll" aria-hidden="true">
+      <span>Scroll</span>
+      <i data-lucide="chevron-down"></i>
+    </div>
+  </section>
+
+  {% if categories or branches %}
+  <nav class="storefront__nav" aria-label="Page sections">
+    {% if branches %}<a href="#branches">Branches</a>{% endif %}
+    {% if categories %}<a href="#catalogue">Catalogue</a>{% endif %}
     {% for category in categories %}
     <a href="#{{ category.anchor }}">{{ category.name }}</a>
     {% endfor %}
   </nav>
+  {% endif %}
+
+  {% if branches %}
+  <section class="storefront__branches" id="branches" aria-labelledby="branches-title">
+    <header class="storefront__branches-head">
+      <p class="storefront__eyebrow"><span></span> Our branches</p>
+      <h2 id="branches-title">Get your supplies near you.</h2>
+      <p>Visit any {{ company_name|default:"MY-SHOP" }} location for stock, pricing support, and pickup.</p>
+    </header>
+    <ul class="storefront__branch-list">
+      {% for branch in branches %}
+      <li class="storefront__branch{% if branch.pk == shop.pk %} is-current{% endif %}">
+        <div class="storefront__branch-top">
+          <span class="storefront__branch-mark" aria-hidden="true">{{ branch.name|slice:":1"|upper }}</span>
+          <div>
+            <h3>{{ branch.name }}</h3>
+            {% if branch.pk == shop.pk %}
+            <em>Viewing this catalogue</em>
+            {% endif %}
+          </div>
+        </div>
+        {% if branch.location %}
+        <p class="storefront__branch-meta">
+          <i data-lucide="map-pin" aria-hidden="true"></i>
+          <span>{{ branch.location }}</span>
+        </p>
+        {% endif %}
+        <div class="storefront__branch-actions">
+          {% if branch.phone_number %}
+          <a class="storefront__branch-link" href="tel:{{ branch.phone_number }}">
+            <i data-lucide="phone-call" aria-hidden="true"></i>
+            <span>{{ branch.phone_number }}</span>
+          </a>
+          {% endif %}
+          {% if branch.pk != shop.pk %}
+          <a class="storefront__branch-link storefront__branch-link--accent" href="{% url 'employees:shop_website' branch.pk %}">
+            <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+            <span>View catalogue</span>
+          </a>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
   {% endif %}
 
   {% if categories %}
@@ -71,10 +188,23 @@
     {% for category in categories %}
     <section class="storefront__category" id="{{ category.anchor }}" data-storefront-category>
       <div class="storefront__category-heading">
-        <h3>{{ category.name }}</h3>
-        <span data-storefront-category-count>{{ category.items|length }} item{{ category.items|length|pluralize }}</span>
+        <div>
+          <h3>{{ category.name }}</h3>
+          <span data-storefront-category-count>{{ category.items|length }} item{{ category.items|length|pluralize }}</span>
+        </div>
+        {% if category.items|length > 1 %}
+        <div class="storefront__rail-controls" data-storefront-rail-controls>
+          <button type="button" class="storefront__rail-btn" data-rail-prev aria-label="Previous {{ category.name }} items">
+            <i data-lucide="chevron-left" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="storefront__rail-btn" data-rail-next aria-label="Next {{ category.name }} items">
+            <i data-lucide="chevron-right" aria-hidden="true"></i>
+          </button>
+        </div>
+        {% endif %}
       </div>
-      <div class="storefront__products">
+      <div class="storefront__rail" data-storefront-rail>
+        <div class="storefront__products" data-storefront-products tabindex="0" aria-label="{{ category.name }} products">
         {% for product in category.items %}
         <article
           class="storefront__product"
@@ -127,6 +257,7 @@
           </button>
         </article>
         {% endfor %}
+        </div>
       </div>
     </section>
     {% endfor %}
@@ -334,7 +465,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/shop-website.js' %}?v=17"></script>
+<script defer src="{% static 'js/shop-website.js' %}?v=20"></script>
 {% if google_maps_api_key %}
 <script>
   window.__storefrontMapsReady = function () {

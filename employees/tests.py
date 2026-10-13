@@ -1305,15 +1305,6 @@ class MarketingLinksPageTests(TestCase):
         self.assertContains(response, "Hosted")
         self.assertNotContains(response, ">Local<")
 
-    @override_settings(
-        ALLOWED_HOSTS=[
-            "testserver",
-            "localhost",
-            "richcom.co.ke",
-            "www.richcom.co.ke",
-            "pos.richcom.co.ke",
-        ]
-    )
     def test_marketing_links_can_set_main_website(self):
         from shops.services import get_company_profile
 
@@ -1321,14 +1312,18 @@ class MarketingLinksPageTests(TestCase):
         page = self.client.get("/it-support/marketing/")
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "Main website")
-        self.assertContains(page, "How to show this page on your main domain")
+        self.assertContains(page, "How the landing page works")
+
+        # Off → home redirects to login
+        off_home = self.client.get("/")
+        self.assertEqual(off_home.status_code, 302)
+        self.assertEqual(off_home["Location"], "/employees/login/")
 
         response = self.client.post(
             "/it-support/marketing/",
             {
                 "action": "set_main_website",
                 "main_website_shop_id": str(self.live.pk),
-                "main_website_domain": "https://www.richcom.co.ke/path",
             },
         )
         self.assertEqual(response.status_code, 302)
@@ -1336,23 +1331,30 @@ class MarketingLinksPageTests(TestCase):
 
         company = get_company_profile()
         self.assertEqual(company.main_website_shop_id, self.live.pk)
-        self.assertEqual(company.main_website_domain, "richcom.co.ke")
 
         preview = self.client.get("/website/")
         self.assertEqual(preview.status_code, 200)
         self.assertContains(preview, self.live.name)
 
-        apex = self.client.get("/", HTTP_HOST="richcom.co.ke")
-        self.assertEqual(apex.status_code, 200)
-        self.assertContains(apex, self.live.name)
+        # On → home shows the selected shop catalogue
+        home = self.client.get("/")
+        self.assertEqual(home.status_code, 200)
+        self.assertContains(home, self.live.name)
 
-        www = self.client.get("/", HTTP_HOST="www.richcom.co.ke")
-        self.assertEqual(www.status_code, 200)
-        self.assertContains(www, self.live.name)
-
-        app_home = self.client.get("/", HTTP_HOST="pos.richcom.co.ke")
-        self.assertEqual(app_home.status_code, 200)
-        self.assertContains(app_home, "Employee Login")
+        # Clear selection → login again
+        cleared = self.client.post(
+            "/it-support/marketing/",
+            {
+                "action": "set_main_website",
+                "main_website_shop_id": "",
+            },
+        )
+        self.assertEqual(cleared.status_code, 302)
+        company = get_company_profile()
+        self.assertIsNone(company.main_website_shop_id)
+        off_again = self.client.get("/")
+        self.assertEqual(off_again.status_code, 302)
+        self.assertEqual(off_again["Location"], "/employees/login/")
 
 
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost"])

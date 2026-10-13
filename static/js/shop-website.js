@@ -842,4 +842,267 @@
     }
     setCartOpen(false, { fromClose: true });
   });
+
+  const header = root.querySelector("[data-storefront-header]");
+  const hero = root.querySelector(".storefront__hero");
+  if (header && hero) {
+    const syncHeader = () => {
+      const threshold = Math.max(hero.offsetHeight - 72, 48);
+      header.classList.toggle("is-solid", window.scrollY > threshold);
+    };
+    syncHeader();
+    window.addEventListener("scroll", syncHeader, { passive: true });
+    window.addEventListener("resize", syncHeader, { passive: true });
+  }
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  const rails = Array.from(root.querySelectorAll("[data-storefront-rail]")).map((rail) => {
+    const track = rail.querySelector("[data-storefront-products]");
+    const section = rail.closest("[data-storefront-category]");
+    const prevBtn = section?.querySelector("[data-rail-prev]");
+    const nextBtn = section?.querySelector("[data-rail-next]");
+    return {
+      rail,
+      track,
+      section,
+      prevBtn,
+      nextBtn,
+      pausedUntil: 0,
+      direction: 1,
+      inView: false,
+      frame: 0,
+      hoverCard: null,
+    };
+  }).filter((entry) => entry.track);
+
+  const visibleCards = (track) =>
+    Array.from(track.querySelectorAll("[data-storefront-product]")).filter(
+      (card) => !card.hidden
+    );
+
+  const syncRailFocus = (entry) => {
+    const { track, prevBtn, nextBtn, hoverCard } = entry;
+    const cards = visibleCards(track);
+    if (!cards.length) {
+      if (prevBtn) prevBtn.disabled = true;
+      if (nextBtn) nextBtn.disabled = true;
+      entry.canScroll = false;
+      return;
+    }
+
+    const maxScroll = Math.max(track.scrollWidth - track.clientWidth, 0);
+    entry.canScroll = maxScroll > 8;
+    const trackRect = track.getBoundingClientRect();
+    const center = trackRect.left + trackRect.width / 2;
+    let focusIndex = 0;
+    let best = Infinity;
+
+    cards.forEach((card, index) => {
+      const isHovered = finePointer && hoverCard === card;
+      card.classList.toggle("is-hover", isHovered);
+
+      if (!entry.canScroll) {
+        card.style.setProperty("--rail-opacity", "1");
+        card.style.setProperty("--rail-scale", "1");
+        card.style.setProperty("--rail-blur", "0px");
+        card.classList.add("is-focus");
+        card.classList.remove("is-near");
+        return;
+      }
+
+      const rect = card.getBoundingClientRect();
+      const visibleLeft = Math.max(rect.left, trackRect.left);
+      const visibleRight = Math.min(rect.right, trackRect.right);
+      const visibleWidth = Math.max(0, visibleRight - visibleLeft);
+      const visibility = Math.min(1, visibleWidth / Math.max(rect.width, 1));
+      const cardCenter = rect.left + rect.width / 2;
+      const distance = Math.abs(cardCenter - center);
+
+      // Desktop: any card largely in view stays readable; hover/focus makes it primary.
+      // Touch: keep a stronger center emphasis.
+      let opacity;
+      let scale;
+      let blur;
+      if (isHovered) {
+        opacity = 1;
+        scale = 1.06;
+        blur = 0;
+      } else if (finePointer) {
+        opacity = 0.4 + visibility * 0.55;
+        scale = 0.93 + visibility * 0.09;
+        blur = (1 - visibility) * 1.1;
+      } else {
+        const norm = Math.min(1, distance / Math.max(trackRect.width * 0.45, 1));
+        opacity = 1 - norm * 0.58;
+        scale = 1.04 - norm * 0.16;
+        blur = norm * 1.35;
+      }
+
+      card.style.setProperty("--rail-opacity", opacity.toFixed(3));
+      card.style.setProperty("--rail-scale", scale.toFixed(3));
+      card.style.setProperty("--rail-blur", `${blur.toFixed(2)}px`);
+      card.classList.toggle(
+        "is-focus",
+        isHovered || (!hoverCard && visibility > 0.72)
+      );
+      card.classList.toggle(
+        "is-near",
+        !isHovered && visibility > 0.35 && visibility <= 0.72
+      );
+      if (distance < best) {
+        best = distance;
+        focusIndex = index;
+      }
+    });
+
+    if (prevBtn) prevBtn.disabled = !entry.canScroll || track.scrollLeft <= 4;
+    if (nextBtn) nextBtn.disabled = !entry.canScroll || track.scrollLeft >= maxScroll - 4;
+    entry.focusIndex = focusIndex;
+  };
+
+  const scrollRailBy = (entry, direction) => {
+    const cards = visibleCards(entry.track);
+    if (!cards.length) return;
+    const current = Math.max(0, Math.min(entry.focusIndex || 0, cards.length - 1));
+    const target = cards[Math.max(0, Math.min(cards.length - 1, current + direction))];
+    target?.scrollIntoView({
+      behavior: reduceMotion ? "auto" : "smooth",
+      inline: "center",
+      block: "nearest",
+    });
+  };
+
+  const pauseRail = (entry, ms = 4500) => {
+    entry.pausedUntil = performance.now() + ms;
+  };
+
+  rails.forEach((entry) => {
+    const onScroll = () => {
+      if (entry.frame) return;
+      entry.frame = window.requestAnimationFrame(() => {
+        entry.frame = 0;
+        syncRailFocus(entry);
+      });
+    };
+
+    entry.track.addEventListener("scroll", onScroll, { passive: true });
+
+    if (finePointer) {
+      entry.track.addEventListener("pointerover", (event) => {
+        const card = event.target.closest?.("[data-storefront-product]");
+        if (!card || !entry.track.contains(card) || entry.hoverCard === card) return;
+        entry.hoverCard = card;
+        pauseRail(entry, 5000);
+        syncRailFocus(entry);
+      });
+      entry.track.addEventListener("pointerleave", () => {
+        if (!entry.hoverCard) return;
+        entry.hoverCard = null;
+        syncRailFocus(entry);
+      });
+    }
+
+    entry.track.addEventListener(
+      "pointerdown",
+      () => pauseRail(entry, 6000),
+      { passive: true }
+    );
+    entry.track.addEventListener(
+      "wheel",
+      () => pauseRail(entry, 6000),
+      { passive: true }
+    );
+    entry.track.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          pauseRail(entry, 6000);
+          scrollRailBy(entry, 1);
+        } else if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          pauseRail(entry, 6000);
+          scrollRailBy(entry, -1);
+        }
+      }
+    );
+
+    entry.prevBtn?.addEventListener("click", () => {
+      pauseRail(entry, 6000);
+      scrollRailBy(entry, -1);
+    });
+    entry.nextBtn?.addEventListener("click", () => {
+      pauseRail(entry, 6000);
+      scrollRailBy(entry, 1);
+    });
+
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(
+        ([obs]) => {
+          entry.inView = Boolean(obs?.isIntersecting);
+          if (entry.inView) syncRailFocus(entry);
+        },
+        { root: null, threshold: 0.28 }
+      );
+      observer.observe(entry.section || entry.rail);
+    } else {
+      entry.inView = true;
+    }
+
+    syncRailFocus(entry);
+  });
+
+  const refreshRails = () => {
+    rails.forEach((entry) => {
+      syncRailFocus(entry);
+    });
+  };
+
+  window.addEventListener("resize", refreshRails, { passive: true });
+  root
+    .querySelector("[data-storefront-search]")
+    ?.addEventListener("input", () => {
+      window.setTimeout(refreshRails, 100);
+    });
+
+  if (!reduceMotion) {
+    let lastTick = performance.now();
+    const tick = (now) => {
+      const delta = Math.min(now - lastTick, 40);
+      lastTick = now;
+
+      rails.forEach((entry) => {
+        if (!entry.inView || !entry.canScroll || now < entry.pausedUntil) return;
+        const maxScroll = entry.track.scrollWidth - entry.track.clientWidth;
+        if (maxScroll <= 8) return;
+
+        const speed = 0.028 * delta;
+        let next = entry.track.scrollLeft + speed * entry.direction;
+        if (next >= maxScroll - 1) {
+          next = maxScroll;
+          entry.direction = -1;
+          pauseRail(entry, 1200);
+        } else if (next <= 1) {
+          next = 0;
+          entry.direction = 1;
+          pauseRail(entry, 1200);
+        }
+        entry.track.scrollLeft = next;
+      });
+
+      window.requestAnimationFrame(tick);
+    };
+    window.requestAnimationFrame(tick);
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      rails.forEach((entry) => pauseRail(entry, 999999));
+    } else {
+      rails.forEach((entry) => {
+        entry.pausedUntil = performance.now() + 1200;
+      });
+    }
+  });
 })();

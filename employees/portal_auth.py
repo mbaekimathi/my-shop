@@ -1,6 +1,7 @@
 """Shared portal sign-in helpers for employee + shop login."""
 
 from django.contrib.auth import logout
+from django.contrib.auth.models import AnonymousUser
 from django.shortcuts import render
 
 PORTAL_LOGIN_TEMPLATE = "core/portal_login.html"
@@ -37,14 +38,20 @@ def render_portal_login(request, **kwargs):
 
 
 def clear_employee_auth(request):
-    """End any employee session without depending on shop portal keys afterward."""
+    """End the employee session while preserving any shop portal keys."""
+    from shops.session import restore_shop_portal_session, snapshot_shop_portal_session
+
     from .access import SESSION_PROFILE_KEY, REQUEST_META_ATTR, REQUEST_PROFILE_ATTR
+
+    shop_snap = snapshot_shop_portal_session(request)
 
     was_authenticated = bool(
         getattr(request, "user", None) is not None and request.user.is_authenticated
     )
     if was_authenticated:
         logout(request)
+    else:
+        request.user = AnonymousUser()
 
     if SESSION_PROFILE_KEY in request.session:
         del request.session[SESSION_PROFILE_KEY]
@@ -53,9 +60,23 @@ def clear_employee_auth(request):
     if hasattr(request, REQUEST_PROFILE_ATTR):
         delattr(request, REQUEST_PROFILE_ATTR)
 
+    restore_shop_portal_session(request, shop_snap)
+
+
+def end_shop_portal_session(request):
+    """End only the shop portal session."""
+    from shops.session import clear_shop_portal_session
+
+    clear_shop_portal_session(request)
+
+
+def end_employee_session(request):
+    """End only the employee session."""
+    clear_employee_auth(request)
+
 
 def end_all_portal_sessions(request):
-    """Fully end shop portal and employee sessions (explicit logout only)."""
+    """Fully end shop portal and employee sessions (hard clear)."""
     from shops.session import clear_shop_portal_session
 
     clear_shop_portal_session(request)
@@ -64,23 +85,19 @@ def end_all_portal_sessions(request):
 
 
 def begin_shop_portal_session(request, shop):
-    """Exclusive shop portal sign-in: drop employee auth, set shop session."""
+    """Shop portal sign-in; leaves any employee session intact."""
     from shops.session import persist_shop_portal_session, set_shop_portal_session
 
-    clear_employee_auth(request)
     set_shop_portal_session(request, shop)
     request.session.cycle_key()
     persist_shop_portal_session(request)
 
 
 def begin_employee_session(request, user, profile):
-    """Exclusive employee sign-in: drop shop portal, establish employee session."""
+    """Employee sign-in; leaves any shop portal session intact."""
     from django.contrib.auth import login
-
-    from shops.session import clear_shop_portal_session
 
     from .access import store_profile_session
 
-    clear_shop_portal_session(request)
     login(request, user)
     store_profile_session(request, profile)

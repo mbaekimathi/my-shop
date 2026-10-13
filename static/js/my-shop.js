@@ -1995,11 +1995,22 @@
     }
 
     if (decision === "decline") {
+      const reasonPanel = form.querySelector("[data-decline-reason-panel]");
+      const reasonInput = form.querySelector("[data-decline-reason]");
+      if (reasonPanel) reasonPanel.hidden = false;
+      const reason = (reasonInput?.value || "").trim();
+      if (reason.length < 3) {
+        window.alert(
+          "Enter a reason for declining (at least 3 characters), e.g. Wrong quantity."
+        );
+        reasonInput?.focus();
+        return false;
+      }
       const shopName =
         form.getAttribute("data-requesting-shop") || "the sending shop";
       if (
         !window.confirm(
-          `Decline this stock transfer from ${shopName}? They will be notified and no stock will move.`
+          `Decline this stock transfer from ${shopName}?\nReason: ${reason}\n\nThey will be notified and no stock will move.`
         )
       ) {
         return false;
@@ -2022,7 +2033,7 @@
         );
         if (input.value === "" || !Number.isFinite(qty) || qty !== mustMatch) {
           window.alert(
-            "Received quantity must match what was sent. Decline if the quantities do not match."
+            "Received quantity must match what was sent. Decline with a reason if the quantities do not match."
           );
           input.focus();
           return false;
@@ -2053,16 +2064,69 @@
       const input = event.target;
       input.value = String(input.value || "").replace(/\D/g, "").slice(0, 6);
       setVerified(form, false);
-      queueEmployeeVerify(form);
+      voidEmployeeVerify(form);
     });
+
+    form.querySelectorAll("[data-decline-preset]").forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        const reasonInput = form.querySelector("[data-decline-reason]");
+        const reasonPanel = form.querySelector("[data-decline-reason-panel]");
+        if (reasonPanel) reasonPanel.hidden = false;
+        if (reasonInput) {
+          reasonInput.value = btn.getAttribute("data-decline-preset") || "";
+          reasonInput.focus();
+        }
+      });
+    });
+
+    form
+      .querySelector('[data-decision-submit="decline"]')
+      ?.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (form.dataset.codeVerified !== "1") {
+          window.alert("Enter a valid active staff 6-digit ID first.");
+          form.querySelector("[data-login-code]")?.focus();
+          return;
+        }
+        const reasonPanel = form.querySelector("[data-decline-reason-panel]");
+        const reasonInput = form.querySelector("[data-decline-reason]");
+        if (reasonPanel?.hidden) {
+          reasonPanel.hidden = false;
+          if (window.lucide?.createIcons) window.lucide.createIcons();
+          reasonInput?.focus();
+          const status = form.querySelector("[data-verify-status]");
+          if (status) {
+            status.textContent =
+              "Enter a decline reason (e.g. Wrong quantity), then press Decline again.";
+            status.classList.remove("is-ok");
+          }
+          return;
+        }
+        form.dataset.pendingDecision = "decline";
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+        } else {
+          form.dispatchEvent(
+            new Event("submit", { cancelable: true, bubbles: true })
+          );
+        }
+      });
 
     form.addEventListener("submit", async (event) => {
       const submitter = event.submitter;
-      const decision = (
+      let decision = (
         submitter?.getAttribute?.("data-decision-submit") ||
         submitter?.value ||
         ""
       ).trim();
+      // Decline uses a type=button, then submits with pendingDecision.
+      if (!decision && form.dataset.pendingDecision) {
+        decision = form.dataset.pendingDecision;
+      }
+      if (form.dataset.pendingDecision) {
+        delete form.dataset.pendingDecision;
+      }
       if (!validateForm(form, decision)) {
         event.preventDefault();
         return;

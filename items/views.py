@@ -2733,6 +2733,16 @@ def _transfer_event_label(*, event_type, direction):
     return base
 
 
+def _timeline_type_css_class(event):
+    """CSS modifier for timeline type/qty badges (matches report T-in / T-out)."""
+    direction = (event.get("transfer_direction") or "").strip()
+    if direction == "in" or direction == "both":
+        return "transfer-in"
+    if direction == "out":
+        return "transfer-out"
+    return (event.get("event_type") or "all").replace(" ", "-")
+
+
 def _request_transfer_counts_toward_units(movement) -> bool:
     """Fulfilled transfers are counted when stock moves (responded_at), not when submitted."""
     from .models import StockRequestStatus
@@ -2741,7 +2751,11 @@ def _request_transfer_counts_toward_units(movement) -> bool:
 
 
 def _transfer_people_for_movement(movement):
-    """Sender and receiver names for inter-shop transfer movements."""
+    """Sent-by / received-by names for inter-shop transfers.
+
+    Send/confirm model: created_by sent from movement.shop;
+    responded_by confirmed at movement.requested_from_shop.
+    """
     from .models import StockMovementType
 
     if movement.movement_type != StockMovementType.REQUEST:
@@ -2818,7 +2832,7 @@ def _timeline_event_from_movement_line(
     parties = _movement_parties_for_line(movement=movement, line=line)
     from .models import StockMovementType
 
-    requested_by, received_by = _transfer_people_for_movement(movement)
+    sent_by, received_by = _transfer_people_for_movement(movement)
     by_label = _employee_display_name(actor)
 
     note = line.note or ""
@@ -2829,6 +2843,23 @@ def _timeline_event_from_movement_line(
         movement.notes or ""
     )
 
+    is_transfer = movement.movement_type == StockMovementType.REQUEST
+    from_shop_name = (
+        movement.shop.name if is_transfer and movement.shop else ""
+    )
+    to_shop_name = (
+        movement.requested_from_shop.name
+        if is_transfer and movement.requested_from_shop
+        else ""
+    )
+    # From ↔ Sent (sender shop + sender person); To ↔ Received (receiver).
+    if is_transfer:
+        parties = {
+            **parties,
+            "from_label": from_shop_name or parties.get("from_label") or "—",
+            "to_label": to_shop_name or parties.get("to_label") or "—",
+        }
+
     return {
         "happened_at": happened_at,
         "event_type": event_type,
@@ -2837,17 +2868,8 @@ def _timeline_event_from_movement_line(
         "shop_id": movement.shop_id,
         "source_shop_id": movement.shop_id,
         "destination_shop_id": movement.requested_from_shop_id,
-        "from_shop_name": (
-            movement.shop.name
-            if movement.movement_type == StockMovementType.REQUEST and movement.shop
-            else ""
-        ),
-        "to_shop_name": (
-            movement.requested_from_shop.name
-            if movement.movement_type == StockMovementType.REQUEST
-            and movement.requested_from_shop
-            else ""
-        ),
+        "from_shop_name": from_shop_name,
+        "to_shop_name": to_shop_name,
         "item_name": line.item.name,
         "item_category": line.item.category,
         "item_id": line.item_id,
@@ -2858,7 +2880,8 @@ def _timeline_event_from_movement_line(
         ),
         "note": note,
         "by": by_label,
-        "requested_by": requested_by,
+        "sent_by": sent_by,
+        "requested_by": sent_by,  # alias: Sent column / legacy callers
         "received_by": received_by,
         "serial_numbers": _movement_serial_numbers(line.serial_numbers),
         "movement_id": movement.pk,
@@ -3546,12 +3569,13 @@ def _movement_parties_for_line(*, movement, line):
             "seller": "—",
             "pay": _movement_pay_label(line=line),
         }
-    from_shop = (
+    # Send/confirm: shop = sender (from), requested_from_shop = receiver (to).
+    to_shop = (
         movement.requested_from_shop.name if movement.requested_from_shop else "—"
     )
     return {
-        "from_label": from_shop,
-        "to_label": shop_name,
+        "from_label": shop_name,
+        "to_label": to_shop,
         "seller": "—",
         "pay": "—",
     }
@@ -3725,9 +3749,12 @@ def _timeline_event_search_text(event):
         event.get("item_name_snapshot") or "",
         event.get("item_category") or "",
         event.get("event_label") or "",
+        event.get("from_shop_name") or "",
         event.get("from_label") or "",
+        event.get("to_shop_name") or "",
         event.get("to_label") or "",
         event.get("by") or "",
+        event.get("sent_by") or "",
         event.get("requested_by") or "",
         event.get("received_by") or "",
         event.get("receipt_number") or "",
@@ -3810,11 +3837,19 @@ def _group_timeline_events_by_receipt(events):
         labels = []
         seen_labels = set()
         for activity in activities:
+            type_class = _timeline_type_css_class(activity)
+            activity["type_class"] = type_class
             label = activity.get("event_label") or ""
             event_type = activity.get("event_type") or "all"
             if label and label not in seen_labels:
                 seen_labels.add(label)
-                labels.append({"label": label, "event_type": event_type})
+                labels.append(
+                    {
+                        "label": label,
+                        "event_type": event_type,
+                        "type_class": type_class,
+                    }
+                )
         group["activity_labels"] = labels
         group["is_multi"] = len(activities) > 1
 
@@ -3855,25 +3890,38 @@ def _summarize_movement_events(events):
     return units_in, units_out, units_request, units_sale, units_transfer_in, units_transfer_out, units_return
 
 
-MOVEMENT_VIEW_BY = frozenset({"timeline", "item"})
-REPORT_VIEW_BY = frozenset({"item", "day"})
+# Shared by Stock report and Stock movement pages.
+STOCK_VIEW_BY = frozenset({"timeline", "item", "day"})
+STOCK_VIEW_BY_LABELS = {
+    "timeline": "Timeline",
+    "item": "Period summary",
+    "day": "Daily breakdown",
+}
+
+
+def _parse_stock_view_by(raw, *, range_type="day", page_mode="report"):
+    """Shared View by for report and movements pages.
+
+    Options: timeline | period summary (item) | daily breakdown (day).
+    Daily breakdown is only valid for multi-day ranges.
+    """
+    default = "timeline" if page_mode == "movements" else "item"
+    view_by = (raw or default).strip().lower()
+    if view_by not in STOCK_VIEW_BY:
+        view_by = default
+    if view_by == "day" and range_type == "day":
+        return default if page_mode == "movements" else "item"
+    return view_by
 
 
 def _parse_movement_view_by(raw):
-    view_by = (raw or "timeline").strip().lower()
-    if view_by not in MOVEMENT_VIEW_BY:
-        return "timeline"
-    return view_by
+    """Backward-compatible wrapper."""
+    return _parse_stock_view_by(raw, range_type="period", page_mode="movements")
 
 
 def _parse_report_view_by(raw, *, range_type="day"):
-    """Report page view: period item summary, or daily rows for multi-day ranges."""
-    view_by = (raw or "item").strip().lower()
-    if view_by not in REPORT_VIEW_BY:
-        view_by = "item"
-    if range_type == "day":
-        return "item"
-    return view_by
+    """Backward-compatible wrapper."""
+    return _parse_stock_view_by(raw, range_type=range_type, page_mode="report")
 
 
 def _blank_movement_item_row(
@@ -4340,146 +4388,6 @@ def _movement_event_seller_label(event):
     return "—"
 
 
-def _movement_event_note_label(event):
-    note = (event.get("note") or "").strip()
-    if note:
-        return note
-    reason = (event.get("reason") or "").strip()
-    if reason:
-        return reason
-    trade = (event.get("trade") or "").strip()
-    if trade:
-        return trade
-    return "—"
-
-
-def _movement_event_stock_delta(event):
-    qty = int(event.get("quantity") or 0)
-    event_type = (event.get("event_type") or "").strip()
-    direction = (event.get("transfer_direction") or "").strip()
-    if event_type in ("in", "return"):
-        return qty
-    if event_type in ("out", "sale"):
-        return -qty
-    if event_type in ("transfer_fulfilled", "transfer", "request"):
-        if direction == "in":
-            return qty
-        if direction == "out":
-            return -qty
-        return 0
-    return 0
-
-
-def _movement_event_shop_stock_key(event):
-    item_id = event.get("item_id")
-    if not item_id:
-        return None
-    direction = (event.get("transfer_direction") or "").strip()
-    if direction == "out" and event.get("source_shop_id"):
-        return (item_id, event.get("source_shop_id"))
-    if direction == "in" and event.get("destination_shop_id"):
-        return (item_id, event.get("destination_shop_id"))
-    shop_id = event.get("shop_id")
-    if not shop_id:
-        return None
-    return (item_id, shop_id)
-
-
-def _audit_shop_qty_after_events(events, *, shop_ids, day_end):
-    """
-    Map each event object id -> shop on-hand qty after that event.
-
-    Rewinds current stock through after-period aggregates, then reverse-walks
-    the provided events (newest first) so each row gets a post-event balance.
-    """
-    from datetime import timedelta
-
-    from django.utils import timezone as dj_timezone
-
-    qty_by_event = {}
-    if not events:
-        return qty_by_event
-
-    item_ids = []
-    seen_items = set()
-    shop_ids_used = []
-    seen_shops = set()
-    for event in events:
-        item_id = event.get("item_id")
-        if item_id and item_id not in seen_items:
-            seen_items.add(item_id)
-            item_ids.append(item_id)
-        key = _movement_event_shop_stock_key(event)
-        if key:
-            shop_id = key[1]
-            if shop_id and shop_id not in seen_shops:
-                seen_shops.add(shop_id)
-                shop_ids_used.append(shop_id)
-    active_shop_ids = shop_ids_used or list(shop_ids or [])
-    if not item_ids or not active_shop_ids:
-        for event in events:
-            qty_by_event[id(event)] = 0
-        return qty_by_event
-
-    now = dj_timezone.now()
-    far_future = now + timedelta(days=3650)
-    current = _current_stock_by_item_shop(item_ids, active_shop_ids)
-    balances = dict(current)
-
-    if day_end is not None and day_end < now:
-        after_moves = _movement_qty_by_item_shop(
-            item_ids, active_shop_ids, day_end, far_future
-        )
-        after_transfers = _transfer_qty_by_item_shop(
-            item_ids, active_shop_ids, day_end, far_future
-        )
-        after_sales = _receipt_sale_qty_by_item_shop(
-            item_ids, active_shop_ids, day_end, far_future
-        )
-        after_returns = _return_qty_by_item_shop(
-            item_ids, active_shop_ids, day_end, far_future
-        )
-        for key in list(balances.keys()):
-            after = after_moves.get(key) or {"in": 0, "out": 0}
-            after_transfer = after_transfers.get(key) or {"in": 0, "out": 0}
-            _starting, closing = _item_report_closing_starting(
-                current=current.get(key) or 0,
-                after_in=after["in"],
-                after_out=after["out"],
-                after_sale=after_sales.get(key) or 0,
-                after_transfer_in=after_transfer["in"],
-                after_transfer_out=after_transfer["out"],
-                after_return=after_returns.get(key) or 0,
-                stock_in=0,
-                stock_out=0,
-                stock_sale=0,
-                stock_transfer_in=0,
-                stock_transfer_out=0,
-                stock_return=0,
-            )
-            balances[key] = closing
-
-    sorted_events = sorted(
-        events,
-        key=lambda event: (
-            event.get("happened_at") or "",
-            (event.get("item_name") or "").lower(),
-            event.get("event_type") or "",
-            event.get("movement_id") or 0,
-        ),
-        reverse=True,
-    )
-    for event in sorted_events:
-        key = _movement_event_shop_stock_key(event)
-        if not key:
-            qty_by_event[id(event)] = 0
-            continue
-        after_qty = int(balances.get(key) or 0)
-        qty_by_event[id(event)] = after_qty
-        balances[key] = after_qty - _movement_event_stock_delta(event)
-    return qty_by_event
-
-
 def _movement_event_filter_label(event_filter):
     if isinstance(event_filter, (set, frozenset, list, tuple)):
         ordered = _ordered_event_filters(event_filter)
@@ -4661,8 +4569,69 @@ def _stock_report_pdf_response(*, filename, pdf_bytes):
     return response
 
 
-def _build_audit_summary_rows(events, *, event_filter="all", qty_label="Qty"):
-    """Per-item audit summary with blank Actual qty / Missing / Excess / Note."""
+def _audit_system_qty_by_item(item_ids, shop_ids, *, day_end=None):
+    """On-hand system qty per item for the audit sheet (rewound to day_end when past)."""
+    from datetime import timedelta
+
+    from django.utils import timezone as dj_timezone
+
+    item_ids = [item_id for item_id in (item_ids or []) if item_id is not None]
+    shop_ids = list(shop_ids or [])
+    totals = {item_id: 0 for item_id in item_ids}
+    if not item_ids or not shop_ids:
+        return totals
+
+    current = _current_stock_by_item(item_ids, shop_ids)
+    now = dj_timezone.now()
+    if day_end is None or day_end >= now:
+        return current
+
+    far_future = now + timedelta(days=3650)
+    current_shop = _current_stock_by_item_shop(item_ids, shop_ids)
+    after_moves = _movement_qty_by_item_shop(
+        item_ids, shop_ids, day_end, far_future
+    )
+    after_transfers = _transfer_qty_by_item_shop(
+        item_ids, shop_ids, day_end, far_future
+    )
+    after_sales = _receipt_sale_qty_by_item_shop(
+        item_ids, shop_ids, day_end, far_future
+    )
+    after_returns = _return_qty_by_item_shop(
+        item_ids, shop_ids, day_end, far_future
+    )
+    for item_id in item_ids:
+        closing = 0
+        for shop_id in shop_ids:
+            key = (item_id, shop_id)
+            after = after_moves.get(key) or {"in": 0, "out": 0}
+            after_transfer = after_transfers.get(key) or {"in": 0, "out": 0}
+            _starting, shop_closing = _item_report_closing_starting(
+                current=current_shop.get(key) or 0,
+                after_in=after["in"],
+                after_out=after["out"],
+                after_sale=after_sales.get(key) or 0,
+                after_transfer_in=after_transfer["in"],
+                after_transfer_out=after_transfer["out"],
+                after_return=after_returns.get(key) or 0,
+                stock_in=0,
+                stock_out=0,
+                stock_sale=0,
+                stock_transfer_in=0,
+                stock_transfer_out=0,
+                stock_return=0,
+            )
+            closing += int(shop_closing or 0)
+        totals[item_id] = closing
+    return totals
+
+
+def _build_audit_summary_rows(
+    events, *, event_filter="all", qty_label="Qty", shop_ids=None, day_end=None
+):
+    """Per-item audit summary with System qty and blank Actual / Missing / Excess / Note."""
+    from decimal import Decimal
+
     totals = {}
     for event in events or []:
         if not _event_matches_summary_filter(event, event_filter):
@@ -4700,11 +4669,18 @@ def _build_audit_summary_rows(events, *, event_filter="all", qty_label="Qty"):
             (row.get("item_category") or "").lower(),
         ),
     )
+    system_qty_by_item = _audit_system_qty_by_item(
+        [row.get("item_id") for row in sorted_rows],
+        shop_ids,
+        day_end=day_end,
+    )
+    buy_prices = _buying_prices_for_summary(sorted_rows, shop_ids=shop_ids)
     headers = [
         "Item",
-        "Category",
+        "Avg buy price",
         "Transactions",
         qty_label,
+        "System qty",
         "Actual qty",
         "Missing",
         "Excess",
@@ -4713,17 +4689,23 @@ def _build_audit_summary_rows(events, *, event_filter="all", qty_label="Qty"):
     rows = []
     total_events = 0
     total_qty = 0
+    total_system = 0
     for row in sorted_rows:
         events_count = int(row.get("event_count") or 0)
         qty = int(row.get("quantity") or 0)
+        item_id = row.get("item_id")
+        system_qty = int(system_qty_by_item.get(item_id) or 0) if item_id else 0
+        unit_buy = buy_prices.get(item_id) or Decimal("0")
         total_events += events_count
         total_qty += qty
+        total_system += system_qty
         rows.append(
             [
                 row.get("item_name") or "—",
-                row.get("item_category") or "",
+                _format_money_pdf(unit_buy),
                 events_count,
                 qty,
+                system_qty,
                 "",
                 "",
                 "",
@@ -4737,45 +4719,11 @@ def _build_audit_summary_rows(events, *, event_filter="all", qty_label="Qty"):
                 "",
                 total_events,
                 total_qty,
+                total_system,
                 "",
                 "",
                 "",
                 "",
-            ]
-        )
-    return headers, rows
-
-
-def _build_audit_detail_rows(events, *, shop_ids=None, day_end=None):
-    """Audit PDF transaction rows: When, Type, Item, Reason, Qty."""
-    detail_events = sorted(
-        events or [],
-        key=lambda event: (
-            event.get("happened_at") or "",
-            (event.get("item_name") or "").lower(),
-            event.get("event_type") or "",
-        ),
-    )
-    headers = [
-        "When",
-        "Type",
-        "Item",
-        "Reason",
-        "Qty",
-    ]
-    rows = []
-    for event in detail_events:
-        date_value, time_value = _format_movement_pdf_date_time(
-            event.get("happened_at")
-        )
-        when = f"{date_value} {time_value}".strip()
-        rows.append(
-            [
-                when,
-                event.get("event_label") or event.get("event_type") or "",
-                event.get("item_name") or "—",
-                _movement_event_note_label(event),
-                event.get("quantity") or 0,
             ]
         )
     return headers, rows
@@ -4832,10 +4780,7 @@ def _stock_report_download(
     )
     period_label = (filter_context.get("report_period_label") or "").strip() or "—"
     event_label = _movement_event_filter_label(event_filters)
-    if page_mode == "report":
-        view_label = "Daily breakdown" if view_by == "day" else "Period summary"
-    else:
-        view_label = "Item summary" if view_by == "item" else "Timeline"
+    view_label = STOCK_VIEW_BY_LABELS.get(view_by, STOCK_VIEW_BY_LABELS["item"])
     generated_at = dj_timezone.localtime(dj_timezone.now())
 
     summary_headers = None
@@ -4849,15 +4794,14 @@ def _stock_report_download(
     qty_label = _movement_summary_qty_label(event_filters)
     event_filter = event_filters
 
-    # Audit downloads: item summary (with count blanks) then transaction ledger.
+    # Audit downloads: summary by item only (System qty + count blanks).
     if report_kind == "audit" and page_mode == "movements":
         summary_headers, summary_rows = _build_audit_summary_rows(
             movement_events,
             event_filter=event_filter,
             qty_label=qty_label,
-        )
-        detail_headers, detail_rows = _build_audit_detail_rows(
-            movement_events, shop_ids=shop_ids, day_end=day_end
+            shop_ids=shop_ids,
+            day_end=day_end,
         )
         pdf_bytes = build_stock_report_pdf(
             company_name=company_name,
@@ -4877,8 +4821,8 @@ def _stock_report_download(
             summary_rows=summary_rows,
             summary_headers=summary_headers,
             summary_qty_label=qty_label,
-            detail_rows=detail_rows,
-            detail_headers=detail_headers,
+            detail_rows=None,
+            detail_headers=None,
             item_summary_rows=None,
             item_summary_headers=None,
             report_rows=None,
@@ -4938,7 +4882,7 @@ def _stock_report_download(
                 ]
             )
             item_summary_rows.append(line)
-    elif page_mode == "movements":
+    elif view_by == "timeline":
         use_typed_summary = (
             _event_filters_are_all(event_filter)
             if isinstance(event_filter, (set, frozenset, list, tuple))
@@ -5245,16 +5189,15 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             else "multi"
         )
     )
-    if is_movements:
-        view_by = _parse_movement_view_by(request.GET.get("view_by"))
-    else:
-        view_by = _parse_report_view_by(
-            request.GET.get("view_by"), range_type=range_type
-        )
+    view_by = _parse_stock_view_by(
+        request.GET.get("view_by"),
+        range_type=range_type,
+        page_mode=page_mode,
+    )
 
     # Only load the full catalog when the item picker or POS sale matching needs it.
     need_full_item_catalog = item_mode == "items" or (
-        is_movements
+        (is_movements or view_by == "timeline")
         and (
             _event_filters_are_all(event_filters) or "sale" in event_filters
         )
@@ -5297,6 +5240,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
 
     if (
         is_movements
+        and view_by != "day"
         and item_mode == "all"
         and not _event_filters_are_all(event_filters)
         and "sale" not in event_filters
@@ -5328,7 +5272,6 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     units_sale = 0
     units_return = 0
     item_report_rows = []
-    is_daily_report = False
     item_report_show_item_col = True
     totals = {
         "starting_stock": 0,
@@ -5344,14 +5287,18 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     }
 
     is_item_movement_detail = (
-        is_movements
-        and view_by == "timeline"
+        view_by == "timeline"
         and item_mode == "items"
         and len(selected_item_ids) == 1
     )
+    # Movements period summary keeps the event-based item table.
+    # Daily breakdown (and report period summary) use the stock matrix.
     is_item_movement_summary = (
         is_movements and view_by == "item" and not is_item_movement_detail
     )
+    is_daily_report = view_by == "day" and range_type != "day"
+    show_timeline = view_by == "timeline"
+    show_stock_matrix = (not is_movements and view_by == "item") or is_daily_report
     movement_item_rows = []
     movement_item_totals = {
         "current_stock": 0,
@@ -5379,7 +5326,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     report_prev_url = ""
     report_next_url = ""
 
-    if is_movements:
+    if show_timeline or is_item_movement_summary:
         (
             movement_events,
             units_in,
@@ -5398,7 +5345,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         )
         if not _event_filters_are_all(event_filters):
             movement_events = _filter_movement_events(movement_events, event_filters)
-        if view_by == "timeline":
+        if show_timeline:
             movement_events = _filter_timeline_display_events(movement_events)
             if search_q:
                 movement_events = _filter_movement_events_by_search(
@@ -5422,7 +5369,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             units_transfer_out,
             units_return,
         ) = _summarize_movement_events(movement_events)
-        if view_by == "timeline":
+        if show_timeline:
             # Live on-hand total for items that appear in this timeline.
             from django.db.models import Sum
 
@@ -5498,7 +5445,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
 
         # Paginate timeline HTML only (PDF download keeps the full set).
         is_download = (request.GET.get("download") or "").strip() == "1"
-        if view_by == "timeline" and movement_event_groups and not is_download:
+        if show_timeline and movement_event_groups and not is_download:
             try:
                 timeline_page = max(1, int(request.GET.get("page") or 1))
             except (TypeError, ValueError):
@@ -5518,8 +5465,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             timeline_prev_url, timeline_next_url = _report_page_urls(
                 request, timeline_page, timeline_total_pages
             )
-    else:
-        is_daily_report = view_by == "day" and range_type != "day"
+    elif show_stock_matrix:
         items_for_report = report_items
         if search_q:
             items_for_report = _filter_items_by_search(report_items, search_q)
@@ -6588,6 +6534,82 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if request.method == "POST":
         wants_json = _wants_json_response(request)
+        post_action = (request.POST.get("action") or "").strip().lower()
+        if post_action == "cancel_transfer":
+            from .models import StockMovement, StockMovementType, StockRequestStatus
+            from .services import cancel_pending_stock_transfer
+
+            denied = require_module_permission(
+                request, profile, "stock-management", "request", as_json=wants_json
+            )
+            if denied is not None:
+                return denied
+            try:
+                movement_id = int(request.POST.get("movement_id") or 0)
+            except (TypeError, ValueError):
+                movement_id = 0
+            movement = (
+                StockMovement.objects.select_related("shop", "requested_from_shop")
+                .filter(
+                    pk=movement_id,
+                    movement_type=StockMovementType.REQUEST,
+                    request_status=StockRequestStatus.PENDING,
+                )
+                .first()
+            )
+            cancel_next = _stock_next_url(
+                request.path,
+                "request",
+                shop_ids=selected_shop_ids[:1],
+                requested_from_shop_id=requested_from_id,
+            )
+            if movement is None:
+                error = "That pending transfer could not be found."
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": error}, status=404)
+                messages.error(request, error)
+                return redirect(cancel_next)
+            try:
+                cancel_pending_stock_transfer(
+                    movement=movement,
+                    profile=profile,
+                    reason=request.POST.get("cancel_reason")
+                    or request.POST.get("reason")
+                    or "",
+                )
+            except ValidationError as exc:
+                errors = (
+                    list(exc.messages)
+                    if hasattr(exc, "messages")
+                    else [str(exc)]
+                )
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": errors[0] if errors else "Could not cancel transfer.",
+                            "errors": errors,
+                        },
+                        status=400,
+                    )
+                for message in errors:
+                    messages.error(request, message)
+                return redirect(cancel_next)
+            receiver_name = (
+                movement.requested_from_shop.name
+                if movement.requested_from_shop
+                else "the receiving shop"
+            )
+            success_message = (
+                f"Transfer to {receiver_name} cancelled. No stock was moved."
+            )
+            messages.success(request, success_message)
+            if wants_json:
+                return JsonResponse(
+                    {"ok": True, "message": success_message, "next": cancel_next}
+                )
+            return redirect(cancel_next)
+
         action_mode = (request.POST.get("mode") or mode).strip().lower()
         if action_mode not in ("in", "out", "request"):
             if wants_json:
@@ -6837,6 +6859,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "stock_request_audits_url": stock_management_url(
                 profile.role, "request-audits"
             ),
+            "allow_pending_transfer_cancel": True,
+            "cancel_transfer_url": request.path,
         }
 
     return render(

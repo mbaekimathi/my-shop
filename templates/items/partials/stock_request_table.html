@@ -11,6 +11,10 @@
         <th>Units</th>
         <th>When</th>
         <th>Note</th>
+        <th>View</th>
+        {% if allow_cancel %}
+        <th>Cancel</th>
+        {% endif %}
       </tr>
     </thead>
     <tbody>
@@ -20,7 +24,7 @@
           {% if req.request_status == "fulfilled" %}
           <span class="stock-request-status is-accepted">Confirmed</span>
           {% elif req.request_status == "declined" %}
-          <span class="stock-request-status is-declined">Declined</span>
+          <span class="stock-request-status is-declined">Declined / cancelled</span>
           {% else %}
           <span class="stock-request-status is-pending">Pending</span>
           {% endif %}
@@ -69,15 +73,416 @@
           {% endif %}
         </td>
         <td class="stock-request-table-note" data-label="Note">
-          {% if req.notes %}{{ req.notes }}{% else %}
+          {% if req.response_note %}
+          <span class="stock-request-table-sub">Reason: {{ req.response_note }}</span>
+          {% elif req.notes %}{{ req.notes }}{% else %}
           <span class="stock-request-table-sub">—</span>
           {% endif %}
         </td>
+        <td class="stock-request-table-view" data-label="View">
+          <button
+            type="button"
+            class="ax-eye stock-request-view-eye"
+            data-stock-request-view
+            data-request-status="{{ req.request_status|default:'pending' }}"
+            data-request-id="{{ req.pk }}"
+            data-from-shop="{% if req.shop %}{{ req.shop.name }}{% endif %}"
+            data-to-shop="{% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% endif %}"
+            data-responded-by="{% if req.responded_by %}{{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}{% endif %}"
+            data-note="{% if req.notes %}{{ req.notes }}{% endif %}"
+            data-response-note="{% if req.response_note %}{{ req.response_note }}{% endif %}"
+            aria-label="View transfer #{{ req.pk }} details"
+          >
+            <i data-lucide="eye" aria-hidden="true"></i>
+          </button>
+          <ul class="stock-request-view-data" hidden>
+            {% for line in req.lines.all %}
+            <li data-item-name="{{ line.item.name }}" data-item-qty="{{ line.quantity }}"></li>
+            {% endfor %}
+          </ul>
+        </td>
+        {% if allow_cancel %}
+        <td class="stock-request-table-action" data-label="Cancel">
+          {% if req.request_status == "pending" %}
+          <button
+            type="button"
+            class="btn btn--ghost btn--sm"
+            data-stock-request-cancel
+            data-request-id="{{ req.pk }}"
+            data-to-shop="{% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% else %}receiving shop{% endif %}"
+            aria-label="Cancel transfer #{{ req.pk }}"
+          >
+            Cancel
+          </button>
+          {% else %}
+          <span class="stock-request-table-sub">—</span>
+          {% endif %}
+        </td>
+        {% endif %}
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+
+{% if allow_cancel %}
+<div
+  class="workspace-modal stock-request-cancel-modal"
+  data-stock-request-cancel-modal
+  data-cancel-url="{{ cancel_transfer_url|default:request.path }}"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-stock-request-cancel-close></div>
+  <div
+    class="workspace-modal-dialog stock-request-cancel-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stock-request-cancel-title"
+  >
+    <header class="workspace-modal-head">
+      <div>
+        <p class="stock-request-view-kicker">Pending transfer</p>
+        <h2 id="stock-request-cancel-title">Cancel transfer</h2>
+      </div>
+      <button type="button" class="workspace-modal-close" data-stock-request-cancel-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+    <form class="stock-request-cancel-form" data-stock-request-cancel-form method="post" action="{{ cancel_transfer_url|default:request.path }}">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="cancel_transfer">
+      <input type="hidden" name="mode" value="request">
+      <input type="hidden" name="movement_id" value="" data-stock-request-cancel-id>
+      <div class="stock-request-cancel-body">
+        <p class="stock-request-cancel-lead" data-stock-request-cancel-lead>
+          Cancel this pending transfer. No stock will move. Use this when the quantity or items were wrong — receiving shops cannot confirm mismatched quantities.
+        </p>
+        <div class="stock-request-cancel-presets" role="group" aria-label="Quick reasons">
+          <button type="button" class="btn btn--ghost btn--sm" data-cancel-preset="Wrong quantity">Wrong quantity</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-cancel-preset="Wrong items">Wrong items</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-cancel-preset="Sent by mistake">Sent by mistake</button>
+        </div>
+        <label class="field">
+          <span class="field-label">Reason for cancelling</span>
+          <textarea
+            name="cancel_reason"
+            rows="3"
+            required
+            maxlength="500"
+            placeholder="e.g. Wrong quantity — sent 10 instead of 5"
+            data-stock-request-cancel-reason
+          ></textarea>
+        </label>
+        <p class="stock-request-cancel-status" data-stock-request-cancel-status hidden></p>
+      </div>
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-stock-request-cancel-close>Keep pending</button>
+        <button type="submit" class="btn btn--primary" data-stock-request-cancel-submit>Cancel transfer</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div
+  class="workspace-modal stock-request-view-modal"
+  data-stock-request-view-modal
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-stock-request-view-close></div>
+  <div
+    class="workspace-modal-dialog stock-request-view-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stock-request-view-title"
+  >
+    <header class="workspace-modal-head">
+      <div>
+        <p class="stock-request-view-kicker" data-stock-request-view-kicker>Transfer details</p>
+        <h2 id="stock-request-view-title" data-stock-request-view-title>Transfer</h2>
+      </div>
+      <button type="button" class="workspace-modal-close" data-stock-request-view-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+    <div class="stock-request-view-body">
+      <div class="stock-request-view-status" data-stock-request-view-status hidden></div>
+      <p class="stock-request-view-meta" data-stock-request-view-meta></p>
+      <div class="stock-request-view-items-wrap" data-stock-request-view-items-wrap>
+        <p class="stock-request-view-items-label" data-stock-request-view-items-label>Items received</p>
+        <ul class="stock-request-view-list" data-stock-request-view-list></ul>
+      </div>
+      <p class="stock-request-view-note" data-stock-request-view-note hidden></p>
+    </div>
+    <div class="workspace-modal-actions">
+      <button type="button" class="btn btn--primary" data-stock-request-view-close>Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const modal = document.querySelector("[data-stock-request-view-modal]");
+    if (!modal || modal.dataset.bound === "1") return;
+    modal.dataset.bound = "1";
+
+    const titleEl = modal.querySelector("[data-stock-request-view-title]");
+    const kickerEl = modal.querySelector("[data-stock-request-view-kicker]");
+    const statusEl = modal.querySelector("[data-stock-request-view-status]");
+    const metaEl = modal.querySelector("[data-stock-request-view-meta]");
+    const itemsWrap = modal.querySelector("[data-stock-request-view-items-wrap]");
+    const itemsLabel = modal.querySelector("[data-stock-request-view-items-label]");
+    const listEl = modal.querySelector("[data-stock-request-view-list]");
+    const noteEl = modal.querySelector("[data-stock-request-view-note]");
+    const body = document.body;
+
+    const escapeHtml = (value) =>
+      String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+    const setOpen = (open) => {
+      modal.hidden = !open;
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+      body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+      if (open && window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    const openFromButton = (btn) => {
+      const cell = btn.closest(".stock-request-table-view");
+      const status = (btn.getAttribute("data-request-status") || "pending").trim().toLowerCase();
+      const requestId = (btn.getAttribute("data-request-id") || "").trim();
+      const fromShop = (btn.getAttribute("data-from-shop") || "").trim();
+      const toShop = (btn.getAttribute("data-to-shop") || "").trim();
+      const respondedBy = (btn.getAttribute("data-responded-by") || "").trim();
+      const note = (btn.getAttribute("data-note") || "").trim();
+      const responseNote = (btn.getAttribute("data-response-note") || "").trim();
+      const items = [...(cell?.querySelectorAll(".stock-request-view-data li") || [])].map((li) => ({
+        name: (li.getAttribute("data-item-name") || "").trim(),
+        qty: (li.getAttribute("data-item-qty") || "").trim(),
+      })).filter((item) => item.name);
+
+      if (titleEl) {
+        titleEl.textContent = requestId
+          ? `Transfer #${requestId}`
+          : "Transfer details";
+      }
+      if (kickerEl) {
+        kickerEl.textContent =
+          fromShop && toShop ? `${fromShop} → ${toShop}` : "Transfer details";
+      }
+      if (metaEl) {
+        const parts = [];
+        if (toShop) parts.push(`Receiving shop: ${toShop}`);
+        if (respondedBy) parts.push(`By: ${respondedBy}`);
+        metaEl.textContent = parts.join(" · ");
+        metaEl.hidden = !parts.length;
+      }
+
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.className = "stock-request-view-status";
+        if (status === "fulfilled") {
+          statusEl.classList.add("is-accepted");
+          statusEl.textContent = "Accepted — items received by this shop";
+        } else if (status === "declined") {
+          statusEl.classList.add("is-declined");
+          statusEl.textContent = responseNote
+            ? `Declined / cancelled — ${responseNote}`
+            : "This transfer was declined or cancelled";
+        } else {
+          statusEl.classList.add("is-pending");
+          statusEl.textContent = "Pending confirmation from the receiving shop";
+        }
+      }
+
+      if (itemsWrap && listEl && itemsLabel) {
+        if (status === "declined") {
+          itemsWrap.hidden = true;
+          listEl.innerHTML = "";
+        } else {
+          itemsWrap.hidden = false;
+          itemsLabel.textContent =
+            status === "fulfilled" ? "Items received" : "Items requested";
+          if (!items.length) {
+            listEl.innerHTML =
+              '<li class="stock-request-view-empty">No line items on this transfer.</li>';
+          } else {
+            listEl.innerHTML = items
+              .map(
+                (item) =>
+                  `<li><span class="stock-request-view-item-name">${escapeHtml(
+                    item.name
+                  )}</span><span class="stock-request-view-item-qty">×${escapeHtml(
+                    item.qty
+                  )}</span></li>`
+              )
+              .join("");
+          }
+        }
+      }
+
+      if (noteEl) {
+        const displayNote = responseNote || note;
+        if (displayNote) {
+          noteEl.hidden = false;
+          noteEl.textContent = responseNote
+            ? `Reason: ${responseNote}`
+            : `Note: ${note}`;
+        } else {
+          noteEl.hidden = true;
+          noteEl.textContent = "";
+        }
+      }
+
+      setOpen(true);
+    };
+
+    document.addEventListener("click", (event) => {
+      const openBtn = event.target.closest("[data-stock-request-view]");
+      if (openBtn) {
+        event.preventDefault();
+        openFromButton(openBtn);
+        return;
+      }
+      if (event.target.closest("[data-stock-request-view-close]")) {
+        if (!modal.hidden) setOpen(false);
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) setOpen(false);
+    });
+  })();
+
+  (() => {
+    const modal = document.querySelector("[data-stock-request-cancel-modal]");
+    if (!modal || modal.dataset.bound === "1") return;
+    modal.dataset.bound = "1";
+
+    const form = modal.querySelector("[data-stock-request-cancel-form]");
+    const idInput = modal.querySelector("[data-stock-request-cancel-id]");
+    const reasonInput = modal.querySelector("[data-stock-request-cancel-reason]");
+    const leadEl = modal.querySelector("[data-stock-request-cancel-lead]");
+    const statusEl = modal.querySelector("[data-stock-request-cancel-status]");
+    const submitBtn = modal.querySelector("[data-stock-request-cancel-submit]");
+    const body = document.body;
+    const csrfInput = form?.querySelector("input[name=csrfmiddlewaretoken]");
+
+    const setOpen = (open) => {
+      modal.hidden = !open;
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+      body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+      if (open && window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    const setStatus = (text, isError = false) => {
+      if (!statusEl) return;
+      if (!text) {
+        statusEl.hidden = true;
+        statusEl.textContent = "";
+        return;
+      }
+      statusEl.hidden = false;
+      statusEl.textContent = text;
+      statusEl.classList.toggle("is-error", isError);
+      statusEl.classList.toggle("is-ok", !isError);
+    };
+
+    const openCancel = (btn) => {
+      const requestId = (btn.getAttribute("data-request-id") || "").trim();
+      const toShop = (btn.getAttribute("data-to-shop") || "receiving shop").trim();
+      if (!requestId || !idInput || !reasonInput) return;
+      idInput.value = requestId;
+      reasonInput.value = "";
+      setStatus("");
+      if (leadEl) {
+        leadEl.textContent =
+          `Cancel transfer #${requestId} to ${toShop}. No stock will move. Use this when quantity or items were wrong — receiving shops cannot confirm mismatched quantities.`;
+      }
+      setOpen(true);
+      reasonInput.focus();
+    };
+
+    document.addEventListener("click", (event) => {
+      const openBtn = event.target.closest("[data-stock-request-cancel]");
+      if (openBtn) {
+        event.preventDefault();
+        openCancel(openBtn);
+        return;
+      }
+      const preset = event.target.closest("[data-cancel-preset]");
+      if (preset && modal.contains(preset) && reasonInput) {
+        event.preventDefault();
+        reasonInput.value = preset.getAttribute("data-cancel-preset") || "";
+        reasonInput.focus();
+        return;
+      }
+      if (event.target.closest("[data-stock-request-cancel-close]")) {
+        if (!modal.hidden) setOpen(false);
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) setOpen(false);
+    });
+
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const reason = (reasonInput?.value || "").trim();
+      if (reason.length < 3) {
+        setStatus("Enter a reason (at least 3 characters), e.g. Wrong quantity.", true);
+        reasonInput?.focus();
+        return;
+      }
+      if (submitBtn) submitBtn.disabled = true;
+      setStatus("Cancelling transfer…");
+
+      try {
+        const bodyData = new FormData(form);
+        bodyData.set("ajax", "1");
+        const response = await fetch(
+          form.getAttribute("action") || modal.getAttribute("data-cancel-url") || window.location.href,
+          {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "X-CSRFToken": csrfInput?.value || "",
+            },
+            credentials: "same-origin",
+            body: bodyData,
+          }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          setStatus(data.error || "Could not cancel this transfer.", true);
+          if (submitBtn) submitBtn.disabled = false;
+          return;
+        }
+        setStatus(data.message || "Transfer cancelled. Refreshing…");
+        const next = data.next || window.location.href;
+        window.setTimeout(() => {
+          try {
+            const url = new URL(next, window.location.origin);
+            url.searchParams.set("_r", String(Date.now()));
+            window.location.replace(url.pathname + url.search + url.hash);
+          } catch {
+            window.location.href = next;
+          }
+        }, 350);
+      } catch (_error) {
+        setStatus("Network error while cancelling. Try again.", true);
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  })();
+</script>
 {% else %}
 <p class="stock-request-history-empty">{{ empty_message }}</p>
 {% endif %}

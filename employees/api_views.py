@@ -34,29 +34,41 @@ def ping_api(request):
 
     Also refreshes the CSRF cookie so long-lived stock-in pages keep a valid token,
     and reports whether the browser still has a live shop/employee session.
+    Both portals may be signed in at once; shop_auth / employee_auth are independent.
     """
     from django.urls import reverse
 
     from shops.session import is_shop_portal_session, resolve_portal_shop
 
-    auth = "none"
-    login_url = reverse("employees:login")
+    shop_auth = resolve_portal_shop(request) is not None
+    employee_auth = False
+    if getattr(request, "user", None) is not None and request.user.is_authenticated:
+        meta = get_employee_meta_for_request(request) or {}
+        employee_auth = meta.get("status") == EmployeeStatus.ACTIVE
 
-    portal_shop = resolve_portal_shop(request)
-    if portal_shop is not None:
+    if shop_auth:
         auth = "shop"
         login_url = reverse("employees:shop_login")
-    elif getattr(request, "user", None) is not None and request.user.is_authenticated:
-        meta = get_employee_meta_for_request(request) or {}
-        if meta.get("status") == EmployeeStatus.ACTIVE:
-            auth = "employee"
-        else:
-            login_url = reverse("employees:login")
+    elif employee_auth:
+        auth = "employee"
+        login_url = reverse("employees:login")
     elif is_shop_portal_session(request):
         # Stale portal flag without a resolvable shop — treat as logged out.
+        auth = "none"
         login_url = reverse("employees:shop_login")
+    else:
+        auth = "none"
+        login_url = reverse("employees:login")
 
-    return JsonResponse({"ok": True, "auth": auth, "login_url": login_url})
+    return JsonResponse(
+        {
+            "ok": True,
+            "auth": auth,
+            "shop_auth": shop_auth,
+            "employee_auth": employee_auth,
+            "login_url": login_url,
+        }
+    )
 
 
 @rate_limit("sync")

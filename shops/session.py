@@ -7,6 +7,7 @@ from items.services import actionable_shops_for_profile
 
 SESSION_SHOP_KEY = "active_shop_id"
 SESSION_SHOP_PORTAL_KEY = "shop_portal_auth"
+SESSION_SHOP_PORTAL_SHOP_KEY = "shop_portal_shop_id"
 SESSION_SHOP_PORTAL_TOUCH_KEY = "_shop_portal_touch"
 # Shop portal stays signed in until explicit logout. Refreshed on each use.
 SHOP_PORTAL_SESSION_AGE = 60 * 60 * 24 * 365 * 10
@@ -14,6 +15,13 @@ SHOP_PORTAL_SESSION_AGE = 60 * 60 * 24 * 365 * 10
 SHOP_PORTAL_TOUCH_INTERVAL = 60 * 60
 
 _UNSET = object()
+
+# Keys that belong to the shop portal auth namespace (independent of employee auth).
+SHOP_PORTAL_SESSION_KEYS = (
+    SESSION_SHOP_PORTAL_KEY,
+    SESSION_SHOP_PORTAL_SHOP_KEY,
+    SESSION_SHOP_PORTAL_TOUCH_KEY,
+)
 
 
 def shops_for_profile(profile):
@@ -39,6 +47,46 @@ def is_shop_portal_session(request) -> bool:
     return bool(request.session.get(SESSION_SHOP_PORTAL_KEY))
 
 
+def get_portal_shop_id(request):
+    """Return the shop portal shop id, with legacy active_shop_id fallback."""
+    value = request.session.get(SESSION_SHOP_PORTAL_SHOP_KEY)
+    if value:
+        return str(value)
+    # Legacy cookies stored portal identity in the shared employee floor key.
+    if is_shop_portal_session(request):
+        legacy = get_active_shop_id(request)
+        if legacy:
+            request.session[SESSION_SHOP_PORTAL_SHOP_KEY] = legacy
+            return legacy
+    return ""
+
+
+def snapshot_shop_portal_session(request) -> dict:
+    """Capture shop portal keys so they can survive an employee logout flush."""
+    session = request.session
+    snap = {}
+    for key in SHOP_PORTAL_SESSION_KEYS:
+        if key in session:
+            snap[key] = session[key]
+    # Preserve legacy portal identity if only active_shop_id was set.
+    if SESSION_SHOP_PORTAL_KEY in snap and SESSION_SHOP_PORTAL_SHOP_KEY not in snap:
+        legacy = get_active_shop_id(request)
+        if legacy:
+            snap[SESSION_SHOP_PORTAL_SHOP_KEY] = legacy
+    return snap
+
+
+def restore_shop_portal_session(request, snap: dict):
+    """Restore shop portal keys after a session flush that cleared them."""
+    if not snap:
+        return
+    for key, value in snap.items():
+        request.session[key] = value
+    request.session.modified = True
+    if hasattr(request, "_portal_shop_cache"):
+        delattr(request, "_portal_shop_cache")
+
+
 def persist_shop_portal_session(request, *, force: bool = False):
     """Keep the shop portal cookie alive until the user signs out.
 
@@ -62,17 +110,20 @@ def persist_shop_portal_session(request, *, force: bool = False):
 
 def set_shop_portal_session(request, shop):
     """Mark the browser as signed in to a shop via the public shop portal."""
-    set_active_shop(request, shop)
+    request.session[SESSION_SHOP_PORTAL_SHOP_KEY] = str(shop.pk)
     request.session[SESSION_SHOP_PORTAL_KEY] = True
+    if hasattr(request, "_portal_shop_cache"):
+        delattr(request, "_portal_shop_cache")
     persist_shop_portal_session(request, force=True)
 
 
 def clear_shop_portal_session(request):
-    clear_active_shop(request)
-    if SESSION_SHOP_PORTAL_KEY in request.session:
-        del request.session[SESSION_SHOP_PORTAL_KEY]
-    if SESSION_SHOP_PORTAL_TOUCH_KEY in request.session:
-        del request.session[SESSION_SHOP_PORTAL_TOUCH_KEY]
+    """End shop portal auth without touching employee floor unlock keys."""
+    for key in SHOP_PORTAL_SESSION_KEYS:
+        if key in request.session:
+            del request.session[key]
+    if hasattr(request, "_portal_shop_cache"):
+        delattr(request, "_portal_shop_cache")
 
 
 def resolve_portal_shop(request):
@@ -85,7 +136,7 @@ def resolve_portal_shop(request):
         request._portal_shop_cache = None
         return None
 
-    shop_id = get_active_shop_id(request)
+    shop_id = get_portal_shop_id(request)
     if not shop_id:
         clear_shop_portal_session(request)
         request._portal_shop_cache = None
@@ -187,10 +238,13 @@ def shop_portal_login_url() -> str:
 
 
 def clear_expired_portal_session(request):
-    """Drop leftover shop/employee auth so the browser is fully signed out."""
-    from employees.portal_auth import end_all_portal_sessions
+    """Drop shop portal auth when shop-floor access has expired.
 
-    end_all_portal_sessions(request)
+    Leaves any employee session intact so both portals can coexist.
+    """
+    from employees.portal_auth import end_shop_portal_session
+
+    end_shop_portal_session(request)
 
 
 def session_expired_response(request, *, login_url=None, as_json=None):

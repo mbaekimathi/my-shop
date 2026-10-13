@@ -865,6 +865,20 @@
 
     const tracksSerial = (cell) => cell.getAttribute("data-track-serial") === "1";
 
+    /** Qty (and buy price on stock-in) must be finished before the row pins to the top. */
+    const rowReadyToPromote = (row) => {
+      if (!row) return false;
+      const filledCells = [
+        ...row.querySelectorAll("[data-stock-shop-cell]"),
+      ].filter((c) => cellQty(c) > 0);
+      if (!filledCells.length) return false;
+      if (mode === "in") {
+        return filledCells.every((c) => cellHasPrice(c));
+      }
+      // Stock-out / request: qty is enough here; reason/refund live in the submit panel.
+      return true;
+    };
+
     const updateFilledGroupMeta = (section) => {
       if (!section) return;
       const count = section.querySelectorAll("[data-item-row]").length;
@@ -926,9 +940,20 @@
         ...row.querySelectorAll("[data-stock-shop-cell]"),
       ].some((c) => cellQty(c) > 0);
       row.classList.toggle("is-filled", rowFilled);
-      // Pin stocked lines into the persistent top group immediately so live
-      // search never hides an in-progress item while looking up the next one.
-      reorderFilledRow(row);
+      // Only sink while typing (cleared, or incomplete after it was already pinned).
+      // Promotion waits for Enter / leave-row once qty (+ buying price) are complete.
+      if (!rowFilled) {
+        reorderFilledRow(row);
+        return;
+      }
+      if (
+        row.closest("[data-stock-filled-group]") &&
+        !rowReadyToPromote(row)
+      ) {
+        row.classList.remove("is-filled");
+        reorderFilledRow(row);
+        row.classList.add("is-filled");
+      }
     };
 
     const syncCellBalance = (cell) => {
@@ -959,35 +984,59 @@
       searchInput.dispatchEvent(new Event("search", { bubbles: true }));
     };
 
-    const promoteRowAfterLeave = (row) => {
-      if (!row) return;
-      // Refresh filled state from current inputs, then move only after the user left.
+    const focusItemSearch = () => {
+      const searchInput = panel.querySelector("[data-item-search]");
+      searchInput?.focus();
+    };
+
+    const promoteCompletedRow = (row, { clearSearch = true } = {}) => {
+      if (!row) return false;
       row.querySelectorAll("[data-stock-shop-cell]").forEach((cell) => {
         cell.classList.toggle("is-filled", cellQty(cell) > 0);
+        syncCellBalance(cell);
       });
       const rowFilled = [
         ...row.querySelectorAll("[data-stock-shop-cell]"),
       ].some((c) => cellQty(c) > 0);
       row.classList.toggle("is-filled", rowFilled);
+      if (!rowFilled) {
+        reorderFilledRow(row);
+        return false;
+      }
+      if (!rowReadyToPromote(row)) return false;
       reorderFilledRow(row);
-      if (!rowFilled) return;
-      // Stock-in: wait until qty + buying price are both set before clearing
-      // search so the user can immediately look up the next item.
-      const readyToClear =
-        mode !== "in" ||
-        [...row.querySelectorAll("[data-stock-shop-cell]")].some(
-          (c) => cellQty(c) > 0 && cellHasPrice(c)
-        );
-      if (readyToClear) {
-        // Defer so focus can land on the next field before catalog reload parks rows.
+      if (clearSearch) {
+        // Defer so focus can land on search before catalog reload parks rows.
         window.setTimeout(() => clearLiveSearchIfUsed(), 0);
       }
+      return true;
+    };
+
+    const promoteRowAfterLeave = (row) => {
+      if (!row) return;
+      // Move to the top only after the user leaves AND line details are complete.
+      if (promoteCompletedRow(row)) return;
+      const rowFilled = [
+        ...row.querySelectorAll("[data-stock-shop-cell]"),
+      ].some((c) => cellQty(c) > 0);
+      if (!rowFilled || mode !== "in") return;
+      const missing = [...row.querySelectorAll("[data-stock-shop-cell]")].find(
+        (c) => cellQty(c) > 0 && !cellHasPrice(c)
+      );
+      if (!missing) return;
+      setApplyStatus(
+        `Enter unit buying price for ${
+          missing.dataset.itemName || "this item"
+        } before it moves up.`,
+        true
+      );
     };
 
     const reorderFilledRow = (row) => {
       if (!row) return;
       const fromSection = row.closest(".stock-category");
-      if (row.classList.contains("is-filled")) {
+      // Pin to the top group only when the line is complete (qty + buy price on in).
+      if (row.classList.contains("is-filled") && rowReadyToPromote(row)) {
         const tbody = ensureLiveFilledTbody();
         if (tbody) {
           if (tbody.firstElementChild !== row) {
@@ -1006,8 +1055,9 @@
         return;
       }
 
-      // Cleared: leave the selected group and sink under remaining filled rows.
+      // Cleared / incomplete: leave catalog rows in place; sink only if already pinned.
       const selected = row.closest("[data-stock-filled-group]");
+      if (!selected && row.classList.contains("is-filled")) return;
       const catalogRoot = panel.querySelector("[data-stock-catalog-root]");
       const home =
         catalogRoot?.querySelector(
@@ -1782,7 +1832,20 @@
         serialModal.setAttribute("aria-hidden", "true");
       }
       document.body.classList.remove("workspace-modal-open");
-      if (cell) markFilled(cell);
+      if (!cell) return;
+      markFilled(cell);
+      const row = cell.closest("[data-item-row]");
+      if (save && row && promoteCompletedRow(row)) {
+        focusItemSearch();
+        return;
+      }
+      if (save && mode === "in") {
+        const price = cell.querySelector("[data-stock-buying-price]");
+        if (price && !String(price.value || "").trim()) {
+          price.focus();
+          price.select?.();
+        }
+      }
     };
 
     const runSerialSearch = async (input) => {
@@ -1903,6 +1966,64 @@
       ) {
         markFilled(cell);
         renderSummary();
+      }
+    });
+
+    // Enter: qty → buying price (stock-in), then promote + jump to search for the next item.
+    panel.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        !target.matches(
+          "[data-stock-shop-cell] [data-stock-qty]:not([type='hidden']):not([readonly]), [data-stock-shop-cell] [data-stock-buying-price]"
+        )
+      ) {
+        return;
+      }
+      const cell = target.closest("[data-stock-shop-cell]");
+      const row = target.closest("[data-item-row]");
+      if (!cell || !row) return;
+      event.preventDefault();
+      event.stopPropagation();
+      markFilled(cell);
+      renderSummary();
+
+      if (target.matches("[data-stock-qty]")) {
+        if (mode === "in") {
+          const price = cell.querySelector("[data-stock-buying-price]");
+          if (price && !String(price.value || "").trim()) {
+            price.focus();
+            price.select?.();
+            return;
+          }
+        }
+        if (promoteCompletedRow(row)) {
+          focusItemSearch();
+          return;
+        }
+        if (mode === "in") {
+          const price = cell.querySelector("[data-stock-buying-price]");
+          price?.focus();
+          price?.select?.();
+        }
+        return;
+      }
+
+      if (target.matches("[data-stock-buying-price]")) {
+        if (cellQty(cell) <= 0) {
+          const qty = cell.querySelector(
+            "[data-stock-qty]:not([type='hidden']):not([readonly])"
+          );
+          qty?.focus();
+          qty?.select?.();
+          setApplyStatus("Enter quantity before this item moves up.", true);
+          return;
+        }
+        if (promoteCompletedRow(row)) {
+          focusItemSearch();
+          return;
+        }
       }
     });
 

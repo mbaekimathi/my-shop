@@ -25,8 +25,8 @@
       <div>
         <h2>Main website</h2>
         <p>
-          Choose which shop catalogue appears on your <strong>main domain</strong>
-          (apex). Branch links below stay on the app subdomain.
+          When a shop is selected, home (<code>/</code>) shows that catalogue.
+          When set to <strong>Not set</strong>, home sends visitors to the login page.
         </p>
       </div>
     </div>
@@ -38,29 +38,15 @@
 
     <div class="marketing-main-form__fields">
       <label class="field">
-        <span class="field-label">Shop website to show on the main domain</span>
+        <span class="field-label">Shop website on the landing page</span>
         <select name="main_website_shop_id" aria-label="Main website shop">
-          <option value="">— Not set —</option>
+          <option value="">— Not set (login page) —</option>
           {% for link in marketing_links %}
           <option value="{{ link.id }}"{% if link.id == main_website_shop_id %} selected{% endif %}>
             {{ link.name }} · {{ link.location }}
           </option>
           {% endfor %}
         </select>
-      </label>
-
-      <label class="field">
-        <span class="field-label">Main domain (apex)</span>
-        <input
-          type="text"
-          name="main_website_domain"
-          value="{{ main_website_domain }}"
-          placeholder="example.com"
-          autocomplete="off"
-          spellcheck="false"
-          aria-label="Main website domain"
-        >
-        <span class="field-hint">No https:// — e.g. richcom.co.ke (www is accepted automatically).</span>
       </label>
     </div>
 
@@ -69,73 +55,46 @@
         <i data-lucide="save" aria-hidden="true"></i>
         <span>Save main website</span>
       </button>
-      {% if main_website_guide.preview_url and main_website_shop_id %}
-      <a class="btn btn--ghost" href="{{ main_website_guide.preview_url }}" target="_blank" rel="noopener noreferrer">
+      {% if main_website_guide.is_on %}
+      <a class="btn btn--ghost" href="{{ main_website_guide.home_url }}" target="_blank" rel="noopener noreferrer">
         <i data-lucide="external-link" aria-hidden="true"></i>
-        <span>Preview on this host</span>
+        <span>Open landing page</span>
+      </a>
+      {% else %}
+      <a class="btn btn--ghost" href="{{ main_website_guide.login_url }}" target="_blank" rel="noopener noreferrer">
+        <i data-lucide="log-in" aria-hidden="true"></i>
+        <span>Open login page</span>
       </a>
       {% endif %}
     </div>
   </form>
 
   <div class="marketing-guide">
-    <h3>How to show this page on your main domain</h3>
-    <p>
-      Shop websites live on the app subdomain
-      {% if main_website_guide.app_host %}
-      (<code>{{ main_website_guide.app_host }}</code>)
-      {% endif %}
-      as <code>/shop/&lt;id&gt;/</code>.
-      Your main domain should hit the <em>same</em> Django app; when the host matches the apex you set above, <code>/</code> serves the selected shop catalogue.
-    </p>
+    <h3>How the landing page works</h3>
     <ol class="marketing-guide__steps">
       <li>
-        <strong>Pick the shop</strong> and enter the apex domain, then save.
+        <strong>On</strong> — pick a shop and save.
+        Home (<code>/</code>) shows that shop catalogue.
         {% if main_website_guide.shop_name %}
-        Currently: <em>{{ main_website_guide.shop_name }}</em>
-        {% if main_website_guide.apex_domain %} on <code>{{ main_website_guide.apex_domain }}</code>{% endif %}.
+        Currently: <em>{{ main_website_guide.shop_name }}</em>.
         {% endif %}
       </li>
       <li>
-        <strong>DNS</strong> — In your domain DNS (cPanel / registrar), point the apex
-        {% if main_website_guide.apex_domain %}<code>{{ main_website_guide.apex_domain }}</code>{% else %}(your main domain){% endif %}
-        and <code>www</code> to the same server that hosts
-        {% if main_website_guide.app_host %}<code>{{ main_website_guide.app_host }}</code>{% else %}the app subdomain{% endif %}
-        (same A record or CNAME alias as the subdomain).
+        <strong>Off</strong> — choose <em>Not set (login page)</em> and save.
+        Home (<code>/</code>) redirects to the staff/shop login page.
       </li>
       <li>
-        <strong>Hosting</strong> — Add the apex (and www) as an <em>Alias</em> or <em>Addon Domain</em>
-        that uses the same document root / Passenger app as the subdomain. Do not point it at a different folder.
-      </li>
-      <li>
-        <strong>Django hosts</strong> — If <code>DJANGO_ALLOWED_HOSTS</code> is a fixed list (not <code>auto</code>),
-        add the apex and www. Also add
-        {% if main_website_guide.apex_url %}<code>{{ main_website_guide.apex_url|slice:":-1" }}</code>{% else %}<code>https://your-domain</code>{% endif %}
-        to <code>DJANGO_CSRF_TRUSTED_ORIGINS</code>.
-      </li>
-      <li>
-        <strong>Check</strong> —
-        {% if main_website_guide.apex_url %}
-        open <a href="{{ main_website_guide.apex_url }}" target="_blank" rel="noopener noreferrer">{{ main_website_guide.apex_url }}</a>
-        {% else %}
-        open <code>https://your-main-domain/</code>
-        {% endif %}
-        — visitors see the selected shop website.
-        Staff keep using the subdomain for the portal
-        {% if main_website_guide.app_origin %}(<code>{{ main_website_guide.app_origin }}</code>){% endif %}.
+        Branch links below stay available as <code>/shop/&lt;id&gt;/</code> for ads and QR codes.
+        Staff login stays at
+        <a href="{{ main_website_guide.login_url }}" target="_blank" rel="noopener noreferrer"><code>{{ main_website_guide.login_url }}</code></a>.
       </li>
     </ol>
     {% if main_website_guide.subdomain_url %}
     <p class="marketing-guide__urls">
-      Branch URL (subdomain path):
+      Selected shop URL:
       <a href="{{ main_website_guide.subdomain_url }}" target="_blank" rel="noopener noreferrer">{{ main_website_guide.subdomain_url }}</a><br>
-      Same catalogue preview on this host:
-      <a href="{{ main_website_guide.preview_url }}" target="_blank" rel="noopener noreferrer">{{ main_website_guide.preview_url }}</a>
-      {% if main_website_guide.apex_url %}
-      <br>
-      Main domain home (after DNS):
-      <a href="{{ main_website_guide.apex_url }}" target="_blank" rel="noopener noreferrer">{{ main_website_guide.apex_url }}</a>
-      {% endif %}
+      Landing page:
+      <a href="{{ main_website_guide.home_url }}" target="_blank" rel="noopener noreferrer">{{ main_website_guide.home_url }}</a>
     </p>
     {% endif %}
   </div>

@@ -358,11 +358,28 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(empty, [])
 
     def test_parse_report_view_by_forces_item_for_single_day(self):
-        from items.views import _parse_report_view_by
+        from items.views import _parse_report_view_by, _parse_stock_view_by
 
         self.assertEqual(_parse_report_view_by("day", range_type="period"), "day")
         self.assertEqual(_parse_report_view_by("day", range_type="day"), "item")
         self.assertEqual(_parse_report_view_by("bogus", range_type="month"), "item")
+        # Shared View by options on report and movements.
+        self.assertEqual(
+            _parse_stock_view_by("timeline", range_type="year", page_mode="report"),
+            "timeline",
+        )
+        self.assertEqual(
+            _parse_stock_view_by("day", range_type="year", page_mode="movements"),
+            "day",
+        )
+        self.assertEqual(
+            _parse_stock_view_by("item", range_type="year", page_mode="movements"),
+            "item",
+        )
+        self.assertEqual(
+            _parse_stock_view_by("day", range_type="day", page_mode="movements"),
+            "timeline",
+        )
 
     def test_movement_event_filters_support_multi_select(self):
         from items.views import (
@@ -407,10 +424,10 @@ class ItemStockReportRowsTests(TestCase):
             ["out", "sale"],
         )
 
-    def test_audit_pdf_summary_then_transaction_ledger(self):
+    def test_audit_pdf_summary_by_item_includes_system_qty(self):
         from django.utils import timezone
         from items.services import build_stock_report_pdf
-        from items.views import _build_audit_detail_rows, _build_audit_summary_rows
+        from items.views import _build_audit_summary_rows
 
         now = timezone.now()
         events = [
@@ -436,29 +453,31 @@ class ItemStockReportRowsTests(TestCase):
             },
         ]
         summary_headers, summary_rows = _build_audit_summary_rows(
-            events, event_filter="out", qty_label="Stocked out"
+            events,
+            event_filter="out",
+            qty_label="Stocked out",
+            shop_ids=[self.shop_a.pk],
         )
         self.assertEqual(
             summary_headers,
             [
                 "Item",
-                "Category",
+                "Avg buy price",
                 "Transactions",
                 "Stocked out",
+                "System qty",
                 "Actual qty",
                 "Missing",
                 "Excess",
                 "Note",
             ],
         )
-        self.assertEqual(summary_rows[0][:4], [self.item.name, self.item.category, 2, 5])
-        self.assertEqual(summary_rows[0][4:], ["", "", "", ""])
-        self.assertEqual(summary_rows[-1][:4], ["Total", "", 2, 5])
-
-        detail_headers, detail_rows = _build_audit_detail_rows(events)
-        self.assertEqual(detail_headers, ["When", "Type", "Item", "Reason", "Qty"])
-        self.assertEqual(len(detail_rows), 2)
-        self.assertEqual(len(detail_rows[0]), 5)
+        # Shop A on-hand for this item is 2; buy price formats as money.
+        self.assertEqual(summary_rows[0][0], self.item.name)
+        self.assertRegex(str(summary_rows[0][1]), r"^\d[\d,]*\.\d{2}$")
+        self.assertEqual(summary_rows[0][2:5], [2, 5, 2])
+        self.assertEqual(summary_rows[0][5:], ["", "", "", ""])
+        self.assertEqual(summary_rows[-1][:5], ["Total", "", 2, 5, 2])
 
         pdf = build_stock_report_pdf(
             company_name="TEST SHOP",
@@ -474,8 +493,8 @@ class ItemStockReportRowsTests(TestCase):
             summary_rows=summary_rows,
             summary_headers=summary_headers,
             summary_qty_label="Stocked out",
-            detail_rows=detail_rows,
-            detail_headers=detail_headers,
+            detail_rows=None,
+            detail_headers=None,
         )
         self.assertTrue(pdf.startswith(b"%PDF"))
         self.assertGreater(len(pdf), 500)
@@ -765,7 +784,12 @@ class ItemStockReportRowsTests(TestCase):
         )
 
     def test_timeline_transfer_shows_requester_and_receiver(self):
-        from items.views import _build_movement_timeline, _filter_timeline_display_events
+        from items.views import (
+            _build_movement_timeline,
+            _filter_timeline_display_events,
+            _group_timeline_events_by_receipt,
+            _timeline_type_css_class,
+        )
 
         receiver = User.objects.create_user(
             username="840012",
@@ -804,6 +828,130 @@ class ItemStockReportRowsTests(TestCase):
             item=self.item,
             quantity=2,
         )
+        # Sender shop: Transfer out, From=sender → To=receiver
+        out_events, *_ = _build_movement_timeline(
+            shop_ids=[self.shop_a.pk],
+            day_start=self.day_start,
+            day_end=self.day_end,
+            item_mode="all",
+            selected_categories=[],
+            selected_item_ids=[],
+            report_items=[self.item],
+        )
+        out_transfers = [
+            event
+            for event in _filter_timeline_display_events(out_events)
+            if event.get("event_type") == "transfer_fulfilled"
+        ]
+        self.assertEqual(len(out_transfers), 1)
+        out_event = out_transfers[0]
+        self.assertEqual(out_event["transfer_direction"], "out")
+        self.assertEqual(out_event["event_label"], "Transfer out")
+        self.assertEqual(out_event["from_label"], self.shop_a.name)
+        self.assertEqual(out_event["to_label"], self.shop_b.name)
+        self.assertEqual(out_event["from_shop_name"], self.shop_a.name)
+        self.assertEqual(out_event["to_shop_name"], self.shop_b.name)
+        # From/Sent = sender shop + sender person; To/Received = receiver.
+        self.assertEqual(out_event["sent_by"], "STOCK REPORT")
+        self.assertEqual(out_event["requested_by"], "STOCK REPORT")
+        self.assertEqual(out_event["received_by"], "STOCK RECEIVER")
+        self.assertEqual(_timeline_type_css_class(out_event), "transfer-out")
+
+        # Receiver shop: Transfer in, same From → To parties
+        in_events, *_ = _build_movement_timeline(
+            shop_ids=[self.shop_b.pk],
+            day_start=self.day_start,
+            day_end=self.day_end,
+            item_mode="all",
+            selected_categories=[],
+            selected_item_ids=[],
+            report_items=[self.item],
+        )
+        in_transfers = [
+            event
+            for event in _filter_timeline_display_events(in_events)
+            if event.get("event_type") == "transfer_fulfilled"
+        ]
+        self.assertEqual(len(in_transfers), 1)
+        in_event = in_transfers[0]
+        self.assertEqual(in_event["transfer_direction"], "in")
+        self.assertEqual(in_event["event_label"], "Transfer in")
+        self.assertEqual(in_event["from_label"], self.shop_a.name)
+        self.assertEqual(in_event["to_label"], self.shop_b.name)
+        self.assertEqual(in_event["sent_by"], "STOCK REPORT")
+        self.assertEqual(in_event["received_by"], "STOCK RECEIVER")
+        self.assertEqual(_timeline_type_css_class(in_event), "transfer-in")
+
+        groups = _group_timeline_events_by_receipt(in_transfers)
+        self.assertEqual(groups[0]["activities"][0]["type_class"], "transfer-in")
+
+    def test_legacy_transfer_people_swap_pairs_sent_with_from(self):
+        """Pre-send/confirm rows: after shop swap, people must also swap."""
+        import importlib
+        from datetime import timedelta
+
+        from items.models import (
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+            StockRequestStatus,
+        )
+        from items.views import _build_movement_timeline, _filter_timeline_display_events
+
+        people_migration = importlib.import_module(
+            "items.migrations.0043_swap_legacy_transfer_people"
+        )
+        NEW_TRANSFER_SEMANTICS_AT = people_migration.NEW_TRANSFER_SEMANTICS_AT
+        swap_legacy_transfer_people = people_migration.swap_legacy_transfer_people
+
+        # Already shop-swapped (sender=A, receiver=B) but people still on old
+        # request semantics (created_by=receiver staff, responded_by=sender staff).
+        receiver_user = User.objects.create_user(
+            username="840013",
+            password="report-pass",
+            email="legacy-recv@test.local",
+            first_name="LEGACY",
+            last_name="RECV",
+            is_active=True,
+        )
+        receiver_profile = EmployeeProfile.objects.create(
+            user=receiver_user,
+            employee_id="840013",
+            phone_country_code="+254",
+            phone_number="700000943",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        movement = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_a,
+            requested_from_shop=self.shop_b,
+            request_status=StockRequestStatus.FULFILLED,
+            responded_at=self.now,
+            created_by=receiver_profile,
+            responded_by=self.profile,
+        )
+        StockMovement.objects.filter(pk=movement.pk).update(
+            created_at=NEW_TRANSFER_SEMANTICS_AT - timedelta(days=1)
+        )
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=self.item,
+            quantity=1,
+        )
+
+        class _Apps:
+            @staticmethod
+            def get_model(app_label, model_name):
+                from django.apps import apps
+
+                return apps.get_model(app_label, model_name)
+
+        swap_legacy_transfer_people(_Apps(), None)
+        movement.refresh_from_db()
+        self.assertEqual(movement.created_by_id, self.profile.pk)
+        self.assertEqual(movement.responded_by_id, receiver_profile.pk)
+
         events, *_ = _build_movement_timeline(
             shop_ids=[self.shop_a.pk],
             day_start=self.day_start,
@@ -816,14 +964,14 @@ class ItemStockReportRowsTests(TestCase):
         transfers = [
             event
             for event in _filter_timeline_display_events(events)
-            if event.get("event_type") == "transfer_fulfilled"
+            if event.get("movement_id") == movement.pk
         ]
         self.assertEqual(len(transfers), 1)
         event = transfers[0]
-        self.assertEqual(event["requested_by"], "STOCK REPORT")
-        self.assertEqual(event["received_by"], "STOCK RECEIVER")
-        self.assertIn("Requested: STOCK REPORT", event["by"])
-        self.assertIn("Received: STOCK RECEIVER", event["by"])
+        self.assertEqual(event["from_shop_name"], self.shop_a.name)
+        self.assertEqual(event["to_shop_name"], self.shop_b.name)
+        self.assertEqual(event["sent_by"], "STOCK REPORT")
+        self.assertEqual(event["received_by"], "LEGACY RECV")
 
     def test_timeline_sale_keeps_item_after_rename(self):
         from shops.models import (
@@ -2506,6 +2654,164 @@ class RequestItemAuditTests(TestCase):
         self.assertEqual(rows[0]["quantity"], Decimal("2.500"))
         self.assertEqual(summary["fulfilled"], Decimal("2.500"))
         self.assertEqual(summary["count"], 1)
+
+    def test_request_audits_page_includes_transfer_view_eye(self):
+        from items.models import StockMovement, StockMovementLine, StockMovementType, StockRequestStatus
+
+        declined = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_a,
+            requested_from_shop=self.shop_b,
+            request_status=StockRequestStatus.DECLINED,
+            created_by=self.profile,
+            responded_by=self.profile,
+            responded_at=timezone.now(),
+        )
+        StockMovementLine.objects.create(
+            movement=declined,
+            item=self.item,
+            quantity=Decimal("1"),
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/it-support/stock-management/",
+            {
+                "mode": "request-audits",
+                "range": "year",
+                "year": str(timezone.localdate().year),
+                "status": "all",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        self.assertIn('data-stock-request-view', body)
+        self.assertIn('data-stock-request-view-modal', body)
+        self.assertIn(f'data-request-id="{self.movement.pk}"', body)
+        self.assertIn(f'data-request-status="fulfilled"', body)
+        self.assertIn(f'data-request-id="{declined.pk}"', body)
+        self.assertIn('data-request-status="declined"', body)
+        self.assertIn("AUDIT CABLE", body)
+
+    def test_cancel_pending_transfer_requires_reason_and_keeps_stock(self):
+        from items.models import (
+            ShopStock,
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+            StockRequestStatus,
+        )
+        from items.services import cancel_pending_stock_transfer
+
+        ShopStock.objects.create(shop=self.shop_a, item=self.item, quantity=Decimal("5"))
+        pending = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_a,
+            requested_from_shop=self.shop_b,
+            request_status=StockRequestStatus.PENDING,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=pending,
+            item=self.item,
+            quantity=Decimal("2"),
+        )
+
+        with self.assertRaises(Exception):
+            cancel_pending_stock_transfer(
+                movement=pending, profile=self.profile, reason=""
+            )
+
+        self.client.force_login(self.user)
+        page = self.client.get("/it-support/stock-management/", {"mode": "request"})
+        self.assertEqual(page.status_code, 200)
+        body = page.content.decode()
+        self.assertIn("data-stock-request-cancel-modal", body)
+        self.assertIn(f'data-request-id="{pending.pk}"', body)
+        self.assertIn("Cancel transfer", body)
+
+        cancel_pending_stock_transfer(
+            movement=pending,
+            profile=self.profile,
+            reason="Wrong quantity",
+        )
+        pending.refresh_from_db()
+        self.assertEqual(pending.request_status, StockRequestStatus.DECLINED)
+        self.assertEqual(pending.response_note, "Wrong quantity")
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop_a, item=self.item).quantity,
+            Decimal("5.000"),
+        )
+
+        other = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_a,
+            requested_from_shop=self.shop_b,
+            request_status=StockRequestStatus.PENDING,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=other,
+            item=self.item,
+            quantity=Decimal("1"),
+        )
+        response = self.client.post(
+            "/it-support/stock-management/?mode=request",
+            {
+                "action": "cancel_transfer",
+                "mode": "request",
+                "movement_id": str(other.pk),
+                "cancel_reason": "Wrong quantity — sent 1 instead of 3",
+                "ajax": "1",
+            },
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        other.refresh_from_db()
+        self.assertEqual(other.request_status, StockRequestStatus.DECLINED)
+        self.assertIn("Wrong quantity", other.response_note)
+
+    def test_decline_transfer_requires_reason(self):
+        from django.core.exceptions import ValidationError
+
+        from items.models import StockMovement, StockMovementLine, StockMovementType, StockRequestStatus
+        from items.services import respond_to_stock_request
+
+        pending = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_a,
+            requested_from_shop=self.shop_b,
+            request_status=StockRequestStatus.PENDING,
+            created_by=self.profile,
+        )
+        line = StockMovementLine.objects.create(
+            movement=pending,
+            item=self.item,
+            quantity=Decimal("2"),
+        )
+
+        with self.assertRaises(ValidationError):
+            respond_to_stock_request(
+                movement=pending,
+                profile=self.profile,
+                decision="decline",
+                login_code=self.profile.employee_id,
+                reason="",
+            )
+
+        respond_to_stock_request(
+            movement=pending,
+            profile=self.profile,
+            decision="decline",
+            login_code=self.profile.employee_id,
+            reason="Wrong quantity",
+            quantities_by_line={str(line.pk): "1"},
+        )
+        pending.refresh_from_db()
+        self.assertEqual(pending.request_status, StockRequestStatus.DECLINED)
+        self.assertEqual(pending.response_note, "Wrong quantity")
 
 
 class StockSerialReturnClientStatusTests(TestCase):

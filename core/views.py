@@ -1,25 +1,19 @@
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 
 
 def landing(request):
     """
-    Employee portal homepage on the app/subdomain.
-
-    On the configured main (apex) domain, show the selected shop catalogue instead.
+    Public home:
+    - Main website shop selected → show that shop catalogue
+    - Not selected → send visitors to the login page
     """
-    from shops.services import (
-        get_company_profile,
-        get_main_website_shop,
-        main_website_host_matches,
-    )
+    from shops.services import get_main_website_shop
     from shops.views import shop_website
 
-    company = get_company_profile()
     main_shop = get_main_website_shop()
-    domain = getattr(company, "main_website_domain", "") or ""
-    if main_shop and main_website_host_matches(request.get_host(), domain):
+    if main_shop:
         return shop_website(request, main_shop.pk)
-    return render(request, "core/landing.html")
+    return redirect("employees:login")
 
 
 def service_worker(request):

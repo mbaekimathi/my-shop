@@ -119,9 +119,6 @@ def clear_profile_session(request):
         delattr(request, REQUEST_META_ATTR)
     if hasattr(request, REQUEST_PROFILE_ATTR):
         delattr(request, REQUEST_PROFILE_ATTR)
-    from shops.session import clear_shop_portal_session
-
-    clear_shop_portal_session(request)
 
 
 
@@ -161,12 +158,11 @@ def _login_redirect(request, *, message=None, level="error"):
         redirect_to = f"{login_url}?{urlencode({'next': next_path})}"
 
     if _wants_json(request):
-        from django.contrib.auth import logout
         from django.http import JsonResponse
 
-        if getattr(request, "user", None) is not None and request.user.is_authenticated:
-            logout(request)
-        clear_profile_session(request)
+        from .portal_auth import end_employee_session
+
+        end_employee_session(request)
         return JsonResponse(
             {
                 "ok": False,

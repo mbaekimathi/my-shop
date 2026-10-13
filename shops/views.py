@@ -547,7 +547,7 @@ def shop_portal_login(request):
         return redirect(_shop_workspace_url(portal_shop))
 
     # Viewing the login form must not end an existing employee session.
-    # Successful shop sign-in still replaces it via begin_shop_portal_session.
+    # Successful shop sign-in also leaves any employee session intact.
 
     error = None
     login_code = ""
@@ -576,9 +576,9 @@ def shop_portal_login(request):
 
 @require_http_methods(["GET", "POST"])
 def shop_portal_logout(request):
-    from employees.portal_auth import end_all_portal_sessions
+    from employees.portal_auth import end_shop_portal_session
 
-    end_all_portal_sessions(request)
+    end_shop_portal_session(request)
     return redirect("employees:shop_login")
 
 
@@ -841,6 +841,11 @@ def shop_website(request, shop_id):
         kwargs={"shop_id": shop.pk, "item_id": 0},
     ).replace("/0/", "/__ID__/")
     whatsapp_phone = re.sub(r"\D+", "", format_kenya_phone(shop.phone_number or ""))
+    branches = list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False)
+        .only("id", "name", "location", "phone_number", "email")
+        .order_by("name", "id")
+    )
 
     return render(
         request,
@@ -849,6 +854,7 @@ def shop_website(request, shop_id):
             "shop": shop,
             "categories": categories,
             "item_count": len(items),
+            "branches": branches,
             "suggestions_url_template": suggestions_url_template,
             "whatsapp_phone": whatsapp_phone,
             "google_maps_api_key": settings.GOOGLE_MAPS_API_KEY,
@@ -1153,14 +1159,14 @@ def _previous_stock_requests_for_shop(shop, *, limit=20):
 
 def _require_active_shop_session(request, shop_id):
     portal_shop = resolve_portal_shop(request)
-    if portal_shop is not None:
-        if str(portal_shop.pk) != str(shop_id):
-            messages.error(request, "You are signed into a different shop.")
-            return None, None, redirect(_shop_workspace_url(portal_shop))
+    if portal_shop is not None and str(portal_shop.pk) == str(shop_id):
         return None, portal_shop, None
 
     profile = get_profile_for_request(request)
     if profile is None:
+        if portal_shop is not None:
+            messages.error(request, "You are signed into a different shop.")
+            return None, None, redirect(_shop_workspace_url(portal_shop))
         messages.info(request, "Sign in with the shop code to open this workspace.")
         return None, None, redirect("employees:shop_login")
 
@@ -1191,15 +1197,15 @@ def _require_shop_read_access(request, shop_id):
     from shops.session import session_expired_response
 
     portal_shop = resolve_portal_shop(request)
-    if portal_shop is not None:
-        if str(portal_shop.pk) != str(shop_id):
-            return None, None, JsonResponse(
-                {"ok": False, "error": "Shop session required."}, status=403
-            )
+    if portal_shop is not None and str(portal_shop.pk) == str(shop_id):
         return None, portal_shop, None
 
     profile = get_profile_for_request(request)
     if profile is None or not profile.is_active_employee:
+        if portal_shop is not None:
+            return None, None, JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
         return None, None, session_expired_response(request, as_json=True)
 
     shop = get_shop_for_profile(profile, shop_id)
@@ -3033,6 +3039,12 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
 
     decision = (request.POST.get("decision") or "").strip().lower()
     login_code = (request.POST.get("login_code") or "").strip()
+    decline_reason = (
+        request.POST.get("decline_reason")
+        or request.POST.get("cancel_reason")
+        or request.POST.get("reason")
+        or ""
+    ).strip()
     wants_json = _wants_json_response(request)
     serials_by_line = {}
     quantities_by_line = {}
@@ -3054,6 +3066,7 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
             login_code=login_code,
             serials_by_line=serials_by_line,
             quantities_by_line=quantities_by_line,
+            reason=decline_reason,
         )
     except ValidationError as exc:
         errors = _validation_errors(exc)

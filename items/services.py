@@ -3089,6 +3089,80 @@ def _normalize_serial_list(values) -> list[str]:
 
 
 @transaction.atomic
+def _normalize_transfer_response_reason(reason: str) -> str:
+    text = " ".join(str(reason or "").split()).strip()
+    if not text:
+        raise ValidationError(
+            "Enter a reason for cancelling or declining this transfer "
+            "(for example: wrong quantity)."
+        )
+    if len(text) < 3:
+        raise ValidationError("Reason must be at least 3 characters.")
+    return text[:500]
+
+
+def cancel_pending_stock_transfer(*, movement: StockMovement, profile, reason: str):
+    """Cancel a pending transfer from the sending shop / stock-management side.
+
+    Stock has not moved yet, so this only marks the transfer declined and stores
+    the reason for the receiving shop / audit trail.
+    """
+    from django.utils import timezone
+
+    from employees.module_permissions import employee_may
+
+    note = _normalize_transfer_response_reason(reason)
+
+    with transaction.atomic():
+        locked = (
+            StockMovement.objects.select_for_update()
+            .select_related("shop", "requested_from_shop")
+            .filter(pk=movement.pk)
+            .first()
+        )
+        if locked is None:
+            raise ValidationError("This stock transfer could not be found.")
+        movement = locked
+
+        if (
+            movement.movement_type != StockMovementType.REQUEST
+            or movement.request_status != StockRequestStatus.PENDING
+        ):
+            raise ValidationError("This stock transfer is no longer pending.")
+
+        sender = movement.shop
+        if sender is None:
+            raise ValidationError("This stock transfer is missing the sending shop.")
+
+        _assert_shop_allowed(profile, sender, label="sending shop")
+        if not (
+            employee_may(profile, "stock-management", "request")
+            or employee_may(profile, "my-shop", "respond_stock_request")
+        ):
+            raise ValidationError(
+                "You do not have permission to cancel stock transfers."
+            )
+
+        movement.request_status = StockRequestStatus.DECLINED
+        movement.response_note = note
+        # Sender cancelled — they already know; receiving shop drops it from pending.
+        movement.requester_notified = True
+        movement.supplier_notified = True
+        movement.responded_by = profile
+        movement.responded_at = timezone.now()
+        movement.save(
+            update_fields=[
+                "request_status",
+                "response_note",
+                "requester_notified",
+                "supplier_notified",
+                "responded_by",
+                "responded_at",
+            ]
+        )
+        return movement
+
+
 def respond_to_stock_request(
     *,
     movement: StockMovement,
@@ -3097,11 +3171,13 @@ def respond_to_stock_request(
     login_code: str,
     serials_by_line: dict | None = None,
     quantities_by_line: dict | None = None,
+    reason: str = "",
 ):
     """Confirm or decline a pending transfer at the receiving shop.
 
     On accept, received quantities must match what was sent — then stock moves
-    from the sending shop to the receiving shop. Decline leaves stock unchanged.
+    from the sending shop to the receiving shop. Decline leaves stock unchanged
+    and requires a reason (for example wrong quantity).
     """
     from django.utils import timezone
 
@@ -3151,7 +3227,9 @@ def respond_to_stock_request(
         profile = authorising
 
     if decision == "decline":
+        note = _normalize_transfer_response_reason(reason)
         movement.request_status = StockRequestStatus.DECLINED
+        movement.response_note = note
         movement.requester_notified = False
         movement.supplier_notified = True
         movement.responded_by = profile
@@ -3159,6 +3237,7 @@ def respond_to_stock_request(
         movement.save(
             update_fields=[
                 "request_status",
+                "response_note",
                 "requester_notified",
                 "supplier_notified",
                 "responded_by",
@@ -4198,9 +4277,9 @@ def build_stock_report_pdf(
     Compact branded A4 PDF for stock movements / stock report downloads.
 
     Actual reports include item summaries and operational activity columns.
-    Audit PDFs are a separate trail document: amber chrome, event KPIs, a
-    per-item summary (with Actual qty / Missing / Excess / Note blanks), then
-    the full When/Type/Item/Reason/Qty transaction ledger — no buy-price summary.
+    Audit PDFs are a separate trail document: amber chrome, item KPIs, and a
+    per-item summary (System qty plus Actual qty / Missing / Excess / Note
+    blanks) — no transaction ledger or buy-price summary.
     """
     from io import BytesIO
     from pathlib import Path
@@ -4246,7 +4325,18 @@ def build_stock_report_pdf(
         accent_mid = colors.HexColor("#fbbf24")
         surface_warm = colors.HexColor("#fffbeb")
         head_fill = colors.HexColor("#1c1917")
-        row_alt = colors.HexColor("#fafaf9")
+        row_alt = colors.HexColor("#fff7ed")
+        line = colors.HexColor("#fcd34d")
+        line_strong = colors.HexColor("#d97706")
+        # Column tints for the printable audit sheet
+        col_buy = colors.HexColor("#f3e8ff")  # Avg buy price
+        col_tx = colors.HexColor("#eff6ff")  # Transactions
+        col_qty = colors.HexColor("#ecfdf5")  # Movement qty
+        col_system = colors.HexColor("#fef3c7")  # System qty
+        col_actual = colors.HexColor("#e0f2fe")  # Actual qty (fill-in)
+        col_missing = colors.HexColor("#fee2e2")  # Missing
+        col_excess = colors.HexColor("#dcfce7")  # Excess
+        col_note = colors.HexColor("#f5f5f4")  # Note
     else:
         accent = colors.HexColor("#0f766e")
         accent_deep = colors.HexColor("#115e59")
@@ -4579,8 +4669,7 @@ def build_stock_report_pdf(
             Paragraph(
                 _esc(
                     f"{event_filter_label} · {shop_label or 'All shops'} · "
-                    f"{len(detail_rows or [])} event"
-                    f"{'' if len(detail_rows or []) == 1 else 's'}"
+                    "Summary by item"
                 ),
                 hero_sub,
             ),
@@ -4654,18 +4743,27 @@ def build_stock_report_pdf(
         return total
 
     if is_audit:
+        # Summary columns: Item, Category, Transactions, Qty, System qty, ...
+        audit_events = 0
         audit_qty = 0
-        # Detail ledger rows: When, Type, Item, Reason, Qty
-        for row in detail_rows or []:
+        audit_system = 0
+        usable = summary_rows or []
+        if usable and str(usable[-1][0]).strip().lower() == "total":
             try:
-                audit_qty += int(row[4] or 0)
+                audit_events = int(usable[-1][2] or 0)
+                audit_qty = int(usable[-1][3] or 0)
+                audit_system = int(usable[-1][4] or 0)
             except (TypeError, ValueError, IndexError):
                 pass
+        else:
+            audit_events = _sum_qty(usable, 2)
+            audit_qty = _sum_qty(usable, 3)
+            audit_system = _sum_qty(usable, 4)
         kpi_data = [
             ("ITEMS", str(_count_rows(summary_rows))),
-            ("EVENTS", str(len(detail_rows or []))),
+            ("EVENTS", str(audit_events)),
+            ("SYSTEM QTY", str(audit_system)),
             ("UNITS", str(audit_qty)),
-            ("SHOP", shop_label or "All shops"),
         ]
     elif is_movements and view_by != "item":
         item_count = _count_rows(summary_rows)
@@ -4757,6 +4855,8 @@ def build_stock_report_pdf(
         numeric_from=None,
         type_col=None,
         qty_col=None,
+        col_fills=None,
+        strong_grid=False,
     ):
         if not data_rows:
             return Paragraph("No rows for these filters.", empty_style)
@@ -4787,17 +4887,19 @@ def build_stock_report_pdf(
                     cells.append(Paragraph(text, cell))
             body.append(cells)
 
-        table = Table(body, colWidths=col_widths, repeatRows=1)
+        grid_color = line_strong if strong_grid else line
+        grid_width = 0.55 if strong_grid else 0.25
+        box_width = 1.1 if strong_grid else 0.6
         cmds = [
             ("BACKGROUND", (0, 0), (-1, 0), head_fill),
             ("TEXTCOLOR", (0, 0), (-1, 0), white),
             ("FONTNAME", (0, 0), (-1, 0), MANROPE_PDF_BOLD),
             ("BACKGROUND", (0, 1), (-1, -1), white),
             ("TEXTCOLOR", (0, 1), (-1, -1), ink),
-            ("LINEBELOW", (0, 0), (-1, 0), 1.4, accent),
-            ("LINEBELOW", (0, 1), (-1, -2), 0.3, line),
-            ("BOX", (0, 0), (-1, -1), 0.6, line_strong),
-            ("INNERGRID", (0, 0), (-1, -1), 0.25, line),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.8 if strong_grid else 1.4, accent),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.55 if strong_grid else 0.3, grid_color),
+            ("BOX", (0, 0), (-1, -1), box_width, line_strong),
+            ("INNERGRID", (0, 0), (-1, -1), grid_width, grid_color),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (-1, -1), 2.8),
             ("RIGHTPADDING", (0, 0), (-1, -1), 2.8),
@@ -4805,7 +4907,14 @@ def build_stock_report_pdf(
             ("BOTTOMPADDING", (0, 0), (-1, -1), 2.0),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, row_alt]),
         ]
-        if qty_col is not None:
+        if col_fills:
+            last_data = len(body) - (2 if emphasize_last and len(body) > 1 else 1)
+            for col_idx, fill in col_fills.items():
+                if col_idx < 0 or col_idx >= len(headers):
+                    continue
+                for r in range(1, last_data + 1):
+                    cmds.append(("BACKGROUND", (col_idx, r), (col_idx, r), fill))
+        elif qty_col is not None:
             for r in range(1, len(body)):
                 cmds.append(("BACKGROUND", (qty_col, r), (qty_col, r), accent_soft))
         if type_col is not None:
@@ -4818,25 +4927,29 @@ def build_stock_report_pdf(
             last = len(body) - 1
             cmds.append(("BACKGROUND", (0, last), (-1, last), accent_soft))
             cmds.append(("FONTNAME", (0, last), (-1, last), MANROPE_PDF_BOLD))
-            cmds.append(("LINEABOVE", (0, last), (-1, last), 1.1, accent))
+            cmds.append(("LINEABOVE", (0, last), (-1, last), 1.4 if strong_grid else 1.1, accent))
             cmds.append(("TEXTCOLOR", (0, last), (-1, last), accent_deep))
+            if strong_grid:
+                cmds.append(("BOX", (0, last), (-1, last), 1.0, accent))
+        table = Table(body, colWidths=col_widths, repeatRows=1)
         table.setStyle(TableStyle(cmds))
         return table
 
-    # ---- Audit trail: item summary (count blanks) then activity ledger ----
+    # ---- Audit trail: summary by item only ----
     if is_audit and is_movements:
         story.append(
             _section(
                 "01  SUMMARY",
                 "Summary by item",
-                "Totals per item. Fill Actual qty · Missing · Excess · Note during the audit.",
+                "System qty vs count. Fill Actual qty · Missing · Excess · Note during the audit.",
             )
         )
         sum_headers = list(summary_headers) if summary_headers else [
             "Item",
-            "Category",
+            "Avg buy price",
             "Transactions",
             summary_qty_label or "Qty",
+            "System qty",
             "Actual qty",
             "Missing",
             "Excess",
@@ -4850,14 +4963,15 @@ def build_stock_report_pdf(
         else:
             usable = doc.width
             sum_widths = [
-                usable * 0.22,
-                usable * 0.12,
+                usable * 0.20,
+                usable * 0.11,
+                usable * 0.09,
+                usable * 0.08,
+                usable * 0.10,
                 usable * 0.10,
                 usable * 0.09,
-                usable * 0.11,
-                usable * 0.10,
-                usable * 0.10,
-                usable * 0.16,
+                usable * 0.09,
+                usable * 0.14,
             ]
             story.append(
                 _styled_table(
@@ -4865,46 +4979,19 @@ def build_stock_report_pdf(
                     sum_rows,
                     col_widths=sum_widths,
                     emphasize_last=True,
-                    numeric_from=2,
-                )
-            )
-        story.append(Spacer(1, 3 * mm))
-
-        story.append(
-            _section(
-                "02  ACTIVITY LEDGER",
-                "All transactions",
-                "When · Type · Item · Reason · Qty for every filtered movement.",
-            )
-        )
-        headers = list(detail_headers) if detail_headers else [
-            "When",
-            "Type",
-            "Item",
-            "Reason",
-            "Qty",
-        ]
-        detail_data = [list(row) for row in (detail_rows or [])]
-        if not detail_data:
-            story.append(
-                Paragraph("No audit transactions for these filters.", empty_style)
-            )
-        else:
-            usable = doc.width
-            detail_widths = [
-                usable * 0.18,
-                usable * 0.12,
-                usable * 0.28,
-                usable * 0.30,
-                usable * 0.12,
-            ]
-            story.append(
-                _styled_table(
-                    headers,
-                    detail_data,
-                    col_widths=detail_widths,
-                    type_col=1,
+                    numeric_from=1,
                     qty_col=4,
+                    strong_grid=True,
+                    col_fills={
+                        1: col_buy,
+                        2: col_tx,
+                        3: col_qty,
+                        4: col_system,
+                        5: col_actual,
+                        6: col_missing,
+                        7: col_excess,
+                        8: col_note,
+                    },
                 )
             )
         doc.build(story, canvasmaker=_NumberedCanvas)

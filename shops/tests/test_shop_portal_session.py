@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
 from shops.models import Shop
-from shops.session import SHOP_PORTAL_SESSION_AGE
+from shops.session import SHOP_PORTAL_SESSION_AGE, SESSION_SHOP_PORTAL_SHOP_KEY
 
 
 @override_settings(
@@ -66,7 +66,9 @@ class ShopPortalSessionLifetimeTests(TestCase):
     def test_login_sets_long_lived_shop_session(self):
         client = self._login()
         self.assertTrue(client.session.get("shop_portal_auth"))
-        self.assertEqual(client.session.get("active_shop_id"), str(self.shop.pk))
+        self.assertEqual(
+            client.session.get(SESSION_SHOP_PORTAL_SHOP_KEY), str(self.shop.pk)
+        )
         self.assertEqual(client.session.get_expiry_age(), SHOP_PORTAL_SESSION_AGE)
         expiry = client.session.get_expiry_date()
         self.assertGreater(expiry, timezone.now() + timedelta(days=365 * 9))
@@ -74,7 +76,7 @@ class ShopPortalSessionLifetimeTests(TestCase):
     def test_shop_floor_use_keeps_session_from_expiring(self):
         client = Client()
         session = client.session
-        session["active_shop_id"] = str(self.shop.pk)
+        session[SESSION_SHOP_PORTAL_SHOP_KEY] = str(self.shop.pk)
         session["shop_portal_auth"] = True
         session.set_expiry(60)
         session.save()
@@ -100,12 +102,12 @@ class ShopPortalSessionLifetimeTests(TestCase):
         response = client.get(reverse("employees:shop_logout"))
         self.assertEqual(response.status_code, 302)
         self.assertFalse(client.session.get("shop_portal_auth"))
-        self.assertFalse(client.session.get("active_shop_id"))
+        self.assertFalse(client.session.get(SESSION_SHOP_PORTAL_SHOP_KEY))
 
     def test_ping_keeps_shop_portal_session_from_expiring(self):
         client = Client()
         session = client.session
-        session["active_shop_id"] = str(self.shop.pk)
+        session[SESSION_SHOP_PORTAL_SHOP_KEY] = str(self.shop.pk)
         session["shop_portal_auth"] = True
         session.set_expiry(60)
         session.save()
