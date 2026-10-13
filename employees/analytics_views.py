@@ -471,7 +471,7 @@ def analytics_client_credit(request, role_segment, client_id):
             "meta": {
                 "title": f"{account['client'].full_name} · Client account",
                 "headline": "Client account",
-                "summary": "Open credit receipts and outstanding balance for this client.",
+                "summary": "Sales, credits, and quotations for this client, with filters.",
                 "icon": "contact",
             },
             "module": module,

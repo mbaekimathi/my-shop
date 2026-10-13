@@ -423,12 +423,13 @@ class AllocatedShopDataScopeTests(TestCase):
                 "filter_shops": [self.shop_a],
                 "role": self.cashier.role,
                 "query": "",
+                "receipt_kind": "credits",
             }
         )
         labels = " ".join(
             str(cell.get("label") if isinstance(cell, dict) else cell)
             for row in page["tables"][0]["rows"]
-            for cell in row
+            for cell in (row.get("cells") if isinstance(row, dict) else row)
         )
         self.assertIn("CLIENT A", labels)
         self.assertNotIn("CLIENT B", labels)
@@ -618,11 +619,19 @@ class ClientCreditAccountTableTests(TestCase):
         defaults.update(kwargs)
         return ShopReceipt.objects.create(**defaults)
 
+    def _row_cells(self, row):
+        if isinstance(row, dict):
+            return row.get("cells") or []
+        return row
+
     def _row_for(self, page, name):
         for row in page["tables"][0]["rows"]:
-            first = row[0]
+            cells = self._row_cells(row)
+            if not cells:
+                continue
+            first = cells[0]
             if isinstance(first, dict) and name in (first.get("label") or ""):
-                return row
+                return cells
         return None
 
     def test_fully_paid_credit_is_converted_to_sale(self):
@@ -639,7 +648,7 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
         self.assertTrue(receipt.settled_from_credit)
         self.assertEqual(str(receipt.amount_paid), "100.00")
-        page = _build_clients(self._filters())
+        page = _build_clients(self._filters(receipt_kind="credits"))
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIsNotNone(row)
         self.assertEqual(row[-1]["qty"], "1")
@@ -659,9 +668,9 @@ class ClientCreditAccountTableTests(TestCase):
         )
         page = _build_clients(self._filters(from_credits=True))
         labels = [
-            row[0]["label"]
+            self._row_cells(row)[0]["label"]
             for row in page["tables"][0]["rows"]
-            if isinstance(row[0], dict)
+            if self._row_cells(row) and isinstance(self._row_cells(row)[0], dict)
         ]
         open_idx = next(i for i, label in enumerate(labels) if "OPEN CLIENT" in label)
         cleared_idx = next(
@@ -683,7 +692,7 @@ class ClientCreditAccountTableTests(TestCase):
         receipt.refresh_from_db()
         self.assertFalse(result["converted"])
         self.assertEqual(receipt.kind, ShopReceiptKind.CREDIT)
-        page = _build_clients(self._filters())
+        page = _build_clients(self._filters(receipt_kind="credits"))
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIsNotNone(row)
         self.assertEqual(row[-1]["qty"], "1")
@@ -696,10 +705,10 @@ class ClientCreditAccountTableTests(TestCase):
             amount_paid=0,
             status=ShopReceiptStatus.CANCELLED,
         )
-        page = _build_clients(self._filters())
+        page = _build_clients(self._filters(receipt_kind="credits"))
         self.assertIsNone(self._row_for(page, "CREDIT CLIENT"))
 
-    def test_sale_only_client_is_excluded(self):
+    def test_sale_only_client_is_included_on_clients_page(self):
         sale_client = self._make_client("SALE CLIENT", "002")
         self._make_receipt(
             sale_client,
@@ -708,12 +717,88 @@ class ClientCreditAccountTableTests(TestCase):
             amount_paid=80,
         )
         page = _build_clients(self._filters())
-        self.assertIsNone(self._row_for(page, "SALE CLIENT"))
+        row = self._row_for(page, "SALE CLIENT")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[-1]["qty"], "1")
+        self.assertEqual(row[-1]["amount"], "80")
+        credits_only = _build_clients(self._filters(receipt_kind="credits"))
+        self.assertIsNone(self._row_for(credits_only, "SALE CLIENT"))
+
+    def test_clients_page_filters_by_sales_credits_quotations(self):
+        sale_client = self._make_client("SALE ONLY", "021")
+        credit_client = self._make_client("CREDIT ONLY", "022")
+        quote_client = self._make_client("QUOTE ONLY", "023")
+        self._make_receipt(
+            sale_client, kind=ShopReceiptKind.SALE, total=50, amount_paid=50
+        )
+        self._make_receipt(credit_client, total=90, amount_paid=0)
+        self._make_receipt(
+            quote_client,
+            kind=ShopReceiptKind.QUOTATION,
+            total=40,
+            amount_paid=0,
+        )
+
+        all_page = _build_clients(self._filters(receipt_kind="all"))
+        self.assertIsNotNone(self._row_for(all_page, "SALE ONLY"))
+        self.assertIsNotNone(self._row_for(all_page, "CREDIT ONLY"))
+        self.assertIsNotNone(self._row_for(all_page, "QUOTE ONLY"))
+
+        sales_page = _build_clients(self._filters(receipt_kind="sales"))
+        self.assertIsNotNone(self._row_for(sales_page, "SALE ONLY"))
+        self.assertIsNone(self._row_for(sales_page, "CREDIT ONLY"))
+        self.assertIsNone(self._row_for(sales_page, "QUOTE ONLY"))
+
+        credits_page = _build_clients(self._filters(receipt_kind="credits"))
+        self.assertIsNone(self._row_for(credits_page, "SALE ONLY"))
+        self.assertIsNotNone(self._row_for(credits_page, "CREDIT ONLY"))
+        self.assertIsNone(self._row_for(credits_page, "QUOTE ONLY"))
+
+        quotes_page = _build_clients(self._filters(receipt_kind="quotations"))
+        self.assertIsNone(self._row_for(quotes_page, "SALE ONLY"))
+        self.assertIsNone(self._row_for(quotes_page, "CREDIT ONLY"))
+        self.assertIsNotNone(self._row_for(quotes_page, "QUOTE ONLY"))
+
+    def test_clients_page_respects_timeline_filter(self):
+        from datetime import datetime, time, timedelta
+
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        older = today - timedelta(days=3)
+        tz = timezone.get_current_timezone()
+        in_period = self._make_receipt(
+            self.client, kind=ShopReceiptKind.SALE, total=70, amount_paid=70
+        )
+        out_period = self._make_receipt(
+            self.client, kind=ShopReceiptKind.SALE, total=30, amount_paid=30
+        )
+        ShopReceipt.objects.filter(pk=in_period.pk).update(
+            created_at=timezone.make_aware(datetime.combine(today, time(10, 0)), tz)
+        )
+        ShopReceipt.objects.filter(pk=out_period.pk).update(
+            created_at=timezone.make_aware(datetime.combine(older, time(10, 0)), tz)
+        )
+
+        start = timezone.make_aware(datetime.combine(today, time.min), tz)
+        end = start + timedelta(days=1)
+        page = _build_clients(
+            self._filters(
+                receipt_kind="sales",
+                start=start,
+                end=end,
+                report_period_label=today.strftime("%d %b %Y"),
+            )
+        )
+        row = self._row_for(page, "CREDIT CLIENT")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[-1]["qty"], "1")
+        self.assertEqual(row[-1]["amount"], "70")
 
     def test_overpayment_does_not_reduce_other_receipt_due(self):
         self._make_receipt(self.client, total=100, amount_paid=150)
         self._make_receipt(self.client, total=80, amount_paid=0)
-        page = _build_clients(self._filters())
+        page = _build_clients(self._filters(receipt_kind="credits"))
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIsNotNone(row)
         self.assertEqual(row[-1]["qty"], "2")
@@ -813,6 +898,67 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertEqual(all_account["receipt_count"], 2)
         self.assertEqual(all_account["other_credits_count"], 0)
         self.assertIsNone(all_account["other_credits_alert"])
+
+    def test_client_account_shows_sales_credits_and_quotations(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_client_credit_account
+
+        self._make_receipt(
+            self.client, kind=ShopReceiptKind.SALE, total=50, amount_paid=50
+        )
+        self._make_receipt(self.client, total=80, amount_paid=0)
+        self._make_receipt(
+            self.client, kind=ShopReceiptKind.QUOTATION, total=30, amount_paid=0
+        )
+
+        request = RequestFactory().get(
+            f"/shop-cashier/analytics/clients/{self.client.pk}/",
+            {"shop_id": str(self.shop.pk), "range": "all"},
+        )
+        account = build_client_credit_account(
+            profile=self.cashier, client_id=self.client.pk, request=request
+        )
+        self.assertEqual(account["receipt_kind"], "all")
+        self.assertEqual(account["receipt_count"], 3)
+        self.assertTrue(account["ledger_show_type"])
+        kinds = {row["kind_label"] for row in account["rows"]}
+        self.assertEqual(kinds, {"Sale", "Credit", "Quotation"})
+        self.assertEqual(account["balance_raw"], "80.00")
+        self.assertTrue(account["can_pay"])
+
+        sales_request = RequestFactory().get(
+            f"/shop-cashier/analytics/clients/{self.client.pk}/",
+            {
+                "shop_id": str(self.shop.pk),
+                "range": "all",
+                "receipt_kind": "sales",
+            },
+        )
+        sales_account = build_client_credit_account(
+            profile=self.cashier, client_id=self.client.pk, request=sales_request
+        )
+        self.assertEqual(sales_account["receipt_kind"], "sales")
+        self.assertEqual(sales_account["receipt_count"], 1)
+        self.assertEqual(sales_account["rows"][0]["kind_label"], "Sale")
+        self.assertFalse(sales_account["ledger_show_type"])
+        self.assertFalse(sales_account["ledger_show_select"])
+
+        quotes_request = RequestFactory().get(
+            f"/shop-cashier/analytics/clients/{self.client.pk}/",
+            {
+                "shop_id": str(self.shop.pk),
+                "range": "all",
+                "receipt_kind": "quotations",
+            },
+        )
+        quotes_account = build_client_credit_account(
+            profile=self.cashier, client_id=self.client.pk, request=quotes_request
+        )
+        self.assertEqual(quotes_account["receipt_count"], 1)
+        self.assertEqual(quotes_account["rows"][0]["kind_label"], "Quotation")
+        self.assertFalse(quotes_account["rows"][0]["can_pay"])
+        self.assertFalse(quotes_account["rows"][0]["can_manage"])
 
 
 class CreditsShopScopeTests(TestCase):

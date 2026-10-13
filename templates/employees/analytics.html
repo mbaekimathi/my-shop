@@ -51,7 +51,14 @@
         {% if page.expense_category %}
         <input type="hidden" name="category" value="{{ page.expense_category }}">
         {% endif %}
-        {% if section_slug == "receipts" or section_slug == "return-receipts" %}
+        {% if section_slug == "clients" %}
+        <select name="receipt_kind" aria-label="Client activity">
+          <option value="all"{% if page.receipt_kind == 'all' or not page.receipt_kind %} selected{% endif %}>All types</option>
+          <option value="sales"{% if page.receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
+          <option value="credits"{% if page.receipt_kind == 'credits' %} selected{% endif %}>Credits</option>
+          <option value="quotations"{% if page.receipt_kind == 'quotations' %} selected{% endif %}>Quotations</option>
+        </select>
+        {% elif section_slug == "receipts" or section_slug == "return-receipts" %}
         <select name="receipt_kind" aria-label="Receipt type">
           <option value="all"{% if page.receipt_kind == 'all' or not page.receipt_kind %} selected{% endif %}>All types</option>
           <option value="sales"{% if page.receipt_kind == 'sales' %} selected{% endif %}>Sales</option>

@@ -48,6 +48,9 @@
           </th>
           {% endif %}
           <th class="ax-th--item">Receipt</th>
+          {% if ledger_show_type %}
+          <th>Type</th>
+          {% endif %}
           <th>Shop</th>
           <th>Items</th>
           <th>Status</th>
@@ -68,7 +71,7 @@
           class="ax-receipt-row{% if ledger_show_select and row.can_pay %} is-selectable{% endif %}"
           data-ax-receipt-row
           data-row-id="{{ row.id }}"
-          data-search-text="{{ row.number }} {{ row.shop }} {{ row.status }} {{ row.cashier }}{% if row.pay_by %} {{ row.pay_by }}{% endif %}"
+          data-search-text="{{ row.number }} {{ row.kind_label }} {{ row.shop }} {{ row.status }} {{ row.cashier }}{% if row.pay_by %} {{ row.pay_by }}{% endif %}"
           {% if ledger_show_select and row.can_pay %}
           data-receipt-id="{{ row.pay_id }}"
           data-receipt-number="{{ row.number }}"
@@ -97,6 +100,9 @@
           </td>
           {% endif %}
           <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
+          {% if ledger_show_type %}
+          <td data-label="Type">{{ row.kind_label|default:"—" }}</td>
+          {% endif %}
           <td data-label="Shop">{{ row.shop }}</td>
           <td data-label="Items">{{ row.item_count }}</td>
           <td data-label="Status">
@@ -144,7 +150,7 @@
                 Pay
               </button>
               {% endif %}
-              {% if ledger_show_manage %}
+              {% if ledger_show_manage and row.can_manage != False %}
               <button
                 type="button"
                 class="ax-eye ax-eye--manage"
