@@ -2091,11 +2091,17 @@
       input.addEventListener("change", onQtyChange);
     });
 
-    form.querySelector("[data-login-code]")?.addEventListener("input", (event) => {
+    const loginCodeInput = form.querySelector("[data-login-code]");
+    loginCodeInput?.addEventListener("input", (event) => {
       const input = event.target;
       input.value = String(input.value || "").replace(/\D/g, "").slice(0, 6);
       setVerified(form, false);
-      voidEmployeeVerify(form);
+      queueEmployeeVerify(form);
+    });
+    loginCodeInput?.addEventListener("blur", () => {
+      if ((loginCodeInput.value || "").trim().length === 6) {
+        verifyLoginCode(form);
+      }
     });
 
     form.querySelectorAll("[data-decline-preset]").forEach((btn) => {
