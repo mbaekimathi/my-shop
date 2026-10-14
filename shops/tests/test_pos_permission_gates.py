@@ -38,7 +38,7 @@ class PosPermissionGateTests(TestCase):
         self.assertTrue(company_pos_permission_visible("my-shop", "sale"))
 
     def test_analytics_tradings_follows_trade_out_toggle(self):
-        self._set_pos(enable_trade_out=False)
+        self._set_pos(enable_trade_out=False, enable_trade_in=False)
         self.assertFalse(company_pos_analytics_section_visible("tradings"))
         self.assertTrue(company_pos_analytics_section_visible("revenue"))
 

@@ -505,6 +505,50 @@
   .qr-text { margin-top: 6px; font-size: 0.95em; font-weight: 800 !important; }
 `;
 
+  const maskPhoneLastDigits = (phone, count = 6) => {
+    const chars = [...String(phone || "")];
+    let remaining = count;
+    for (let i = chars.length - 1; i >= 0 && remaining > 0; i -= 1) {
+      if (/\d/.test(chars[i])) {
+        chars[i] = "*";
+        remaining -= 1;
+      }
+    }
+    return chars.join("");
+  };
+
+  const isClientReceiptParty = (ticket) => {
+    if (!ticket || typeof ticket !== "object") return false;
+    if (ticket.route_from || ticket.route_to) return false;
+    const label = String(ticket.party_label || "").trim().toLowerCase();
+    if (label === "supplier") return false;
+    return Boolean(String(ticket.party_phone || "").trim());
+  };
+
+  const maskReceiptForPrint = (text, ticket) => {
+    const source = ticket && typeof ticket === "object" ? ticket : null;
+    const phone = String(source?.party_phone || "").trim();
+    if (!source || !phone || !isClientReceiptParty(source)) {
+      return { text: String(text || ""), ticket: source };
+    }
+    const masked = maskPhoneLastDigits(phone, 6);
+    let nextText = String(text || "");
+    if (masked !== phone && nextText) {
+      nextText = nextText
+        .split("\n")
+        .map((line) => {
+          const match = /^(Phone)(\s+)(.*)$/.exec(line);
+          if (!match || match[3].trim() !== phone) return line;
+          return `${match[1]}${match[2]}${masked}`;
+        })
+        .join("\n");
+    }
+    return {
+      text: nextText,
+      ticket: { ...source, party_phone: masked },
+    };
+  };
+
   const renderTicketHtml = (ticket, qr = null) => {
     const t = ticket && typeof ticket === "object" ? ticket : null;
     if (!t || !t.shop_name) return "";
@@ -708,6 +752,9 @@
   const browserPrint = (text, qr = null, label = "USB", styleOverride = null, ticket = null) =>
     new Promise((resolve, reject) => {
       try {
+        const prepared = maskReceiptForPrint(text, ticket);
+        text = prepared.text;
+        ticket = prepared.ticket;
         const style = getReceiptPrintStyle(styleOverride);
         const ticketHtml = renderTicketHtml(ticket, qr);
         let bodyHtml = ticketHtml;
@@ -1756,6 +1803,7 @@ ${bodyHtml}
     encodeEscPos,
     browserPrint,
     renderTicketHtml,
+    maskReceiptForPrint,
     onChange(fn) {
       if (typeof fn === "function") listeners.add(fn);
       return () => listeners.delete(fn);
@@ -1926,7 +1974,8 @@ ${bodyHtml}
         );
         return true;
       }
-      const bytes = await encodeEscPos(text, qr, styleOverride);
+      const prepared = maskReceiptForPrint(text, ticket);
+      const bytes = await encodeEscPos(prepared.text, qr, styleOverride);
       await withTimeout(
         driver.print(bytes),
         20000,

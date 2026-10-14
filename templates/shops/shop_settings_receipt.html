@@ -200,6 +200,23 @@
         </li>
         <li class="pos-settings-row pos-settings-row--format">
           <div class="pos-settings-copy">
+            <strong>Trade in</strong>
+            <p data-receipt-format-preview="trade_in">Example: {{ receipt_format_previews.trade_in }}</p>
+          </div>
+          <label class="receipt-format-field">
+            <input
+              type="text"
+              maxlength="8"
+              spellcheck="false"
+              autocomplete="off"
+              value="{{ receipt_format_trade_in }}"
+              data-receipt-format="trade_in"
+              aria-label="Trade in receipt number format"
+            >
+          </label>
+        </li>
+        <li class="pos-settings-row pos-settings-row--format">
+          <div class="pos-settings-copy">
             <strong>Trade out</strong>
             <p data-receipt-format-preview="trade_out">Example: {{ receipt_format_previews.trade_out }}</p>
           </div>
@@ -550,7 +567,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=21"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=23"></script>
 <script defer src="{% static 'js/receipt-settings.js' %}?v=8"></script>
 <script defer src="{% static 'js/shop-settings.js' %}?v=1"></script>
 {% endblock %}

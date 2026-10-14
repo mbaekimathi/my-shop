@@ -335,7 +335,12 @@ urlpatterns = [
         name="analytics_trade_settle",
     ),
     path(
-        "<role_segment:role_segment>/analytics/tradings/<int:receipt_id>/",
+        "<role_segment:role_segment>/analytics/tradings/<int:client_id>/<int:receipt_id>/",
+        analytics_views.analytics_trade_receipt,
+        name="analytics_trade_receipt",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/tradings/<int:client_id>/",
         analytics_views.analytics_trade_detail,
         name="analytics_trade_detail",
     ),

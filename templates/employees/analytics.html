@@ -57,6 +57,8 @@
           <option value="sales"{% if page.receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
           <option value="credits"{% if page.receipt_kind == 'credits' %} selected{% endif %}>Credits</option>
           <option value="quotations"{% if page.receipt_kind == 'quotations' %} selected{% endif %}>Quotations</option>
+          <option value="trade_out"{% if page.receipt_kind == 'trade_out' %} selected{% endif %}>Trade out</option>
+          <option value="trade_in"{% if page.receipt_kind == 'trade_in' %} selected{% endif %}>Trade in</option>
         </select>
         {% elif section_slug == "receipts" or section_slug == "return-receipts" %}
         <select name="receipt_kind" aria-label="Receipt type">
@@ -64,6 +66,8 @@
           <option value="sales"{% if page.receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
           <option value="credits"{% if page.receipt_kind == 'credits' %} selected{% endif %}>Credits</option>
           <option value="quotations"{% if page.receipt_kind == 'quotations' %} selected{% endif %}>Quotations</option>
+          <option value="trade_out"{% if page.receipt_kind == 'trade_out' %} selected{% endif %}>Trade out</option>
+          <option value="trade_in"{% if page.receipt_kind == 'trade_in' %} selected{% endif %}>Trade in</option>
           <option value="stock"{% if page.receipt_kind == 'stock' %} selected{% endif %}>Stock suppliers</option>
           <option value="expense"{% if page.receipt_kind == 'expense' %} selected{% endif %}>Expense suppliers</option>
           <option value="cancelled"{% if page.receipt_kind == 'cancelled' %} selected{% endif %}>Cancelled</option>

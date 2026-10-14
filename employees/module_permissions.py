@@ -63,6 +63,7 @@ STORE_MANAGER_ALLOWED_KEYS = frozenset(
         ("my-shop", "credit"),
         ("my-shop", "quotation"),
         ("my-shop", "trade_out"),
+        ("my-shop", "trade_in"),
         ("my-shop", "buy_stock"),
         ("my-shop", "stock_requests"),
         ("my-shop", "respond_stock_request"),

@@ -1643,8 +1643,10 @@ def _trade_qty_by_item_shop(item_ids, shop_ids, start, end):
     sql_item_ids = _item_ids_for_sql(item_ids)
     trade_filter = (
         Q(movement__entry_source=StockEntrySource.TRADE_OUT)
+        | Q(movement__entry_source=StockEntrySource.TRADE_IN)
         | Q(movement__entry_source=StockEntrySource.TRADE_EXCHANGE)
         | Q(reason=StockOutReason.TRADE_OUT)
+        | Q(reason=StockOutReason.TRADE_IN)
         | (
             Q(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
             & (
@@ -2469,8 +2471,10 @@ def _daily_activity_by_item(items, shop_ids, day_start, day_end):
     # Trade-tagged units (movements + settled trade sales).
     trade_filter = (
         Q(movement__entry_source=StockEntrySource.TRADE_OUT)
+        | Q(movement__entry_source=StockEntrySource.TRADE_IN)
         | Q(movement__entry_source=StockEntrySource.TRADE_EXCHANGE)
         | Q(reason=StockOutReason.TRADE_OUT)
+        | Q(reason=StockOutReason.TRADE_IN)
         | (
             Q(movement__entry_source=StockEntrySource.CUSTOMER_RETURN)
             & (
@@ -2773,6 +2777,8 @@ def _timeline_trade_label(*, movement=None, line=None, receipt=None, note=""):
     source = (getattr(movement, "entry_source", None) or "").strip()
     if source == StockEntrySource.TRADE_OUT:
         return "Trade out"
+    if source == StockEntrySource.TRADE_IN:
+        return "Trade in"
     if source == StockEntrySource.TRADE_EXCHANGE:
         return "Trade exchange"
     if source == StockEntrySource.CUSTOMER_RETURN:
@@ -2783,6 +2789,8 @@ def _timeline_trade_label(*, movement=None, line=None, receipt=None, note=""):
     reason = (getattr(line, "reason", None) or "").strip()
     if reason == StockOutReason.TRADE_OUT:
         return "Trade out"
+    if reason == StockOutReason.TRADE_IN:
+        return "Trade in"
 
     if receipt is not None:
         from shops.models import ShopReceiptKind
@@ -2790,6 +2798,8 @@ def _timeline_trade_label(*, movement=None, line=None, receipt=None, note=""):
         kind = getattr(receipt, "kind", None) or ""
         if kind == ShopReceiptKind.TRADE_OUT:
             return "Trade out"
+        if kind == ShopReceiptKind.TRADE_IN:
+            return "Trade in"
         if getattr(receipt, "settled_from_trade", False):
             return "Trade sale"
 

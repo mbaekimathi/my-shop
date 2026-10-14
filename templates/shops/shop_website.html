@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}{{ shop.name }} | Shop online{% endblock %}
+{% block title %}{{ company_name|default:"MY-SHOP" }} | Shop online{% endblock %}
 {% block body_class %}shop-website-page{% endblock %}
 
 {% block extra_head %}
-<meta name="description" content="Browse {{ shop.name }} products and shop-specific prices.">
+<meta name="description" content="Browse {{ company_name|default:'MY-SHOP' }} products and prices.">
 {% if shop.image %}
 <link rel="preload" as="image" href="{{ shop.image.url }}" fetchpriority="high">
 {% else %}
@@ -22,7 +22,7 @@
   class="storefront"
   data-storefront
   data-suggestions-url-template="{{ suggestions_url_template }}"
-  data-shop-name="{{ shop.name }}"
+  data-shop-name="{{ company_name|default:'MY-SHOP' }}"
   data-whatsapp-phone="{{ whatsapp_phone }}"
 >
   <header class="storefront__header" data-storefront-header>
@@ -56,7 +56,7 @@
     {% endif %}
   </header>
 
-  <section class="storefront__hero" aria-label="{{ shop.name }} introduction">
+  <section class="storefront__hero" aria-label="{{ company_name|default:'MY-SHOP' }} introduction">
     <div class="storefront__hero-media" aria-hidden="true">
       {% if shop.image %}
       <img
@@ -140,14 +140,11 @@
     </header>
     <ul class="storefront__branch-list">
       {% for branch in branches %}
-      <li class="storefront__branch{% if branch.pk == shop.pk %} is-current{% endif %}">
+      <li class="storefront__branch">
         <div class="storefront__branch-top">
           <span class="storefront__branch-mark" aria-hidden="true">{{ branch.name|slice:":1"|upper }}</span>
           <div>
             <h3>{{ branch.name }}</h3>
-            {% if branch.pk == shop.pk %}
-            <em>Viewing this catalogue</em>
-            {% endif %}
           </div>
         </div>
         {% if branch.location %}
@@ -272,7 +269,7 @@
   <section class="storefront__empty">
     <i data-lucide="package-open" aria-hidden="true"></i>
     <h2>Our catalogue is being prepared.</h2>
-    <p>Please contact {{ shop.name }} for current products and prices.</p>
+    <p>Please contact {{ company_name|default:"MY-SHOP" }} for current products and prices.</p>
   </section>
   {% endif %}
 </main>
@@ -367,7 +364,7 @@
       <span class="storefront__whatsapp-copy">
         <strong>Enquire on WhatsApp</strong>
         <small data-storefront-whatsapp-summary>
-          Ask {{ shop.name }} about availability
+          Ask {{ company_name|default:"MY-SHOP" }} about availability
         </small>
       </span>
       <span class="storefront__whatsapp-arrow" aria-hidden="true">
@@ -457,7 +454,7 @@
 </div>
 
 <footer class="storefront__footer">
-  <span>© {% now "Y" %} {{ shop.name }}</span>
+  <span>© {% now "Y" %} {{ company_name|default:"MY-SHOP" }}</span>
   <span>{{ shop.location }}</span>
   {% if shop.email %}<a href="mailto:{{ shop.email }}">{{ shop.email }}</a>{% endif %}
 </footer>

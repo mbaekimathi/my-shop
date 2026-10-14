@@ -2321,6 +2321,10 @@ html[data-theme="light"] .staff-shop-list {
   gap: 0.75em;
 }
 
+.receipt-phone-print {
+  display: none;
+}
+
 .receipt-ticket-party,
 .receipt-ticket-refs {
   display: grid;
@@ -2579,6 +2583,14 @@ html[data-theme="light"] .staff-shop-list {
 
   .receipt-ticket-width-tag {
     display: none !important;
+  }
+
+  .receipt-phone-screen {
+    display: none !important;
+  }
+
+  .receipt-phone-print {
+    display: inline !important;
   }
 }
 

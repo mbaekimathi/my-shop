@@ -22,7 +22,7 @@
     </a>
     <div class="td-head-main">
       <div class="td-head-copy">
-        <p class="td-kicker">Trade out</p>
+        <p class="td-kicker">{% if is_trade_in %}Trade in{% else %}Trade out{% endif %}</p>
         <h1>{{ receipt_number }}</h1>
         <p class="td-meta">
           <span>{{ client_name }}</span>
@@ -62,7 +62,7 @@
     <div class="td-main">
       <section class="td-card">
         <header class="td-card-head">
-          <h2>Items taken</h2>
+          <h2>{% if is_trade_in %}Items received{% else %}Items taken{% endif %}</h2>
           <span>{{ lines|length }} line{{ lines|length|pluralize }}</span>
         </header>
         <ul class="td-items">
@@ -112,15 +112,17 @@
         </header>
 
         {% if can_settle %}
-        <div class="td-tabs{% if can_return %} td-tabs--three{% endif %}" role="tablist" aria-label="Settle mode">
+        <div class="td-tabs{% if can_return and not is_trade_in %} td-tabs--three{% endif %}" role="tablist" aria-label="Settle mode">
           <label class="td-tab">
             <input type="radio" name="settle_mode" value="payment" data-trade-mode checked>
-            <span>Pay &amp; convert</span>
+            <span>{% if is_trade_in %}Pay client{% else %}Pay &amp; convert{% endif %}</span>
           </label>
+          {% if not is_trade_in %}
           <label class="td-tab">
             <input type="radio" name="settle_mode" value="exchange" data-trade-mode>
             <span>Exchange item</span>
           </label>
+          {% endif %}
           {% if can_return %}
           <label class="td-tab">
             <input type="radio" name="settle_mode" value="return" data-trade-mode>
@@ -160,7 +162,7 @@
           <button type="submit" class="td-submit">Record payment</button>
         </form>
 
-        <form class="td-form" data-trade-exchange-form hidden>
+        <form class="td-form" data-trade-exchange-form hidden{% if is_trade_in %} data-trade-exchange-disabled{% endif %}>
           {% csrf_token %}
           <input type="hidden" name="mode" value="exchange">
           <input type="hidden" name="item_id" value="" data-trade-item-id>

@@ -121,6 +121,7 @@ PERMISSION_MODULES = (
             {"slug": "credit", "label": "Credit sale"},
             {"slug": "quotation", "label": "Quotation"},
             {"slug": "trade_out", "label": "Trade out"},
+            {"slug": "trade_in", "label": "Trade in"},
             {"slug": "buy_stock", "label": "Buy stock"},
             {"slug": "stock_requests", "label": "View stock transfers"},
             {"slug": "respond_stock_request", "label": "Confirm / decline transfers"},

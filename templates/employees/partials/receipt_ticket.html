@@ -38,7 +38,12 @@
       {% else %}
       <span class="receipt-ticket-party-label">{{ p.party_label|default:"Customer" }}</span>
       <strong>{{ p.client|default:"—" }}</strong>
-      {% if p.party_phone %}<em>{{ p.party_phone }}</em>{% endif %}
+      {% if p.party_phone %}
+      <em>
+        <span class="receipt-phone-screen">{{ p.party_phone }}</span>
+        <span class="receipt-phone-print">{{ p.party_phone_print|default:p.party_phone }}</span>
+      </em>
+      {% endif %}
       {% endif %}
     </div>
     <div class="receipt-ticket-refs">

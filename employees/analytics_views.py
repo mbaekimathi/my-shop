@@ -21,6 +21,7 @@ from .analytics_services import (
     build_analytics_page,
     build_analytics_receipts_list,
     build_client_credit_account,
+    build_client_tradings_page,
     build_client_transactions,
     build_confirm_receipts_page,
     build_return_receipts_page,
@@ -122,7 +123,9 @@ def _credit_receipt_update_url_template(profile):
     return template.replace("/0/", "/__ID__/")
 
 
-def _render_analytics(request, profile, *, section_slug="overview"):
+def _render_analytics(
+    request, profile, *, section_slug="overview", page_override=None, meta_override=None
+):
     from django.urls import reverse
 
     from .module_permissions import require_module_permission
@@ -143,6 +146,11 @@ def _render_analytics(request, profile, *, section_slug="overview"):
     context = build_analytics_page(
         profile=profile, request=request, section_slug=section["slug"]
     )
+    if page_override is not None:
+        context["page"] = page_override
+    meta = _analytics_meta(section)
+    if meta_override:
+        meta = {**meta, **meta_override}
     return render(
         request,
         (
@@ -152,7 +160,7 @@ def _render_analytics(request, profile, *, section_slug="overview"):
         ),
         {
             "profile": profile,
-            "meta": _analytics_meta(section),
+            "meta": meta,
             "module": module,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
@@ -595,8 +603,76 @@ def analytics_client_credit(request, role_segment, client_id):
 
 @active_employee_required
 @require_GET
-def analytics_trade_detail(request, role_segment, receipt_id):
-    """Trade-out detail and settle page (/…/analytics/tradings/<id>/)."""
+def analytics_trade_detail(request, role_segment, client_id):
+    """One client's trade ins and trade outs (/…/analytics/tradings/<client_id>/)."""
+    from django.http import Http404
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_trade_detail",
+            role_segment=expected,
+            client_id=client_id,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        raise Http404("Module not found.")
+
+    try:
+        page = build_client_tradings_page(
+            profile=profile, request=request, client_id=client_id
+        )
+    except Http404:
+        from django.db.models import Q
+        from django.urls import reverse
+
+        from shops.models import ShopReceipt, ShopReceiptKind
+
+        receipt = (
+            ShopReceipt.objects.filter(pk=client_id)
+            .filter(
+                Q(kind=ShopReceiptKind.TRADE_OUT)
+                | Q(kind=ShopReceiptKind.TRADE_IN)
+                | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
+            )
+            .only("client_id")
+            .first()
+        )
+        if receipt is None or not receipt.client_id:
+            raise
+        query = request.GET.urlencode()
+        target = reverse(
+            "employees:analytics_trade_detail",
+            kwargs={
+                "role_segment": expected,
+                "client_id": receipt.client_id,
+            },
+        )
+        if query:
+            target = f"{target}?{query}"
+        return redirect(target)
+    return _render_analytics(
+        request,
+        profile,
+        section_slug="tradings",
+        page_override=page,
+        meta_override={
+            "title": f"{page['headline']} · Tradings",
+            "headline": page["headline"],
+            "summary": page.get("lead") or "Trade ins and trade outs",
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_trade_receipt(request, role_segment, client_id, receipt_id):
+    """One trade receipt — pay, exchange, or return (/…/tradings/<client>/<receipt>/)."""
     from django.http import Http404
 
     from .module_permissions import require_module_permission
@@ -609,8 +685,9 @@ def analytics_trade_detail(request, role_segment, receipt_id):
     expected = role_url_segment(profile.role)
     if role_segment != expected:
         return redirect(
-            "employees:analytics_trade_detail",
+            "employees:analytics_trade_receipt",
             role_segment=expected,
+            client_id=client_id,
             receipt_id=receipt_id,
         )
 
@@ -625,6 +702,9 @@ def analytics_trade_detail(request, role_segment, receipt_id):
     detail = build_trade_out_detail(
         profile=profile, receipt_id=receipt_id, request=request
     )
+    receipt_client_id = getattr(detail.get("receipt"), "client_id", None)
+    if receipt_client_id != client_id:
+        raise Http404("Trade not found for this client.")
     return render(
         request,
         "employees/analytics_trade_detail.html",
@@ -633,7 +713,7 @@ def analytics_trade_detail(request, role_segment, receipt_id):
             "meta": {
                 "title": f"Trade {detail['receipt_number']}",
                 "headline": detail["receipt_number"],
-                "summary": "Clear this trade by payment or exchange, or return items to restock.",
+                "summary": detail.get("kind_label") or "Trade",
                 "icon": "repeat",
             },
             "module": module,
@@ -683,12 +763,14 @@ def analytics_trade_settle(request, role_segment, receipt_id):
 
     filters = _filters_context(profile, request, allow_all_time=True, default_all_time=True)
     receipt = (
-        ShopReceipt.objects.filter(
-            pk=receipt_id,
-            shop_id__in=filters["active_shop_ids"],
+        ShopReceipt.objects.filter(pk=receipt_id)
+        .filter(
+            Q(shop_id__in=filters["active_shop_ids"])
+            | Q(source_shop_id__in=filters["active_shop_ids"])
         )
         .filter(
             Q(kind=ShopReceiptKind.TRADE_OUT)
+            | Q(kind=ShopReceiptKind.TRADE_IN)
             | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
         )
         .exclude(status=ShopReceiptStatus.CANCELLED)
@@ -701,7 +783,10 @@ def analytics_trade_settle(request, role_segment, receipt_id):
     mode = (request.POST.get("mode") or request.POST.get("settle_mode") or "").strip().lower()
     try:
         if mode == "payment":
-            if receipt.kind != ShopReceiptKind.TRADE_OUT:
+            if receipt.kind not in {
+                ShopReceiptKind.TRADE_OUT,
+                ShopReceiptKind.TRADE_IN,
+            }:
                 return JsonResponse(
                     {"ok": False, "error": "This trade is already settled."},
                     status=400,
@@ -713,11 +798,14 @@ def analytics_trade_settle(request, role_segment, receipt_id):
                 mpesa_receipt_number=request.POST.get("mpesa_receipt_number") or "",
                 actor=profile,
             )
-            message = (
-                "Trade converted to a sale."
-                if result["converted"]
-                else f"Payment recorded. Balance left {_money_ksh_safe(result['balance'])}."
-            )
+            if result["converted"]:
+                message = "Trade converted to a sale."
+            elif result["confirmed"] and receipt.kind == ShopReceiptKind.TRADE_IN:
+                message = "Trade in cleared."
+            else:
+                message = (
+                    f"Payment recorded. Balance left {_money_ksh_safe(result['balance'])}."
+                )
         elif mode == "exchange":
             if receipt.kind != ShopReceiptKind.TRADE_OUT:
                 return JsonResponse(

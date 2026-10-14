@@ -61,11 +61,18 @@ def finalize_trade_if_cleared(receipt) -> str:
     - exchange-only → mark confirmed, keep trade_out
     Returns action: '', 'converted_sale', or 'confirmed'.
     """
-    if getattr(receipt, "kind", None) != ShopReceiptKind.TRADE_OUT:
+    kind = getattr(receipt, "kind", None)
+    if kind not in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}:
         return ""
     if getattr(receipt, "status", None) == ShopReceiptStatus.CANCELLED:
         return ""
     if trade_balance_due(receipt) > 0:
+        return ""
+
+    if kind == ShopReceiptKind.TRADE_IN:
+        if receipt.status != ShopReceiptStatus.CONFIRMED:
+            receipt.status = ShopReceiptStatus.CONFIRMED
+            return "confirmed"
         return ""
 
     paid = _money(receipt.amount_paid)
@@ -91,9 +98,9 @@ def record_trade_payment(
     mpesa_receipt_number: str = "",
     actor=None,
 ) -> dict:
-    """Apply cash/M-Pesa toward a trade-out and convert when fully paid."""
-    if receipt.kind != ShopReceiptKind.TRADE_OUT:
-        raise ValidationError("Only open trade-out receipts can be converted to a sale.")
+    """Apply cash/M-Pesa toward an open trade and clear it when fully paid."""
+    if receipt.kind not in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}:
+        raise ValidationError("Only open trade receipts can be settled.")
     if receipt.status == ShopReceiptStatus.CANCELLED:
         raise ValidationError("This trade-out was cancelled.")
 

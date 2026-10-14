@@ -60,6 +60,7 @@ POS_SETTING_FIELDS = {
     "enable_credit",
     "enable_quotation",
     "enable_trade_out",
+    "enable_trade_in",
     "enable_cash",
     "enable_mpesa",
     "enable_cash_mpesa",
@@ -84,6 +85,7 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_credit",
         "enable_quotation",
         "enable_trade_out",
+    "enable_trade_in",
         "enable_cash",
         "enable_mpesa",
         "enable_cash_mpesa",
@@ -109,6 +111,7 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "receipt_format_credit",
         "receipt_format_quotation",
         "receipt_format_trade_out",
+        "receipt_format_trade_in",
         "mpesa_collection_type",
         "mpesa_business_number",
         "mpesa_account_number",
@@ -144,12 +147,14 @@ RECEIPT_FORMAT_FIELDS = {
     "credit": "receipt_format_credit",
     "quotation": "receipt_format_quotation",
     "trade_out": "receipt_format_trade_out",
+    "trade_in": "receipt_format_trade_in",
 }
 RECEIPT_FORMAT_DEFAULTS = {
     "sale": "S",
     "credit": "C",
     "quotation": "Q",
     "trade_out": "T",
+    "trade_in": "TI",
 }
 DOC_NUMBER_PREFIX = {
     "stock_in": "I",
@@ -161,8 +166,8 @@ RECEIPT_FORMAT_RE = re.compile(r"^[A-Za-z0-9]{1,8}$")
 RECEIPT_QR_CONTENTS = ("website", "receipt_details")
 WEBSITE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 
-POS_SETTINGS_CACHE_KEY = "company_pos_settings:v2"
-SHOP_POS_SETTINGS_CACHE_KEY = "shop_pos_settings:v1:{shop_id}"
+POS_SETTINGS_CACHE_KEY = "company_pos_settings:v3"
+SHOP_POS_SETTINGS_CACHE_KEY = "shop_pos_settings:v2:{shop_id}"
 POS_SETTINGS_CACHE_TTL = 300
 WORKING_HOURS_SETTINGS_CACHE_KEY = "company_working_hours:v1"
 DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v2"
@@ -421,6 +426,7 @@ def set_shop_receipt_number_formats(
     credit: str | None = None,
     quotation: str | None = None,
     trade_out: str | None = None,
+    trade_in: str | None = None,
 ) -> ShopPosSettings:
     row = get_shop_pos_settings(shop)
     if not row.override_receipt:
@@ -444,6 +450,11 @@ def set_shop_receipt_number_formats(
             trade_out, label="Trade out"
         )
         updates.append("receipt_format_trade_out")
+    if trade_in is not None:
+        row.receipt_format_trade_in = _clean_receipt_format(
+            trade_in, label="Trade in"
+        )
+        updates.append("receipt_format_trade_in")
     if not updates:
         raise ValidationError("No receipt formats to update.")
     row.save(update_fields=[*updates, "updated_at"])
@@ -2750,6 +2761,7 @@ def set_receipt_number_formats(
     credit: str | None = None,
     quotation: str | None = None,
     trade_out: str | None = None,
+    trade_in: str | None = None,
 ) -> CompanyPosSettings:
     settings_row = get_company_pos_settings()
     updates = []
@@ -2769,6 +2781,11 @@ def set_receipt_number_formats(
             trade_out, label="Trade out"
         )
         updates.append("receipt_format_trade_out")
+    if trade_in is not None:
+        settings_row.receipt_format_trade_in = _clean_receipt_format(
+            trade_in, label="Trade in"
+        )
+        updates.append("receipt_format_trade_in")
     if not updates:
         raise ValidationError("No receipt formats to update.")
     settings_row.save(update_fields=[*updates, "updated_at"])
@@ -2979,6 +2996,7 @@ POS_EMPLOYEE_PERMISSION_LINKS: dict[str, tuple[str, str, str]] = {
     "enable_credit": ("my-shop", "credit", "Credit sale"),
     "enable_quotation": ("my-shop", "quotation", "Quotation"),
     "enable_trade_out": ("my-shop", "trade_out", "Trade out"),
+    "enable_trade_in": ("my-shop", "trade_in", "Trade in"),
 }
 
 _POS_FIELD_TO_ANALYTICS_SECTION = {
@@ -2993,6 +3011,7 @@ _POS_FIELD_TO_RECEIPT_KIND = {
     "enable_credit": "credit",
     "enable_quotation": "quotation",
     "enable_trade_out": "trade_out",
+    "enable_trade_in": "trade_in",
 }
 
 
@@ -3007,6 +3026,10 @@ def company_pos_disabled_permission_keys(
             analytics_slug = _POS_FIELD_TO_ANALYTICS_SECTION.get(field)
             if analytics_slug:
                 disabled.add(("analytics", analytics_slug))
+    if getattr(row, "enable_trade_out", True) or getattr(row, "enable_trade_in", True):
+        disabled.discard(("analytics", "tradings"))
+    else:
+        disabled.add(("analytics", "tradings"))
     if not row.enabled_print_channels():
         disabled.add(("my-shop", "print"))
     return frozenset(disabled)
@@ -3074,6 +3097,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_credit": row.enable_credit,
         "enable_quotation": row.enable_quotation,
         "enable_trade_out": getattr(row, "enable_trade_out", True),
+        "enable_trade_in": getattr(row, "enable_trade_in", True),
         "enable_cash": row.enable_cash,
         "enable_mpesa": row.enable_mpesa,
         "enable_cash_mpesa": row.enable_cash_mpesa,
@@ -3103,6 +3127,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "receipt_format_credit": receipt_format_for_kind("credit", row),
         "receipt_format_quotation": receipt_format_for_kind("quotation", row),
         "receipt_format_trade_out": receipt_format_for_kind("trade_out", row),
+        "receipt_format_trade_in": receipt_format_for_kind("trade_in", row),
         "mpesa_collection_type": payment.get("type") or row.mpesa_collection_type or "",
         "mpesa_business_number": row.mpesa_business_number or "",
         "mpesa_account_number": row.mpesa_account_number or "",
@@ -3371,6 +3396,26 @@ def format_kenya_phone(value: str) -> str:
     return f"+{normalized}"
 
 
+def mask_client_phone_for_print(phone: str, digits: int = 6) -> str:
+    """Hide the last numerals of a client phone on a printed receipt.
+
+    Other characters stay in place, so ``0712345678`` prints as ``0712******``
+    and ``+254 712 555 010`` prints as ``+254 712 *** ***``.
+    """
+    value = str(phone or "")
+    if digits <= 0 or not value:
+        return value
+    chars = list(value)
+    remaining = digits
+    for index in range(len(chars) - 1, -1, -1):
+        if chars[index].isdigit():
+            chars[index] = "*"
+            remaining -= 1
+            if remaining == 0:
+                break
+    return "".join(chars)
+
+
 def find_client_by_phone(phone: str):
     """Return a Client when the phone matches a registered number."""
     from .models import Client
@@ -3510,6 +3555,15 @@ def _sales_ticket_document_meta(receipt) -> dict:
             "party_label": "Client",
             "authorised_label": "Cashier",
             "footer": "Items released on trade — settle by payment or exchange",
+        }
+    if kind == ShopReceiptKind.TRADE_IN:
+        return {
+            "doc_type": "trade_in",
+            "document_title": "Trade in note",
+            "doc_number_label": "Trade No.",
+            "party_label": "Client",
+            "authorised_label": "Cashier",
+            "footer": "Items received on trade — settle the amount owed later",
         }
     return {
         "doc_type": "sale",
@@ -4278,12 +4332,13 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
 
     kind = (payload.get("kind") or ShopReceiptKind.SALE).strip().lower()
     if kind not in ShopReceiptKind.values:
-        raise ValidationError("Choose sale, credit, quotation, or trade out.")
+        raise ValidationError("Choose sale, credit, quotation, trade out, or trade in.")
 
     if kind in (
         ShopReceiptKind.SALE,
         ShopReceiptKind.CREDIT,
         ShopReceiptKind.TRADE_OUT,
+        ShopReceiptKind.TRADE_IN,
     ):
         require_shop_day_for_sale(shop=shop)
 
@@ -4324,7 +4379,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     require_client_name = collect_client_data and bool(
         getattr(pos_settings, "require_client_name", False)
     )
-    if not collect_client_data:
+    if not collect_client_data and kind not in {
+        ShopReceiptKind.TRADE_OUT,
+        ShopReceiptKind.TRADE_IN,
+    }:
         client_name = ""
         client_phone_raw = ""
         client_phone = ""
@@ -4443,7 +4501,13 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             override = price_by_item.get(item_id) if item.use_individual_shop_prices else None
             list_price = item.resolve_list_price(override)
 
-            if not pos_settings.enable_discount:
+            if kind == ShopReceiptKind.TRADE_IN:
+                if unit_price <= 0:
+                    errors.append(
+                        f"Enter the amount owed for “{item.name}”."
+                    )
+                    continue
+            elif not pos_settings.enable_discount:
                 unit_price = list_price
             elif unit_price < item.minimum_selling_price:
                 errors.append(
@@ -4457,7 +4521,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 errors.append(f"Item #{item_id} is unavailable.")
                 continue
             track_stock = bool(getattr(pos_settings, "enable_stock_tracking", True))
-            if (
+            if kind != ShopReceiptKind.TRADE_IN and (
                 track_stock
                 and kind != ShopReceiptKind.QUOTATION
                 and stock.quantity < qty
@@ -4469,7 +4533,29 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 continue
 
             serial_objects = {}
-            if item.track_serial_number and kind != ShopReceiptKind.QUOTATION:
+            if item.track_serial_number and kind == ShopReceiptKind.TRADE_IN:
+                if not serials:
+                    errors.append(f"“{item.name}” requires serial numbers.")
+                    continue
+                if len(serials) != qty:
+                    errors.append(
+                        f"“{item.name}”: quantity must match serial count."
+                    )
+                    continue
+                held = list(
+                    ItemSerial.objects.select_for_update().filter(
+                        item=item,
+                        serial_number__in=serials,
+                        is_available=True,
+                    )
+                )
+                if held:
+                    shown = ", ".join(row.serial_number for row in held[:5])
+                    errors.append(
+                        f"“{item.name}”: serial already in stock ({shown})."
+                    )
+                    continue
+            elif item.track_serial_number and kind != ShopReceiptKind.QUOTATION:
                 if not serials:
                     errors.append(f"“{item.name}” requires serial numbers.")
                     continue
@@ -4500,7 +4586,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
 
             unit_cost = Decimal("0.00")
             line_cogs = Decimal("0.00")
-            if kind != ShopReceiptKind.QUOTATION:
+            if kind == ShopReceiptKind.TRADE_IN:
+                unit_cost = unit_price
+                line_cogs = (unit_cost * qty).quantize(Decimal("0.01"))
+            elif kind != ShopReceiptKind.QUOTATION:
                 last_buy = fallback_costs.get(item_id)
                 unit_cost = resolve_sale_unit_cost(
                     stock,
@@ -4544,7 +4633,6 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         requires_client = collect_client_data and kind in {
             ShopReceiptKind.CREDIT,
             ShopReceiptKind.QUOTATION,
-            ShopReceiptKind.TRADE_OUT,
         }
         if require_client_phone and not client_phone_raw:
             raise ValidationError("Enter the client phone number before completing.")
@@ -4552,7 +4640,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             raise ValidationError("Enter the client full name before completing.")
         if requires_client and not client_name and not client_phone_raw:
             raise ValidationError(
-                "Enter a client name, a phone number, or both for credit, quotation, and trade out."
+                "Enter a client name, a phone number, or both for credit and quotation."
             )
         if collect_client_data and kind == ShopReceiptKind.CREDIT:
             from communications.automations import credit_whatsapp_required
@@ -4561,10 +4649,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 raise ValidationError(
                     "Enter the client phone number so the credit sale can be sent on WhatsApp."
                 )
-        if collect_client_data and kind == ShopReceiptKind.TRADE_OUT and not client_name:
-            raise ValidationError(
-                "Enter the client full name for a trade out."
-            )
+        if kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}:
+            if not client_name:
+                raise ValidationError("Enter the client full name.")
+            if not client_phone_raw:
+                raise ValidationError("Enter the client phone number.")
 
         if client_phone_raw:
             normalized = _normalize_phone(client_phone_raw)
@@ -4664,7 +4753,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 phone=client_phone,
                 profile=authorising,
             )
-        elif kind in {ShopReceiptKind.CREDIT, ShopReceiptKind.TRADE_OUT} and client_phone:
+        elif kind in {
+            ShopReceiptKind.CREDIT,
+            ShopReceiptKind.TRADE_OUT,
+            ShopReceiptKind.TRADE_IN,
+        } and client_phone:
             client = find_client_by_phone(client_phone)
             if client is None:
                 client = upsert_client(
@@ -4672,10 +4765,6 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                     phone=client_phone,
                     profile=authorising,
                 )
-        elif kind == ShopReceiptKind.TRADE_OUT and client_name and not client_phone:
-            # Name-only trade outs stay as free-text on the receipt.
-            client = None
-
         receipt = ShopReceipt.objects.create(
             shop=shop,
             receipt_number=_next_receipt_number(shop, kind=kind),
@@ -4731,7 +4820,75 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             log_credit_receipt_issued(receipt=receipt)
 
         stock_updates = []
-        if kind != ShopReceiptKind.QUOTATION:
+        if kind == ShopReceiptKind.TRADE_IN:
+            from items.services import apply_stock_in_average_cost
+
+            now = timezone.now()
+            stocks_to_update = []
+            items_to_update = []
+            serials_to_update = []
+            track_stock = bool(getattr(pos_settings, "enable_stock_tracking", True))
+            for row in prepared:
+                stock = row["stock"]
+                item = row["item"]
+                qty = row["qty"]
+                if track_stock:
+                    apply_stock_in_average_cost(
+                        stock,
+                        qty=qty,
+                        unit_cost=row.get("unit_cost") or row["unit_price"],
+                    )
+                    stock.quantity += qty
+                    stock.updated_at = now
+                    item.stock += qty
+                    item.updated_at = now
+                    stocks_to_update.append(stock)
+                    items_to_update.append(item)
+                    for serial in row.get("serial_numbers") or []:
+                        existing = (
+                            ItemSerial.objects.select_for_update()
+                            .filter(item=item, serial_number=serial)
+                            .first()
+                        )
+                        if existing is None:
+                            serials_to_update.append(
+                                ItemSerial(
+                                    item=item,
+                                    shop=shop,
+                                    serial_number=serial,
+                                    is_available=True,
+                                )
+                            )
+                        else:
+                            existing.shop = shop
+                            existing.is_available = True
+                            existing.updated_at = now
+                            existing.save(
+                                update_fields=["shop", "is_available", "updated_at"]
+                            )
+                stock_updates.append(
+                    {
+                        "id": item.pk,
+                        "quantity": int(stock.quantity),
+                    }
+                )
+            if stocks_to_update:
+                ShopStock.objects.bulk_update(
+                    stocks_to_update,
+                    ["quantity", "average_cost", "updated_at"],
+                )
+            if items_to_update:
+                Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
+            if serials_to_update:
+                ItemSerial.objects.bulk_create(serials_to_update)
+            if track_stock:
+                _create_trade_in_stock_movements(
+                    shop=shop,
+                    receipt=receipt,
+                    actor=authorising,
+                    lines=prepared,
+                )
+        elif kind != ShopReceiptKind.QUOTATION:
             now = timezone.now()
             stocks_to_update = []
             items_to_update = []
@@ -6231,6 +6388,8 @@ def list_shop_receipts(
         kind_key = "quotation"
     elif kind_key in ("trade_out", "trade-out", "trades", "tradings", "trade"):
         kind_key = "trade_out"
+    elif kind_key in ("trade_in", "trade-in"):
+        kind_key = "trade_in"
     elif kind_key in ("stock", "stock-suppliers", "stock_suppliers"):
         kind_key = "stock"
     elif kind_key in ("expense", "expenses", "expense-suppliers", "expense_suppliers"):
@@ -6244,6 +6403,7 @@ def list_shop_receipts(
         "credit",
         "quotation",
         "trade_out",
+        "trade_in",
         "sales_credits",
     )
     include_stock = kind_key in ("all", "stock")
@@ -6263,7 +6423,7 @@ def list_shop_receipts(
         )
         if kind_key == "sales_credits":
             pos_qs = pos_qs.filter(kind__in=("sale", "credit"))
-        elif kind_key in ("sale", "credit", "quotation", "trade_out"):
+        elif kind_key in ("sale", "credit", "quotation", "trade_out", "trade_in"):
             pos_qs = pos_qs.filter(kind=kind_key)
         if q:
             pos_qs = pos_qs.filter(
@@ -6764,6 +6924,52 @@ def _create_trade_out_stock_movement(*, shop: Shop, receipt, actor, lines: list[
             unit_cost=unit_cost,
             reason=StockOutReason.TRADE_OUT,
             note=f"Trade out · {receipt.receipt_number}",
+            serial_numbers=serials,
+        )
+    return movement
+
+
+def _create_trade_in_stock_movements(*, shop: Shop, receipt, actor, lines: list[dict]):
+    """Ledger-only stock-in for a trade-in. Quantities are already updated."""
+    from items.models import (
+        StockEntrySource,
+        StockMovement,
+        StockMovementLine,
+        StockMovementType,
+    )
+
+    prepared = [
+        row for row in lines if row.get("item") is not None and int(row.get("qty") or 0) > 0
+    ]
+    if not prepared:
+        return None
+
+    client = (getattr(receipt, "client_name", None) or "").strip()
+    notes = f"Trade in {receipt.receipt_number}"
+    if client:
+        notes = f"{notes} · {client}"
+    movement = StockMovement.objects.create(
+        movement_type=StockMovementType.IN,
+        entry_source=StockEntrySource.TRADE_IN,
+        shop=shop,
+        created_by=actor,
+        notes=notes,
+        supplier_notified=True,
+    )
+    for row in prepared:
+        item = row["item"]
+        qty = int(row["qty"])
+        unit_cost = Decimal(row.get("unit_cost") or 0)
+        serials = [
+            str(s).strip() for s in (row.get("serial_numbers") or []) if str(s).strip()
+        ]
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=item,
+            quantity=qty,
+            unit_cost=unit_cost,
+            buying_price=unit_cost,
+            note=f"Trade in · {receipt.receipt_number}",
             serial_numbers=serials,
         )
     return movement

@@ -313,6 +313,12 @@
             <span>Trade out</span>
           </label>
           {% endif %}
+          {% if "trade_in" in cart_kinds %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="kind" value="trade_in" data-cart-kind{% if default_kind == "trade_in" %} checked{% endif %}>
+            <span>Trade in</span>
+          </label>
+          {% endif %}
         </div>
       </div>
       {% elif default_kind %}
@@ -747,8 +753,8 @@
 <script defer src="{% static 'js/shop-catalog.js' %}?v=7"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=22"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=88"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=23"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=89"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=39"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=matrix55"></script>

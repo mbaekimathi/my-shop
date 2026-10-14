@@ -322,6 +322,7 @@ class StockEntrySource(models.TextChoices):
     STOCK_MANAGEMENT = "stock_management", "Stock management"
     CUSTOMER_RETURN = "customer_return", "Customer return"
     TRADE_OUT = "trade_out", "Trade out"
+    TRADE_IN = "trade_in", "Trade in"
     TRADE_EXCHANGE = "trade_exchange", "Trade exchange"
 
 
@@ -337,6 +338,7 @@ class StockOutReason(models.TextChoices):
     DISPLAY = "display", "Display"
     RETURN = "return", "Supplier return"
     TRADE_OUT = "trade_out", "Trade out"
+    TRADE_IN = "trade_in", "Trade in"
     CUSTOM = "custom", "Custom"
 
 

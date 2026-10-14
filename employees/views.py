@@ -31,6 +31,7 @@ from shops.services import (
     get_communications_settings,
     get_company_pos_settings,
     get_company_display_name,
+    mask_client_phone_for_print,
     get_company_profile,
     get_main_website_shop,
     get_company_working_hours_settings,
@@ -1893,6 +1894,7 @@ POS_SETTING_GROUPS = (
             ("enable_credit", "Credit"),
             ("enable_quotation", "Quotation"),
             ("enable_trade_out", "Trade out"),
+            ("enable_trade_in", "Trade in"),
         ),
     },
     {
@@ -2070,6 +2072,7 @@ def _company_pos_settings(
                     credit=request.POST.get("receipt_format_credit"),
                     quotation=request.POST.get("receipt_format_quotation"),
                     trade_out=request.POST.get("receipt_format_trade_out"),
+                    trade_in=request.POST.get("receipt_format_trade_in"),
                 )
             except ValidationError as exc:
                 message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -2085,6 +2088,7 @@ def _company_pos_settings(
                         "receipt_format_credit": row.receipt_format_credit,
                         "receipt_format_quotation": row.receipt_format_quotation,
                         "receipt_format_trade_out": row.receipt_format_trade_out,
+                        "receipt_format_trade_in": row.receipt_format_trade_in,
                         "preview_sale": preview_receipt_number(kind="sale", settings_row=row),
                         "preview_credit": preview_receipt_number(
                             kind="credit", settings_row=row
@@ -2094,6 +2098,9 @@ def _company_pos_settings(
                         ),
                         "preview_trade_out": preview_receipt_number(
                             kind="trade_out", settings_row=row
+                        ),
+                        "preview_trade_in": preview_receipt_number(
+                            kind="trade_in", settings_row=row
                         ),
                     }
                 )
@@ -2287,11 +2294,14 @@ def _company_pos_settings(
             "receipt_format_quotation": pos.receipt_format_quotation or "QTN",
             "receipt_format_trade_out": getattr(pos, "receipt_format_trade_out", None)
             or "T",
+            "receipt_format_trade_in": getattr(pos, "receipt_format_trade_in", None)
+            or "TI",
             "receipt_format_previews": {
                 "sale": preview_receipt_number(kind="sale", settings_row=pos),
                 "credit": preview_receipt_number(kind="credit", settings_row=pos),
                 "quotation": preview_receipt_number(kind="quotation", settings_row=pos),
                 "trade_out": preview_receipt_number(kind="trade_out", settings_row=pos),
+                "trade_in": preview_receipt_number(kind="trade_in", settings_row=pos),
             },
             "mpesa_collection_type": pos.mpesa_collection_type or "",
             "mpesa_business_number": pos.mpesa_business_number or "",
@@ -2322,6 +2332,7 @@ def _company_pos_settings(
                 "date": "07 Aug 2026 · 09:15",
                 "client": "JANE WAMBUI",
                 "party_phone": "+254 712 555 010",
+                "party_phone_print": mask_client_phone_for_print("+254 712 555 010"),
                 "cashier": "Staff 104822",
                 "status": "",
                 "lines": (

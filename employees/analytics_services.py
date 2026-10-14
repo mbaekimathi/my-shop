@@ -112,7 +112,7 @@ ANALYTICS_SECTIONS = (
         "slug": "tradings",
         "label": "Tradings",
         "icon": "repeat",
-        "summary": "Trade-out clients — items taken, value, and balance left to clear.",
+        "summary": "Client trade accounts — open a client to see their trade ins and trade outs.",
     },
     {
         "slug": "clients",
@@ -332,6 +332,12 @@ def _parse_client_receipt_kind(raw: str) -> str:
         return "credits"
     if kind in ("quotation", "quotations", "quote"):
         return "quotations"
+    if kind in ("trade_out", "trade-out"):
+        return "trade_out"
+    if kind in ("trade_in", "trade-in"):
+        return "trade_in"
+    if kind in ("tradings", "trades", "trade"):
+        return "tradings"
     return "all"
 
 
@@ -343,10 +349,18 @@ def _client_activity_receipts_q(kind: str) -> Q:
         return Q(kind=ShopReceiptKind.SALE)
     if kind == "quotations":
         return Q(kind=ShopReceiptKind.QUOTATION)
+    if kind == "trade_out":
+        return Q(kind=ShopReceiptKind.TRADE_OUT)
+    if kind == "trade_in":
+        return Q(kind=ShopReceiptKind.TRADE_IN)
+    if kind == "tradings":
+        return Q(kind__in=(ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN))
     return (
         Q(kind=ShopReceiptKind.SALE)
         | Q(kind=ShopReceiptKind.CREDIT)
         | Q(kind=ShopReceiptKind.QUOTATION)
+        | Q(kind=ShopReceiptKind.TRADE_OUT)
+        | Q(kind=ShopReceiptKind.TRADE_IN)
     )
 
 
@@ -2437,9 +2451,14 @@ def _analytics_receipt_kind_filter(kind: str):
         return Q(kind=ShopReceiptKind.QUOTATION) & ~Q(
             status=ShopReceiptStatus.CANCELLED
         )
-    if key in {"tradings", "trade_out", "trades"}:
+    if key == "trade_in":
+        return Q(kind=ShopReceiptKind.TRADE_IN) & ~Q(status=ShopReceiptStatus.CANCELLED)
+    if key == "trade_out":
+        return Q(kind=ShopReceiptKind.TRADE_OUT) & ~Q(status=ShopReceiptStatus.CANCELLED)
+    if key in {"tradings", "trades", "trade"}:
         return (
             Q(kind=ShopReceiptKind.TRADE_OUT)
+            | Q(kind=ShopReceiptKind.TRADE_IN)
             | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
         ) & ~Q(status=ShopReceiptStatus.CANCELLED)
     if key == "cancelled":
@@ -3315,6 +3334,22 @@ def _client_transaction_kind_meta(row) -> tuple[str, str, str, str, str, Decimal
     )
     if row.kind == ShopReceiptKind.QUOTATION:
         return "Quotation", "Quotation", "neutral", "—", "—", _zero(), False
+    if row.kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}:
+        from shops.trade_settlement import trade_balance_due
+
+        due = trade_balance_due(row)
+        paid_cash = Decimal(row.amount_paid or 0)
+        status = "Open" if due > 0 else "Cleared"
+        label = "Trade in" if row.kind == ShopReceiptKind.TRADE_IN else "Trade out"
+        return (
+            label,
+            status,
+            "warn" if due > 0 else "good",
+            _money_ksh(paid_cash),
+            _money_ksh(due),
+            due,
+            False,
+        )
     if is_credit:
         due = _due_amount(total, paid)
         status = "Paid" if due <= 0 else "Unpaid"
@@ -3387,9 +3422,13 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
     sales_total = _zero()
     credits_total = _zero()
     quotations_total = _zero()
+    trade_out_total = _zero()
+    trade_in_total = _zero()
     sales_count = 0
     credits_count = 0
     quotations_count = 0
+    trade_out_count = 0
+    trade_in_count = 0
     shop_ids_seen: set[int] = set()
     rows = []
     item_rows = []
@@ -3429,6 +3468,12 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
         if row.kind == ShopReceiptKind.QUOTATION:
             quotations_total += total
             quotations_count += 1
+        elif row.kind == ShopReceiptKind.TRADE_OUT:
+            trade_out_total += total
+            trade_out_count += 1
+        elif row.kind == ShopReceiptKind.TRADE_IN:
+            trade_in_total += total
+            trade_in_count += 1
         elif is_credit:
             credits_total += total
             credits_count += 1
@@ -3518,14 +3563,22 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
         "sales": "Sales",
         "credits": "Credits",
         "quotations": "Quotations",
+        "trade_out": "Trade outs",
+        "trade_in": "Trade ins",
+        "tradings": "Trades",
     }
     kind_empty = {
         "all": "transactions",
         "sales": "sales",
         "credits": "credits",
         "quotations": "quotations",
+        "trade_out": "trade outs",
+        "trade_in": "trade ins",
+        "tradings": "trades",
     }
-    grand_total = sales_total + credits_total + quotations_total
+    grand_total = (
+        sales_total + credits_total + quotations_total + trade_out_total + trade_in_total
+    )
     from urllib.parse import parse_qs, urlencode
 
     params = parse_qs(query, keep_blank_values=True) if query else {}
@@ -3599,6 +3652,20 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
                     "icon": "file-text",
                     "tone": "shops",
                 },
+                {
+                    "label": "Trade out",
+                    "value": _money_ksh(trade_out_total),
+                    "hint": f"{trade_out_count} receipt{'s' if trade_out_count != 1 else ''}",
+                    "icon": "arrow-up-right",
+                    "tone": "warn" if trade_out_count else "neutral",
+                },
+                {
+                    "label": "Trade in",
+                    "value": _money_ksh(trade_in_total),
+                    "hint": f"{trade_in_count} receipt{'s' if trade_in_count != 1 else ''}",
+                    "icon": "arrow-down-left",
+                    "tone": "cash" if trade_in_count else "neutral",
+                },
             ],
         },
         "export_rows": [
@@ -3654,6 +3721,9 @@ def build_client_transactions_pdf(*, account: dict, company_name: str = "") -> b
         "sales": "Sales",
         "credits": "Credits",
         "quotations": "Quotations",
+        "trade_out": "Trade out",
+        "trade_in": "Trade in",
+        "tradings": "Trades",
     }.get(kind, "All types")
     rows = list(account.get("export_rows") or [])
     item_rows = list(account.get("item_rows") or [])
@@ -8228,36 +8298,28 @@ def _build_quotations(filters):
     }
 
 
-def _build_tradings(filters):
-    """Trade-out receipts: clients, items taken, value, and balance left."""
-    from django.urls import reverse
-
-    from employees.access import role_url_segment
-    from shops.trade_settlement import trade_balance_due
-
-    shop_ids = filters["active_shop_ids"]
-    start, end = filters["start"], filters["end"]
-    role = filters["role"]
-    query = filters.get("query") or ""
-
-    qs = (
+def _trade_receipts_qs(shop_ids, start, end):
+    return (
         _within_created_range(
-            ShopReceipt.objects.filter(shop_id__in=shop_ids),
+            ShopReceipt.objects.filter(
+                Q(shop_id__in=shop_ids) | Q(source_shop_id__in=shop_ids)
+            ),
             start,
             end,
         )
         .filter(
             Q(kind=ShopReceiptKind.TRADE_OUT)
+            | Q(kind=ShopReceiptKind.TRADE_IN)
             | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
         )
         .exclude(status=ShopReceiptStatus.CANCELLED)
-        .select_related("shop", "client")
-        .prefetch_related("lines")
-        .order_by("-created_at", "-id")
     )
 
-    columns = [
+
+def _trade_receipt_columns():
+    return [
         "Trade",
+        "Type",
         "Client",
         "Shop",
         {
@@ -8268,7 +8330,7 @@ def _build_tradings(filters):
         },
         {
             "label": "Value",
-            "title": "Selling value of items taken on trade",
+            "title": "Value of the trade",
             "band": "total",
             "band_start": True,
         },
@@ -8287,6 +8349,14 @@ def _build_tradings(filters):
         "Status",
     ]
 
+
+def _trade_receipt_rows(qs, *, role, query, client_id):
+    """One row per trade receipt, linked to that client's settle page."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+    from shops.trade_settlement import trade_balance_due
+
     table_rows = []
     total_value = _zero()
     total_cleared = _zero()
@@ -8294,6 +8364,10 @@ def _build_tradings(filters):
     open_count = 0
     item_units = 0
     trade_count = 0
+    trade_in_count = 0
+    trade_out_count = 0
+    trade_in_value = _zero()
+    trade_out_value = _zero()
 
     for receipt in qs:
         trade_count += 1
@@ -8314,15 +8388,25 @@ def _build_tradings(filters):
         paid = Decimal(receipt.amount_paid or 0)
         exchange = Decimal(getattr(receipt, "trade_exchange_value", 0) or 0)
         cleared = (paid + exchange).quantize(Decimal("0.01"))
-        if receipt.kind == ShopReceiptKind.TRADE_OUT:
+        value = Decimal(receipt.total or 0)
+        if receipt.kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}:
             balance = trade_balance_due(receipt)
         else:
             balance = _zero()
-        total_value += Decimal(receipt.total or 0)
+        total_value += value
         total_cleared += cleared
         total_balance += balance
         if balance > 0:
             open_count += 1
+
+        if receipt.kind == ShopReceiptKind.TRADE_IN:
+            type_label = "Trade in"
+            trade_in_count += 1
+            trade_in_value += value
+        else:
+            type_label = "Trade out"
+            trade_out_count += 1
+            trade_out_value += value
 
         client = (receipt.client_name or "Walk-in").strip() or "Walk-in"
         if receipt.client_phone:
@@ -8339,9 +8423,10 @@ def _build_tradings(filters):
             status_tone = "warn"
 
         detail_href = reverse(
-            "employees:analytics_trade_detail",
+            "employees:analytics_trade_receipt",
             kwargs={
                 "role_segment": role_url_segment(role),
+                "client_id": client_id,
                 "receipt_id": receipt.pk,
             },
         )
@@ -8349,47 +8434,55 @@ def _build_tradings(filters):
             detail_href = f"{detail_href}?{query}"
 
         table_rows.append(
-            [
-                {
-                    "href": detail_href,
-                    "label": receipt.receipt_number,
-                },
-                {
-                    "label": client,
-                    "title": items_label,
-                },
-                receipt.shop.name if receipt.shop else "—",
-                _qty_amount_cell(
-                    qty,
-                    line_count,
-                    title=items_label,
-                ),
-                _money_cell(
-                    receipt.total,
-                    title=f"Value {_money_ksh(receipt.total)}",
-                ),
-                _money_cell(
-                    cleared,
-                    title=(
-                        f"Paid {_money_ksh(paid)} · exchange {_money_ksh(exchange)}"
+            {
+                "search_text": f"{receipt.receipt_number} {type_label} {client} {items_label}",
+                "cells": [
+                    {
+                        "href": detail_href,
+                        "label": receipt.receipt_number,
+                    },
+                    {
+                        "label": type_label,
+                        "tone": "good" if type_label == "Trade in" else "warn",
+                    },
+                    {
+                        "label": client,
+                        "title": items_label,
+                    },
+                    receipt.shop.name if receipt.shop else "—",
+                    _qty_amount_cell(
+                        qty,
+                        line_count,
+                        title=items_label,
                     ),
-                ),
-                _money_cell(
-                    balance,
-                    tone="warn" if balance > 0 else "neutral",
-                    title=f"Balance {_money_ksh(balance)}",
-                ),
-                {
-                    "label": status_label,
-                    "tone": status_tone,
-                },
-            ]
+                    _money_cell(
+                        receipt.total,
+                        title=f"Value {_money_ksh(receipt.total)}",
+                    ),
+                    _money_cell(
+                        cleared,
+                        title=(
+                            f"Paid {_money_ksh(paid)} · exchange {_money_ksh(exchange)}"
+                        ),
+                    ),
+                    _money_cell(
+                        balance,
+                        tone="warn" if balance > 0 else "neutral",
+                        title=f"Balance {_money_ksh(balance)}",
+                    ),
+                    {
+                        "label": status_label,
+                        "tone": status_tone,
+                    },
+                ],
+            }
         )
 
     if table_rows:
         table_rows.append(
             [
                 "Total",
+                f"{trade_in_count} in · {trade_out_count} out",
                 f"{trade_count} trade{'' if trade_count == 1 else 's'}",
                 f"{open_count} open",
                 _qty_amount_cell(
@@ -8410,38 +8503,297 @@ def _build_tradings(filters):
             ]
         )
 
+    return {
+        "rows": table_rows,
+        "trade_count": trade_count,
+        "open_count": open_count,
+        "trade_in_count": trade_in_count,
+        "trade_out_count": trade_out_count,
+        "trade_in_value": trade_in_value,
+        "trade_out_value": trade_out_value,
+        "total_value": total_value,
+        "total_balance": total_balance,
+    }
+
+
+def _build_tradings(filters):
+    """Client accounts that have trade ins or trade outs in the period."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+    from shops.trade_settlement import trade_balance_due
+
+    shop_ids = filters["active_shop_ids"]
+    start, end = filters["start"], filters["end"]
+    role = filters["role"]
+    query = filters.get("query") or ""
+
+    qs = _trade_receipts_qs(shop_ids, start, end).select_related("client")
+
+    accounts = {}
+    unlinked = 0
+    for receipt in qs:
+        if not receipt.client_id:
+            unlinked += 1
+            continue
+        bucket = accounts.get(receipt.client_id)
+        if bucket is None:
+            client = receipt.client
+            bucket = {
+                "client_id": receipt.client_id,
+                "name": (
+                    (getattr(client, "full_name", None) or receipt.client_name or "Client")
+                    .strip()
+                    or "Client"
+                ),
+                "phone": (
+                    getattr(client, "phone_number", None) or receipt.client_phone or ""
+                ).strip(),
+                "trade_in_count": 0,
+                "trade_in_value": _zero(),
+                "trade_out_count": 0,
+                "trade_out_value": _zero(),
+                "balance": _zero(),
+            }
+            accounts[receipt.client_id] = bucket
+        value = Decimal(receipt.total or 0)
+        if receipt.kind == ShopReceiptKind.TRADE_IN:
+            bucket["trade_in_count"] += 1
+            bucket["trade_in_value"] += value
+        else:
+            bucket["trade_out_count"] += 1
+            bucket["trade_out_value"] += value
+        if receipt.kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}:
+            bucket["balance"] += trade_balance_due(receipt)
+
+    ordered = sorted(
+        accounts.values(),
+        key=lambda row: (-row["balance"], row["name"].lower(), row["client_id"]),
+    )
+
+    columns = [
+        "Client",
+        {"label": "Phone", "phone": True, "title": "Client phone number"},
+        {
+            "label": "Trade in",
+            "pair": True,
+            "pair_qty": "Docs",
+            "pair_amt": "Value",
+        },
+        {
+            "label": "Trade out",
+            "pair": True,
+            "pair_qty": "Docs",
+            "pair_amt": "Value",
+        },
+        {
+            "label": "Balance",
+            "title": "Open amount still to clear",
+            "band": "mpesa",
+            "band_start": True,
+        },
+    ]
+
+    table_rows = []
+    total_in = _zero()
+    total_out = _zero()
+    total_balance = _zero()
+    in_docs = 0
+    out_docs = 0
+    segment = role_url_segment(role)
+    for account in ordered:
+        total_in += account["trade_in_value"]
+        total_out += account["trade_out_value"]
+        total_balance += account["balance"]
+        in_docs += account["trade_in_count"]
+        out_docs += account["trade_out_count"]
+        href = reverse(
+            "employees:analytics_trade_detail",
+            kwargs={"role_segment": segment, "client_id": account["client_id"]},
+        )
+        if query:
+            href = f"{href}?{query}"
+        table_rows.append(
+            {
+                "search_text": f"{account['name']} {account['phone']}",
+                "cells": [
+                    {"href": href, "label": account["name"]},
+                    account["phone"] or "—",
+                    _qty_amount_cell(
+                        account["trade_in_count"],
+                        account["trade_in_value"],
+                        title=(
+                            f"{account['trade_in_count']} trade in · "
+                            f"{_money_ksh(account['trade_in_value'])}"
+                        ),
+                    ),
+                    _qty_amount_cell(
+                        account["trade_out_count"],
+                        account["trade_out_value"],
+                        title=(
+                            f"{account['trade_out_count']} trade out · "
+                            f"{_money_ksh(account['trade_out_value'])}"
+                        ),
+                    ),
+                    _money_cell(
+                        account["balance"],
+                        tone="warn" if account["balance"] > 0 else "neutral",
+                        title=f"Balance {_money_ksh(account['balance'])}",
+                    ),
+                ],
+            }
+        )
+
+    if table_rows:
+        table_rows.append(
+            [
+                "Total",
+                f"{len(ordered)} client{'' if len(ordered) == 1 else 's'}",
+                _qty_amount_cell(
+                    in_docs,
+                    total_in,
+                    title=f"{in_docs} trade in · {_money_ksh(total_in)}",
+                ),
+                _qty_amount_cell(
+                    out_docs,
+                    total_out,
+                    title=f"{out_docs} trade out · {_money_ksh(total_out)}",
+                ),
+                _money_cell(
+                    total_balance,
+                    tone="warn" if total_balance > 0 else "neutral",
+                    title=f"Balance {_money_ksh(total_balance)}",
+                ),
+            ]
+        )
+
     period_label = filters.get("report_period_label") or "selected period"
+    footnote = "Open a client to see every trade in and trade out."
+    if unlinked:
+        footnote = (
+            f"{footnote} {unlinked} trade"
+            f"{'' if unlinked == 1 else 's'} have no client account and are not listed."
+        )
     return {
         "headline": "Tradings",
         "lead": (
-            f"Trade-out clients and items taken for {period_label}. "
-            "Clear a trade by converting it to a sale or stocking an exchange item."
+            f"Client trade accounts for {period_label}. "
+            "Open a client to see their trade ins and trade outs."
         ),
         "alerts": [],
+        "show_search": True,
+        "search_placeholder": "Search client or phone",
+        "list_table_layout": True,
         "metrics": [
             {
-                "label": "Open trades",
-                "value": str(open_count),
-                "hint": "Still awaiting payment or exchange",
+                "label": "Clients",
+                "value": str(len(ordered)),
+                "hint": "Accounts with a trade in this period",
             },
             {
-                "label": "Trade value",
-                "value": _money_ksh(total_value),
-                "hint": "Selling value of items taken",
+                "label": "Trade in",
+                "value": _money_ksh(total_in),
+                "hint": f"{in_docs} document{'' if in_docs == 1 else 's'} received",
+            },
+            {
+                "label": "Trade out",
+                "value": _money_ksh(total_out),
+                "hint": f"{out_docs} document{'' if out_docs == 1 else 's'} sent",
             },
             {
                 "label": "Balance left",
                 "value": _money_ksh(total_balance),
-                "hint": "Not yet cleared by cash or exchange",
+                "hint": "Still to clear with the client",
             },
         ],
         "insights": [],
         "tables": [
             _table(
-                "Trade outs",
+                "Client accounts",
                 columns,
                 table_rows,
-                empty="No trade outs for selected shops and period.",
+                empty="No client trade accounts for selected shops and period.",
+                footnote=footnote,
+                searchable=True,
+            )
+        ],
+    }
+
+
+def build_client_tradings_page(*, profile, request, client_id: int) -> dict:
+    """Trade ins and trade outs for one client."""
+    from employees.workspace import analytics_section_url
+
+    client = Client.objects.filter(pk=client_id).first()
+    if client is None:
+        raise Http404("Client not found.")
+
+    filters = _filters_context(
+        profile,
+        request,
+        allow_all_time=True,
+        default_all_time=False,
+    )
+    filters["role"] = profile.role
+    query = request.GET.urlencode()
+    role = profile.role
+    qs = (
+        _trade_receipts_qs(filters["active_shop_ids"], filters["start"], filters["end"])
+        .filter(client_id=client.pk)
+        .select_related("shop", "client", "source_shop")
+        .prefetch_related("lines")
+        .order_by("-created_at", "-id")
+    )
+    summary = _trade_receipt_rows(qs, role=role, query=query, client_id=client.pk)
+    back_href = analytics_section_url(role, "tradings")
+    if query:
+        back_href = f"{back_href}?{query}"
+    period_label = filters.get("report_period_label") or "selected period"
+    phone = (client.phone_number or "").strip()
+    return {
+        "headline": client.full_name,
+        "lead": (
+            f"{phone + ' · ' if phone else ''}"
+            f"Trade ins and trade outs for {period_label}."
+        ),
+        "period_label": period_label,
+        "back_href": back_href,
+        "back_label": "All clients",
+        "alerts": [],
+        "show_search": True,
+        "search_placeholder": "Search trade or item",
+        "list_table_layout": True,
+        "metrics": [
+            {
+                "label": "Trade in",
+                "value": _money_ksh(summary["trade_in_value"]),
+                "hint": f"{summary['trade_in_count']} document{'' if summary['trade_in_count'] == 1 else 's'}",
+            },
+            {
+                "label": "Trade out",
+                "value": _money_ksh(summary["trade_out_value"]),
+                "hint": f"{summary['trade_out_count']} document{'' if summary['trade_out_count'] == 1 else 's'}",
+            },
+            {
+                "label": "Open trades",
+                "value": str(summary["open_count"]),
+                "hint": "Still awaiting payment or exchange",
+            },
+            {
+                "label": "Balance left",
+                "value": _money_ksh(summary["total_balance"]),
+                "hint": "Still to clear with this client",
+            },
+        ],
+        "insights": [],
+        "tables": [
+            _table(
+                "Trades",
+                _trade_receipt_columns(),
+                summary["rows"],
+                empty="No trade ins or trade outs for this client in the selected period.",
+                footnote="Open a trade to pay, exchange, or return items.",
+                searchable=True,
             )
         ],
     }
@@ -8462,15 +8814,14 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
     )
     shop_ids = filters["active_shop_ids"]
     receipt = (
-        ShopReceipt.objects.filter(
-            pk=receipt_id,
-            shop_id__in=shop_ids,
-        )
+        ShopReceipt.objects.filter(pk=receipt_id)
+        .filter(Q(shop_id__in=shop_ids) | Q(source_shop_id__in=shop_ids))
         .filter(
             Q(kind=ShopReceiptKind.TRADE_OUT)
+            | Q(kind=ShopReceiptKind.TRADE_IN)
             | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
         )
-        .select_related("shop", "client", "created_by", "created_by__user")
+        .select_related("shop", "source_shop", "client", "created_by", "created_by__user")
         .prefetch_related("lines", "lines__item")
         .first()
     )
@@ -8499,18 +8850,20 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
 
     paid = Decimal(receipt.amount_paid or 0)
     exchange = Decimal(getattr(receipt, "trade_exchange_value", 0) or 0)
+    is_trade_in = receipt.kind == ShopReceiptKind.TRADE_IN
     balance = (
         trade_balance_due(receipt)
-        if receipt.kind == ShopReceiptKind.TRADE_OUT
+        if receipt.kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}
         else _zero()
     )
     can_settle = (
-        receipt.kind == ShopReceiptKind.TRADE_OUT
+        receipt.kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}
         and receipt.status != ShopReceiptStatus.CANCELLED
         and balance > 0
     )
     can_return = (
-        receipt.status != ShopReceiptStatus.CANCELLED
+        receipt.kind == ShopReceiptKind.TRADE_OUT
+        and receipt.status != ShopReceiptStatus.CANCELLED
         and any(int(row["remaining"] or 0) > 0 for row in lines)
     )
 
@@ -8549,13 +8902,25 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
             )
 
     role = profile.role
-    back_href = reverse(
-        "employees:analytics_section",
-        kwargs={
-            "role_segment": role_url_segment(role),
-            "section": "tradings",
-        },
-    )
+    query = request.GET.urlencode() if request is not None else ""
+    if receipt.client_id:
+        back_href = reverse(
+            "employees:analytics_trade_detail",
+            kwargs={
+                "role_segment": role_url_segment(role),
+                "client_id": receipt.client_id,
+            },
+        )
+    else:
+        back_href = reverse(
+            "employees:analytics_section",
+            kwargs={
+                "role_segment": role_url_segment(role),
+                "section": "tradings",
+            },
+        )
+    if query:
+        back_href = f"{back_href}?{query}"
     settle_url = reverse(
         "employees:analytics_trade_settle",
         kwargs={
@@ -8583,7 +8948,11 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
         "balance_raw": str(balance),
         "can_settle": can_settle,
         "can_return": can_return,
-        "is_open_trade": receipt.kind == ShopReceiptKind.TRADE_OUT,
+        "is_trade_in": is_trade_in,
+        "is_open_trade": receipt.kind in {
+            ShopReceiptKind.TRADE_OUT,
+            ShopReceiptKind.TRADE_IN,
+        },
         "settlements": settlements,
         "back_href": back_href,
         "settle_url": settle_url,
@@ -8919,7 +9288,10 @@ def _build_clients(filters):
     pair_qty = "Txns" if credit_mode else "Docs"
     pair_amt = "Owed" if credit_mode else "Amt"
     kind_labels = {
-        "all": "sales, credits, and quotations",
+        "all": "sales, credits, quotations, and trades",
+        "trade_out": "trade outs",
+        "trade_in": "trade ins",
+        "tradings": "trades",
         "sales": "sales",
         "credits": "credit receipts",
         "quotations": "quotations",
@@ -10149,6 +10521,10 @@ def _build_return_receipts(filters):
         receipt_kind = "credits"
     elif receipt_kind in ("quotation", "quotations", "quote"):
         receipt_kind = "quotations"
+    elif receipt_kind in ("trade_out", "trade-out"):
+        receipt_kind = "trade_out"
+    elif receipt_kind in ("trade_in", "trade-in"):
+        receipt_kind = "trade_in"
     elif receipt_kind in ("stock", "stock-suppliers", "stock_suppliers"):
         receipt_kind = "stock"
     elif receipt_kind in (
@@ -10177,6 +10553,8 @@ def _build_return_receipts(filters):
         ("sales", "Sales"),
         ("credits", "Credits"),
         ("quotations", "Quotations"),
+        ("trade_out", "Trade out"),
+        ("trade_in", "Trade in"),
         ("stock", "Stock suppliers"),
         ("expense", "Expense suppliers"),
         ("cancelled", "Cancelled"),
@@ -10251,6 +10629,8 @@ def _build_return_receipts(filters):
         "sales",
         "credits",
         "quotations",
+        "trade_out",
+        "trade_in",
         "cancelled",
         "partial-returns",
     )
@@ -10271,6 +10651,8 @@ def _build_return_receipts(filters):
             "sales",
             "credits",
             "quotations",
+            "trade_out",
+            "trade_in",
             "cancelled",
             "partial-returns",
         ):

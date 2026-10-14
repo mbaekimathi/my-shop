@@ -1284,7 +1284,13 @@
               // Last-resort browser print when shop printer JS is unavailable.
               const win = window.open("", "_blank", "noopener,noreferrer,width=480,height=720");
               if (win) {
-                const safe = String(data.receipt_text)
+                const prepared = window.RichcomPrinter?.maskReceiptForPrint
+                  ? window.RichcomPrinter.maskReceiptForPrint(
+                      data.receipt_text,
+                      data.receipt_ticket || null
+                    )
+                  : { text: data.receipt_text };
+                const safe = String(prepared.text || "")
                   .replace(/&/g, "&amp;")
                   .replace(/</g, "&lt;")
                   .replace(/>/g, "&gt;");
@@ -3252,7 +3258,9 @@
     };
 
     const syncClientRequirements = () => {
-      if (!clientDataEnabled) {
+      const kind = selectedKind();
+      const isTrade = kind === "trade_out" || kind === "trade_in";
+      if (!clientDataEnabled && !isTrade) {
         if (clientBlock) clientBlock.hidden = true;
         if (clientHint) {
           clientHint.hidden = true;
@@ -3266,12 +3274,10 @@
       }
       if (clientBlock) clientBlock.hidden = false;
       const hasSerials = cartHasSerialTracked();
-      const kind = selectedKind();
-      const eitherRequired =
-        kind === "credit" || kind === "quotation" || kind === "trade_out";
+      const eitherRequired = kind === "credit" || kind === "quotation";
       const phoneRequired =
-        requireClientPhone || (kind === "credit" && creditWhatsapp);
-      const nameRequired = requireClientName || kind === "trade_out";
+        requireClientPhone || (kind === "credit" && creditWhatsapp) || isTrade;
+      const nameRequired = requireClientName || isTrade;
       const blockRequired = phoneRequired || nameRequired || eitherRequired;
       if (clientPhoneInput) clientPhoneInput.required = phoneRequired;
       if (clientNameInput) clientNameInput.required = nameRequired;
@@ -3288,7 +3294,10 @@
             "Enter the client phone number. A credit sale notice is sent on WhatsApp.";
         } else if (kind === "trade_out") {
           clientNote.textContent =
-            "Capture the client who is taking stock on trade. Name is required.";
+            "Client who is taking the goods. Name and phone are required.";
+        } else if (kind === "trade_in") {
+          clientNote.textContent =
+            "Client who brought the goods. Name and phone are required. Settle later.";
         } else if (phoneRequired && nameRequired) {
           clientNote.textContent = "Client phone and full name are required.";
         } else if (phoneRequired) {
@@ -3750,7 +3759,7 @@
             return;
           }
         }
-        if (clientDataEnabled) {
+        if (clientDataEnabled || kind === "trade_out" || kind === "trade_in") {
           const phone = normalizeClientPhoneField({ force: true });
           const name = (clientNameInput?.value || "").trim();
           if (requireClientPhone && !phone) {
@@ -3769,7 +3778,19 @@
             focusCartClientFields();
             return;
           }
-          if (kind === "credit" || kind === "quotation" || kind === "trade_out") {
+          if (kind === "trade_out" || kind === "trade_in") {
+            if (!name) {
+              setCartStatus("Enter the client full name.", { error: true });
+              focusCartClientFields();
+              return;
+            }
+            if (!phone) {
+              setCartStatus("Enter the client phone number.", { error: true });
+              focusCartClientFields();
+              return;
+            }
+          }
+          if (kind === "credit" || kind === "quotation") {
             if (kind === "credit" && creditWhatsapp && !phone) {
               setCartStatus(
                 "Enter the client phone number so the credit sale can be sent on WhatsApp.",
@@ -3778,17 +3799,9 @@
               focusCartClientFields();
               return;
             }
-            if (kind === "trade_out" && !name) {
-              setCartStatus(
-                "Enter the client full name for a trade out.",
-                { error: true }
-              );
-              focusCartClientFields();
-              return;
-            }
             if (!phone && !name) {
               setCartStatus(
-                "Enter a client name, a phone number, or both for credit, quotation, and trade out.",
+                "Enter a client name, a phone number, or both for credit and quotation.",
                 { error: true }
               );
               focusCartClientFields();
@@ -3800,16 +3813,18 @@
         const payload = {
           kind,
           client_id: checkoutClientId,
-          client_name: clientDataEnabled
-            ? (
-                checkoutForm.querySelector("[data-cart-client-name]")?.value || ""
-              )
-                .trim()
-                .toUpperCase()
-            : "",
-          client_phone: clientDataEnabled
-            ? normalizeClientPhoneField({ force: true })
-            : "",
+          client_name:
+            clientDataEnabled || kind === "trade_out" || kind === "trade_in"
+              ? (
+                  checkoutForm.querySelector("[data-cart-client-name]")?.value || ""
+                )
+                  .trim()
+                  .toUpperCase()
+              : "",
+          client_phone:
+            clientDataEnabled || kind === "trade_out" || kind === "trade_in"
+              ? normalizeClientPhoneField({ force: true })
+              : "",
           login_code: (cartLoginCode?.value || "").trim(),
           share_whatsapp: Boolean(
             clientDataEnabled &&
@@ -3818,7 +3833,10 @@
           lines: [...cart.values()].map((line) => ({
             id: line.id,
             qty: line.qty,
-            price: discountEnabled ? line.price : line.listPrice || line.price,
+            price:
+              kind === "trade_in" || discountEnabled
+                ? line.price
+                : line.listPrice || line.price,
             serials: Array.isArray(line.serials) ? line.serials : [],
           })),
         };
@@ -3956,7 +3974,7 @@
             stockUpdates = data.stock_updates;
             applyStockUpdates(data.stock_updates);
             applyPendingStockToCatalog();
-          } else if (queued && kind !== "quotation") {
+          } else if (queued && kind !== "quotation" && kind !== "trade_in") {
             await applyPendingStockToCatalog();
           } else if (kind !== "quotation") {
             stockUpdates = soldLines.map((line) => {
@@ -4018,7 +4036,8 @@
               kind === "sale" ||
               kind === "credit" ||
               kind === "quotation" ||
-              kind === "trade_out");
+              kind === "trade_out" ||
+              kind === "trade_in");
           if (shouldPrint) {
             await printReceiptText(
               data.receipt_text,
@@ -4242,6 +4261,9 @@
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;");
+      const prepared = printer?.maskReceiptForPrint
+        ? printer.maskReceiptForPrint(text, ticket)
+        : { text };
       doc.open();
       doc.write(`<!doctype html><html><head><title>Receipt (${label})</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
@@ -4257,7 +4279,7 @@
     -webkit-font-smoothing: none;
     text-shadow: 0.35px 0 0 #000, -0.35px 0 0 #000;
   }
-</style></head><body><pre>${esc(text)}</pre>
+</style></head><body><pre>${esc(prepared.text)}</pre>
 <script>window.onload = () => { window.focus(); window.print(); };<\/script>
 </body></html>`);
       doc.close();
@@ -4342,6 +4364,9 @@
     const clampPrice = (price, minPrice, listPrice) => {
       let next = roundMoney(price);
       if (!Number.isFinite(next)) next = listPrice > 0 ? listPrice : 0;
+      if (selectedKind() === "trade_in") {
+        return Math.max(0, next);
+      }
       if (!discountEnabled) {
         return listPrice > 0 ? listPrice : Math.max(0, next);
       }
@@ -4410,7 +4435,14 @@
     const clampQty = (qty, stock) => {
       let next = Math.floor(Number(qty));
       if (!Number.isFinite(next) || next < 1) next = 0;
-      if (stockTrackingEnabled && stock > 0 && next > stock) next = stock;
+      if (
+        stockTrackingEnabled &&
+        selectedKind() !== "trade_in" &&
+        stock > 0 &&
+        next > stock
+      ) {
+        next = stock;
+      }
       return next;
     };
 
@@ -4511,6 +4543,15 @@
 
     const setLinePrice = (id, price, meta = null) => {
       if (!id) return null;
+      if (selectedKind() === "trade_in") {
+        const existing = cart.get(id);
+        const nextPrice = Math.max(0, roundMoney(price));
+        if (existing) {
+          existing.price = nextPrice;
+          cart.set(id, existing);
+        }
+        return nextPrice;
+      }
       if (!discountEnabled) {
         const existing = cart.get(id);
         const listPrice = roundMoney(
@@ -4573,7 +4614,7 @@
         if (addBtn) {
           const label = addBtn.querySelector(".shop-floor-add-label");
           const short = addBtn.querySelector(".shop-floor-add-short");
-          if (stockTrackingEnabled && stock <= 0) {
+          if (stockTrackingEnabled && selectedKind() !== "trade_in" && stock <= 0) {
             addBtn.hidden = false;
             addBtn.disabled = true;
             if (label) label.textContent = "Out of stock";
@@ -4607,7 +4648,8 @@
       );
       const inCart = Boolean(line);
       if (productAdd) {
-        const outOfStock = stockTrackingEnabled && stock <= 0;
+        const outOfStock =
+          stockTrackingEnabled && selectedKind() !== "trade_in" && stock <= 0;
         productAdd.hidden = inCart || outOfStock;
         productAdd.disabled = outOfStock;
         const label = productAdd.querySelector("span");
@@ -4830,26 +4872,38 @@
         const name = document.createElement("strong");
         name.textContent = line.name;
 
+        const canEditPrice = discountEnabled || selectedKind() === "trade_in";
         const priceField = document.createElement("label");
         priceField.className = "shop-cart-price-field";
-        if (!discountEnabled) priceField.classList.add("is-locked");
+        if (!canEditPrice) priceField.classList.add("is-locked");
         const pricePrefix = document.createElement("span");
         pricePrefix.textContent = "KSh";
         const priceInput = document.createElement("input");
         priceInput.type = "number";
         priceInput.className = "shop-cart-price-input";
-        priceInput.min = String(discountEnabled ? line.minPrice || 0 : line.listPrice || 0);
-        if (!discountEnabled) priceInput.max = String(line.listPrice || 0);
+        priceInput.min = String(
+          selectedKind() === "trade_in"
+            ? 0.01
+            : canEditPrice
+              ? line.minPrice || 0
+              : line.listPrice || 0
+        );
+        if (!canEditPrice) priceInput.max = String(line.listPrice || 0);
         else priceInput.removeAttribute("max");
         priceInput.step = "0.01";
         priceInput.inputMode = "decimal";
         priceInput.value = roundMoney(
-          discountEnabled ? line.price : line.listPrice || line.price
+          canEditPrice ? line.price : line.listPrice || line.price
         ).toFixed(2);
-        priceInput.readOnly = !discountEnabled;
-        priceInput.tabIndex = discountEnabled ? 0 : -1;
-        priceInput.setAttribute("aria-label", `Sale price for ${line.name}`);
-        if (!discountEnabled) {
+        priceInput.readOnly = !canEditPrice;
+        priceInput.tabIndex = canEditPrice ? 0 : -1;
+        priceInput.setAttribute(
+          "aria-label",
+          selectedKind() === "trade_in"
+            ? `Amount owed for ${line.name}`
+            : `Sale price for ${line.name}`
+        );
+        if (!canEditPrice) {
           priceInput.setAttribute("aria-readonly", "true");
         }
         priceInput.dataset.cartPriceInput = "";
@@ -4857,7 +4911,9 @@
 
         const priceHint = document.createElement("span");
         priceHint.className = "shop-cart-price-hint";
-        if (discountEnabled && line.minPrice > 0 && line.listPrice > 0) {
+        if (selectedKind() === "trade_in") {
+          priceHint.textContent = "Amount owed to the sending shop";
+        } else if (discountEnabled && line.minPrice > 0 && line.listPrice > 0) {
           let hint = `Min ${money(line.minPrice)} · List ${money(line.listPrice)}`;
           if (line.discountMinQty > 0 && line.discountAmount > 0) {
             hint += ` · From ${line.discountMinQty}+: −${money(line.discountAmount)}`;
@@ -4906,7 +4962,9 @@
         qtyInput.type = "number";
         qtyInput.className = "shop-cart-qty-input";
         qtyInput.min = "1";
-        if (stockTrackingEnabled && line.stock > 0) qtyInput.max = String(line.stock);
+        if (stockTrackingEnabled && selectedKind() !== "trade_in" && line.stock > 0) {
+          qtyInput.max = String(line.stock);
+        }
         qtyInput.value = String(line.qty);
         qtyInput.inputMode = "numeric";
         qtyInput.setAttribute("aria-label", "Quantity");
@@ -4917,7 +4975,12 @@
         inc.setAttribute("aria-label", "Increase quantity");
         inc.dataset.cartQty = "inc";
         inc.innerHTML = '<i data-lucide="plus" aria-hidden="true"></i>';
-        if (stockTrackingEnabled && line.stock > 0 && line.qty >= line.stock) {
+        if (
+          stockTrackingEnabled &&
+          selectedKind() !== "trade_in" &&
+          line.stock > 0 &&
+          line.qty >= line.stock
+        ) {
           inc.disabled = true;
         }
 
@@ -5617,7 +5680,9 @@
       if (!checkoutEnabled) return;
       const item = readItemFromEl(sourceEl);
       if (!item.id) return;
-      if (stockTrackingEnabled && item.stock <= 0) return;
+      if (stockTrackingEnabled && selectedKind() !== "trade_in" && item.stock <= 0) {
+        return;
+      }
       if (item.trackSerial || cart.get(item.id)?.trackSerial) {
         const existing = cart.get(item.id);
         const salePrice = clampPrice(
@@ -5768,6 +5833,7 @@
           clearStkConfirmation();
         }
         syncCheckoutMode();
+        if (event.target.matches?.("[data-cart-kind]")) renderCart();
       }
     });
 
