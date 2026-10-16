@@ -641,9 +641,15 @@
       root.querySelector(
         '[data-pos-toggle][data-field="show_client_phone_on_receipt"]'
       )?.checked !== false;
-    const ticket = showClientPhone
-      ? sample.ticket
-      : { ...sample.ticket, party_phone: "", party_phone_print: "" };
+    const fullPhone = String(
+      sample.ticket.party_phone_full || sample.ticket.party_phone || ""
+    );
+    const displayPhone = showClientPhone ? fullPhone : firstClientPhoneDigits(fullPhone);
+    const ticket = {
+      ...sample.ticket,
+      party_phone: displayPhone,
+      party_phone_print: displayPhone,
+    };
     const paperWidth =
       root.querySelector("[data-receipt-paper]:checked")?.value ||
       sample.paper_width ||
@@ -678,6 +684,20 @@
     }
   });
 
+  function firstClientPhoneDigits(phone, count = 8) {
+    const chars = [...String(phone || "")];
+    let digits = 0;
+    let end = 0;
+    for (let i = 0; i < chars.length; i += 1) {
+      if (/\d/.test(chars[i])) {
+        if (digits >= count) break;
+        digits += 1;
+      }
+      end = i + 1;
+    }
+    return chars.slice(0, end).join("").replace(/[\s\-().]+$/, "");
+  }
+
   const clientPhoneToggle = root.querySelector(
     '[data-pos-toggle][data-field="show_client_phone_on_receipt"]'
   );
@@ -685,7 +705,12 @@
     const syncClientPhonePreview = () => {
       const show = clientPhoneToggle.checked;
       root.querySelectorAll("[data-receipt-client-phone]").forEach((el) => {
-        el.hidden = !show;
+        const full = el.getAttribute("data-full-phone") || "";
+        const value = show ? full : firstClientPhoneDigits(full);
+        el.hidden = !value;
+        el.querySelectorAll(".receipt-phone-screen, .receipt-phone-print").forEach((span) => {
+          span.textContent = value;
+        });
       });
     };
     clientPhoneToggle.addEventListener("change", () => {

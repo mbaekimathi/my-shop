@@ -510,49 +510,10 @@
   .qr-text { margin-top: 6px; font-size: 0.95em; font-weight: 800 !important; }
 `;
 
-  const maskPhoneLastDigits = (phone, count = 6) => {
-    const chars = [...String(phone || "")];
-    let remaining = count;
-    for (let i = chars.length - 1; i >= 0 && remaining > 0; i -= 1) {
-      if (/\d/.test(chars[i])) {
-        chars[i] = "*";
-        remaining -= 1;
-      }
-    }
-    return chars.join("");
-  };
-
-  const isClientReceiptParty = (ticket) => {
-    if (!ticket || typeof ticket !== "object") return false;
-    if (ticket.route_from || ticket.route_to) return false;
-    const label = String(ticket.party_label || "").trim().toLowerCase();
-    if (label === "supplier") return false;
-    return Boolean(String(ticket.party_phone || "").trim());
-  };
-
-  const maskReceiptForPrint = (text, ticket) => {
-    const source = ticket && typeof ticket === "object" ? ticket : null;
-    const phone = String(source?.party_phone || "").trim();
-    if (!source || !phone || !isClientReceiptParty(source)) {
-      return { text: String(text || ""), ticket: source };
-    }
-    const masked = maskPhoneLastDigits(phone, 6);
-    let nextText = String(text || "");
-    if (masked !== phone && nextText) {
-      nextText = nextText
-        .split("\n")
-        .map((line) => {
-          const match = /^(Phone)(\s+)(.*)$/.exec(line);
-          if (!match || match[3].trim() !== phone) return line;
-          return `${match[1]}${match[2]}${masked}`;
-        })
-        .join("\n");
-    }
-    return {
-      text: nextText,
-      ticket: { ...source, party_phone: masked },
-    };
-  };
+  const maskReceiptForPrint = (text, ticket) => ({
+    text: String(text || ""),
+    ticket: ticket && typeof ticket === "object" ? ticket : null,
+  });
 
   const renderTicketHtml = (ticket, qr = null) => {
     const t = ticket && typeof ticket === "object" ? ticket : null;

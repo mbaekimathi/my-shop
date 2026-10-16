@@ -412,7 +412,7 @@ class CompanyPosSettings(models.Model):
     )
     show_client_phone_on_receipt = models.BooleanField(
         default=True,
-        help_text="When on, the customer's phone number is printed on receipts. When off, it is left off the receipt.",
+        help_text="When on, the full customer phone is printed. When off, only the first 8 digits are printed.",
     )
     receipt_paper_width = models.CharField(
         max_length=8,
@@ -681,7 +681,7 @@ class ShopPosSettings(models.Model):
     )
     show_client_phone_on_receipt = models.BooleanField(
         default=True,
-        help_text="When on, the customer's phone number is printed on receipts. When off, it is left off the receipt.",
+        help_text="When on, the full customer phone is printed. When off, only the first 8 digits are printed.",
     )
     receipt_paper_width = models.CharField(
         max_length=8,

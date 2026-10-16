@@ -31,7 +31,7 @@ from shops.services import (
     get_communications_settings,
     get_company_pos_settings,
     get_company_display_name,
-    mask_client_phone_for_print,
+    client_phone_for_receipt,
     get_company_profile,
     get_main_website_shop,
     get_company_working_hours_settings,
@@ -2332,8 +2332,15 @@ def _company_pos_settings(
                 "authorised_label": "Cashier",
                 "date": "07 Aug 2026 · 09:15",
                 "client": "JANE WAMBUI",
-                "party_phone": "+254 712 555 010",
-                "party_phone_print": mask_client_phone_for_print("+254 712 555 010"),
+                "party_phone_full": "+254 712 555 010",
+                "party_phone": client_phone_for_receipt(
+                    "+254 712 555 010",
+                    show_full=bool(getattr(pos, "show_client_phone_on_receipt", True)),
+                ),
+                "party_phone_print": client_phone_for_receipt(
+                    "+254 712 555 010",
+                    show_full=bool(getattr(pos, "show_client_phone_on_receipt", True)),
+                ),
                 "show_client_phone": bool(
                     getattr(pos, "show_client_phone_on_receipt", True)
                 ),
@@ -2427,8 +2434,14 @@ def _company_pos_settings(
             or "Cashier",
             "date": context["receipt_preview"]["date"],
             "client": context["receipt_preview"]["client"],
-            "party_phone": context["receipt_preview"].get("party_phone") or "",
-            "party_phone_print": context["receipt_preview"].get("party_phone_print")
+            "party_phone": context["receipt_preview"].get("party_phone_full")
+            or context["receipt_preview"].get("party_phone")
+            or "",
+            "party_phone_full": context["receipt_preview"].get("party_phone_full")
+            or context["receipt_preview"].get("party_phone")
+            or "",
+            "party_phone_print": context["receipt_preview"].get("party_phone_full")
+            or context["receipt_preview"].get("party_phone")
             or "",
             "show_client_phone": bool(
                 context["receipt_preview"].get("show_client_phone", True)

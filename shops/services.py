@@ -3401,6 +3401,22 @@ def format_kenya_phone(value: str) -> str:
     return f"+{normalized}"
 
 
+def client_phone_for_receipt(phone: str, *, show_full: bool) -> str:
+    """Full client phone, or only the first 8 digits when the shop hides it."""
+    value = (phone or "").strip()
+    if not value or show_full:
+        return value
+    kept = []
+    digits = 0
+    for char in value:
+        if char.isdigit():
+            if digits >= 8:
+                break
+            digits += 1
+        kept.append(char)
+    return "".join(kept).rstrip(" -().")
+
+
 def mask_client_phone_for_print(phone: str, digits: int = 6) -> str:
     """Hide the last numerals of a client phone on a printed receipt.
 
@@ -3720,9 +3736,10 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
     except (ValueError, AttributeError):
         logo_url = ""
 
-    party_phone = (getattr(receipt, "client_phone", None) or "").strip()
-    if not bool(getattr(pos, "show_client_phone_on_receipt", True)):
-        party_phone = ""
+    party_phone = client_phone_for_receipt(
+        getattr(receipt, "client_phone", None) or "",
+        show_full=bool(getattr(pos, "show_client_phone_on_receipt", True)),
+    )
 
     return {
         "mark": (company_name or DEFAULT_COMPANY_NAME).upper(),
