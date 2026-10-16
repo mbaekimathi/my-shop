@@ -76,6 +76,7 @@ POS_SETTING_FIELDS = {
     "enable_print_usb",
     "enable_print_wifi",
     "enable_receipt_payment_methods",
+    "show_client_phone_on_receipt",
 }
 
 # Shop override sections (POS page vs Receipt page).
@@ -106,6 +107,7 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "enable_print_usb",
         "enable_print_wifi",
         "enable_receipt_payment_methods",
+        "show_client_phone_on_receipt",
         "receipt_paper_width",
         "receipt_format_sale",
         "receipt_format_credit",
@@ -166,8 +168,8 @@ RECEIPT_FORMAT_RE = re.compile(r"^[A-Za-z0-9]{1,8}$")
 RECEIPT_QR_CONTENTS = ("website", "receipt_details")
 WEBSITE_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 
-POS_SETTINGS_CACHE_KEY = "company_pos_settings:v3"
-SHOP_POS_SETTINGS_CACHE_KEY = "shop_pos_settings:v2:{shop_id}"
+POS_SETTINGS_CACHE_KEY = "company_pos_settings:v4"
+SHOP_POS_SETTINGS_CACHE_KEY = "shop_pos_settings:v3:{shop_id}"
 POS_SETTINGS_CACHE_TTL = 300
 WORKING_HOURS_SETTINGS_CACHE_KEY = "company_working_hours:v1"
 DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v2"
@@ -3117,6 +3119,9 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_receipt_payment_methods": bool(
             getattr(row, "enable_receipt_payment_methods", True)
         ),
+        "show_client_phone_on_receipt": bool(
+            getattr(row, "show_client_phone_on_receipt", True)
+        ),
         "receipt_paper_width": paper,
         "receipt_font_size": font["size"],
         "receipt_font_weight": font["weight"],
@@ -3526,6 +3531,36 @@ def _receipt_center(text: str, width: int) -> str:
     return f"{' ' * (pad // 2)}{value}"
 
 
+RECEIPT_NO_RETURN_NOTICE = "Goods once bought cannot be returned"
+
+
+def _receipt_center_wrap(text: str, width: int) -> list[str]:
+    """Center a sentence, wrapping onto extra lines when the paper is narrow."""
+    words = str(text or "").split()
+    if not words or width < 1:
+        return []
+    raw: list[str] = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if len(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            raw.append(current)
+        current = word[:width]
+    if current:
+        raw.append(current)
+    if len(raw) >= 2:
+        previous = raw[-2].split()
+        if len(raw[-1].split()) == 1 and len(previous) > 1:
+            joined = f"{previous[-1]} {raw[-1]}"
+            if len(joined) <= width:
+                raw[-2] = " ".join(previous[:-1])
+                raw[-1] = joined
+    return [_receipt_center(line, width) for line in raw if line]
+
+
 def _sales_ticket_document_meta(receipt) -> dict:
     """Professional document labels for sale / credit / quotation / trade tickets."""
     kind = receipt.kind
@@ -3537,6 +3572,7 @@ def _sales_ticket_document_meta(receipt) -> dict:
             "party_label": "Customer",
             "authorised_label": "Cashier",
             "footer": "Thank you for your business",
+            "return_notice": RECEIPT_NO_RETURN_NOTICE,
         }
     if kind == ShopReceiptKind.QUOTATION:
         return {
@@ -3572,6 +3608,7 @@ def _sales_ticket_document_meta(receipt) -> dict:
         "party_label": "Customer",
         "authorised_label": "Cashier",
         "footer": "Thank you for shopping with us",
+        "return_notice": RECEIPT_NO_RETURN_NOTICE,
     }
 
 
@@ -3684,6 +3721,8 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         logo_url = ""
 
     party_phone = (getattr(receipt, "client_phone", None) or "").strip()
+    if not bool(getattr(pos, "show_client_phone_on_receipt", True)):
+        party_phone = ""
 
     return {
         "mark": (company_name or DEFAULT_COMPANY_NAME).upper(),
@@ -3720,6 +3759,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
             "lines": list(payment_details.get("lines") or []),
         },
         "footer": doc_meta["footer"],
+        "return_notice": doc_meta.get("return_notice") or "",
     }
 
 
@@ -3889,6 +3929,9 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
             _receipt_center(ticket.get("footer") or "Thank you for shopping with us", width),
         ]
     )
+    notice = (ticket.get("return_notice") or "").strip()
+    if notice:
+        rows.extend(_receipt_center_wrap(notice, width))
     return "\n".join(rows)
 
 

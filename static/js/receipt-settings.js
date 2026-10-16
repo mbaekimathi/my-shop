@@ -637,6 +637,13 @@
       window.alert("Sample receipt data is missing. Refresh the page.");
       return;
     }
+    const showClientPhone =
+      root.querySelector(
+        '[data-pos-toggle][data-field="show_client_phone_on_receipt"]'
+      )?.checked !== false;
+    const ticket = showClientPhone
+      ? sample.ticket
+      : { ...sample.ticket, party_phone: "", party_phone_print: "" };
     const paperWidth =
       root.querySelector("[data-receipt-paper]:checked")?.value ||
       sample.paper_width ||
@@ -659,7 +666,7 @@
           },
           "Sample",
           font,
-          sample.ticket
+          ticket
         );
       } else {
         window.alert("Print helper is not loaded. Refresh the page.");
@@ -670,6 +677,22 @@
       printSampleBtn.disabled = false;
     }
   });
+
+  const clientPhoneToggle = root.querySelector(
+    '[data-pos-toggle][data-field="show_client_phone_on_receipt"]'
+  );
+  if (clientPhoneToggle) {
+    const syncClientPhonePreview = () => {
+      const show = clientPhoneToggle.checked;
+      root.querySelectorAll("[data-receipt-client-phone]").forEach((el) => {
+        el.hidden = !show;
+      });
+    };
+    clientPhoneToggle.addEventListener("change", () => {
+      window.setTimeout(syncClientPhonePreview, 0);
+    });
+    syncClientPhonePreview();
+  }
 
   const paymentMethodToggle = root.querySelector(
     '[data-pos-toggle][data-field="enable_receipt_payment_methods"]'

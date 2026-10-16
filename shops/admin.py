@@ -73,6 +73,8 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "enable_print_bluetooth",
         "enable_print_usb",
         "enable_print_wifi",
+        "enable_receipt_payment_methods",
+        "show_client_phone_on_receipt",
         "receipt_paper_width",
         "receipt_format_sale",
         "receipt_format_credit",

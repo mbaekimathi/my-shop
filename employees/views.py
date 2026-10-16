@@ -1948,6 +1948,7 @@ RECEIPT_SETTING_GROUPS = (
             ("enable_print_usb", "Print via USB"),
             ("enable_print_wifi", "Print via Wi‑Fi"),
             ("enable_receipt_payment_methods", "Show payment methods on receipt"),
+            ("show_client_phone_on_receipt", "Show client phone number"),
         ),
     },
 )
@@ -2333,6 +2334,9 @@ def _company_pos_settings(
                 "client": "JANE WAMBUI",
                 "party_phone": "+254 712 555 010",
                 "party_phone_print": mask_client_phone_for_print("+254 712 555 010"),
+                "show_client_phone": bool(
+                    getattr(pos, "show_client_phone_on_receipt", True)
+                ),
                 "cashier": "Staff 104822",
                 "status": "",
                 "lines": (
@@ -2374,6 +2378,7 @@ def _company_pos_settings(
                     else {"type": "", "label": "", "lines": []}
                 ),
                 "footer": "Thank you for shopping with us",
+                "return_notice": "Goods once bought cannot be returned",
             },
         }
     )
@@ -2423,6 +2428,11 @@ def _company_pos_settings(
             "date": context["receipt_preview"]["date"],
             "client": context["receipt_preview"]["client"],
             "party_phone": context["receipt_preview"].get("party_phone") or "",
+            "party_phone_print": context["receipt_preview"].get("party_phone_print")
+            or "",
+            "show_client_phone": bool(
+                context["receipt_preview"].get("show_client_phone", True)
+            ),
             "cashier": context["receipt_preview"]["cashier"],
             "status": context["receipt_preview"].get("status") or "",
             "lines": preview_lines,
@@ -2435,6 +2445,7 @@ def _company_pos_settings(
             "payment": context["receipt_preview"]["payment"],
             "payment_details": context["receipt_preview"]["payment_details"],
             "footer": context["receipt_preview"]["footer"],
+            "return_notice": context["receipt_preview"].get("return_notice") or "",
         },
         "qr": context["receipt_qr"],
         "paper_width": paper_width,

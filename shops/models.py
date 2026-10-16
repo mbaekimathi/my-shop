@@ -410,6 +410,10 @@ class CompanyPosSettings(models.Model):
         default=True,
         help_text="Show how the customer paid and M-Pesa collection details on receipts.",
     )
+    show_client_phone_on_receipt = models.BooleanField(
+        default=True,
+        help_text="When on, the customer's phone number is printed on receipts. When off, it is left off the receipt.",
+    )
     receipt_paper_width = models.CharField(
         max_length=8,
         choices=(
@@ -674,6 +678,10 @@ class ShopPosSettings(models.Model):
     enable_receipt_payment_methods = models.BooleanField(
         default=True,
         help_text="Show how the customer paid and M-Pesa collection details on receipts.",
+    )
+    show_client_phone_on_receipt = models.BooleanField(
+        default=True,
+        help_text="When on, the customer's phone number is printed on receipts. When off, it is left off the receipt.",
     )
     receipt_paper_width = models.CharField(
         max_length=8,

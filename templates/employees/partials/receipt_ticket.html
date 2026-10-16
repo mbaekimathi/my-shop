@@ -39,7 +39,7 @@
       <span class="receipt-ticket-party-label">{{ p.party_label|default:"Customer" }}</span>
       <strong>{{ p.client|default:"—" }}</strong>
       {% if p.party_phone %}
-      <em>
+      <em data-receipt-client-phone{% if p.show_client_phone == False %} hidden{% endif %}>
         <span class="receipt-phone-screen">{{ p.party_phone }}</span>
         <span class="receipt-phone-print">{{ p.party_phone_print|default:p.party_phone }}</span>
       </em>
@@ -166,6 +166,9 @@
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
 
   <p class="receipt-ticket-footer">{{ p.footer }}</p>
+  {% if p.return_notice %}
+  <p class="receipt-ticket-footer receipt-ticket-return-notice">{{ p.return_notice }}</p>
+  {% endif %}
 
   <div class="receipt-ticket-qr" data-receipt-qr-block{% if not p.qr.ready %} hidden{% endif %}>
     {% if p.qr.image_data_url %}

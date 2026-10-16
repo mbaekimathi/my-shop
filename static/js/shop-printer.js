@@ -466,6 +466,11 @@
     font-size: 0.9em;
     font-weight: 800 !important;
   }
+  .receipt-ticket-return-notice {
+    margin-top: 0.35em;
+    font-size: 0.82em;
+    font-weight: 800 !important;
+  }
   .receipt-ticket-qr {
     display: grid;
     justify-items: center;
@@ -745,6 +750,11 @@
   <p class="receipt-ticket-footer">${escapeHtml(
     t.footer || "Thank you for shopping with us"
   )}</p>
+  ${
+    t.return_notice
+      ? `<p class="receipt-ticket-footer receipt-ticket-return-notice">${escapeHtml(t.return_notice)}</p>`
+      : ""
+  }
   ${qrBlock}
 </div>`;
   };
