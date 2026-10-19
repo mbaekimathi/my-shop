@@ -1,4 +1,0 @@
-/* Compatibility shim — prefer core.css + auth.css / app.css per page. */
-@import url("core.css");
-@import url("auth.css");
-@import url("app.css");

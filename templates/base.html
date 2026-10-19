@@ -1,12 +1,12 @@
 {% load static %}
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="{{ company_name|default:'MY-SHOP' }} — employee registration, login, and role-based access.">
-  <meta name="color-scheme" content="dark light">
-  <meta name="theme-color" content="#10282c">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f6f8f8">
   <link rel="manifest" href="{% url 'core:web_manifest' %}">
   <title>{% block title %}{{ company_name|default:"MY-SHOP" }}{% endblock %}</title>
   <script>
@@ -14,33 +14,24 @@
       try {
         var key = "myshop-theme";
         var stored = localStorage.getItem(key);
-        var theme = stored;
-        if (!theme) {
-          theme = window.matchMedia("(prefers-color-scheme: light)").matches
-            ? "light"
-            : "dark";
-        }
+        var theme = stored === "dark" || stored === "light" ? stored : "light";
         document.documentElement.setAttribute("data-theme", theme);
       } catch (e) {
-        document.documentElement.setAttribute("data-theme", "dark");
+        document.documentElement.setAttribute("data-theme", "light");
       }
     })();
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" onload="this.onload=null;this.rel='stylesheet'">
-  <noscript>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  </noscript>
-  <link rel="stylesheet" href="{% static 'css/core.css' %}?v=20260819-dark">
-  <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js" defer></script>
+  <link rel="preload" href="{% static 'fonts/manrope-latin.woff2' %}" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{% static 'css/core.css' %}?v=20261019-assets">
+  <script src="{% static 'vendor/lucide.min.js' %}" defer></script>
   {% block extra_css %}{% endblock %}
   {% block extra_head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}" data-sync-url="{% url 'employees:sync' %}" data-sync-register-url="{% url 'employees:sync_register' %}">
   {% include "partials/offline_bar.html" %}
   {% block body %}{% endblock %}
-  <script defer src="{% static 'js/main.js' %}"></script>
+  <script defer src="{% static 'js/notify-sound.js' %}?v=1"></script>
+  <script defer src="{% static 'js/main.js' %}?v=20261019-assets"></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>

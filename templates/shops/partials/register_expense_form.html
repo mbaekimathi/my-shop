@@ -1,3 +1,4 @@
+{% load static %}
 <section
   class="shop-tool-page shop-expense-page{% if expense_compact %} shop-expense-page--modal{% endif %}"
   data-shop-expense
@@ -135,7 +136,7 @@
               >
                 <img
                   class="flag-img"
-                  src="https://flagcdn.com/w40/{{ form_data.supplier_phone_country_iso|default:'KE'|lower }}.png"
+                  src="{% static 'img/flags/' %}{{ form_data.supplier_phone_country_iso|default:'KE'|lower }}.png"
                   width="20"
                   height="15"
                   alt=""
@@ -265,7 +266,7 @@
           data-dial="{{ country.dial }}"
           data-name="{{ country.name|lower }}"
         >
-          <img class="flag-img" src="https://flagcdn.com/w40/{{ country.iso|lower }}.png" width="20" height="15" alt="">
+          <img class="flag-img" src="{% static 'img/flags/' %}{{ country.iso|lower }}.png" width="20" height="15" alt="">
           <span class="stock-country-name">{{ country.name }}</span>
           <span class="stock-country-dial">{{ country.dial }}</span>
         </button>

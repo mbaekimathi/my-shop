@@ -3402,19 +3402,18 @@ def format_kenya_phone(value: str) -> str:
 
 
 def client_phone_for_receipt(phone: str, *, show_full: bool) -> str:
-    """Full client phone, or only the first 8 digits when the shop hides it."""
+    """Full client phone, or the first 7 digits with the rest masked by ``*``."""
     value = (phone or "").strip()
     if not value or show_full:
         return value
-    kept = []
+    chars = list(value)
     digits = 0
-    for char in value:
+    for index, char in enumerate(chars):
         if char.isdigit():
-            if digits >= 8:
-                break
             digits += 1
-        kept.append(char)
-    return "".join(kept).rstrip(" -().")
+            if digits > 7:
+                chars[index] = "*"
+    return "".join(chars)
 
 
 def mask_client_phone_for_print(phone: str, digits: int = 6) -> str:

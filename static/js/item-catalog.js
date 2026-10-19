@@ -354,7 +354,9 @@
             canDelete
               ? `<form class="item-inline-form" method="post" data-confirm-delete data-item-name="${escapeHtml(
                   name
-                )}">
+                )}" data-stock-rows="${escapeHtml(
+                  JSON.stringify(item.stock_rows || [])
+                )}" data-item-suspended="${item.is_suspended ? "1" : "0"}">
             <input type="hidden" name="csrfmiddlewaretoken" value="${escapeHtml(csrf)}">
             <input type="hidden" name="action" value="delete">
             <input type="hidden" name="item_id" value="${item.id}">

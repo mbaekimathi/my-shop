@@ -1101,7 +1101,7 @@
             <input type="hidden" name="supplier_phone_country_code" value="+254" data-stock-supplier-dial data-stock-field disabled>
             <input type="hidden" value="KE" data-stock-supplier-iso disabled>
             <button type="button" class="stock-country-trigger" data-stock-country-trigger aria-label="Select country" aria-haspopup="listbox" aria-expanded="false">
-              <img class="flag-img" src="https://flagcdn.com/w40/ke.png" width="20" height="15" alt="" data-stock-flag-img>
+              <img class="flag-img" src="/static/img/flags/ke.png" width="20" height="15" alt="" data-stock-flag-img>
             </button>
             <span class="stock-phone-dial" data-stock-dial-display>+254</span>
             <input type="tel" name="supplier_phone_number" placeholder="7XXXXXXXX" inputmode="numeric" maxlength="9" autocomplete="tel-national" data-stock-supplier-phone data-supplier-search="phone" data-stock-field disabled>

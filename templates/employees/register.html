@@ -5,7 +5,7 @@
 {% block body_class %}page-auth{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/auth.css' %}?v=20260815c">
+<link rel="stylesheet" href="{% static 'css/auth.css' %}?v=20261019-components">
 {% endblock %}
 
 {% block body %}
@@ -142,7 +142,7 @@
               >
                 <img
                   class="flag-img"
-                  src="https://flagcdn.com/w40/{{ form_data.phone_country_iso|lower }}.png"
+                  src="{% static 'img/flags/' %}{{ form_data.phone_country_iso|lower }}.png"
                   width="20"
                   height="15"
                   alt=""
@@ -179,7 +179,7 @@
                       data-dial="{{ country.dial }}"
                       data-name="{{ country.name|lower }}"
                     >
-                      <img class="flag-img" src="https://flagcdn.com/w40/{{ country.iso|lower }}.png" width="20" height="15" alt="">
+                      <img class="flag-img" src="{% static 'img/flags/' %}{{ country.iso|lower }}.png" width="20" height="15" alt="">
                       <span class="country-name">{{ country.name }}</span>
                       <span class="country-dial">{{ country.dial }}</span>
                     </button>
@@ -274,5 +274,5 @@
 {% block extra_js %}
 <script src="{% static 'js/input-uppercase.js' %}"></script>
 <script src="{% static 'js/auth.js' %}"></script>
-<script src="{% static 'js/register.js' %}"></script>
+<script src="{% static 'js/register.js' %}?v=20261019-assets"></script>
 {% endblock %}

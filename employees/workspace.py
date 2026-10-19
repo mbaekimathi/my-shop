@@ -135,6 +135,7 @@ WORKSPACE_DASHBOARD_VIEWS = frozenset(
         "employees:role_employee",
         "employees:role_super_admin",
         "employees:role_super_admin_page",
+        "employees:role_super_admin_dashboard",
         "employees:role_company_manager",
         "employees:role_shop_manager",
         "employees:role_store_manager",
@@ -648,6 +649,8 @@ def sidebar_for_my_shop(
     portal=False,
     profile=None,
     pending_request_count=0,
+    trade_in_enabled=False,
+    trade_out_enabled=False,
 ):
     """Sidebar for MY-SHOP entry picker and shop floor workspace."""
     from .module_permissions import employee_may
@@ -711,6 +714,16 @@ def sidebar_for_my_shop(
                             active=active == "day_toggle",
                         )
                     )
+            if (trade_out_enabled and _allowed("trade_out")) or (
+                trade_in_enabled and _allowed("trade_in")
+            ):
+                primary.append(
+                    _action(
+                        "Trade",
+                        "repeat",
+                        action="trade",
+                    )
+                )
             if _allowed("buy_stock"):
                 primary.append(
                     _action(

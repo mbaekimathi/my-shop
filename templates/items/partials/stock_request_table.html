@@ -203,7 +203,6 @@
             <thead>
               <tr>
                 <th scope="col">Item</th>
-                <th scope="col">Sent</th>
                 <th scope="col">Received</th>
               </tr>
             </thead>
@@ -710,7 +709,7 @@
 
       if (!items.length) {
         linesEl.innerHTML =
-          '<tr><td colspan="3">This transfer has no items.</td></tr>';
+          '<tr><td colspan="2">This transfer has no items.</td></tr>';
       } else {
         linesEl.innerHTML = items
           .map(
@@ -718,9 +717,6 @@
               <td data-label="Item"><div class="stock-transfer-item"><span>${escapeHtml(
                 item.name
               )}</span></div></td>
-              <td data-label="Sent"><span class="stock-transfer-qty-readonly">${escapeHtml(
-                item.qty
-              )}</span></td>
               <td data-label="Received">
                 <label class="stock-transfer-qty-field">
                   <span class="visually-hidden">Received quantity for ${escapeHtml(
@@ -730,10 +726,8 @@
                     type="number"
                     name="qty_${escapeHtml(item.id)}"
                     min="0"
-                    max="${escapeHtml(item.qty)}"
                     step="1"
                     value=""
-                    placeholder="${escapeHtml(item.qty)}"
                     inputmode="numeric"
                     data-transfer-qty
                     data-line-id="${escapeHtml(item.id)}"
@@ -932,6 +926,9 @@
             : `<span class="workspace-toast__text"></span>`;
         toastItem.querySelector(".workspace-toast__text").textContent = flashText;
         toastList.appendChild(toastItem);
+        window.MyShopNotifySound?.play?.(
+          decision === "accept" ? "success" : "warning"
+        );
         const next = data.next || window.location.href;
         window.setTimeout(() => {
           try {

@@ -3,4 +3,56 @@
 {% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
+<section class="home" data-animate="rise">
+  <header class="home-hero">
+    <p class="home-kicker">{{ role_label|default:workspace.role_label }}</p>
+    <h2 class="home-title">
+      {% if meta.icon %}
+      <span class="home-title-icon" aria-hidden="true"><i data-lucide="{{ meta.icon }}"></i></span>
+      {% endif %}
+      Welcome back, {{ user.first_name|default:user.get_full_name|default:user.username }}
+    </h2>
+    {% if meta.summary %}
+    <p class="home-sub">{{ meta.summary }}</p>
+    {% endif %}
+  </header>
+
+  {% if page_sidebar.primary %}
+  <section class="home-section" aria-labelledby="home-actions-title">
+    <h3 class="home-section-title" id="home-actions-title">Quick actions</h3>
+    <div class="home-actions">
+      {% for item in page_sidebar.primary %}
+      {% if item.type == "action" %}
+      <button
+        type="button"
+        class="home-card"
+        data-modal-open="{{ item.action }}"
+        {% if item.href %}data-href="{{ item.href }}"{% endif %}
+      >
+        <span class="home-card-icon" aria-hidden="true"><i data-lucide="{{ item.icon }}"></i></span>
+        <span class="home-card-text"><strong>{{ item.label }}</strong></span>
+      </button>
+      {% elif item.href %}
+      <a class="home-card" href="{{ item.href }}">
+        <span class="home-card-icon" aria-hidden="true"><i data-lucide="{{ item.icon }}"></i></span>
+        <span class="home-card-text">
+          <strong>{{ item.label }}</strong>
+          {% if item.summary %}<small>{{ item.summary }}</small>{% endif %}
+        </span>
+        {% if item.badge %}<span class="home-card-badge">{{ item.badge }}</span>{% endif %}
+      </a>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="home-section" aria-labelledby="home-activity-title">
+    <h3 class="home-section-title" id="home-activity-title">Recent activity</h3>
+    <div class="home-empty">
+      <i data-lucide="history" aria-hidden="true"></i>
+      <p><strong>Nothing to show yet.</strong> Recent receipts, approvals and transfers will appear here.</p>
+    </div>
+  </section>
+</section>
 {% endblock %}

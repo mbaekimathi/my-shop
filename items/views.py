@@ -273,7 +273,10 @@ def item_management(request, profile, meta, module, page_sidebar):
         action = (request.POST.get("action") or "register").strip()
         item_id = (request.POST.get("item_id") or "").strip()
         denied = require_module_permission(
-            request, profile, "item-management", action
+            request,
+            profile,
+            "item-management",
+            "toggle_suspend" if action == "suspend" else action,
         )
         if denied is not None:
             return denied
@@ -325,9 +328,26 @@ def item_management(request, profile, meta, module, page_sidebar):
             messages.success(request, f"Item “{item.name}” {state}.")
             return redirect(request.path)
 
+        elif action == "suspend":
+            item = get_object_or_404(Item, pk=item_id)
+            if not item.is_suspended:
+                toggle_item_suspended(item, actor=profile)
+            messages.success(request, f"Item “{item.name}” suspended.")
+            return redirect(request.path)
+
         elif action == "delete":
             item = get_object_or_404(Item, pk=item_id)
             name = item.name
+            if (
+                not item.is_suspended
+                and item.shop_stocks.filter(quantity__gt=0).exists()
+            ):
+                toggle_item_suspended(item, actor=profile)
+                messages.success(
+                    request,
+                    f"Item “{name}” has stock on hand — suspended instead of deleted.",
+                )
+                return redirect(request.path)
             try:
                 delete_item(item, actor=profile)
             except ValidationError as exc:

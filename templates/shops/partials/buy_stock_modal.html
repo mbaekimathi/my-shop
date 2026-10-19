@@ -1,3 +1,4 @@
+{% load static %}
 {% if buy_stock_modal %}
 <div
   class="workspace-modal buy-stock-modal"
@@ -158,7 +159,7 @@
                 >
                   <img
                     class="flag-img"
-                    src="https://flagcdn.com/w40/ke.png"
+                    src="{% static 'img/flags/' %}ke.png"
                     width="20"
                     height="15"
                     alt=""
@@ -246,7 +247,7 @@
             data-dial="{{ country.dial }}"
             data-name="{{ country.name|lower }}"
           >
-            <img class="flag-img" src="https://flagcdn.com/w40/{{ country.iso|lower }}.png" width="20" height="15" alt="">
+            <img class="flag-img" src="{% static 'img/flags/' %}{{ country.iso|lower }}.png" width="20" height="15" alt="">
             <span class="stock-country-name">{{ country.name }}</span>
             <span class="stock-country-dial">{{ country.dial }}</span>
           </button>

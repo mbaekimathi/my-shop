@@ -210,6 +210,11 @@ urlpatterns = [
     ),
     path("super-admin/", views.role_super_admin, name="role_super_admin"),
     path(
+        "super-admin/dashboard/",
+        views.role_super_admin,
+        name="role_super_admin_dashboard",
+    ),
+    path(
         "company-manager/",
         views.role_company_manager,
         name="role_company_manager",

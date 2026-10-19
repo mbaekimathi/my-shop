@@ -889,10 +889,11 @@ body.storefront-pair-open .storefront__cart-fab {
   height: auto;
   place-items: center;
   overflow: hidden;
+  padding: .75rem;
   background: #eef0e8;
 }
 
-.storefront__product-image img { width: 100%; height: 100%; object-fit: cover; transition: transform .35s ease; }
+.storefront__product-image img { position: absolute; inset: 0; width: 100%; height: 100%; padding: .75rem; object-fit: contain; transition: transform .35s ease; }
 .storefront__product.is-focus:hover .storefront__product-image img,
 .storefront__product:hover .storefront__product-image img,
 .storefront__product.is-hover .storefront__product-image img {
@@ -1868,7 +1869,7 @@ body.storefront-pair-open {
 .storefront__footer a { color: inherit; }
 
 /* ── Tablet (≤ 960px) ── */
-@media (max-width: 960px) {
+@media (max-width: 899px) {
   .storefront__hero {
     min-height: min(100svh, 780px);
     align-items: center;
@@ -1885,8 +1886,8 @@ body.storefront-pair-open {
   .storefront__product-footer strong { font-size: .8rem; }
 }
 
-/* ── Mobile (≤ 760px) — horizontal scroll per category ── */
-@media (max-width: 760px) {
+/* ── Mobile (≤ 639px) — compact chrome, grid catalogue ── */
+@media (max-width: 639px) {
   .storefront { padding: 0 1rem 3rem; }
   .storefront__header {
     gap: .55rem;
@@ -2056,3 +2057,159 @@ body.storefront-pair-open {
     box-shadow: none;
   }
 }
+
+/* ============================================================
+   Phase 6 — storefront alignment pass
+   Keeps the shop-website identity (lime/ink/paper) while adopting
+   the shared spacing, radius, type and focus tokens from core.css.
+   ============================================================ */
+:root {
+  /* Storefront aliases — same values as the shared scale. */
+  --store-space-1: var(--space-1);
+  --store-space-2: var(--space-2);
+  --store-space-3: var(--space-3);
+  --store-space-4: var(--space-4);
+  --store-space-5: var(--space-5);
+  --store-radius-sm: var(--radius-sm);
+  --store-radius: var(--radius);
+  --store-radius-lg: var(--radius-lg);
+  --store-focus: 0 0 0 3px rgba(23, 33, 29, 0.24);
+}
+
+/* One visible focus ring for every storefront control (light-only page). */
+.storefront :where(a, button, input, select, textarea, [tabindex], [role="button"]):focus-visible {
+  outline: none;
+  box-shadow: var(--store-focus);
+}
+
+/* — Sticky header refinement -------------------------------------------- */
+.storefront__search:focus-within {
+  box-shadow: var(--store-focus);
+}
+
+.storefront__search:focus-within input {
+  outline: none;
+}
+
+/* — Catalogue: real responsive grid (2 / 3 / 4 columns) -------------------- */
+/* The rail scripts still run; their focus/near/hover effects are neutralized
+   so every card renders identically in the grid. */
+.storefront__products {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  overflow: visible;
+  scroll-snap-type: none;
+  mask-image: none;
+  padding: 0.35rem 0 1rem;
+}
+
+.storefront__product {
+  --rail-opacity: 1;
+  --rail-scale: 1;
+  --rail-blur: 0px;
+  flex: none;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  height: auto;
+  min-height: 0;
+  opacity: 1;
+  transform: none;
+  filter: none;
+  scroll-snap-align: none;
+  border-radius: var(--store-radius);
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+  will-change: auto;
+}
+
+.storefront__product.is-focus,
+.storefront__product.is-near {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+.storefront__product.is-focus {
+  box-shadow: none;
+  border-color: var(--store-line);
+  z-index: auto;
+}
+
+/* Keep the gentle lift on hover/focus, but never dim sibling cards. */
+@media (hover: hover) and (pointer: fine) {
+  .storefront__product:hover,
+  .storefront__product:focus-within,
+  .storefront__product.is-hover,
+  .storefront__product.is-focus:hover {
+    z-index: 2;
+    opacity: 1 !important;
+    transform: translateY(-3px) !important;
+    filter: none !important;
+    border-color: rgba(23, 33, 29, 0.2);
+    box-shadow: 0 14px 30px rgba(28, 41, 32, 0.12);
+  }
+
+  .storefront__products:hover .storefront__product:not(:hover):not(:focus-within):not(.is-hover) {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+}
+
+/* Grid shows every item — rail arrows would do nothing. */
+.storefront__rail-controls {
+  display: none;
+}
+
+.storefront__products:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Card internals sized for a grid cell instead of a fixed rail slot. */
+.storefront__product-image {
+  flex: none;
+  aspect-ratio: 4 / 3;
+}
+
+.storefront__product-body {
+  flex: 1 1 auto;
+  min-height: min-content;
+  padding: 0.65rem 0.75rem 0.75rem;
+}
+
+.storefront__product h4 {
+  font-size: 0.82rem;
+}
+
+.storefront__product-footer strong {
+  font-size: 0.82rem;
+}
+
+.storefront__add {
+  min-height: 2.25rem;
+  align-items: center;
+}
+
+@media (min-width: 640px) {
+  .storefront__products {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .storefront__product h4 {
+    font-size: 0.92rem;
+  }
+
+  .storefront__product-footer strong {
+    font-size: 0.9rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  .storefront__products {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+

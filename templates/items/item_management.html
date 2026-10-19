@@ -218,12 +218,52 @@
     </form>
   </div>
 </div>
+
+<div
+  class="workspace-modal item-delete-modal"
+  id="delete-item-modal"
+  data-modal="delete-item"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close></div>
+  <div
+    class="workspace-modal-dialog item-delete-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="delete-item-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <p class="item-delete-kicker" data-delete-kicker>Stock on hand</p>
+        <h2 id="delete-item-title" data-delete-title>Delete item</h2>
+      </div>
+      <button class="workspace-icon-btn" type="button" aria-label="Close" data-modal-close>
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="item-delete-body">
+      <p class="item-delete-lead" data-delete-lead></p>
+      <div data-delete-stock-wrap hidden>
+        <p class="item-delete-detail" data-delete-detail></p>
+        <ul class="item-delete-stock-list" data-delete-stock-list></ul>
+      </div>
+    </div>
+    <div class="workspace-modal-actions">
+      <button class="btn btn--ghost" type="button" data-modal-close>Cancel</button>
+      <button class="btn btn--primary" type="button" data-delete-confirm>
+        <i data-lucide="trash-2" aria-hidden="true" data-delete-confirm-icon></i>
+        <span data-delete-confirm-label>Delete item</span>
+      </button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/item-catalog.js' %}?v=13"></script>
-<script defer src="{% static 'js/item-management.js' %}?v=13"></script>
+<script defer src="{% static 'js/item-catalog.js' %}?v=15"></script>
+<script defer src="{% static 'js/item-management.js' %}?v=15"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=2"></script>
 {% endblock %}

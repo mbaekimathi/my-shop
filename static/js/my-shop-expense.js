@@ -407,7 +407,7 @@
       const flagImg = phoneRoot.querySelector("[data-stock-flag-img]");
       if (dialDisplay) dialDisplay.textContent = supplier.dial;
       if (flagImg && supplier.iso) {
-        flagImg.src = `https://flagcdn.com/w40/${String(supplier.iso).toLowerCase()}.png`;
+        flagImg.src = `/static/img/flags/${String(supplier.iso).toLowerCase()}.png`;
       }
     }
     form.querySelectorAll("[data-supplier-search-root]").forEach(hideSuggest);
@@ -516,7 +516,7 @@
     if (isoInput) isoInput.value = iso;
     if (dialDisplay) dialDisplay.textContent = dial;
     if (flagImg) {
-      flagImg.src = `https://flagcdn.com/w40/${String(iso).toLowerCase()}.png`;
+      flagImg.src = `/static/img/flags/${String(iso).toLowerCase()}.png`;
     }
     countryOptions.forEach((opt) => {
       opt.classList.toggle("is-selected", opt.dataset.dial === dial);

@@ -118,7 +118,7 @@
 
     if (flagImg && iso) {
 
-      flagImg.src = `https://flagcdn.com/w40/${iso.toLowerCase()}.png`;
+      flagImg.src = `/static/img/flags/${iso.toLowerCase()}.png`;
 
     }
 

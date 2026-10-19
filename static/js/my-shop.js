@@ -1340,8 +1340,13 @@
 
   const TRANSFER_FLASH_KEY = "myshop:transfer-flash";
 
-  const pushStockRequestToast = (text, tone = "warning", { duration } = {}) => {
+  const pushStockRequestToast = (text, tone = "warning", { duration, silent = false } = {}) => {
     if (!text) return;
+    if (!silent) {
+      window.MyShopNotifySound?.play?.(
+        tone === "error" ? "error" : tone === "success" ? "success" : "warning"
+      );
+    }
     let host = document.querySelector("[data-workspace-toast]");
     if (!host) {
       host = document.createElement("div");
@@ -2447,6 +2452,10 @@
     const serialSaleCount = serialSaleModal?.querySelector("[data-serial-sale-count]");
     const serialSaleStatus = serialSaleModal?.querySelector("[data-serial-sale-status]");
     const serialSaleConfirm = serialSaleModal?.querySelector("[data-serial-sale-confirm]");
+    const tradeModal = document.querySelector('[data-modal="trade"]');
+    const tradeStatusEl = tradeModal?.querySelector("[data-trade-status]");
+    const tradeClientNameEl = tradeModal?.querySelector("[data-trade-client-name]");
+    const tradeClientPhoneEl = tradeModal?.querySelector("[data-trade-client-phone]");
     const checkoutForm = drawer?.querySelector("[data-cart-checkout]");
     const whatsappWrap = checkoutForm?.querySelector("[data-cart-whatsapp-wrap]");
     const paymentWrap = checkoutForm?.querySelector("[data-cart-payment-wrap]");
@@ -2526,13 +2535,6 @@
     let cartVerifyTimer = null;
     let cartVerifySeq = 0;
     let checkoutInFlight = false;
-    let clientLookupTimer = null;
-    let clientLookupSeq = 0;
-    let clientNameSearchTimer = null;
-    let clientNameSearchSeq = 0;
-    let clientNameAutofilled = false;
-    let clientPhoneAutofilled = false;
-    let clientSuggestIndex = -1;
     let splitLastEdited = "cash";
     let splitSyncing = false;
     let serialSaleItem = null;
@@ -2613,10 +2615,18 @@
     };
 
     const setCartStatus = (message, { ok = false, error = false } = {}) => {
-      if (!cartStatus) return;
-      cartStatus.textContent = message || defaultStatusMessage;
-      cartStatus.classList.toggle("is-ok", ok);
-      cartStatus.classList.toggle("is-error", error);
+      const text = message || defaultStatusMessage;
+      if (cartStatus) {
+        cartStatus.textContent = text;
+        cartStatus.classList.toggle("is-ok", ok);
+        cartStatus.classList.toggle("is-error", error);
+      }
+      if (tradeStatusEl && tradeModal && !tradeModal.hidden) {
+        tradeStatusEl.hidden = false;
+        tradeStatusEl.textContent = text;
+        tradeStatusEl.classList.toggle("is-ok", ok);
+        tradeStatusEl.classList.toggle("is-error", error);
+      }
     };
 
     const PRINTER_CONNECT_MSG =
@@ -2662,7 +2672,7 @@
       setCartStatus(text, { error: true });
       setCartNotice(text, { showConnect });
       setPagePrinterNotice(text, { showConnect });
-      pushStockRequestToast(text, "error");
+      pushStockRequestToast(text, "error", { silent: true });
     };
 
     const setCartVerified = (verified, message = "") => {
@@ -3187,12 +3197,6 @@
       }
     };
 
-    const setClientHint = (message = "", { ok = false } = {}) => {
-      if (!clientHint) return;
-      clientHint.textContent = message;
-      clientHint.classList.toggle("is-ok", ok && Boolean(message));
-    };
-
     const toKenyaPhone = (value) => {
       let digits = String(value || "").replace(/\D+/g, "");
       if (!digits) return "";
@@ -3208,35 +3212,306 @@
       return "";
     };
 
-    const normalizeClientName = () => {
-      if (!clientNameInput) return;
-      const start = clientNameInput.selectionStart;
-      const end = clientNameInput.selectionEnd;
-      const next = (clientNameInput.value || "").toUpperCase();
-      if (clientNameInput.value !== next) {
-        clientNameInput.value = next;
-        if (typeof start === "number" && typeof end === "number") {
-          clientNameInput.setSelectionRange(start, end);
+    // Client autofill: typing a full phone looks up the name, typing a name
+    // shows matching clients and fills the phone on selection.
+    const createClientAutofill = (
+      { nameInput, phoneInput, suggestEl, onHint } = {}
+    ) => {
+      let lookupTimer = null;
+      let lookupSeq = 0;
+      let nameSearchTimer = null;
+      let nameSearchSeq = 0;
+      let nameAutofilled = false;
+      let phoneAutofilled = false;
+      let suggestIndex = -1;
+
+      const setHint = (message = "", { ok = false } = {}) => {
+        onHint?.(message, { ok });
+      };
+
+      const normalizeName = () => {
+        if (!nameInput) return;
+        const start = nameInput.selectionStart;
+        const end = nameInput.selectionEnd;
+        const next = (nameInput.value || "").toUpperCase();
+        if (nameInput.value !== next) {
+          nameInput.value = next;
+          if (typeof start === "number" && typeof end === "number") {
+            nameInput.setSelectionRange(start, end);
+          }
         }
-      }
+      };
+
+      const normalizePhoneField = ({ force = false } = {}) => {
+        if (!phoneInput) return "";
+        const raw = (phoneInput.value || "").trim();
+        if (!raw) return "";
+        const formatted = toKenyaPhone(raw);
+        if (formatted) {
+          if (phoneInput.value !== formatted) {
+            phoneInput.value = formatted;
+          }
+          return formatted;
+        }
+        if (force && raw) {
+          setHint("Use a Kenyan number (07… or +2547…).");
+        }
+        return raw;
+      };
+
+      const hideSuggest = () => {
+        if (!suggestEl) return;
+        suggestEl.hidden = true;
+        suggestEl.innerHTML = "";
+        suggestIndex = -1;
+      };
+
+      const applySelection = (client) => {
+        if (!client) return;
+        if (nameInput) {
+          nameInput.value = String(client.full_name || "").toUpperCase();
+          nameAutofilled = true;
+        }
+        if (phoneInput && client.phone_number) {
+          phoneInput.value = client.phone_number;
+          phoneAutofilled = true;
+        }
+        hideSuggest();
+        setHint("Registered client selected.", { ok: true });
+      };
+
+      const renderSuggest = (results) => {
+        if (!suggestEl) return;
+        suggestEl.innerHTML = "";
+        suggestIndex = -1;
+        if (!results.length) {
+          const empty = document.createElement("div");
+          empty.className = "shop-cart-client-suggest-empty";
+          empty.textContent = "No matching clients";
+          suggestEl.appendChild(empty);
+          suggestEl.hidden = false;
+          return;
+        }
+
+        results.forEach((client, index) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "shop-cart-client-suggest-option";
+          btn.setAttribute("role", "option");
+          btn.dataset.index = String(index);
+          btn.innerHTML = `<strong></strong><small></small>`;
+          btn.querySelector("strong").textContent = client.full_name || "";
+          btn.querySelector("small").textContent = client.phone_number || "";
+          btn.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+            applySelection(client);
+          });
+          suggestEl.appendChild(btn);
+        });
+        suggestEl.hidden = false;
+      };
+
+      const moveSuggest = (delta) => {
+        if (!suggestEl || suggestEl.hidden) return;
+        const options = [
+          ...suggestEl.querySelectorAll(".shop-cart-client-suggest-option"),
+        ];
+        if (!options.length) return;
+        suggestIndex =
+          (suggestIndex + delta + options.length) % options.length;
+        options.forEach((el, idx) => {
+          el.classList.toggle("is-active", idx === suggestIndex);
+        });
+        options[suggestIndex]?.scrollIntoView({ block: "nearest" });
+      };
+
+      const selectActiveSuggest = () => {
+        if (!suggestEl || suggestEl.hidden) return false;
+        const options = [
+          ...suggestEl.querySelectorAll(".shop-cart-client-suggest-option"),
+        ];
+        if (!options.length) return false;
+        const active =
+          options[suggestIndex] ||
+          options.find((el) => el.classList.contains("is-active")) ||
+          options[0];
+        active?.dispatchEvent(new Event("mousedown", { bubbles: true }));
+        return true;
+      };
+
+      const searchByName = async () => {
+        normalizeName();
+        const query = (nameInput?.value || "").trim();
+        const seq = ++nameSearchSeq;
+        if (query.length < 2) {
+          hideSuggest();
+          if (phoneAutofilled && phoneInput) {
+            phoneInput.value = "";
+            phoneAutofilled = false;
+            setHint("");
+          }
+          return;
+        }
+        if (!clientLookupUrl) return;
+
+        try {
+          const url = `${clientLookupUrl}?name=${encodeURIComponent(query)}`;
+          const response = await fetch(url, {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+          });
+          const data = await response.json().catch(() => ({}));
+          if (seq !== nameSearchSeq) return;
+          if (!response.ok || !data.ok) {
+            hideSuggest();
+            return;
+          }
+          const results = Array.isArray(data.results) ? data.results : [];
+          renderSuggest(results);
+          if (!results.length) {
+            setHint("No registered client with that name.");
+          } else {
+            setHint("Select a client to fill the phone number.");
+          }
+        } catch (_) {
+          if (seq !== nameSearchSeq) return;
+          hideSuggest();
+        }
+      };
+
+      const queueNameSearch = () => {
+        window.clearTimeout(nameSearchTimer);
+        nameSearchTimer = window.setTimeout(() => {
+          searchByName();
+        }, 220);
+      };
+
+      const lookupByPhone = async () => {
+        normalizePhoneField();
+        const phone = (phoneInput?.value || "").trim();
+        const digits = phone.replace(/\D+/g, "");
+        const seq = ++lookupSeq;
+
+        if (digits.length < 12) {
+          if (nameAutofilled && nameInput) {
+            nameInput.value = "";
+            nameAutofilled = false;
+          }
+          setHint("");
+          return;
+        }
+        if (!clientLookupUrl) return;
+
+        try {
+          const url = `${clientLookupUrl}?phone=${encodeURIComponent(phone)}`;
+          const response = await fetch(url, {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+          });
+          const data = await response.json().catch(() => ({}));
+          if (seq !== lookupSeq) return;
+          if (!response.ok || !data.ok) {
+            setHint("");
+            return;
+          }
+          if (data.found && data.full_name) {
+            if (nameInput) {
+              nameInput.value = String(data.full_name || "").toUpperCase();
+              nameAutofilled = true;
+            }
+            if (data.phone_number && phoneInput) {
+              phoneInput.value = data.phone_number;
+              phoneAutofilled = true;
+            }
+            hideSuggest();
+            setHint("Registered client found.", { ok: true });
+          } else {
+            if (nameAutofilled && nameInput) {
+              nameInput.value = "";
+              nameAutofilled = false;
+            }
+            setHint("New client — will be saved on complete.");
+          }
+        } catch (_) {
+          if (seq !== lookupSeq) return;
+          setHint("");
+        }
+      };
+
+      const queueLookup = () => {
+        window.clearTimeout(lookupTimer);
+        lookupTimer = window.setTimeout(() => {
+          lookupByPhone();
+        }, 280);
+      };
+
+      const reset = () => {
+        nameAutofilled = false;
+        phoneAutofilled = false;
+        window.clearTimeout(lookupTimer);
+        window.clearTimeout(nameSearchTimer);
+        lookupSeq += 1;
+        nameSearchSeq += 1;
+        setHint("");
+        hideSuggest();
+      };
+
+      phoneInput?.addEventListener("input", () => {
+        phoneAutofilled = false;
+        hideSuggest();
+        queueLookup();
+      });
+      phoneInput?.addEventListener("blur", () => {
+        normalizePhoneField({ force: true });
+        lookupByPhone();
+      });
+      nameInput?.addEventListener("input", () => {
+        nameAutofilled = false;
+        normalizeName();
+        queueNameSearch();
+      });
+      nameInput?.addEventListener("keydown", (event) => {
+        if (!suggestEl || suggestEl.hidden) return;
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          moveSuggest(1);
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          moveSuggest(-1);
+        } else if (event.key === "Enter") {
+          if (selectActiveSuggest()) event.preventDefault();
+        } else if (event.key === "Escape") {
+          hideSuggest();
+        }
+      });
+      nameInput?.addEventListener("blur", () => {
+        normalizeName();
+        window.setTimeout(() => hideSuggest(), 120);
+      });
+
+      return {
+        setHint,
+        normalizeName,
+        normalizePhoneField,
+        hideSuggest,
+        lookupByPhone,
+        reset,
+      };
     };
 
-    const normalizeClientPhoneField = ({ force = false } = {}) => {
-      if (!clientPhoneInput) return "";
-      const raw = (clientPhoneInput.value || "").trim();
-      if (!raw) return "";
-      const formatted = toKenyaPhone(raw);
-      if (formatted) {
-        if (clientPhoneInput.value !== formatted) {
-          clientPhoneInput.value = formatted;
-        }
-        return formatted;
-      }
-      if (force && raw) {
-        setClientHint("Use a Kenyan number (07… or +2547…).");
-      }
-      return raw;
-    };
+    const cartClient = createClientAutofill({
+      nameInput: clientNameInput,
+      phoneInput: clientPhoneInput,
+      suggestEl: clientSuggest,
+      onHint: (message = "", { ok = false } = {}) => {
+        if (!clientHint) return;
+        clientHint.textContent = message;
+        clientHint.classList.toggle("is-ok", ok && Boolean(message));
+      },
+    });
+    const normalizeClientPhoneField = cartClient.normalizePhoneField;
 
     const cartHasSerialTracked = () =>
       [...cart.values()].some(
@@ -3327,6 +3602,17 @@
     };
 
     const focusCartClientFields = () => {
+      if (tradeModal && !tradeModal.hidden) {
+        window.setTimeout(() => {
+          const phone = (tradeClientPhoneEl?.value || "").trim();
+          if (!phone) {
+            tradeClientPhoneEl?.focus();
+            return;
+          }
+          tradeClientNameEl?.focus();
+        }, 80);
+        return;
+      }
       setCartOpen(true);
       window.setTimeout(() => {
         const phone = (clientPhoneInput?.value || "").trim();
@@ -3336,194 +3622,6 @@
         }
         clientNameInput?.focus();
       }, 80);
-    };
-
-    const hideClientSuggest = () => {
-      if (!clientSuggest) return;
-      clientSuggest.hidden = true;
-      clientSuggest.innerHTML = "";
-      clientSuggestIndex = -1;
-    };
-
-    const applyClientSelection = (client) => {
-      if (!client) return;
-      if (clientNameInput) {
-        clientNameInput.value = String(client.full_name || "").toUpperCase();
-        clientNameAutofilled = true;
-      }
-      if (clientPhoneInput && client.phone_number) {
-        clientPhoneInput.value = client.phone_number;
-        clientPhoneAutofilled = true;
-      }
-      hideClientSuggest();
-      setClientHint("Registered client selected.", { ok: true });
-    };
-
-    const renderClientSuggest = (results) => {
-      if (!clientSuggest) return;
-      clientSuggest.innerHTML = "";
-      clientSuggestIndex = -1;
-      if (!results.length) {
-        const empty = document.createElement("div");
-        empty.className = "shop-cart-client-suggest-empty";
-        empty.textContent = "No matching clients";
-        clientSuggest.appendChild(empty);
-        clientSuggest.hidden = false;
-        return;
-      }
-
-      results.forEach((client, index) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "shop-cart-client-suggest-option";
-        btn.setAttribute("role", "option");
-        btn.dataset.index = String(index);
-        btn.innerHTML = `<strong></strong><small></small>`;
-        btn.querySelector("strong").textContent = client.full_name || "";
-        btn.querySelector("small").textContent = client.phone_number || "";
-        btn.addEventListener("mousedown", (event) => {
-          event.preventDefault();
-          applyClientSelection(client);
-        });
-        clientSuggest.appendChild(btn);
-      });
-      clientSuggest.hidden = false;
-    };
-
-    const moveClientSuggest = (delta) => {
-      if (!clientSuggest || clientSuggest.hidden) return;
-      const options = [
-        ...clientSuggest.querySelectorAll(".shop-cart-client-suggest-option"),
-      ];
-      if (!options.length) return;
-      clientSuggestIndex =
-        (clientSuggestIndex + delta + options.length) % options.length;
-      options.forEach((el, idx) => {
-        el.classList.toggle("is-active", idx === clientSuggestIndex);
-      });
-      options[clientSuggestIndex]?.scrollIntoView({ block: "nearest" });
-    };
-
-    const selectActiveClientSuggest = () => {
-      if (!clientSuggest || clientSuggest.hidden) return false;
-      const options = [
-        ...clientSuggest.querySelectorAll(".shop-cart-client-suggest-option"),
-      ];
-      if (!options.length) return false;
-      const active =
-        options[clientSuggestIndex] ||
-        options.find((el) => el.classList.contains("is-active")) ||
-        options[0];
-      active?.dispatchEvent(new Event("mousedown", { bubbles: true }));
-      return true;
-    };
-
-    const searchClientsByName = async () => {
-      normalizeClientName();
-      const query = (clientNameInput?.value || "").trim();
-      const seq = ++clientNameSearchSeq;
-      if (query.length < 2) {
-        hideClientSuggest();
-        if (clientPhoneAutofilled && clientPhoneInput) {
-          clientPhoneInput.value = "";
-          clientPhoneAutofilled = false;
-          setClientHint("");
-        }
-        return;
-      }
-      if (!clientLookupUrl) return;
-
-      try {
-        const url = `${clientLookupUrl}?name=${encodeURIComponent(query)}`;
-        const response = await fetch(url, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-          credentials: "same-origin",
-        });
-        const data = await response.json().catch(() => ({}));
-        if (seq !== clientNameSearchSeq) return;
-        if (!response.ok || !data.ok) {
-          hideClientSuggest();
-          return;
-        }
-        const results = Array.isArray(data.results) ? data.results : [];
-        renderClientSuggest(results);
-        if (!results.length) {
-          setClientHint("No registered client with that name.");
-        } else {
-          setClientHint("Select a client to fill the phone number.");
-        }
-      } catch (_) {
-        if (seq !== clientNameSearchSeq) return;
-        hideClientSuggest();
-      }
-    };
-
-    const queueClientNameSearch = () => {
-      window.clearTimeout(clientNameSearchTimer);
-      clientNameSearchTimer = window.setTimeout(() => {
-        searchClientsByName();
-      }, 220);
-    };
-
-    const lookupClientByPhone = async () => {
-      normalizeClientPhoneField();
-      const phone = (clientPhoneInput?.value || "").trim();
-      const digits = phone.replace(/\D+/g, "");
-      const seq = ++clientLookupSeq;
-
-      if (digits.length < 12) {
-        if (clientNameAutofilled && clientNameInput) {
-          clientNameInput.value = "";
-          clientNameAutofilled = false;
-        }
-        setClientHint("");
-        return;
-      }
-      if (!clientLookupUrl) return;
-
-      try {
-        const url = `${clientLookupUrl}?phone=${encodeURIComponent(phone)}`;
-        const response = await fetch(url, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-          credentials: "same-origin",
-        });
-        const data = await response.json().catch(() => ({}));
-        if (seq !== clientLookupSeq) return;
-        if (!response.ok || !data.ok) {
-          setClientHint("");
-          return;
-        }
-        if (data.found && data.full_name) {
-          if (clientNameInput) {
-            clientNameInput.value = String(data.full_name || "").toUpperCase();
-            clientNameAutofilled = true;
-          }
-          if (data.phone_number && clientPhoneInput) {
-            clientPhoneInput.value = data.phone_number;
-            clientPhoneAutofilled = true;
-          }
-          hideClientSuggest();
-          setClientHint("Registered client found.", { ok: true });
-        } else {
-          if (clientNameAutofilled && clientNameInput) {
-            clientNameInput.value = "";
-            clientNameAutofilled = false;
-          }
-          setClientHint("New client — will be saved on complete.");
-        }
-      } catch (_) {
-        if (seq !== clientLookupSeq) return;
-        setClientHint("");
-      }
-    };
-
-    const queueClientLookup = () => {
-      window.clearTimeout(clientLookupTimer);
-      clientLookupTimer = window.setTimeout(() => {
-        lookupClientByPhone();
-      }, 280);
     };
 
     const syncCheckoutMode = () => {
@@ -3699,10 +3797,7 @@
       if (selectedKind() === "credit" || defaultKind === "credit") {
         ensureCreditDueDefault();
       }
-      clientNameAutofilled = false;
-      clientPhoneAutofilled = false;
-      setClientHint("");
-      hideClientSuggest();
+      cartClient.reset();
       clearStkConfirmation();
       setStaffCodeLocked(false);
       setCartVerified(false);
@@ -4266,7 +4361,7 @@
         : { text };
       doc.open();
       doc.write(`<!doctype html><html><head><title>Receipt (${label})</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="/static/css/fonts.css?v=20261019-assets">
 <style>
   @page { size: ${pageWidth} auto; margin: 2mm; }
   body {
@@ -5664,6 +5759,12 @@
       setSerialSaleOpen(false);
       renderCart();
 
+      if (tradeModal && !tradeModal.hidden) {
+        // Serials were picked inside the trade popup — stay there.
+        renderTradeLines();
+        return true;
+      }
+
       const phone = (clientPhoneInput?.value || "").trim();
       const name = (clientNameInput?.value || "").trim();
       if (!phone && !name) {
@@ -5866,39 +5967,6 @@
       // so blur + verify cannot start a second sale.
       if (checkoutInFlight || cartCodeVerified) return;
       verifyCartLoginCode({ autoCheckout: false });
-    });
-
-    clientPhoneInput?.addEventListener("input", () => {
-      clientPhoneAutofilled = false;
-      hideClientSuggest();
-      queueClientLookup();
-    });
-    clientPhoneInput?.addEventListener("blur", () => {
-      normalizeClientPhoneField({ force: true });
-      lookupClientByPhone();
-    });
-    clientNameInput?.addEventListener("input", () => {
-      clientNameAutofilled = false;
-      normalizeClientName();
-      queueClientNameSearch();
-    });
-    clientNameInput?.addEventListener("keydown", (event) => {
-      if (!clientSuggest || clientSuggest.hidden) return;
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        moveClientSuggest(1);
-      } else if (event.key === "ArrowUp") {
-        event.preventDefault();
-        moveClientSuggest(-1);
-      } else if (event.key === "Enter") {
-        if (selectActiveClientSuggest()) event.preventDefault();
-      } else if (event.key === "Escape") {
-        hideClientSuggest();
-      }
-    });
-    clientNameInput?.addEventListener("blur", () => {
-      normalizeClientName();
-      window.setTimeout(() => hideClientSuggest(), 120);
     });
 
     checkoutForm?.addEventListener("submit", (event) => {
@@ -6170,6 +6238,567 @@
       renderCart();
     });
 
+    /* —— Trade popup (sidebar → modal) —— */
+    const tradeForm = tradeModal?.querySelector("[data-trade-form]");
+    const tradeKindInputs = tradeModal
+      ? [...tradeModal.querySelectorAll("[data-trade-kind]")]
+      : [];
+    const tradeSearch = tradeModal?.querySelector("[data-trade-item-search]");
+    const tradeSuggest = tradeModal?.querySelector("[data-trade-suggest]");
+    const tradeLinesEl = tradeModal?.querySelector("[data-trade-lines]");
+    const tradeEmptyEl = tradeModal?.querySelector("[data-trade-empty]");
+    const tradeTotalEl = tradeModal?.querySelector("[data-trade-total]");
+    const tradeLeadEl = tradeModal?.querySelector("[data-trade-lead]");
+    const tradeItemsLabelEl = tradeModal?.querySelector("[data-trade-items-label]");
+    const tradeSubmitBtn = tradeModal?.querySelector("[data-trade-submit]");
+    const tradeSubmitLabel = tradeModal?.querySelector("[data-trade-submit-label]");
+    const tradeLoginCode = tradeModal?.querySelector("[data-trade-login-code]");
+    const tradeCatalogApi = cartRoot.getAttribute("data-catalog-api") || "";
+    const TRADE_KINDS = new Set(["trade_out", "trade_in"]);
+    let tradePrevKind = "";
+    let tradeSearchTimer = 0;
+    let tradeSearchSeq = 0;
+    let tradeInFlight = false;
+
+    const tradeKind = () =>
+      tradeModal?.querySelector("[data-trade-kind]:checked")?.value ||
+      tradeKindInputs[0]?.value ||
+      "";
+
+    const setTradeStatus = (message = "", { error = false, ok = false } = {}) => {
+      if (!tradeStatusEl) return;
+      tradeStatusEl.hidden = !message;
+      tradeStatusEl.textContent = message || "";
+      tradeStatusEl.classList.toggle("is-error", Boolean(error));
+      tradeStatusEl.classList.toggle("is-ok", Boolean(ok));
+    };
+
+    const tradeClientSuggest = tradeModal?.querySelector(
+      "[data-trade-client-suggest]"
+    );
+    const tradeClient = createClientAutofill({
+      nameInput: tradeClientNameEl,
+      phoneInput: tradeClientPhoneEl,
+      suggestEl: tradeClientSuggest,
+      onHint: (message = "", { ok = false } = {}) =>
+        setTradeStatus(message, { ok }),
+    });
+
+    const setCartKind = (kind) => {
+      if (!checkoutForm || !kind) return;
+      checkoutForm.querySelectorAll("[data-cart-kind]").forEach((input) => {
+        input.checked = input.value === kind;
+      });
+      syncCheckoutMode();
+    };
+
+    const syncTradeCopy = () => {
+      const isIn = tradeKind() === "trade_in";
+      if (tradeLeadEl) {
+        tradeLeadEl.textContent = isIn
+          ? "The client brings the items — record what you owe them."
+          : "The client takes the items from this shop.";
+      }
+      if (tradeItemsLabelEl) {
+        tradeItemsLabelEl.textContent = isIn ? "Items received" : "Items taken";
+      }
+      if (tradeSubmitLabel) {
+        tradeSubmitLabel.textContent = isIn
+          ? "Complete trade in"
+          : "Complete trade out";
+      }
+    };
+
+    const hideTradeSuggest = () => {
+      if (!tradeSuggest) return;
+      tradeSuggest.hidden = true;
+      tradeSuggest.innerHTML = "";
+    };
+
+    const tradeItemFromJson = (item) => ({
+      id: String(item?.id ?? ""),
+      name: String(item?.name || "Item"),
+      category: String(item?.category || ""),
+      description: String(item?.description || ""),
+      price: roundMoney(item?.price),
+      listPrice: roundMoney(item?.price),
+      minPrice: roundMoney(item?.min_price),
+      discountMinQty: Math.max(
+        0,
+        Math.floor(Number(item?.discount_min_qty) || 0)
+      ),
+      discountAmount: roundMoney(item?.discount_amount),
+      stock: Math.max(0, Math.floor(Number(item?.stock) || 0)),
+      image: String(item?.image_url || ""),
+      trackSerial: Boolean(item?.track_serial),
+    });
+
+    const renderTradeSuggest = (items, query) => {
+      if (!tradeSuggest) return;
+      tradeSuggest.innerHTML = "";
+      const kind = tradeKind();
+      items.slice(0, 8).forEach((item) => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "shop-cart-client-suggest-option";
+        const out =
+          stockTrackingEnabled && kind !== "trade_in" && item.stock <= 0;
+        option.disabled = out;
+        const name = document.createElement("strong");
+        name.textContent = item.name;
+        const meta = document.createElement("small");
+        meta.textContent = [
+          item.category,
+          item.trackSerial ? "Serial tracked" : "",
+          stockTrackingEnabled
+            ? out
+              ? "Out of stock"
+              : `${item.stock} in stock`
+            : "",
+          money(item.price),
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        option.append(name, meta);
+        option.addEventListener("mousedown", (event) => event.preventDefault());
+        option.addEventListener("click", () => addTradeItem(item));
+        tradeSuggest.appendChild(option);
+      });
+      if (!items.length) {
+        const empty = document.createElement("p");
+        empty.className = "shop-cart-client-suggest-empty";
+        empty.textContent = `No items match “${query}”.`;
+        tradeSuggest.appendChild(empty);
+      }
+      tradeSuggest.hidden = false;
+    };
+
+    const searchTradeItems = async (query) => {
+      const seq = ++tradeSearchSeq;
+      const q = String(query || "").trim();
+      if (!q) {
+        hideTradeSuggest();
+        return;
+      }
+      if (tradeCatalogApi) {
+        try {
+          const params = new URLSearchParams({
+            page: "1",
+            page_size: "8",
+            q,
+          });
+          const response = await fetch(`${tradeCatalogApi}?${params}`, {
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+          });
+          const data = await response.json().catch(() => ({}));
+          if (seq !== tradeSearchSeq) return;
+          if (response.ok && data.ok) {
+            renderTradeSuggest((data.items || []).map(tradeItemFromJson), q);
+            return;
+          }
+        } catch (_err) {
+          /* fall back to the rendered catalog */
+        }
+      }
+      if (seq !== tradeSearchSeq) return;
+      const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const items = [];
+      cartRoot.querySelectorAll("[data-cart-item]").forEach((card) => {
+        if (items.length >= 8) return;
+        const haystack = String(
+          card.getAttribute("data-search-text") || ""
+        ).toLowerCase();
+        if (tokens.every((token) => haystack.includes(token))) {
+          items.push(readItemFromEl(card));
+        }
+      });
+      renderTradeSuggest(items, q);
+    };
+
+    const renderTradeLines = () => {
+      if (!tradeLinesEl || !tradeModal) return;
+      const isIn = tradeKind() === "trade_in";
+      const editable = isIn || discountEnabled;
+      const lines = [...cart.values()];
+      tradeLinesEl.innerHTML = "";
+      if (tradeEmptyEl) tradeEmptyEl.hidden = lines.length > 0;
+      lines.forEach((line) => {
+        const li = document.createElement("li");
+        li.className = "shop-trade-line";
+        li.dataset.lineId = line.id;
+
+        const copy = document.createElement("div");
+        copy.className = "shop-trade-line-copy";
+        const name = document.createElement("strong");
+        name.textContent = line.name;
+        copy.appendChild(name);
+        const meta = document.createElement("small");
+        meta.className = "shop-trade-line-meta";
+        const serialCount = (line.serials || []).length;
+        meta.textContent = line.trackSerial
+          ? `${serialCount} serial${serialCount === 1 ? "" : "s"}`
+          : `${line.qty} × ${money(line.price)}`;
+        copy.appendChild(meta);
+        li.appendChild(copy);
+
+        if (line.trackSerial) {
+          const serialsBtn = document.createElement("button");
+          serialsBtn.type = "button";
+          serialsBtn.className = "shop-cart-line-serial-edit";
+          serialsBtn.dataset.tradeEditSerials = "";
+          serialsBtn.textContent = serialCount
+            ? `Serials (${serialCount})`
+            : "Add serials";
+          li.appendChild(serialsBtn);
+        } else {
+          const qtyWrap = document.createElement("div");
+          qtyWrap.className = "shop-cart-qty shop-trade-qty";
+          const dec = document.createElement("button");
+          dec.type = "button";
+          dec.className = "shop-floor-qty-btn";
+          dec.dataset.tradeQty = "dec";
+          dec.setAttribute("aria-label", "Decrease quantity");
+          dec.innerHTML = '<i data-lucide="minus" aria-hidden="true"></i>';
+          const qtyInput = document.createElement("input");
+          qtyInput.type = "number";
+          qtyInput.className = "shop-cart-qty-input";
+          qtyInput.min = "1";
+          if (!isIn && stockTrackingEnabled && line.stock > 0) {
+            qtyInput.max = String(line.stock);
+          }
+          qtyInput.value = String(line.qty);
+          qtyInput.inputMode = "numeric";
+          qtyInput.setAttribute("aria-label", "Quantity");
+          qtyInput.dataset.tradeQtyInput = "";
+          const inc = document.createElement("button");
+          inc.type = "button";
+          inc.className = "shop-floor-qty-btn";
+          inc.dataset.tradeQty = "inc";
+          inc.setAttribute("aria-label", "Increase quantity");
+          inc.innerHTML = '<i data-lucide="plus" aria-hidden="true"></i>';
+          if (
+            !isIn &&
+            stockTrackingEnabled &&
+            line.stock > 0 &&
+            line.qty >= line.stock
+          ) {
+            inc.disabled = true;
+          }
+          qtyWrap.append(dec, qtyInput, inc);
+          li.appendChild(qtyWrap);
+        }
+
+        const priceField = document.createElement("label");
+        priceField.className = "shop-cart-price-field";
+        if (!editable) priceField.classList.add("is-locked");
+        const prefix = document.createElement("span");
+        prefix.textContent = "KSh";
+        const priceInput = document.createElement("input");
+        priceInput.type = "number";
+        priceInput.className = "shop-cart-price-input";
+        priceInput.min = isIn
+          ? "0.01"
+          : String(editable ? line.minPrice || 0 : line.listPrice || 0);
+        if (!editable) priceInput.max = String(line.listPrice || 0);
+        priceInput.step = "0.01";
+        priceInput.inputMode = "decimal";
+        priceInput.value = roundMoney(line.price).toFixed(2);
+        priceInput.readOnly = !editable;
+        priceInput.tabIndex = editable ? 0 : -1;
+        priceInput.dataset.tradePriceInput = "";
+        priceInput.setAttribute(
+          "aria-label",
+          isIn ? `Amount owed for ${line.name}` : `Price for ${line.name}`
+        );
+        priceField.append(prefix, priceInput);
+        li.appendChild(priceField);
+
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "shop-cart-line-remove";
+        remove.dataset.tradeRemove = "";
+        remove.textContent = "Remove";
+        li.appendChild(remove);
+
+        tradeLinesEl.appendChild(li);
+      });
+      if (tradeTotalEl) tradeTotalEl.textContent = money(cartTotal());
+      refreshIcons();
+    };
+
+    const setTradeOpen = (open) => {
+      if (!tradeModal) return;
+      tradeModal.hidden = !open;
+      tradeModal.setAttribute("aria-hidden", String(!open));
+      syncModalOpen();
+      if (open) {
+        refreshIcons();
+        window.setTimeout(() => tradeSearch?.focus(), 60);
+      } else {
+        hideTradeSuggest();
+        tradeClient.hideSuggest();
+      }
+    };
+
+    const openTrade = () => {
+      if (!tradeModal || !tradeKind()) return;
+      const current = selectedKind();
+      tradePrevKind = TRADE_KINDS.has(current) ? "" : current;
+      setCartKind(tradeKind());
+      setCartOpen(false);
+      setTradeStatus(
+        checkoutEnabled
+          ? ""
+          : cartRoot.dataset.shopDayCanTrade === "0"
+            ? "Open the shop before trading."
+            : "Checkout is disabled in POS settings.",
+        { error: !checkoutEnabled }
+      );
+      syncTradeCopy();
+      setTradeOpen(true);
+      renderCart();
+      renderTradeLines();
+    };
+
+    const closeTrade = ({ restoreKind = true } = {}) => {
+      if (!tradeModal || tradeModal.hidden) return;
+      if (restoreKind) {
+        setCartKind(tradePrevKind || defaultKind);
+        renderCart();
+      }
+      setTradeOpen(false);
+    };
+
+    const addTradeItem = (item) => {
+      if (!item?.id || !tradeModal) return;
+      hideTradeSuggest();
+      if (tradeSearch) tradeSearch.value = "";
+      const kind = tradeKind();
+      if (stockTrackingEnabled && kind !== "trade_in" && item.stock <= 0) {
+        setTradeStatus(`“${item.name}” is out of stock.`, { error: true });
+        return;
+      }
+      const existing = cart.get(item.id);
+      if (item.trackSerial || existing?.trackSerial) {
+        openSerialSaleModal(
+          {
+            ...item,
+            price: existing?.price ?? item.price,
+            serials: existing?.serials || [],
+          },
+          { append: Boolean(existing) }
+        );
+        return;
+      }
+      const price = clampPrice(
+        existing?.price ?? item.price,
+        item.minPrice,
+        item.listPrice
+      );
+      setQty(item.id, (existing?.qty || 0) + 1, {
+        ...item,
+        price: existing ? existing.price : price,
+      });
+      if (!existing) setLinePrice(item.id, price, item);
+      renderCart();
+      renderTradeLines();
+      setTradeStatus("");
+    };
+
+    const submitTrade = async () => {
+      if (tradeInFlight || checkoutInFlight) return;
+      const kind = tradeKind();
+      if (!TRADE_KINDS.has(kind)) {
+        setTradeStatus("Choose trade out or trade in.", { error: true });
+        return;
+      }
+      if (!checkoutEnabled) {
+        setTradeStatus(
+          cartRoot.dataset.shopDayCanTrade === "0"
+            ? "Open the shop before trading."
+            : "Checkout is disabled in POS settings.",
+          { error: true }
+        );
+        return;
+      }
+      if (!cart.size) {
+        setTradeStatus("Search and add at least one item.", { error: true });
+        tradeSearch?.focus();
+        return;
+      }
+      const name = (tradeClientNameEl?.value || "").trim();
+      tradeClient.normalizePhoneField({ force: true });
+      const phone = (tradeClientPhoneEl?.value || "").trim();
+      tradeClient.hideSuggest();
+      if (!name) {
+        setTradeStatus("Enter the client full name.", { error: true });
+        tradeClientNameEl?.focus();
+        return;
+      }
+      if (!phone) {
+        setTradeStatus("Enter the client phone number.", { error: true });
+        tradeClientPhoneEl?.focus();
+        return;
+      }
+      const code = (tradeLoginCode?.value || "").trim();
+      if (!/^\d{6}$/.test(code)) {
+        setTradeStatus("Enter your 6-digit employee ID.", { error: true });
+        tradeLoginCode?.focus();
+        return;
+      }
+
+      tradeInFlight = true;
+      if (tradeSubmitBtn) tradeSubmitBtn.disabled = true;
+      try {
+        setCartKind(kind);
+        if (clientNameInput) clientNameInput.value = name.toUpperCase();
+        if (clientPhoneInput) clientPhoneInput.value = phone;
+        if (cartLoginCode) cartLoginCode.value = code;
+        cartCodeVerified = false;
+        cartStaffAllocatedToShop = null;
+        renderCart();
+        setTradeStatus("Verifying employee ID…");
+        await submitCheckout();
+        if (!cart.size) {
+          // Checkout finished and cleared the cart.
+          tradeForm?.reset();
+          tradeClient.reset();
+          if (tradeSearch) tradeSearch.value = "";
+          hideTradeSuggest();
+          renderTradeLines();
+          closeTrade({ restoreKind: false });
+          pushStockRequestToast(
+            kind === "trade_in" ? "Trade in recorded." : "Trade out recorded.",
+            "success"
+          );
+        }
+      } finally {
+        tradeInFlight = false;
+        if (tradeSubmitBtn) tradeSubmitBtn.disabled = false;
+      }
+    };
+
+    document.querySelectorAll('[data-modal-open="trade"]').forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        openTrade();
+      });
+    });
+
+    if (tradeModal && checkoutForm) {
+      tradeModal.addEventListener("click", (event) => {
+        if (event.target.closest?.("[data-trade-close]")) {
+          event.preventDefault();
+          closeTrade();
+          return;
+        }
+        const lineEl = event.target.closest?.(".shop-trade-line");
+        const line = lineEl?.dataset.lineId
+          ? cart.get(lineEl.dataset.lineId)
+          : null;
+
+        const qtyBtn = event.target.closest?.("[data-trade-qty]");
+        if (qtyBtn && line) {
+          event.preventDefault();
+          setQty(
+            line.id,
+            qtyBtn.dataset.tradeQty === "inc" ? line.qty + 1 : line.qty - 1,
+            line
+          );
+          renderCart();
+          renderTradeLines();
+          return;
+        }
+        const serialsBtn = event.target.closest?.("[data-trade-edit-serials]");
+        if (serialsBtn && line) {
+          event.preventDefault();
+          openSerialSaleModal(line);
+          return;
+        }
+        const removeBtn = event.target.closest?.("[data-trade-remove]");
+        if (removeBtn && line) {
+          event.preventDefault();
+          cart.delete(line.id);
+          renderCart();
+          renderTradeLines();
+          return;
+        }
+        if (
+          !event.target.closest?.("[data-trade-suggest]") &&
+          !event.target.closest?.("[data-trade-item-search]")
+        ) {
+          hideTradeSuggest();
+        }
+        if (
+          !event.target.closest?.("[data-trade-client-suggest]") &&
+          !event.target.closest?.("[data-trade-client-name]")
+        ) {
+          tradeClient.hideSuggest();
+        }
+      });
+
+      tradeModal.addEventListener("change", (event) => {
+        if (event.target.matches?.("[data-trade-kind]")) {
+          setCartKind(tradeKind());
+          syncTradeCopy();
+          renderCart();
+          renderTradeLines();
+          return;
+        }
+        const qtyInput = event.target.closest?.("[data-trade-qty-input]");
+        if (qtyInput) {
+          const lineEl = qtyInput.closest(".shop-trade-line");
+          const line = lineEl ? cart.get(lineEl.dataset.lineId) : null;
+          if (!line) return;
+          if (line.trackSerial) {
+            openSerialSaleModal(line);
+            renderTradeLines();
+            return;
+          }
+          setQty(line.id, qtyInput.value, line);
+          renderCart();
+          renderTradeLines();
+          return;
+        }
+        const priceInput = event.target.closest?.("[data-trade-price-input]");
+        if (priceInput) {
+          const lineEl = priceInput.closest(".shop-trade-line");
+          const line = lineEl ? cart.get(lineEl.dataset.lineId) : null;
+          if (!line) return;
+          const next = setLinePrice(line.id, priceInput.value, line);
+          if (next != null) priceInput.value = roundMoney(next).toFixed(2);
+          renderCart();
+          renderTradeLines();
+        }
+      });
+
+      tradeForm?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitTrade();
+      });
+
+      tradeSearch?.addEventListener("input", () => {
+        window.clearTimeout(tradeSearchTimer);
+        tradeSearchTimer = window.setTimeout(() => {
+          searchTradeItems(tradeSearch.value);
+        }, 220);
+      });
+      tradeSearch?.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          hideTradeSuggest();
+          return;
+        }
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        window.clearTimeout(tradeSearchTimer);
+        searchTradeItems(tradeSearch.value);
+      });
+      tradeSearch?.addEventListener("focusout", () => {
+        window.setTimeout(hideTradeSuggest, 160);
+      });
+    }
+
     window.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || selectModal) return;
       if (serialSaleModal?.classList.contains("is-open")) {
@@ -6180,6 +6809,11 @@
       if (productModal?.classList.contains("is-open")) {
         event.stopPropagation();
         setProductOpen(false);
+        return;
+      }
+      if (tradeModal && !tradeModal.hidden) {
+        event.stopPropagation();
+        closeTrade();
         return;
       }
       if (drawer?.classList.contains("is-open")) {

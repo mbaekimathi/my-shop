@@ -1,0 +1,172 @@
+{% if checkout_enabled and trade_kinds %}
+<div
+  class="workspace-modal shop-trade-modal"
+  data-modal="trade"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-trade-close></div>
+  <div
+    class="workspace-modal-dialog shop-trade-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shop-trade-title"
+  >
+    <div class="workspace-modal-head shop-trade-head">
+      <div class="shop-trade-head-copy">
+        <p class="shop-trade-kicker">{{ shop.name }}</p>
+        <h2 id="shop-trade-title">Trade</h2>
+        <p class="shop-trade-lead" data-trade-lead>
+          The client takes the items from this shop.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        aria-label="Close trade"
+        data-trade-close
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form class="workspace-modal-form shop-trade-form" data-trade-form novalidate>
+      {% csrf_token %}
+
+      <div class="shop-cart-field">
+        <span class="shop-cart-field-label">Trade type</span>
+        <div class="shop-cart-seg" role="group" aria-label="Trade type">
+          {% if "trade_out" in trade_kinds %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="trade_kind" value="trade_out" data-trade-kind checked>
+            <span>Trade out</span>
+          </label>
+          {% endif %}
+          {% if "trade_in" in trade_kinds %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="trade_kind" value="trade_in" data-trade-kind{% if "trade_out" not in trade_kinds %} checked{% endif %}>
+            <span>Trade in</span>
+          </label>
+          {% endif %}
+        </div>
+        <p class="shop-cart-client-note" data-trade-kind-note>
+          {% if "trade_in" in trade_kinds and "trade_out" in trade_kinds %}
+          Trade out: the client takes items. Trade in: the client brings items.
+          {% elif "trade_in" in trade_kinds %}
+          Trade in: the client brings the items — record what you owe them.
+          {% else %}
+          Trade out: the client takes the items from this shop.
+          {% endif %}
+        </p>
+      </div>
+
+      <div class="shop-cart-field shop-trade-items-field">
+        <span class="shop-cart-field-label" data-trade-items-label>Items</span>
+        <label class="shop-cart-input shop-trade-search">
+          <span>Item</span>
+          <input
+            type="search"
+            autocomplete="off"
+            placeholder="Search items to add…"
+            data-trade-item-search
+            aria-label="Search items to trade"
+          >
+        </label>
+        <div
+          class="shop-trade-suggest"
+          data-trade-suggest
+          role="listbox"
+          hidden
+        ></div>
+      </div>
+
+      <ul class="shop-trade-lines" data-trade-lines></ul>
+      <p class="shop-trade-empty" data-trade-empty>
+        No items yet — search above to add them to this trade.
+      </p>
+
+      <div class="shop-cart-total-row shop-trade-total-row">
+        <span>Total</span>
+        <strong data-trade-total>KSh 0.00</strong>
+      </div>
+
+      <div class="shop-cart-field">
+        <span class="shop-cart-field-label">Client</span>
+        <div class="shop-trade-client-grid">
+          <div class="shop-cart-name-wrap">
+            <label class="shop-cart-input">
+              <span>
+                Client full name
+                <span class="shop-serial-required" aria-hidden="true">*</span>
+              </span>
+              <input
+                type="text"
+                name="trade_client_name"
+                autocomplete="off"
+                placeholder="Full name"
+                data-trade-client-name
+                aria-autocomplete="list"
+                aria-controls="shop-trade-client-suggest"
+                required
+              >
+            </label>
+            <div
+              class="shop-cart-client-suggest"
+              id="shop-trade-client-suggest"
+              data-trade-client-suggest
+              role="listbox"
+              hidden
+            ></div>
+          </div>
+          <label class="shop-cart-input">
+            <span>
+              Client phone
+              <span class="shop-serial-required" aria-hidden="true">*</span>
+            </span>
+            <input
+              type="tel"
+              name="trade_client_phone"
+              autocomplete="tel"
+              inputmode="tel"
+              placeholder="07XX XXX XXX"
+              data-trade-client-phone
+              required
+            >
+          </label>
+        </div>
+      </div>
+
+      <label class="shop-cart-input">
+        <span>Employee ID (not shop code)</span>
+        <input
+          type="text"
+          name="trade_login_code"
+          inputmode="numeric"
+          maxlength="6"
+          autocomplete="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="Personal 6-digit employee ID"
+          data-trade-login-code
+          required
+        >
+      </label>
+
+      <p class="shop-cart-status shop-trade-status" data-trade-status hidden></p>
+
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-trade-close>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="btn btn--primary"
+          data-trade-submit
+        >
+          <span data-trade-submit-label>Complete trade</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}

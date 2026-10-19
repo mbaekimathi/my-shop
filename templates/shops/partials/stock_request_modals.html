@@ -83,7 +83,6 @@
                 <thead>
                   <tr>
                     <th scope="col">Item</th>
-                    <th scope="col">Sent</th>
                     <th scope="col">Received</th>
                   </tr>
                 </thead>
@@ -105,20 +104,15 @@
                         {% endif %}
                       </div>
                     </td>
-                    <td data-label="Sent">
-                      <span class="stock-transfer-qty-readonly">{{ line.quantity }}</span>
-                    </td>
                     <td data-label="Received">
                       <label class="stock-transfer-qty-field">
-                        <span class="visually-hidden">Received quantity for {{ line.item.name }} (must match sent {{ line.quantity }})</span>
+                        <span class="visually-hidden">Received quantity for {{ line.item.name }}</span>
                         <input
                           type="number"
                           name="qty_{{ line.pk }}"
                           min="0"
-                          max="{{ line.quantity }}"
                           step="1"
                           value=""
-                          placeholder="{{ line.quantity }}"
                           inputmode="numeric"
                           data-transfer-qty
                           data-line-id="{{ line.pk }}"

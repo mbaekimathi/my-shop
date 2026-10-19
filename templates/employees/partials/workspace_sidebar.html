@@ -1,4 +1,4 @@
-<aside class="workspace-sidebar" aria-label="Workspace sidebar" data-workspace-sidebar>
+<aside class="workspace-sidebar" id="workspace-sidebar" aria-label="Workspace sidebar" data-workspace-sidebar>
   <div class="workspace-sidebar-top">
     <div class="brand brand--nav workspace-brand">
       <span class="brand-mark" aria-hidden="true"></span>
@@ -11,6 +11,7 @@
 
   {% if page_sidebar.primary %}
   <nav class="workspace-nav workspace-nav--primary" aria-label="Page navigation">
+    <p class="workspace-nav-heading">Menu</p>
     {% for item in page_sidebar.primary %}
       {% if item.type == "action" %}
       <button
@@ -51,6 +52,7 @@
 
   {% if page_sidebar.footer %}
   <div class="workspace-sidebar-foot">
+    <p class="workspace-nav-heading">Account</p>
     {% for item in page_sidebar.footer %}
     <a
       class="workspace-nav-link{% if item.active %} is-active{% endif %}{% if item.danger %} workspace-nav-link--danger{% endif %}{% if item.muted %} workspace-nav-link--muted{% endif %}"

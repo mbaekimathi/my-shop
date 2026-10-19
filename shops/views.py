@@ -471,6 +471,8 @@ def _shop_floor_chrome(
             portal=portal,
             profile=profile,
             pending_request_count=pending_request_count,
+            trade_in_enabled=bool(getattr(pos, "enable_trade_in", False)),
+            trade_out_enabled=bool(getattr(pos, "enable_trade_out", False)),
         ),
         "shop": shop,
         "shops": shops,
@@ -1274,11 +1276,17 @@ def my_shop_workspace(request, shop_id):
             or employee_may(profile, "my-shop", kind)
         )
     ]
-    default_kind = cart_kinds[0] if cart_kinds else ""
+    trade_kinds = [
+        kind for kind in cart_kinds if kind in ("trade_out", "trade_in")
+    ]
+    picker_kinds = [kind for kind in cart_kinds if kind not in trade_kinds]
+    default_kind = (
+        picker_kinds[0] if picker_kinds else (cart_kinds[0] if cart_kinds else "")
+    )
     default_payment = enabled_payments[0] if enabled_payments else ""
     default_print_via = enabled_print_channels[0] if enabled_print_channels else ""
     checkout_enabled = bool(cart_kinds)
-    show_document_picker = len(cart_kinds) > 1
+    show_document_picker = len(picker_kinds) > 1
     show_payment_picker = bool(
         default_kind == "sale" and pos_flags["cash_sale_checkout"] and enabled_payments
     )
@@ -1359,6 +1367,7 @@ def my_shop_workspace(request, shop_id):
                 "employees:settings_section", kwargs={"section": "company-daraja"}
             ),
             "cart_kinds": cart_kinds,
+            "trade_kinds": trade_kinds,
             "checkout_enabled": checkout_enabled,
             "show_document_picker": show_document_picker,
             "show_payment_picker": show_payment_picker,

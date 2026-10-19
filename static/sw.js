@@ -1,11 +1,15 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v23";
+const CACHE_VERSION = "myshop-v29";
 
 // Precache only the shared shell. Page-specific bundles (my-shop, catalogs,
 // printer) are cached on first use via networkFirst to keep install light.
 const PRECACHE = [
-  "/static/css/core.css?v=20260819-dark",
-  "/static/js/main.js",
+  "/static/css/core.css?v=20261019-assets",
+  "/static/css/fonts.css?v=20261019-assets",
+  "/static/fonts/manrope-latin.woff2",
+  "/static/fonts/manrope-latin-ext.woff2",
+  "/static/vendor/lucide.min.js",
+  "/static/js/main.js?v=20261019-assets",
   "/static/js/offline/store.js",
   "/static/js/offline/catalog-cache.js",
   "/static/js/offline/connectivity.js",
@@ -17,7 +21,16 @@ const PRECACHE = [
   "/static/js/offline/serials.js",
   "/static/manifest.webmanifest",
   "/manifest.webmanifest",
-];
+].concat(
+  // Phone-picker flags — self-hosted from flagcdn (w40 set).
+  [
+    "ae", "au", "bd", "be", "br", "ca", "ch", "cn", "de", "dj", "dk", "eg",
+    "er", "es", "et", "fi", "fr", "gb", "gh", "id", "ie", "il", "in", "it",
+    "jp", "ke", "kr", "ma", "mx", "my", "ng", "nl", "no", "nz", "ph", "pk",
+    "pl", "pt", "qa", "rw", "sa", "se", "sg", "so", "ss", "tr", "tz", "ug",
+    "us", "za",
+  ].map((iso) => `/static/img/flags/${iso}.png`)
+);
 
 const isApi = (url) => url.pathname.includes("/api/");
 const isConnectivityPing = (url) =>

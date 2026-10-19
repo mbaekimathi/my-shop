@@ -598,7 +598,7 @@ body:has([data-wa-app]),
 }
 
 /* Phone: one pane, compact chrome */
-@media (max-width: 759px) {
+@media (max-width: 639px) {
   .comms.wa-app {
     --wa-list: 100%;
     --wa-chat-max: 100%;
@@ -666,7 +666,7 @@ body:has([data-wa-app]),
 }
 
 /* Tablet: two panes, narrower list, no overflow */
-@media (min-width: 760px) and (max-width: 1099px) {
+@media (min-width: 640px) and (max-width: 1199px) {
   .comms.wa-app {
     --wa-list: clamp(15.5rem, 36vw, 20.5rem);
     --wa-chat-max: 38rem;
@@ -682,7 +682,7 @@ body:has([data-wa-app]),
 }
 
 /* PC: keep the chat from stretching across ultrawide monitors */
-@media (min-width: 1100px) {
+@media (min-width: 1200px) {
   .comms.wa-app {
     --wa-list: clamp(18rem, 26vw, 24rem);
     --wa-chat-max: 42rem;
@@ -693,7 +693,7 @@ body:has([data-wa-app]),
   }
 }
 
-@media (min-width: 1440px) {
+@media (min-width: 1200px) {
   .workspace-main:has([data-wa-app]) {
     display: flex;
     flex-direction: row;
@@ -706,5 +706,30 @@ body:has([data-wa-app]),
     width: min(100%, 86rem);
     max-width: 86rem;
     border-inline: 1px solid var(--wa-line);
+  }
+}
+
+/* Phase 6 — contacts as a real third pane on desktop */
+@media (min-width: 1200px) {
+  .wa-app__contacts:not([hidden]) {
+    inset: 0 0 0 auto;
+    width: min(21rem, 32%);
+    border-right: 0;
+    border-left: 1px solid var(--wa-line);
+    box-shadow: -10px 0 28px rgba(10, 30, 32, 0.1);
+  }
+
+  .wa-app:has(.wa-app__contacts:not([hidden])) .wa-app__shell {
+    margin-right: min(21rem, 32%);
+  }
+}
+
+/* Composer controls stay reachable at any width */
+@media (max-width: 639px) {
+  .wa-app__composer .comms-icon-btn,
+  .wa-app__composer .comms-attach-btn,
+  .wa-app__composer .comms-send-fab {
+    width: 2.75rem;
+    height: 2.75rem;
   }
 }

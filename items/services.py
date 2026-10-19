@@ -687,6 +687,24 @@ def build_item_management_catalog_page(
             prices_list_by_item.setdefault(item_id, []).append(price)
             prices_map_by_item.setdefault(item_id, {})[shop_id] = price
 
+    stock_rows_by_item = {}
+    if item_ids:
+        stock_qs = (
+            ShopStock.objects.filter(item_id__in=item_ids, quantity__gt=0)
+            .select_related("shop")
+            .order_by("shop__name")
+        )
+        for stock in stock_qs:
+            if allowed_shop_ids and stock.shop_id not in allowed_shop_ids:
+                continue
+            stock_rows_by_item.setdefault(stock.item_id, []).append(
+                {
+                    "shop_id": stock.shop_id,
+                    "shop_name": stock.shop.name,
+                    "quantity": format(stock.quantity.normalize(), "f"),
+                }
+            )
+
     rows = []
     for item in items:
         description = (item.description or "").strip()
@@ -736,6 +754,7 @@ def build_item_management_catalog_page(
                 "track_serial": bool(item.track_serial_number),
                 "is_suspended": bool(item.is_suspended),
                 "image_url": image_url,
+                "stock_rows": stock_rows_by_item.get(item.pk) or [],
             }
         )
 
@@ -775,6 +794,7 @@ def search_available_serials(
 
     qs = ItemSerial.objects.filter(
         item_id=item_pk,
+        item__is_suspended=False,
         shop_id=shop_pk,
         is_available=True,
     )

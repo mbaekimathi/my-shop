@@ -4,7 +4,17 @@
 {% block body_class %}page-workspace{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/app.css' %}?v=20261016-no-return">
+<link rel="stylesheet" href="{% static 'css/app/settings.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/credit-note.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/comms.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/components.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261019-split">
 {% endblock %}
 
 {% block body %}
@@ -129,24 +139,172 @@
     const root = document.querySelector("[data-workspace]");
     if (!root) return;
     const overlay = root.querySelector("[data-workspace-overlay]");
+    const sidebar = root.querySelector("[data-workspace-sidebar]");
     const openers = document.querySelectorAll("[data-workspace-open]");
     const closers = document.querySelectorAll("[data-workspace-close]");
+    let sidebarTrigger = null;
 
     const setOpen = (open) => {
+      const wasOpen = root.classList.contains("is-sidebar-open");
       root.classList.toggle("is-sidebar-open", open);
       if (overlay) overlay.hidden = !open;
       document.body.classList.toggle("workspace-lock", open);
+      openers.forEach((btn) =>
+        btn.setAttribute("aria-expanded", String(open))
+      );
+      if (open && sidebar) {
+        const first =
+          sidebar.querySelector("[data-workspace-close]") ||
+          sidebar.querySelector("a[href], button");
+        window.setTimeout(() => first?.focus(), 60);
+      } else if (!open && wasOpen && sidebar?.contains(document.activeElement)) {
+        (sidebarTrigger || openers[0])?.focus();
+      }
+      if (!open) sidebarTrigger = null;
     };
 
-    openers.forEach((btn) => btn.addEventListener("click", () => setOpen(true)));
+    openers.forEach((btn) =>
+      btn.addEventListener("click", () => {
+        sidebarTrigger = btn;
+        setOpen(true);
+      })
+    );
     closers.forEach((btn) => btn.addEventListener("click", () => setOpen(false)));
     overlay?.addEventListener("click", () => setOpen(false));
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") setOpen(false);
     });
 
+    // Keep focus inside the open drawer.
+    sidebar?.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab" || !root.classList.contains("is-sidebar-open"))
+        return;
+      const items = sidebar.querySelectorAll(
+        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        last.focus();
+        event.preventDefault();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        first.focus();
+        event.preventDefault();
+      }
+    });
+
+    // If the viewport grows to desktop while the drawer is open, drop the
+    // drawer state so scroll lock and overlay never linger.
+    const desktopMq = window.matchMedia("(min-width: 1200px)");
+    const onMqChange = () => {
+      if (desktopMq.matches) setOpen(false);
+    };
+    if (desktopMq.addEventListener) desktopMq.addEventListener("change", onMqChange);
+    else if (desktopMq.addListener) desktopMq.addListener(onMqChange);
+
     root.querySelectorAll("[data-workspace-nav]").forEach((link) => {
       link.addEventListener("click", () => setOpen(false));
+    });
+
+    // ── Unified modal behaviour for every .workspace-modal[data-modal]:
+    // scroll lock, aria-modal, focus-in on open, Tab trap, Esc, focus restore.
+    let lastModalTrigger = null;
+    document.addEventListener(
+      "click",
+      (event) => {
+        const trigger = event.target.closest("[data-modal-open]");
+        if (trigger) lastModalTrigger = trigger;
+      },
+      true
+    );
+
+    const openWorkspaceModals = () =>
+      [...document.querySelectorAll(".workspace-modal[data-modal]")].filter(
+        (m) => !m.hidden
+      );
+    const topWorkspaceModal = () => openWorkspaceModals().pop() || null;
+
+    const syncModalShellState = () => {
+      document.body.classList.toggle(
+        "workspace-modal-open",
+        Boolean(topWorkspaceModal())
+      );
+      openWorkspaceModals().forEach((m) => {
+        const dialog = m.querySelector(".workspace-modal-dialog") || m;
+        if (!dialog.hasAttribute("aria-modal"))
+          dialog.setAttribute("aria-modal", "true");
+        if (!dialog.hasAttribute("role")) dialog.setAttribute("role", "dialog");
+      });
+    };
+
+    const onWorkspaceModalToggled = () => {
+      syncModalShellState();
+      const open = topWorkspaceModal();
+      if (open) {
+        window.setTimeout(() => {
+          if (!open.contains(document.activeElement)) {
+            const first = open.querySelector(
+              "[data-autofocus], input:not([type='hidden']):not([disabled]), select, textarea, button, a[href]"
+            );
+            first?.focus();
+          }
+        }, 30);
+      } else if (lastModalTrigger) {
+        if (document.activeElement === document.body) lastModalTrigger.focus();
+        lastModalTrigger = null;
+      }
+    };
+
+    const workspaceModalObserver = new MutationObserver(onWorkspaceModalToggled);
+    document
+      .querySelectorAll(".workspace-modal[data-modal]")
+      .forEach((m) =>
+        workspaceModalObserver.observe(m, {
+          attributes: true,
+          attributeFilter: ["hidden"],
+        })
+      );
+
+    document.addEventListener("keydown", (event) => {
+      const modal = topWorkspaceModal();
+      if (!modal) return;
+      const scope = modal.querySelector(".workspace-modal-dialog") || modal;
+      if (event.key === "Escape") {
+        const countryOpen = document.querySelector(
+          "[data-stock-country-menu]:not([hidden])"
+        );
+        if (countryOpen) return;
+        const closer =
+          scope.querySelector("[data-modal-close]") ||
+          modal.querySelector("[data-modal-close]");
+        if (closer) {
+          event.preventDefault();
+          closer.click();
+        }
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = scope.querySelectorAll(
+        "a[href], button:not([disabled]), input:not([type='hidden']):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+      );
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const inside = modal.contains(document.activeElement);
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || !inside)
+      ) {
+        last.focus();
+        event.preventDefault();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last || !inside)
+      ) {
+        first.focus();
+        event.preventDefault();
+      }
     });
 
     // Sidebar action modals: open when present, otherwise follow data-href.
@@ -294,17 +452,21 @@
       const safeTone = tone === "error" ? "error" : tone === "warning" ? "warning" : "success";
       item.className = `workspace-toast__item workspace-toast__item--${safeTone}`;
       item.setAttribute("data-toast-duration", "4500");
-      if (safeTone === "success") {
-        item.innerHTML = `<span class="workspace-toast__icon" aria-hidden="true">
-            <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
-              <circle class="workspace-toast__ring" cx="26" cy="26" r="24" fill="none" />
-              <path class="workspace-toast__mark workspace-toast__mark--check" fill="none" d="M14.5 27.2 l7.1 7.2 16.4-16.8" />
-            </svg>
-          </span>
-          <span class="workspace-toast__text"></span>`;
-      } else {
-        item.innerHTML = `<span class="workspace-toast__text"></span>`;
-      }
+      const markPaths = {
+        success:
+          '<path class="workspace-toast__mark workspace-toast__mark--check" fill="none" d="M14.5 27.2 l7.1 7.2 16.4-16.8" />',
+        error:
+          '<path class="workspace-toast__mark workspace-toast__mark--x" fill="none" d="M18 18 L34 34 M34 18 L18 34" />',
+        warning:
+          '<path class="workspace-toast__mark workspace-toast__mark--warn" fill="none" d="M26 16 V30 M26 36 V38" />',
+      };
+      item.innerHTML = `<span class="workspace-toast__icon" aria-hidden="true">
+          <svg class="workspace-toast__glyph" viewBox="0 0 52 52" focusable="false">
+            <circle class="workspace-toast__ring" cx="26" cy="26" r="24" fill="none" />
+            ${markPaths[safeTone]}
+          </svg>
+        </span>
+        <span class="workspace-toast__text"></span>`;
       item.querySelector(".workspace-toast__text").textContent = text;
       list.appendChild(item);
     };

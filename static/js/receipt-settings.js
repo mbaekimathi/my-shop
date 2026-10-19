@@ -644,7 +644,7 @@
     const fullPhone = String(
       sample.ticket.party_phone_full || sample.ticket.party_phone || ""
     );
-    const displayPhone = showClientPhone ? fullPhone : firstClientPhoneDigits(fullPhone);
+    const displayPhone = showClientPhone ? fullPhone : maskClientPhoneDigits(fullPhone);
     const ticket = {
       ...sample.ticket,
       party_phone: displayPhone,
@@ -684,18 +684,16 @@
     }
   });
 
-  function firstClientPhoneDigits(phone, count = 8) {
+  function maskClientPhoneDigits(phone, visibleDigits = 7) {
     const chars = [...String(phone || "")];
     let digits = 0;
-    let end = 0;
     for (let i = 0; i < chars.length; i += 1) {
       if (/\d/.test(chars[i])) {
-        if (digits >= count) break;
         digits += 1;
+        if (digits > visibleDigits) chars[i] = "*";
       }
-      end = i + 1;
     }
-    return chars.slice(0, end).join("").replace(/[\s\-().]+$/, "");
+    return chars.join("");
   }
 
   const clientPhoneToggle = root.querySelector(
@@ -706,7 +704,7 @@
       const show = clientPhoneToggle.checked;
       root.querySelectorAll("[data-receipt-client-phone]").forEach((el) => {
         const full = el.getAttribute("data-full-phone") || "";
-        const value = show ? full : firstClientPhoneDigits(full);
+        const value = show ? full : maskClientPhoneDigits(full);
         el.hidden = !value;
         el.querySelectorAll(".receipt-phone-screen, .receipt-phone-print").forEach((span) => {
           span.textContent = value;

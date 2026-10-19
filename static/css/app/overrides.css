@@ -1,0 +1,623 @@
+/* MY-SHOP app — overrides.css (split from app.css; cascade order preserved) */
+
+/* ============================================================
+   Phase 5 — POS shop floor
+   Docked cart panel on desktop, FAB pill on tablet,
+   sticky pay bar on mobile, unified cards/inputs/STK states.
+   ============================================================ */
+:root {
+  --pos-cart-w: 24rem;
+}
+
+/* — Toolbar + search --------------------------------------------------- */
+.shop-floor-search {
+  min-height: 3rem;
+  border-radius: var(--radius-lg);
+  border-color: var(--input-border);
+}
+
+.shop-floor-search input {
+  font-size: 1rem;
+}
+
+.shop-floor-search .serial-scan-field-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.shop-floor-search .serial-scan-btn {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius);
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.shop-floor-search .serial-scan-btn:hover {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+@media (max-width: 639px) {
+  .shop-floor-search {
+    flex-basis: 100%;
+  }
+}
+
+/* — View toggle --------------------------------------------------------- */
+.shop-floor-view-btn {
+  min-height: 2.75rem;
+  font-size: var(--text-sm);
+  padding-inline: 0.85rem;
+}
+
+@media (max-width: 639px) {
+  .shop-floor-view-btn {
+    padding-inline: 0.65rem;
+  }
+}
+
+/* — Catalog item cards --------------------------------------------------- */
+.shop-floor-item {
+  border-color: var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.shop-floor-item:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.shop-floor-add {
+  min-height: 3rem;
+  font-size: var(--text-sm);
+}
+
+.shop-floor-qty {
+  border-color: var(--input-border);
+  border-radius: var(--radius);
+}
+
+.shop-floor-stock {
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+@media (max-width: 1199px) {
+  .shop-floor-qty {
+    grid-template-columns: 2.75rem minmax(0, 1fr) 2.75rem;
+    min-height: 3rem;
+  }
+
+  .shop-floor-qty-btn {
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 10px;
+  }
+
+  .shop-floor-qty-input {
+    font-size: 1rem;
+    min-height: 2.5rem;
+  }
+}
+
+/* — Request badges (amber needs dark ink) -------------------------------- */
+.shop-floor-request-badge {
+  color: var(--accent-ink);
+}
+
+/* — FAB: pill with count + total on tablet ------------------------------- */
+.shop-cart-fab-total {
+  display: none;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+@media (min-width: 640px) and (max-width: 1199px) {
+  .shop-cart-fab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    width: auto;
+    height: 3.25rem;
+    padding: 0 1.15rem;
+    border-radius: 999px;
+  }
+
+  .shop-cart-fab-total:not([hidden]) {
+    display: inline;
+  }
+
+  .shop-cart-fab-count {
+    position: static;
+    margin-left: 0.05rem;
+    min-width: 1.5rem;
+    height: 1.5rem;
+    background: var(--accent-ink);
+    color: var(--accent);
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 639px) {
+  .shop-cart-fab {
+    display: none;
+  }
+}
+
+/* — Mobile sticky pay bar (single column checkout entry) ------------------ */
+.shop-paybar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  padding: 0.7rem 0.95rem calc(0.7rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 -6px 24px rgba(10, 30, 32, 0.08);
+  transition: transform 0.25s var(--ease), opacity 0.25s var(--ease);
+}
+
+.shop-paybar[hidden] {
+  display: none !important;
+}
+
+.shop-paybar-meta {
+  display: grid;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.shop-paybar-count {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shop-paybar-total {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.shop-paybar-cta {
+  min-height: 3rem;
+  padding-inline: 1.35rem;
+  font-size: 1rem;
+  flex: 0 0 auto;
+}
+
+.shop-paybar-cta i {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+@media (min-width: 640px) {
+  .shop-paybar {
+    display: none !important;
+  }
+}
+
+body:has(.shop-paybar:not([hidden])) .shop-floor {
+  padding-bottom: 5.25rem;
+}
+
+body:has(.shop-paybar:not([hidden])) .workspace-footer {
+  padding-bottom: 6rem;
+}
+
+body.shop-cart-open .shop-paybar {
+  transform: translateY(110%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* — Desktop: docked persistent cart panel (>=1200px) ---------------------- */
+@media (min-width: 1200px) {
+  body:has(.shop-cart-drawer.is-docked) .workspace-frame {
+    margin-right: var(--pos-cart-w);
+  }
+
+  .shop-cart-drawer.is-docked {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: auto;
+    z-index: 20;
+    width: var(--pos-cart-w);
+    max-width: var(--pos-cart-w);
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    transform: none;
+    visibility: visible;
+    pointer-events: auto;
+    border-left: 1px solid var(--border);
+    box-shadow: none;
+    transition: none;
+  }
+
+  .shop-cart-drawer.is-docked .shop-cart-close {
+    display: none;
+  }
+
+  body:has(.shop-cart-drawer.is-docked) .shop-cart-fab,
+  body:has(.shop-cart-drawer.is-docked) .shop-cart-overlay {
+    display: none !important;
+  }
+
+  /* Adding an item still toggles body.shop-cart-open — must not lock scroll
+     while the panel is docked. */
+  body.shop-cart-open {
+    overflow: visible;
+  }
+}
+
+/* — Cart internals -------------------------------------------------------- */
+.shop-cart-head {
+  background: var(--surface);
+}
+
+.shop-cart-close {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.shop-cart-close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.shop-cart-notice {
+  border-bottom-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.shop-cart-notice > svg,
+.shop-cart-notice > i {
+  color: var(--danger-text);
+}
+
+.shop-cart-notice p {
+  color: var(--danger-text);
+}
+
+.shop-cart-notice-link {
+  color: var(--link);
+}
+
+.shop-cart-line-media {
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--radius-sm);
+}
+
+.shop-cart-qty {
+  border-color: var(--input-border);
+}
+
+.shop-cart-qty button {
+  width: 2.5rem;
+  height: 2.5rem;
+  transition: background 0.15s ease;
+}
+
+.shop-cart-qty button:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 18%, var(--input-bg));
+}
+
+@media (max-width: 1199px) {
+  .shop-cart-qty button {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+
+.shop-cart-line-remove {
+  padding: 0.45rem 0.6rem;
+  min-height: 2.25rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.shop-cart-line-remove:hover {
+  color: var(--danger-text);
+  background: var(--danger-bg);
+}
+
+.shop-cart-line-remove:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (max-width: 1199px) {
+  .shop-cart-line-remove {
+    min-height: 2.75rem;
+  }
+}
+
+/* Strong total — accent amber fails text contrast, so keep it on the CTA
+   and make the figure itself high-contrast ink. */
+.shop-cart-total-row:last-child {
+  padding-top: 0.5rem;
+  margin-top: 0.15rem;
+  border-top: 1px solid var(--border);
+}
+
+.shop-cart-total-row:last-child strong {
+  color: var(--text-strong);
+  font-size: 1.45rem;
+}
+
+/* — Segmented controls as selectable chips -------------------------------- */
+.shop-cart-seg {
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+  border-color: var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.shop-cart-seg-option span {
+  min-height: 2.75rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 3px);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.shop-cart-seg-option input:checked + span {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: var(--text-strong);
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+.shop-cart-seg-option input:focus-visible + span {
+  box-shadow: var(--focus-ring);
+}
+
+/* — Cart inputs ------------------------------------------------------------ */
+.shop-cart-input input,
+.shop-cart-input textarea {
+  min-height: 2.75rem;
+  font-size: 0.9375rem;
+  border-color: var(--input-border);
+  border-radius: var(--radius);
+}
+
+.shop-cart-client-suggest {
+  border-color: var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+/* — M-Pesa STK states: color + icon + text, never colour alone ------------ */
+.shop-cart-stk-error {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.shop-cart-stk-error > svg,
+.shop-cart-stk-error > i {
+  color: var(--danger);
+}
+
+.shop-cart-stk-error-copy strong {
+  color: var(--danger-text);
+}
+
+.shop-cart-stk-error-copy p {
+  color: var(--danger-text);
+  opacity: 0.92;
+}
+
+.shop-cart-stk-error-link {
+  color: var(--link);
+}
+
+.shop-cart-stk-wait {
+  border-color: var(--info-border);
+  background: var(--info-bg);
+}
+
+.shop-cart-stk-wait p {
+  color: var(--info-text);
+}
+
+.shop-cart-stk-spinner {
+  color: var(--info);
+}
+
+.shop-cart-stk-receipt {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  border-color: var(--success-border);
+  background: var(--success-bg);
+}
+
+.shop-cart-stk-receipt > svg,
+.shop-cart-stk-receipt > i {
+  flex: 0 0 auto;
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--success);
+}
+
+.shop-cart-stk-receipt-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.shop-cart-stk-receipt-copy span {
+  color: var(--success-text);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.shop-cart-stk-receipt-copy strong {
+  color: var(--text-strong);
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+.shop-cart-stk-send {
+  min-height: 3rem;
+}
+
+.shop-cart-stk-send.is-retry {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+/* — Primary pay action ----------------------------------------------------- */
+.shop-cart-actions .shop-cart-submit {
+  min-height: 3rem;
+  font-size: 1rem;
+}
+
+.shop-cart-submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* — Product / serial modals: unified card + bottom sheet -------------------- */
+.shop-product-modal-dialog,
+.shop-serial-modal-dialog {
+  border-color: var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.shop-product-modal-close,
+.shop-serial-modal-close {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+@media (max-width: 639px) {
+  .shop-product-modal-dialog,
+  .shop-serial-modal-dialog {
+    border-radius: var(--radius-lg) var(--radius-lg) var(--radius) var(--radius);
+  }
+}
+
+/* ============================================================
+   Phase 6 — dark-theme parity fixes
+   These recolour hardcoded hues that fail contrast on dark
+   surfaces. Base (light) rendering is unchanged.
+   ============================================================ */
+html[data-theme="dark"] .working-hours-shop-status--open { color: var(--info); }
+html[data-theme="dark"] .working-hours-shop-status--close { color: var(--danger); }
+html[data-theme="dark"] .working-hours-shop-status--trading { color: var(--success); }
+html[data-theme="dark"] .shop-select-hours-pill.is-open { color: var(--info); }
+html[data-theme="dark"] .shop-select-hours-pill.is-close { color: var(--danger); }
+html[data-theme="dark"] .shop-select-hours-pill.is-trading { color: var(--success); }
+html[data-theme="dark"] .daraja-status-pill.is-bad { color: var(--danger); }
+html[data-theme="dark"] .developer-payment-hint--warn { color: var(--warning-text); }
+html[data-theme="dark"] .daraja-form-message.is-error,
+html[data-theme="dark"] .pos-tax-percent-field input.is-error,
+html[data-theme="dark"] .receipt-format-field input.is-error,
+html[data-theme="dark"] .shop-serial-modal-stock.is-empty,
+html[data-theme="dark"] .shop-serial-client-hint.is-error,
+html[data-theme="dark"] .shop-serial-status,
+html[data-theme="dark"] .td-status.is-error,
+html[data-theme="dark"] .stock-request-cancel-status.is-error,
+html[data-theme="dark"] .stock-create-item-stock.is-low {
+  color: var(--danger-text);
+}
+
+html[data-theme="dark"] .stock-request-code-hint.is-ok,
+html[data-theme="dark"] .stock-create-item-stock.is-ok,
+html[data-theme="dark"] .stock-decision-foot.is-ok,
+html[data-theme="dark"] .shop-expense-pay--paid {
+  color: var(--success-text);
+}
+
+html[data-theme="dark"] .stock-report-qty--in:not(.is-empty),
+html[data-theme="dark"] .stock-report-type--in { color: var(--success); }
+html[data-theme="dark"] .stock-report-qty--out:not(.is-empty),
+html[data-theme="dark"] .stock-report-qty--sale-returned:not(.is-empty),
+html[data-theme="dark"] .stock-report-type--out,
+html[data-theme="dark"] .stock-report-type--sale-returned { color: var(--danger); }
+html[data-theme="dark"] .stock-report-qty--request:not(.is-empty),
+html[data-theme="dark"] .stock-report-qty--transfer-in:not(.is-empty),
+html[data-theme="dark"] .stock-report-type--request,
+html[data-theme="dark"] .stock-report-type--transfer-in,
+html[data-theme="dark"] .stock-report-type--transfer_fulfilled,
+html[data-theme="dark"] .stock-report-item-chip,
+html[data-theme="dark"] .stock-report-jump-link,
+html[data-theme="dark"] .shop-expense-pay--unpaid { color: var(--warning); }
+html[data-theme="dark"] .stock-report-qty--sale:not(.is-empty),
+html[data-theme="dark"] .stock-report-type--sale,
+html[data-theme="dark"] .stock-panel--request .stock-kicker,
+html[data-theme="dark"] .stock-float--request .stock-float-kicker,
+html[data-theme="dark"] .shop-expense-pay--partial { color: var(--info); }
+html[data-theme="dark"] .stock-report-qty--transfer-out:not(.is-empty),
+html[data-theme="dark"] .stock-report-type--transfer-out { color: var(--teal); }
+html[data-theme="dark"] .stock-report-qty--return:not(.is-empty),
+html[data-theme="dark"] .stock-report-type--return,
+html[data-theme="dark"] .stock-report-type--returned { color: #b79cf7; }
+html[data-theme="dark"] .stock-report-qty--trade:not(.is-empty),
+html[data-theme="dark"] .stock-report-type--trade,
+html[data-theme="dark"] .stock-report-trade { color: var(--teal); }
+html[data-theme="dark"] .stock-report-trade--trade-out { color: var(--warning); }
+html[data-theme="dark"] .stock-report-type--goods_received,
+html[data-theme="dark"] .shop-receipt-kind--goods_received { color: #b79cf7; }
+html[data-theme="dark"] .shop-receipt-kind--stock,
+html[data-theme="dark"] .shop-receipt-status.is-confirmed { color: var(--info); }
+html[data-theme="dark"] .shop-receipt-kind--delivery,
+html[data-theme="dark"] .shop-receipt-kind--expense { color: var(--warning); }
+
+html[data-theme="dark"] .stock-serial-entry-wrap.is-already-in-stock [data-stock-serial-entry],
+html[data-theme="dark"] .stock-serial-entry-wrap.is-already-in-stock [data-stock-serial-entry]:focus {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+html[data-theme="dark"] .stock-request-view-status.is-declined {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+html[data-theme="dark"] .stock-request-view-status.is-pending {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+html[data-theme="dark"] .wa-chip--warn {
+  color: var(--warning-text);
+}

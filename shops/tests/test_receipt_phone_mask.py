@@ -23,16 +23,16 @@ class ClientPhoneForReceiptTests(SimpleTestCase):
             "+254795606115",
         )
 
-    def test_hide_keeps_the_first_eight_digits(self):
+    def test_hide_keeps_the_first_seven_digits_and_masks_the_rest(self):
         self.assertEqual(
             client_phone_for_receipt("0712345678", show_full=False),
-            "07123456",
+            "0712345***",
         )
         self.assertEqual(
             client_phone_for_receipt("+254 712 555 010", show_full=False),
-            "+254 712 55",
+            "+254 712 5** ***",
         )
         self.assertEqual(
             client_phone_for_receipt("+254795606115", show_full=False),
-            "+25479560",
+            "+2547956*****",
         )

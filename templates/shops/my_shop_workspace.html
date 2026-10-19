@@ -111,6 +111,7 @@
         placeholder="Search items or categories…"
         autocomplete="off"
         data-item-search
+        data-serial-scan
         aria-label="Search active items"
       >
     </label>
@@ -210,6 +211,17 @@
 {% block workspace_overlays %}
 {{ block.super }}
 {% if checkout_enabled %}
+<div class="shop-paybar" data-cart-paybar hidden>
+  <div class="shop-paybar-meta">
+    <span class="shop-paybar-count" data-paybar-count>No items yet</span>
+    <strong class="shop-paybar-total" data-paybar-total>KSh 0.00</strong>
+  </div>
+  <button type="button" class="btn btn--primary shop-paybar-cta" data-paybar-open>
+    <span>Checkout</span>
+    <i data-lucide="arrow-right" aria-hidden="true"></i>
+  </button>
+</div>
+
 <button
   type="button"
   class="shop-cart-fab"
@@ -220,6 +232,7 @@
   aria-label="Open cart"
 >
   <i data-lucide="shopping-cart" aria-hidden="true"></i>
+  <span class="shop-cart-fab-total" data-cart-fab-total hidden></span>
   <span class="shop-cart-fab-count" data-cart-count hidden>0</span>
 </button>
 
@@ -307,22 +320,18 @@
             <span>Quotation</span>
           </label>
           {% endif %}
-          {% if "trade_out" in cart_kinds %}
-          <label class="shop-cart-seg-option">
-            <input type="radio" name="kind" value="trade_out" data-cart-kind{% if default_kind == "trade_out" %} checked{% endif %}>
-            <span>Trade out</span>
-          </label>
-          {% endif %}
-          {% if "trade_in" in cart_kinds %}
-          <label class="shop-cart-seg-option">
-            <input type="radio" name="kind" value="trade_in" data-cart-kind{% if default_kind == "trade_in" %} checked{% endif %}>
-            <span>Trade in</span>
-          </label>
-          {% endif %}
         </div>
       </div>
       {% elif default_kind %}
       <input type="hidden" name="kind" value="{{ default_kind }}" data-cart-kind>
+      {% endif %}
+
+      {# Trade kinds are picked from the Trade popup, not the cart picker. #}
+      {% if "trade_out" in cart_kinds %}
+      <input type="radio" name="kind" value="trade_out" data-cart-kind hidden tabindex="-1" aria-hidden="true">
+      {% endif %}
+      {% if "trade_in" in cart_kinds %}
+      <input type="radio" name="kind" value="trade_in" data-cart-kind hidden tabindex="-1" aria-hidden="true">
       {% endif %}
 
       {% if "quotation" in cart_kinds %}
@@ -399,7 +408,7 @@
       </div>
       {% endif %}
 
-      {% if pos_flags.enable_client_data %}
+      {% if pos_flags.enable_client_data or trade_kinds %}
       <div class="shop-cart-client{% if pos_flags.require_client_phone or pos_flags.require_client_name or default_kind != 'sale' %} is-required{% endif %}" data-cart-client>
         <div class="shop-cart-client-head">
           <p class="shop-cart-client-label" data-cart-client-heading>
@@ -508,8 +517,11 @@
           <p data-cart-stk-wait-text>Waiting for customer to confirm on their phone…</p>
         </div>
         <div class="shop-cart-stk-receipt" data-cart-stk-receipt hidden>
-          <span>M-Pesa reference</span>
-          <strong data-cart-stk-receipt-code></strong>
+          <i data-lucide="circle-check" aria-hidden="true"></i>
+          <div class="shop-cart-stk-receipt-copy">
+            <span>M-Pesa reference</span>
+            <strong data-cart-stk-receipt-code></strong>
+          </div>
         </div>
       </div>
 
@@ -549,6 +561,10 @@
         <button type="button" class="btn btn--ghost shop-cart-clear" data-cart-clear>
           Clear
         </button>
+        <button type="submit" class="btn btn--primary shop-cart-submit" data-cart-submit>
+          <i data-lucide="circle-check" aria-hidden="true"></i>
+          <span>Complete</span>
+        </button>
       </div>
     </form>
   </footer>
@@ -559,6 +575,7 @@
 </p>
 {% endif %}
 
+{% include "shops/partials/trade_modal.html" %}
 {% include "shops/partials/wrong_shop_sale_modal.html" %}
 
 <div
@@ -750,15 +767,72 @@
 
 {% block extra_js %}
 {{ block.super }}
+<script>
+(function () {
+  var drawer = document.querySelector("[data-cart-drawer]");
+  if (!drawer) return;
+  var fab = document.querySelector("[data-cart-open]");
+  var paybar = document.querySelector("[data-cart-paybar]");
+  var paybarOpen = document.querySelector("[data-paybar-open]");
+  var paybarTotal = document.querySelector("[data-paybar-total]");
+  var paybarCount = document.querySelector("[data-paybar-count]");
+  var fabTotal = document.querySelector("[data-cart-fab-total]");
+  var countEl = document.querySelector("[data-cart-count]");
+  var totalEl = document.querySelector("[data-cart-total]");
+  var labelEl = document.querySelector("[data-cart-item-label]");
+  var dockMq = window.matchMedia("(min-width: 1200px)");
+
+  var syncDock = function () {
+    var docked = dockMq.matches;
+    drawer.classList.toggle("is-docked", docked);
+    if (docked || !drawer.classList.contains("is-open")) {
+      drawer.setAttribute("aria-hidden", docked ? "false" : "true");
+    }
+  };
+  if (dockMq.addEventListener) dockMq.addEventListener("change", syncDock);
+  syncDock();
+  // my-shop.js rewrites aria-hidden on open/close — keep the docked panel exposed.
+  new MutationObserver(function () {
+    if (dockMq.matches && drawer.getAttribute("aria-hidden") !== "false") {
+      drawer.setAttribute("aria-hidden", "false");
+    }
+  }).observe(drawer, { attributes: true, attributeFilter: ["aria-hidden"] });
+
+  var syncPay = function () {
+    var has = Boolean(countEl) && !countEl.hidden;
+    if (paybar) paybar.hidden = !has;
+    if (paybarTotal && totalEl) paybarTotal.textContent = totalEl.textContent;
+    if (paybarCount && labelEl) paybarCount.textContent = labelEl.textContent;
+    if (fabTotal && totalEl) {
+      fabTotal.textContent = totalEl.textContent;
+      fabTotal.hidden = !has;
+    }
+  };
+  [countEl, totalEl, labelEl].forEach(function (el) {
+    if (!el) return;
+    new MutationObserver(syncPay).observe(el, {
+      attributes: true,
+      attributeFilter: ["hidden"],
+      childList: true,
+      characterData: true,
+      subtree: true
+    });
+  });
+  syncPay();
+  if (paybarOpen && fab) {
+    paybarOpen.addEventListener("click", function () { fab.click(); });
+  }
+})();
+</script>
 <script defer src="{% static 'js/shop-catalog.js' %}?v=7"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=25"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=89"></script>
-<script defer src="{% static 'js/stock-catalog.js' %}?v=39"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261019-assets"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=20261019-assets"></script>
+<script defer src="{% static 'js/stock-catalog.js' %}?v=20261019-assets"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/stock-bulk.js' %}?v=matrix55"></script>
-<script defer src="{% static 'js/my-shop-expense.js' %}?v=10"></script>
+<script defer src="{% static 'js/stock-bulk.js' %}?v=20261019-assets"></script>
+<script defer src="{% static 'js/my-shop-expense.js' %}?v=20261019-assets"></script>
 <script
   defer
   src="{% static 'js/serial-scan.js' %}?v=8"

@@ -92,7 +92,7 @@
             <th>From shop</th>
             <th>By</th>
             <th>Items</th>
-            <th>Units</th>
+            <th>Lines</th>
             <th>When</th>
             <th>Note</th>
             <th>Action</th>
@@ -120,12 +120,12 @@
             </td>
             <td class="stock-request-table-items" data-label="Items">
               {% for line in req.lines.all %}
-              <span>{{ line.item.name }} <em>×{{ line.quantity }}</em></span>{% if not forloop.last %}, {% endif %}
+              <span>{{ line.item.name }}</span>{% if not forloop.last %}, {% endif %}
               {% empty %}
               <span class="stock-request-table-sub">No line items</span>
               {% endfor %}
             </td>
-            <td class="stock-request-table-units" data-label="Units">{{ req.units_total }}</td>
+            <td class="stock-request-table-units" data-label="Lines">{{ req.lines.all|length }}</td>
             <td class="stock-request-table-when" data-label="When">
               {{ req.created_at|date:"d M Y · H:i" }}
             </td>
@@ -379,8 +379,8 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=25"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=89"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261019-assets"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=20261019-assets"></script>
 <script
   defer
   src="{% static 'js/serial-scan.js' %}?v=8"

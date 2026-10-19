@@ -16,7 +16,7 @@
     }
     const themeColor = document.querySelector('meta[name="theme-color"]');
     if (themeColor) {
-      themeColor.setAttribute("content", next === "light" ? "#eef4f2" : "#10282c");
+      themeColor.setAttribute("content", next === "light" ? "#f6f8f8" : "#0a1517");
     }
     const colorScheme = document.querySelector('meta[name="color-scheme"]');
     if (colorScheme) {

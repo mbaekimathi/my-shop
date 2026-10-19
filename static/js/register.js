@@ -277,7 +277,7 @@
         if (isoInput) isoInput.value = iso;
         if (dialLabel) dialLabel.textContent = dial;
         if (flagImg) {
-          flagImg.src = `https://flagcdn.com/w40/${iso.toLowerCase()}.png`;
+          flagImg.src = `/static/img/flags/${iso.toLowerCase()}.png`;
         }
 
         options.forEach((o) => o.classList.remove("is-selected"));

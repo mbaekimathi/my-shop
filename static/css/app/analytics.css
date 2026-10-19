@@ -1,0 +1,7056 @@
+/* MY-SHOP app — analytics.css (split from app.css; cascade order preserved) */
+
+.ax {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.ax-top {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--teal) 10%, var(--surface)),
+      var(--surface) 48%
+    );
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent);
+}
+
+.ax-top-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem 0.85rem;
+}
+
+.ax-top-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.ax-pay-modal-dialog {
+  width: min(28rem, calc(100vw - 1.5rem));
+}
+
+.ax-pay-modal .ax-pay-wrap {
+  border-top: 0;
+}
+
+.ax-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.65rem;
+  min-width: 0;
+}
+
+.ax-title h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.05rem, 2vw, 1.25rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+}
+
+.ax-period {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent-deep);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-lead {
+  margin: 0;
+  color: var(--mist-dim);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.ax-alerts {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ax-alert {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  border-left-width: 3px;
+  background: var(--surface);
+}
+
+.ax-alert.is-ok {
+  border-left-color: var(--teal);
+}
+
+.ax-alert.is-info {
+  border-left-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
+.ax-alert.is-warn {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.ax-alert.is-danger {
+  border-left-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.ax-alert-main strong {
+  display: block;
+  font-size: 0.84rem;
+  color: var(--text-strong);
+}
+
+.ax-alert-main p {
+  margin: 0.15rem 0 0;
+  color: var(--mist-dim);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.ax-alert-action {
+  margin: 0;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--line);
+  color: var(--text-strong);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.ax-alert-action span {
+  display: inline-block;
+  margin-right: 0.35rem;
+  color: var(--accent-deep);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ax-alert-link {
+  color: var(--accent-deep);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.ax-alert-link:hover {
+  color: var(--text-strong);
+}
+
+.ax-insights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.ax-trends {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.ax-trend-card {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.7rem 0.75rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.ax-trend-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax-trend-value {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  line-height: 1.15;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-trend-delta {
+  font-style: normal;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--mist-soft);
+}
+
+.ax-trend-card.is-good .ax-trend-delta {
+  color: var(--teal);
+}
+
+.ax-trend-card.is-bad .ax-trend-delta {
+  color: var(--danger);
+}
+
+.ax-trend-card.is-warn .ax-trend-delta {
+  color: var(--accent-deep);
+}
+
+.ax-spark {
+  width: 100%;
+  height: 2.1rem;
+  margin-top: 0.35rem;
+  display: block;
+}
+
+.ax-spark-area {
+  fill: color-mix(in srgb, var(--teal) 16%, transparent);
+}
+
+.ax-spark-line {
+  stroke: var(--teal);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ax-trend-card.is-bad .ax-spark-area {
+  fill: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.ax-trend-card.is-bad .ax-spark-line {
+  stroke: var(--danger);
+}
+
+.ax-trend-card.is-warn .ax-spark-area {
+  fill: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.ax-trend-card.is-warn .ax-spark-line {
+  stroke: var(--accent-deep);
+}
+
+.ax-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.ax-charts--trend {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ax-charts--trend .ax-chart-card--wide:first-child {
+  grid-column: 1 / -1;
+}
+
+.ax-line-wrap {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ax-line-chart,
+.ax-shop-chart {
+  width: 100%;
+  height: 12.5rem;
+  display: block;
+  min-width: 0;
+}
+
+.ax-shop-grid {
+  stroke: color-mix(in srgb, var(--line) 85%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.ax-shop-baseline {
+  stroke: color-mix(in srgb, var(--line) 90%, var(--text-strong));
+  stroke-width: 1.25;
+}
+
+.ax-shop-axis {
+  fill: var(--mist-soft);
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-shop-bar.is-opening {
+  fill: color-mix(in srgb, var(--mist-soft) 55%, var(--surface));
+}
+
+.ax-shop-bar.is-sales {
+  fill: var(--teal);
+}
+
+.ax-shop-bar.is-closing {
+  fill: var(--accent-deep);
+}
+
+.ax-shop-bar.is-prior {
+  fill: color-mix(in srgb, var(--teal) 28%, var(--line));
+}
+
+.ax-line-area {
+  fill: color-mix(in srgb, var(--teal) 14%, transparent);
+}
+
+.ax-line-sales {
+  stroke: var(--teal);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ax-line-expenses,
+.ax-line-payments {
+  stroke: var(--accent-deep);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+}
+
+.ax-line-payments {
+  stroke: color-mix(in srgb, var(--teal) 35%, var(--accent-deep));
+  stroke-dasharray: 0;
+  stroke-width: 2.25;
+}
+
+.ax-line-label {
+  fill: var(--mist-soft);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ax-chart-legend .is-expense::before,
+.ax-chart-legend .is-payments::before {
+  background: var(--accent-deep);
+}
+
+.ax-chart-legend .is-payments::before {
+  background: color-mix(in srgb, var(--teal) 35%, var(--accent-deep));
+}
+
+.ax-chart-legend .is-opening::before {
+  background: color-mix(in srgb, var(--mist-soft) 55%, var(--surface));
+}
+
+.ax-chart-legend .is-closing::before {
+  background: var(--accent-deep);
+}
+
+.ax-delta {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.ax-delta-row {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.ax-delta-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ax-delta-change {
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-delta-row.is-good .ax-delta-change {
+  color: var(--teal);
+}
+
+.ax-delta-row.is-good .ax-bar-fill {
+  background: var(--teal);
+}
+
+.ax-delta-row.is-bad .ax-delta-change {
+  color: var(--danger);
+}
+
+.ax-delta-row.is-bad .ax-bar-fill {
+  background: var(--danger);
+}
+
+.ax-delta-amount {
+  font-size: 0.68rem;
+  color: var(--mist-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-chart-card {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.ax-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ax-chart-head h3 {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-strong);
+}
+
+.ax-chart-head span {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-soft);
+}
+
+.ax-bars,
+.ax-compare,
+.ax-donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ax-bar-meta,
+.ax-compare-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.22rem;
+}
+
+.ax-bar-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-bar-value {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--mist-dim);
+}
+
+.ax-bar-track {
+  height: 0.42rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mist) 10%, var(--surface));
+  overflow: hidden;
+}
+
+.ax-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--teal), color-mix(in srgb, var(--accent) 70%, var(--teal)));
+  min-width: 0;
+  transition: width 0.35s ease;
+}
+
+.ax-bar.is-negative .ax-bar-fill,
+.ax-compare-row.is-negative .ax-bar-track.is-now .ax-bar-fill {
+  background: linear-gradient(90deg, var(--danger), color-mix(in srgb, var(--accent-deep) 55%, var(--danger)));
+}
+
+.ax-compare-values {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-compare-values strong {
+  font-size: 0.72rem;
+  color: var(--text-strong);
+}
+
+.ax-compare-values em {
+  font-style: normal;
+  font-size: 0.68rem;
+  color: var(--mist-soft);
+}
+
+.ax-compare-tracks {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.ax-bar-track.is-prior .ax-bar-fill {
+  background: color-mix(in srgb, var(--mist) 55%, transparent);
+}
+
+.ax-chart-legend {
+  display: inline-flex;
+  gap: 0.85rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-soft);
+}
+
+.ax-chart-legend .is-now::before,
+.ax-chart-legend .is-prior::before,
+.ax-donut-legend li::before,
+.ax-mini-bar span::before {
+  content: "";
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.3rem;
+  border-radius: 999px;
+  vertical-align: -0.05rem;
+}
+
+.ax-chart-legend .is-now::before {
+  background: var(--teal);
+}
+
+.ax-chart-legend .is-prior::before {
+  background: color-mix(in srgb, var(--mist) 55%, transparent);
+}
+
+.ax-donut-wrap {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: center;
+}
+
+.ax-donut {
+  --ax-donut-cash: var(--teal);
+  --ax-donut-mpesa: var(--accent);
+  --ax-donut-other: color-mix(in srgb, var(--mist) 45%, transparent);
+  width: 7.2rem;
+  height: 7.2rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+.ax-donut-hole {
+  width: 4.4rem;
+  height: 4.4rem;
+  border-radius: 50%;
+  background: var(--surface);
+  display: grid;
+  place-content: center;
+  text-align: center;
+  gap: 0.05rem;
+}
+
+.ax-donut-hole strong {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  line-height: 1.15;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-donut-hole span {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-soft);
+}
+
+.ax-donut-legend li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.35rem;
+  align-items: baseline;
+  font-size: 0.72rem;
+}
+
+.ax-donut-legend li span {
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.ax-donut-legend li strong {
+  font-variant-numeric: tabular-nums;
+  color: var(--mist-dim);
+}
+
+.ax-donut-legend li em {
+  font-style: normal;
+  color: var(--mist-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-donut-legend li.is-cash::before {
+  background: var(--teal);
+}
+
+.ax-donut-legend li.is-mpesa::before {
+  background: var(--accent);
+}
+
+.ax-donut-legend li.is-other::before {
+  background: color-mix(in srgb, var(--mist) 45%, transparent);
+}
+
+.ax-donut-legend li::before {
+  content: "";
+  display: none;
+}
+
+.ax-donut-legend li span::before {
+  content: "";
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.3rem;
+  border-radius: 999px;
+  vertical-align: -0.05rem;
+}
+
+.ax-donut-legend li.is-cash span::before {
+  background: var(--teal);
+}
+
+.ax-donut-legend li.is-mpesa span::before {
+  background: var(--accent);
+}
+
+.ax-donut-legend li.is-other span::before {
+  background: color-mix(in srgb, var(--mist) 45%, transparent);
+}
+
+.ax-mini-bars {
+  display: grid;
+  gap: 0.22rem;
+  margin-top: 0.15rem;
+}
+
+.ax-mini-bar {
+  display: grid;
+  grid-template-columns: 2.4rem minmax(0, 1fr);
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.ax-mini-bar span {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-soft);
+}
+
+.ax-mini-bar .ax-bar-track {
+  height: 0.32rem;
+}
+
+.ax-mini-bar.is-prior .ax-bar-fill {
+  background: color-mix(in srgb, var(--mist) 55%, transparent);
+}
+
+.ax-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr));
+  gap: 0.55rem;
+}
+
+.ax-section {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.ax-section:hover {
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+  background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+}
+
+.ax-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ax-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax-section-title i {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.ax-section-open {
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+
+.ax-section-value {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  line-height: 1.15;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-section.is-good .ax-section-value {
+  color: var(--teal);
+}
+
+.ax-section.is-bad .ax-section-value {
+  color: var(--danger);
+}
+
+.ax-section.is-warn .ax-section-value {
+  color: var(--accent-deep);
+}
+
+.ax-section-hint {
+  font-style: normal;
+  font-size: 0.7rem;
+  color: var(--mist-soft);
+}
+
+.ax-section.is-good .ax-section-hint {
+  color: var(--teal);
+}
+
+.ax-section.is-bad .ax-section-hint {
+  color: var(--danger);
+}
+
+.ax-section.is-warn .ax-section-hint {
+  color: var(--accent-deep);
+}
+
+.ax-section-body {
+  margin: 0.1rem 0 0;
+  color: var(--mist-dim);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.ax-section-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin: 0.25rem 0 0;
+}
+
+.ax-section-stats div {
+  min-width: 0;
+}
+
+.ax-section-stats dt {
+  margin: 0;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-soft);
+}
+
+.ax-section-stats dd {
+  margin: 0.08rem 0 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-trend {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--mist-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-trend.is-good {
+  color: var(--teal);
+}
+
+.ax-trend.is-bad {
+  color: var(--danger);
+}
+
+.ax-trend.is-warn {
+  color: var(--accent-deep);
+}
+
+.ax-insight {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
+.ax-insight h3 {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-strong);
+}
+
+.ax-insight p {
+  margin: 0.25rem 0 0;
+  color: var(--mist-dim);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.ax-footnote {
+  margin: 0;
+  padding: 0.55rem 0.15rem 0.1rem;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
+  color: var(--mist-dim);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.ax-kpis--dynamic {
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.5rem;
+}
+
+.ax-kpis--wide {
+  grid-template-columns: repeat(auto-fit, minmax(7.6rem, 1fr));
+}
+
+.ax-kpi.is-good strong {
+  color: var(--teal);
+}
+
+.ax-kpi.is-bad strong {
+  color: var(--danger);
+}
+
+.ax-kpi.is-warn strong {
+  color: var(--accent-deep);
+}
+
+.ax-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.ax-filters select,
+.ax-filters input {
+  min-height: 2rem;
+  min-width: 0;
+  padding: 0.28rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ax-filters select {
+  min-width: 7.5rem;
+  max-width: 11rem;
+  flex: 0 1 11rem;
+}
+
+.ax-filters input[type="date"],
+.ax-filters input[type="month"],
+.ax-filters input[type="number"] {
+  min-width: 8.2rem;
+  max-width: 12rem;
+  flex: 0 1 12rem;
+}
+
+.ax-filters input[type="search"] {
+  min-width: min(12rem, 100%);
+  flex: 1 1 12rem;
+}
+
+.ax-filters select:focus,
+.ax-filters input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-color: var(--accent);
+}
+
+.ax-filters [hidden] {
+  display: none !important;
+}
+
+.ax-apply {
+  min-height: 2rem;
+  padding: 0.28rem 0.75rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #101820;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ax-apply:hover {
+  background: var(--accent-deep);
+}
+
+.ax-apply--ghost {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text-strong);
+}
+
+.ax-apply--ghost:hover {
+  background: color-mix(in srgb, var(--mist) 6%, var(--surface));
+}
+
+.ax-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 14%, var(--surface));
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.ax-link:hover {
+  background: color-mix(in srgb, var(--teal) 22%, var(--surface));
+  color: var(--text-strong);
+}
+
+.ax-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.ax-kpi {
+  display: grid;
+  gap: 0.12rem;
+  margin: 0;
+  min-width: 0;
+  padding: 0.55rem 0.6rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface) 92%, transparent),
+      color-mix(in srgb, var(--panel-muted) 70%, var(--surface))
+    );
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
+  position: relative;
+  overflow: hidden;
+}
+
+.ax-kpi::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: color-mix(in srgb, var(--line) 80%, transparent);
+}
+
+.ax-kpi.is-good::before {
+  background: var(--teal);
+}
+
+.ax-kpi.is-bad::before {
+  background: var(--danger);
+}
+
+.ax-kpi.is-warn::before {
+  background: var(--accent);
+}
+
+.ax-kpi span {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-kpi strong {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  line-height: 1.15;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-kpi em {
+  font-style: normal;
+  font-size: 0.66rem;
+  color: var(--mist-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-card-hint {
+  margin: 0;
+  color: var(--mist-soft);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ax-card--matrix {
+  gap: 0.65rem;
+  padding: 0.8rem 0.7rem 0.75rem;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 12px 28px rgba(8, 24, 28, 0.08);
+}
+
+.ax-card--matrix .ax-card-head {
+  padding: 0 0.15rem 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.ax-card--matrix .ax-card-head h3 {
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+}
+
+.ax-band-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  padding: 0 0.15rem 0.15rem;
+}
+
+.ax-band-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax-band-legend span::before {
+  content: "";
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 0.15rem;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.ax-band-legend .is-flow::before {
+  background: color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+.ax-band-legend .is-till::before {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.ax-band-legend .is-pl::before {
+  background: color-mix(in srgb, var(--ok) 55%, transparent);
+}
+
+.ax-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.ax-card {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  scroll-margin-top: 0.85rem;
+}
+
+.ax-card--wide {
+  grid-column: 1 / -1;
+}
+
+.ax-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.ax-card-head h3 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.ax-card-head h3 i {
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--teal);
+  flex-shrink: 0;
+}
+
+.ax-card-head > span {
+  min-width: 0;
+  color: var(--mist-dim);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.ax-metrics--4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ax-metrics--5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.ax-metrics > div {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 0;
+  padding: 0.4rem 0.45rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mist) 5%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+}
+
+.ax-metrics span {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax-metrics strong {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.ax-table-wrap {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.ax-table-wrap--scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ax-table-wrap--scroll .ax-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ax-table-wrap--scroll .ax-table th:first-child,
+.ax-table-wrap--scroll .ax-table td:first-child,
+.ax-table-wrap--scroll .ax-table th.ax-th--item,
+.ax-table-wrap--scroll .ax-table td.ax-cell--primary {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 8.5rem;
+  max-width: 14rem;
+  background: var(--surface);
+  box-shadow: 1px 0 0 var(--line);
+}
+
+.ax-table-wrap--scroll .ax-table thead th:first-child,
+.ax-table-wrap--scroll .ax-table thead th.ax-th--item {
+  z-index: 3;
+}
+
+.ax-table-wrap--scroll .ax-table--shops thead th:first-child,
+.ax-table-wrap--scroll .ax-table--shops thead th.ax-th--item {
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
+.ax-table-wrap--scroll .ax-table--shops tbody tr:nth-child(even) td:first-child,
+.ax-table-wrap--scroll .ax-table--shops tbody tr:nth-child(even) td.ax-cell--primary {
+  background: color-mix(in srgb, var(--line) 35%, var(--surface));
+}
+
+.ax-table-wrap--scroll .ax-table tbody tr:hover td:first-child,
+.ax-table-wrap--scroll .ax-table tbody tr:hover td.ax-cell--primary,
+.ax-table-wrap--scroll .ax-table--shops tbody tr:hover td:first-child,
+.ax-table-wrap--scroll .ax-table--shops tbody tr:hover td.ax-cell--primary {
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+}
+
+.ax-label {
+  margin: 0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.ax-table th,
+.ax-table td {
+  padding: 0.32rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Shop matrices may use full frame width; list-table pages stay within normal workspace. */
+.workspace-main:has(.ax-table--shops):not(:has(.ax--list-table)) {
+  width: calc(100% - 1rem);
+  max-width: none;
+}
+
+@media (min-width: 980px) {
+  .workspace-main:has(.ax-table--shops):not(:has(.ax--list-table)) {
+    width: calc(100% - 1.5rem);
+    max-width: none;
+  }
+}
+
+.ax-table--shops {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 85%, var(--text-strong));
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ax-table--shops th,
+.ax-table--shops td {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.ax-table--shops th:last-child,
+.ax-table--shops td:last-child {
+  border-right: 0;
+}
+
+.ax-table--shops thead th {
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, var(--text-strong));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--teal) 10%, var(--surface)),
+      color-mix(in srgb, var(--teal) 4%, var(--surface))
+    );
+}
+
+.ax-table--shops .ax-th--shop,
+.ax-table--shops .ax-th--pair,
+.ax-table--shops .ax-cell--shop,
+.ax-table--shops .ax-cell--pair {
+  border-left: 0;
+}
+
+.ax-table--shops .ax-th--band-start,
+.ax-table--shops .ax-cell--band-start {
+  border-left: 2px solid color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
+.ax-table--shops .ax-th--band-flow,
+.ax-table--shops .ax-cell--band-flow,
+.ax-table--shops .ax-th--band-pl,
+.ax-table--shops .ax-cell--band-pl {
+  background: color-mix(in srgb, var(--teal) 3%, transparent);
+}
+
+.ax-table--shops .ax-th--band-till,
+.ax-table--shops .ax-cell--band-till,
+.ax-table--shops .ax-th--band-cost,
+.ax-table--shops .ax-cell--band-cost {
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.ax-table--shops .ax-th--band-result,
+.ax-table--shops .ax-cell--band-result {
+  background: color-mix(in srgb, var(--ok) 4%, transparent);
+}
+
+.ax-table--shops .ax-th--band-cash-open,
+.ax-table--shops .ax-cell--band-cash-open {
+  background: color-mix(in srgb, var(--teal) 4%, transparent);
+}
+
+.ax-table--shops .ax-th--band-cash-close,
+.ax-table--shops .ax-cell--band-cash-close {
+  background: color-mix(in srgb, var(--teal) 7%, transparent);
+}
+
+.ax-table--shops .ax-th--band-mpesa-open,
+.ax-table--shops .ax-cell--band-mpesa-open {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.ax-table--shops .ax-th--band-mpesa-close,
+.ax-table--shops .ax-cell--band-mpesa-close {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.ax-band-legend--balances .is-cash-open::before {
+  background: color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+.ax-band-legend--balances .is-cash-close::before {
+  background: color-mix(in srgb, var(--teal) 75%, transparent);
+}
+
+.ax-band-legend--balances .is-mpesa-open::before {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.ax-band-legend--balances .is-mpesa-close::before {
+  background: color-mix(in srgb, var(--accent-deep) 65%, transparent);
+}
+
+.ax-till-board {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.ax-till-card {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.85rem 0.9rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 8px 24px rgba(8, 24, 28, 0.04);
+}
+
+.ax-till-card.is-cash {
+  border-top: 3px solid var(--teal);
+}
+
+.ax-till-card.is-mpesa {
+  border-top: 3px solid var(--accent-deep);
+}
+
+.ax-till-card.is-live {
+  border-top: 3px solid color-mix(in srgb, var(--teal) 55%, var(--accent-deep));
+}
+
+.ax-till-card.is-wide {
+  grid-column: 1 / -1;
+}
+
+.ax-till-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  padding-bottom: 0.15rem;
+}
+
+.ax-till-card-head i {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
+.ax-till-card.is-cash .ax-till-card-head i {
+  color: var(--teal);
+}
+
+.ax-till-card.is-mpesa .ax-till-card-head i {
+  color: var(--accent-deep);
+}
+
+.ax-till-card.is-live .ax-till-card-head i {
+  color: color-mix(in srgb, var(--teal) 50%, var(--accent-deep));
+}
+
+.ax-till-card-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+}
+
+.ax-till-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: stretch;
+  padding: 0.55rem 0.6rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-muted) 45%, var(--surface));
+}
+
+.ax-till-row + .ax-till-row {
+  margin-top: 0.1rem;
+}
+
+.ax-till-row-label {
+  display: flex;
+  align-items: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--mist-dim);
+}
+
+.ax-till-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.ax-till-metric {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  padding: 0.35rem 0.45rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+.ax-till-metric-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--mist-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-till-metric-value {
+  font-family: var(--font-display);
+  font-size: clamp(0.82rem, 1.6vw, 0.95rem);
+  line-height: 1.15;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-till-metric-hint {
+  font-style: normal;
+  font-size: 0.62rem;
+  line-height: 1.25;
+  color: var(--mist-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-till-metric.is-variance {
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+}
+
+.ax-till-metric.is-variance.is-good {
+  background: color-mix(in srgb, var(--ok) 12%, var(--surface));
+}
+
+.ax-till-metric.is-variance.is-good .ax-till-metric-value {
+  color: var(--teal);
+}
+
+.ax-till-metric.is-variance.is-bad {
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
+
+.ax-till-metric.is-variance.is-bad .ax-till-metric-value {
+  color: var(--danger);
+}
+
+.ax-till-metric.is-variance.is-warn {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.ax-till-metric.is-variance.is-warn .ax-till-metric-value {
+  color: var(--accent-deep);
+}
+
+.ax-till-card.is-mpesa .ax-till-metric.is-variance:not(.is-bad):not(.is-warn) {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+@media (max-width: 1100px) {
+  .ax-till-board {
+    grid-template-columns: 1fr;
+  }
+
+  /* Keep Cash | M-Pesa side by side on tablet for easier compare. */
+  .ax--list-table[data-ax-section="balances"] .ax-till-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .ax--list-table[data-ax-section="balances"] .ax-till-board {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .ax-till-row {
+    grid-template-columns: 1fr;
+    gap: 0.45rem;
+  }
+
+  .ax-till-row-label {
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .ax-till-metrics {
+    grid-template-columns: 1fr;
+    gap: 0.3rem;
+  }
+
+  .ax-till-metric {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    column-gap: 0.65rem;
+    padding: 0.45rem 0.55rem;
+  }
+
+  .ax-till-metric-label {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .ax-till-metric-value {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    text-align: right;
+    white-space: normal;
+  }
+
+  .ax-till-metric-hint {
+    grid-column: 1;
+    grid-row: 2;
+    white-space: normal;
+  }
+}
+
+.ax-summary-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: stretch;
+}
+
+.ax-summary-hero {
+  display: grid;
+  gap: 0.2rem;
+  align-content: center;
+  min-width: 0;
+  padding: 1rem 1.05rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 28%, var(--line));
+  border-radius: 16px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--teal) 12%, var(--surface)),
+      color-mix(in srgb, var(--surface) 92%, transparent) 58%
+    );
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 28px rgba(8, 24, 28, 0.06);
+}
+
+.ax-summary-hero-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax-summary-hero-value {
+  font-family: var(--font-display);
+  font-size: clamp(1.35rem, 3vw, 1.85rem);
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+.ax-summary-hero-hint {
+  font-style: normal;
+  font-size: 0.74rem;
+  color: var(--mist-soft);
+}
+
+.ax-summary-hero.is-good {
+  border-color: color-mix(in srgb, var(--teal) 32%, var(--line));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--teal) 14%, var(--surface)),
+      color-mix(in srgb, var(--surface) 92%, transparent) 58%
+    );
+}
+
+.ax-summary-hero.is-bad {
+  border-color: color-mix(in srgb, var(--danger) 32%, var(--line));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--danger) 10%, var(--surface)),
+      color-mix(in srgb, var(--surface) 92%, transparent) 58%
+    );
+}
+
+.ax-summary-hero.is-bad .ax-summary-hero-value {
+  color: var(--danger);
+}
+
+.ax-summary-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.ax-summary-tile {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
+}
+
+.ax-summary-tile i {
+  width: 0.95rem;
+  height: 0.95rem;
+  margin-top: 0.12rem;
+  flex-shrink: 0;
+}
+
+.ax-summary-tile.is-cash i {
+  color: var(--teal);
+}
+
+.ax-summary-tile.is-mpesa i {
+  color: var(--accent-deep);
+}
+
+.ax-summary-tile.is-credits i {
+  color: color-mix(in srgb, var(--ok) 70%, var(--accent-deep));
+}
+
+.ax-summary-tile.is-shops i {
+  color: var(--mist-dim);
+}
+
+.ax-summary-tile.is-sales i {
+  color: var(--teal);
+}
+
+.ax-summary-tile.is-cost i {
+  color: var(--accent-deep);
+}
+
+.ax-summary-tile.is-good i {
+  color: var(--teal);
+}
+
+.ax-summary-tile.is-warn i {
+  color: var(--accent-deep);
+}
+
+.ax-band-legend--items .is-flow::before {
+  background: color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+.ax-band-legend--items .is-total::before {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.ax-band-legend--items .is-result::before {
+  background: color-mix(in srgb, var(--ok) 55%, transparent);
+}
+
+.ax-summary-tile-body {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.ax-summary-tile-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax-summary-tile-value {
+  font-family: var(--font-display);
+  font-size: clamp(0.88rem, 1.8vw, 1.02rem);
+  line-height: 1.15;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax-summary-tile-hint {
+  font-style: normal;
+  font-size: 0.64rem;
+  line-height: 1.3;
+  color: var(--mist-soft);
+}
+
+.ax-band-legend--sales .is-cash::before {
+  background: color-mix(in srgb, var(--teal) 60%, transparent);
+}
+
+.ax-band-legend--sales .is-mpesa::before {
+  background: color-mix(in srgb, var(--accent-deep) 60%, transparent);
+}
+
+.ax-band-legend--sales .is-credits::before {
+  background: color-mix(in srgb, var(--ok) 55%, var(--accent-deep));
+}
+
+.ax-band-legend--sales .is-unpaid::before {
+  background: color-mix(in srgb, var(--accent-deep) 70%, transparent);
+}
+
+.ax-band-legend--sales .is-total::before {
+  background: color-mix(in srgb, var(--ok) 55%, transparent);
+}
+
+.ax-band-legend--sales .is-result::before {
+  background: color-mix(in srgb, var(--ok) 75%, transparent);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply {
+  margin-top: 0.05rem;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tiles {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-hero-value {
+  font-size: clamp(1.05rem, 2vw, 1.35rem);
+  line-height: 1.25;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-card-sub {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--mist-dim);
+}
+
+.ax-band-legend--supply .is-flow::before {
+  background: color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+.ax-band-legend--supply .is-total::before {
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.ax-band-legend--supply .is-result::before {
+  background: color-mix(in srgb, var(--ok) 60%, transparent);
+}
+
+.ax-band-legend--supply .is-action::before {
+  background: color-mix(in srgb, var(--mist-dim) 45%, transparent);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-entity-name {
+  font-weight: 650;
+  color: var(--text-strong);
+  line-height: 1.25;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-table--supply th.ax-th--phone,
+.ax--list-table[data-ax-section="supply"] .ax-table--supply td.ax-cell--phone {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--mist-dim);
+  font-size: 0.84rem;
+  font-weight: 550;
+}
+
+.ax-supply-detail-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 28%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.ax-supply-detail-btn:hover {
+  background: color-mix(in srgb, var(--teal) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
+.ax-supply-detail-btn svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-table--supply th.ax-th--num,
+.ax--list-table[data-ax-section="supply"] .ax-table--supply td.ax-cell--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-table--supply th.ax-th--money,
+.ax--list-table[data-ax-section="supply"] .ax-table--supply td.ax-cell--money {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-table--supply th.ax-th--action,
+.ax--list-table[data-ax-section="supply"] .ax-table--supply td.ax-cell--action {
+  width: 7.5rem;
+  text-align: center;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-table-wrap--list:has(.ax-table--supply) {
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 10px;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-card--empty {
+  padding: 1.25rem 1rem 1.5rem;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 0.55rem;
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem;
+  text-align: center;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-empty-state svg {
+  width: 2.25rem;
+  height: 2.25rem;
+  color: color-mix(in srgb, var(--teal) 55%, var(--mist-dim));
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-empty-state h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--text-strong);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-empty-state p {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-empty-state-action {
+  margin-top: 0.35rem;
+}
+
+.ax-supply-modal-dialog .ax-table--supply-history th.ax-th--num,
+.ax-supply-modal-dialog .ax-table--supply-history td.ax-cell--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-supply-modal-dialog .ax-table--supply-history th.ax-th--money,
+.ax-supply-modal-dialog .ax-table--supply-history td.ax-cell--money {
+  text-align: right;
+}
+
+@media (max-width: 1100px) {
+  .ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax-supply-detail-btn span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .ax-supply-detail-btn {
+    padding: 0.35rem;
+    border-radius: 10px;
+  }
+}
+
+.ax-table--shops .ax-th--band-cash,
+.ax-table--shops .ax-cell--band-cash {
+  background: color-mix(in srgb, var(--teal) 4%, transparent);
+}
+
+.ax-table--shops .ax-th--band-mpesa,
+.ax-table--shops .ax-cell--band-mpesa {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.ax-table--shops .ax-th--band-credits,
+.ax-table--shops .ax-cell--band-credits {
+  background: color-mix(in srgb, var(--ok) 6%, transparent);
+}
+
+.ax-table--shops .ax-th--band-unpaid,
+.ax-table--shops .ax-cell--band-unpaid {
+  background: color-mix(in srgb, var(--accent-deep) 5%, transparent);
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-cash {
+  background: color-mix(in srgb, var(--teal) 7%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-mpesa {
+  background: color-mix(in srgb, var(--accent) 8%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-credits {
+  background: color-mix(in srgb, var(--ok) 9%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-unpaid {
+  background: color-mix(in srgb, var(--accent-deep) 8%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+@media (max-width: 900px) {
+  .ax-summary-board {
+    grid-template-columns: 1fr;
+  }
+
+  .ax-summary-tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ax--list-table[data-ax-section="credits"] .ax-summary-tiles,
+  .ax--list-table[data-ax-section="credit-audits"] .ax-summary-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .ax-summary-tiles {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ax-table--shops .ax-th--total,
+.ax-table--shops .ax-cell--total {
+  border-left: 1px solid color-mix(in srgb, var(--teal) 35%, var(--line));
+  background: color-mix(in srgb, var(--teal) 5%, transparent);
+}
+
+.ax-table--shops tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--line) 28%, transparent);
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-flow,
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-pl {
+  background: color-mix(in srgb, var(--teal) 6%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-till,
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-cost {
+  background: color-mix(in srgb, var(--accent) 7%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-result {
+  background: color-mix(in srgb, var(--ok) 7%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-cash-open {
+  background: color-mix(in srgb, var(--teal) 7%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-cash-close {
+  background: color-mix(in srgb, var(--teal) 10%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-mpesa-open {
+  background: color-mix(in srgb, var(--accent) 8%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-mpesa-close {
+  background: color-mix(in srgb, var(--accent) 11%, color-mix(in srgb, var(--line) 22%, transparent));
+}
+
+.ax-table--shops tbody tr:nth-child(even) td.ax-cell--total {
+  background: color-mix(in srgb, var(--teal) 8%, transparent);
+}
+
+.ax-table--shops tbody tr:hover td {
+  background: color-mix(in srgb, var(--teal) 9%, transparent);
+}
+
+.ax-table--shops tbody tr.ax-row--total td {
+  background: color-mix(in srgb, var(--teal) 10%, var(--surface));
+  border-top: 1px solid color-mix(in srgb, var(--teal) 35%, var(--line));
+  font-weight: 700;
+}
+
+.ax-table--shops tbody tr.ax-row--total td.ax-cell--primary {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.ax-table--shops tbody tr.ax-row--total:hover td {
+  background: color-mix(in srgb, var(--teal) 14%, var(--surface));
+}
+
+.ax-table th {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  white-space: nowrap;
+}
+
+.ax-table th.ax-th--shop {
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  vertical-align: bottom;
+  text-align: center;
+}
+
+.ax-table th.ax-th--pair {
+  vertical-align: bottom;
+  padding-bottom: 0.28rem;
+  text-align: center;
+  width: 10.75rem;
+  min-width: 10.75rem;
+}
+
+.ax-th-pair {
+  display: grid;
+  grid-template-columns: 2.6rem 7.5rem;
+  column-gap: 0.28rem;
+  align-items: end;
+  width: 10.38rem;
+  margin-inline: auto;
+}
+
+.ax-th-pair-name {
+  grid-column: 1 / -1;
+  margin-bottom: 0.28rem;
+  text-align: center;
+  justify-self: stretch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ax-th-pair-cols {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 2.6rem 7.5rem;
+  column-gap: 0.28rem;
+}
+
+.ax-th-pair-cols span {
+  text-align: right;
+  font-size: 0.58rem;
+  letter-spacing: 0.05em;
+}
+
+.ax-th-pair-cols span:last-child {
+  padding-right: 0.35rem;
+}
+
+.ax-table td:not(.ax-cell--primary) {
+  white-space: nowrap;
+}
+
+.ax-table td.ax-cell--pair {
+  white-space: nowrap;
+  vertical-align: middle;
+  width: 10.75rem;
+  min-width: 10.75rem;
+  text-align: center;
+}
+
+.ax-table--shops td.ax-cell--shop:not(.ax-cell--pair) {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ax-table--shops tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ax-pair {
+  display: grid;
+  grid-template-columns: 2.6rem 7.5rem;
+  column-gap: 0.28rem;
+  align-items: center;
+  width: 10.38rem;
+  margin-inline: auto;
+}
+
+.ax-pair-qty,
+.ax-pair-amt {
+  display: block;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.ax-pair-qty {
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.ax-pair-amt {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.12rem 0.35rem;
+  border-radius: 0.28rem;
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  color: color-mix(in srgb, var(--teal) 55%, var(--text-strong));
+  font-weight: 650;
+  font-size: 0.74rem;
+}
+
+.ax-pair.is-bad .ax-pair-amt {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: color-mix(in srgb, var(--danger) 45%, var(--text-strong));
+}
+
+.ax-pair.is-good .ax-pair-amt {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: color-mix(in srgb, var(--ok) 45%, var(--text-strong));
+}
+
+.ax-pair.is-warn .ax-pair-amt {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: color-mix(in srgb, var(--accent) 40%, var(--text-strong));
+}
+
+/* Desktop: fit every shop-matrix column in the viewport (no sideways scroll). */
+@media (min-width: 900px) {
+  .ax:not(.ax--list-table) .ax-card:has(.ax-table--shops) {
+    padding-inline: 0.55rem;
+  }
+
+  .ax:not(.ax--list-table) .ax-table-wrap--scroll:has(.ax-table--shops) {
+    overflow-x: visible;
+    border-radius: 10px;
+  }
+
+  .ax:not(.ax--list-table) .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table th:first-child,
+  .ax:not(.ax--list-table) .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table td:first-child,
+  .ax:not(.ax--list-table) .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table th.ax-th--item,
+  .ax:not(.ax--list-table) .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table td.ax-cell--primary {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    min-width: 5.75rem;
+    max-width: 8rem;
+    width: 6.75rem;
+    padding-inline: 0.45rem;
+    font-weight: 700;
+    text-align: left;
+  }
+
+  .ax:not(.ax--list-table) .ax-table--shops {
+    table-layout: fixed;
+    width: 100%;
+    min-width: 0;
+    font-size: 0.66rem;
+  }
+
+  .ax:not(.ax--list-table) .ax-table--shops th,
+  .ax:not(.ax--list-table) .ax-table--shops td {
+    padding: 0.28rem 0.14rem;
+  }
+
+  .ax:not(.ax--list-table) .ax-table--shops th.ax-th--pair,
+  .ax:not(.ax--list-table) .ax-table--shops td.ax-cell--pair {
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    overflow: hidden;
+  }
+
+  .ax:not(.ax--list-table) .ax-table--shops .ax-th-pair,
+  .ax:not(.ax--list-table) .ax-table--shops .ax-pair {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 0.12rem;
+    width: 100%;
+    min-width: 0;
+    margin-inline: 0;
+  }
+
+  .ax:not(.ax--list-table) .ax-table--shops .ax-th-pair-name {
+    grid-column: auto;
+    margin-bottom: 0;
+    font-size: 0.56rem;
+    letter-spacing: 0.03em;
+    line-height: 1.15;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    color: color-mix(in srgb, var(--mist-dim) 88%, var(--text-strong));
+  }
+
+  .ax:not(.ax--list-table) .ax-table--shops .ax-th-pair-cols {
+    display: none;
+  }
+
+  .ax:not(.ax--list-table) .ax-table--shops .ax-pair-qty,
+  .ax:not(.ax--list-table) .ax-table--shops .ax-pair-amt {
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: right;
+    line-height: 1.15;
+  }
+
+  .ax:not(.ax--list-table) .ax-table--shops .ax-pair-qty {
+    font-size: 0.58rem;
+    font-weight: 650;
+    color: var(--mist-soft);
+    opacity: 1;
+  }
+
+  .ax:not(.ax--list-table) .ax-table--shops .ax-pair-amt {
+    padding: 0.14rem 0.22rem;
+    font-size: 0.64rem;
+    font-weight: 700;
+    border-radius: 0.28rem;
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent);
+  }
+
+  .ax-table--shops .ax-cell--band-pl .ax-pair-amt {
+    background: color-mix(in srgb, var(--ok) 12%, var(--surface));
+    color: color-mix(in srgb, var(--ok) 35%, var(--text-strong));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 22%, transparent);
+  }
+
+  .ax-table--shops .ax-cell--band-till .ax-pair-amt {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    color: color-mix(in srgb, var(--accent-deep) 55%, var(--text-strong));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+
+  .ax-table--shops .ax-cell--band-flow .ax-pair-amt {
+    background: color-mix(in srgb, var(--teal) 12%, var(--surface));
+    color: color-mix(in srgb, var(--teal) 45%, var(--text-strong));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 24%, transparent);
+  }
+}
+
+.ax-money {
+  display: inline-block;
+  min-width: 4.5rem;
+  padding: 0.16rem 0.35rem;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent);
+  color: var(--text-strong);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  font-size: 0.74rem;
+  text-align: right;
+}
+
+.ax-money.is-good {
+  background: color-mix(in srgb, var(--ok) 14%, var(--surface));
+  color: color-mix(in srgb, var(--ok) 30%, var(--text-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 28%, transparent);
+}
+
+.ax-money.is-bad {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  color: color-mix(in srgb, var(--danger) 35%, var(--text-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+.ax-money.is-warn {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: color-mix(in srgb, var(--accent-deep) 55%, var(--text-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.ax-table td.ax-cell--money {
+  text-align: right;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Readable P&L matrix — few analytical columns, no ultra-dense squeeze. */
+@media (min-width: 900px) {
+  .ax-table--pl {
+    table-layout: auto;
+    font-size: 0.78rem;
+  }
+
+  .ax-table--pl th,
+  .ax-table--pl td {
+    padding: 0.4rem 0.45rem;
+  }
+
+  .ax-table--pl th.ax-th--pair,
+  .ax-table--pl td.ax-cell--pair {
+    width: auto;
+    min-width: 7.5rem;
+  }
+
+  .ax-table--pl .ax-th-pair,
+  .ax-table--pl .ax-pair {
+    display: grid;
+    grid-template-columns: 2.4rem minmax(4.5rem, 1fr);
+    column-gap: 0.3rem;
+    align-items: center;
+    width: auto;
+    min-width: 7.2rem;
+    margin-inline: 0 0 auto;
+  }
+
+  .ax-table--pl .ax-th-pair-name {
+    grid-column: 1 / -1;
+    margin-bottom: 0.15rem;
+    font-size: 0.64rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ax-table--pl .ax-th-pair-cols {
+    display: none;
+  }
+
+  .ax-table--pl .ax-pair-qty {
+    font-size: 0.7rem;
+    opacity: 0.75;
+  }
+
+  .ax-table--pl .ax-pair-amt {
+    font-size: 0.74rem;
+    padding: 0.14rem 0.3rem;
+  }
+
+  .ax-table--pl .ax-money {
+    min-width: 5.5rem;
+    font-size: 0.78rem;
+  }
+
+  .ax-table-wrap--scroll:has(.ax-table--pl) {
+    overflow-x: visible;
+  }
+}
+
+.ax-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ax-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--teal) 6%, transparent);
+}
+
+.ax-table td.is-zero {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+@media (max-width: 899px) {
+  .ax-table-wrap--scroll {
+    overflow-x: visible;
+  }
+
+  .ax-table-wrap--scroll .ax-table th:first-child,
+  .ax-table-wrap--scroll .ax-table td:first-child,
+  .ax-table-wrap--scroll .ax-table th.ax-th--item,
+  .ax-table-wrap--scroll .ax-table td.ax-cell--primary {
+    position: static;
+    left: auto;
+    z-index: auto;
+    box-shadow: none;
+  }
+
+  .ax-table {
+    min-width: 0;
+  }
+
+  .ax-table thead {
+    display: none;
+  }
+
+  .ax-table tbody tr {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.75rem 0.65rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .ax-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .ax-table tbody tr:hover td {
+    background: transparent;
+  }
+
+  .ax-table th,
+  .ax-table td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    min-width: 0;
+  }
+
+  .ax-table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-weight: 600;
+    font-size: 0.68rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+    padding-top: 0.1rem;
+  }
+
+  .ax-table td.ax-cell--primary,
+  .ax-table td[data-label="Receipt"],
+  .ax-table td[data-label="Item"] {
+    display: block;
+    padding-bottom: 0.15rem;
+  }
+
+  .ax-table td.ax-cell--primary::before,
+  .ax-table td[data-label="Receipt"]::before,
+  .ax-table td[data-label="Item"]::before {
+    display: none;
+  }
+
+  .ax-table td.ax-col-actions {
+    justify-content: flex-end;
+  }
+
+  .ax-table td.ax-col-actions::before {
+    margin-right: auto;
+  }
+
+  .ax-receipt-lines td.ax-cell--primary strong {
+    display: block;
+  }
+}
+
+/* Analytics list tables — scrollable rows/columns, sticky label column. */
+.ax--list-table .ax-kpis {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  scrollbar-width: thin;
+}
+
+.ax--list-table .ax-kpi {
+  flex: 1 0 8.25rem;
+  min-width: 8.25rem;
+  margin: 0;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--surface);
+}
+
+.ax--list-table .ax-kpi:last-child {
+  border-right: 0;
+}
+
+.ax--list-table .ax-scroll-hint {
+  margin: 0;
+  padding: 0.35rem 0.75rem 0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-soft);
+}
+
+.ax--list-table .ax-table-wrap--list {
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  border-top: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+
+.ax--list-table .ax-card--wide,
+.ax--list-table .ax-card--matrix {
+  overflow: visible;
+}
+
+.ax--list-table .ax-table--shops {
+  overflow: visible;
+}
+
+.ax--list-table .ax-table {
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ax--list-table .ax-table--shops {
+  min-width: 0;
+  width: max-content;
+  max-width: 100%;
+}
+
+.ax--list-table .ax-table th,
+.ax--list-table .ax-table td {
+  border-right: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.ax--list-table .ax-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--line) 85%, transparent);
+}
+
+.ax--list-table .ax-table th:last-child,
+.ax--list-table .ax-table td:last-child {
+  border-right: 0;
+}
+
+.ax--list-table .ax-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ax--list-table .ax-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--line) 22%, var(--surface));
+}
+
+.ax--list-table .ax-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.ax--list-table .ax-table tbody tr.ax-row--total td {
+  background: color-mix(in srgb, var(--panel-muted) 75%, var(--surface));
+  font-weight: 700;
+}
+
+.ax--list-table .ax-table--pl {
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ax--list-table .ax-table--pl th,
+.ax--list-table .ax-table--pl td {
+  border-right: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.ax--list-table .ax-table--pl thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--line) 85%, transparent);
+}
+
+.ax--list-table .ax-table--pl th:last-child,
+.ax--list-table .ax-table--pl td:last-child {
+  border-right: 0;
+}
+
+.ax--list-table .ax-table--pl tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ax--list-table .ax-table--pl tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--line) 22%, var(--surface));
+}
+
+.ax--list-table .ax-table--pl tbody tr:hover td {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.ax--list-table .ax-table--pl tbody tr.ax-row--total td {
+  background: color-mix(in srgb, var(--panel-muted) 75%, var(--surface));
+  font-weight: 700;
+}
+
+.ax--list-table .ax-table-wrap--scroll,
+.ax--list-table .ax-table-wrap--list {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+/* Safety: list-table pages must never let wide tables blow out the page. */
+.ax--list-table .ax-table-wrap:not(.ax-table-wrap--scroll):not(.ax-table-wrap--list) {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
+.ax--list-table .ax-table-wrap--scroll .ax-table th:first-child,
+.ax--list-table .ax-table-wrap--scroll .ax-table td:first-child,
+.ax--list-table .ax-table-wrap--scroll .ax-table th.ax-th--item,
+.ax--list-table .ax-table-wrap--scroll .ax-table td.ax-cell--primary,
+.ax--list-table .ax-table-wrap--list .ax-table th:first-child,
+.ax--list-table .ax-table-wrap--list .ax-table td:first-child,
+.ax--list-table .ax-table-wrap--list .ax-table th.ax-th--item,
+.ax--list-table .ax-table-wrap--list .ax-table td.ax-cell--primary {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 12rem;
+  min-width: 11rem;
+  max-width: 16rem;
+  background: var(--surface);
+  box-shadow: 2px 0 0 color-mix(in srgb, var(--line) 85%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax--list-table .ax-table-wrap--scroll .ax-table thead th:first-child,
+.ax--list-table .ax-table-wrap--scroll .ax-table thead th.ax-th--item,
+.ax--list-table .ax-table-wrap--list .ax-table thead th:first-child,
+.ax--list-table .ax-table-wrap--list .ax-table thead th.ax-th--item {
+  z-index: 4;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
+.ax--list-table .ax-table-wrap--scroll .ax-table tbody tr:nth-child(even) td:first-child,
+.ax--list-table .ax-table-wrap--scroll .ax-table tbody tr:nth-child(even) td.ax-cell--primary,
+.ax--list-table .ax-table-wrap--list .ax-table tbody tr:nth-child(even) td:first-child,
+.ax--list-table .ax-table-wrap--list .ax-table tbody tr:nth-child(even) td.ax-cell--primary {
+  background: color-mix(in srgb, var(--line) 22%, var(--surface));
+}
+
+.ax--list-table .ax-table-wrap--scroll .ax-table tbody tr:hover td:first-child,
+.ax--list-table .ax-table-wrap--scroll .ax-table tbody tr:hover td.ax-cell--primary,
+.ax--list-table .ax-table-wrap--list .ax-table tbody tr:hover td:first-child,
+.ax--list-table .ax-table-wrap--list .ax-table tbody tr:hover td.ax-cell--primary {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.ax--list-table .ax-table-wrap--scroll .ax-table tbody tr.ax-row--total td:first-child,
+.ax--list-table .ax-table-wrap--scroll .ax-table tbody tr.ax-row--total td.ax-cell--primary,
+.ax--list-table .ax-table-wrap--list .ax-table tbody tr.ax-row--total td:first-child,
+.ax--list-table .ax-table-wrap--list .ax-table tbody tr.ax-row--total td.ax-cell--primary {
+  background: color-mix(in srgb, var(--panel-muted) 75%, var(--surface));
+}
+
+/* Analytics list tables — readable column spacing on desktop. */
+@media (min-width: 900px) {
+  .ax--list-table .ax-table--shops,
+  .ax--list-table .ax-table--items,
+  .ax--list-table .ax-table--stock,
+  .ax--list-table .ax-table--credits,
+  .ax--list-table .ax-table--suppliers,
+  .ax--list-table .ax-table--expenses,
+  .ax--list-table .ax-table--sessions {
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
+    font-size: 0.78rem;
+  }
+
+  .ax--list-table .ax-table th,
+  .ax--list-table .ax-table td {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .ax--list-table .ax-table-wrap--list .ax-table th.ax-th--item,
+  .ax--list-table .ax-table-wrap--list .ax-table td.ax-cell--primary,
+  .ax--list-table .ax-table-wrap--scroll .ax-table th.ax-th--item,
+  .ax--list-table .ax-table-wrap--scroll .ax-table td.ax-cell--primary,
+  .ax--list-table .ax-table-wrap--list .ax-table th:first-child,
+  .ax--list-table .ax-table-wrap--list .ax-table td:first-child,
+  .ax--list-table .ax-table-wrap--scroll .ax-table th:first-child,
+  .ax--list-table .ax-table-wrap--scroll .ax-table td:first-child {
+    width: 12rem;
+    min-width: 11rem;
+    max-width: 16rem;
+    padding-inline: 0.85rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+
+  .ax--list-table .ax-table th.ax-th--pair,
+  .ax--list-table .ax-table td.ax-cell--pair,
+  .ax--list-table .ax-table th.ax-th--total,
+  .ax--list-table .ax-table td.ax-cell--total {
+    width: 8.75rem;
+    min-width: 8.25rem;
+    max-width: 10.75rem;
+    padding-inline: 0.72rem;
+  }
+
+  .ax--list-table .ax-table .ax-th-pair,
+  .ax--list-table .ax-table .ax-pair {
+    display: grid;
+    grid-template-columns: 2.85rem minmax(5.1rem, 1fr);
+    column-gap: 0.55rem;
+    align-items: center;
+    width: 100%;
+    min-width: 7.85rem;
+    margin-inline: 0;
+  }
+
+  .ax--list-table .ax-table .ax-th-pair-name {
+    grid-column: 1 / -1;
+    margin-bottom: 0.14rem;
+    font-size: 0.64rem;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    color: color-mix(in srgb, var(--mist-dim) 88%, var(--text-strong));
+  }
+
+  .ax--list-table .ax-table .ax-th-pair-cols {
+    display: none;
+  }
+
+  .ax--list-table .ax-table .ax-pair-qty {
+    font-size: 0.72rem;
+    font-weight: 650;
+    color: var(--mist-soft);
+    text-align: right;
+    line-height: 1.15;
+  }
+
+  .ax--list-table .ax-table .ax-pair-amt {
+    font-size: 0.76rem;
+    font-weight: 700;
+    padding: 0;
+    border-radius: 0;
+    text-align: right;
+    line-height: 1.15;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-strong);
+  }
+
+  .ax--list-table .ax-table td.ax-cell--money,
+  .ax--list-table .ax-table td.ax-cell--pct {
+    min-width: 5.5rem;
+    padding-inline: 0.65rem;
+    text-align: right;
+  }
+
+  .ax--list-table .ax-table .ax-money {
+    min-width: 0;
+    font-size: 0.76rem;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-strong);
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--item,
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--primary {
+    width: 14%;
+    min-width: 7rem;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--pair,
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--pair {
+    width: 13%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--money,
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--money {
+    width: 10%;
+    min-width: 0;
+    max-width: none;
+  }
+}
+
+/* Analytics list tables — flat cells, tone via text color only. */
+.ax--list-table .ax-table .ax-pair.is-good .ax-pair-amt {
+  background: transparent;
+  box-shadow: none;
+  color: var(--teal);
+}
+
+.ax--list-table .ax-table .ax-pair.is-bad .ax-pair-amt {
+  background: transparent;
+  box-shadow: none;
+  color: var(--danger);
+}
+
+.ax--list-table .ax-table .ax-pair.is-warn .ax-pair-amt {
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent-deep);
+}
+
+.ax--list-table .ax-table .ax-money.is-good {
+  background: transparent;
+  box-shadow: none;
+  color: var(--teal);
+}
+
+.ax--list-table .ax-table .ax-money.is-bad {
+  background: transparent;
+  box-shadow: none;
+  color: var(--danger);
+}
+
+.ax--list-table .ax-table .ax-money.is-warn {
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent-deep);
+}
+
+.ax--list-table .ax-table .ax-trend.is-good {
+  color: var(--teal);
+}
+
+.ax--list-table .ax-table .ax-trend.is-bad {
+  color: var(--danger);
+}
+
+.ax--list-table .ax-table .ax-trend.is-warn {
+  color: var(--accent-deep);
+}
+
+@media (max-width: 899px) {
+  .ax--list-table .ax-kpis {
+    border-radius: 8px;
+  }
+
+  .ax--list-table .ax-kpi {
+    flex-basis: 7.5rem;
+    min-width: 7.5rem;
+    padding: 0.5rem 0.55rem;
+  }
+
+  .ax--list-table .ax-table-wrap--scroll,
+  .ax--list-table .ax-table-wrap--list {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+
+  .ax--list-table .ax-table thead {
+    display: table-header-group;
+  }
+
+  .ax--list-table .ax-table tbody tr {
+    display: table-row;
+    gap: 0;
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .ax--list-table .ax-table th,
+  .ax--list-table .ax-table td {
+    display: table-cell;
+    align-items: unset;
+    justify-content: unset;
+    gap: 0;
+    padding: 0.45rem 0.55rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .ax--list-table .ax-table td::before {
+    content: none;
+    display: none;
+  }
+
+  .ax--list-table .ax-table td.ax-cell--primary,
+  .ax--list-table .ax-table td[data-label="Shop"],
+  .ax--list-table .ax-table td[data-label="Item"],
+  .ax--list-table .ax-table td[data-label="Client"],
+  .ax--list-table .ax-table td[data-label="Staff"],
+  .ax--list-table .ax-table td[data-label="Supplier"],
+  .ax--list-table .ax-table td[data-label="Type"],
+  .ax--list-table .ax-table td[data-label="Receipt"] {
+    display: table-cell;
+    padding-bottom: 0.45rem;
+  }
+
+  .ax--list-table .ax-table--shops {
+    min-width: 36rem;
+    font-size: 0.74rem;
+  }
+
+  .ax--list-table .ax-table:not(.ax-table--shops):not(.ax-table--pl) {
+    min-width: 32rem;
+    font-size: 0.74rem;
+  }
+
+  .ax--list-table .ax-table--pl {
+    min-width: 44rem;
+  }
+
+  .ax--list-table .ax-table-wrap--scroll .ax-table th:first-child,
+  .ax--list-table .ax-table-wrap--scroll .ax-table td:first-child,
+  .ax--list-table .ax-table-wrap--scroll .ax-table th.ax-th--item,
+  .ax--list-table .ax-table-wrap--scroll .ax-table td.ax-cell--primary,
+  .ax--list-table .ax-table-wrap--list .ax-table th:first-child,
+  .ax--list-table .ax-table-wrap--list .ax-table td:first-child,
+  .ax--list-table .ax-table-wrap--list .ax-table th.ax-th--item,
+  .ax--list-table .ax-table-wrap--list .ax-table td.ax-cell--primary {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    width: 7rem;
+    min-width: 7rem;
+    max-width: 10rem;
+    box-shadow: 2px 0 0 color-mix(in srgb, var(--line) 85%, transparent);
+  }
+
+  .ax--list-table .ax-table--pl .ax-th-pair,
+  .ax--list-table .ax-table--pl .ax-pair {
+    display: grid;
+    grid-template-columns: 2.2rem minmax(4rem, 1fr);
+    column-gap: 0.25rem;
+    align-items: center;
+    width: auto;
+    min-width: 6.5rem;
+    margin-inline: 0;
+  }
+
+  .ax--list-table .ax-table--pl .ax-th-pair-name {
+    grid-column: 1 / -1;
+    margin-bottom: 0.12rem;
+    font-size: 0.58rem;
+    white-space: nowrap;
+  }
+
+  .ax--list-table .ax-table--pl .ax-th-pair-cols {
+    display: none;
+  }
+
+  .ax--list-table .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--list-table .ax-filters {
+    width: 100%;
+  }
+}
+
+@media (min-width: 900px) {
+  .ax--list-table .ax-scroll-hint {
+    display: none;
+  }
+
+  .ax--list-table .ax-kpis {
+    width: max-content;
+    max-width: 100%;
+  }
+
+  .ax--list-table .ax-kpi {
+    flex: 0 0 auto;
+  }
+
+  .ax--list-table .ax-table--pl {
+    font-size: 0.78rem;
+  }
+
+  .ax--list-table .ax-table--pl th,
+  .ax--list-table .ax-table--pl td {
+    padding: 0.52rem 0.68rem;
+  }
+
+  .ax--list-table.ax--ledger .ax-table--shops {
+    width: max-content;
+    max-width: 100%;
+    min-width: 0;
+  }
+}
+
+/* Sales — compact shop summary; fits the workspace on every screen. */
+.ax--list-table[data-ax-section="sales"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-filters {
+  flex: 1 1 16rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-grid--tables {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-card--wide {
+  min-width: 0;
+  padding: 0.8rem 0.75rem 0.75rem;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.06);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-card-head {
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board,
+.ax-summary-board--one {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin-top: 0.05rem;
+  padding: 0.85rem 1rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 24%, var(--line));
+  border-radius: 16px;
+  background:
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--teal) 8%, var(--surface)),
+      var(--surface) 42%
+    );
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.05);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-hero,
+.ax-summary-board--one .ax-summary-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.85rem;
+  padding: 0 0 0.75rem;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  background: transparent;
+  box-shadow: none;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-hero-label,
+.ax-summary-board--one .ax-summary-hero-label {
+  flex: 0 0 auto;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-hero-value,
+.ax-summary-board--one .ax-summary-hero-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: clamp(1.25rem, 2.4vw, 1.65rem);
+  white-space: nowrap;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-hero-hint,
+.ax-summary-board--one .ax-summary-hero-hint {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tiles,
+.ax-summary-board--one .ax-summary-tiles {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 0;
+  padding-top: 0.15rem;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile,
+.ax-summary-board--one .ax-summary-tile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.7rem 0.55rem;
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  background: transparent;
+  box-shadow: none;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile:last-child,
+.ax-summary-board--one .ax-summary-tile:last-child {
+  border-right: 0;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile-value,
+.ax-summary-board--one .ax-summary-tile-value {
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  font-size: clamp(0.78rem, 1.15vw, 0.92rem);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile-hint,
+.ax-summary-board--one .ax-summary-tile-hint {
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.25;
+}
+
+@media (max-width: 1100px) {
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tiles,
+  .ax-summary-board--one .ax-summary-tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile:nth-child(3n),
+  .ax-summary-board--one .ax-summary-tile:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile:nth-child(n + 4),
+  .ax-summary-board--one .ax-summary-tile:nth-child(n + 4) {
+    border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  }
+}
+
+@media (max-width: 900px) {
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tiles,
+  .ax-summary-board--one .ax-summary-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile:nth-child(3),
+  .ax-summary-board--one .ax-summary-tile:nth-child(3) {
+    border-right: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile:nth-child(even),
+  .ax-summary-board--one .ax-summary-tile:nth-child(even) {
+    border-right: 0;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile:nth-child(n + 3),
+  .ax-summary-board--one .ax-summary-tile:nth-child(n + 3) {
+    border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  }
+}
+
+@media (max-width: 640px) {
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tiles,
+  .ax-summary-board--one .ax-summary-tiles {
+    grid-template-columns: 1fr;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile,
+  .ax-summary-board--one .ax-summary-tile {
+    border-right: 0;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-summary-board .ax-summary-tile:nth-child(n + 2),
+  .ax-summary-board--one .ax-summary-tile:nth-child(n + 2) {
+    border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  }
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--item,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--primary {
+  width: 14%;
+  min-width: 7rem;
+  max-width: none;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops th,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops td {
+  padding: 0.5rem 0.4rem;
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops thead th {
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--item {
+  text-align: left;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--money,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--money {
+  width: 10%;
+  min-width: 0;
+  max-width: none;
+  text-align: right;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--pair,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--pair {
+  width: 13%;
+  min-width: 0;
+  max-width: none;
+  text-align: center;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th-pair,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th-pair--stack,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair--stack {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  column-gap: 0.35rem;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th-pair-name {
+  grid-column: 1 / -1;
+  margin: 0 0 0.18rem;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th-pair-cols {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  column-gap: 0.35rem;
+  grid-column: 1 / -1;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th-pair-cols span {
+  text-align: right;
+  font-size: 0.56rem;
+  letter-spacing: 0.04em;
+  color: var(--mist-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair-qty,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair-amt {
+  order: unset;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  line-height: 1.15;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair-qty {
+  color: var(--mist-soft);
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair-qty::after {
+  content: none;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair-amt {
+  width: 100%;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-money {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  color: var(--text-strong);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-cash,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-cash,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-mpesa,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-mpesa,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-credits,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-credits,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-unpaid,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-unpaid,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-total,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-total,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-result,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-result {
+  background: transparent;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-cash,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-mpesa,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-credits,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-unpaid,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-total,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops tbody tr:nth-child(even) td.ax-cell--band-result,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops tbody tr:nth-child(even) td.ax-cell--total {
+  background: color-mix(in srgb, var(--line) 22%, transparent);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-start,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-start {
+  border-left: 2px solid color-mix(in srgb, var(--line) 80%, transparent);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-cash,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-cash.ax-cell--band-start {
+  border-left-color: color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-mpesa,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-mpesa.ax-cell--band-start {
+  border-left-color: color-mix(in srgb, var(--accent-deep) 55%, transparent);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-credits,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-credits.ax-cell--band-start {
+  border-left-color: color-mix(in srgb, var(--ok) 60%, transparent);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-unpaid,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-unpaid.ax-cell--band-start {
+  border-left-color: color-mix(in srgb, var(--accent-deep) 70%, transparent);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--total,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--total {
+  border-left: 2px solid color-mix(in srgb, var(--ok) 55%, transparent);
+  background: color-mix(in srgb, var(--ok) 4%, transparent);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--band-result,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--band-result.ax-cell--band-start {
+  border-left-color: color-mix(in srgb, var(--ok) 70%, transparent);
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-band-legend--sales {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.85rem;
+  margin: 0.35rem 0 0.55rem;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-footnote {
+  max-width: 62rem;
+  line-height: 1.45;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+  max-width: 100%;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  gap: 0.45rem;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-kpi {
+  flex: unset;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  border-right: 1px solid var(--line);
+}
+
+@media (min-width: 900px) {
+  .ax--list-table[data-ax-section="sales"] .ax-scroll-hint {
+    display: none;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-table-wrap--list,
+  .ax--list-table[data-ax-section="sales"] .ax-table-wrap--scroll {
+    overflow-x: visible;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="sales"] .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-table-wrap--list,
+  .ax--list-table[data-ax-section="sales"] .ax-table-wrap--scroll {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .ax--list-table[data-ax-section="sales"] .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 0.4rem;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-filters select,
+  .ax--list-table[data-ax-section="sales"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="sales"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="sales"] .ax-filters input[type="number"] {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-filters .ax-apply {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-kpis {
+    grid-template-columns: 1fr;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-kpi:last-child:nth-child(odd) {
+    grid-column: auto;
+  }
+}
+
+/* Items — profit summary, searchable shop matrix. */
+.ax--list-table[data-ax-section="items"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="items"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="items"] .ax-filters {
+  flex: 1 1 16rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="items"] .ax-grid--tables {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ax--list-table[data-ax-section="items"] .ax-card--wide,
+.ax--list-table[data-ax-section="items"] .ax-card--matrix {
+  min-width: 0;
+  padding: 0.8rem 0.75rem 0.75rem;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.06);
+}
+
+.ax--list-table[data-ax-section="items"] .ax-card-head {
+  flex-wrap: wrap;
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.ax--list-table[data-ax-section="items"] .ax-table-search {
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: 18rem;
+  margin-left: auto;
+}
+
+.ax--list-table[data-ax-section="items"] .ax-table-search input {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.32rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ax--list-table[data-ax-section="items"] .ax-table-search input:focus {
+  outline: 2px solid color-mix(in srgb, var(--teal) 35%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
+.ax--list-table[data-ax-section="items"] .ax-summary-board {
+  margin-top: 0.05rem;
+}
+
+@media (min-width: 900px) {
+  .ax--list-table[data-ax-section="items"] .ax-table-wrap--list:has(.ax-table--items) {
+    overflow-x: auto;
+    border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+    border-radius: 10px;
+  }
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="items"] .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax--list-table[data-ax-section="items"] .ax-table-wrap--list:has(.ax-table--items) {
+    overflow-x: auto;
+  }
+
+  .ax--list-table[data-ax-section="items"] .ax-table--items {
+    min-width: 36rem;
+  }
+
+  .ax--list-table[data-ax-section="items"] .ax-table-search {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 3;
+  }
+
+  .ax--list-table[data-ax-section="items"] .ax-card-head-main {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .ax--list-table[data-ax-section="items"] .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--list-table[data-ax-section="items"] .ax-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 0.4rem;
+  }
+
+  .ax--list-table[data-ax-section="items"] .ax-filters select,
+  .ax--list-table[data-ax-section="items"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="items"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="items"] .ax-filters input[type="number"] {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="items"] .ax-filters .ax-apply {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+.ax-band-legend--stock .is-flow::before {
+  background: color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+.ax-band-legend--stock .is-total::before {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* Stock — inventory summary, searchable shop matrix. */
+.ax--list-table[data-ax-section="stock"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-filters {
+  flex: 1 1 16rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-grid--tables {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-card--wide,
+.ax--list-table[data-ax-section="stock"] .ax-card--matrix {
+  min-width: 0;
+  padding: 0.8rem 0.75rem 0.75rem;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.06);
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-card-head {
+  flex-wrap: wrap;
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-table-search {
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: 18rem;
+  margin-left: auto;
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-table-search input {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.32rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-table-search input:focus {
+  outline: 2px solid color-mix(in srgb, var(--teal) 35%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-summary-board {
+  margin-top: 0.05rem;
+}
+
+.ax--list-table[data-ax-section="stock"] .ax-summary-hero.is-good {
+  border-color: color-mix(in srgb, var(--accent-deep) 28%, var(--line));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 10%, var(--surface)),
+      color-mix(in srgb, var(--surface) 92%, transparent) 58%
+    );
+}
+
+@media (min-width: 900px) {
+  .ax--list-table[data-ax-section="stock"] .ax-table-wrap--list:has(.ax-table--stock) {
+    overflow-x: auto;
+    border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+    border-radius: 10px;
+  }
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="stock"] .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax--list-table[data-ax-section="stock"] .ax-table-wrap--list:has(.ax-table--stock) {
+    overflow-x: auto;
+  }
+
+  .ax--list-table[data-ax-section="stock"] .ax-table--stock {
+    min-width: 34rem;
+  }
+
+  .ax--list-table[data-ax-section="stock"] .ax-table-search {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 3;
+  }
+}
+
+@media (max-width: 640px) {
+  .ax--list-table[data-ax-section="stock"] .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--list-table[data-ax-section="stock"] .ax-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 0.4rem;
+  }
+
+  .ax--list-table[data-ax-section="stock"] .ax-filters select,
+  .ax--list-table[data-ax-section="stock"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="stock"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="stock"] .ax-filters input[type="number"] {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="stock"] .ax-filters .ax-apply {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+.ax-band-legend--credits .is-flow::before {
+  background: color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+.ax-band-legend--credits .is-total::before {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* Credits — outstanding balance summary, searchable client matrix. */
+.ax--list-table[data-ax-section="credits"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-filters {
+  flex: 1 1 16rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-grid--tables {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-card--wide,
+.ax--list-table[data-ax-section="credits"] .ax-card--matrix {
+  min-width: 0;
+  padding: 0.8rem 0.75rem 0.75rem;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.06);
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-card-head {
+  flex-wrap: wrap;
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-table-search {
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: 18rem;
+  margin-left: auto;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-table-search input {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.32rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-table-search input:focus {
+  outline: 2px solid color-mix(in srgb, var(--teal) 35%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-summary-board {
+  margin-top: 0.05rem;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-summary-tiles {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-summary-hero.is-warn {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 10%, var(--surface)),
+      color-mix(in srgb, var(--surface) 92%, transparent) 58%
+    );
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-summary-hero.is-warn .ax-summary-hero-value {
+  color: var(--accent-deep);
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-entity-link,
+.ax--list-table[data-ax-section="clients"] .ax-entity-link {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  text-decoration: none;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-entity-name,
+.ax--list-table[data-ax-section="clients"] .ax-entity-name {
+  font-weight: 650;
+  color: var(--text-strong);
+  line-height: 1.25;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-table th.ax-th--phone,
+.ax--list-table[data-ax-section="credits"] .ax-table td.ax-cell--phone,
+.ax--list-table[data-ax-section="clients"] .ax-table th.ax-th--phone,
+.ax--list-table[data-ax-section="clients"] .ax-table td.ax-cell--phone {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--mist-dim);
+  font-size: 0.84rem;
+  font-weight: 550;
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-entity-link:hover .ax-entity-name,
+.ax--list-table[data-ax-section="clients"] .ax-entity-link:hover .ax-entity-name {
+  color: var(--teal);
+}
+
+.ax--list-table[data-ax-section="credits"] .ax-cell--primary a,
+.ax--list-table[data-ax-section="clients"] .ax-cell--primary a {
+  font-weight: 600;
+}
+
+@media (min-width: 900px) {
+  .ax--list-table[data-ax-section="credits"] .ax-table-wrap--list:has(.ax-table--credits) {
+    overflow-x: auto;
+    border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+    border-radius: 10px;
+  }
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="credits"] .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax--list-table[data-ax-section="credits"] .ax-table-wrap--list:has(.ax-table--credits) {
+    overflow-x: auto;
+  }
+
+  .ax--list-table[data-ax-section="credits"] .ax-table--credits {
+    min-width: 38rem;
+  }
+
+  .ax--list-table[data-ax-section="credits"] .ax-table-search {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 3;
+  }
+}
+
+@media (max-width: 640px) {
+  .ax--list-table[data-ax-section="credits"] .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--list-table[data-ax-section="credits"] .ax-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 0.4rem;
+  }
+
+  .ax--list-table[data-ax-section="credits"] .ax-filters select,
+  .ax--list-table[data-ax-section="credits"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="credits"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="credits"] .ax-filters input[type="number"] {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="credits"] .ax-filters .ax-apply {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+/* Client account — summary board + searchable receipt ledger. */
+.ax--list-table[data-ax-section="client-account"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-title--stack {
+  display: grid;
+  gap: 0.12rem;
+  align-items: start;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-account-kicker {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-title--stack h2 {
+  margin: 0;
+  font-size: clamp(1.05rem, 2.2vw, 1.28rem);
+  letter-spacing: -0.02em;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-title--stack .ax-period {
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-top-actions .ax-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-top-actions .ax-apply i,
+.ax--list-table[data-ax-section="client-account"] .ax-top-actions .ax-apply svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-summary-board {
+  margin-top: 0.05rem;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-summary-hero.is-warn {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 10%, var(--surface)),
+      color-mix(in srgb, var(--surface) 92%, transparent) 58%
+    );
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-summary-hero.is-warn .ax-summary-hero-value {
+  color: var(--accent-deep);
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-card--ledger {
+  min-width: 0;
+  padding: 0.8rem 0.75rem 0.75rem;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.06);
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-card--ledger .ax-card-head {
+  flex-wrap: wrap;
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-card-meta {
+  font-size: 0.72rem;
+  color: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table-search {
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: 18rem;
+  margin-left: auto;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table-search input {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.32rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table-search input:focus {
+  outline: 2px solid color-mix(in srgb, var(--teal) 35%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-scroll-hint {
+  display: none;
+  margin: 0.35rem 0 0;
+  padding: 0 0.05rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-soft);
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table-wrap--list:has(.ax-table--account) {
+  overflow-x: auto;
+  margin-top: 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account th,
+.ax--list-table[data-ax-section="client-account"] .ax-table--account td {
+  border-right: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  padding: 0.55rem 0.75rem;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account th:last-child,
+.ax--list-table[data-ax-section="client-account"] .ax-table--account td:last-child {
+  border-right: 0;
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account .ax-th--item,
+.ax--list-table[data-ax-section="client-account"] .ax-table--account .ax-cell--primary {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 9.5rem;
+  max-width: 14rem;
+  background: var(--surface);
+  box-shadow: 1px 0 0 color-mix(in srgb, var(--line) 88%, transparent);
+  text-align: left;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account thead .ax-th--item {
+  z-index: 3;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--line) 22%, var(--surface));
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account tbody tr:nth-child(even) .ax-cell--primary {
+  background: color-mix(in srgb, var(--line) 22%, var(--surface));
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account tbody tr:hover td {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-table--account tbody tr:hover .ax-cell--primary {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.ax--list-table[data-ax-section="client-account"] .ax-receipt-row .ax-cell--primary {
+  color: var(--teal);
+}
+
+.ax-pay-by.is-overdue {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+/* Client credit audit trail. */
+.ax--list-table[data-ax-section="client-credit-audit"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-title--stack {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-account-kicker {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-title--stack h2 {
+  margin: 0;
+  font-size: clamp(1.05rem, 2.2vw, 1.28rem);
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-title--stack .ax-period {
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-ledger-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-ledger-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-ledger-lead {
+  margin: 0.15rem 0 0;
+  font-size: 0.74rem;
+  color: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-scroll-hint,
+.ax--list-table[data-ax-section="client-account"] .ax-audit-feed .ax-scroll-hint {
+  display: none;
+  margin: 0 0 0.45rem;
+  padding: 0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-soft);
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-table-wrap--list,
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-table-wrap--scroll,
+.ax--list-table[data-ax-section="client-account"] .ax-audit-feed .ax-table-wrap--list,
+.ax--list-table[data-ax-section="client-account"] .ax-audit-feed .ax-table-wrap--scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 10px;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="client-credit-audit"] .ax-table--audit,
+.ax--list-table[data-ax-section="client-account"] .ax-audit-feed .ax-table--audit {
+  width: max-content;
+  min-width: 100%;
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="client-credit-audit"] .ax-scroll-hint,
+  .ax--list-table[data-ax-section="client-account"] .ax-audit-feed .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax--list-table[data-ax-section="client-credit-audit"] .ax-table--audit {
+    min-width: 36rem;
+  }
+
+  .ax--list-table[data-ax-section="client-account"] .ax-audit-feed .ax-table--audit {
+    min-width: 32rem;
+  }
+
+  .ax--list-table[data-ax-section="client-credit-audit"] .ax-top-main {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .ax--list-table[data-ax-section="client-credit-audit"] .ax-top-actions {
+    width: 100%;
+  }
+
+  .ax--list-table[data-ax-section="client-credit-audit"] .ax-top-actions .ax-apply {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
+.ax-audit-event {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.ax-audit-event i,
+.ax-audit-event svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.ax-audit-row.is-good .ax-audit-event {
+  color: var(--teal);
+}
+
+.ax-audit-row.is-warn .ax-audit-event {
+  color: var(--accent-deep);
+}
+
+.ax-audit-row.is-bad .ax-audit-event {
+  color: var(--warn);
+}
+
+.ax-audit-row.is-synthetic td {
+  opacity: 0.84;
+}
+
+.ax--list-table[data-ax-section="credit-audits"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="credit-audits"] .ax-filters {
+  flex: 1 1 16rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="credit-audits"] .ax-filters select[name="event"] {
+  min-width: 11rem;
+  max-width: 16rem;
+}
+
+@media (max-width: 640px) {
+  .ax--list-table[data-ax-section="credit-audits"] .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--list-table[data-ax-section="credit-audits"] .ax-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 0.4rem;
+  }
+
+  .ax--list-table[data-ax-section="credit-audits"] .ax-filters select,
+  .ax--list-table[data-ax-section="credit-audits"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="credit-audits"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="credit-audits"] .ax-filters input[type="number"] {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="credit-audits"] .ax-filters .ax-apply {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+.ax--list-table[data-ax-section="credit-audits"] .ax-table--audit th:nth-child(6),
+.ax--list-table[data-ax-section="credit-audits"] .ax-table--audit td:nth-child(6) {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.ax--list-table[data-ax-section="credit-audits"] .ax-table--audit td:nth-child(7) {
+  max-width: 22rem;
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="client-account"] .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax--list-table[data-ax-section="client-account"] .ax-table--account {
+    min-width: 42rem;
+  }
+
+  .ax--list-table[data-ax-section="client-account"] .ax-table-search {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 3;
+  }
+}
+
+@media (max-width: 640px) {
+  .ax--list-table[data-ax-section="client-account"] .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--list-table[data-ax-section="client-account"] .ax-top-actions {
+    width: 100%;
+  }
+
+  .ax--list-table[data-ax-section="client-account"] .ax-top-actions .ax-apply {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .ax--list-table[data-ax-section="client-account"] .ax-filters {
+    width: 100%;
+  }
+}
+
+.ax-share-modal .workspace-modal-backdrop {
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.ax-share-modal-dialog {
+  width: min(26.5rem, calc(100vw - 1.25rem));
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 5%, transparent),
+    0 28px 80px rgba(8, 24, 28, 0.22);
+}
+
+.ax-share-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem 1rem 0.85rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.ax-share-eyebrow {
+  margin: 0;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+
+.ax-share-head h2 {
+  margin: 0.12rem 0 0;
+  font-size: 1.08rem;
+  letter-spacing: -0.02em;
+}
+
+.ax-share-body {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.9rem 1rem 1rem;
+}
+
+.ax-share-client {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.8rem 0.85rem;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  background:
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--teal) 7%, var(--surface)),
+      var(--surface) 55%
+    );
+}
+
+.ax-share-client-main {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.ax-share-avatar {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent), var(--teal));
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--teal) 20%, transparent);
+}
+
+.ax-share-client-copy {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.ax-share-client-copy strong {
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ax-share-balance {
+  font-size: 0.76rem;
+  color: var(--mist-dim);
+}
+
+.ax-share-balance em {
+  font-style: normal;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-deep);
+}
+
+.ax-share-org {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.55rem 0.62rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-muted) 42%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
+}
+
+.ax-share-org-logo {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.ax-share-org-logo--fallback {
+  display: block;
+  background: linear-gradient(135deg, var(--accent), var(--teal));
+}
+
+.ax-share-org-copy {
+  display: grid;
+  gap: 0.04rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ax-share-org-copy span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ax-share-org-copy em {
+  font-style: normal;
+  font-size: 0.68rem;
+  color: var(--mist-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ax-share-org-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  padding: 0.22rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 10%, var(--surface));
+  color: var(--teal);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.ax-share-org-badge i,
+.ax-share-org-badge svg {
+  width: 0.72rem;
+  height: 0.72rem;
+}
+
+.ax-share-compose {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.ax-share-sendto {
+  display: grid;
+  gap: 0.32rem;
+}
+
+.ax-share-sendto > span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--mist-dim);
+}
+
+.ax-share-phone-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.5rem;
+  padding: 0 0.8rem;
+  border: 1px solid color-mix(in srgb, #25d366 28%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, #25d366 5%, var(--surface));
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.ax-share-phone-row:focus-within {
+  border-color: color-mix(in srgb, #25d366 55%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, #25d366 14%, transparent);
+}
+
+.ax-share-wa-mark {
+  display: grid;
+  place-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, #25d366 16%, var(--surface));
+  color: #128c7e;
+  flex-shrink: 0;
+}
+
+.ax-share-wa-mark i,
+.ax-share-wa-mark svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.ax-share-phone-row input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+}
+
+.ax-share-phone-row input:focus {
+  outline: 0;
+}
+
+.ax-share-chat-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-bottom: 0.35rem;
+}
+
+.ax-share-chat-label span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--mist-dim);
+}
+
+.ax-share-text-action {
+  margin: 0;
+  padding: 0.15rem 0.4rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--teal);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ax-share-text-action:hover {
+  background: color-mix(in srgb, var(--teal) 8%, transparent);
+}
+
+.ax-share-bubble {
+  position: relative;
+  max-width: 92%;
+  margin-left: 0.35rem;
+  padding: 0.72rem 0.82rem 0.55rem;
+  border-radius: 14px 14px 14px 4px;
+  background: color-mix(in srgb, #dcf8c6 88%, var(--surface));
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #128c7e 8%, transparent),
+    0 6px 16px color-mix(in srgb, #25d366 10%, transparent);
+}
+
+[data-theme="dark"] .ax-share-bubble {
+  background: color-mix(in srgb, #128c7e 28%, var(--surface));
+  box-shadow: 0 1px 0 color-mix(in srgb, #25d366 12%, transparent);
+}
+
+.ax-share-bubble pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text-strong) 92%, #0b3b34);
+}
+
+[data-theme="dark"] .ax-share-bubble pre {
+  color: var(--text-strong);
+}
+
+.ax-share-bubble time {
+  display: block;
+  margin-top: 0.28rem;
+  text-align: right;
+  font-size: 0.58rem;
+  color: color-mix(in srgb, var(--mist-dim) 80%, #128c7e);
+}
+
+.ax-share-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: stretch;
+}
+
+.ax-share-tool {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  min-width: 3.35rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--mist-dim);
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ax-share-tool i,
+.ax-share-tool svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--teal);
+}
+
+.ax-share-tool:hover {
+  background: color-mix(in srgb, var(--panel-muted) 50%, var(--surface));
+}
+
+.ax-share-wa {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #25d366 0%, #128c7e 100%);
+  color: #fff;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow:
+    0 10px 24px color-mix(in srgb, #25d366 28%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 18%, transparent);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ax-share-wa:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 14px 28px color-mix(in srgb, #25d366 32%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 18%, transparent);
+}
+
+.ax-share-wa.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  transform: none;
+  box-shadow: none;
+}
+
+.ax-share-wa i,
+.ax-share-wa svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.ax-share-status {
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  text-align: center;
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+}
+
+@media (max-width: 420px) {
+  .ax-share-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .ax-share-tool {
+    flex-direction: row;
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+.ax-band-legend--suppliers .is-flow::before,
+.ax-band-legend--expenses .is-flow::before {
+  background: color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+.ax-band-legend--suppliers .is-total::before,
+.ax-band-legend--expenses .is-total::before {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* Suppliers / expenses — modern matrix (matches stock & credits). */
+.ax--list-table[data-ax-section="suppliers"],
+.ax--list-table[data-ax-section="expenses"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-top-main,
+.ax--list-table[data-ax-section="expenses"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-filters,
+.ax--list-table[data-ax-section="expenses"] .ax-filters {
+  flex: 1 1 16rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-grid--tables,
+.ax--list-table[data-ax-section="expenses"] .ax-grid--tables {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-card--wide,
+.ax--list-table[data-ax-section="suppliers"] .ax-card--matrix,
+.ax--list-table[data-ax-section="expenses"] .ax-card--wide,
+.ax--list-table[data-ax-section="expenses"] .ax-card--matrix {
+  min-width: 0;
+  padding: 0.8rem 0.75rem 0.75rem;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.06);
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-card-head,
+.ax--list-table[data-ax-section="expenses"] .ax-card-head {
+  flex-wrap: wrap;
+  gap: 0.5rem 0.65rem;
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card,
+.ax--list-table[data-ax-section="expenses"] .ax-filters--card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card select,
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="date"],
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="month"],
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="number"],
+.ax--list-table[data-ax-section="expenses"] .ax-filters--card select {
+  min-height: 2rem;
+  min-width: 8.5rem;
+  max-width: 12rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card .ax-apply {
+  min-height: 2rem;
+  border-radius: 999px;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card select:focus,
+.ax--list-table[data-ax-section="suppliers"] .ax-filters--card input:focus,
+.ax--list-table[data-ax-section="expenses"] .ax-filters--card select:focus {
+  outline: 2px solid color-mix(in srgb, var(--teal) 35%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-table-search,
+.ax--list-table[data-ax-section="expenses"] .ax-table-search {
+  flex: 0 1 16rem;
+  min-width: 0;
+  max-width: 16rem;
+  margin-left: 0;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-table-search input,
+.ax--list-table[data-ax-section="expenses"] .ax-table-search input {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.32rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-table-search input:focus,
+.ax--list-table[data-ax-section="expenses"] .ax-table-search input:focus {
+  outline: 2px solid color-mix(in srgb, var(--teal) 35%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-summary-board,
+.ax--list-table[data-ax-section="expenses"] .ax-summary-board {
+  margin-top: 0.05rem;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-summary-hero.is-warn,
+.ax--list-table[data-ax-section="expenses"] .ax-summary-hero.is-warn {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 10%, var(--surface)),
+      color-mix(in srgb, var(--surface) 92%, transparent) 58%
+    );
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-summary-hero.is-warn .ax-summary-hero-value,
+.ax--list-table[data-ax-section="expenses"] .ax-summary-hero.is-warn .ax-summary-hero-value {
+  color: var(--accent-deep);
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-entity-link,
+.ax--list-table[data-ax-section="expenses"] .ax-entity-link {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  text-decoration: none;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-entity-name,
+.ax--list-table[data-ax-section="expenses"] .ax-entity-name {
+  font-weight: 650;
+  color: var(--text-strong);
+  line-height: 1.25;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-entity-meta,
+.ax--list-table[data-ax-section="expenses"] .ax-entity-meta {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--mist-dim);
+  line-height: 1.2;
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-entity-link:hover .ax-entity-name,
+.ax--list-table[data-ax-section="expenses"] .ax-entity-link:hover .ax-entity-name {
+  color: var(--teal);
+}
+
+.ax--list-table[data-ax-section="suppliers"] .ax-table td.ax-cell--pair:not(:has(.ax-pair)),
+.ax--list-table[data-ax-section="expenses"] .ax-table td.ax-cell--pair:not(:has(.ax-pair)) {
+  text-align: center;
+  color: color-mix(in srgb, var(--mist-dim) 50%, transparent);
+}
+
+@media (min-width: 900px) {
+  .ax--list-table[data-ax-section="suppliers"] .ax-table-wrap--list:has(.ax-table--suppliers),
+  .ax--list-table[data-ax-section="expenses"] .ax-table-wrap--list:has(.ax-table--expenses) {
+    overflow-x: auto;
+    border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+    border-radius: 10px;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-table--suppliers,
+  .ax--list-table[data-ax-section="expenses"] .ax-table--expenses {
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-table--suppliers .ax-th--item,
+  .ax--list-table[data-ax-section="suppliers"] .ax-table--suppliers .ax-cell--primary,
+  .ax--list-table[data-ax-section="expenses"] .ax-table--expenses .ax-th--item,
+  .ax--list-table[data-ax-section="expenses"] .ax-table--expenses .ax-cell--primary {
+    width: 12rem;
+    min-width: 11rem;
+    max-width: 16rem;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-table--suppliers th.ax-th--pair,
+  .ax--list-table[data-ax-section="suppliers"] .ax-table--suppliers td.ax-cell--pair,
+  .ax--list-table[data-ax-section="suppliers"] .ax-table--suppliers th.ax-th--total,
+  .ax--list-table[data-ax-section="suppliers"] .ax-table--suppliers td.ax-cell--total,
+  .ax--list-table[data-ax-section="expenses"] .ax-table--expenses th.ax-th--pair,
+  .ax--list-table[data-ax-section="expenses"] .ax-table--expenses td.ax-cell--pair,
+  .ax--list-table[data-ax-section="expenses"] .ax-table--expenses th.ax-th--total,
+  .ax--list-table[data-ax-section="expenses"] .ax-table--expenses td.ax-cell--total {
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-table .ax-th-pair-cols,
+  .ax--list-table[data-ax-section="expenses"] .ax-table .ax-th-pair-cols {
+    display: grid;
+    grid-template-columns: 2.85rem minmax(5.1rem, 1fr);
+    column-gap: 0.55rem;
+    margin-top: 0.12rem;
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-table .ax-th-pair-cols span,
+  .ax--list-table[data-ax-section="expenses"] .ax-table .ax-th-pair-cols span {
+    text-align: right;
+  }
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="suppliers"] .ax-scroll-hint,
+  .ax--list-table[data-ax-section="expenses"] .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-table-wrap--list:has(.ax-table--suppliers),
+  .ax--list-table[data-ax-section="expenses"] .ax-table-wrap--list:has(.ax-table--expenses) {
+    overflow-x: auto;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-table--suppliers,
+  .ax--list-table[data-ax-section="expenses"] .ax-table--expenses {
+    min-width: 38rem;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card,
+  .ax--list-table[data-ax-section="expenses"] .ax-filters--card {
+    flex: 1 1 8rem;
+    margin-left: 0;
+    order: 2;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card select,
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="date"],
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="month"],
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters--card input[type="number"],
+  .ax--list-table[data-ax-section="expenses"] .ax-filters--card select {
+    width: 100%;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-table-search,
+  .ax--list-table[data-ax-section="expenses"] .ax-table-search {
+    flex: 1 1 12rem;
+    max-width: none;
+    order: 3;
+  }
+}
+
+@media (max-width: 640px) {
+  .ax--list-table[data-ax-section="suppliers"] .ax-top-main,
+  .ax--list-table[data-ax-section="expenses"] .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters,
+  .ax--list-table[data-ax-section="expenses"] .ax-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 0.4rem;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters select,
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters input[type="number"],
+  .ax--list-table[data-ax-section="expenses"] .ax-filters select,
+  .ax--list-table[data-ax-section="expenses"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="expenses"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="expenses"] .ax-filters input[type="number"] {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    flex: none;
+  }
+
+  .ax--list-table[data-ax-section="suppliers"] .ax-filters .ax-apply,
+  .ax--list-table[data-ax-section="expenses"] .ax-filters .ax-apply {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+/* Balances — grouped till KPIs, banded shop matrix, session ledger. */
+.ax--list-table[data-ax-section="balances"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-filters {
+  flex: 1 1 16rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-grid--tables {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-card--wide {
+  min-width: 0;
+  padding: 0.8rem 0.75rem 0.75rem;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.06);
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-card-head {
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-till-board {
+  margin-top: 0.1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-till-card.is-live .ax-till-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-till-card.is-live .ax-till-row:first-of-type .ax-till-metric:nth-child(1) {
+  border-left: 3px solid var(--teal);
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-till-card.is-live .ax-till-row:first-of-type .ax-till-metric:nth-child(2) {
+  border-left: 3px solid var(--accent-deep);
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-table--sessions {
+  font-size: 0.76rem;
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-table--sessions thead th {
+  font-size: 0.64rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="balances"] .ax-table--sessions .ax-cell--primary {
+  font-weight: 700;
+}
+
+@media (min-width: 900px) {
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--shops),
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--scroll:has(.ax-table--shops) {
+    overflow-x: auto;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-table--sessions {
+    min-width: 68rem;
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) .ax-table th:nth-child(-n + 3),
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) .ax-table td:nth-child(-n + 3) {
+    position: sticky;
+    z-index: 2;
+    background: var(--surface);
+    box-shadow: 2px 0 0 color-mix(in srgb, var(--line) 85%, transparent);
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) .ax-table thead th:nth-child(-n + 3) {
+    z-index: 4;
+    background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) .ax-table th:first-child,
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) .ax-table td:first-child {
+    left: 0;
+    min-width: 6.5rem;
+    max-width: 8rem;
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) .ax-table th:nth-child(2),
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) .ax-table td:nth-child(2) {
+    left: 6.5rem;
+    min-width: 4.8rem;
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) .ax-table th:nth-child(3),
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) .ax-table td:nth-child(3) {
+    left: 11.3rem;
+    min-width: 4.8rem;
+    box-shadow: 3px 0 6px rgba(8, 24, 28, 0.06);
+  }
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="balances"] .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--shops),
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--scroll:has(.ax-table--shops),
+  .ax--list-table[data-ax-section="balances"] .ax-table-wrap--list:has(.ax-table--sessions) {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .ax--list-table[data-ax-section="balances"] .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 0.4rem;
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-filters select,
+  .ax--list-table[data-ax-section="balances"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="balances"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="balances"] .ax-filters input[type="number"] {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax--list-table[data-ax-section="balances"] .ax-filters .ax-apply {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+.ax-primary {
+  display: block;
+  font-weight: 650;
+  color: var(--text-strong);
+}
+
+.ax-muted {
+  display: block;
+  margin-top: 0.08rem;
+  color: var(--mist-dim);
+  font-size: 0.7rem;
+}
+
+.ax-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.38rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 12%, var(--surface));
+  color: var(--teal);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ax-col-actions {
+  width: 3rem;
+  text-align: center;
+}
+
+.ax-col-actions--multi {
+  width: auto;
+  min-width: 4.75rem;
+}
+
+.ax-col-actions-group {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.ax-eye--manage {
+  background: color-mix(in srgb, var(--mist-soft) 12%, var(--surface));
+  color: var(--mist-dim);
+}
+
+.ax-eye--manage:hover {
+  background: color-mix(in srgb, var(--mist-soft) 22%, var(--surface));
+  color: var(--text-strong);
+}
+
+.ax-receipt-manage-section + .ax-receipt-manage-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+}
+
+.ax-receipt-manage-heading {
+  margin: 0 0 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax-receipt-manage-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.ax-receipt-manage-actions {
+  margin-top: 0.55rem;
+}
+
+.ax-receipt-manage-save-date {
+  min-height: 2.25rem;
+}
+
+.ax-eye {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--teal) 10%, var(--surface));
+  color: var(--teal);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.ax-eye:hover {
+  background: color-mix(in srgb, var(--teal) 20%, var(--surface));
+  color: var(--text-strong);
+}
+
+.ax-eye i {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.ax-receipt-pay {
+  min-height: 2rem;
+  padding: 0 0.65rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #101820;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ax-receipt-pay:hover {
+  background: var(--accent-deep);
+}
+
+.ax-receipt-pay.is-settled {
+  background: color-mix(in srgb, var(--mist) 16%, var(--surface));
+  color: var(--text-strong);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.ax-receipt-pay.is-settled:hover {
+  background: color-mix(in srgb, var(--mist) 26%, var(--surface));
+}
+
+.ax-ledger-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 1rem 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.ax-ledger-select-count {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.ax-col-select {
+  width: 2.25rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ax-select-all,
+.ax-select-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  cursor: pointer;
+}
+
+.ax-select-all input,
+.ax-select-row input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent-deep);
+  cursor: pointer;
+}
+
+.ax-select-na {
+  color: var(--mist-dim);
+  font-size: 0.75rem;
+}
+
+.ax-receipt-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+[data-ax-section="client-account"] .ax-table th.ax-col-actions,
+[data-ax-section="client-account"] .ax-table td.ax-col-actions {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  min-width: 7.5rem;
+  background: var(--surface);
+  box-shadow: -1px 0 0 var(--line);
+}
+
+[data-ax-section="client-account"] .ax-table thead th.ax-col-actions {
+  z-index: 3;
+}
+
+[data-ax-section="client-account"] .ax-table tr.is-selected td.ax-col-actions {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+[data-ax-section="supplier-account"] .ax-top-main {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+[data-ax-section="supplier-account"] .ax-filters {
+  flex: 1 1 16rem;
+  min-width: 0;
+  margin-top: 0;
+}
+
+.ax--list-table[data-ax-section="supplier-account"] .ax-scroll-hint {
+  display: none;
+  margin: 0.35rem 0 0;
+  padding: 0 0.05rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-soft);
+}
+
+.ax--list-table[data-ax-section="supplier-account"] .ax-table-wrap--list,
+.ax--list-table[data-ax-section="supplier-account"] .ax-table-wrap--scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="supplier-account"] .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax--list-table[data-ax-section="supplier-account"] .ax-table {
+    min-width: 36rem;
+  }
+
+  [data-ax-section="supplier-account"] .ax-top-main {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  [data-ax-section="supplier-account"] .ax-filters {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  [data-ax-section="supplier-account"] .ax-top-actions {
+    width: 100%;
+  }
+
+  [data-ax-section="supplier-account"] .ax-top-actions .ax-apply {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
+[data-ax-section="supplier-account"] .ax-table th.ax-col-actions,
+[data-ax-section="supplier-account"] .ax-table td.ax-col-actions {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  min-width: 6.5rem;
+  background: var(--surface);
+  box-shadow: -1px 0 0 var(--line);
+}
+
+[data-ax-section="supplier-account"] .ax-table thead th.ax-col-actions {
+  z-index: 3;
+}
+
+.ax-receipt-modal-dialog {
+  width: min(36rem, calc(100vw - 1.5rem));
+}
+
+.ax-receipt-modal-meta {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.ax-receipt-modal-body {
+  padding: 0 1rem 1rem;
+}
+
+.ax-pay-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin-bottom: 0.35rem;
+}
+
+.ax-pay-method {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.ax-pay-method.is-active {
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+  background: color-mix(in srgb, var(--teal) 10%, var(--surface));
+}
+
+.ax-pay-method.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ax-pay-phone-row {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.ax-pay-wrap {
+  padding: 0 1rem 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.ax-pay-form {
+  display: grid;
+  gap: 0.55rem;
+  padding-top: 0.85rem;
+}
+
+.ax-pay-row {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.ax-pay-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.ax-pay-label span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--mist-dim);
+}
+
+.ax-pay-label em {
+  font-style: normal;
+  color: var(--text-strong);
+}
+
+.ax-pay-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem;
+}
+
+.ax-pay-input {
+  min-width: 0;
+  height: 2.4rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ax-pay-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--teal) 55%, var(--line));
+}
+
+.ax-pay-submit {
+  min-height: 2.4rem;
+  padding-inline: 1rem;
+}
+
+.ax-pay-status {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.ax-pay-status.is-ok {
+  color: var(--teal);
+}
+
+.ax-pay-status.is-error {
+  color: #b42318;
+}
+
+.ax-receipt-lines td strong {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-strong);
+}
+
+.ax-receipt-line-meta {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.68rem;
+  color: var(--mist-dim);
+}
+
+/* —— Supplier / expense ledger pages —— */
+.workspace-main:has(.ax--ledger) {
+  width: min(1120px, calc(100% - 2rem));
+  max-width: 1120px;
+}
+
+.ax--ledger {
+  display: grid;
+  gap: 0.9rem;
+  width: 100%;
+}
+
+.ax--ledger .ax-top {
+  display: grid;
+  gap: 0.55rem;
+  padding: 1rem 1.15rem;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: none;
+}
+
+.ax--ledger .ax-top-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.ax--ledger .ax-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.65rem;
+}
+
+.ax--ledger .ax-title h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+.ax--ledger .ax-period {
+  border-radius: 6px;
+  border-color: color-mix(in srgb, var(--teal) 28%, var(--line));
+  background: color-mix(in srgb, var(--teal) 10%, var(--surface));
+  color: color-mix(in srgb, var(--teal) 30%, var(--text-strong));
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.ax--ledger .ax-lead {
+  margin: 0;
+  max-width: 40rem;
+  color: var(--mist-dim);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.ax--ledger .ax-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.ax--ledger[data-ax-section="receipts"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--ledger[data-ax-section="receipts"] .ax-filters {
+  flex: 1 1 18rem;
+  max-width: 36rem;
+}
+
+.ax--ledger .ax-kpis,
+.ax--ledger .ax-kpis--dynamic {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  width: 100%;
+}
+
+.ax--ledger .ax-kpi {
+  margin: 0;
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.ax--ledger .ax-kpi::before {
+  width: 2px;
+}
+
+.ax--ledger .ax-kpi span {
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+}
+
+.ax--ledger .ax-kpi strong {
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.ax--ledger .ax-kpi em {
+  font-size: 0.68rem;
+  color: var(--mist-soft);
+}
+
+.ax--ledger .ax-grid--tables {
+  display: grid;
+  gap: 0.9rem;
+  width: 100%;
+}
+
+.ax--ledger .ax-card--wide:not(.ax-card--matrix) {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.ax--ledger .ax-card--wide:not(.ax-card--matrix) .ax-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  padding: 0.85rem 1rem;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 80%, var(--surface));
+}
+
+.ax--ledger .ax-card--wide:not(.ax-card--matrix) .ax-table-wrap {
+  padding: 0;
+}
+
+.ax--ledger .ax-card--wide:not(.ax-card--matrix) .ax-table th,
+.ax--ledger .ax-card--wide:not(.ax-card--matrix) .ax-table td {
+  padding: 0.55rem 0.75rem;
+  white-space: nowrap;
+}
+
+.ax--ledger .ax-receipt-row {
+  cursor: pointer;
+}
+
+.ax--ledger .ax-receipt-row:hover td {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.ax--ledger .ax-receipt-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -2px;
+}
+
+.ax--ledger .ax-receipt-row .ax-cell--primary {
+  color: var(--teal);
+  font-weight: 700;
+}
+
+/* Confirm receipts — compact columns, card stack on small screens. */
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-top-main {
+  align-items: flex-start;
+}
+
+/* Receipts list — filter toolbar matches confirm-receipts; card-stack on phone. */
+[data-ax-section="receipts-list"] .ax-top-main {
+  align-items: flex-start;
+}
+
+[data-ax-section="receipts-list"] .ax-filters {
+  flex: 1 1 18rem;
+  margin-left: 0;
+  justify-content: flex-start;
+  max-width: 100%;
+  min-width: 0;
+}
+
+[data-ax-section="receipts-list"] .ax-grid--tables {
+  width: 100%;
+  min-width: 0;
+}
+
+[data-ax-section="receipts-list"] .ax-table-wrap--scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 899px) {
+  [data-ax-section="receipts-list"] .ax-top-main {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  [data-ax-section="receipts-list"] .ax-filters {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  [data-ax-section="receipts-list"] .ax-filters input[type="search"],
+  [data-ax-section="receipts-list"] .ax-filters select,
+  [data-ax-section="receipts-list"] .ax-filters input[type="date"],
+  [data-ax-section="receipts-list"] .ax-filters input[type="month"],
+  [data-ax-section="receipts-list"] .ax-filters input[type="number"] {
+    flex: 1 1 8.5rem;
+    min-width: 0;
+  }
+
+  [data-ax-section="receipts-list"] .ax-filters .ax-apply {
+    flex: 1 1 100%;
+  }
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-filters {
+  flex: 1 1 18rem;
+  margin-left: 0;
+  justify-content: flex-start;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-grid--tables {
+  width: 100%;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 100% !important;
+  table-layout: fixed;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th,
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(1),
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(1) {
+  width: 16%;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(2),
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(2) {
+  width: 16%;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(3),
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(3) {
+  width: 12%;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(4),
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(4) {
+  width: 32%;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(5),
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(5) {
+  width: 24%;
+}
+
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th:first-child,
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td:first-child,
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th.ax-th--item,
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td.ax-cell--primary,
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table th:first-child,
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table td:first-child,
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table th.ax-th--item,
+.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table td.ax-cell--primary {
+  position: static;
+  left: auto;
+  z-index: auto;
+  width: 16%;
+  min-width: 0;
+  max-width: none;
+  box-shadow: none;
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-top-main {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters input[type="search"],
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters select,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters input[type="number"] {
+    flex: 1 1 8.5rem;
+    min-width: 0;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters .ax-apply {
+    flex: 1 1 100%;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list {
+    overflow-x: visible;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table th:first-child,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table td:first-child,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table th.ax-th--item,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table td.ax-cell--primary,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th:first-child,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td:first-child,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th.ax-th--item,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td.ax-cell--primary {
+    position: static;
+    left: auto;
+    z-index: auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    box-shadow: none;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    table-layout: auto;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table th,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table thead {
+    display: none;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table tbody tr {
+    display: grid;
+    gap: 0.4rem;
+    padding: 0.85rem 0.9rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table th,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0;
+    border: 0;
+    border-bottom: 0;
+    white-space: normal;
+    min-width: 0;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td::before {
+    content: attr(data-label);
+    display: inline;
+    flex-shrink: 0;
+    font-weight: 600;
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+    padding-top: 0.15rem;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td.ax-cell--primary,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td[data-label="Receipt"] {
+    display: block;
+    padding-bottom: 0.25rem;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td.ax-cell--primary::before,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td[data-label="Receipt"]::before {
+    display: none;
+  }
+
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table tbody tr:nth-child(even) td,
+  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table tbody tr:hover td {
+    background: transparent;
+  }
+}
+
+/* Return receipts — same compact list + mobile cards as confirm receipts. */
+.ax--list-table[data-ax-section="return-receipts"] .ax-top-main {
+  align-items: flex-start;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-filters {
+  flex: 1 1 18rem;
+  margin-left: 0;
+  justify-content: flex-start;
+  max-width: 100%;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-grid--tables {
+  width: 100%;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 100% !important;
+  table-layout: fixed;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th,
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th:nth-child(1),
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td:nth-child(1) {
+  width: 10%;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th:nth-child(2),
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td:nth-child(2) {
+  width: 10%;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th:nth-child(3),
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td:nth-child(3) {
+  width: 14%;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th:nth-child(4),
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td:nth-child(4) {
+  width: 18%;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th:nth-child(5),
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td:nth-child(5) {
+  width: 10%;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th:nth-child(6),
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td:nth-child(6) {
+  width: 10%;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th:nth-child(7),
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td:nth-child(7) {
+  width: 16%;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th:nth-child(8),
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td:nth-child(8) {
+  width: 12%;
+}
+
+.ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) th:first-child,
+.ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) td:first-child,
+.ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) th.ax-th--item,
+.ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) td.ax-cell--primary {
+  position: static;
+  left: auto;
+  z-index: auto;
+  width: 10%;
+  min-width: 0;
+  max-width: none;
+  box-shadow: none;
+}
+
+@media (max-width: 899px) {
+  .ax--list-table[data-ax-section="return-receipts"] .ax-top-main {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-filters {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-filters select,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="return-receipts"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="return-receipts"] .ax-filters input[type="number"] {
+    flex: 1 1 8.5rem;
+    min-width: 0;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-filters .ax-apply {
+    flex: 1 1 100%;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-kpis,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-kpis--dynamic {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list:has(.ax-table:not(.ax-table--shops)) {
+    overflow-x: visible;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) th:first-child,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) td:first-child,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) th.ax-th--item,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) td.ax-cell--primary {
+    position: static;
+    left: auto;
+    z-index: auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    box-shadow: none;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    table-layout: auto;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) thead {
+    display: none;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) tbody tr {
+    display: grid;
+    gap: 0.4rem;
+    padding: 0.85rem 0.9rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) th,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0;
+    border: 0;
+    border-bottom: 0;
+    white-space: normal;
+    min-width: 0;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td::before {
+    content: attr(data-label);
+    display: inline;
+    flex-shrink: 0;
+    font-weight: 600;
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+    padding-top: 0.15rem;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td.ax-cell--primary,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td[data-label="Receipt"] {
+    display: block;
+    padding-bottom: 0.25rem;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td.ax-cell--primary::before,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td[data-label="Receipt"]::before {
+    display: none;
+  }
+
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) tbody tr:nth-child(even) td,
+  .ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) tbody tr:hover td {
+    background: transparent;
+  }
+}
+
+.ax--ledger .ax-card--matrix,
+.ax--ledger .ax-card--wide {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.ax--list-table.ax--ledger .ax-card--wide,
+.ax--list-table.ax--ledger .ax-card--matrix {
+  overflow: visible;
+}
+
+.ax--ledger .ax-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  padding: 0.85rem 1rem;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 80%, var(--surface));
+}
+
+.ax--ledger .ax-card-head-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem 0.75rem;
+  min-width: 0;
+}
+
+.ax--ledger .ax-card-head h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.ax--ledger .ax-table-search {
+  display: block;
+  flex: 0 1 16rem;
+  min-width: min(16rem, 100%);
+  margin: 0;
+}
+
+.ax--ledger .ax-table-search input {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ax--ledger .ax-table-search input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-color: var(--accent);
+}
+
+.ax--ledger .ax-table-wrap--scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  border-radius: 0;
+}
+
+.ax--ledger .ax-table--shops {
+  table-layout: auto;
+  width: 100%;
+  min-width: 36rem;
+  border: 0;
+  border-radius: 0;
+  font-size: 0.8rem;
+}
+
+.ax--list-table.ax--ledger .ax-table--shops {
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table,
+.ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 100% !important;
+  table-layout: fixed;
+}
+
+.ax--ledger .ax-table--shops th,
+.ax--ledger .ax-table--shops td {
+  padding: 0.55rem 0.75rem;
+  vertical-align: middle;
+  border-right: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.ax--ledger .ax-table--shops thead th {
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  white-space: nowrap;
+}
+
+.ax--ledger .ax-table--shops .ax-th--item,
+.ax--ledger .ax-table--shops .ax-cell--primary {
+  width: 28%;
+  min-width: 11rem;
+  max-width: none;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ax--ledger:not(.ax--list-table) .ax-table--shops th.ax-th--pair,
+.ax--ledger:not(.ax--list-table) .ax-table--shops td.ax-cell--pair {
+  width: 1%;
+  min-width: 9.5rem;
+  max-width: none;
+  white-space: nowrap;
+  text-align: center;
+  overflow: visible;
+}
+
+.ax--ledger:not(.ax--list-table) .ax-table--shops th.ax-th--total,
+.ax--ledger:not(.ax--list-table) .ax-table--shops td.ax-cell--total {
+  width: 1%;
+  min-width: 9.5rem;
+}
+
+.ax--ledger:not(.ax--list-table) .ax-table--shops .ax-th-pair,
+.ax--ledger:not(.ax--list-table) .ax-table--shops .ax-pair {
+  display: grid;
+  grid-template-columns: 2.4rem 6.6rem;
+  column-gap: 0.35rem;
+  align-items: center;
+  width: 9.35rem;
+  min-width: 9.35rem;
+  margin-inline: auto;
+}
+
+.ax--ledger:not(.ax--list-table) .ax-table--shops .ax-th-pair-name {
+  grid-column: 1 / -1;
+  margin-bottom: 0.2rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+}
+
+.ax--ledger:not(.ax--list-table) .ax-table--shops .ax-th-pair-cols {
+  display: grid;
+  grid-template-columns: 2.4rem 6.6rem;
+  column-gap: 0.35rem;
+}
+
+.ax--ledger:not(.ax--list-table) .ax-table--shops .ax-pair-qty,
+.ax--ledger:not(.ax--list-table) .ax-table--shops .ax-pair-amt {
+  width: auto;
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: right;
+  line-height: 1.2;
+  font-size: 0.78rem;
+}
+
+.ax--ledger:not(.ax--list-table) .ax-table--shops .ax-pair-qty {
+  font-weight: 700;
+  color: var(--text-strong);
+  opacity: 1;
+}
+
+.ax--ledger .ax-link {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.ax--ledger .ax-link:hover {
+  background: transparent;
+  color: var(--teal);
+  border-bottom-color: color-mix(in srgb, var(--teal) 45%, transparent);
+}
+
+.ax--ledger .ax-table--shops tbody tr:hover td {
+  background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+}
+
+.ax--ledger .ax-footnote {
+  margin: 0;
+  padding: 0.65rem 1rem 0.85rem;
+  border-top: 1px solid var(--line);
+  color: var(--mist-soft);
+  font-size: 0.72rem;
+}
+
+.ax--ledger .ax-empty-search {
+  margin: 0;
+  padding: 0.65rem 1rem 0.95rem;
+}
+
+@media (min-width: 900px) {
+  .ax--ledger .ax-card:has(.ax-table--shops) {
+    padding-inline: 0;
+  }
+
+  .ax--ledger .ax-table-wrap--scroll:has(.ax-table--shops) {
+    overflow-x: auto;
+  }
+
+  .ax--ledger .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table th:first-child,
+  .ax--ledger .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table td:first-child,
+  .ax--ledger .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table th.ax-th--item,
+  .ax--ledger .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table td.ax-cell--primary {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    min-width: 11rem;
+    max-width: none;
+    width: 28%;
+    padding-inline: 0.75rem;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .ax--list-table.ax--ledger .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table th:first-child,
+  .ax--list-table.ax--ledger .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table td:first-child,
+  .ax--list-table.ax--ledger .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table th.ax-th--item,
+  .ax--list-table.ax--ledger .ax-table-wrap--scroll:has(.ax-table--shops) .ax-table td.ax-cell--primary,
+  .ax--list-table.ax--ledger .ax-table-wrap--list .ax-table th:first-child,
+  .ax--list-table.ax--ledger .ax-table-wrap--list .ax-table td:first-child,
+  .ax--list-table.ax--ledger .ax-table-wrap--list .ax-table th.ax-th--item,
+  .ax--list-table.ax--ledger .ax-table-wrap--list .ax-table td.ax-cell--primary {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    width: 12rem;
+    min-width: 11rem;
+    max-width: 16rem;
+    padding-inline: 0.85rem;
+    font-weight: 700;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    box-shadow: 2px 0 0 color-mix(in srgb, var(--line) 85%, transparent);
+  }
+
+  .ax--ledger:not(.ax--list-table) .ax-table--shops {
+    table-layout: auto;
+    width: 100%;
+    min-width: 36rem;
+    font-size: 0.8rem;
+  }
+
+  .ax--list-table.ax--ledger .ax-table--shops {
+    width: max-content;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table,
+  .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 100% !important;
+    table-layout: fixed;
+  }
+
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th:first-child,
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td:first-child,
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th.ax-th--item,
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td.ax-cell--primary,
+  .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) th:first-child,
+  .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) td:first-child,
+  .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) th.ax-th--item,
+  .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) td.ax-cell--primary {
+    position: static !important;
+    left: auto !important;
+    z-index: auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    box-shadow: none !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(1),
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(1) {
+    width: 16% !important;
+  }
+
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(2),
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(2) {
+    width: 16% !important;
+  }
+
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(3),
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(3) {
+    width: 12% !important;
+  }
+
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(4),
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(4) {
+    width: 32% !important;
+  }
+
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(5),
+  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(5) {
+    width: 24% !important;
+  }
+
+  .ax--ledger:not(.ax--list-table) .ax-table--shops th.ax-th--pair,
+  .ax--ledger:not(.ax--list-table) .ax-table--shops td.ax-cell--pair {
+    width: 1%;
+    min-width: 9.5rem;
+    max-width: none;
+    overflow: visible;
+  }
+
+  .ax--ledger:not(.ax--list-table) .ax-table--shops .ax-th-pair,
+  .ax--ledger:not(.ax--list-table) .ax-table--shops .ax-pair {
+    display: grid;
+    grid-template-columns: 2.4rem 6.6rem;
+    flex-direction: unset;
+    align-items: center;
+    justify-content: unset;
+    gap: unset;
+    column-gap: 0.35rem;
+    width: 9.35rem;
+    min-width: 9.35rem;
+    margin-inline: auto;
+  }
+
+  .ax--ledger:not(.ax--list-table) .ax-table--shops .ax-th-pair-cols {
+    display: grid;
+  }
+
+  .ax--ledger:not(.ax--list-table) .ax-table--shops .ax-th-pair-name {
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+
+  .ax--ledger:not(.ax--list-table) .ax-table--shops .ax-pair-qty,
+  .ax--ledger:not(.ax--list-table) .ax-table--shops .ax-pair-amt {
+    width: auto;
+    min-width: 0;
+    overflow: visible;
+    text-overflow: clip;
+    font-size: 0.78rem;
+  }
+
+  .ax--ledger:not(.ax--list-table) .ax-table--shops .ax-pair-qty {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text-strong);
+  }
+}
+
+@media (max-width: 860px) {
+  .ax--ledger .ax-kpis,
+  .ax--ledger .ax-kpis--dynamic {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax--ledger .ax-filters {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .ax--ledger .ax-table-search {
+    flex: 1 1 100%;
+  }
+}
+
+@media (max-width: 1100px) {
+  .ax-kpis {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .ax-trends {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax-charts--trend {
+    grid-template-columns: 1fr;
+  }
+
+  .ax-metrics--5 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 899px) {
+  .ax-top-main {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .ax-top-actions {
+    width: 100%;
+  }
+
+  .ax-top-actions .ax-apply {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .ax-period {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    line-height: 1.35;
+    border-radius: 10px;
+  }
+
+  .ax-filters {
+    width: 100%;
+  }
+
+  .ax-filters select,
+  .ax-filters input,
+  .ax-filters input[type="search"],
+  .ax-filters input[type="date"],
+  .ax-filters input[type="month"],
+  .ax-filters input[type="number"] {
+    flex: 1 1 8.5rem;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax-filters .ax-apply {
+    flex: 1 1 100%;
+  }
+
+  .ax-line-chart,
+  .ax-shop-chart {
+    height: 10.5rem;
+  }
+
+  .ax-band-legend {
+    gap: 0.35rem 0.55rem;
+  }
+}
+
+@media (max-width: 860px) {
+  .ax-grid,
+  .ax-split,
+  .ax-insights,
+  .ax-charts,
+  .ax-trends {
+    grid-template-columns: 1fr;
+  }
+
+  .ax-charts--trend {
+    grid-template-columns: 1fr;
+  }
+
+  .ax-donut-wrap {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .ax-section-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax-card--wide {
+    grid-column: auto;
+  }
+
+  .ax-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ax-metrics,
+  .ax-metrics--4,
+  .ax-metrics--5 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax-filters {
+    width: 100%;
+  }
+
+  .ax-filters select,
+  .ax-filters input {
+    flex: 1 1 7rem;
+    max-width: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .ax-top {
+    padding: 0.75rem 0.8rem;
+  }
+
+  .ax-title {
+    width: 100%;
+  }
+
+  .ax-title h2 {
+    font-size: 1.05rem;
+  }
+
+  .ax-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+  }
+
+  .ax-filters select,
+  .ax-filters input,
+  .ax-filters input[type="search"],
+  .ax-filters input[type="date"],
+  .ax-filters input[type="month"],
+  .ax-filters input[type="number"] {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax-filters input[type="search"],
+  .ax-filters .ax-apply {
+    grid-column: 1 / -1;
+  }
+
+  .ax-line-chart,
+  .ax-shop-chart {
+    height: 9rem;
+  }
+
+  .ax-line-label {
+    font-size: 8px;
+  }
+
+  .ax-pay-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .ax-pay-submit {
+    width: 100%;
+  }
+
+  .ax-share-org {
+    flex-wrap: wrap;
+  }
+
+  .ax-share-org-badge {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .ax-ledger-select-bar {
+    flex-wrap: wrap;
+    margin-inline: 0.75rem;
+  }
+
+  .ax-ledger-select-bar .ax-apply {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 520px) {
+  .ax-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax-card-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ax-card-head > span {
+    text-align: left;
+    white-space: normal;
+  }
+}

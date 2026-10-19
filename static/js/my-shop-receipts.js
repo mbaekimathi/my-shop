@@ -695,7 +695,7 @@
       : { text };
     doc.open();
     doc.write(`<!doctype html><html><head><title>Receipt</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="/static/css/fonts.css?v=20261019-assets">
 <style>
 @page { size: ${pageWidth} auto; margin: 2mm; }
 body { margin: 0; padding: 2mm; font-family: "Manrope", system-ui, sans-serif; font-size: ${fontSize}; font-weight: 900; color: #000 !important; background: #fff; -webkit-font-smoothing: none; text-shadow: 0.35px 0 0 #000, -0.35px 0 0 #000; }

@@ -2300,7 +2300,7 @@
       const flagImg = floatPhoneWrap?.querySelector("[data-stock-flag-img]");
       if (dialDisplay && dial) dialDisplay.textContent = dial;
       if (flagImg && iso) {
-        flagImg.src = `https://flagcdn.com/w40/${String(iso).toLowerCase()}.png`;
+        flagImg.src = `/static/img/flags/${String(iso).toLowerCase()}.png`;
       }
       if (floatSupplierPhone?.value) {
         floatSupplierPhone.value = normalizePhone(floatSupplierPhone.value);
@@ -2370,7 +2370,7 @@
         if (isoInput) isoInput.value = supplier.iso || "KE";
         if (dialDisplay) dialDisplay.textContent = supplier.dial || "+254";
         if (flagImg && supplier.iso) {
-          flagImg.src = `https://flagcdn.com/w40/${String(supplier.iso).toLowerCase()}.png`;
+          flagImg.src = `/static/img/flags/${String(supplier.iso).toLowerCase()}.png`;
         }
       }
       if (targets.phoneInput) {
@@ -3222,7 +3222,7 @@
     if (isoInput && iso) isoInput.value = iso;
     if (dialDisplay && dial) dialDisplay.textContent = dial;
     if (flagImg && iso) {
-      flagImg.src = `https://flagcdn.com/w40/${String(iso).toLowerCase()}.png`;
+      flagImg.src = `/static/img/flags/${String(iso).toLowerCase()}.png`;
     }
     if (phoneInput && phoneInput.value) {
       phoneInput.value = normalizeNationalPhone(phoneInput.value, dial || dialInput?.value || "+254");

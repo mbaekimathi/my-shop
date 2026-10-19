@@ -84,6 +84,24 @@ class ItemStockReportRowsTests(TestCase):
         )
         return movement
 
+    def test_catalog_page_lists_per_shop_stock_rows(self):
+        from items.models import ShopStock
+        from items.services import build_item_management_catalog_page
+
+        ShopStock.objects.filter(shop=self.shop_b, item=self.item).update(quantity=0)
+        payload = build_item_management_catalog_page(q="REPORT CABLE")
+        row = next(r for r in payload["items"] if r["id"] == self.item.pk)
+        self.assertEqual(
+            row["stock_rows"],
+            [
+                {
+                    "shop_id": self.shop_a.pk,
+                    "shop_name": "REPORT SHOP A",
+                    "quantity": "2",
+                }
+            ],
+        )
+
     def test_destination_shop_counts_transfer_in(self):
         from items.views import _build_item_report_rows
 
@@ -1817,6 +1835,101 @@ class ItemPriceListTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Download price list")
         self.assertContains(response, "/it-support/item-management/price-list/")
+
+
+class ItemDeleteWithStockTests(TestCase):
+    def setUp(self):
+        from items.models import Item
+
+        self.password = "delete-stock-pass"
+        self.user = User.objects.create_user(
+            username="840051",
+            password=self.password,
+            email="delete-stock@test.local",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840051",
+            phone_country_code="+254",
+            phone_number="700000981",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="DELETE STOCK SHOP",
+            location="NAIROBI",
+            email="delete-stock@test.local",
+            phone_number="0700000981",
+            login_code="840151",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.item = Item.objects.create(
+            category="DRINKS",
+            name="DELETE STOCK ITEM",
+            minimum_selling_price=Decimal("80.00"),
+            shop_price=Decimal("100.00"),
+            created_by=self.profile,
+        )
+        self.url = "/it-support/item-management/"
+        self.client.login(username="840051", password=self.password)
+
+    def _delete(self, item):
+        return self.client.post(
+            self.url, {"action": "delete", "item_id": item.pk}
+        )
+
+    def test_delete_with_stock_suspends_instead(self):
+        from items.models import Item, ShopStock
+
+        ShopStock.objects.create(shop=self.shop, item=self.item, quantity=4)
+        response = self._delete(self.item)
+        self.assertEqual(response.status_code, 302)
+        self.item.refresh_from_db()
+        self.assertTrue(self.item.is_suspended)
+        self.assertTrue(
+            ShopStock.objects.filter(item=self.item, shop=self.shop).exists()
+        )
+        self.assertTrue(Item.objects.filter(pk=self.item.pk).exists())
+
+    def test_delete_without_stock_removes_item(self):
+        from items.models import Item
+
+        response = self._delete(self.item)
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
+
+    def test_delete_suspended_item_with_stock_still_deletes(self):
+        from items.models import Item, ShopStock
+
+        ShopStock.objects.create(shop=self.shop, item=self.item, quantity=4)
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+        response = self._delete(self.item)
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
+
+    def test_serial_search_excludes_suspended_items(self):
+        from items.models import ItemSerial
+        from items.services import search_available_serials
+
+        ItemSerial.objects.create(
+            item=self.item, shop=self.shop, serial_number="SN-DEL-1"
+        )
+        results = search_available_serials(
+            item_id=self.item.pk, shop_id=self.shop.pk
+        )
+        self.assertEqual(len(results), 1)
+
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+        self.assertEqual(
+            search_available_serials(
+                item_id=self.item.pk, shop_id=self.shop.pk
+            ),
+            [],
+        )
 
 
 class ItemActivityAuditTests(TestCase):

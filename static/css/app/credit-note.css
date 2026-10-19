@@ -1,0 +1,869 @@
+/* MY-SHOP app — credit-note.css (split from app.css; cascade order preserved) */
+
+.page-credit-note {
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      1200px 420px at 50% -10%,
+      color-mix(in srgb, var(--teal) 14%, transparent),
+      transparent 60%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--teal) 5%, var(--bg)),
+      var(--bg) 38%
+    );
+}
+
+.page-credit-note .offline-bar {
+  display: none;
+}
+
+.credit-note-shell {
+  width: min(64rem, calc(100vw - 1.5rem));
+  margin: 0 auto;
+  padding: 0.85rem 0 1.5rem;
+}
+
+.credit-note-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+  padding: 0.55rem 0.15rem;
+}
+
+.credit-note-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.credit-note-logo,
+.credit-note-logo-fallback {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 10px;
+  flex-shrink: 0;
+  object-fit: cover;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 6%, transparent);
+}
+
+.credit-note-logo-fallback {
+  background: linear-gradient(135deg, var(--accent), var(--teal));
+}
+
+.credit-note-topbar-copy {
+  display: grid;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.credit-note-topbar-copy strong {
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credit-note-topbar-copy span {
+  font-size: 0.68rem;
+  color: var(--mist-dim);
+}
+
+.credit-note-secure {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--teal) 24%, var(--line));
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+  color: var(--teal);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.credit-note-secure i,
+.credit-note-secure svg {
+  width: 0.78rem;
+  height: 0.78rem;
+}
+
+.credit-note-page {
+  display: grid;
+  gap: 1.15rem;
+}
+
+.credit-note-block {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem 1.05rem 1.05rem;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent),
+    0 14px 32px rgba(8, 24, 28, 0.04);
+}
+
+.credit-note-block--pay {
+  border-color: color-mix(in srgb, #25d366 22%, var(--line));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #25d366 6%, var(--surface)),
+      var(--surface) 42%
+    );
+  padding: 0.85rem 1rem;
+}
+
+.credit-note-pay-form--simple {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.85fr) auto;
+  gap: 0.55rem;
+  align-items: end;
+}
+
+.credit-note-pay-form--simple .credit-note-pay-btn {
+  min-width: 5.5rem;
+  min-height: 2.35rem;
+  padding-inline: 1.1rem;
+}
+
+.credit-note-pay-status--full {
+  grid-column: 1 / -1;
+}
+
+.credit-note-block--ledger {
+  padding-bottom: 1.1rem;
+}
+
+.credit-note-block--clear {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.credit-note-block-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+}
+
+.credit-note-block--pay .credit-note-block-head {
+  border-bottom-color: color-mix(in srgb, #25d366 18%, var(--line));
+}
+
+.credit-note-block-icon {
+  display: grid;
+  place-items: center;
+  width: 2.45rem;
+  height: 2.45rem;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+
+.credit-note-block-icon.is-mpesa {
+  background: color-mix(in srgb, #25d366 16%, var(--surface));
+  color: #128c7e;
+}
+
+.credit-note-block-icon.is-ledger {
+  background: color-mix(in srgb, var(--teal) 14%, var(--surface));
+  color: var(--teal);
+}
+
+.credit-note-block-icon i,
+.credit-note-block-icon svg {
+  width: 1.12rem;
+  height: 1.12rem;
+}
+
+.credit-note-block-kicker {
+  margin: 0;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.credit-note-block-head h2 {
+  margin: 0.12rem 0 0;
+  font-size: 1.02rem;
+}
+
+.credit-note-block-lead {
+  margin: 0.2rem 0 0;
+  color: var(--mist-dim);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.credit-note-pay {
+  padding: 0.15rem 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.credit-note-hero {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem 1rem 0.95rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 18%, var(--line));
+  border-radius: 18px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--teal) 11%, var(--surface)),
+      var(--surface) 62%
+    );
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 16px 40px rgba(8, 24, 28, 0.07);
+}
+
+.credit-note-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.credit-note-avatar {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--accent), var(--teal));
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--teal) 22%, transparent);
+}
+
+.credit-note-hero-copy {
+  min-width: 0;
+}
+
+.credit-note-kicker {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+
+.credit-note-hero-copy h1 {
+  margin: 0.1rem 0 0;
+  font-size: clamp(1.2rem, 3.8vw, 1.55rem);
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credit-note-phone {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.22rem 0 0;
+  color: var(--mist-dim);
+  font-size: 0.8rem;
+}
+
+.credit-note-phone i,
+.credit-note-phone svg {
+  width: 0.82rem;
+  height: 0.82rem;
+}
+
+.credit-note-balance-card {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  background: color-mix(in srgb, var(--panel-muted) 35%, var(--surface));
+}
+
+.credit-note-balance-card.is-due {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 10%, var(--surface)),
+      color-mix(in srgb, var(--panel-muted) 40%, var(--surface))
+    );
+}
+
+.credit-note-balance-card.is-clear {
+  border-color: color-mix(in srgb, var(--teal) 28%, var(--line));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--teal) 10%, var(--surface)),
+      color-mix(in srgb, var(--panel-muted) 40%, var(--surface))
+    );
+}
+
+.credit-note-balance-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.credit-note-balance-value {
+  font-family: var(--font-display);
+  font-size: clamp(1.45rem, 4vw, 2rem);
+  line-height: 1.05;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.credit-note-balance-card.is-due .credit-note-balance-value {
+  color: var(--accent-deep);
+}
+
+.credit-note-balance-card.is-clear .credit-note-balance-value {
+  color: var(--teal);
+}
+
+.credit-note-balance-hint {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--mist-soft);
+}
+
+.credit-note-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.credit-note-stat {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.42rem;
+  min-width: 0;
+  padding: 0.72rem 0.78rem;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
+}
+
+.credit-note-stat i,
+.credit-note-stat svg {
+  width: 0.92rem;
+  height: 0.92rem;
+  margin-top: 0.12rem;
+  color: var(--teal);
+  flex-shrink: 0;
+}
+
+.credit-note-stat.is-warn i,
+.credit-note-stat.is-warn svg {
+  color: var(--accent-deep);
+}
+
+.credit-note-stat.is-cash i,
+.credit-note-stat.is-cash svg {
+  color: var(--accent-deep);
+}
+
+.credit-note-stat span {
+  display: block;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.credit-note-stat strong {
+  display: block;
+  margin-top: 0.08rem;
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.credit-note-stat em {
+  display: block;
+  margin-top: 0.08rem;
+  font-style: normal;
+  font-size: 0.64rem;
+  color: var(--mist-soft);
+  line-height: 1.3;
+}
+
+.credit-note-pay-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.credit-note-pay-icon {
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, #25d366 16%, var(--surface));
+  color: #128c7e;
+  flex-shrink: 0;
+}
+
+.credit-note-pay-icon i,
+.credit-note-pay-icon svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.credit-note-pay-head h2 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.credit-note-pay-head p {
+  margin: 0.18rem 0 0;
+  color: var(--mist-dim);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.credit-note-pay-form {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.credit-note-pay-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.credit-note-field {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.credit-note-field > span {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.credit-note-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.35rem;
+  padding: 0 0.72rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--input-bg);
+}
+
+.credit-note-input-wrap:focus-within {
+  outline: 2px solid color-mix(in srgb, #25d366 24%, transparent);
+  border-color: color-mix(in srgb, #25d366 40%, var(--line));
+}
+
+.credit-note-input-wrap i,
+.credit-note-input-wrap svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--mist-dim);
+  flex-shrink: 0;
+}
+
+.credit-note-input-wrap input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.credit-note-input-wrap input:focus {
+  outline: 0;
+}
+
+.credit-note-pay-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 0.5rem;
+}
+
+.credit-note-pay-full {
+  min-height: 2.45rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.credit-note-pay-full:hover {
+  background: color-mix(in srgb, var(--panel-muted) 50%, var(--surface));
+}
+
+.credit-note-pay-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.42rem;
+  min-height: 2.45rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid color-mix(in srgb, #128c7e 60%, #0f6f63);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #25d366, #128c7e);
+  color: #fff;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 20px color-mix(in srgb, #25d366 22%, transparent);
+}
+
+.credit-note-pay-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.credit-note-pay-status {
+  margin: 0;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.credit-note-pay-status.is-error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}
+
+.credit-note-pay-status.is-ok {
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+}
+
+.credit-note-clear {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.95rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 24%, var(--line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
+}
+
+.credit-note-clear i,
+.credit-note-clear svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--teal);
+  flex-shrink: 0;
+}
+
+.credit-note-clear strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.credit-note-clear p {
+  margin: 0.15rem 0 0;
+  color: var(--mist-dim);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.credit-note-ledger {
+  padding: 0.1rem 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.credit-note-ledger-head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.credit-note-ledger-head p {
+  margin: 0.15rem 0 0.65rem;
+  color: var(--mist-dim);
+  font-size: 0.72rem;
+}
+
+.credit-note-table-wrap {
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 12px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.credit-note-table {
+  width: 100%;
+  min-width: 38rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.78rem;
+}
+
+.credit-note-table th,
+.credit-note-table td {
+  padding: 0.55rem 0.72rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.credit-note-table th:last-child,
+.credit-note-table td:last-child {
+  border-right: 0;
+}
+
+.credit-note-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.credit-note-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.credit-note-cell-primary {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 7.5rem;
+  font-weight: 700;
+  color: var(--teal);
+  background: var(--surface);
+  box-shadow: 1px 0 0 color-mix(in srgb, var(--line) 88%, transparent);
+}
+
+.credit-note-table thead .credit-note-cell-primary {
+  z-index: 2;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
+.credit-note-due {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.credit-note-row.is-bad .credit-note-due {
+  color: var(--accent-deep);
+}
+
+.credit-note-row.is-good .credit-note-due {
+  color: var(--teal);
+}
+
+.credit-note-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--line) 20%, var(--surface));
+}
+
+.credit-note-table tbody tr:nth-child(even) .credit-note-cell-primary {
+  background: color-mix(in srgb, var(--line) 20%, var(--surface));
+}
+
+.credit-note-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.credit-note-table tbody tr:hover .credit-note-cell-primary {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.credit-note-table-actions {
+  width: 4.5rem;
+  text-align: center;
+}
+
+.credit-note-view-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-height: 1.85rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 24%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+  color: var(--teal);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.credit-note-view-btn i,
+.credit-note-view-btn svg {
+  width: 0.78rem;
+  height: 0.78rem;
+}
+
+.credit-note-empty {
+  margin: 0;
+}
+
+.credit-note-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem 0.5rem;
+  margin-top: 1rem;
+  color: var(--mist-soft);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+
+.credit-note-modal .workspace-modal-backdrop {
+  backdrop-filter: blur(4px);
+}
+
+.credit-note-modal-dialog {
+  width: min(34rem, calc(100vw - 1.25rem));
+  padding: 0;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.credit-note-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.95rem 1rem 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  background: color-mix(in srgb, var(--panel-muted) 40%, var(--surface));
+}
+
+.credit-note-modal-kicker {
+  margin: 0;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.credit-note-modal-head h2 {
+  margin: 0.12rem 0 0;
+  font-size: 1rem;
+}
+
+.credit-note-modal-meta {
+  margin: 0.18rem 0 0;
+  color: var(--mist-dim);
+  font-size: 0.76rem;
+}
+
+.credit-note-modal-body {
+  padding: 0.85rem 1rem 1rem;
+}
+
+.credit-note-modal-body .ax-table-wrap {
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 10px;
+}
+
+.credit-note-modal-body .ax-table {
+  width: 100%;
+  font-size: 0.78rem;
+}
+
+.credit-note-modal-body .ax-table th,
+.credit-note-modal-body .ax-table td {
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+}
+
+@media (min-width: 900px) {
+  .credit-note-hero {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
+    align-items: stretch;
+  }
+
+  .credit-note-balance-card {
+    align-content: center;
+  }
+}
+
+@media (max-width: 720px) {
+  .credit-note-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .credit-note-pay-form--simple {
+    grid-template-columns: 1fr;
+  }
+
+  .credit-note-pay-form--simple .credit-note-pay-btn {
+    width: 100%;
+  }
+
+  .credit-note-hero-copy h1 {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 640px) {
+  .credit-note-topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .credit-note-secure {
+    align-self: flex-start;
+  }
+}
