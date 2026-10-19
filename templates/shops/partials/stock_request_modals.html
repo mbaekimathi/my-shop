@@ -94,19 +94,19 @@
                     data-item-id="{{ line.item_id }}"
                     data-requested="{{ line.quantity }}"
                     data-available="{{ line.quantity }}"
-                    data-track-serial="{% if line.item.track_serial_number %}1{% else %}0{% endif %}"
+                    data-track-serial="{% if line.item and line.item.track_serial_number %}1{% else %}0{% endif %}"
                   >
                     <td data-label="Item">
                       <div class="stock-transfer-item">
-                        <span>{{ line.item.name }}</span>
-                        {% if line.item.track_serial_number %}
+                        <span>{{ line.item.name|default:line.item_name }}</span>
+                        {% if line.item and line.item.track_serial_number %}
                         <em class="stock-request-serial-tag">Serial tracked</em>
                         {% endif %}
                       </div>
                     </td>
                     <td data-label="Received">
                       <label class="stock-transfer-qty-field">
-                        <span class="visually-hidden">Received quantity for {{ line.item.name }}</span>
+                        <span class="visually-hidden">Received quantity for {{ line.item.name|default:line.item_name }}</span>
                         <input
                           type="number"
                           name="qty_{{ line.pk }}"
@@ -277,7 +277,7 @@
           <ul class="stock-decision-lines">
             {% for line in req.lines.all %}
             <li>
-              <span class="stock-decision-line-name">{{ line.item.name }}</span>
+              <span class="stock-decision-line-name">{{ line.item.name|default:line.item_name }}</span>
               <span class="stock-decision-line-qty">{{ line.quantity }}</span>
             </li>
             {% empty %}
@@ -304,7 +304,7 @@
           {% endif %}
           {% for line in req.lines.all %}
             {% if line.note %}
-            <p class="stock-decision-note">{{ line.item.name }}: {{ line.note }}</p>
+            <p class="stock-decision-note">{{ line.item.name|default:line.item_name }}: {{ line.note }}</p>
             {% endif %}
           {% endfor %}
         </article>

@@ -458,8 +458,16 @@ class StockMovementLine(models.Model):
     )
     item = models.ForeignKey(
         Item,
-        on_delete=models.PROTECT,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="stock_movement_lines",
+    )
+    item_name = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        help_text="Snapshot of the item name; kept when the item is deleted.",
     )
     quantity = models.DecimalField(max_digits=12, decimal_places=3)
     buying_price = models.DecimalField(
@@ -508,8 +516,14 @@ class StockMovementLine(models.Model):
     class Meta:
         ordering = ["id"]
 
+    def save(self, *args, **kwargs):
+        if self.item_id and not self.item_name:
+            self.item_name = self.item.name
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"{self.item.name} × {self.quantity}"
+        name = self.item.name if self.item else (self.item_name or "Deleted item")
+        return f"{name} × {self.quantity}"
 
 
 class Supplier(models.Model):

@@ -120,7 +120,7 @@
             </td>
             <td class="stock-request-table-items" data-label="Items">
               {% for line in req.lines.all %}
-              <span>{{ line.item.name }}</span>{% if not forloop.last %}, {% endif %}
+              <span>{{ line.item.name|default:line.item_name }}</span>{% if not forloop.last %}, {% endif %}
               {% empty %}
               <span class="stock-request-table-sub">No line items</span>
               {% endfor %}
@@ -199,7 +199,7 @@
             </td>
             <td class="stock-request-table-items" data-label="Items">
               {% for line in req.lines.all %}
-              <span>{{ line.item.name }} <em>×{{ line.quantity }}</em></span>{% if not forloop.last %}, {% endif %}
+              <span>{{ line.item.name|default:line.item_name }} <em>×{{ line.quantity }}</em></span>{% if not forloop.last %}, {% endif %}
               {% empty %}
               <span class="stock-request-table-sub">No line items</span>
               {% endfor %}
@@ -282,7 +282,7 @@
             </td>
             <td class="stock-request-table-items" data-label="Items">
               {% for line in req.lines.all %}
-              <span>{{ line.item.name }} <em>×{{ line.quantity }}</em></span>{% if not forloop.last %}, {% endif %}
+              <span>{{ line.item.name|default:line.item_name }} <em>×{{ line.quantity }}</em></span>{% if not forloop.last %}, {% endif %}
               {% empty %}
               <span class="stock-request-table-sub">No line items</span>
               {% endfor %}
@@ -303,7 +303,7 @@
               {% endif %}
               {% for line in req.lines.all %}
                 {% if line.note %}
-                <span class="stock-request-table-sub">{{ line.item.name }}: {{ line.note }}</span>
+                <span class="stock-request-table-sub">{{ line.item.name|default:line.item_name }}: {{ line.note }}</span>
                 {% endif %}
               {% endfor %}
             </td>

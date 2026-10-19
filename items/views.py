@@ -2900,8 +2900,10 @@ def _timeline_event_from_movement_line(
         "destination_shop_id": movement.requested_from_shop_id,
         "from_shop_name": from_shop_name,
         "to_shop_name": to_shop_name,
-        "item_name": line.item.name,
-        "item_category": line.item.category,
+        "item_name": (
+            line.item.name if line.item else (line.item_name or "Deleted item")
+        ),
+        "item_category": line.item.category if line.item else "",
         "item_id": line.item_id,
         "quantity": line.quantity,
         "reason": _stock_out_reason_label(line),

@@ -4425,7 +4425,11 @@ def build_supplier_account(
             receipt_total += line_total
             receipt_lines.append(
                 {
-                    "name": line.item.name if line.item else "Item",
+                    "name": (
+                        line.item.name
+                        if line.item
+                        else (line.item_name or "Item")
+                    ),
                     "qty": qty,
                     "unit": _money_ksh(unit),
                     "total": _money_ksh(line_total),
@@ -7854,6 +7858,7 @@ def _build_stock(filters):
             movement__entry_source=StockEntrySource.BUY_ITEMS,
             movement__created_at__gte=start,
             movement__created_at__lt=end,
+            item__isnull=False,
         )
         .values("item_id", "item__name")
         .annotate(transaction_count=Count("movement_id", distinct=True))
@@ -8030,6 +8035,7 @@ def _build_supply(filters):
             movement__shop_id__in=shop_ids,
             movement__movement_type=StockMovementType.IN,
             movement__entry_source=StockEntrySource.BUY_ITEMS,
+            item__isnull=False,
         ),
         start,
         end,

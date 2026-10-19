@@ -1856,6 +1856,10 @@ def _sync_item_name_history(item: Item, *, old_name: str, new_name: str) -> None
         item_name=new_name
     ).update(item_name=new_name)
 
+    item.stock_movement_lines.exclude(item_name=new_name).update(
+        item_name=new_name
+    )
+
     from pos.models import SaleLine
 
     SaleLine.objects.filter(product_name=old_name).update(product_name=new_name)
@@ -1871,10 +1875,13 @@ def toggle_item_suspended(item: Item, *, actor=None) -> Item:
 
 
 def delete_item(item: Item, *, actor=None) -> None:
-    if item.stock_movement_lines.exists():
+    if item.stock_movement_lines.filter(
+        movement__movement_type=StockMovementType.REQUEST,
+        movement__request_status=StockRequestStatus.PENDING,
+    ).exists():
         raise ValidationError(
-            f"“{item.name}” cannot be deleted because it has stock movement history. "
-            "Suspend it instead to hide it from sales."
+            f"“{item.name}” cannot be deleted while a stock transfer is still "
+            "pending. Complete or decline the transfer first."
         )
     from items.activity_audit import log_item_activity
     from items.models import ItemActivityKind
@@ -1883,6 +1890,8 @@ def delete_item(item: Item, *, actor=None) -> None:
     item_category = item.category or ""
     item_id = item.pk
     shop_ids = list(item.shop_prices.values_list("shop_id", flat=True))
+    # Keep the name on stock movement history after the item row is gone.
+    item.stock_movement_lines.filter(item_name="").update(item_name=item_name)
     if item.image:
         item.image.delete(save=False)
     try:

@@ -1910,6 +1910,51 @@ class ItemDeleteWithStockTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
 
+    def test_delete_with_movement_history_and_no_stock_removes_item(self):
+        from items.models import (
+            Item,
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+        )
+
+        movement = StockMovement.objects.create(
+            movement_type=StockMovementType.IN,
+            shop=self.shop,
+            created_by=self.profile,
+        )
+        line = StockMovementLine.objects.create(
+            movement=movement, item=self.item, quantity=3
+        )
+        response = self._delete(self.item)
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
+        line.refresh_from_db()
+        self.assertIsNone(line.item_id)
+        self.assertEqual(line.item_name, "DELETE STOCK ITEM")
+
+    def test_delete_with_pending_transfer_is_blocked(self):
+        from items.models import (
+            Item,
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+            StockRequestStatus,
+        )
+
+        movement = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop,
+            request_status=StockRequestStatus.PENDING,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=movement, item=self.item, quantity=2
+        )
+        response = self._delete(self.item)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Item.objects.filter(pk=self.item.pk).exists())
+
     def test_serial_search_excludes_suspended_items(self):
         from items.models import ItemSerial
         from items.services import search_available_serials
