@@ -1925,9 +1925,11 @@
       setFloatCollapsed(!floatRoot.classList.contains("is-collapsed"));
     });
     try {
-      setFloatCollapsed(sessionStorage.getItem(floatCollapseKey) === "1", {
-        persist: false,
-      });
+      const storedCollapsed = sessionStorage.getItem(floatCollapseKey);
+      setFloatCollapsed(
+        storedCollapsed === null ? true : storedCollapsed === "1",
+        { persist: false }
+      );
     } catch (_err) {
       setFloatCollapsed(true, { persist: false });
     }

@@ -124,6 +124,20 @@
             <span>units at {{ selected_shop.name }}</span>
           </p>
           {% endif %}
+          {% if stock_mode == 'request' %}
+          <button
+            type="button"
+            class="workspace-icon-btn stock-pending-bell"
+            data-stock-pending-open
+            title="Pending transfers"
+            aria-label="Pending transfers{% if request_summary.pending %} — {{ request_summary.pending }} awaiting confirmation{% endif %}"
+          >
+            <i data-lucide="bell" aria-hidden="true"></i>
+            {% if request_summary.pending %}
+            <span class="stock-pending-bell-count">{{ request_summary.pending }}</span>
+            {% endif %}
+          </button>
+          {% endif %}
         </div>
         {% endif %}
       </div>
@@ -890,29 +904,6 @@
     {% endif %}
   </section>
 
-  {% if stock_mode == 'request' %}
-  <section class="stock-request-feed" aria-label="Pending stock requests">
-    <header class="stock-request-feed-head">
-      <div>
-        <h3>Pending transfers</h3>
-        <p>
-          Confirm receipt here to complete the transfer and move stock, or cancel if quantity or items were wrong.
-          Received quantities must match what was sent — otherwise decline with a reason.
-        </p>
-      </div>
-    </header>
-
-    <div class="stock-request-feed-stats">
-      <p class="stock-stat">
-        <strong>{{ request_summary.pending }}</strong>
-        <span>pending</span>
-      </p>
-    </div>
-
-    {% include "items/partials/stock_request_table.html" with requests=pending_stock_requests empty_message="No pending transfers." allow_cancel=allow_pending_transfer_cancel allow_confirm=allow_pending_transfer_confirm cancel_transfer_url=cancel_transfer_url respond_transfer_url=respond_transfer_url verify_login_code_url=verify_login_code_url %}
-  </section>
-  {% endif %}
-
   {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
   {% if shops %}
   <aside
@@ -954,7 +945,7 @@
           </p>
           <p class="stock-float-shop-readout">
             <span>To</span>
-            <strong data-stock-float-shop-label">{% if requested_from_shop %}{{ requested_from_shop.name }}{% else %}Choose receiving shop{% endif %}</strong>
+            <strong data-stock-float-shop-label>{% if requested_from_shop %}{{ requested_from_shop.name }}{% else %}Choose receiving shop{% endif %}</strong>
           </p>
           {% else %}
           <p class="stock-float-shop-readout">
@@ -1333,6 +1324,84 @@
   </div>
 </div>
 {% endif %}
+
+{% if stock_mode == 'request' %}
+<div
+  class="workspace-modal stock-pending-modal"
+  data-stock-pending-modal
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-stock-pending-close></div>
+  <div
+    class="workspace-modal-dialog stock-pending-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stock-pending-title"
+  >
+    <header class="workspace-modal-head">
+      <div>
+        <p class="stock-pending-kicker">
+          {{ request_summary.pending }} awaiting confirmation
+        </p>
+        <h2 id="stock-pending-title">Pending transfers</h2>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-stock-pending-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+    <div class="stock-pending-body">
+      <p class="stock-pending-lead">
+        Confirm receipt here to complete the transfer and move stock, or cancel if quantity or items were wrong.
+        Received quantities must match what was sent — otherwise decline with a reason.
+      </p>
+      {% include "items/partials/stock_request_table.html" with requests=pending_stock_requests empty_message="No pending transfers." allow_cancel=allow_pending_transfer_cancel allow_confirm=allow_pending_transfer_confirm cancel_transfer_url=cancel_transfer_url respond_transfer_url=respond_transfer_url verify_login_code_url=verify_login_code_url %}
+    </div>
+  </div>
+</div>
+<script>
+  (() => {
+    const modal = document.querySelector("[data-stock-pending-modal]");
+    if (!modal || modal.dataset.bound === "1") return;
+    modal.dataset.bound = "1";
+
+    const setOpen = (open) => {
+      modal.hidden = !open;
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+      document.body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+      if (open && window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    document.addEventListener("click", (event) => {
+      if (event.target.closest("[data-stock-pending-open]")) {
+        event.preventDefault();
+        setOpen(true);
+        return;
+      }
+      if (
+        event.target.closest("[data-stock-pending-close]") &&
+        modal.contains(event.target) &&
+        !modal.hidden
+      ) {
+        event.preventDefault();
+        setOpen(false);
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || modal.hidden) return;
+      if (modal.querySelector(".workspace-modal:not([hidden])")) return;
+      setOpen(false);
+    });
+  })();
+</script>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
@@ -1340,7 +1409,7 @@
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261019-assets"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/stock-bulk.js' %}?v=20261019-assets"></script>
+<script defer src="{% static 'js/stock-bulk.js' %}?v=20261020-assets"></script>
 <script
   defer
   src="{% static 'js/serial-scan.js' %}?v=9"
