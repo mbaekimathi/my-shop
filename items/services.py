@@ -2078,13 +2078,16 @@ def _parse_movement_lines(data, movement_type: str):
         note = (raw_notes[index] if index < len(raw_notes) else "").strip()
         line_label = f"Item line {index + 1}"
 
-        if tracks_serial:
-            if not serials:
-                continue
+        if tracks_serial and serials:
             if len(serials) != len(set(serials)):
                 errors.append(f"{line_label}: duplicate serial numbers are not allowed.")
                 continue
             quantity = _quantize_qty(len(serials))
+        elif tracks_serial and movement_type != StockMovementType.REQUEST:
+            # Stock in/out for tracked items always go through serials.
+            # Transfers (REQUEST) may be submitted by quantity only — the
+            # sender's serials are auto-picked in apply_stock_movement.
+            continue
         else:
             qty_raw = (raw_qtys[index] if index < len(raw_qtys) else "").strip()
             if not qty_raw:
@@ -2876,6 +2879,33 @@ def apply_stock_movement(
                     StockMovementType.OUT,
                     StockMovementType.REQUEST,
                 }:
+                    if movement_type == StockMovementType.REQUEST and not serials:
+                        # Transfers may be submitted by quantity only — auto-pick
+                        # available serials at the sending shop so the line still
+                        # carries specific units for the receiver to confirm.
+                        wanted = int(line["quantity"])
+                        if line["quantity"] != wanted:
+                            errors.append(
+                                f"“{item.name}” at {shop.name}: serial items "
+                                "transfer in whole units — select serials or "
+                                "enter a whole quantity."
+                            )
+                            continue
+                        picked_rows = list(
+                            ItemSerial.objects.select_for_update()
+                            .filter(item=item, shop=shop, is_available=True)
+                            .order_by("serial_number")[:wanted]
+                        )
+                        if len(picked_rows) != wanted:
+                            errors.append(
+                                f"“{item.name}”: only {len(picked_rows)} serial"
+                                f"{'s' if len(picked_rows) != 1 else ''} in stock at "
+                                f"{shop.name} (transfer {wanted}). Select serials "
+                                "or lower the quantity."
+                            )
+                            continue
+                        serials = [row.serial_number for row in picked_rows]
+                        line["serial_numbers"] = serials
                     if not serials:
                         errors.append(
                             f"“{item.name}” at {shop.name} requires serial numbers."

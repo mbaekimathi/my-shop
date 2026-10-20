@@ -35,8 +35,9 @@
           type="search"
           name="q"
           value="{{ search }}"
-          placeholder="Item or category…"
-          aria-label="Search items"
+          placeholder="Item, category, or serial…"
+          aria-label="Search items or serials"
+          data-serial-scan
         >
       </label>
 
@@ -67,7 +68,7 @@
         {% for row in rows %}
         <tr>
           <td class="stock-serials-col--item" data-label="Item">
-            <a class="stock-serial-item-link" href="{{ row.detail_url }}">
+            <a class="stock-serial-item-link" href="{{ row.detail_url }}{% if row.serial_match %}?q={{ search|urlencode }}{% endif %}">
               <strong>{{ row.item.name }}</strong>
               <span class="stock-report-from">{{ row.item.category }}</span>
             </a>
@@ -99,4 +100,12 @@
   </div>
   {% endif %}
 </section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script
+  src="{% static 'js/serial-scan.js' %}?v=8"
+  data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
+></script>
 {% endblock %}

@@ -573,18 +573,32 @@
       }
     };
 
+    const dispatchCreateSerialSettled = (detail = {}) => {
+      createSerialEntry?.dispatchEvent(
+        new CustomEvent("myshop:serial-commit-settled", {
+          bubbles: true,
+          detail,
+        })
+      );
+    };
+
     const commitCreateSerialEntry = async ({ serial: override } = {}) => {
       if (createSerialCommitBusy || !createSerialEntry || !activeCreateSerialRow) {
+        dispatchCreateSerialSettled({ ok: false, reason: "busy" });
         return false;
       }
       let serial = normalizeCreateSerial(override || createSerialEntry.value);
-      if (!serial) return false;
+      if (!serial) {
+        dispatchCreateSerialSettled({ ok: false, reason: "empty" });
+        return false;
+      }
       const now = Date.now();
       if (
         serial === lastCreateSerialCommit &&
         now - lastCreateSerialCommitAt < 1000
       ) {
         createSerialEntry.value = "";
+        dispatchCreateSerialSettled({ ok: false, reason: "dedupe", serial });
         return false;
       }
       if (modalCreateSerials().includes(serial)) {
@@ -595,12 +609,14 @@
           700
         );
         createSerialEntry.focus?.();
+        dispatchCreateSerialSettled({ ok: false, reason: "duplicate", serial });
         return false;
       }
       const avail = Number(activeCreateSerialRow.getAttribute("data-avail") || 0) || 0;
       if (avail > 0 && modalCreateSerials().length >= avail) {
         createSerialEntry.value = "";
         createSerialEntry.focus?.();
+        dispatchCreateSerialSettled({ ok: false, reason: "stock", serial });
         return false;
       }
       const root = createSerialEntry.closest("[data-serial-search-root]");
@@ -658,12 +674,7 @@
         createSerialCommitBusy = false;
         createSerialEntry.value = "";
         createSerialEntry.focus?.();
-        createSerialEntry.dispatchEvent(
-          new CustomEvent("myshop:serial-commit-settled", {
-            bubbles: true,
-            detail: { ok, serial },
-          })
-        );
+        dispatchCreateSerialSettled({ ok, serial });
       }
     };
 
@@ -739,18 +750,19 @@
         focusQty();
       });
       if (tracksSerial) {
-        const openSerial = (event) => {
-          event.preventDefault();
-          openCreateSerialModal(row);
+        // Serial-tracked items accept a typed quantity: the server auto-picks
+        // available serials at this shop. Typing clears any picked serials so
+        // quantity and serials stay consistent. Clicking elsewhere on the row
+        // still opens the serial picker.
+        const onManualQty = () => {
+          const serialHidden = row.querySelector("[data-stock-create-serials]");
+          if (serialHidden && serialHidden.value) serialHidden.value = "";
+          syncRowEnabled(row);
+          syncSelectedCount();
+          captureSelectedQtys();
         };
-        qty.addEventListener("click", openSerial);
-        qty.addEventListener("focus", openSerial);
-        qty.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            openCreateSerialModal(row);
-          }
-        });
+        qty.addEventListener("input", onManualQty);
+        qty.addEventListener("change", onManualQty);
       } else {
         qty.addEventListener("input", () => {
           syncRowEnabled(row);
@@ -816,8 +828,8 @@
         if (text) {
           text.textContent =
             qty <= 3
-              ? `Only ${qty} left — select serials to send`
-              : `${qty} available — select serials to send`;
+              ? `Only ${qty} left — enter qty or pick serials`
+              : `${qty} available — enter qty or pick serials`;
         }
       } else if (qty <= 3) {
         el.classList.add("is-low");
@@ -887,21 +899,22 @@
         const qtyValue = item.trackSerial
           ? item.serials?.length
             ? String(item.serials.length)
-            : ""
+            : item.qty || ""
           : item.qty || "";
         const qtyControl = item.trackSerial
           ? `<input
-            type="text"
+            type="number"
             class="stock-create-qty stock-create-qty--serial"
             name="quantity"
+            min="1"
+            step="1"
             value="${escapeHtml(qtyValue)}"
             placeholder="0"
             inputmode="numeric"
-            readonly
             data-stock-create-qty
             data-stock-create-serial-open
-            aria-label="Select serials to send for ${escapeHtml(item.name)}"
-            title="Click to select serial numbers"
+            aria-label="Serials or quantity to send for ${escapeHtml(item.name)}"
+            title="Enter a quantity to auto-pick serials, or click the row to select serial numbers"
           >`
           : `<input
             type="number"
@@ -1086,7 +1099,7 @@
           } else if (visibleCount) {
             itemsHint.textContent = includeEmpty
               ? `Showing all items at ${shopName || "this shop"} (including out of stock). Enter qty, or select serials for serial-tracked items.`
-              : `In-stock items at ${shopName || "this shop"}. Serial items require selecting serials; qty follows your selection.`;
+              : `In-stock items at ${shopName || "this shop"}. Serial items: enter qty to auto-pick serials, or click a row to pick them.`;
           } else {
             itemsHint.textContent =
               "Search an item name to load matches, then enter qty or select serials to send.";
@@ -1188,11 +1201,12 @@
       for (const row of activeRows) {
         if (!rowTracksSerial(row)) continue;
         const serials = rowSerials(row);
+        if (!serials.length) continue; // quantity-only — server auto-picks serials
         const qty = Number(row.querySelector("[data-stock-create-qty]")?.value || 0);
-        if (!serials.length || serials.length !== qty) {
+        if (serials.length !== qty) {
           rows.forEach((r) => syncRowEnabled(r));
           window.alert(
-            "Select serial numbers for serial-tracked items. Quantity follows the serials you pick."
+            "Serial count and quantity must match — pick serials or enter a quantity to auto-pick."
           );
           openCreateSerialModal(row);
           return;

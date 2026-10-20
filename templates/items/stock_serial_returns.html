@@ -35,8 +35,9 @@
           type="search"
           name="q"
           value="{{ search }}"
-          placeholder="Client name or phone…"
-          aria-label="Search clients"
+          placeholder="Client, phone, or serial…"
+          aria-label="Search clients or serials"
+          data-serial-scan
         >
       </label>
 
@@ -95,4 +96,12 @@
   </div>
   {% endif %}
 </section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script
+  src="{% static 'js/serial-scan.js' %}?v=8"
+  data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
+></script>
 {% endblock %}

@@ -2477,6 +2477,81 @@ class StockSerialDetailShopFilterTests(TestCase):
         self.assertEqual(serials, ["SDA-OUT-1"])
 
 
+class StockSerialsIndexScanSearchTests(TestCase):
+    def setUp(self):
+        self.password = "serial-index-pass"
+        self.user = User.objects.create_user(
+            username="840033",
+            password=self.password,
+            email="serial-index@test.local",
+            first_name="SERIAL",
+            last_name="INDEX",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840033",
+            phone_country_code="+254",
+            phone_number="700000946",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="INDEX SHOP",
+            location="NAIROBI",
+            email="index-shop@test.local",
+            phone_number="0700000947",
+            login_code="840147",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        from items.models import Item, ItemSerial
+
+        self.item = Item.objects.create(
+            category="PHONES",
+            name="INDEX HANDSET",
+            minimum_selling_price=Decimal("1000.00"),
+            shop_price=Decimal("1500.00"),
+            track_serial_number=True,
+            created_by=self.profile,
+        )
+        ItemSerial.objects.create(
+            item=self.item,
+            shop=self.shop,
+            serial_number="SIX-001",
+            is_available=True,
+        )
+        self.index_url = "/it-support/stock-management/"
+        self.detail_url = f"/it-support/stock-management/serials/{self.item.pk}/"
+
+    def test_exact_serial_redirects_to_item_detail(self):
+        self.client.login(username="840033", password=self.password)
+        resp = self.client.get(
+            self.index_url, {"mode": "serials", "q": "SIX-001"}
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            resp["Location"], f"{self.detail_url}?q=SIX-001"
+        )
+
+    def test_partial_serial_shows_owning_item(self):
+        self.client.login(username="840033", password=self.password)
+        resp = self.client.get(self.index_url, {"mode": "serials", "q": "SIX-"})
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.context["rows"]
+        self.assertEqual([row["item"].pk for row in rows], [self.item.pk])
+        self.assertTrue(rows[0]["serial_match"])
+        self.assertContains(resp, f"{self.detail_url}?q=SIX-")
+
+    def test_item_name_search_does_not_redirect(self):
+        self.client.login(username="840033", password=self.password)
+        resp = self.client.get(self.index_url, {"mode": "serials", "q": "HANDSET"})
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.context["rows"]
+        self.assertEqual([row["item"].pk for row in rows], [self.item.pk])
+        self.assertFalse(rows[0]["serial_match"])
+
+
 class DecimalStockQuantityTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
@@ -2667,17 +2742,18 @@ class DecimalStockQuantityTests(TestCase):
             Decimal("2.000"),
         )
 
-        missing = QueryDict(mutable=True)
-        missing.update(
+        # Quantity-only transfer of more than the serials in stock fails.
+        shortfall = QueryDict(mutable=True)
+        shortfall.update(
             {
                 "shop_id": str(self.shop.pk),
                 "requested_from_shop_id": str(destination.pk),
                 "item_id": str(self.serial_item.pk),
-                "quantity": "2",
+                "quantity": "3",
             }
         )
         with self.assertRaises(ValidationError):
-            apply_stock_movement(self.profile, StockMovementType.REQUEST, missing)
+            apply_stock_movement(self.profile, StockMovementType.REQUEST, shortfall)
 
         transfer = QueryDict(mutable=True)
         transfer.update(
@@ -2724,6 +2800,120 @@ class DecimalStockQuantityTests(TestCase):
             ),
             {"SN-TX-1", "SN-TX-2"},
         )
+
+    def test_serial_transfer_quantity_only_autopicks_serials(self):
+        from django.http import QueryDict
+
+        from items.models import (
+            ItemSerial,
+            ShopStock,
+            StockMovementType,
+            StockRequestStatus,
+        )
+        from items.services import apply_stock_movement, respond_to_stock_request
+
+        destination = Shop.objects.create(
+            name="DECIMAL DEST",
+            location="MOMBASA",
+            email="decimal-dest@test.local",
+            phone_number="0700000998",
+            login_code="840998",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        inbound = QueryDict(mutable=True)
+        inbound.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.serial_item.pk),
+                "serial_numbers": "SN-AP-1\nSN-AP-2\nSN-AP-3",
+                "buying_price": "900.00",
+            }
+        )
+        apply_stock_movement(self.profile, StockMovementType.IN, inbound)
+
+        transfer = QueryDict(mutable=True)
+        transfer.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "requested_from_shop_id": str(destination.pk),
+                "item_id": str(self.serial_item.pk),
+                "quantity": "2",
+            }
+        )
+        movement = apply_stock_movement(
+            self.profile, StockMovementType.REQUEST, transfer
+        )
+        line = movement.lines.get()
+        self.assertEqual(line.quantity, Decimal("2.000"))
+        self.assertEqual(len(line.serial_numbers), 2)
+        self.assertTrue(
+            set(line.serial_numbers).issubset({"SN-AP-1", "SN-AP-2", "SN-AP-3"})
+        )
+        self.assertEqual(movement.request_status, StockRequestStatus.PENDING)
+
+        respond_to_stock_request(
+            movement=movement,
+            profile=self.profile,
+            decision="accept",
+            login_code=self.profile.employee_id,
+            quantities_by_line={str(line.pk): "2"},
+        )
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop, item=self.serial_item).quantity,
+            Decimal("1.000"),
+        )
+        self.assertEqual(
+            ShopStock.objects.get(shop=destination, item=self.serial_item).quantity,
+            Decimal("2.000"),
+        )
+        self.assertEqual(
+            set(
+                ItemSerial.objects.filter(
+                    item=self.serial_item, shop=destination, is_available=True
+                ).values_list("serial_number", flat=True)
+            ),
+            set(line.serial_numbers),
+        )
+
+    def test_serial_transfer_quantity_only_rejects_fractional_qty(self):
+        from django.core.exceptions import ValidationError
+        from django.http import QueryDict
+
+        from items.models import StockMovementType
+        from items.services import apply_stock_movement
+
+        destination = Shop.objects.create(
+            name="DECIMAL DEST",
+            location="MOMBASA",
+            email="decimal-dest@test.local",
+            phone_number="0700000998",
+            login_code="840998",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        inbound = QueryDict(mutable=True)
+        inbound.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.serial_item.pk),
+                "serial_numbers": "SN-FR-1\nSN-FR-2",
+                "buying_price": "900.00",
+            }
+        )
+        apply_stock_movement(self.profile, StockMovementType.IN, inbound)
+
+        fractional = QueryDict(mutable=True)
+        fractional.update(
+            {
+                "shop_id": str(self.shop.pk),
+                "requested_from_shop_id": str(destination.pk),
+                "item_id": str(self.serial_item.pk),
+                "quantity": "1.5",
+            }
+        )
+        with self.assertRaises(ValidationError):
+            apply_stock_movement(self.profile, StockMovementType.REQUEST, fractional)
 
 
 class RequestItemAuditTests(TestCase):

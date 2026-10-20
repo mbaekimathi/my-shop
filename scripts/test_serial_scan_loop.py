@@ -34,14 +34,14 @@ def check_static_files() -> list[tuple[str, bool, str]]:
     checks = []
     vendor = ROOT / "static" / "vendor" / "html5-qrcode.min.js"
     js = ROOT / "static" / "js" / "serial-scan.js"
-    css = ROOT / "static" / "css" / "app.css"
+    css = ROOT / "static" / "css" / "app" / "pos.css"
     checks.append(("vendor lib", vendor.exists() and vendor.stat().st_size > 10_000, str(vendor)))
     checks.append(("serial-scan.js", js.exists() and "MyShopSerialScan" in js.read_text(encoding="utf-8"), str(js)))
     checks.append(
         (
             "css scanner styles",
             ".serial-scan-modal" in css.read_text(encoding="utf-8"),
-            "app.css includes .serial-scan-modal",
+            "app/pos.css includes .serial-scan-modal",
         )
     )
     return checks
@@ -53,7 +53,9 @@ def check_page_wiring() -> list[tuple[str, bool, str]]:
         "buy stock": ROOT / "templates" / "shops" / "my_shop_buy_stock.html",
         "workspace": ROOT / "templates" / "shops" / "my_shop_workspace.html",
         "stock requests": ROOT / "templates" / "shops" / "my_shop_stock_requests.html",
+        "serials index": ROOT / "templates" / "items" / "stock_serials.html",
         "serial detail": ROOT / "templates" / "items" / "stock_serial_detail.html",
+        "serial returns": ROOT / "templates" / "items" / "stock_serial_returns.html",
         "return client": ROOT / "templates" / "items" / "stock_serial_return_client.html",
     }
     results = []
@@ -63,8 +65,12 @@ def check_page_wiring() -> list[tuple[str, bool, str]]:
         results.append((f"page wiring:{label}", ok, str(path)))
     detail = (ROOT / "templates" / "items" / "stock_serial_detail.html").read_text(encoding="utf-8")
     returns = (ROOT / "templates" / "items" / "stock_serial_return_client.html").read_text(encoding="utf-8")
+    index = (ROOT / "templates" / "items" / "stock_serials.html").read_text(encoding="utf-8")
+    serial_returns = (ROOT / "templates" / "items" / "stock_serial_returns.html").read_text(encoding="utf-8")
     results.append(("data-serial-scan:detail", "data-serial-scan" in detail, "stock_serial_detail.html"))
     results.append(("data-serial-scan:returns", "data-serial-scan" in returns, "stock_serial_return_client.html"))
+    results.append(("data-serial-scan:index", "data-serial-scan" in index, "stock_serials.html"))
+    results.append(("data-serial-scan:serial-returns", "data-serial-scan" in serial_returns, "stock_serial_returns.html"))
     return results
 
 

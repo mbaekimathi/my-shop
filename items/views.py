@@ -7359,6 +7359,7 @@ def stock_serials(request, profile, meta, module):
     shops_label = _serial_shops_label(display_shops)
 
     items = []
+    serial_matched_ids: set = set()
     shop_in_map: dict[int, dict[int, int]] = {}
     if shop_ids:
         items_qs = Item.objects.filter(track_serial_number=True).annotate(
@@ -7380,9 +7381,36 @@ def stock_serials(request, profile, meta, module):
         )
         items_qs = items_qs.filter(serial_total__gt=0).order_by("category", "name")
         if search:
-            items_qs = items_qs.filter(
-                Q(name__icontains=search) | Q(category__icontains=search)
+            name_filter = Q(name__icontains=search) | Q(category__icontains=search)
+            # Subquery keeps the serial-match join from skewing the Count
+            # annotations above.
+            serial_matched_ids = set(
+                ItemSerial.objects.filter(serial_number__icontains=search)
+                .filter(Q(shop_id__in=shop_ids) | Q(shop__isnull=True))
+                .values_list("item_id", flat=True)
+                .distinct()
             )
+            if not items_qs.filter(name_filter).exists():
+                # A scanned serial resolves straight to that item's serial
+                # list when it belongs to exactly one item.
+                exact = set(
+                    ItemSerial.objects.filter(serial_number__iexact=search)
+                    .filter(Q(shop_id__in=shop_ids) | Q(shop__isnull=True))
+                    .values_list("item_id", flat=True)
+                    .distinct()
+                )
+                if len(exact) == 1:
+                    detail = reverse(
+                        "employees:stock_serial_detail",
+                        kwargs={
+                            "role_segment": role_url_segment(profile.role),
+                            "item_id": next(iter(exact)),
+                        },
+                    )
+                    from urllib.parse import urlencode
+
+                    return redirect(f"{detail}?{urlencode({'q': search})}")
+            items_qs = items_qs.filter(name_filter | Q(pk__in=serial_matched_ids))
 
         items = list(items_qs)
         item_ids = [item.pk for item in items]
@@ -7412,6 +7440,7 @@ def stock_serials(request, profile, meta, module):
                 "in_stock": item.serial_in_stock,
                 "out": item.serial_out,
                 "total": item.serial_total,
+                "serial_match": item.pk in serial_matched_ids,
                 "detail_url": reverse(
                     "employees:stock_serial_detail",
                     kwargs={
@@ -7716,8 +7745,11 @@ def stock_serial_returns(request, profile, meta, module):
                 "return_count": 0,
                 "shop_returns": [0] * len(display_shops),
                 "last_returned_at": row["returned_at"],
+                "serials": set(),
             }
             clients[key] = entry
+        if row.get("serial_number"):
+            entry["serials"].add(str(row["serial_number"]).strip().lower())
         entry["return_count"] += 1
         shop_pk = row.get("shop_id")
         if shop_pk in shop_index:
@@ -7736,7 +7768,9 @@ def stock_serial_returns(request, profile, meta, module):
         if search:
             needle = search.lower()
             hay = f"{entry['client_name']} {entry['client_phone']}".lower()
-            if needle not in hay:
+            if needle not in hay and not any(
+                needle in serial for serial in entry["serials"]
+            ):
                 continue
         if entry["client_id"]:
             detail_url = reverse(
@@ -7756,7 +7790,10 @@ def stock_serial_returns(request, profile, meta, module):
             detail_url = (
                 f"{detail_url}?{urlencode({'phone': entry['client_phone'] or '', 'name': entry['client_name']})}"
             )
-        rows.append({**entry, "detail_url": detail_url})
+        rows.append(
+            {k: v for k, v in entry.items() if k != "serials"}
+            | {"detail_url": detail_url}
+        )
 
     rows.sort(
         key=lambda r: (
