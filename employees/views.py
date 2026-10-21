@@ -73,6 +73,7 @@ from .access import (
     active_employee_required,
     get_profile,
     get_profile_for_request,
+    redirect_to_role_home,
     role_required,
     role_from_url_segment,
     role_url_segment,
@@ -451,7 +452,7 @@ def employee_login(request):
         if profile and profile.is_active_employee:
             if next_url:
                 return redirect(next_url)
-            return redirect("employees:role_super_admin_dashboard")
+            return redirect_to_role_home(profile)
         if profile and profile.status == EmployeeStatus.PENDING_APPROVAL:
             return redirect("employees:pending")
         from .portal_auth import end_employee_session
@@ -489,7 +490,7 @@ def employee_login(request):
                     begin_employee_session(request, user, profile)
                     if next_url:
                         return redirect(next_url)
-                    return redirect("employees:role_super_admin_dashboard")
+                    return redirect_to_role_home(profile)
 
     return render_portal_login(
         request,
@@ -506,7 +507,7 @@ def employee_register(request):
     if request.user.is_authenticated:
         profile = get_profile(request.user)
         if profile and profile.is_active_employee:
-            return redirect("employees:role_super_admin_dashboard")
+            return redirect_to_role_home(profile)
         if profile and profile.status == EmployeeStatus.PENDING_APPROVAL:
             return redirect("employees:pending")
 
@@ -608,8 +609,8 @@ def pending_approval(request):
 
 @active_employee_required
 def dashboard(request):
-    """Entry point — send active employees to the dashboard."""
-    return redirect("employees:role_super_admin_dashboard")
+    """Entry point — send active employees to their role dashboard."""
+    return redirect_to_role_home(get_profile_for_request(request))
 
 
 @role_required(EmployeeRole.EMPLOYEE)

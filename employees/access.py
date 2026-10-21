@@ -236,6 +236,16 @@ def role_required(*allowed_roles):
         @wraps(view_func)
         @active_employee_required
         def wrapper(request, *args, **kwargs):
+            meta = get_employee_meta_for_request(request)
+            if meta is None or meta["role"] not in allowed_roles:
+                messages.error(
+                    request,
+                    "You do not have permission to access that page.",
+                    extra_tags="unauthorized",
+                )
+                if meta is not None:
+                    return redirect(role_home_url_name(meta["role"]))
+                return redirect("employees:login")
             return view_func(request, *args, **kwargs)
 
         return wrapper
