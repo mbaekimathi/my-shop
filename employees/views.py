@@ -447,7 +447,12 @@ def employee_login(request):
         request.POST.get("next") if request.method == "POST" else request.GET.get("next"),
     )
 
-    if request.user.is_authenticated:
+    # ?switch=1 (or a posted switch flag) forces the login form even when an
+    # employee session already exists, so a second tab can sign in instead of
+    # being auto-redirected into the current session.
+    switching = request.GET.get("switch") or request.POST.get("switch")
+
+    if request.user.is_authenticated and not switching:
         profile = get_profile(request.user)
         if profile and profile.is_active_employee:
             if next_url:
@@ -498,6 +503,7 @@ def employee_login(request):
         employee_error=error,
         next_url=next_url,
         employee_username=username,
+        switch=switching,
     )
 
 

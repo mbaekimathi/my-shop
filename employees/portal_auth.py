@@ -16,6 +16,7 @@ def portal_login_context(
     employee_username="",
     shop_login_code="",
     rate_limited=False,
+    switch=False,
 ):
     if rate_limited and not employee_error and not shop_error:
         message = "Too many sign-in attempts. Wait a moment and try again."
@@ -30,6 +31,7 @@ def portal_login_context(
         "next_url": next_url or "",
         "employee_username": employee_username or "",
         "shop_login_code": shop_login_code or "",
+        "switch": bool(switch),
     }
 
 

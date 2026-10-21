@@ -24,7 +24,7 @@
   data-auth-required="1"
   data-auth-mode="{% if workspace.is_shop_portal %}shop{% else %}employee{% endif %}"
   data-login-url="{% if workspace.is_shop_portal %}{% url 'employees:shop_login' %}{% else %}{% url 'employees:login' %}{% endif %}"
-  data-alt-login-url="{% if workspace.is_shop_portal %}{% url 'employees:login' %}{% else %}{% url 'employees:shop_login' %}{% endif %}"
+  data-alt-login-url="{% if workspace.is_shop_portal %}{% url 'employees:login' %}?switch=1{% else %}{% url 'employees:shop_login' %}?switch=1{% endif %}"
   data-dashboard-url="{{ page_sidebar.dashboard_url }}"
 >
   <div class="workspace-overlay" data-workspace-overlay hidden></div>
@@ -55,7 +55,7 @@
         <a
           class="btn btn--ghost-dark"
           data-session-tab-alt-login
-          href="{% if workspace.is_shop_portal %}{% url 'employees:login' %}{% else %}{% url 'employees:shop_login' %}{% endif %}"
+          href="{% if workspace.is_shop_portal %}{% url 'employees:login' %}?switch=1{% else %}{% url 'employees:shop_login' %}?switch=1{% endif %}"
         >
           Log in to the other portal
         </a>

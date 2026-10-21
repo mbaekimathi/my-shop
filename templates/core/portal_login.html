@@ -150,6 +150,7 @@
         >
           {% csrf_token %}
           {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
+          {% if switch %}<input type="hidden" name="switch" value="1">{% endif %}
           <label class="field">
             <span>Employee ID</span>
             <input
@@ -232,6 +233,7 @@
           autocomplete="on"
         >
           {% csrf_token %}
+          {% if switch %}<input type="hidden" name="switch" value="1">{% endif %}
           <label class="field">
             <span>Shop code</span>
             <input

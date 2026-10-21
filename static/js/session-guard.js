@@ -183,7 +183,9 @@ function altLoginUrl(mode) {
   const root = authRoot();
   const declared = root?.getAttribute("data-alt-login-url") || "";
   if (declared) return declared;
-  return mode === "shop" ? "/employees/login/" : "/employees/shops/login/";
+  return mode === "shop"
+    ? "/employees/login/?switch=1"
+    : "/employees/shops/login/?switch=1";
 }
 
 function blockPanel() {

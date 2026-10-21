@@ -545,8 +545,12 @@ def shop_portal_login(request):
         render_portal_login,
     )
 
+    # ?switch=1 forces the login form even when a shop session already exists,
+    # so a second tab can sign in instead of resuming the current session.
+    switching = request.GET.get("switch") or request.POST.get("switch")
+
     portal_shop = resolve_portal_shop(request)
-    if portal_shop is not None and request.method == "GET":
+    if portal_shop is not None and request.method == "GET" and not switching:
         return redirect(_shop_workspace_url(portal_shop))
 
     # Viewing the login form must not end an existing employee session.
@@ -574,6 +578,7 @@ def shop_portal_login(request):
         login_mode="shop",
         shop_error=error,
         shop_login_code=login_code,
+        switch=switching,
     )
 
 
