@@ -1,0 +1,144 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Suspended items — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="item-panel item-panel--dense item-panel--shop-cols-open"
+  data-animate="rise"
+  data-item-total="{{ item_count }}"
+>
+  <header class="item-panel-head item-discounts-head">
+    <div class="item-panel-head-top">
+      <div class="item-discounts-intro">
+        <p class="item-discounts-kicker">Item management</p>
+        <h2>Suspended items</h2>
+        <p>Items suspended from sale, with on-hand stock for each shop.</p>
+      </div>
+      <div class="item-discounts-head-actions">
+        <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ item_management_url }}">
+          <i data-lucide="tags" aria-hidden="true"></i>
+          <span>Registered items</span>
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+        </a>
+        <p class="item-count" data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</p>
+      </div>
+    </div>
+
+    {% if item_count %}
+    <div class="item-search item-discounts-search">
+      <label class="item-search-field">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input
+          type="search"
+          placeholder="Search suspended items…"
+          autocomplete="off"
+          data-item-search
+          aria-label="Search suspended items"
+        >
+      </label>
+    </div>
+    {% endif %}
+  </header>
+
+  {% if not can_toggle_suspend %}
+  <p class="stock-settings-readonly">
+    <i data-lucide="lock" aria-hidden="true"></i>
+    <span>View only — you need suspend permission on Item Management to unsuspend items.</span>
+  </p>
+  {% endif %}
+
+  {% if item_count %}
+  <div class="item-table-wrap item-table-wrap--discounts">
+    <table class="item-table item-table--dense">
+      <thead>
+        <tr>
+          <th scope="col" class="item-col--item">Item</th>
+          <th scope="col" class="item-col--range">Category</th>
+          {% for shop in stock_shops %}
+          <th scope="col" class="item-col--shop" title="On-hand stock at {{ shop.name }}">{{ shop.name }}</th>
+          {% endfor %}
+          <th scope="col" class="item-col--discount-num" title="Total on-hand stock across shops">Total</th>
+          {% if can_toggle_suspend %}
+          <th scope="col" class="item-col--actions"><span class="visually-hidden">Actions</span></th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in suspended_rows %}
+        <tr
+          class="item-row--suspended"
+          data-item-row
+          data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }} {{ row.item.description|lower }}"
+        >
+          <td class="item-cell--item" data-label="Item">
+            <div class="item-person">
+              {% if row.item.image %}
+              <img class="item-thumb" src="{{ row.item.image.url }}" alt="" width="32" height="32">
+              {% else %}
+              <span class="item-thumb item-thumb--empty" aria-hidden="true">
+                <i data-lucide="package"></i>
+              </span>
+              {% endif %}
+              <div class="item-person-copy">
+                <strong>{{ row.item.name }}</strong>
+                {% if row.item.description %}
+                <small>{{ row.item.description|truncatechars:56 }}</small>
+                {% endif %}
+              </div>
+            </div>
+          </td>
+          <td data-label="Category">{{ row.item.category|default:"—" }}</td>
+          {% for shop_row in row.shop_stock_rows %}
+          <td class="item-cell--shop" data-label="{{ shop_row.shop_name }}">
+            {% if shop_row.has_stock %}
+            <strong>{{ shop_row.quantity }}</strong>
+            {% else %}
+            <span class="item-sold-empty">{{ shop_row.quantity }}</span>
+            {% endif %}
+          </td>
+          {% endfor %}
+          <td class="item-cell--discount-num" data-label="Total">
+            <strong>{{ row.total_qty }}</strong>
+          </td>
+          {% if can_toggle_suspend %}
+          <td class="item-cell--actions" data-label="Actions">
+            <form class="item-inline-form" method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="unsuspend">
+              <input type="hidden" name="item_id" value="{{ row.item.pk }}">
+              <button
+                class="item-discount-save"
+                type="submit"
+                title="Unsuspend item"
+                aria-label="Unsuspend {{ row.item.name }}"
+              >
+                <i data-lucide="play" aria-hidden="true"></i>
+                <span>Unsuspend</span>
+              </button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="item-search-empty" data-item-no-results hidden>
+    <i data-lucide="search-x" aria-hidden="true"></i>
+    <p>No suspended items match your search.</p>
+  </div>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="circle-check" aria-hidden="true"></i>
+    <p>No suspended items. All registered items are active.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/item-search.js' %}?v=2"></script>
+{% endblock %}

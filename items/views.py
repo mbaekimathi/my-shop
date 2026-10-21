@@ -255,12 +255,14 @@ def item_management(request, profile, meta, module, page_sidebar):
     from employees.workspace import item_management_url
 
     mode = (request.GET.get("mode") or "view").strip().lower()
-    if mode not in {"view", "discounts", "activity-audits"}:
+    if mode not in {"view", "discounts", "activity-audits", "suspended"}:
         mode = "view"
     if mode == "discounts":
         return item_discounts(request, profile, meta, module)
     if mode == "activity-audits":
         return item_activity_audits(request, profile, meta, module)
+    if mode == "suspended":
+        return item_suspended(request, profile, meta, module)
 
     form_data = dict(EMPTY_FORM)
     form_errors = []
@@ -417,6 +419,7 @@ def item_management(request, profile, meta, module, page_sidebar):
             "edit_item": edit_item,
             "module_permissions": caps,
             "item_discounts_url": item_management_url(profile.role, "discounts"),
+            "item_suspended_url": item_management_url(profile.role, "suspended"),
             "item_activity_audits_url": item_management_url(
                 profile.role, "activity-audits"
             ),
@@ -838,6 +841,112 @@ def item_activity_audits(request, profile, meta, module):
             "report_month_value": filter_context["report_month_value"],
             "report_year_value": filter_context["report_year_value"],
             **trail,
+        },
+    )
+
+
+@require_http_methods(["GET", "POST"])
+def item_suspended(request, profile, meta, module):
+    """Suspended items with per-shop on-hand stock and an unsuspend action."""
+    from decimal import Decimal
+
+    from employees.module_permissions import (
+        employee_may,
+        module_capabilities,
+        require_module_permission,
+    )
+    from employees.workspace import item_management_url, sidebar_for_item_management
+
+    suspended_url = item_management_url(profile.role, "suspended")
+
+    if request.method == "POST":
+        denied = require_module_permission(
+            request, profile, "item-management", "toggle_suspend"
+        )
+        if denied is not None:
+            return denied
+        action = (request.POST.get("action") or "unsuspend").strip()
+        if action != "unsuspend":
+            messages.error(request, "Unknown action.")
+            return redirect(suspended_url)
+        item_id = (request.POST.get("item_id") or "").strip()
+        item = get_object_or_404(Item, pk=item_id)
+        if item.is_suspended:
+            toggle_item_suspended(item, actor=profile)
+        messages.success(request, f"Item “{item.name}” unsuspended.")
+        return redirect(suspended_url)
+
+    denied = require_module_permission(request, profile, "item-management", "view")
+    if denied is not None:
+        return denied
+
+    can_toggle = employee_may(profile, "item-management", "toggle_suspend")
+    stock_shops = list(_pricing_shops_for_profile(profile))
+    shop_ids = [shop.pk for shop in stock_shops]
+
+    items = list(Item.objects.filter(is_suspended=True).order_by("category", "name"))
+    item_ids = [item.pk for item in items]
+
+    qty_map = {}
+    if item_ids:
+        stock_qs = ShopStock.objects.filter(item_id__in=item_ids)
+        if shop_ids:
+            stock_qs = stock_qs.filter(shop_id__in=shop_ids)
+        for item_id, shop_id, qty in stock_qs.values_list(
+            "item_id", "shop_id", "quantity"
+        ):
+            qty_map.setdefault(item_id, {})[shop_id] = qty
+
+    suspended_rows = []
+    for item in items:
+        per_shop = qty_map.get(item.pk) or {}
+        total = sum(per_shop.values(), Decimal("0"))
+        suspended_rows.append(
+            {
+                "item": item,
+                "shop_stock_rows": [
+                    {
+                        "shop_name": shop.name,
+                        "quantity": format(
+                            (per_shop.get(shop.pk) or Decimal("0")).normalize(), "f"
+                        ),
+                        "has_stock": (per_shop.get(shop.pk) or 0) > 0,
+                    }
+                    for shop in stock_shops
+                ],
+                "total_qty": format(total.normalize(), "f"),
+            }
+        )
+
+    page_sidebar = sidebar_for_item_management(
+        profile.role, profile=profile, active_mode="suspended"
+    )
+    meta = {
+        **meta,
+        "title": "Suspended items",
+        "headline": "Suspended items",
+        "summary": (
+            "Items suspended from sale with on-hand stock per shop; "
+            "unsuspend to make an item sellable again."
+        ),
+    }
+
+    return render(
+        request,
+        "items/item_suspended.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "suspended_rows": suspended_rows,
+            "stock_shops": stock_shops,
+            "item_count": len(suspended_rows),
+            "item_management_url": item_management_url(profile.role, "view"),
+            "can_toggle_suspend": can_toggle,
+            "module_permissions": module_capabilities(profile, "item-management"),
         },
     )
 

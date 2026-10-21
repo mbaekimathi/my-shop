@@ -3377,3 +3377,88 @@ class StockSerialReturnClientStatusTests(TestCase):
         page = self.client.get(self.url)
         self.assertContains(page, "In stock")
         self.assertContains(page, "Repaired and restocked")
+class SuspendedItemsPageTests(TestCase):
+    def setUp(self):
+        from items.models import Item, ShopStock
+
+        self.password = "susp-pass"
+        self.user = User.objects.create_user(
+            username="840077",
+            password=self.password,
+            email="susp@test.local",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840077",
+            phone_country_code="+254",
+            phone_number="700000991",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop_a = Shop.objects.create(
+            name="SUSP SHOP A",
+            location="NAIROBI",
+            email="susp-a@test.local",
+            phone_number="0700000991",
+            login_code="840171",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.shop_b = Shop.objects.create(
+            name="SUSP SHOP B",
+            location="MOMBASA",
+            email="susp-b@test.local",
+            phone_number="0700000992",
+            login_code="840172",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.item = Item.objects.create(
+            category="CABLES",
+            name="SUSPENDED CABLE",
+            minimum_selling_price=Decimal("100.00"),
+            shop_price=Decimal("150.00"),
+            is_suspended=True,
+            created_by=self.profile,
+        )
+        self.active_item = Item.objects.create(
+            category="CABLES",
+            name="ACTIVE CABLE",
+            minimum_selling_price=Decimal("50.00"),
+            shop_price=Decimal("70.00"),
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(shop=self.shop_a, item=self.item, quantity=3)
+        ShopStock.objects.create(shop=self.shop_b, item=self.item, quantity=7)
+        self.client.login(username="840077", password=self.password)
+
+    def test_item_management_links_to_suspended_page(self):
+        response = self.client.get("/it-support/item-management/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Suspended items")
+        self.assertContains(response, "mode=suspended")
+
+    def test_suspended_page_lists_stock_per_shop(self):
+        response = self.client.get("/it-support/item-management/?mode=suspended")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "SUSPENDED CABLE")
+        self.assertContains(response, "SUSP SHOP A")
+        self.assertContains(response, "SUSP SHOP B")
+        self.assertNotContains(response, "ACTIVE CABLE")
+        content = response.content.decode()
+        self.assertIn("<strong>3</strong>", content)
+        self.assertIn("<strong>7</strong>", content)
+        self.assertIn("<strong>10</strong>", content)
+
+    def test_unsuspend_action_reactivates_item(self):
+        response = self.client.post(
+            "/it-support/item-management/?mode=suspended",
+            {"action": "unsuspend", "item_id": self.item.pk},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.item.refresh_from_db()
+        self.assertFalse(self.item.is_suspended)
+        page = self.client.get("/it-support/item-management/?mode=suspended")
+        self.assertContains(page, "No suspended items")
+        self.assertNotContains(page, "data-item-row")
