@@ -1752,3 +1752,118 @@ class StoreManagerRoleTests(TestCase):
         self.assertNotEqual(EmployeeRole.SHOP_MANAGER, EmployeeRole.STORE_MANAGER)
         self.assertEqual(EmployeeRole.SHOP_MANAGER.label, "Shop Manager")
         self.assertEqual(EmployeeRole.STORE_MANAGER.label, "Store Manager")
+
+
+class DashboardOverviewTests(TestCase):
+    def setUp(self):
+        from items.models import Item, StockMovement, StockMovementLine, StockMovementType, StockRequestStatus
+        from shops.models import ShopDaySession
+
+        self.user = User.objects.create_user(
+            username="820011", password="dash-pass", first_name="DASH", is_active=True
+        )
+        self.cashier = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="820011",
+            phone_country_code="+254",
+            phone_number="700000921",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        shop_kwargs = {"location": "NAIROBI", "password_hash": "x", "created_by": self.cashier}
+        self.shop_a = Shop.objects.create(
+            name="DASH A", email="da@test.local", phone_number="0700000921",
+            login_code="820111", **shop_kwargs
+        )
+        self.shop_b = Shop.objects.create(
+            name="DASH B", email="db@test.local", phone_number="0700000922",
+            login_code="820112", **shop_kwargs
+        )
+        self.shop_c = Shop.objects.create(
+            name="DASH C", email="dc@test.local", phone_number="0700000923",
+            login_code="820113", **shop_kwargs
+        )
+        self.cashier.assigned_shops.add(self.shop_a, self.shop_b)
+
+        ShopDaySession.objects.create(
+            shop=self.shop_a, opening_cash=1000, opening_mpesa=500, opened_by=self.cashier
+        )
+        ShopDaySession.objects.create(
+            shop=self.shop_c, opening_cash=9999, opening_mpesa=0, opened_by=self.cashier
+        )
+
+        for number, shop, kind, total, paid in (
+            ("DA-1", self.shop_a, ShopReceiptKind.SALE, 300, 300),
+            ("DA-2", self.shop_a, ShopReceiptKind.CREDIT, 200, 50),
+            ("DA-3", self.shop_a, ShopReceiptKind.QUOTATION, 999, 0),
+            ("DC-1", self.shop_c, ShopReceiptKind.SALE, 5000, 5000),
+        ):
+            ShopReceipt.objects.create(
+                shop=shop, receipt_number=number, kind=kind, total=total,
+                amount_paid=paid, created_by=self.cashier,
+            )
+
+        item = Item.objects.create(
+            category="TEST", name="DASH ITEM", minimum_selling_price=10,
+            shop_price=12, created_by=self.cashier,
+        )
+        incoming = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_c,
+            requested_from_shop=self.shop_a,
+            request_status=StockRequestStatus.PENDING,
+            supplier_notified=False,
+            created_by=self.cashier,
+        )
+        StockMovementLine.objects.create(movement=incoming, item=item, quantity=3)
+        StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop_c,
+            requested_from_shop=self.shop_c,
+            request_status=StockRequestStatus.PENDING,
+            created_by=self.cashier,
+        )
+
+    def test_overview_is_scoped_to_allocated_shops(self):
+        from employees.dashboard_services import build_dashboard_overview
+
+        overview = build_dashboard_overview(self.cashier)
+        self.assertTrue(overview["has_shops"])
+
+        opening = overview["opening"]
+        self.assertEqual(opening["total"], 1500)
+        self.assertEqual(opening["opened_count"], 1)
+        self.assertEqual(opening["shop_count"], 2)
+        states = {row["shop"].pk: row["state"] for row in opening["rows"]}
+        self.assertEqual(states, {self.shop_a.pk: "open", self.shop_b.pk: "not_opened"})
+
+        perf = overview["performance"]
+        self.assertEqual(perf["today_sales"], 500)
+        self.assertEqual(perf["today_receipts"], 2)
+        self.assertEqual(perf["credit_outstanding"], 150)
+        self.assertEqual(len(perf["trend"]), 7)
+
+        transfers = overview["transfers"]
+        self.assertEqual(transfers["incoming_count"], 1)
+        self.assertEqual(transfers["outgoing_count"], 0)
+        self.assertEqual(transfers["unseen_count"], 1)
+        self.assertEqual(transfers["items"][0]["units"], 3)
+        self.assertIn("DASH C", transfers["items"][0]["title"])
+
+    def test_role_home_renders_overview(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/shop-cashier/")
+        if response.status_code == 404:
+            from django.urls import reverse
+
+            response = self.client.get(reverse("employees:role_shop_cashier"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Opening balance today")
+        self.assertContains(response, "Transfer notifications")
+        self.assertContains(response, "KSh 1,500.00")
+
+    def test_profile_without_shops_shows_empty_state(self):
+        from employees.dashboard_services import build_dashboard_overview
+
+        self.cashier.assigned_shops.clear()
+        self.assertFalse(build_dashboard_overview(self.cashier)["has_shops"])

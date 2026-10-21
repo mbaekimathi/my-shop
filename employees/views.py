@@ -79,6 +79,7 @@ from .access import (
     store_profile_session,
 )
 from .analytics_views import analytics_dashboard
+from .dashboard_services import build_dashboard_overview
 from communications.views import communications_dashboard
 from .countries import COUNTRY_DIAL_CODES
 from .hr_views import hr_management_page
@@ -151,6 +152,7 @@ def _render_role_page(request, expected_role):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": sidebar_for_role_dashboard(expected_role, profile=profile),
+            "dashboard": build_dashboard_overview(profile),
         },
     )
 
@@ -659,6 +661,7 @@ def role_super_admin(request, page=None):
             "role_choices": EmployeeRole.choices,
             "status_choices": EmployeeStatus.choices,
             "page_sidebar": sidebar_for_super_admin(),
+            "dashboard": build_dashboard_overview(profile),
             "pagination": pagination_links(
                 employees_page, "role_super_admin", fragment="employee-access"
             ),
