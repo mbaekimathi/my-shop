@@ -14,6 +14,46 @@ SHOP_PORTAL_SESSION_AGE = 60 * 60 * 24 * 365 * 10
 # Avoid writing the session row on every poll/ping — refresh at most hourly.
 SHOP_PORTAL_TOUCH_INTERVAL = 60 * 60
 
+# When a sign-in rotates the session id, the retired session record is replaced
+# with a pointer to the new key. A second open tab can still carry the previous
+# sessionid cookie while the login response is in flight; following the pointer
+# lets it resolve the rotated session instead of looking signed out.
+SESSION_ROTATED_TO_KEY = "_rotated_session_to"
+SESSION_ROTATION_GRACE_SECONDS = 120
+
+
+def write_rotation_pointer(session_cls, old_key, new_key):
+    """Point a retired session key at its replacement for a short grace window."""
+    if not old_key or not new_key or old_key == new_key:
+        return
+    import logging
+
+    try:
+        store = session_cls(session_key=old_key)
+        store.clear()
+        store[SESSION_ROTATED_TO_KEY] = new_key
+        store.set_expiry(SESSION_ROTATION_GRACE_SECONDS)
+        try:
+            store.save(must_create=True)
+        except Exception:
+            store.save()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Could not write rotated session pointer."
+        )
+
+
+def rotate_session_key(request):
+    """Cycle the session id and immediately bridge the retired key.
+
+    Rotating mid-request leaves the old key valid for in-flight requests from
+    other tabs until the new cookie reaches the browser.
+    """
+    session = request.session
+    old_key = session.session_key
+    session.cycle_key()
+    write_rotation_pointer(session.__class__, old_key, session.session_key)
+
 _UNSET = object()
 
 # Keys that belong to the shop portal auth namespace (independent of employee auth).

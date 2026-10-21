@@ -86,10 +86,14 @@ def end_all_portal_sessions(request):
 
 def begin_shop_portal_session(request, shop):
     """Shop portal sign-in; leaves any employee session intact."""
-    from shops.session import persist_shop_portal_session, set_shop_portal_session
+    from shops.session import (
+        persist_shop_portal_session,
+        rotate_session_key,
+        set_shop_portal_session,
+    )
 
     set_shop_portal_session(request, shop)
-    request.session.cycle_key()
+    rotate_session_key(request)
     persist_shop_portal_session(request)
 
 
@@ -97,7 +101,16 @@ def begin_employee_session(request, user, profile):
     """Employee sign-in; leaves any shop portal session intact."""
     from django.contrib.auth import login
 
+    from shops.session import (
+        restore_shop_portal_session,
+        snapshot_shop_portal_session,
+    )
+
     from .access import store_profile_session
 
+    # login() flushes the session when it belonged to a different user;
+    # keep the shop portal keys either way.
+    shop_snap = snapshot_shop_portal_session(request)
     login(request, user)
+    restore_shop_portal_session(request, shop_snap)
     store_profile_session(request, profile)

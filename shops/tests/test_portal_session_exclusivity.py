@@ -198,3 +198,92 @@ class PortalSessionCoexistenceTests(TestCase):
         self.assertTrue(data.get("shop_auth"))
         self.assertTrue(data.get("employee_auth"))
         self.assertIn(data.get("auth"), {"shop", "employee"})
+
+    def _stale_client(self, session_key):
+        """A client still holding a retired sessionid cookie (in-flight tab)."""
+        from django.conf import settings
+
+        stale = Client()
+        stale.cookies[settings.SESSION_COOKIE_NAME] = session_key
+        return stale
+
+    def test_stale_cookie_after_employee_login_still_resolves(self):
+        """A second tab's in-flight request survives the login key rotation."""
+        client = self._login_shop()
+        old_key = client.session.session_key
+        client = self._login_employee(client)
+        self.assertNotEqual(old_key, client.session.session_key)
+
+        response = self._stale_client(old_key).get(reverse("employees:ping"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data.get("shop_auth"))
+        self.assertTrue(data.get("employee_auth"))
+
+    def test_stale_cookie_after_shop_login_still_resolves(self):
+        client = self._login_employee()
+        old_key = client.session.session_key
+        client = self._login_shop(client)
+        self.assertNotEqual(old_key, client.session.session_key)
+
+        response = self._stale_client(old_key).get(reverse("employees:ping"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data.get("shop_auth"))
+        self.assertTrue(data.get("employee_auth"))
+
+    def test_stale_cookie_can_open_shop_workspace(self):
+        client = self._login_shop()
+        old_key = client.session.session_key
+        client = self._login_employee(client)
+
+        response = self._stale_client(old_key).get(
+            reverse("employees:my_shop_workspace", kwargs={"shop_id": self.shop.pk})
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_stale_cookie_after_employee_logout_resolves_to_current(self):
+        """Logout flushes the key; a lagging tab still sees the surviving shop session."""
+        client = self._login_shop()
+        client = self._login_employee(client)
+        old_key = client.session.session_key
+        client.get(reverse("employees:logout"))
+
+        response = self._stale_client(old_key).get(reverse("employees:ping"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data.get("shop_auth"))
+        self.assertFalse(data.get("employee_auth"))
+
+    def test_employee_login_over_other_user_session_keeps_shop_keys(self):
+        """login() flushes a different user's session — shop keys must survive."""
+        from django.contrib.auth import (
+            BACKEND_SESSION_KEY,
+            HASH_SESSION_KEY,
+            SESSION_KEY,
+        )
+        from django.test import RequestFactory
+
+        from employees.portal_auth import begin_employee_session
+
+        other = User.objects.create_user(
+            username="900044",
+            password="other-pass",
+            email="portal-other@test.local",
+            is_active=True,
+        )
+        client = self._login_shop()
+
+        request = RequestFactory().post(reverse("employees:login"))
+        request.session = client.session
+        request.session[SESSION_KEY] = str(other.pk)
+        request.session[BACKEND_SESSION_KEY] = (
+            "django.contrib.auth.backends.ModelBackend"
+        )
+        request.session[HASH_SESSION_KEY] = other.get_session_auth_hash()
+
+        begin_employee_session(request, self.user, self.profile)
+        self.assertTrue(request.session.get("shop_portal_auth"))
+        self.assertEqual(
+            request.session.get(SESSION_SHOP_PORTAL_SHOP_KEY), str(self.shop.pk)
+        )

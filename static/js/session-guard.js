@@ -8,12 +8,12 @@
 let redirecting = false;
 let tabLockState = null;
 
-const TAB_ID_KEY = "myshop-tab-id";
 const LOCK_KEY_PREFIX = "myshop-session-lock:";
 const CHANNEL_PREFIX = "myshop-session-lock-";
 const HEARTBEAT_MS = 1500;
 const STALE_MS = 4000;
 const CLAIM_CONFIRM_MS = 60;
+const RECLAIM_MS = 1000;
 
 function authRoot() {
   return document.querySelector("[data-workspace][data-auth-required]");
@@ -107,20 +107,14 @@ function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+// Unique per page load — sessionStorage is copied when a tab is duplicated,
+// which would let the copy share the lock owner id and bypass the tab limit.
 function getTabId() {
-  try {
-    let id = sessionStorage.getItem(TAB_ID_KEY);
-    if (!id) {
-      id =
-        (typeof crypto !== "undefined" && crypto.randomUUID
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-      sessionStorage.setItem(TAB_ID_KEY, id);
-    }
-    return id;
-  } catch (_err) {
-    return `ephemeral-${Date.now()}`;
-  }
+  const random =
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `tab-${random}`;
 }
 
 function lockStorageKey(mode) {
@@ -254,6 +248,18 @@ function startHeartbeat(mode, tabId, channel) {
   }, HEARTBEAT_MS);
 }
 
+function startReclaim(mode) {
+  if (!tabLockState || tabLockState.reclaimId) return;
+  tabLockState.reclaimId = window.setInterval(async () => {
+    if (!tabLockState || !tabLockState.blocked) return;
+    const { tabId, channel } = tabLockState;
+    if (isHeldByOther(mode, tabId)) return;
+    const claimed = await claimLock(mode, tabId, { force: false });
+    if (!claimed || !tabLockState || !tabLockState.blocked) return;
+    becomeActive(mode, tabId, channel);
+  }, RECLAIM_MS);
+}
+
 function becomeBlocked(mode) {
   if (!tabLockState) return;
   tabLockState.blocked = true;
@@ -262,12 +268,19 @@ function becomeBlocked(mode) {
     tabLockState.heartbeatId = null;
   }
   setBlocked(true, mode);
+  // Keep watching: when the owner tab closes or its lock goes stale, this tab
+  // takes over automatically instead of staying blocked.
+  startReclaim(mode);
 }
 
 function becomeActive(mode, tabId, channel) {
   if (!tabLockState) return;
   tabLockState.blocked = false;
   setBlocked(false, mode);
+  if (tabLockState.reclaimId) {
+    window.clearInterval(tabLockState.reclaimId);
+    tabLockState.reclaimId = null;
+  }
   if (tabLockState.heartbeatId) window.clearInterval(tabLockState.heartbeatId);
   tabLockState.heartbeatId = startHeartbeat(mode, tabId, channel);
   broadcast(channel, { type: "claim", owner: tabId, mode });
@@ -323,6 +336,7 @@ async function initTabLock() {
     channel,
     blocked: false,
     heartbeatId: null,
+    reclaimId: null,
     onStorage,
     onPageHide,
   };
