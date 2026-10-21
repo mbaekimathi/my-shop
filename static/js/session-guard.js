@@ -177,6 +177,15 @@ function modeLabel(mode) {
   return mode === "shop" ? "shop" : "employee";
 }
 
+// The other portal's login page: a blocked employee tab offers the shop
+// login (and vice versa) so the user can run one tab of each kind.
+function altLoginUrl(mode) {
+  const root = authRoot();
+  const declared = root?.getAttribute("data-alt-login-url") || "";
+  if (declared) return declared;
+  return mode === "shop" ? "/employees/login/" : "/employees/shops/login/";
+}
+
 function blockPanel() {
   return document.querySelector("[data-session-tab-block]");
 }
@@ -193,6 +202,7 @@ function setBlocked(blocked, mode) {
 
   const title = panel.querySelector("[data-session-tab-block-title]");
   const detail = panel.querySelector("[data-session-tab-block-detail]");
+  const altLogin = panel.querySelector("[data-session-tab-alt-login]");
   const label = modeLabel(mode);
   if (title) {
     title.textContent =
@@ -205,6 +215,11 @@ function setBlocked(blocked, mode) {
       label === "shop"
         ? "This shop session is open in another tab. You can keep one shop tab and one employee tab at the same time, but not two shop tabs."
         : "This employee session is open in another tab. You can keep one employee tab and one shop tab at the same time, but not two employee tabs.";
+  }
+  if (altLogin) {
+    altLogin.setAttribute("href", altLoginUrl(mode));
+    altLogin.textContent =
+      label === "shop" ? "Log in as an employee" : "Log in to a shop";
   }
 }
 
