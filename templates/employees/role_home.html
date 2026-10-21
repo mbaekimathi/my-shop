@@ -47,12 +47,6 @@
   </section>
   {% endif %}
 
-  <section class="home-section" aria-labelledby="home-activity-title">
-    <h3 class="home-section-title" id="home-activity-title">Recent activity</h3>
-    <div class="home-empty">
-      <i data-lucide="history" aria-hidden="true"></i>
-      <p><strong>Nothing to show yet.</strong> Recent receipts, approvals and transfers will appear here.</p>
-    </div>
-  </section>
+  {% include "employees/partials/dashboard_overview.html" %}
 </section>
 {% endblock %}

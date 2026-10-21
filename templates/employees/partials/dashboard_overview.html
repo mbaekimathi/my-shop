@@ -1,0 +1,125 @@
+{% load humanize %}
+{% if dashboard.has_shops %}
+<section class="home-section dash-overview" aria-labelledby="dash-opening-title">
+  <div class="dash-section-head">
+    <h3 class="home-section-title" id="dash-opening-title">Opening balance today</h3>
+    <span class="dash-muted">{{ dashboard.today|date:"D, j M Y" }}</span>
+  </div>
+  <div class="dash-opening">
+    <div class="dash-opening-total">
+      <span class="dash-stat-label">Total opening (cash + M-Pesa)</span>
+      <strong class="dash-opening-amount" data-dash-opening-total>KSh {{ dashboard.opening.total|floatformat:2|intcomma }}</strong>
+      <span class="dash-muted">
+        Cash {{ dashboard.opening.total_cash|floatformat:2|intcomma }} · M-Pesa {{ dashboard.opening.total_mpesa|floatformat:2|intcomma }}
+        · {{ dashboard.opening.opened_count }} of {{ dashboard.opening.shop_count }} shop{{ dashboard.opening.shop_count|pluralize }} opened
+      </span>
+    </div>
+    <ul class="dash-opening-list">
+      {% for row in dashboard.opening.rows %}
+      <li class="dash-opening-row">
+        <span class="dash-opening-shop">
+          <strong>{{ row.shop.name }}</strong>
+          {% if row.state == "open" %}
+          <span class="dash-pill dash-pill--ok">Open · {{ row.opened_at|time:"H:i" }}</span>
+          {% elif row.state == "closed" %}
+          <span class="dash-pill">Closed</span>
+          {% elif row.state == "stale" %}
+          <span class="dash-pill dash-pill--warn">Open since {{ row.opened_at|date:"j M" }}</span>
+          {% else %}
+          <span class="dash-pill dash-pill--muted">Not opened</span>
+          {% endif %}
+        </span>
+        <span class="dash-opening-value">
+          {% if row.session and row.state != "stale" %}KSh {{ row.opening_total|floatformat:2|intcomma }}{% else %}—{% endif %}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+
+<section class="home-section dash-overview" aria-labelledby="dash-transfers-title">
+  <div class="dash-section-head">
+    <h3 class="home-section-title" id="dash-transfers-title">
+      Transfer notifications
+      {% if dashboard.transfers.unseen_count %}<span class="dash-count" data-dash-transfer-unseen>{{ dashboard.transfers.unseen_count }} new</span>{% endif %}
+    </h3>
+    <span class="dash-muted">{{ dashboard.transfers.incoming_count }} incoming · {{ dashboard.transfers.outgoing_count }} outgoing pending</span>
+  </div>
+  {% if dashboard.transfers.items %}
+  <ul class="dash-feed">
+    {% for item in dashboard.transfers.items %}
+    <li>
+      <a class="dash-feed-item dash-feed-item--{{ item.tone }}{% if item.unseen %} is-unseen{% endif %}" href="{{ item.href }}">
+        <span class="dash-feed-icon" aria-hidden="true"><i data-lucide="{{ item.icon }}"></i></span>
+        <span class="dash-feed-text">
+          <strong>{{ item.title }}</strong>
+          <small>{{ item.detail }} · {{ item.units }} unit{{ item.units|pluralize }}</small>
+        </span>
+        <time class="dash-feed-time" datetime="{{ item.at|date:'c' }}">{{ item.at|naturaltime }}</time>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="home-empty">
+    <i data-lucide="bell-off" aria-hidden="true"></i>
+    <p><strong>No transfer notifications.</strong> Pending and recently answered transfers for your shops will appear here.</p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="home-section dash-overview" aria-labelledby="dash-perf-title">
+  <div class="dash-section-head">
+    <h3 class="home-section-title" id="dash-perf-title">Performance</h3>
+    <span class="dash-muted">Sales &amp; credit receipts · last 7 days</span>
+  </div>
+  <div class="dash-stats">
+    <div class="dash-stat">
+      <span class="dash-stat-label">Sales today</span>
+      <strong class="dash-stat-value" data-dash-today-sales>KSh {{ dashboard.performance.today_sales|floatformat:2|intcomma }}</strong>
+      {% with pct=dashboard.performance.today_change_pct %}
+      {% if pct is not None %}
+      <span class="dash-delta {% if pct >= 0 %}is-up{% else %}is-down{% endif %}">
+        <i data-lucide="{% if pct >= 0 %}trending-up{% else %}trending-down{% endif %}" aria-hidden="true"></i>
+        {{ pct }}% vs yesterday
+      </span>
+      {% else %}
+      <span class="dash-muted">Yesterday KSh {{ dashboard.performance.yesterday_sales|floatformat:2|intcomma }}</span>
+      {% endif %}
+      {% endwith %}
+    </div>
+    <div class="dash-stat">
+      <span class="dash-stat-label">Receipts today</span>
+      <strong class="dash-stat-value">{{ dashboard.performance.today_receipts }}</strong>
+      <span class="dash-muted">{{ dashboard.performance.pending_confirm }} sale{{ dashboard.performance.pending_confirm|pluralize }} awaiting confirmation</span>
+    </div>
+    <div class="dash-stat">
+      <span class="dash-stat-label">Last 7 days</span>
+      <strong class="dash-stat-value">KSh {{ dashboard.performance.week_sales|floatformat:2|intcomma }}</strong>
+      <span class="dash-muted">{{ dashboard.performance.week_receipts }} receipt{{ dashboard.performance.week_receipts|pluralize }} · avg KSh {{ dashboard.performance.avg_receipt|floatformat:0|intcomma }}</span>
+    </div>
+    <div class="dash-stat">
+      <span class="dash-stat-label">Credit outstanding</span>
+      <strong class="dash-stat-value">KSh {{ dashboard.performance.credit_outstanding|floatformat:2|intcomma }}</strong>
+      <span class="dash-muted">Unpaid balance on credit receipts</span>
+    </div>
+  </div>
+  <div class="dash-trend" role="img" aria-label="Daily sales for the last 7 days">
+    {% for point in dashboard.performance.trend %}
+    <div class="dash-trend-col{% if forloop.last %} is-today{% endif %}" title="{{ point.day|date:'D j M' }}: KSh {{ point.amount|floatformat:2|intcomma }} ({{ point.count }} receipt{{ point.count|pluralize }})">
+      <span class="dash-trend-bar" style="--h: {{ point.pct }}%"></span>
+      <span class="dash-trend-label">{{ point.day|date:"D" }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% else %}
+<section class="home-section" aria-labelledby="dash-noshops-title">
+  <h3 class="home-section-title" id="dash-noshops-title">Shop overview</h3>
+  <div class="home-empty">
+    <i data-lucide="store" aria-hidden="true"></i>
+    <p><strong>No shops allocated.</strong> Opening balances, transfers and performance will show once you are allocated to a shop.</p>
+  </div>
+</section>
+{% endif %}
