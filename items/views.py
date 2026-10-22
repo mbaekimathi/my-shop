@@ -7466,6 +7466,40 @@ def _serial_return_lookup(item):
     return return_by_serial
 
 
+def _serial_stock_movement_lookup(item):
+    """Map serial_number → latest stock-in / stock-out time for an item."""
+    from .models import StockMovementLine, StockMovementType
+
+    lines = (
+        StockMovementLine.objects.filter(
+            item=item,
+            movement__movement_type__in=(StockMovementType.IN, StockMovementType.OUT),
+        )
+        .select_related("movement")
+        .order_by("-movement__created_at", "-id")
+    )
+    latest = {StockMovementType.IN: {}, StockMovementType.OUT: {}}
+    for line in lines:
+        bucket = latest[line.movement.movement_type]
+        for serial in _movement_serial_numbers(line.serial_numbers):
+            bucket.setdefault(serial, line.movement.created_at)
+    return {"in": latest[StockMovementType.IN], "out": latest[StockMovementType.OUT]}
+
+
+def _serial_status_at(serial, status, event, movement_lookup):
+    """When the serial entered its current status (sale, return, stock in/out)."""
+    key = str(serial.serial_number or "").strip().upper()
+    if status == "sold" and event and event.get("sold_at"):
+        return event["sold_at"]
+    if status == "returned" and event:
+        return event.get("returned_at") or event.get("sold_at")
+    if status == "out":
+        return movement_lookup["out"].get(key) or serial.updated_at
+    if status == "in_stock":
+        return movement_lookup["in"].get(key) or serial.created_at
+    return serial.updated_at
+
+
 def stock_serials(request, profile, meta, module):
     """List serial-tracked items with in-stock counts for allocated shops."""
     from django.db.models import Count, Q
@@ -8196,6 +8230,10 @@ def stock_serial_detail(request, profile, meta, module, item_id):
     status_filter = (request.GET.get("status") or "all").strip().lower()
     if status_filter not in ("all", "in_stock", "sold", "returned", "out"):
         status_filter = "all"
+    range_type, range_start, range_end, filter_context = _report_range_bounds(request)
+    if (request.GET.get("range") or "").strip().lower() != range_type:
+        range_type, range_start, range_end = "all", None, None
+        filter_context = {**filter_context, "report_range": "all", "report_period_label": "All time"}
 
     page_sidebar = sidebar_for_stock_management(
         profile.role,
@@ -8230,6 +8268,7 @@ def stock_serial_detail(request, profile, meta, module, item_id):
 
     sale_by_serial = _serial_sale_lookup(item)
     return_by_serial = _serial_return_lookup(item)
+    movement_lookup = _serial_stock_movement_lookup(item)
     rows = []
     in_stock_count = 0
     sold_count = 0
@@ -8245,6 +8284,11 @@ def stock_serial_detail(request, profile, meta, module, item_id):
         )
         event_shop_id = event.get("shop_id") if event else None
         if shop_ids and serial.shop_id not in shop_ids and event_shop_id not in shop_ids:
+            continue
+        status_at = _serial_status_at(serial, status, event, movement_lookup)
+        if range_start is not None and not (
+            status_at and range_start <= status_at < range_end
+        ):
             continue
         if status == "sold":
             sold_count += 1
@@ -8269,6 +8313,7 @@ def stock_serial_detail(request, profile, meta, module, item_id):
                 "receipt_number": event["receipt_number"] if event else "",
                 "sold_at": event.get("sold_at") if event else None,
                 "returned_at": event.get("returned_at") if event else None,
+                "status_at": status_at,
                 "kind_label": event["kind_label"] if event else "",
                 "sale_shop_name": event["shop_name"] if event else "",
                 "history_url": reverse(
@@ -8312,6 +8357,7 @@ def stock_serial_detail(request, profile, meta, module, item_id):
             "display_shops": display_shops,
             "shops_label": shops_label,
             "stock_mode": "serials",
+            **filter_context,
         },
     )
 

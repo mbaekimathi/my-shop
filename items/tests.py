@@ -2665,6 +2665,44 @@ class StockSerialDetailShopFilterTests(TestCase):
         serials = [row["serial_number"] for row in filtered.context["rows"]]
         self.assertEqual(serials, ["SDA-OUT-1"])
 
+    def test_time_range_filter(self):
+        from datetime import datetime
+
+        from django.utils import timezone
+
+        from items.models import ItemSerial
+
+        tz = timezone.get_current_timezone()
+        ItemSerial.objects.filter(serial_number="SDA-OUT-1").update(
+            updated_at=timezone.make_aware(datetime(2025, 3, 10, 12, 0), tz)
+        )
+        ItemSerial.objects.filter(serial_number="SDB-OUT-1").update(
+            updated_at=timezone.make_aware(datetime(2025, 5, 2, 9, 0), tz)
+        )
+        self.client.login(username="840032", password=self.password)
+
+        all_time = self.client.get(self.detail_url, {"status": "out"})
+        self.assertEqual(all_time.context["report_range"], "all")
+        self.assertEqual(all_time.context["out_count"], 2)
+        self.assertContains(all_time, 'name="range"')
+
+        cases = [
+            ({"range": "day", "date": "2025-03-10"}, ["SDA-OUT-1"]),
+            ({"range": "month", "month": "2025-05"}, ["SDB-OUT-1"]),
+            (
+                {"range": "period", "date_from": "2025-03-01", "date_to": "2025-05-31"},
+                ["SDA-OUT-1", "SDB-OUT-1"],
+            ),
+            ({"range": "year", "year": "2024"}, []),
+        ]
+        for params, expected in cases:
+            resp = self.client.get(self.detail_url, {"status": "out", **params})
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.context["report_range"], params["range"])
+            serials = [row["serial_number"] for row in resp.context["rows"]]
+            self.assertEqual(serials, expected, params)
+            self.assertEqual(resp.context["out_count"], len(expected))
+
 
 class StockSerialsIndexScanSearchTests(TestCase):
     def setUp(self):
