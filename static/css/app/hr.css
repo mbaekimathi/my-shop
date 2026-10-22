@@ -2020,6 +2020,10 @@ body.workspace-modal-open {
   padding: 1rem;
 }
 
+.shop-wrong-shop-modal {
+  z-index: 130;
+}
+
 .workspace-modal[hidden] {
   display: none;
 }

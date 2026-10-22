@@ -3966,6 +3966,7 @@
       const name = row.dataset.itemName || "Item";
       const qty = getQty(row);
       const hasPrice = rowHasBuyingPrice(row);
+      if (!qty && !hasPrice) continue;
       if (!qty) {
         return {
           row,
@@ -4199,9 +4200,12 @@
       return focusIncompleteSelectedItem(incompleteSelected);
     }
     if (!ready.length) {
+      const parkedCount = parkedRoot()?.querySelectorAll("[data-item-row][data-item-id]").length || 0;
       return blockSubmit(
         simpleCatalog
-          ? "Add items first — search and tap Add."
+          ? parkedCount
+            ? "Enter quantity and buying price on your items."
+            : "Add items first — search and tap Add."
           : "Add items first — enter quantity on at least one item.",
         panel.querySelector("[data-item-search]") ||
           panel.querySelector("[data-stock-qty]") ||
@@ -4667,7 +4671,11 @@
     if (!(await confirmStaffShopAllocationIfNeeded())) return false;
 
     const ready = prepareStockInRows();
-    if (!ready.length || !canSubmitStockIn(ready)) return false;
+    if (!ready.length || !canSubmitStockIn(ready)) {
+      focusFirstIncomplete(collectReady());
+      renderSummary();
+      return false;
+    }
     if (!(await confirmHighUnitBuyingPrices(ready))) {
       renderSummary();
       return false;
@@ -5705,7 +5713,7 @@
     staffAllocatedToShop = null;
     staffName = "";
     staffAllocatedShopNames = [];
-    if (submitBtn) submitBtn.disabled = true;
+    renderSummary();
     window.clearTimeout(loginVerifyTimer);
     loginVerifyTimer = window.setTimeout(async () => {
       const ok = await verifyLoginCode();
