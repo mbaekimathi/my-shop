@@ -157,13 +157,56 @@ def set_shop_portal_session(request, shop):
     persist_shop_portal_session(request, force=True)
 
 
+def bind_shop_portal_session(request, shop):
+    """Bind this browser session as the shop's single live portal session."""
+    session_key = request.session.session_key
+    if not session_key:
+        return
+    from .models import Shop
+
+    Shop.objects.filter(pk=shop.pk).update(active_session_key=session_key)
+    shop.active_session_key = session_key
+
+
+def migrate_shop_session_stamp(request, old_key):
+    """Re-point the shop's session stamp after the session id rotated/flushed."""
+    if not old_key:
+        return
+    session = request.session
+    new_key = session.session_key
+    if not new_key:
+        # flush() defers key creation until save time — materialise it now so
+        # the stamp can follow the restored shop keys into the new session.
+        if session.is_empty():
+            return
+        session.save()
+        new_key = session.session_key
+    if not new_key or new_key == old_key:
+        return
+    from .models import Shop
+
+    Shop.objects.filter(active_session_key=old_key).update(
+        active_session_key=new_key
+    )
+
+
 def clear_shop_portal_session(request):
     """End shop portal auth without touching employee floor unlock keys."""
+    shop_id = request.session.get(SESSION_SHOP_PORTAL_SHOP_KEY)
+    session_key = request.session.session_key
     for key in SHOP_PORTAL_SESSION_KEYS:
         if key in request.session:
             del request.session[key]
     if hasattr(request, "_portal_shop_cache"):
         delattr(request, "_portal_shop_cache")
+    # Release the single-session stamp only when this session still owns it —
+    # a superseded session must not clear the newer device's stamp.
+    if shop_id and session_key:
+        from .models import Shop
+
+        Shop.objects.filter(
+            pk=shop_id, active_session_key=session_key
+        ).update(active_session_key="")
 
 
 def resolve_portal_shop(request):
@@ -186,13 +229,35 @@ def resolve_portal_shop(request):
 
     shop = (
         Shop.objects.filter(pk=shop_id, is_hidden=False, is_suspended=False)
-        .only("id", "name", "location", "image", "is_suspended", "is_hidden")
+        .only(
+            "id",
+            "name",
+            "location",
+            "image",
+            "is_suspended",
+            "is_hidden",
+            "active_session_key",
+        )
         .first()
     )
     if shop is None:
         clear_shop_portal_session(request)
         request._portal_shop_cache = None
         return None
+
+    session_key = request.session.session_key
+    if shop.active_session_key:
+        if shop.active_session_key != session_key:
+            # A newer sign-in on another device owns this shop portal account.
+            clear_shop_portal_session(request)
+            request._portal_shop_cache = None
+            return None
+    elif session_key:
+        # Sessions created before single-session tracking claim the shop on use.
+        Shop.objects.filter(pk=shop.pk, active_session_key="").update(
+            active_session_key=session_key
+        )
+
     persist_shop_portal_session(request)
     request._portal_shop_cache = shop
     return shop

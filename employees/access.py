@@ -112,6 +112,26 @@ def store_profile_session(request, profile):
     setattr(request, REQUEST_PROFILE_ATTR, profile)
 
 
+def employee_session_is_current(request) -> bool:
+    """True when this session is the account's most recent login.
+
+    Each successful employee sign-in stamps EmployeeProfile.active_session_key;
+    older sessions on other devices are superseded and treated as signed out.
+    """
+    if not request or not getattr(request, "user", None):
+        return True
+    if not request.user.is_authenticated:
+        return True
+    key = (
+        EmployeeProfile.objects.filter(user_id=request.user.pk)
+        .values_list("active_session_key", flat=True)
+        .first()
+    )
+    if not key:
+        return True
+    return key == request.session.session_key
+
+
 def clear_profile_session(request):
     if SESSION_PROFILE_KEY in request.session:
         del request.session[SESSION_PROFILE_KEY]
@@ -204,6 +224,16 @@ def active_employee_required(view_func):
             "role": meta["role"],
             "status": meta["status"],
         }
+
+        if not employee_session_is_current(request):
+            from .portal_auth import end_employee_session
+
+            end_employee_session(request)
+            return _login_redirect(
+                request,
+                message="You were signed out — this account signed in on another device.",
+                level="info",
+            )
 
         if meta["status"] == EmployeeStatus.PENDING_APPROVAL:
             return redirect("employees:pending")

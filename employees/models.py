@@ -93,6 +93,13 @@ class EmployeeProfile(models.Model):
         blank=True,
         related_name="assigned_employees",
     )
+    active_session_key = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        editable=False,
+        help_text="Session key of the single live employee session.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

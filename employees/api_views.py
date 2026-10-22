@@ -4,7 +4,11 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
-from .access import get_employee_meta_for_request, get_profile_for_request
+from .access import (
+    employee_session_is_current,
+    get_employee_meta_for_request,
+    get_profile_for_request,
+)
 from .models import EmployeeStatus
 from .sync_handlers import SyncOperationError, _sync_register_employee, process_sync_operations
 from .throttle import rate_limit
@@ -16,7 +20,7 @@ def _sync_actor(request):
         meta = get_employee_meta_for_request(request) or {}
         if meta.get("status") == EmployeeStatus.ACTIVE:
             profile = get_profile_for_request(request)
-            if profile is not None:
+            if profile is not None and employee_session_is_current(request):
                 return profile, None
 
     from shops.session import resolve_portal_shop
@@ -45,6 +49,12 @@ def ping_api(request):
     if getattr(request, "user", None) is not None and request.user.is_authenticated:
         meta = get_employee_meta_for_request(request) or {}
         employee_auth = meta.get("status") == EmployeeStatus.ACTIVE
+        if employee_auth and not employee_session_is_current(request):
+            # Superseded by a newer sign-in — end it so this device signs out.
+            from .portal_auth import end_employee_session
+
+            end_employee_session(request)
+            employee_auth = False
 
     if shop_auth:
         auth = "shop"

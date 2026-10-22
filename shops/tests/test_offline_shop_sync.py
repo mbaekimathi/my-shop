@@ -353,8 +353,11 @@ class ShopPortalOfflineSyncTests(TestCase):
         self.assertEqual(receipt.client_name, "")
         self.assertEqual(receipt.client_phone, "")
 
-    def _post_checkout(self, payload):
-        return self._portal_client().post(
+    def _post_checkout(self, payload, client=None):
+        # Each _portal_client() is a distinct device session — tests reuse one
+        # so the single-session rule does not supersede it mid-test.
+        client = client or self._portal_client()
+        return client.post(
             reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}),
             data=json.dumps(payload),
             content_type="application/json",
@@ -369,6 +372,7 @@ class ShopPortalOfflineSyncTests(TestCase):
         }
 
     def test_sale_checkout_allows_name_or_phone_independently(self):
+        client = self._portal_client()
         name_only = self._post_checkout(
             {
                 "kind": "sale",
@@ -377,7 +381,8 @@ class ShopPortalOfflineSyncTests(TestCase):
                 "client_phone": "",
                 "login_code": self.profile.employee_id,
                 "lines": [self._sale_line()],
-            }
+            },
+            client=client,
         )
         self.assertEqual(name_only.status_code, 200, name_only.content)
         named = ShopReceipt.objects.get(
@@ -395,7 +400,8 @@ class ShopPortalOfflineSyncTests(TestCase):
                 "client_phone": "0712345678",
                 "login_code": self.profile.employee_id,
                 "lines": [self._sale_line()],
-            }
+            },
+            client=client,
         )
         self.assertEqual(phone_only.status_code, 200, phone_only.content)
         phoned = ShopReceipt.objects.get(
@@ -406,6 +412,7 @@ class ShopPortalOfflineSyncTests(TestCase):
         self.assertIsNone(phoned.client_id)
 
     def test_credit_checkout_allows_name_or_phone_independently(self):
+        client = self._portal_client()
         name_only = self._post_checkout(
             {
                 "kind": "credit",
@@ -413,7 +420,8 @@ class ShopPortalOfflineSyncTests(TestCase):
                 "client_phone": "",
                 "login_code": self.profile.employee_id,
                 "lines": [self._sale_line()],
-            }
+            },
+            client=client,
         )
         self.assertEqual(name_only.status_code, 200, name_only.content)
         named = ShopReceipt.objects.get(
@@ -429,7 +437,8 @@ class ShopPortalOfflineSyncTests(TestCase):
                 "client_phone": "0712345679",
                 "login_code": self.profile.employee_id,
                 "lines": [self._sale_line()],
-            }
+            },
+            client=client,
         )
         self.assertEqual(phone_only.status_code, 200, phone_only.content)
         phoned = ShopReceipt.objects.get(
@@ -445,7 +454,8 @@ class ShopPortalOfflineSyncTests(TestCase):
                 "client_phone": "",
                 "login_code": self.profile.employee_id,
                 "lines": [self._sale_line()],
-            }
+            },
+            client=client,
         )
         self.assertEqual(missing.status_code, 400)
         self.assertFalse(missing.json().get("ok"))
@@ -581,7 +591,8 @@ class ShopPortalOfflineSyncTests(TestCase):
         self.assertIsNone(open_ended.credit_due_date)
 
     def test_portal_online_checkout_rejects_bad_staff_code(self):
-        response = self._portal_client().post(
+        client = self._portal_client()
+        response = client.post(
             reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}),
             data=json.dumps(
                 {
@@ -604,7 +615,7 @@ class ShopPortalOfflineSyncTests(TestCase):
         self.assertFalse(response.json().get("ok"))
         self.assertEqual(ShopReceipt.objects.filter(shop=self.shop).count(), 0)
 
-        shop_code = self._portal_client().post(
+        shop_code = client.post(
             reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}),
             data=json.dumps(
                 {

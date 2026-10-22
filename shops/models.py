@@ -30,6 +30,13 @@ class Shop(models.Model):
     image = models.ImageField(upload_to=shop_image_path, blank=True, null=True)
     is_suspended = models.BooleanField(default=False, db_index=True)
     is_hidden = models.BooleanField(default=False, db_index=True)
+    active_session_key = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        editable=False,
+        help_text="Session key of the single live shop portal session.",
+    )
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
         on_delete=models.SET_NULL,
