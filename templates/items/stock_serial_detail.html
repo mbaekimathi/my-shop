@@ -8,7 +8,7 @@
   <header class="stock-panel-head">
     <div class="stock-panel-head-top">
       <div>
-        <p class="stock-kicker">Serials · {{ item.category }} · {{ shops_label }}</p>
+        <p class="stock-kicker">Serials · {{ item.category }} · {{ shops_label }}{% if report_range != "all" %} · {{ report_period_label }}{% endif %}</p>
         <h2>{{ item.name }}</h2>
         <p>Every serial for this item at shops allocated to your account — in stock, sold, returned, or stocked out. Open a serial to see every movement since it was registered.</p>
       </div>
@@ -25,6 +25,12 @@
           <strong>{{ returned_count }}</strong>
           <span>returned</span>
         </p>
+        {% if returned_count %}
+        <p class="stock-stat" title="Returned serials by where they are now">
+          <strong>{{ returned_in_stock_count }} · {{ returned_out_count }} · {{ returned_sold_count }}</strong>
+          <span>returned: in stock · out · sold</span>
+        </p>
+        {% endif %}
         <p class="stock-stat">
           <strong>{{ out_count }}</strong>
           <span>stocked out</span>
@@ -32,7 +38,7 @@
       </div>
     </div>
 
-    <form class="stock-report-filters stock-report-filters--serials" method="get" data-stock-serial-filters>
+    <form class="stock-report-filters stock-report-filters--serials" method="get" data-stock-report-filters data-stock-serial-filters>
       <a class="stock-report-apply stock-report-apply--ghost" href="{{ list_href }}">Back</a>
 
       <label class="stock-report-field">
@@ -51,9 +57,54 @@
           <option value="all"{% if status_filter == "all" %} selected{% endif %}>All</option>
           <option value="in_stock"{% if status_filter == "in_stock" %} selected{% endif %}>In stock</option>
           <option value="sold"{% if status_filter == "sold" %} selected{% endif %}>Sold</option>
-          <option value="returned"{% if status_filter == "returned" %} selected{% endif %}>Returned</option>
+          <option value="returned"{% if status_filter == "returned" %} selected{% endif %}>Returned (all)</option>
+          <option value="returned_in_stock"{% if status_filter == "returned_in_stock" %} selected{% endif %}>Returned · In stock</option>
+          <option value="returned_out"{% if status_filter == "returned_out" %} selected{% endif %}>Returned · Stocked out</option>
+          <option value="returned_sold"{% if status_filter == "returned_sold" %} selected{% endif %}>Returned · Sold</option>
           <option value="out"{% if status_filter == "out" %} selected{% endif %}>Stocked out</option>
         </select>
+      </label>
+
+      <label class="stock-report-field">
+        <span>Time</span>
+        <select name="range" data-stock-report-range aria-label="Time range">
+          <option value="all"{% if report_range == "all" %} selected{% endif %}>All time</option>
+          <option value="day"{% if report_range == "day" %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == "period" %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == "month" %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == "year" %} selected{% endif %}>Year</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field" data-range-field="day"{% if report_range != "day" %} hidden{% endif %}>
+        <span>Date</span>
+        <input type="date" name="date" value="{{ report_date_value }}" data-stock-report-calendar required aria-label="Select day">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != "period" %} hidden{% endif %}>
+        <span>From</span>
+        <input type="date" name="date_from" value="{{ report_date_from }}" data-stock-report-calendar required aria-label="Period start">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != "period" %} hidden{% endif %}>
+        <span>To</span>
+        <input type="date" name="date_to" value="{{ report_date_to }}" data-stock-report-calendar required aria-label="Period end">
+      </label>
+      <label class="stock-report-field" data-range-field="month"{% if report_range != "month" %} hidden{% endif %}>
+        <span>Month</span>
+        <input type="month" name="month" value="{{ report_month_value }}" data-stock-report-calendar required aria-label="Select month">
+      </label>
+      <label class="stock-report-field" data-range-field="year"{% if report_range != "year" %} hidden{% endif %}>
+        <span>Year</span>
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          data-stock-report-calendar
+          required
+          aria-label="Select year"
+        >
       </label>
 
       <label class="stock-report-field stock-report-field--grow">
@@ -101,8 +152,11 @@
           </td>
           <td class="stock-serials-col--status" data-label="Status">
             <span class="stock-report-type stock-report-type--{% if row.status == 'in_stock' %}in{% elif row.status == 'sold' %}sale{% elif row.status == 'returned' %}returned{% else %}out{% endif %}">
-              {{ row.status_label }}
+              {% if row.returned_after %}Returned{% else %}{{ row.status_label }}{% endif %}
             </span>
+            {% if row.returned_after %}
+            <span class="stock-report-from">Now {{ row.returned_after_label|lower }}</span>
+            {% endif %}
           </td>
           <td data-label="Shop">
             {% if row.status == "sold" or row.status == "returned" %}
@@ -136,15 +190,13 @@
             {% endif %}
           </td>
           <td class="stock-serials-col--when" data-label="When">
-            {% if row.status == "returned" and row.returned_at %}
+            {% if row.status_at %}
             <span class="stock-serials-stack">
-              <span>{{ row.returned_at|date:"d M Y" }} · {{ row.returned_at|time:"H:i" }}</span>
-              <span class="stock-report-from">returned</span>
-            </span>
-            {% elif row.sold_at %}
-            <span class="stock-serials-stack">
-              <span>{{ row.sold_at|date:"d M Y" }} · {{ row.sold_at|time:"H:i" }}</span>
-              <span class="stock-report-from">sold</span>
+              <span>{{ row.status_at|date:"d M Y" }} · {{ row.status_at|time:"H:i" }}</span>
+              <span class="stock-report-from">{% if row.returned_after == "in_stock" %}returned{% elif row.returned_after %}{{ row.returned_after_label|lower }}{% elif row.status == "in_stock" %}stocked in{% else %}{{ row.status_label|lower }}{% endif %}</span>
+              {% if row.returned_after and row.returned_after != "in_stock" and row.returned_at %}
+              <span class="stock-report-from">returned {{ row.returned_at|date:"d M Y" }}</span>
+              {% endif %}
             </span>
             {% else %}
             <span class="stock-serials-empty">—</span>
@@ -171,4 +223,30 @@
   src="{% static 'js/serial-scan.js' %}?v=2"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
+<script>
+  (() => {
+    const form = document.querySelector("[data-stock-report-filters]");
+    if (!form) return;
+
+    const rangeSelect = form.querySelector("[data-stock-report-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+
+    const syncRangeFields = (range) => {
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.querySelectorAll("input").forEach((input) => {
+          input.disabled = !match;
+          if (match) input.setAttribute("required", "required");
+          else input.removeAttribute("required");
+        });
+      });
+    };
+
+    syncRangeFields(rangeSelect?.value || "all");
+    rangeSelect?.addEventListener("change", () => {
+      syncRangeFields(rangeSelect.value || "all");
+    });
+  })();
+</script>
 {% endblock %}
