@@ -678,14 +678,16 @@ def build_item_management_catalog_page(
 
     prices_list_by_item = {}
     prices_map_by_item = {}
+    sold_map_by_item = {}
     if item_ids:
-        for item_id, shop_id, price in ShopItemPrice.objects.filter(
+        for item_id, shop_id, price, is_sold in ShopItemPrice.objects.filter(
             item_id__in=item_ids
-        ).values_list("item_id", "shop_id", "price"):
+        ).values_list("item_id", "shop_id", "price", "is_sold"):
             if allowed_shop_ids and shop_id not in allowed_shop_ids:
                 continue
             prices_list_by_item.setdefault(item_id, []).append(price)
             prices_map_by_item.setdefault(item_id, {})[shop_id] = price
+            sold_map_by_item.setdefault(item_id, {})[shop_id] = is_sold
 
     stock_rows_by_item = {}
     if item_ids:
@@ -719,6 +721,7 @@ def build_item_management_catalog_page(
                 f"KSh {low:.2f}" if low == high else f"KSh {low:.2f} – {high:.2f}"
             )
         shop_price_rows = []
+        item_sold_map = sold_map_by_item.get(item.pk) or {}
         for shop in active_shops:
             override = item_shop_map.get(shop.pk)
             resolved = (
@@ -731,10 +734,14 @@ def build_item_management_catalog_page(
                     "shop_id": shop.pk,
                     "shop_name": shop.name,
                     "price": f"{resolved:.2f}",
+                    "is_sold": item_sold_map.get(shop.pk, True),
                 }
             )
         shop_prices = {
             str(row["shop_id"]): row["price"] for row in shop_price_rows
+        }
+        sold_shops = {
+            str(row["shop_id"]): row["is_sold"] for row in shop_price_rows
         }
         image_url = item.public_image_url()
         rows.append(
@@ -751,6 +758,7 @@ def build_item_management_catalog_page(
                 ),
                 "shop_prices": shop_prices,
                 "shop_price_rows": shop_price_rows,
+                "sold_shops": sold_shops,
                 "track_serial": bool(item.track_serial_number),
                 "is_suspended": bool(item.is_suspended),
                 "image_url": image_url,
@@ -1660,13 +1668,55 @@ def _seed_missing_shop_prices(prices_by_shop: dict, shops, seed_price, minimum_p
     return prices_by_shop
 
 
-def _sync_shop_item_prices(item: Item, prices_by_shop: dict) -> None:
+def _existing_shop_sold(item: Item) -> dict:
+    return {
+        shop_id: is_sold
+        for shop_id, is_sold in ShopItemPrice.objects.filter(item=item).values_list(
+            "shop_id", "is_sold"
+        )
+    }
+
+
+def _sold_shops_from_data(
+    data, shops, *, existing_item=None, editable_shop_ids=None
+) -> dict:
+    """Per-shop "sold here" flags from sold_in_shop_<id> checkboxes.
+
+    Checkbox state is only applied for editable shops when the form posted
+    its ``sold_shops_present`` marker; other shops (and callers that never
+    render the section) keep their existing flag — default on for new rows.
+    """
+    existing = (
+        _existing_shop_sold(existing_item) if existing_item is not None else {}
+    )
+    form_sent = (data.get("sold_shops_present") or "").strip().lower() in (
+        "1",
+        "true",
+        "on",
+        "yes",
+    )
+    sold = {}
+    for shop in shops:
+        if form_sent and _can_edit_shop_price(shop.pk, editable_shop_ids):
+            sold[shop.pk] = (
+                data.get(f"sold_in_shop_{shop.pk}") or ""
+            ).strip().lower() in ("1", "true", "on", "yes")
+        else:
+            sold[shop.pk] = existing.get(shop.pk, True)
+    return sold
+
+
+def _sync_shop_item_prices(item: Item, prices_by_shop: dict, sold_by_shop=None) -> None:
     """Upsert ShopItemPrice rows. Never delete other shops' prices."""
+    sold_by_shop = sold_by_shop or {}
     for shop_id, price in prices_by_shop.items():
+        defaults = {"price": price}
+        if shop_id in sold_by_shop:
+            defaults["is_sold"] = sold_by_shop[shop_id]
         ShopItemPrice.objects.update_or_create(
             item=item,
             shop_id=shop_id,
-            defaults={"price": price},
+            defaults=defaults,
         )
 
 
@@ -1762,6 +1812,12 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
     cleaned["minimum_selling_price"] = minimum_price
     cleaned["shop_price"] = shop_price
     cleaned["shop_prices"] = shop_prices
+    cleaned["sold_by_shop"] = _sold_shops_from_data(
+        data,
+        shops,
+        existing_item=existing_item,
+        editable_shop_ids=editable_shop_ids,
+    )
     return cleaned
 
 
@@ -1779,7 +1835,9 @@ def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
             track_serial_number=cleaned["track_serial_number"],
             created_by=profile,
         )
-        _sync_shop_item_prices(item, cleaned["shop_prices"])
+        _sync_shop_item_prices(
+            item, cleaned["shop_prices"], cleaned["sold_by_shop"]
+        )
         from items.activity_audit import log_item_registered
 
         log_item_registered(
@@ -1838,7 +1896,9 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None, actor=None) 
                 pass
         if old_name and old_name != new_name:
             _sync_item_name_history(item, old_name=old_name, new_name=new_name)
-        _sync_shop_item_prices(item, cleaned["shop_prices"])
+        _sync_shop_item_prices(
+            item, cleaned["shop_prices"], cleaned["sold_by_shop"]
+        )
         log_item_edited(
             item,
             actor=actor or item.created_by,

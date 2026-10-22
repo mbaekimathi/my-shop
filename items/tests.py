@@ -1752,6 +1752,195 @@ class ShopPriceIsolationTests(TestCase):
         self.assertEqual(item.price_for_shop(self.shop_a), Decimal("115.00"))
         self.assertEqual(item.price_for_shop(self.shop_b), Decimal("130.00"))
 
+    def test_register_defaults_all_shops_sold(self):
+        from items.models import ShopItemPrice
+        from items.services import create_item
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "COLA 500ML",
+                "description": "",
+                "minimum_selling_price": "80",
+                "shop_price": "120",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        flags = {
+            row.shop_id: row.is_sold
+            for row in ShopItemPrice.objects.filter(item=item)
+        }
+        self.assertEqual(flags.get(self.shop_a.pk), True)
+        self.assertEqual(flags.get(self.shop_b.pk), True)
+
+    def test_register_toggle_off_marks_shop_not_sold(self):
+        from items.models import ShopItemPrice
+        from items.services import create_item
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "FANTA 500ML",
+                "description": "",
+                "minimum_selling_price": "80",
+                "shop_price": "120",
+                "pricing_mode": "single",
+                "sold_shops_present": "1",
+                f"sold_in_shop_{self.shop_a.pk}": "1",
+                # shop_b checkbox absent = toggled off
+            },
+            {},
+        )
+        flags = {
+            row.shop_id: row.is_sold
+            for row in ShopItemPrice.objects.filter(item=item)
+        }
+        self.assertEqual(flags.get(self.shop_a.pk), True)
+        self.assertEqual(flags.get(self.shop_b.pk), False)
+        # Prices are still stored for every shop — the flag only gates selling.
+        self.assertEqual(item.price_for_shop(self.shop_b), Decimal("120.00"))
+
+    def test_edit_toggles_sold_shops(self):
+        from items.models import Item, ShopItemPrice
+        from items.services import update_item
+
+        item = Item.objects.create(
+            category="DRINKS",
+            name="SPRITE 500ML",
+            minimum_selling_price=Decimal("80.00"),
+            shop_price=Decimal("120.00"),
+            use_individual_shop_prices=True,
+            created_by=self.profile,
+        )
+        ShopItemPrice.objects.create(
+            shop=self.shop_a, item=item, price=Decimal("120.00"), is_sold=True
+        )
+        ShopItemPrice.objects.create(
+            shop=self.shop_b, item=item, price=Decimal("120.00"), is_sold=True
+        )
+
+        update_item(
+            item,
+            {
+                "category": "DRINKS",
+                "name": "SPRITE 500ML",
+                "description": "",
+                "minimum_selling_price": "80",
+                "shop_price": "120",
+                "pricing_mode": "single",
+                "sold_shops_present": "1",
+                # shop_a unchecked, shop_b checked
+                f"sold_in_shop_{self.shop_b.pk}": "1",
+            },
+            {},
+        )
+        flags = {
+            row.shop_id: row.is_sold
+            for row in ShopItemPrice.objects.filter(item=item)
+        }
+        self.assertEqual(flags.get(self.shop_a.pk), False)
+        self.assertEqual(flags.get(self.shop_b.pk), True)
+
+    def test_limited_edit_preserves_non_editable_sold_flag(self):
+        from items.models import Item, ShopItemPrice
+        from items.services import update_item
+
+        item = Item.objects.create(
+            category="DRINKS",
+            name="MIRINDA 500ML",
+            minimum_selling_price=Decimal("80.00"),
+            shop_price=Decimal("120.00"),
+            use_individual_shop_prices=True,
+            created_by=self.profile,
+        )
+        ShopItemPrice.objects.create(
+            shop=self.shop_a, item=item, price=Decimal("120.00"), is_sold=True
+        )
+        ShopItemPrice.objects.create(
+            shop=self.shop_b, item=item, price=Decimal("120.00"), is_sold=False
+        )
+
+        update_item(
+            item,
+            {
+                "category": "DRINKS",
+                "name": "MIRINDA 500ML",
+                "description": "",
+                "minimum_selling_price": "80",
+                "shop_price": "120",
+                "pricing_mode": "single",
+                "sold_shops_present": "1",
+                # shop_a remains checked; shop_b is outside editable scope
+                f"sold_in_shop_{self.shop_a.pk}": "1",
+            },
+            {},
+            editable_shop_ids={self.shop_a.pk},
+        )
+        flags = {
+            row.shop_id: row.is_sold
+            for row in ShopItemPrice.objects.filter(item=item)
+        }
+        self.assertEqual(flags.get(self.shop_a.pk), True)
+        # Non-editable shop keeps its previous flag untouched.
+        self.assertEqual(flags.get(self.shop_b.pk), False)
+
+    def test_shop_floor_catalog_excludes_unsold_item(self):
+        from items.models import Item, ShopItemPrice
+        from items.services import create_item
+        from shops.views import build_shop_catalog_page
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "PEPSI 500ML",
+                "description": "",
+                "minimum_selling_price": "80",
+                "shop_price": "120",
+                "pricing_mode": "single",
+                "sold_shops_present": "1",
+                f"sold_in_shop_{self.shop_a.pk}": "1",
+            },
+            {},
+        )
+        page_a = build_shop_catalog_page(self.shop_a, q="PEPSI 500ML")
+        page_b = build_shop_catalog_page(self.shop_b, q="PEPSI 500ML")
+        self.assertIn(item.pk, {row["id"] for row in page_a["items"]})
+        self.assertNotIn(item.pk, {row["id"] for row in page_b["items"]})
+
+    def test_checkout_rejects_item_not_sold_at_shop(self):
+        from django.core.exceptions import ValidationError
+        from items.services import create_item
+        from shops.services import complete_shop_checkout
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "STING 500ML",
+                "description": "",
+                "minimum_selling_price": "80",
+                "shop_price": "120",
+                "pricing_mode": "single",
+                "sold_shops_present": "1",
+                f"sold_in_shop_{self.shop_a.pk}": "1",
+            },
+            {},
+        )
+        payload = {
+            "kind": "quotation",
+            "login_code": "840031",
+            "lines": [{"id": item.pk, "qty": 1, "price": "120"}],
+        }
+        with self.assertRaises(ValidationError) as ctx:
+            complete_shop_checkout(
+                shop=self.shop_b, profile=self.profile, payload=payload
+            )
+        self.assertIn("not sold at", str(ctx.exception.messages))
+
 
 class ItemPriceListTests(TestCase):
     def setUp(self):

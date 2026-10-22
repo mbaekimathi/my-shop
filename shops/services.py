@@ -4510,11 +4510,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         items_by_id = Item.objects.filter(
             pk__in=item_ids, is_suspended=False
         ).in_bulk()
-        price_by_item = {
-            item_id: price
-            for item_id, price in ShopItemPrice.objects.filter(
+        price_row_by_item = {
+            item_id: (price, is_sold)
+            for item_id, price, is_sold in ShopItemPrice.objects.filter(
                 shop=shop, item_id__in=item_ids
-            ).values_list("item_id", "price")
+            ).values_list("item_id", "price", "is_sold")
         }
         stock_by_item = {
             row.item_id: row
@@ -4557,7 +4557,18 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 errors.append(f"Item #{item_id} is unavailable.")
                 continue
 
-            override = price_by_item.get(item_id) if item.use_individual_shop_prices else None
+            price_row = price_row_by_item.get(item_id)
+            if (
+                price_row is not None
+                and not price_row[1]
+                and kind != ShopReceiptKind.TRADE_IN
+            ):
+                errors.append(
+                    f"“{item.name}” is not sold at {shop.name}."
+                )
+                continue
+
+            override = price_row[0] if price_row and item.use_individual_shop_prices else None
             list_price = item.resolve_list_price(override)
 
             if kind == ShopReceiptKind.TRADE_IN:

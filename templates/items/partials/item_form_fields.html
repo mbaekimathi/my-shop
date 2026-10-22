@@ -120,6 +120,31 @@
   </div>
 </div>
 
+<div class="shop-sold" data-shop-sold>
+  <span class="field-label">Sold in shops</span>
+  <input type="hidden" name="sold_shops_present" value="1">
+  {% if pricing_shops %}
+  <div class="shop-sold-list">
+    {% for shop in pricing_shops %}
+    <label class="shop-sold-row">
+      <input
+        type="checkbox"
+        name="sold_in_shop_{{ shop.pk }}"
+        value="1"
+        id="{{ prefix }}sold-in-shop-{{ shop.pk }}"
+        data-shop-sold-input
+        data-shop-id="{{ shop.pk }}"
+        {% with sid=shop.pk|stringformat:'s' %}{% if form_data.sold_shops %}{% for key, sold in form_data.sold_shops.items %}{% if key == sid %}{% if sold %}checked{% endif %}{% endif %}{% endfor %}{% else %}checked{% endif %}{% endwith %}
+      >
+      <span class="shop-sold-row-name">{{ shop.name }}</span>
+    </label>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="shop-pricing-empty">{{ pricing_shops_empty_message|default:"No shops are available." }}</p>
+  {% endif %}
+</div>
+
 <label class="field field--option">
   <span class="field--option-control">
     <input

@@ -49,6 +49,7 @@ EMPTY_FORM = {
     "shop_price": "",
     "pricing_mode": "single",
     "shop_prices": {},
+    "sold_shops": {},
     "track_serial_number": False,
 }
 
@@ -181,6 +182,22 @@ def _shop_prices_from_post(post, shops) -> dict:
     return prices
 
 
+def _sold_shops_from_post(post, shops) -> dict:
+    form_sent = (post.get("sold_shops_present") or "").strip().lower() in (
+        "1",
+        "true",
+        "on",
+        "yes",
+    )
+    if not form_sent:
+        return {}
+    return {
+        str(shop.pk): (post.get(f"sold_in_shop_{shop.pk}") or "").strip().lower()
+        in ("1", "true", "on", "yes")
+        for shop in shops
+    }
+
+
 def _form_data_from_post(post, profile) -> dict:
     shops = _pricing_shops_for_profile(profile)
     pricing_mode = (post.get("pricing_mode") or "single").strip().lower()
@@ -194,18 +211,20 @@ def _form_data_from_post(post, profile) -> dict:
         "shop_price": post.get("shop_price", "").strip(),
         "pricing_mode": pricing_mode,
         "shop_prices": _shop_prices_from_post(post, shops),
+        "sold_shops": _sold_shops_from_post(post, shops),
         "track_serial_number": (post.get("track_serial_number") or "").strip().lower()
         in ("1", "true", "on", "yes"),
     }
 
 
 def _form_data_from_item(item: Item) -> dict:
-    shop_prices = {
-        str(shop_id): str(price)
-        for shop_id, price in ShopItemPrice.objects.filter(item=item).values_list(
-            "shop_id", "price"
-        )
-    }
+    shop_prices = {}
+    sold_shops = {}
+    for shop_id, price, is_sold in ShopItemPrice.objects.filter(
+        item=item
+    ).values_list("shop_id", "price", "is_sold"):
+        shop_prices[str(shop_id)] = str(price)
+        sold_shops[str(shop_id)] = is_sold
     return {
         "category": item.category,
         "name": item.name,
@@ -214,6 +233,7 @@ def _form_data_from_item(item: Item) -> dict:
         "shop_price": str(item.shop_price),
         "pricing_mode": "individual" if item.use_individual_shop_prices else "single",
         "shop_prices": shop_prices,
+        "sold_shops": sold_shops,
         "track_serial_number": item.track_serial_number,
     }
 

@@ -326,6 +326,7 @@
             data-shop-price="${escapeHtml(item.shop_price || "")}"
             data-pricing-mode="${escapeHtml(item.pricing_mode || "single")}"
             data-shop-prices="${escapeHtml(shopPrices)}"
+            data-sold-shops="${escapeHtml(JSON.stringify(item.sold_shops || {}))}"
             data-track-serial-number="${item.track_serial ? "1" : "0"}"
             data-image-url="${escapeHtml(imageUrl)}"
           >

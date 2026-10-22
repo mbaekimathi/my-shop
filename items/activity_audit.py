@@ -87,10 +87,13 @@ def log_item_activity(
 
 
 def _snapshot_item(item: Item) -> dict:
-    prices = {
-        str(shop_id): f"{price:.2f}"
-        for shop_id, price in item.shop_prices.values_list("shop_id", "price")
-    }
+    prices = {}
+    sold = {}
+    for shop_id, price, is_sold in item.shop_prices.values_list(
+        "shop_id", "price", "is_sold"
+    ):
+        prices[str(shop_id)] = f"{price:.2f}"
+        sold[str(shop_id)] = bool(is_sold)
     return {
         "category": item.category or "",
         "name": item.name or "",
@@ -102,6 +105,7 @@ def _snapshot_item(item: Item) -> dict:
         "discount_min_qty": int(item.discount_min_qty or 0),
         "discount_amount": f"{(item.discount_amount or 0):.2f}",
         "shop_prices": prices,
+        "sold_shops": sold,
         "has_image": bool(item.image),
     }
 
@@ -136,6 +140,19 @@ def _diff_summary(before: dict, after: dict) -> tuple[str, list[int]]:
                 pass
     if shop_ids:
         changes.append("shop prices")
+
+    before_sold = before.get("sold_shops") or {}
+    after_sold = after.get("sold_shops") or {}
+    sold_changed = []
+    for key in set(before_sold) | set(after_sold):
+        if before_sold.get(key, True) != after_sold.get(key, True):
+            try:
+                sold_changed.append(int(key))
+            except (TypeError, ValueError):
+                pass
+    if sold_changed:
+        changes.append("shops sold in")
+        shop_ids = sorted(set(shop_ids) | set(sold_changed))
 
     if not changes:
         return "No field changes", shop_ids

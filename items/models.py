@@ -140,6 +140,10 @@ class ShopItemPrice(models.Model):
         related_name="shop_prices",
     )
     price = models.DecimalField(max_digits=12, decimal_places=2)
+    is_sold = models.BooleanField(
+        default=True,
+        help_text="When off, this item is not listed or sellable at this shop.",
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

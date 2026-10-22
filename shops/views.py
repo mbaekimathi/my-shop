@@ -711,10 +711,17 @@ def my_shop_leave(request):
     return redirect(role_home_url_name(get_profile_for_request(request).role))
 
 
-def _catalog_base_qs():
+def _catalog_base_qs(shop=None):
+    qs = Item.objects.filter(is_suspended=False)
+    if shop is not None:
+        # Only items flagged "sold here" appear in this shop's catalogues.
+        qs = qs.exclude(
+            pk__in=ShopItemPrice.objects.filter(
+                shop=shop, is_sold=False
+            ).values("item_id")
+        )
     return (
-        Item.objects.filter(is_suspended=False)
-        .only(
+        qs.only(
             "id",
             "category",
             "name",
@@ -816,7 +823,7 @@ def shop_website(request, shop_id):
         shop_receipt_lines__receipt__status__in=COUNTED_RECEIPT_STATUSES,
     )
     items = list(
-        _catalog_base_qs()
+        _catalog_base_qs(shop)
         .annotate(
             sold_quantity=Coalesce(
                 Sum("shop_receipt_lines__quantity", filter=sale_filter),
@@ -891,6 +898,11 @@ def shop_website_suggestions(request, shop_id, item_id):
             shop_receipt_lines__receipt_id__in=Subquery(receipt_ids),
         )
         .exclude(pk=item.pk)
+        .exclude(
+            pk__in=ShopItemPrice.objects.filter(
+                shop=shop, is_sold=False
+            ).values("item_id")
+        )
         .annotate(
             together_count=Count(
                 "shop_receipt_lines__receipt_id",
@@ -913,6 +925,11 @@ def shop_website_suggestions(request, shop_id, item_id):
         suggested_items = list(
             Item.objects.filter(is_suspended=False, category=item.category)
             .exclude(pk=item.pk)
+            .exclude(
+                pk__in=ShopItemPrice.objects.filter(
+                    shop=shop, is_sold=False
+                ).values("item_id")
+            )
             .annotate(
                 sold_quantity=Coalesce(
                     Sum("shop_receipt_lines__quantity", filter=sale_filter),
@@ -927,7 +944,7 @@ def shop_website_suggestions(request, shop_id, item_id):
 
 def _catalog_items_by_category(shop):
     """Full catalog grouped by category (buy-stock / legacy callers)."""
-    items = list(_catalog_base_qs())
+    items = list(_catalog_base_qs(shop))
     if not items:
         return [], 0
     rows = _catalog_rows_for_items(shop, items)
@@ -970,7 +987,7 @@ def build_shop_catalog_page(
         page_size = 120
     page_size = min(max(page_size, 24), 240)
 
-    qs = _catalog_filter_qs(_catalog_base_qs(), q=q, category=category)
+    qs = _catalog_filter_qs(_catalog_base_qs(shop), q=q, category=category)
     page_data = _paginate_queryset(qs, page=page, page_size=page_size)
     rows = _catalog_rows_for_items(shop, page_data["items"])
 

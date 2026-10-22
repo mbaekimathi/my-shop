@@ -75,6 +75,9 @@
           modal.querySelectorAll("[data-shop-price-input]").forEach((input) => {
             input.value = "";
           });
+          modal.querySelectorAll("[data-shop-sold-input]").forEach((input) => {
+            input.checked = true;
+          });
           const shopPrice = modal.querySelector("[data-single-shop-price]");
           if (shopPrice) shopPrice.value = "";
         }
@@ -214,6 +217,16 @@
     });
   };
 
+  const setSoldShops = (soldShops) => {
+    const map = parseShopPriceMap(soldShops);
+    editForm?.querySelectorAll("[data-shop-sold-input]").forEach((input) => {
+      const shopId = input.dataset.shopId;
+      input.checked = Object.prototype.hasOwnProperty.call(map, shopId)
+        ? map[shopId] === true || map[shopId] === "1" || map[shopId] === "true"
+        : true;
+    });
+  };
+
   const openEditFromButton = (button) => {
     if (!editForm || !button) return;
 
@@ -228,6 +241,7 @@
       dataset.pricingMode === "individual" || shopPricesDiffer(dataset.shopPrices);
     setPricingMode(useIndividual ? "individual" : "single");
     setShopPrices(dataset.shopPrices);
+    setSoldShops(dataset.soldShops);
     setCheckbox(
       "track_serial_number",
       dataset.trackSerialNumber === "1" || dataset.trackSerialNumber === "true"

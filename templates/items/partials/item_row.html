@@ -70,6 +70,7 @@
         data-shop-price="{{ row.item.shop_price }}"
         data-pricing-mode="{{ row.pricing_mode }}"
         data-shop-prices="{{ row.shop_prices_json }}"
+        data-sold-shops="{{ row.sold_shops_json }}"
         data-track-serial-number="{% if row.item.track_serial_number %}1{% else %}0{% endif %}"
         data-image-url="{% if row.item.image %}{{ row.item.image.url }}{% endif %}"
       >
