@@ -4879,9 +4879,13 @@ def build_stock_report_pdf(
 
     if is_serials:
         if is_audit:
+            try:
+                events_col = (report_headers or []).index("Events")
+            except ValueError:
+                events_col = 2
             kpi_data = [
                 ("SERIALS", str(_count_rows(report_rows))),
-                ("EVENTS", str(_sum_qty(report_rows, 2))),
+                ("EVENTS", str(_sum_qty(report_rows, events_col))),
                 ("PERIOD", period_label or "—"),
                 ("SHOP", shop_label or "All shops"),
             ]
@@ -5087,6 +5091,7 @@ def build_stock_report_pdf(
 
     # ---- Serial movements: single ledger or per-serial audit sheet ----
     if is_serials:
+        n_cols = len(report_headers or [])
         if is_audit:
             story.append(
                 _section(
@@ -5095,15 +5100,28 @@ def build_stock_report_pdf(
                     "Tick each serial seen in the shop; note variances in the last column.",
                 )
             )
-            widths = [
-                doc.width * 0.20,
-                doc.width * 0.16,
-                doc.width * 0.08,
-                doc.width * 0.17,
-                doc.width * 0.15,
-                doc.width * 0.08,
-                doc.width * 0.16,
-            ]
+            if n_cols >= 8:
+                # Shop, Item, Serial, Events, Last event, Expected location, Seen, Note
+                widths = [
+                    doc.width * 0.12,
+                    doc.width * 0.17,
+                    doc.width * 0.14,
+                    doc.width * 0.07,
+                    doc.width * 0.16,
+                    doc.width * 0.14,
+                    doc.width * 0.07,
+                    doc.width * 0.13,
+                ]
+            else:
+                widths = [
+                    doc.width * 0.20,
+                    doc.width * 0.16,
+                    doc.width * 0.08,
+                    doc.width * 0.17,
+                    doc.width * 0.15,
+                    doc.width * 0.08,
+                    doc.width * 0.16,
+                ]
         else:
             story.append(
                 _section(
@@ -5112,15 +5130,28 @@ def build_stock_report_pdf(
                     "Chronological serial-number events for the selected filters.",
                 )
             )
-            widths = [
-                doc.width * 0.15,
-                doc.width * 0.11,
-                doc.width * 0.21,
-                doc.width * 0.17,
-                doc.width * 0.12,
-                doc.width * 0.12,
-                doc.width * 0.12,
-            ]
+            if n_cols >= 8:
+                # Shop, When, Type, Item, Serial, From, To, By
+                widths = [
+                    doc.width * 0.11,
+                    doc.width * 0.13,
+                    doc.width * 0.10,
+                    doc.width * 0.18,
+                    doc.width * 0.16,
+                    doc.width * 0.11,
+                    doc.width * 0.11,
+                    doc.width * 0.10,
+                ]
+            else:
+                widths = [
+                    doc.width * 0.15,
+                    doc.width * 0.11,
+                    doc.width * 0.21,
+                    doc.width * 0.17,
+                    doc.width * 0.12,
+                    doc.width * 0.12,
+                    doc.width * 0.12,
+                ]
         story.append(
             _styled_table(
                 report_headers or [],

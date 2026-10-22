@@ -7888,6 +7888,7 @@ def stock_serial_movements(request, profile, meta, module):
                     "item_name": event["item_name"],
                     "item_category": event["item_category"],
                     "serial_number": serial,
+                    "shop_name": event.get("shop_name") or "—",
                     "from_label": event.get("from_label", "—"),
                     "to_label": event.get("to_label", "—"),
                     "by": event.get("by", "—"),
@@ -7952,6 +7953,9 @@ def _serial_movements_download(
         except Exception:
             logo_path = ""
 
+    # Group the report by shop when the selection covers more than one.
+    multi_shop = len({(row.get("shop_name") or "") for row in rows}) > 1
+
     if report_kind == "audit":
         headers = [
             "Item",
@@ -7962,6 +7966,8 @@ def _serial_movements_download(
             "Seen",
             "Note",
         ]
+        if multi_shop:
+            headers = ["Shop"] + headers
         per_serial = {}
         for row in rows:
             entry = per_serial.get(row["serial_number"])
@@ -7972,12 +7978,14 @@ def _serial_movements_download(
                     "last": None,
                     "last_label": "",
                     "location": "",
+                    "shop": row.get("shop_name") or "—",
                 }
             entry["events"] += 1
             if entry["last"] is None or row["happened_at"] > entry["last"]:
                 entry["last"] = row["happened_at"]
                 entry["last_label"] = row["event_label"]
                 entry["location"] = row["to_label"]
+                entry["shop"] = row.get("shop_name") or "—"
         pdf_rows = []
         total_events = 0
         for serial, entry in per_serial.items():
@@ -7986,36 +7994,56 @@ def _serial_movements_download(
             if entry["last"] is not None:
                 date_str, time_str = _format_movement_pdf_date_time(entry["last"])
                 last = f"{entry['last_label']} · {date_str} {time_str}".strip()
-            pdf_rows.append(
-                [
-                    entry["item"],
-                    serial,
-                    entry["events"],
-                    last or "—",
-                    entry["location"] or "—",
-                    "",
-                    "",
-                ]
+            body = [
+                entry["item"],
+                serial,
+                entry["events"],
+                last or "—",
+                entry["location"] or "—",
+                "",
+                "",
+            ]
+            pdf_rows.append([entry["shop"], *body] if multi_shop else body)
+        pdf_rows.sort(
+            key=lambda r: (
+                str(r[0]).lower(),
+                str(r[1]).lower(),
+                str(r[2]).lower(),
             )
-        pdf_rows.sort(key=lambda r: (str(r[0]).lower(), str(r[1]).lower()))
+            if multi_shop
+            else (str(r[0]).lower(), str(r[1]).lower())
+        )
         if pdf_rows:
-            pdf_rows.append(["Total", "", total_events, "", "", "", ""])
+            total_row = ["Total", "", total_events, "", "", "", ""]
+            pdf_rows.append(
+                ["Total", "", "", total_events, "", "", "", ""]
+                if multi_shop
+                else total_row
+            )
     else:
         headers = ["When", "Type", "Item", "Serial", "From", "To", "By"]
+        if multi_shop:
+            headers = ["Shop"] + headers
+            rows = sorted(
+                rows,
+                key=lambda r: (
+                    str(r.get("shop_name") or "") in ("", "—"),
+                    str(r.get("shop_name") or "").lower(),
+                ),
+            )
         pdf_rows = []
         for row in rows:
             date_str, time_str = _format_movement_pdf_date_time(row["happened_at"])
-            pdf_rows.append(
-                [
-                    f"{date_str} {time_str}".strip() or "—",
-                    row["event_label"],
-                    row["item_name"],
-                    row["serial_number"],
-                    row["from_label"],
-                    row["to_label"],
-                    row["by"],
-                ]
-            )
+            body = [
+                f"{date_str} {time_str}".strip() or "—",
+                row["event_label"],
+                row["item_name"],
+                row["serial_number"],
+                row["from_label"],
+                row["to_label"],
+                row["by"],
+            ]
+            pdf_rows.append([row["shop_name"], *body] if multi_shop else body)
 
     filename = _stock_report_download_filename(
         "serial-movements",
