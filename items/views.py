@@ -4508,8 +4508,11 @@ def _stock_report_download_filename(
         type_slug = "-".join(type_slug_map.get(key, key) for key in ordered)
     kind_slug = "audit" if report_kind == "audit" else "actual"
     stamp = dj_timezone.localtime(dj_timezone.now()).strftime("%Y-%m-%d-%H%M")
-    prefix = "stock-movements" if page_mode == "movements" else "stock-report"
-    if page_mode == "movements" and type_slug != "all":
+    prefix = {
+        "movements": "stock-movements",
+        "serial-movements": "serial-movements",
+    }.get(page_mode, "stock-report")
+    if page_mode in ("movements", "serial-movements") and type_slug != "all":
         return f"{prefix}-{kind_slug}-{safe_period}-{type_slug}-{stamp}.pdf"
     return f"{prefix}-{kind_slug}-{safe_period}-{stamp}.pdf"
 
@@ -7893,6 +7896,16 @@ def stock_serial_movements(request, profile, meta, module):
 
     rows.sort(key=lambda row: row["happened_at"], reverse=True)
 
+    report_kind = _parse_report_kind(request.GET.get("report_kind"))
+    if (request.GET.get("download") or "").strip() == "1":
+        return _serial_movements_download(
+            rows=rows,
+            report_kind=report_kind,
+            event_filter=event_filter,
+            filter_context=filter_context,
+            shops_label=shops_label,
+        )
+
     return render(
         request,
         "items/stock_serial_movements.html",
@@ -7911,10 +7924,123 @@ def stock_serial_movements(request, profile, meta, module):
             "display_shops": display_shops,
             "shops_label": shops_label,
             "event_filter": event_filter,
+            "report_kind": report_kind,
             "stock_mode": "serial-movements",
             **filter_context,
         },
     )
+
+
+def _serial_movements_download(
+    *, rows, report_kind, event_filter, filter_context, shops_label
+):
+    """PDF download of the filtered serial-movement rows.
+
+    ``actual`` renders the on-screen ledger; ``audit`` collapses rows into a
+    per-serial sheet with blank Seen / Note columns for physical checks.
+    """
+    from django.utils import timezone as dj_timezone
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    logo_path = ""
+    if getattr(company, "logo", None):
+        try:
+            logo_path = company.logo.path
+        except Exception:
+            logo_path = ""
+
+    if report_kind == "audit":
+        headers = [
+            "Item",
+            "Serial",
+            "Events",
+            "Last event",
+            "Expected location",
+            "Seen",
+            "Note",
+        ]
+        per_serial = {}
+        for row in rows:
+            entry = per_serial.get(row["serial_number"])
+            if entry is None:
+                entry = per_serial[row["serial_number"]] = {
+                    "item": row["item_name"],
+                    "events": 0,
+                    "last": None,
+                    "last_label": "",
+                    "location": "",
+                }
+            entry["events"] += 1
+            if entry["last"] is None or row["happened_at"] > entry["last"]:
+                entry["last"] = row["happened_at"]
+                entry["last_label"] = row["event_label"]
+                entry["location"] = row["to_label"]
+        pdf_rows = []
+        total_events = 0
+        for serial, entry in per_serial.items():
+            total_events += entry["events"]
+            last = ""
+            if entry["last"] is not None:
+                date_str, time_str = _format_movement_pdf_date_time(entry["last"])
+                last = f"{entry['last_label']} · {date_str} {time_str}".strip()
+            pdf_rows.append(
+                [
+                    entry["item"],
+                    serial,
+                    entry["events"],
+                    last or "—",
+                    entry["location"] or "—",
+                    "",
+                    "",
+                ]
+            )
+        pdf_rows.sort(key=lambda r: (str(r[0]).lower(), str(r[1]).lower()))
+        if pdf_rows:
+            pdf_rows.append(["Total", "", total_events, "", "", "", ""])
+    else:
+        headers = ["When", "Type", "Item", "Serial", "From", "To", "By"]
+        pdf_rows = []
+        for row in rows:
+            date_str, time_str = _format_movement_pdf_date_time(row["happened_at"])
+            pdf_rows.append(
+                [
+                    f"{date_str} {time_str}".strip() or "—",
+                    row["event_label"],
+                    row["item_name"],
+                    row["serial_number"],
+                    row["from_label"],
+                    row["to_label"],
+                    row["by"],
+                ]
+            )
+
+    filename = _stock_report_download_filename(
+        "serial-movements",
+        filter_context,
+        event_filter=event_filter,
+        report_kind=report_kind,
+    )
+    pdf_bytes = build_stock_report_pdf(
+        company_name=company_name,
+        page_mode="serial-movements",
+        period_label=(filter_context.get("report_period_label") or "").strip()
+        or "—",
+        event_filter=event_filter,
+        event_filter_label=_movement_event_filter_label(event_filter),
+        shop_label=shops_label,
+        report_kind=report_kind,
+        generated_at=dj_timezone.localtime(dj_timezone.now()),
+        logo_path=logo_path,
+        company_phone=(getattr(company, "phone_number", None) or "").strip(),
+        company_email=(getattr(company, "email", None) or "").strip(),
+        company_location=(getattr(company, "location", None) or "").strip(),
+        report_rows=pdf_rows,
+        report_headers=headers,
+    )
+    return _stock_report_pdf_response(filename=filename, pdf_bytes=pdf_bytes)
 
 
 def stock_serial_returns(request, profile, meta, module):

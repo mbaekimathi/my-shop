@@ -4426,6 +4426,7 @@ def build_stock_report_pdf(
     register_manrope_pdf_fonts()
 
     is_movements = page_mode == "movements"
+    is_serials = page_mode == "serial-movements"
     is_audit = (report_kind or "actual").strip().lower() == "audit"
     # Always portrait A4 for print-friendly downloads.
     page_size = A4
@@ -4479,7 +4480,12 @@ def build_stock_report_pdf(
     bottom_m = 11 * mm
 
     if is_audit:
-        title = "Stock Movement Audit Trail" if is_movements else "Stock Audit Trail"
+        if is_serials:
+            title = "Serial Movement Audit Trail"
+        else:
+            title = "Stock Movement Audit Trail" if is_movements else "Stock Audit Trail"
+    elif is_serials:
+        title = "Serial Movement Report"
     elif is_movements:
         title = "Stock Movement Report"
     else:
@@ -4787,11 +4793,14 @@ def build_stock_report_pdf(
     # Compact meta strip
     if is_audit:
         hero_left = [
-            Paragraph(_esc("Audit trail"), hero_title),
+            Paragraph(
+                _esc("Serial audit trail" if is_serials else "Audit trail"),
+                hero_title,
+            ),
             Paragraph(
                 _esc(
                     f"{event_filter_label} · {shop_label or 'All shops'} · "
-                    "Summary by item"
+                    + ("Per-serial sheet" if is_serials else "Summary by item")
                 ),
                 hero_sub,
             ),
@@ -4804,15 +4813,19 @@ def build_stock_report_pdf(
         hero_bg = surface_warm
         hero_box = accent_mid
     else:
+        if is_serials:
+            hero_sub_text = (
+                f"Actual report · {event_filter_label} · "
+                f"{shop_label or 'All shops'}"
+            )
+        else:
+            hero_sub_text = (
+                f"Actual report · {event_filter_label} · {view_label} · "
+                f"{shop_label or 'All shops'}"
+            )
         hero_left = [
             Paragraph(_esc(title), hero_title),
-            Paragraph(
-                _esc(
-                    f"Actual report · {event_filter_label} · {view_label} · "
-                    f"{shop_label or 'All shops'}"
-                ),
-                hero_sub,
-            ),
+            Paragraph(_esc(hero_sub_text), hero_sub),
         ]
         hero_right = [
             Paragraph("PERIOD", kpi_label),
@@ -4864,7 +4877,22 @@ def build_stock_report_pdf(
                 continue
         return total
 
-    if is_audit:
+    if is_serials:
+        if is_audit:
+            kpi_data = [
+                ("SERIALS", str(_count_rows(report_rows))),
+                ("EVENTS", str(_sum_qty(report_rows, 2))),
+                ("PERIOD", period_label or "—"),
+                ("SHOP", shop_label or "All shops"),
+            ]
+        else:
+            kpi_data = [
+                ("MOVEMENTS", str(_count_rows(report_rows))),
+                ("TYPE", event_filter_label),
+                ("PERIOD", period_label or "—"),
+                ("SHOP", shop_label or "All shops"),
+            ]
+    elif is_audit:
         # Summary columns: Item, Category, Transactions, Qty, System qty, ...
         audit_events = 0
         audit_qty = 0
@@ -5056,6 +5084,54 @@ def build_stock_report_pdf(
         table = Table(body, colWidths=col_widths, repeatRows=1)
         table.setStyle(TableStyle(cmds))
         return table
+
+    # ---- Serial movements: single ledger or per-serial audit sheet ----
+    if is_serials:
+        if is_audit:
+            story.append(
+                _section(
+                    "01  AUDIT SHEET",
+                    "Serial audit sheet",
+                    "Tick each serial seen in the shop; note variances in the last column.",
+                )
+            )
+            widths = [
+                doc.width * 0.20,
+                doc.width * 0.16,
+                doc.width * 0.08,
+                doc.width * 0.17,
+                doc.width * 0.15,
+                doc.width * 0.08,
+                doc.width * 0.16,
+            ]
+        else:
+            story.append(
+                _section(
+                    "01  MOVEMENT LEDGER",
+                    "Serial movements",
+                    "Chronological serial-number events for the selected filters.",
+                )
+            )
+            widths = [
+                doc.width * 0.15,
+                doc.width * 0.11,
+                doc.width * 0.21,
+                doc.width * 0.17,
+                doc.width * 0.12,
+                doc.width * 0.12,
+                doc.width * 0.12,
+            ]
+        story.append(
+            _styled_table(
+                report_headers or [],
+                report_rows or [],
+                col_widths=widths,
+                emphasize_last=bool(report_rows)
+                and str(report_rows[-1][0]).strip().lower() == "total",
+            )
+        )
+        doc.build(story, canvasmaker=_NumberedCanvas)
+        return buffer.getvalue()
 
     # ---- Audit trail: summary by item only ----
     if is_audit and is_movements:

@@ -104,7 +104,26 @@
         >
       </label>
 
-      <button type="submit" class="stock-report-apply">Apply</button>
+      <div class="stock-report-filter-actions">
+        <button type="submit" class="stock-report-apply">Apply</button>
+        <label class="stock-report-field stock-report-download-kind">
+          <span>PDF type</span>
+          <select name="report_kind" aria-label="Download report type">
+            <option value="actual"{% if report_kind != 'audit' %} selected{% endif %}>Actual report</option>
+            <option value="audit"{% if report_kind == 'audit' %} selected{% endif %}>Audit trail</option>
+          </select>
+        </label>
+        <button
+          type="submit"
+          class="stock-report-apply stock-report-apply--ghost"
+          name="download"
+          value="1"
+          data-stock-report-download
+        >
+          <i data-lucide="download" aria-hidden="true"></i>
+          Download PDF
+        </button>
+      </div>
     </form>
   </header>
 
