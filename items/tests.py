@@ -2703,6 +2703,95 @@ class StockSerialDetailShopFilterTests(TestCase):
             self.assertEqual(serials, expected, params)
             self.assertEqual(resp.context["out_count"], len(expected))
 
+    def test_returned_serials_show_where_they_are_now(self):
+        from shops.models import (
+            ShopPaymentMethod,
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptLine,
+            ShopReceiptStatus,
+        )
+
+        from items.models import ItemSerial
+
+        now = timezone.now()
+        returned_at = now - timedelta(days=5)
+        for serial_number, available in (
+            ("RET-IN-1", True),
+            ("RET-OUT-1", False),
+            ("RET-SOLD-1", False),
+        ):
+            ItemSerial.objects.create(
+                item=self.item,
+                shop=self.shop_a,
+                serial_number=serial_number,
+                is_available=available,
+            )
+
+        def make_receipt(number, serials, returned, created_at):
+            receipt = ShopReceipt.objects.create(
+                shop=self.shop_a,
+                receipt_number=number,
+                kind=ShopReceiptKind.SALE,
+                payment_method=ShopPaymentMethod.CASH,
+                subtotal=Decimal("1500.00"),
+                total=Decimal("1500.00"),
+                amount_paid=Decimal("1500.00"),
+                cash_amount=Decimal("1500.00"),
+                created_by=self.profile,
+                status=(
+                    ShopReceiptStatus.PARTIAL_RETURN
+                    if returned
+                    else ShopReceiptStatus.ACTIVE
+                ),
+                last_returned_at=returned_at if returned else None,
+            )
+            ShopReceipt.objects.filter(pk=receipt.pk).update(created_at=created_at)
+            ShopReceiptLine.objects.create(
+                receipt=receipt,
+                item=self.item,
+                item_name=self.item.name,
+                quantity=len(serials),
+                returned_quantity=len(returned),
+                unit_price=Decimal("1500.00"),
+                line_total=Decimal("0.00"),
+                serial_numbers=serials,
+                returned_serial_numbers=returned,
+            )
+
+        returned_serials = ["RET-IN-1", "RET-OUT-1", "RET-SOLD-1"]
+        make_receipt(
+            "RET-SALE-1", returned_serials, returned_serials, now - timedelta(days=10)
+        )
+        make_receipt("RET-SALE-2", ["RET-SOLD-1"], [], now - timedelta(days=1))
+
+        self.client.login(username="840032", password=self.password)
+        resp = self.client.get(self.detail_url, {"status": "returned"})
+        self.assertEqual(resp.status_code, 200)
+        by_serial = {row["serial_number"]: row for row in resp.context["rows"]}
+        self.assertEqual(set(by_serial), set(returned_serials))
+        self.assertEqual(by_serial["RET-IN-1"]["returned_after"], "in_stock")
+        self.assertEqual(by_serial["RET-OUT-1"]["returned_after"], "out")
+        self.assertEqual(by_serial["RET-SOLD-1"]["returned_after"], "sold")
+        self.assertEqual(by_serial["RET-SOLD-1"]["receipt_number"], "RET-SALE-2")
+        self.assertEqual(resp.context["returned_count"], 3)
+        self.assertEqual(resp.context["returned_in_stock_count"], 1)
+        self.assertEqual(resp.context["returned_out_count"], 1)
+        self.assertEqual(resp.context["returned_sold_count"], 1)
+        self.assertContains(resp, "Now stocked out")
+
+        for status, expected in (
+            ("returned_in_stock", ["RET-IN-1"]),
+            ("returned_out", ["RET-OUT-1"]),
+            ("returned_sold", ["RET-SOLD-1"]),
+        ):
+            filtered = self.client.get(self.detail_url, {"status": status})
+            serials = [row["serial_number"] for row in filtered.context["rows"]]
+            self.assertEqual(serials, expected, status)
+
+        sold = self.client.get(self.detail_url, {"status": "sold"})
+        self.assertEqual(sold.context["rows"], [])
+
 
 class StockSerialsIndexScanSearchTests(TestCase):
     def setUp(self):

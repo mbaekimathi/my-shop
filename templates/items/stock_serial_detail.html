@@ -25,6 +25,12 @@
           <strong>{{ returned_count }}</strong>
           <span>returned</span>
         </p>
+        {% if returned_count %}
+        <p class="stock-stat" title="Returned serials by where they are now">
+          <strong>{{ returned_in_stock_count }} · {{ returned_out_count }} · {{ returned_sold_count }}</strong>
+          <span>returned: in stock · out · sold</span>
+        </p>
+        {% endif %}
         <p class="stock-stat">
           <strong>{{ out_count }}</strong>
           <span>stocked out</span>
@@ -51,7 +57,10 @@
           <option value="all"{% if status_filter == "all" %} selected{% endif %}>All</option>
           <option value="in_stock"{% if status_filter == "in_stock" %} selected{% endif %}>In stock</option>
           <option value="sold"{% if status_filter == "sold" %} selected{% endif %}>Sold</option>
-          <option value="returned"{% if status_filter == "returned" %} selected{% endif %}>Returned</option>
+          <option value="returned"{% if status_filter == "returned" %} selected{% endif %}>Returned (all)</option>
+          <option value="returned_in_stock"{% if status_filter == "returned_in_stock" %} selected{% endif %}>Returned · In stock</option>
+          <option value="returned_out"{% if status_filter == "returned_out" %} selected{% endif %}>Returned · Stocked out</option>
+          <option value="returned_sold"{% if status_filter == "returned_sold" %} selected{% endif %}>Returned · Sold</option>
           <option value="out"{% if status_filter == "out" %} selected{% endif %}>Stocked out</option>
         </select>
       </label>
@@ -143,8 +152,11 @@
           </td>
           <td class="stock-serials-col--status" data-label="Status">
             <span class="stock-report-type stock-report-type--{% if row.status == 'in_stock' %}in{% elif row.status == 'sold' %}sale{% elif row.status == 'returned' %}returned{% else %}out{% endif %}">
-              {{ row.status_label }}
+              {% if row.returned_after %}Returned{% else %}{{ row.status_label }}{% endif %}
             </span>
+            {% if row.returned_after %}
+            <span class="stock-report-from">Now {{ row.returned_after_label|lower }}</span>
+            {% endif %}
           </td>
           <td data-label="Shop">
             {% if row.status == "sold" or row.status == "returned" %}
@@ -181,7 +193,10 @@
             {% if row.status_at %}
             <span class="stock-serials-stack">
               <span>{{ row.status_at|date:"d M Y" }} · {{ row.status_at|time:"H:i" }}</span>
-              <span class="stock-report-from">{% if row.status == "in_stock" %}stocked in{% else %}{{ row.status_label|lower }}{% endif %}</span>
+              <span class="stock-report-from">{% if row.returned_after == "in_stock" %}returned{% elif row.returned_after %}{{ row.returned_after_label|lower }}{% elif row.status == "in_stock" %}stocked in{% else %}{{ row.status_label|lower }}{% endif %}</span>
+              {% if row.returned_after and row.returned_after != "in_stock" and row.returned_at %}
+              <span class="stock-report-from">returned {{ row.returned_at|date:"d M Y" }}</span>
+              {% endif %}
             </span>
             {% else %}
             <span class="stock-serials-empty">—</span>

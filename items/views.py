@@ -7407,6 +7407,43 @@ def _serial_unit_state(serial, sale_by_serial, return_by_serial):
     return "out", "Stocked out", None
 
 
+RETURNED_AFTER_LABELS = {
+    "in_stock": "In stock",
+    "out": "Stocked out",
+    "sold": "Sold",
+}
+
+
+def _serial_display_state(serial, sale_by_serial, return_by_serial):
+    """Unit state plus, for client-returned serials, where the unit is now.
+
+    Returns (status, status_label, event, returned_after, returned_event);
+    ``returned_after`` is "in_stock", "out" or "sold" when a client returned
+    the serial and it has stayed in stock, been stocked out, or sold again.
+    """
+    status, status_label, event = _serial_unit_state(
+        serial, sale_by_serial, return_by_serial
+    )
+    key = str(serial.serial_number or "").strip().upper()
+    returned = return_by_serial.get(key) or return_by_serial.get(serial.serial_number)
+    returned_after = ""
+    if returned is not None:
+        if status == "returned":
+            returned_after = "in_stock" if serial.is_available else "out"
+        elif (
+            status == "sold"
+            and event
+            and event.get("sold_at")
+            and returned.get("returned_at")
+            and event["sold_at"] >= returned["returned_at"]
+        ):
+            returned_after = "sold"
+    if returned_after:
+        status = "returned"
+        status_label = f"Returned · {RETURNED_AFTER_LABELS[returned_after]}"
+    return status, status_label, event, returned_after, returned
+
+
 def _serial_sale_lookup(item):
     """Map serial_number → latest active sale/credit info for an item."""
     from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
@@ -7486,9 +7523,17 @@ def _serial_stock_movement_lookup(item):
     return {"in": latest[StockMovementType.IN], "out": latest[StockMovementType.OUT]}
 
 
-def _serial_status_at(serial, status, event, movement_lookup):
+def _serial_status_at(serial, status, event, movement_lookup, returned_after=""):
     """When the serial entered its current status (sale, return, stock in/out)."""
     key = str(serial.serial_number or "").strip().upper()
+    if returned_after == "sold":
+        return event.get("sold_at")
+    if returned_after == "out":
+        returned_at = event.get("returned_at") if event else None
+        stocked_out_at = movement_lookup["out"].get(key)
+        if stocked_out_at and (returned_at is None or stocked_out_at >= returned_at):
+            return stocked_out_at
+        return serial.updated_at
     if status == "sold" and event and event.get("sold_at"):
         return event["sold_at"]
     if status == "returned" and event:
@@ -8228,7 +8273,16 @@ def stock_serial_detail(request, profile, meta, module, item_id):
     item = get_object_or_404(Item, pk=item_id, track_serial_number=True)
     search = (request.GET.get("q") or "").strip()
     status_filter = (request.GET.get("status") or "all").strip().lower()
-    if status_filter not in ("all", "in_stock", "sold", "returned", "out"):
+    if status_filter not in (
+        "all",
+        "in_stock",
+        "sold",
+        "returned",
+        "returned_in_stock",
+        "returned_out",
+        "returned_sold",
+        "out",
+    ):
         status_filter = "all"
     range_type, range_start, range_end, filter_context = _report_range_bounds(request)
     if (request.GET.get("range") or "").strip().lower() != range_type:
@@ -8273,19 +8327,22 @@ def stock_serial_detail(request, profile, meta, module, item_id):
     in_stock_count = 0
     sold_count = 0
     returned_count = 0
+    returned_after_counts = {key: 0 for key in RETURNED_AFTER_LABELS}
     out_count = 0
 
     segment = role_url_segment(profile.role)
     for serial in serials_qs:
-        # Still on an active sale → sold. Client receipt return stays Returned
-        # until sold again or status is changed manually.
-        status, status_label, event = _serial_unit_state(
+        # Client-returned serials stay Returned, with where the unit is now
+        # (back in stock, stocked out, or sold again).
+        status, status_label, event, returned_after, _returned = _serial_display_state(
             serial, sale_by_serial, return_by_serial
         )
         event_shop_id = event.get("shop_id") if event else None
         if shop_ids and serial.shop_id not in shop_ids and event_shop_id not in shop_ids:
             continue
-        status_at = _serial_status_at(serial, status, event, movement_lookup)
+        status_at = _serial_status_at(
+            serial, status, event, movement_lookup, returned_after
+        )
         if range_start is not None and not (
             status_at and range_start <= status_at < range_end
         ):
@@ -8294,12 +8351,15 @@ def stock_serial_detail(request, profile, meta, module, item_id):
             sold_count += 1
         elif status == "returned":
             returned_count += 1
+            if returned_after:
+                returned_after_counts[returned_after] += 1
         elif status == "in_stock":
             in_stock_count += 1
         else:
             out_count += 1
 
-        if status_filter != "all" and status != status_filter:
+        row_filter_key = f"returned_{returned_after}" if returned_after else status
+        if status_filter not in ("all", status, row_filter_key):
             continue
 
         rows.append(
@@ -8312,8 +8372,10 @@ def stock_serial_detail(request, profile, meta, module, item_id):
                 "client_phone": event["client_phone"] if event else "",
                 "receipt_number": event["receipt_number"] if event else "",
                 "sold_at": event.get("sold_at") if event else None,
-                "returned_at": event.get("returned_at") if event else None,
                 "status_at": status_at,
+                "returned_after": returned_after,
+                "returned_after_label": RETURNED_AFTER_LABELS.get(returned_after, ""),
+                "returned_at": _returned.get("returned_at") if _returned else None,
                 "kind_label": event["kind_label"] if event else "",
                 "sale_shop_name": event["shop_name"] if event else "",
                 "history_url": reverse(
@@ -8348,6 +8410,9 @@ def stock_serial_detail(request, profile, meta, module, item_id):
             "in_stock_count": in_stock_count,
             "sold_count": sold_count,
             "returned_count": returned_count,
+            "returned_in_stock_count": returned_after_counts["in_stock"],
+            "returned_out_count": returned_after_counts["out"],
+            "returned_sold_count": returned_after_counts["sold"],
             "out_count": out_count,
             "search": search,
             "status_filter": status_filter,
@@ -8576,7 +8641,7 @@ def stock_serial_history(request, profile, meta, module, item_id, serial_number)
 
     sale_by_serial = _serial_sale_lookup(item)
     return_by_serial = _serial_return_lookup(item)
-    status, status_label, event = _serial_unit_state(
+    status, status_label, event, _returned_after, _returned = _serial_display_state(
         serial, sale_by_serial, return_by_serial
     )
 
