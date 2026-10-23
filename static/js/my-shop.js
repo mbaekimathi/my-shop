@@ -557,6 +557,7 @@
         item_id: itemId,
         shop_id: createSupplyShopId,
         q: query,
+        limit: 60,
       });
       modalCreateSerials().forEach((serial) => params.append("exclude", serial));
       try {
@@ -620,11 +621,21 @@
         return false;
       }
       const root = createSerialEntry.closest("[data-serial-search-root]");
-      const firstOption = root?.querySelector(
-        ".stock-supplier-suggest-option:not([disabled])"
+      const options = [
+        ...(root?.querySelectorAll(
+          ".stock-supplier-suggest-option:not([disabled])"
+        ) || []),
+      ];
+      // Prefer an exact match on the typed serial; only fall back to the top
+      // suggestion when it is the sole option, so a stale list can't hijack
+      // what the user actually scanned.
+      const exactOption = options.find(
+        (opt) => normalizeCreateSerial(opt.textContent) === serial
       );
-      if (firstOption) {
-        const picked = normalizeCreateSerial(firstOption.textContent);
+      if (exactOption) {
+        serial = normalizeCreateSerial(exactOption.textContent);
+      } else if (options.length === 1) {
+        const picked = normalizeCreateSerial(options[0].textContent);
         if (picked) serial = picked;
       }
       createSerialEntry.value = "";
@@ -668,6 +679,8 @@
         if (ok) {
           lastCreateSerialCommit = serial;
           lastCreateSerialCommitAt = Date.now();
+          // Refresh the pick list so remaining serials stay one tap away.
+          runCreateSerialSearch();
         }
         return ok;
       } finally {
@@ -702,6 +715,8 @@
       createSerialModal.setAttribute("aria-hidden", "false");
       document.body.classList.add("workspace-modal-open");
       createSerialEntry?.focus({ preventScroll: true });
+      // Pre-load available serials so the user can tap them without typing.
+      runCreateSerialSearch();
     };
 
     const closeCreateSerialModal = ({ save = false } = {}) => {
@@ -750,31 +765,27 @@
         focusQty();
       });
       if (tracksSerial) {
-        // Serial-tracked items accept a typed quantity: the server auto-picks
-        // available serials at this shop. Typing clears any picked serials so
-        // quantity and serials stay consistent. Clicking elsewhere on the row
-        // still opens the serial picker.
-        const onManualQty = () => {
-          const serialHidden = row.querySelector("[data-stock-create-serials]");
-          if (serialHidden && serialHidden.value) serialHidden.value = "";
-          syncRowEnabled(row);
-          syncSelectedCount();
-          captureSelectedQtys();
-        };
-        qty.addEventListener("input", onManualQty);
-        qty.addEventListener("change", onManualQty);
-      } else {
-        qty.addEventListener("input", () => {
-          syncRowEnabled(row);
-          syncSelectedCount();
-          captureSelectedQtys();
+        // Serial-tracked items go through the serial picker — the quantity
+        // input is readonly and just reflects how many serials are picked.
+        // Clicking it (or pressing Enter/Space) opens the picker.
+        qty.addEventListener("click", (event) => {
+          event.preventDefault();
+          if (!qty.disabled) openCreateSerialModal(row);
         });
-        qty.addEventListener("change", () => {
-          syncRowEnabled(row);
-          syncSelectedCount();
-          captureSelectedQtys();
+        qty.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (!qty.disabled) openCreateSerialModal(row);
+          }
         });
       }
+      const onQtyChanged = () => {
+        syncRowEnabled(row);
+        syncSelectedCount();
+        captureSelectedQtys();
+      };
+      qty.addEventListener("input", onQtyChanged);
+      qty.addEventListener("change", onQtyChanged);
       syncRowEnabled(row);
     };
 
@@ -828,8 +839,8 @@
         if (text) {
           text.textContent =
             qty <= 3
-              ? `Only ${qty} left — enter qty or pick serials`
-              : `${qty} available — enter qty or pick serials`;
+              ? `Only ${qty} left — pick serials to send`
+              : `${qty} available — pick serials to send`;
         }
       } else if (qty <= 3) {
         el.classList.add("is-low");
@@ -903,18 +914,16 @@
           : item.qty || "";
         const qtyControl = item.trackSerial
           ? `<input
-            type="number"
+            type="text"
             class="stock-create-qty stock-create-qty--serial"
             name="quantity"
-            min="1"
-            step="1"
             value="${escapeHtml(qtyValue)}"
-            placeholder="0"
-            inputmode="numeric"
+            placeholder="Pick"
+            readonly
             data-stock-create-qty
             data-stock-create-serial-open
-            aria-label="Serials or quantity to send for ${escapeHtml(item.name)}"
-            title="Enter a quantity to auto-pick serials, or click the row to select serial numbers"
+            aria-label="Serial numbers to send for ${escapeHtml(item.name)}"
+            title="Click to pick the serial numbers to send"
           >`
           : `<input
             type="number"
@@ -1092,14 +1101,14 @@
         if (itemsHint) {
           if (query) {
             itemsHint.textContent = items.length
-              ? `Matches for “${query}”. Enter qty to send — serial items open a picker.`
+              ? `Matches for “${query}”. Enter qty to send — click serial items to pick serials.`
               : selectedItems.size
                 ? `No new matches for “${query}”. Your selected items stay listed above.`
                 : `No matches for “${query}”.`;
           } else if (visibleCount) {
             itemsHint.textContent = includeEmpty
-              ? `Showing all items at ${shopName || "this shop"} (including out of stock). Enter qty, or select serials for serial-tracked items.`
-              : `In-stock items at ${shopName || "this shop"}. Serial items: enter qty to auto-pick serials, or click a row to pick them.`;
+              ? `Showing all items at ${shopName || "this shop"} (including out of stock). Serial-tracked items: click to pick the serial numbers to send.`
+              : `In-stock items at ${shopName || "this shop"}. Serial-tracked items: click to pick the serial numbers to send.`;
           } else {
             itemsHint.textContent =
               "Search an item name to load matches, then enter qty or select serials to send.";
@@ -1201,12 +1210,11 @@
       for (const row of activeRows) {
         if (!rowTracksSerial(row)) continue;
         const serials = rowSerials(row);
-        if (!serials.length) continue; // quantity-only — server auto-picks serials
         const qty = Number(row.querySelector("[data-stock-create-qty]")?.value || 0);
         if (serials.length !== qty) {
           rows.forEach((r) => syncRowEnabled(r));
           window.alert(
-            "Serial count and quantity must match — pick serials or enter a quantity to auto-pick."
+            "Pick the serial numbers to send — serial-tracked items need serials, not just a quantity."
           );
           openCreateSerialModal(row);
           return;
