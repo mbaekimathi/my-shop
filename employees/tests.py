@@ -651,8 +651,8 @@ class ClientCreditAccountTableTests(TestCase):
         page = _build_clients(self._filters(receipt_kind="credits"))
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIsNotNone(row)
-        self.assertEqual(row[-1]["qty"], "1")
-        self.assertEqual(row[-1]["amount"], "0")
+        self.assertEqual(row[-2]["qty"], "1")
+        self.assertEqual(row[-2]["amount"], "0")
 
     def test_cleared_clients_sort_after_open_balances(self):
         from employees.analytics_services import apply_credit_receipt_payment
@@ -678,7 +678,7 @@ class ClientCreditAccountTableTests(TestCase):
         )
         self.assertLess(open_idx, cleared_idx)
         cleared_row = self._row_for(page, "CLEARED CLIENT")
-        self.assertEqual(cleared_row[-1]["amount"], "0")
+        self.assertEqual(cleared_row[-2]["amount"], "0")
 
     def test_partial_credit_stays_credit_with_balance_due(self):
         from employees.analytics_services import apply_credit_receipt_payment
@@ -695,8 +695,8 @@ class ClientCreditAccountTableTests(TestCase):
         page = _build_clients(self._filters(receipt_kind="credits"))
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIsNotNone(row)
-        self.assertEqual(row[-1]["qty"], "1")
-        self.assertEqual(row[-1]["amount"], "60")
+        self.assertEqual(row[-2]["qty"], "1")
+        self.assertEqual(row[-2]["amount"], "60")
 
     def test_cancelled_credit_is_excluded(self):
         self._make_receipt(
@@ -801,8 +801,8 @@ class ClientCreditAccountTableTests(TestCase):
         page = _build_clients(self._filters(receipt_kind="credits"))
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIsNotNone(row)
-        self.assertEqual(row[-1]["qty"], "2")
-        self.assertEqual(row[-1]["amount"], "80")
+        self.assertEqual(row[-2]["qty"], "2")
+        self.assertEqual(row[-2]["amount"], "80")
 
     def test_credits_page_links_use_credits_account_url(self):
         self._make_receipt(self.client)
@@ -811,6 +811,32 @@ class ClientCreditAccountTableTests(TestCase):
         self.assertIn("/analytics/credits/clients/", row[0]["href"])
         self.assertIn("all-time", page["tables"][0]["footnote"])
         self.assertIn("Cleared clients", page["tables"][0]["footnote"])
+
+    def test_credit_client_rows_include_stock_value_and_totals(self):
+        from shops.models import ShopReceiptLine
+
+        receipt = self._make_receipt(self.client, total=100, amount_paid=0)
+        ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item_name="HDMI CABLE",
+            quantity=2,
+            unit_price=50,
+            unit_cost=30,
+            line_total=100,
+        )
+        page = _build_clients(self._filters(from_credits=True))
+        table = page["tables"][0]
+        self.assertEqual(table["columns"][-1]["label"], "Stock")
+        row = self._row_for(page, "CREDIT CLIENT")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[-2]["qty"], "1")
+        self.assertEqual(row[-2]["amount"], "100")
+        self.assertEqual(row[-1]["kind"], "money")
+        self.assertEqual(row[-1]["label"], "60")
+        totals = self._row_cells(table["rows"][-1])
+        self.assertEqual(totals[0], "Total")
+        self.assertEqual(totals[-2]["amount"], "100")
+        self.assertEqual(totals[-1]["label"], "60")
 
     def test_credits_period_filter_scopes_client_rows_and_alerts(self):
         from datetime import datetime, time, timedelta
@@ -842,8 +868,8 @@ class ClientCreditAccountTableTests(TestCase):
         )
         row = self._row_for(page, "CREDIT CLIENT")
         self.assertIsNotNone(row)
-        self.assertEqual(row[-1]["qty"], "1")
-        self.assertEqual(row[-1]["amount"], "100")
+        self.assertEqual(row[-2]["qty"], "1")
+        self.assertEqual(row[-2]["amount"], "100")
         self.assertIn("this period", page["tables"][0]["footnote"])
         self.assertEqual(len(page["alerts"]), 1)
         self.assertEqual(page["alerts"][0]["href_label"], "View other credits")

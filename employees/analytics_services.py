@@ -9189,6 +9189,47 @@ def _build_credits(filters):
     }
 
 
+def _client_credit_stock_map(receipts_qs) -> dict[int, Decimal]:
+    """Buying cost of items on each client's credit-account receipts."""
+    line_qs = ShopReceiptLine.objects.filter(receipt__in=receipts_qs)
+    remaining_cogs = ExpressionWrapper(
+        F("unit_cost") * (F("quantity") - F("returned_quantity")),
+        output_field=DecimalField(max_digits=14, decimal_places=2),
+    )
+    stock: dict[int, Decimal] = {}
+    for row in line_qs.values("receipt__client_id").annotate(
+        cogs=Coalesce(Sum(remaining_cogs), _zero())
+    ):
+        client_id = row["receipt__client_id"]
+        if client_id is None:
+            continue
+        stock[client_id] = Decimal(row["cogs"] or 0).quantize(Decimal("0.01"))
+
+    missing = list(
+        line_qs.filter(unit_cost=0)
+        .exclude(item_id__isnull=True)
+        .values("receipt__client_id", "item_id", "quantity", "returned_quantity")
+    )
+    if missing:
+        from items.services import last_buying_prices_for_items
+
+        fallback = last_buying_prices_for_items(
+            {row["item_id"] for row in missing if row["item_id"]}
+        )
+        for row in missing:
+            unit = Decimal(fallback.get(row["item_id"]) or 0)
+            remaining = max(
+                0, int(row["quantity"] or 0) - int(row["returned_quantity"] or 0)
+            )
+            if unit <= 0 or remaining <= 0:
+                continue
+            client_id = row["receipt__client_id"]
+            stock[client_id] = stock.get(client_id, _zero()) + (
+                unit * remaining
+            ).quantize(Decimal("0.01"))
+    return stock
+
+
 def _build_clients(filters):
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
@@ -9253,6 +9294,8 @@ def _build_clients(filters):
             total_docs + docs_n,
             total_amount + amount,
         )
+
+    stock_by_client = _client_credit_stock_map(receipts) if credit_mode else {}
 
     if period_scoped:
         client_ids_in_scope = set(totals_by_client.keys())
@@ -9353,12 +9396,56 @@ def _build_clients(filters):
                 f"{_money_ksh(total_amount)}"
             )
         cells.append(_qty_amount_cell(total_docs, total_amount, title=total_title))
+        if credit_mode:
+            stock_value = stock_by_client.get(client_id, _zero())
+            cells.append(
+                _money_cell(
+                    stock_value,
+                    title=f"Stock value {_money_ksh(stock_value)}",
+                )
+            )
         client_rows.append(
             {
                 "cells": cells,
                 "search_text": f"{name} {phone}".strip(),
             }
         )
+
+    if credit_mode and client_rows:
+        total_cells = ["Total", "—"]
+        all_docs = 0
+        all_amount = _zero()
+        for shop in shops:
+            s_docs = 0
+            s_amount = _zero()
+            for shop_map in by_client_shop.values():
+                docs_n, amount_n = shop_map.get(shop.pk, (0, _zero()))
+                s_docs += docs_n
+                s_amount += amount_n
+            all_docs += s_docs
+            all_amount += s_amount
+            total_cells.append(
+                _qty_amount_cell(
+                    s_docs,
+                    s_amount,
+                    title=f"{s_docs} · owed {_money_ksh(s_amount)}",
+                )
+            )
+        total_cells.append(
+            _qty_amount_cell(
+                all_docs,
+                all_amount,
+                title=f"{all_docs} · owed {_money_ksh(all_amount)}",
+            )
+        )
+        total_stock = sum(stock_by_client.values(), _zero())
+        total_cells.append(
+            _money_cell(
+                total_stock,
+                title=f"Stock value {_money_ksh(total_stock)}",
+            )
+        )
+        client_rows.append({"cells": total_cells, "search_text": "Total"})
 
     columns = [
         "Name",
@@ -9371,6 +9458,16 @@ def _build_clients(filters):
     for shop in shops:
         columns.append(_shop_col(shop, pair=True, pair_qty=pair_qty, pair_amt=pair_amt))
     columns.append(_pair_total_col(pair_qty=pair_qty, pair_amt=pair_amt))
+    if credit_mode:
+        columns.append(
+            {
+                "label": "Stock",
+                "title": "Buying cost of items on the client's credit receipts",
+                "money": True,
+                "band": "result",
+                "band_start": True,
+            }
+        )
 
     alerts = []
     if from_credits and period_scoped:
@@ -9405,7 +9502,8 @@ def _build_clients(filters):
                 "Txns and Owed are credit receipts created in this period for the "
                 "selected shops (including cleared credits). Txns = non-cancelled "
                 "credit receipts; Owed = unpaid balance per receipt, never below "
-                "zero. Cleared clients (owed 0) are listed last."
+                "zero. Stock = buying cost of items on those receipts net of "
+                "returns. Cleared clients (owed 0) are listed last."
             )
             empty = (
                 "Select a shop to view credit clients."
@@ -9418,6 +9516,7 @@ def _build_clients(filters):
                 "Txns and Owed are all-time for the selected shops (including "
                 "cleared credits). Txns = non-cancelled credit receipts; "
                 "Owed = unpaid balance per receipt, never below zero. "
+                "Stock = buying cost of items on those receipts net of returns. "
                 "Cleared clients (owed 0) are listed last."
             )
             empty = (

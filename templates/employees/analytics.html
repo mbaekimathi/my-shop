@@ -477,10 +477,16 @@
       </div>
       {% elif table.shop_grid and section_slug == "credits" %}
       <div class="ax-band-legend ax-band-legend--sales" aria-label="Column groups">
+        {% if table.title == "Credits by shop" %}
         <span class="is-cash">Paid</span>
         <span class="is-mpesa">Due</span>
         <span class="is-total">Total</span>
         <span class="is-result">Stock · Profit</span>
+        {% else %}
+        <span class="is-flow">By shop</span>
+        <span class="is-total">Total</span>
+        <span class="is-result">Stock</span>
+        {% endif %}
       </div>
       {% elif table.shop_grid and section_slug == "suppliers" %}
       <div class="ax-band-legend ax-band-legend--suppliers" aria-label="Column groups">
