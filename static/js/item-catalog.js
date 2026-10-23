@@ -35,6 +35,55 @@
   const canToggleSuspend = panel.dataset.canToggleSuspend !== "0";
   const canDelete = panel.dataset.canDelete !== "0";
   let catalogCacheTtl = 60 * 15;
+  let lastFetchedPage = 0;
+  let restoringScroll = false;
+  const scrollStateKey = `item-catalog:scroll:${window.location.pathname}`;
+
+  const saveScrollState = () => {
+    if (restoringScroll) return;
+    try {
+      window.sessionStorage.setItem(
+        scrollStateKey,
+        JSON.stringify({
+          y: Math.round(window.scrollY || window.pageYOffset || 0),
+          pages: lastFetchedPage,
+          q: activeQuery,
+          sort: activeSort,
+          t: Date.now(),
+        })
+      );
+    } catch (_e) {
+      /* storage optional */
+    }
+  };
+
+  const readScrollState = () => {
+    try {
+      const state = JSON.parse(window.sessionStorage.getItem(scrollStateKey) || "null");
+      if (!state || typeof state !== "object") return null;
+      if (Date.now() - Number(state.t || 0) > 24 * 60 * 60 * 1000) return null;
+      return state;
+    } catch (_e) {
+      return null;
+    }
+  };
+
+  // Restore after a real refresh (reload/back-forward) or after the page's own
+  // POST -> redirect -> GET round-trip (form actions like suspend/edit/delete).
+  const shouldRestoreScroll = () => {
+    const navType =
+      performance.getEntriesByType?.("navigation")?.[0]?.type || "";
+    if (navType === "reload" || navType === "back_forward") return true;
+    try {
+      return (
+        Boolean(document.referrer) &&
+        new URL(document.referrer).pathname === window.location.pathname
+      );
+    } catch (_e) {
+      return false;
+    }
+  };
+
   import("./offline/catalog-cache.js")
     .then((mod) => {
       if (mod?.CATALOG_CACHE_TTL_SECONDS) {
@@ -397,6 +446,9 @@
     }`;
 
   const applyCatalogData = (data, { page, q, sort, append }) => {
+    lastFetchedPage = append
+      ? Math.max(lastFetchedPage, Number(page) || 0)
+      : Number(page) || 1;
     totalCount = Number(data.total || 0);
     panel.dataset.itemTotal = String(totalCount);
     hasMore = Boolean(data.has_more);
@@ -416,6 +468,7 @@
     if (moreWrap) moreWrap.hidden = !hasMore;
     updateCountLabel(visible || totalCount, Boolean(activeQuery));
     syncShopColumnsUi();
+    saveScrollState();
   };
 
   const fetchPage = async ({ page, q, sort, append }) => {
@@ -580,6 +633,72 @@
   syncSortUi();
   syncShopColumnsUi();
 
+  let scrollSaveTimer = 0;
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (scrollSaveTimer) return;
+      scrollSaveTimer = window.setTimeout(() => {
+        scrollSaveTimer = 0;
+        saveScrollState();
+      }, 200);
+    },
+    { passive: true }
+  );
+  window.addEventListener("pagehide", saveScrollState);
+  window.addEventListener("beforeunload", saveScrollState);
+
+  const initialState = shouldRestoreScroll() ? readScrollState() : null;
+  if (initialState && "scrollRestoration" in history) {
+    history.scrollRestoration = "manual";
+  }
+  if (!initialState) {
+    try {
+      window.sessionStorage.removeItem(scrollStateKey);
+    } catch (_e) {
+      /* storage optional */
+    }
+  }
+
+  const boot = async () => {
+    if (!initialState) {
+      reload("", "category");
+      return;
+    }
+    const q = String(initialState.q || "");
+    const sort = initialState.sort === "name" ? "name" : "category";
+    const y = Math.max(0, Number(initialState.y) || 0);
+    const targetPages = Math.max(
+      1,
+      Math.min(Number(initialState.pages) || 1, 40)
+    );
+    if (searchInput) searchInput.value = q;
+    groupEls.clear();
+    flatTbody = null;
+    nextPage = 1;
+    hasMore = false;
+    activeSort = sort;
+    syncSortUi();
+    restoringScroll = true;
+    try {
+      for (let p = 1; p <= targetPages; p += 1) {
+        await fetchPage({ page: p, q, sort, append: p > 1 });
+        if (lastFetchedPage !== p || !hasMore) break;
+      }
+    } finally {
+      restoringScroll = false;
+    }
+    if (y > 0 && window.scrollY < 50) {
+      requestAnimationFrame(() => {
+        window.scrollTo(0, y);
+        window.setTimeout(() => {
+          if (window.scrollY < y - 40) window.scrollTo(0, y);
+        }, 150);
+      });
+    }
+    saveScrollState();
+  };
+
   import("./offline/catalog-cache.js")
     .then((mod) => {
       mod.onCatalogInvalidate?.((detail) => {
@@ -596,5 +715,5 @@
     })
     .catch(() => {});
 
-  reload("", "category");
+  boot();
 })();
