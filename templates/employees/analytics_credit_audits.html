@@ -17,6 +17,9 @@
         <span class="ax-period">{{ period_label }}</span>
       </div>
       <div class="ax-top-actions">
+        {% if download_href %}
+        <a class="ax-apply" href="{{ download_href }}">Download PDF</a>
+        {% endif %}
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">Back to credits</a>
       </div>
       <form class="ax-filters" method="get" data-analytics-filters>

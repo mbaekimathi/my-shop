@@ -527,6 +527,7 @@ def build_credit_audits(*, profile, request=None, event_kind: str = "") -> dict:
         "filter_employees": filter_employees,
         "selected_shop_id": shop_filter_id or 0,
         "selected_employee_id": employee_filter_id or 0,
+        "download_href": "",
         "rows": [],
         "event_count": 0,
         "payment_count": 0,
@@ -650,6 +651,11 @@ def build_credit_audits(*, profile, request=None, event_kind: str = "") -> dict:
 
     event_count = len(rows)
     client_count = len(client_names)
+    from employees.analytics_services import _pdf_download_href
+
+    raw_query = ""
+    if request is not None:
+        raw_query = request.GET.urlencode()
     return {
         **date_filter,
         "headline": "Activity analytics",
@@ -657,6 +663,7 @@ def build_credit_audits(*, profile, request=None, event_kind: str = "") -> dict:
             "Payments, due-date updates, returns, and cancellations on credit "
             "receipts. Filter by period, shop, and employee."
         ),
+        "download_href": _pdf_download_href(raw_query),
         "period_label": period_label,
         "event_options": credit_audit_event_options(),
         "event_filter": event_filter,

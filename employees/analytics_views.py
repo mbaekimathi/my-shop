@@ -146,6 +146,15 @@ def _render_analytics(
     context = build_analytics_page(
         profile=profile, request=request, section_slug=section["slug"]
     )
+    if section["slug"] == "credits" and (
+        request.GET.get("download") or ""
+    ).strip().lower() in ("1", "pdf", "csv", "download"):
+        from .analytics_services import credits_report_pdf_response
+
+        return credits_report_pdf_response(
+            page=context.get("page") or {},
+            filters=context,
+        )
     if page_override is not None:
         context["page"] = page_override
     meta = _analytics_meta(section)
@@ -1034,6 +1043,15 @@ def analytics_credit_audits(request, role_segment):
         request=request,
         event_kind=request.GET.get("event") or "",
     )
+    if (request.GET.get("download") or "").strip().lower() in (
+        "1",
+        "pdf",
+        "csv",
+        "download",
+    ):
+        from .analytics_services import credit_audit_pdf_response
+
+        return credit_audit_pdf_response(trail=trail)
     return render(
         request,
         "employees/analytics_credit_audits.html",

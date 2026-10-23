@@ -4237,6 +4237,657 @@ def client_transactions_pdf_response(*, account: dict):
     return response
 
 
+def _pdf_download_href(query: str) -> str:
+    """Current filter query with the download flag swapped on."""
+    from urllib.parse import parse_qs, urlencode
+
+    params = parse_qs(query or "", keep_blank_values=True)
+    flat = {key: values[0] for key, values in params.items()}
+    flat.pop("download", None)
+    flat["download"] = "pdf"
+    return f"?{urlencode(flat)}"
+
+
+def _flatten_analytics_table(table: dict) -> tuple[list, list, list]:
+    """Flatten an analytics table dict into PDF-ready headers/aligns/rows."""
+    columns = list(table.get("columns") or [])
+    headers: list[str] = []
+    aligns: list[str] = []
+    for col in columns:
+        if isinstance(col, dict):
+            if col.get("pair"):
+                base = str(col.get("label") or "").strip()
+                qty = str(col.get("pair_qty") or "Qty")
+                amt = str(col.get("pair_amt") or "Amt")
+                headers += [f"{base} {qty}".strip(), f"{base} {amt}".strip()]
+                aligns += ["right", "right"]
+            else:
+                headers.append(str(col.get("label") or ""))
+                aligns.append("left" if col.get("phone") else "right")
+        else:
+            headers.append(str(col))
+            aligns.append("left")
+
+    rows: list[list[str]] = []
+    for row in table.get("rows") or []:
+        cells = row.get("cells") if isinstance(row, dict) else row
+        flat: list[str] = []
+        for col, cell in zip(columns, list(cells or [])):
+            if isinstance(col, dict) and col.get("pair"):
+                if isinstance(cell, dict) and cell.get("kind") == "qty_amount":
+                    flat += [
+                        str(cell.get("qty") or "0"),
+                        str(cell.get("amount") or "0"),
+                    ]
+                else:
+                    flat += ["—", "—"]
+            elif isinstance(cell, dict):
+                flat.append(str(cell.get("label") or "—"))
+            else:
+                flat.append(str(cell))
+        rows.append(flat)
+    return headers, aligns, rows
+
+
+def _analytics_report_pdf(
+    *,
+    title: str,
+    subtitle: str,
+    brand: str,
+    meta_lines: list,
+    kpi_cards: list,
+    sections: list,
+    footer_note: str,
+) -> bytes:
+    """Shared branded landscape A4 layout for analytics PDF downloads."""
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    from core.pdf_fonts import MANROPE_PDF, MANROPE_PDF_BOLD, register_manrope_pdf_fonts
+
+    register_manrope_pdf_fonts()
+
+    brand = (brand or "MY-SHOP").strip() or "MY-SHOP"
+    printed_at = timezone.localtime()
+
+    ink = colors.HexColor("#0b1220")
+    muted = colors.HexColor("#5b6b7c")
+    line = colors.HexColor("#e2e8f0")
+    line_strong = colors.HexColor("#cbd5e1")
+    surface = colors.HexColor("#f8fafc")
+    head_fill = colors.HexColor("#0f172a")
+    accent = colors.HexColor("#0f766e")
+    accent_soft = colors.HexColor("#ccfbf1")
+    white = colors.white
+
+    def _esc(text) -> str:
+        return (
+            str(text if text is not None else "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    buffer = BytesIO()
+    page_size = landscape(A4)
+    left_m = 10 * mm
+    right_m = 10 * mm
+    top_m = 12 * mm
+    bottom_m = 12 * mm
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=page_size,
+        leftMargin=left_m,
+        rightMargin=right_m,
+        topMargin=top_m,
+        bottomMargin=bottom_m,
+        title=f"{brand} — {title}",
+        author=brand,
+    )
+
+    styles = getSampleStyleSheet()
+    brand_style = ParagraphStyle(
+        "PdfBrand",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=8,
+        textColor=accent,
+        leading=10,
+        spaceAfter=1,
+    )
+    title_style = ParagraphStyle(
+        "PdfTitle",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=16,
+        textColor=ink,
+        leading=19,
+        spaceAfter=1,
+    )
+    subtitle_style = ParagraphStyle(
+        "PdfSubtitle",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=9,
+        textColor=muted,
+        leading=12,
+    )
+    meta_right = ParagraphStyle(
+        "PdfMetaRight",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=8,
+        textColor=muted,
+        leading=10,
+        alignment=TA_RIGHT,
+    )
+    meta_right_strong = ParagraphStyle(
+        "PdfMetaRightStrong",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=9,
+        textColor=ink,
+        leading=11,
+        alignment=TA_RIGHT,
+    )
+    kpi_label = ParagraphStyle(
+        "PdfKpiLabel",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7,
+        textColor=muted,
+        leading=9,
+        alignment=TA_CENTER,
+    )
+    kpi_value = ParagraphStyle(
+        "PdfKpiValue",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=11,
+        textColor=ink,
+        leading=13,
+        alignment=TA_CENTER,
+    )
+    kpi_hint = ParagraphStyle(
+        "PdfKpiHint",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7,
+        textColor=muted,
+        leading=9,
+        alignment=TA_CENTER,
+    )
+    head_cell = ParagraphStyle(
+        "PdfHead",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=6.8,
+        textColor=white,
+        leading=8.6,
+    )
+    head_cell_right = ParagraphStyle(
+        "PdfHeadRight",
+        parent=head_cell,
+        alignment=TA_RIGHT,
+    )
+    cell = ParagraphStyle(
+        "PdfCell",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7.2,
+        textColor=ink,
+        leading=9,
+    )
+    cell_strong = ParagraphStyle(
+        "PdfCellStrong",
+        parent=cell,
+        fontName=MANROPE_PDF_BOLD,
+    )
+    cell_right = ParagraphStyle(
+        "PdfCellRight",
+        parent=cell,
+        alignment=TA_RIGHT,
+    )
+    cell_right_strong = ParagraphStyle(
+        "PdfCellRightStrong",
+        parent=cell_right,
+        fontName=MANROPE_PDF_BOLD,
+    )
+    empty_style = ParagraphStyle(
+        "PdfEmpty",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=9,
+        textColor=muted,
+        leading=12,
+        alignment=TA_CENTER,
+    )
+    foot_style = ParagraphStyle(
+        "PdfFoot",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7,
+        textColor=muted,
+        leading=9,
+    )
+    section_kicker = ParagraphStyle(
+        "PdfSectionKicker",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7,
+        textColor=accent,
+        leading=9,
+        spaceAfter=1,
+    )
+    section_title = ParagraphStyle(
+        "PdfSectionTitle",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=11,
+        textColor=ink,
+        leading=13,
+        spaceAfter=4,
+    )
+
+    story = []
+    right_block = []
+    for idx, text in enumerate(meta_lines or []):
+        right_block.append(
+            Paragraph(
+                _esc(text),
+                meta_right_strong if idx == 0 else meta_right,
+            )
+        )
+    right_block.append(
+        Paragraph(
+            printed_at.strftime("Generated %d %b %Y · %H:%M"),
+            meta_right,
+        )
+    )
+    header = Table(
+        [
+            [
+                [
+                    Paragraph(_esc(brand).upper(), brand_style),
+                    Paragraph(_esc(title), title_style),
+                    Paragraph(_esc(subtitle), subtitle_style),
+                ],
+                right_block,
+            ]
+        ],
+        colWidths=[doc.width * 0.62, doc.width * 0.38],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                ("LINEBELOW", (0, 0), (-1, -1), 1.2, accent),
+            ]
+        )
+    )
+    story.append(header)
+    story.append(Spacer(1, 6 * mm))
+
+    cards = [card for card in (kpi_cards or [])[:6] if card]
+    if cards:
+        kpi_cols = []
+        for label, value, hint in cards:
+            block = [
+                Paragraph(_esc(str(label or "")).upper(), kpi_label),
+                Paragraph(_esc(value if value is not None else "—"), kpi_value),
+            ]
+            if hint:
+                block.append(Paragraph(_esc(hint), kpi_hint))
+            kpi_cols.append(block)
+        kpi = Table(
+            [kpi_cols],
+            colWidths=[doc.width / max(len(kpi_cols), 1)] * len(kpi_cols),
+        )
+        kpi.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), surface),
+                    ("BOX", (0, 0), (-1, -1), 0.8, line_strong),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.5, line),
+                    ("TOPPADDING", (0, 0), (-1, -1), 7),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        story.append(kpi)
+        story.append(Spacer(1, 6 * mm))
+
+    def _style_data_table(n_rows: int, has_total: bool) -> TableStyle:
+        cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), head_fill),
+            ("TEXTCOLOR", (0, 0), (-1, 0), white),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, 0), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+            ("TOPPADDING", (0, 1), (-1, -1), 4.5),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 4.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.4, line),
+            ("BACKGROUND", (0, 1), (-1, -1), white),
+        ]
+        for row_idx in range(1, n_rows):
+            if row_idx % 2 == 0:
+                cmds.append(("BACKGROUND", (0, row_idx), (-1, row_idx), surface))
+        if has_total:
+            cmds.append(("LINEABOVE", (0, -1), (-1, -1), 0.9, line_strong))
+            cmds.append(("BACKGROUND", (0, -1), (-1, -1), accent_soft))
+        return TableStyle(cmds)
+
+    usable = doc.width
+    for section in sections or []:
+        story.append(
+            Paragraph(_esc(section.get("kicker") or "TABLE"), section_kicker)
+        )
+        story.append(
+            Paragraph(_esc(section.get("title") or ""), section_title)
+        )
+        headers = list(section.get("headers") or [])
+        aligns = list(section.get("aligns") or []) or ["left"] * len(headers)
+        rows = list(section.get("rows") or [])
+        if not headers or not rows:
+            story.append(
+                Paragraph(
+                    _esc(section.get("empty") or "No data for this period."),
+                    empty_style,
+                )
+            )
+        else:
+            head_row = [
+                Paragraph(
+                    _esc(text),
+                    head_cell_right if aligns[idx] == "right" else head_cell,
+                )
+                for idx, text in enumerate(headers)
+            ]
+            total_last = bool(
+                rows and str(rows[-1][0] or "").strip().lower() == "total"
+            )
+            table_data = [head_row]
+            for row in rows:
+                is_total = total_last and row is rows[-1]
+                table_data.append(
+                    [
+                        Paragraph(
+                            _esc(value),
+                            (
+                                cell_right_strong
+                                if aligns[idx] == "right"
+                                else cell_strong
+                            )
+                            if is_total
+                            else (
+                                cell_right if aligns[idx] == "right" else cell
+                            ),
+                        )
+                        for idx, value in enumerate(row)
+                    ]
+                )
+            fractions = section.get("widths")
+            if fractions and len(fractions) == len(headers):
+                col_widths = [usable * frac for frac in fractions]
+            else:
+                weights = [
+                    1.7 if aligns[idx] == "left" and idx == 0 else (
+                        1.15 if aligns[idx] == "left" else 1.0
+                    )
+                    for idx in range(len(headers))
+                ]
+                weight_total = sum(weights) or 1.0
+                col_widths = [usable * w / weight_total for w in weights]
+            grid = Table(table_data, colWidths=col_widths, repeatRows=1)
+            grid.setStyle(_style_data_table(len(table_data), total_last))
+            story.append(grid)
+        footnote = (section.get("footnote") or "").strip()
+        if footnote:
+            story.append(Spacer(1, 2 * mm))
+            story.append(Paragraph(_esc(footnote), foot_style))
+        story.append(Spacer(1, 6 * mm))
+
+    story.append(
+        Paragraph(
+            _esc(
+                footer_note
+                or f"{brand} · {title} · "
+                f"{printed_at.strftime('%d %b %Y · %H:%M')}"
+            ),
+            foot_style,
+        )
+    )
+
+    class _NumberedCanvas(pdf_canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            pdf_canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_page_states = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            page_count = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self._draw_page_number(page_count)
+                pdf_canvas.Canvas.showPage(self)
+            pdf_canvas.Canvas.save(self)
+
+        def _draw_page_number(self, page_count):
+            self.setFont(MANROPE_PDF, 7)
+            self.setFillColor(muted)
+            label = f"Page {self._pageNumber} of {page_count}"
+            self.drawRightString(page_size[0] - right_m, 6 * mm, label)
+            self.setStrokeColor(accent_soft)
+            self.setLineWidth(2)
+            self.line(left_m, 8.5 * mm, page_size[0] - right_m - 28 * mm, 8.5 * mm)
+
+    doc.build(story, canvasmaker=_NumberedCanvas)
+    return buffer.getvalue()
+
+
+def _summary_board_kpi_cards(summary: dict) -> list:
+    cards = []
+    hero = (summary or {}).get("hero") or {}
+    if hero:
+        cards.append(
+            (
+                hero.get("label") or "Total",
+                hero.get("value") or "—",
+                hero.get("hint") or "",
+            )
+        )
+    for tile in (summary or {}).get("tiles") or []:
+        cards.append(
+            (
+                tile.get("label") or "",
+                tile.get("value") or "—",
+                tile.get("hint") or "",
+            )
+        )
+    return cards
+
+
+def build_credits_report_pdf(*, page: dict, filters: dict, company_name: str = "") -> bytes:
+    """Landscape A4 PDF of the analytics credits report (shops + clients)."""
+    period_label = filters.get("report_period_label") or "All time"
+    selected = set(filters.get("selected_shop_ids") or [])
+    filter_shops = list(filters.get("filter_shops") or [])
+    if selected:
+        names = [str(shop.name) for shop in filter_shops if shop.pk in selected]
+        shop_label = ", ".join(names) if names else "Selected shops"
+    else:
+        shop_label = "All shops"
+
+    sections = []
+    for table in page.get("tables") or []:
+        headers, aligns, rows = _flatten_analytics_table(table)
+        sections.append(
+            {
+                "kicker": "CREDITS REPORT",
+                "title": table.get("title") or "Table",
+                "headers": headers,
+                "aligns": aligns,
+                "rows": rows,
+                "empty": table.get("empty") or "No data.",
+                "footnote": table.get("footnote") or "",
+            }
+        )
+
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    return _analytics_report_pdf(
+        title="Credits report",
+        subtitle=(page.get("lead") or "Credit performance by shop and client."),
+        brand=brand,
+        meta_lines=[shop_label, period_label],
+        kpi_cards=_summary_board_kpi_cards(page.get("summary_board") or {}),
+        sections=sections,
+        footer_note=(
+            f"{brand} · Credits report · {shop_label} · {period_label}"
+        ),
+    )
+
+
+def credits_report_pdf_response(*, page: dict, filters: dict):
+    """PDF download for the analytics credits report."""
+    from django.http import HttpResponse
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    pdf_bytes = build_credits_report_pdf(
+        page=page, filters=filters, company_name=company_name
+    )
+    stamp = timezone.localtime().strftime("%Y%m%d-%H%M")
+    filename = f"credits-report-{stamp}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
+
+
+def build_credit_audit_pdf(*, trail: dict, company_name: str = "") -> bytes:
+    """Landscape A4 PDF of the credit activity audit trail."""
+    period_label = trail.get("period_label") or "All time"
+    selected_shop = int(trail.get("selected_shop_id") or 0)
+    shop_label = "All shops"
+    for shop in trail.get("filter_shops") or []:
+        if shop.pk == selected_shop:
+            shop_label = str(shop.name)
+            break
+    selected_emp = int(trail.get("selected_employee_id") or 0)
+    employee_label = "All employees"
+    for emp in trail.get("filter_employees") or []:
+        if emp.pk == selected_emp:
+            employee_label = (
+                emp.user.get_full_name() or emp.employee_id or "Employee"
+            )
+            break
+    event_label = trail.get("event_filter_label") or "All events"
+
+    headers = [
+        "When",
+        "Client",
+        "Event",
+        "Receipt",
+        "Shop",
+        "Amount",
+        "Detail",
+        "By",
+    ]
+    aligns = ["left", "left", "left", "left", "left", "right", "left", "left"]
+    widths = [0.11, 0.13, 0.12, 0.10, 0.11, 0.09, 0.24, 0.10]
+    rows = [
+        [
+            row.get("when_label") or "—",
+            row.get("client") or "—",
+            row.get("kind_label") or "—",
+            row.get("receipt_number") or "—",
+            row.get("shop") or "—",
+            row.get("amount") or "—",
+            row.get("detail") or "—",
+            row.get("actor") or "—",
+        ]
+        for row in trail.get("rows") or []
+    ]
+
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    return _analytics_report_pdf(
+        title="Credit activity audit trail",
+        subtitle=(
+            trail.get("lead")
+            or "Payments and changes on credit receipts."
+        ),
+        brand=brand,
+        meta_lines=[
+            shop_label,
+            f"{period_label} · {event_label} · {employee_label}",
+        ],
+        kpi_cards=_summary_board_kpi_cards(trail.get("summary_board") or {}),
+        sections=[
+            {
+                "kicker": "AUDIT TRAIL",
+                "title": "Credit activity",
+                "headers": headers,
+                "aligns": aligns,
+                "rows": rows,
+                "widths": widths,
+                "empty": (
+                    trail.get("empty_message")
+                    or "No credit account changes recorded yet."
+                ),
+            }
+        ],
+        footer_note=(
+            f"{brand} · Credit activity audit · {shop_label} · "
+            f"{period_label} · {event_label}"
+        ),
+    )
+
+
+def credit_audit_pdf_response(*, trail: dict):
+    """PDF download for the credit activity audit trail."""
+    from django.http import HttpResponse
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    pdf_bytes = build_credit_audit_pdf(trail=trail, company_name=company_name)
+    stamp = timezone.localtime().strftime("%Y%m%d-%H%M")
+    filename = f"credit-activity-audit-{stamp}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
+
+
 def supplier_account_url(role, kind: str, supplier_id, *, query: str = "") -> str:
     from django.urls import reverse
 
@@ -9150,6 +9801,7 @@ def _build_credits(filters):
         ),
         "alerts": list(clients_page.get("alerts") or []),
         "show_search": True,
+        "download_href": _pdf_download_href(filters.get("query") or ""),
         "search_placeholder": clients_page.get(
             "search_placeholder", "Search clients by name or phone…"
         ),

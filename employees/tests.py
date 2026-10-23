@@ -1131,6 +1131,26 @@ class CreditsShopScopeTests(TestCase):
             [self.shop_a.pk, self.shop_b.pk],
         )
 
+    def test_credits_page_offers_report_download(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/analytics/credits/?range=all")
+        self.assertEqual(response.status_code, 200)
+        download_href = response.context["page"]["download_href"]
+        self.assertIn("download=pdf", download_href)
+        self.assertIn("range=all", download_href)
+
+    def test_credits_report_pdf_download(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/it-support/analytics/credits/?range=all&download=pdf"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("attachment;", response["Content-Disposition"])
+        self.assertIn("credits-report-", response["Content-Disposition"])
+        self.assertTrue(response.content.startswith(b"%PDF"))
+        self.assertGreater(len(response.content), 500)
+
 
 class CreditAuditsEventFilterTests(TestCase):
     def setUp(self):
@@ -1263,6 +1283,22 @@ class CreditAuditsEventFilterTests(TestCase):
         self.assertIn(">Month</option>", html)
         self.assertIn(">Year</option>", html)
         self.assertEqual(response.context["report_range"], "day")
+
+    def test_audits_pdf_download(self):
+        from shops.models import ClientCreditAccountEventKind
+
+        self._log(ClientCreditAccountEventKind.PAYMENT_CASH, amount=40)
+        self._log(ClientCreditAccountEventKind.ITEMS_RETURNED)
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/it-support/analytics/credits/audits/?download=pdf"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("attachment;", response["Content-Disposition"])
+        self.assertIn("credit-activity-audit-", response["Content-Disposition"])
+        self.assertTrue(response.content.startswith(b"%PDF"))
+        self.assertGreater(len(response.content), 500)
 
     def test_audits_page_honours_event_query(self):
         from shops.models import ClientCreditAccountEventKind

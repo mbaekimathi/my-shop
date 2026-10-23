@@ -40,6 +40,11 @@
         <a class="ax-apply ax-apply--ghost" href="{{ credit_audits_href }}">Activity analytics</a>
       </div>
       {% endif %}
+      {% if page.download_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply" href="{{ page.download_href }}">Download PDF</a>
+      </div>
+      {% endif %}
       {% if not page.hide_date_filters %}
       <form class="ax-filters" method="get" data-analytics-filters>
         <select name="shop_id" aria-label="Shop">
