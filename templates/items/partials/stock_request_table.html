@@ -100,7 +100,12 @@
           </button>
           <ul class="stock-request-view-data" hidden>
             {% for line in req.lines.all %}
-            <li data-item-name="{{ line.item.name|default:line.item_name }}" data-item-qty="{{ line.quantity }}" data-line-id="{{ line.pk }}"></li>
+            <li
+              data-item-name="{{ line.item.name|default:line.item_name }}"
+              data-item-qty="{{ line.quantity }}"
+              data-line-id="{{ line.pk }}"
+              {% if line.item.track_serial_number %}data-item-tracked="1"{% endif %}
+            >{% for serial in line.serial_numbers %}<span data-serial>{{ serial }}</span>{% endfor %}</li>
             {% endfor %}
           </ul>
         </td>
@@ -335,181 +340,9 @@
 </div>
 {% endif %}
 
-<div
-  class="workspace-modal stock-request-view-modal"
-  data-stock-request-view-modal
-  hidden
-  aria-hidden="true"
->
-  <div class="workspace-modal-backdrop" data-stock-request-view-close></div>
-  <div
-    class="workspace-modal-dialog stock-request-view-dialog"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="stock-request-view-title"
-  >
-    <header class="workspace-modal-head">
-      <div>
-        <p class="stock-request-view-kicker" data-stock-request-view-kicker>Transfer details</p>
-        <h2 id="stock-request-view-title" data-stock-request-view-title>Transfer</h2>
-      </div>
-      <button type="button" class="workspace-modal-close" data-stock-request-view-close aria-label="Close">
-        <i data-lucide="x" aria-hidden="true"></i>
-      </button>
-    </header>
-    <div class="stock-request-view-body">
-      <div class="stock-request-view-status" data-stock-request-view-status hidden></div>
-      <p class="stock-request-view-meta" data-stock-request-view-meta></p>
-      <div class="stock-request-view-items-wrap" data-stock-request-view-items-wrap>
-        <p class="stock-request-view-items-label" data-stock-request-view-items-label>Items received</p>
-        <ul class="stock-request-view-list" data-stock-request-view-list></ul>
-      </div>
-      <p class="stock-request-view-note" data-stock-request-view-note hidden></p>
-    </div>
-    <div class="workspace-modal-actions">
-      <button type="button" class="btn btn--primary" data-stock-request-view-close>Done</button>
-    </div>
-  </div>
-</div>
+{% include "items/partials/stock_request_view_modal.html" %}
 
 <script>
-  (() => {
-    const modal = document.querySelector("[data-stock-request-view-modal]");
-    if (!modal || modal.dataset.bound === "1") return;
-    modal.dataset.bound = "1";
-
-    const titleEl = modal.querySelector("[data-stock-request-view-title]");
-    const kickerEl = modal.querySelector("[data-stock-request-view-kicker]");
-    const statusEl = modal.querySelector("[data-stock-request-view-status]");
-    const metaEl = modal.querySelector("[data-stock-request-view-meta]");
-    const itemsWrap = modal.querySelector("[data-stock-request-view-items-wrap]");
-    const itemsLabel = modal.querySelector("[data-stock-request-view-items-label]");
-    const listEl = modal.querySelector("[data-stock-request-view-list]");
-    const noteEl = modal.querySelector("[data-stock-request-view-note]");
-    const body = document.body;
-
-    const escapeHtml = (value) =>
-      String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-
-    const setOpen = (open) => {
-      modal.hidden = !open;
-      modal.setAttribute("aria-hidden", open ? "false" : "true");
-      const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
-      body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
-      if (open && window.lucide?.createIcons) window.lucide.createIcons();
-    };
-
-    const openFromButton = (btn) => {
-      const cell = btn.closest(".stock-request-table-view");
-      const status = (btn.getAttribute("data-request-status") || "pending").trim().toLowerCase();
-      const requestId = (btn.getAttribute("data-request-id") || "").trim();
-      const fromShop = (btn.getAttribute("data-from-shop") || "").trim();
-      const toShop = (btn.getAttribute("data-to-shop") || "").trim();
-      const respondedBy = (btn.getAttribute("data-responded-by") || "").trim();
-      const note = (btn.getAttribute("data-note") || "").trim();
-      const responseNote = (btn.getAttribute("data-response-note") || "").trim();
-      const items = [...(cell?.querySelectorAll(".stock-request-view-data li") || [])].map((li) => ({
-        name: (li.getAttribute("data-item-name") || "").trim(),
-        qty: (li.getAttribute("data-item-qty") || "").trim(),
-      })).filter((item) => item.name);
-
-      if (titleEl) {
-        titleEl.textContent = requestId
-          ? `Transfer #${requestId}`
-          : "Transfer details";
-      }
-      if (kickerEl) {
-        kickerEl.textContent =
-          fromShop && toShop ? `${fromShop} → ${toShop}` : "Transfer details";
-      }
-      if (metaEl) {
-        const parts = [];
-        if (toShop) parts.push(`Receiving shop: ${toShop}`);
-        if (respondedBy) parts.push(`By: ${respondedBy}`);
-        metaEl.textContent = parts.join(" · ");
-        metaEl.hidden = !parts.length;
-      }
-
-      if (statusEl) {
-        statusEl.hidden = false;
-        statusEl.className = "stock-request-view-status";
-        if (status === "fulfilled") {
-          statusEl.classList.add("is-accepted");
-          statusEl.textContent = "Accepted — items received by this shop";
-        } else if (status === "declined") {
-          statusEl.classList.add("is-declined");
-          statusEl.textContent = responseNote
-            ? `Declined / cancelled — ${responseNote}`
-            : "This transfer was declined or cancelled";
-        } else {
-          statusEl.classList.add("is-pending");
-          statusEl.textContent = "Pending confirmation from the receiving shop";
-        }
-      }
-
-      if (itemsWrap && listEl && itemsLabel) {
-        if (status === "declined") {
-          itemsWrap.hidden = true;
-          listEl.innerHTML = "";
-        } else {
-          itemsWrap.hidden = false;
-          itemsLabel.textContent =
-            status === "fulfilled" ? "Items received" : "Items requested";
-          if (!items.length) {
-            listEl.innerHTML =
-              '<li class="stock-request-view-empty">No line items on this transfer.</li>';
-          } else {
-            listEl.innerHTML = items
-              .map(
-                (item) =>
-                  `<li><span class="stock-request-view-item-name">${escapeHtml(
-                    item.name
-                  )}</span><span class="stock-request-view-item-qty">×${escapeHtml(
-                    item.qty
-                  )}</span></li>`
-              )
-              .join("");
-          }
-        }
-      }
-
-      if (noteEl) {
-        const displayNote = responseNote || note;
-        if (displayNote) {
-          noteEl.hidden = false;
-          noteEl.textContent = responseNote
-            ? `Reason: ${responseNote}`
-            : `Note: ${note}`;
-        } else {
-          noteEl.hidden = true;
-          noteEl.textContent = "";
-        }
-      }
-
-      setOpen(true);
-    };
-
-    document.addEventListener("click", (event) => {
-      const openBtn = event.target.closest("[data-stock-request-view]");
-      if (openBtn) {
-        event.preventDefault();
-        openFromButton(openBtn);
-        return;
-      }
-      if (event.target.closest("[data-stock-request-view-close]")) {
-        if (!modal.hidden) setOpen(false);
-      }
-    });
-
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !modal.hidden) setOpen(false);
-    });
-  })();
-
   (() => {
     const modal = document.querySelector("[data-stock-request-confirm-modal]");
     if (!modal || modal.dataset.bound === "1") return;
@@ -835,10 +668,27 @@
         return;
       }
       if (decision === "accept" && !quantitiesMatch()) {
+        const badInput = [...(linesEl?.querySelectorAll("[data-transfer-qty]") || [])].find(
+          (input) => {
+            const received = Number(input.value);
+            const mustMatch = Number(input.getAttribute("data-must-match") || 0);
+            return (
+              String(input.value).trim() === "" ||
+              !Number.isFinite(received) ||
+              !Number.isFinite(mustMatch) ||
+              received !== mustMatch
+            );
+          }
+        );
+        const itemName = (
+          badInput?.closest("tr")?.querySelector(".stock-transfer-item span")
+            ?.textContent || ""
+        ).trim();
         setStatus(
-          "Received quantity must match what was sent. Decline with a reason if they do not match.",
+          `${itemName ? `“${itemName}”: ` : ""}received quantity does not match this transfer. Decline with a reason if the count is wrong.`,
           { error: true }
         );
+        badInput?.focus();
         return;
       }
       if (decision === "decline") {

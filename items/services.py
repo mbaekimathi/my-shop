@@ -3393,8 +3393,8 @@ def respond_to_stock_request(
 
         if received_qty != sent_qty:
             errors.append(
-                f"“{item.name}”: received ({received_qty}) must match sent ({sent_qty}). "
-                f"Decline if the quantities do not match."
+                f"“{item.name}”: received quantity does not match this transfer. "
+                f"Decline if the count is wrong."
             )
             continue
 

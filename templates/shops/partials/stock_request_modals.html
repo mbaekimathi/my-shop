@@ -117,6 +117,7 @@
                           data-transfer-qty
                           data-line-id="{{ line.pk }}"
                           data-must-match="{{ line.quantity }}"
+                          {% if line.item and line.item.track_serial_number %}readonly data-qty-from-serial="1" title="Counted from scanned serials"{% endif %}
                         >
                       </label>
                     </td>
@@ -124,6 +125,57 @@
                   {% endfor %}
                 </tbody>
               </table>
+            </div>
+
+            <div class="stock-request-serial-panel" data-serial-panel hidden>
+              <div class="stock-transfer-section-label">
+                <i data-lucide="scan-barcode" aria-hidden="true"></i>
+                <span>Serial numbers received</span>
+              </div>
+              <div class="stock-request-serial-list">
+                {% for line in req.lines.all %}
+                {% if line.item and line.item.track_serial_number %}
+                <div
+                  class="stock-request-serial-block"
+                  data-serial-block
+                  data-serial-mode="transfer"
+                  data-line-id="{{ line.pk }}"
+                  data-item-id="{{ line.item_id }}"
+                  data-max-qty="{{ line.quantity }}"
+                  data-qty="0"
+                >
+                  <p class="stock-request-serial-label">
+                    {{ line.item.name|default:line.item_name }}
+                    <span data-serial-need>0 / {{ line.quantity|floatformat:"0" }} selected</span>
+                  </p>
+                  <div class="stock-request-serial-entry-wrap" data-serial-search-root data-serial-scan-continuous>
+                    <div class="stock-serial-row">
+                      <div class="stock-serial-input-wrap stock-request-serial-wrap">
+                        <input
+                          type="text"
+                          placeholder="Scan or type serial on this transfer"
+                          autocomplete="off"
+                          spellcheck="false"
+                          data-serial-entry
+                          aria-label="Serial received for {{ line.item.name|default:line.item_name }}"
+                        >
+                      </div>
+                    </div>
+                    <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
+                  </div>
+                  <ul class="stock-request-serial-scanned" data-serial-scanned hidden aria-live="polite"></ul>
+                  <ul hidden>
+                    {% for serial in line.serial_numbers %}
+                    <li data-serial-allowed>{{ serial }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% endfor %}
+              </div>
+              <small class="stock-serial-hint">
+                Scan or type each serial on the transfer — only serials it lists are accepted, and each match counts as one unit received.
+              </small>
             </div>
 
             {% if req.notes %}

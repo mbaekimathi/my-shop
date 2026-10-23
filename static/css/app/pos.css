@@ -8823,6 +8823,17 @@ body.workspace-modal-open .stock-country-menu {
   background: var(--input-bg);
 }
 
+.stock-request-view-item-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.stock-request-view-serial-eye {
+  flex: 0 0 auto;
+}
+
 .stock-request-view-item-name {
   font-size: 0.88rem;
   font-weight: 600;

@@ -244,6 +244,7 @@
             <th>Units</th>
             <th>When</th>
             <th>Note</th>
+            <th>View</th>
           </tr>
         </thead>
         <tbody>
@@ -307,6 +308,33 @@
                 {% endif %}
               {% endfor %}
             </td>
+            <td class="stock-request-table-view" data-label="View">
+              <button
+                type="button"
+                class="ax-eye stock-request-view-eye"
+                data-stock-request-view
+                data-request-status="{{ req.request_status|default:'pending' }}"
+                data-request-id="{{ req.pk }}"
+                data-from-shop="{% if req.shop %}{{ req.shop.name }}{% endif %}"
+                data-to-shop="{% if req.requested_from_shop %}{{ req.requested_from_shop.name }}{% endif %}"
+                data-responded-by="{% if req.responded_by %}{{ req.responded_by.user.get_full_name|default:req.responded_by.user.username }}{% endif %}"
+                data-note="{% if req.notes %}{{ req.notes }}{% endif %}"
+                data-response-note="{% if req.response_note %}{{ req.response_note }}{% endif %}"
+                aria-label="View transfer #{{ req.pk }} details"
+              >
+                <i data-lucide="eye" aria-hidden="true"></i>
+              </button>
+              <ul class="stock-request-view-data" hidden>
+                {% for line in req.lines.all %}
+                <li
+                  data-item-name="{{ line.item.name|default:line.item_name }}"
+                  data-item-qty="{{ line.quantity }}"
+                  data-line-id="{{ line.pk }}"
+                  {% if line.item.track_serial_number %}data-item-tracked="1"{% endif %}
+                >{% for serial in line.serial_numbers %}<span data-serial>{{ serial }}</span>{% endfor %}</li>
+                {% endfor %}
+              </ul>
+            </td>
           </tr>
           {% endfor %}
         </tbody>
@@ -320,6 +348,7 @@
 
 {% include "shops/partials/stock_request_modals.html" %}
 {% include "shops/partials/stock_request_create_modal.html" %}
+{% include "items/partials/stock_request_view_modal.html" %}
 
 <div
   class="workspace-modal stock-serial-modal"

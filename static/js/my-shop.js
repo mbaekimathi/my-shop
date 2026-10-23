@@ -1739,6 +1739,11 @@
 
   const transferCommitState = new WeakMap();
 
+  const transferAllowedSerials = (block) =>
+    [...(block?.querySelectorAll("[data-serial-allowed]") || [])]
+      .map((el) => normalizeSerial(el.textContent || ""))
+      .filter(Boolean);
+
   const commitTransferSerialEntry = async (block, form, { serial: override } = {}) => {
     const entry = getTransferSerialEntry(block);
     if (!entry || !form) return false;
@@ -1780,7 +1785,12 @@
     );
     if (firstOption) {
       const picked = normalizeSerial(firstOption.textContent);
-      if (picked) serial = picked;
+      // In transfer-check mode an exact typed match wins over the
+      // first suggestion — a partial scan must not jump to another serial.
+      const exactAllowed =
+        block.dataset.serialMode === "transfer" &&
+        transferAllowedSerials(block).includes(serial);
+      if (picked && !exactAllowed) serial = picked;
     }
 
     entry.value = "";
@@ -1790,7 +1800,23 @@
     transferCommitState.set(block, state);
     let ok = false;
     try {
-      if (!serialSearchUrl) {
+      if (block.dataset.serialMode === "transfer") {
+        // Receiving a transfer: serial must be one of the serials recorded
+        // on the transfer itself — do not search shop stock.
+        const match = transferAllowedSerials(block).find((value) => value === serial);
+        if (!match) {
+          entry.classList.add("is-duplicate");
+          window.setTimeout(() => entry.classList.remove("is-duplicate"), 700);
+          pushStockRequestToast(
+            `Serial ${serial} is not on this transfer.`,
+            "error",
+            { silent: true }
+          );
+          return false;
+        }
+        createTransferScannedItem(block, match);
+        ok = true;
+      } else if (!serialSearchUrl) {
         createTransferScannedItem(block, serial);
         ok = true;
       } else {
@@ -1822,6 +1848,7 @@
         state.lastSerial = serial;
         state.lastAt = Date.now();
         syncSerialBlockQty(form, block);
+        syncDecisionButtons(form);
       }
       return ok;
     } finally {
@@ -1855,6 +1882,7 @@
       transferCommitState.set(block, { busy: false, lastSerial: "", lastAt: 0 });
       syncSerialBlockQty(form, block);
     });
+    syncDecisionButtons(form);
     window.MyShopSerialScan?.enhance?.(panel);
     refreshIcons();
   };
@@ -1898,9 +1926,19 @@
   };
 
   const runSerialSearch = async (input) => {
-    if (!serialSearchUrl || !supplyShopId) return;
     const block = input.closest("[data-serial-block]");
     if (!block || block.hidden) return;
+    if (block.dataset.serialMode === "transfer") {
+      const filled = new Set(filledSerialsInBlock(block));
+      const query = normalizeSerial(input.value);
+      const results = transferAllowedSerials(block)
+        .filter((serial) => !filled.has(serial))
+        .filter((serial) => !query || serial.includes(query))
+        .slice(0, 10);
+      renderSerialSuggest(input, results);
+      return;
+    }
+    if (!serialSearchUrl || !supplyShopId) return;
     const itemId = block.dataset.itemId || "";
     if (!itemId) return;
 
@@ -2144,8 +2182,12 @@
             0
         );
         if (input.value === "" || !Number.isFinite(qty) || qty !== mustMatch) {
+          const row = input.closest("[data-request-line]");
+          const itemName = (
+            row?.querySelector(".stock-transfer-item span")?.textContent || ""
+          ).trim();
           window.alert(
-            "Received quantity must match what was sent. Decline with a reason if the quantities do not match."
+            `${itemName ? `“${itemName}”: ` : ""}received quantity does not match this transfer. Decline with a reason if the count is wrong.`
           );
           input.focus();
           return false;
@@ -2376,7 +2418,10 @@
       const block = remove.closest("[data-serial-block]");
       const form = block?.closest("[data-request-form]");
       remove.closest("li")?.remove();
-      if (block && form) syncSerialBlockQty(form, block);
+      if (block && form) {
+        syncSerialBlockQty(form, block);
+        syncDecisionButtons(form);
+      }
       getTransferSerialEntry(block)?.focus?.();
     });
     requestModal.addEventListener("input", (event) => {
