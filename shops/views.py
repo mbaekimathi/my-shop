@@ -1341,6 +1341,9 @@ def my_shop_workspace(request, shop_id):
             "category_count": 0,
             "pending_stock_requests": pending_requests,
             "pending_request_count": len(pending_requests),
+            "stock_request_auto_open": any(
+                not r.supplier_notified for r in pending_requests
+            ),
             "stock_request_decisions": request_decisions,
             "stock_request_decision_count": len(request_decisions),
             "serial_search_url": reverse(
@@ -1716,6 +1719,9 @@ def my_shop_stock_requests(request, shop_id):
         extra_context={
             "pending_stock_requests": pending_requests,
             "pending_request_count": len(pending_requests),
+            "stock_request_auto_open": any(
+                not r.supplier_notified for r in pending_requests
+            ),
             "outgoing_pending_requests": outgoing_pending,
             "outgoing_pending_count": len(outgoing_pending),
             "stock_request_decisions": request_decisions,

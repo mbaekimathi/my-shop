@@ -2,7 +2,7 @@
 <div
   class="workspace-modal stock-request-modal"
   data-stock-request-modal
-  data-auto-open="{% if pending_stock_requests %}1{% else %}0{% endif %}"
+  data-auto-open="{% if stock_request_auto_open %}1{% else %}0{% endif %}"
   data-serial-search-url="{{ serial_search_url }}"
   data-verify-login-url="{{ verify_login_code_url }}"
   data-supply-shop-id="{{ shop.id }}"
@@ -33,7 +33,7 @@
         Confirm receipt at <strong>{{ shop.name }}</strong>.
         Enter quantities received below. Confirm only when they match what was sent —
         otherwise Decline with a reason (for example wrong quantity). No stock changes on decline.
-        Dismiss hides this for 5 minutes; refresh brings it back.
+        Dismiss hides this for 5 minutes; a new incoming transfer brings it back.
       </p>
 
       <div class="stock-transfer-stack">
