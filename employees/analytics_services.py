@@ -4328,7 +4328,6 @@ def _analytics_report_pdf(
     line = colors.HexColor("#e2e8f0")
     line_strong = colors.HexColor("#cbd5e1")
     surface = colors.HexColor("#f8fafc")
-    head_fill = colors.HexColor("#0f172a")
     accent = colors.HexColor("#0f766e")
     accent_soft = colors.HexColor("#ccfbf1")
     white = colors.white
@@ -4434,9 +4433,9 @@ def _analytics_report_pdf(
         "PdfHead",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=6.8,
-        textColor=white,
-        leading=8.6,
+        fontSize=7,
+        textColor=muted,
+        leading=8.8,
     )
     head_cell_right = ParagraphStyle(
         "PdfHeadRight",
@@ -4447,9 +4446,9 @@ def _analytics_report_pdf(
         "PdfCell",
         parent=styles["Normal"],
         fontName=MANROPE_PDF,
-        fontSize=7.2,
+        fontSize=7.6,
         textColor=ink,
-        leading=9,
+        leading=9.4,
     )
     cell_strong = ParagraphStyle(
         "PdfCellStrong",
@@ -4564,8 +4563,8 @@ def _analytics_report_pdf(
             TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, -1), surface),
-                    ("BOX", (0, 0), (-1, -1), 0.8, line_strong),
-                    ("INNERGRID", (0, 0), (-1, -1), 0.5, line),
+                    ("BOX", (0, 0), (-1, -1), 0.6, line_strong),
+                    ("LINEABOVE", (0, 0), (-1, 0), 1.4, accent),
                     ("TOPPADDING", (0, 0), (-1, -1), 7),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
                     ("LEFTPADDING", (0, 0), (-1, -1), 6),
@@ -4579,24 +4578,20 @@ def _analytics_report_pdf(
 
     def _style_data_table(n_rows: int, has_total: bool) -> TableStyle:
         cmds = [
-            ("BACKGROUND", (0, 0), (-1, 0), head_fill),
-            ("TEXTCOLOR", (0, 0), (-1, 0), white),
+            ("BACKGROUND", (0, 0), (-1, 0), surface),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, 0), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-            ("TOPPADDING", (0, 1), (-1, -1), 4.5),
-            ("BOTTOMPADDING", (0, 1), (-1, -1), 4.5),
+            ("TOPPADDING", (0, 0), (-1, 0), 5.5),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 5.5),
+            ("TOPPADDING", (0, 1), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
             ("LEFTPADDING", (0, 0), (-1, -1), 4),
             ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
-            ("LINEBELOW", (0, 1), (-1, -2), 0.4, line),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.9, line_strong),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.4, line),
             ("BACKGROUND", (0, 1), (-1, -1), white),
         ]
-        for row_idx in range(1, n_rows):
-            if row_idx % 2 == 0:
-                cmds.append(("BACKGROUND", (0, row_idx), (-1, row_idx), surface))
         if has_total:
-            cmds.append(("LINEABOVE", (0, -1), (-1, -1), 0.9, line_strong))
+            cmds.append(("LINEABOVE", (0, -1), (-1, -1), 1.0, accent))
             cmds.append(("BACKGROUND", (0, -1), (-1, -1), accent_soft))
         return TableStyle(cmds)
 
@@ -4621,7 +4616,7 @@ def _analytics_report_pdf(
         else:
             head_row = [
                 Paragraph(
-                    _esc(text),
+                    _esc(str(text).upper()),
                     head_cell_right if aligns[idx] == "right" else head_cell,
                 )
                 for idx, text in enumerate(headers)
@@ -4664,10 +4659,6 @@ def _analytics_report_pdf(
             grid = Table(table_data, colWidths=col_widths, repeatRows=1)
             grid.setStyle(_style_data_table(len(table_data), total_last))
             story.append(grid)
-        footnote = (section.get("footnote") or "").strip()
-        if footnote:
-            story.append(Spacer(1, 2 * mm))
-            story.append(Paragraph(_esc(footnote), foot_style))
         story.append(Spacer(1, 6 * mm))
 
     story.append(
@@ -4711,6 +4702,121 @@ def _analytics_report_pdf(
     return buffer.getvalue()
 
 
+def _pdf_cell_label(cell) -> str:
+    if isinstance(cell, dict):
+        if cell.get("kind") == "qty_amount":
+            return str(cell.get("amount") or "0")
+        return str(cell.get("label") or "—")
+    return str(cell)
+
+
+def _credits_shop_pdf_section(table: dict) -> dict:
+    """Simplified shop rollup: total, due, paid, profit/loss, stock value."""
+    rows = []
+    for row in table.get("rows") or []:
+        cells = row.get("cells") if isinstance(row, dict) else row
+        cells = list(cells or [])
+        total_cell = cells[3] if len(cells) > 3 else {}
+        amount = (
+            str(total_cell.get("amount") or "0")
+            if isinstance(total_cell, dict)
+            else "0"
+        )
+        rows.append(
+            [
+                _pdf_cell_label(cells[0]) if cells else "—",
+                amount,
+                _pdf_cell_label(cells[2]) if len(cells) > 2 else "—",
+                _pdf_cell_label(cells[1]) if len(cells) > 1 else "—",
+                _pdf_cell_label(cells[5]) if len(cells) > 5 else "—",
+                _pdf_cell_label(cells[4]) if len(cells) > 4 else "—",
+            ]
+        )
+    return {
+        "kicker": "CREDITS REPORT",
+        "title": "Credits by shop",
+        "headers": [
+            "Shop",
+            "Total amount",
+            "Total due",
+            "Total paid",
+            "Profit/Loss",
+            "Stock value",
+        ],
+        "aligns": ["left", "right", "right", "right", "right", "right"],
+        "widths": [0.24, 0.16, 0.15, 0.15, 0.15, 0.15],
+        "rows": rows,
+        "empty": table.get("empty") or "No data.",
+        "footnote": table.get("footnote") or "",
+    }
+
+
+def _credits_clients_pdf_section(table: dict) -> dict:
+    """Simplified client rollup: per-branch owed, due, paid, credit, stock."""
+    columns = list(table.get("columns") or [])
+    shop_cols = [
+        col
+        for col in columns
+        if isinstance(col, dict) and col.get("pair") and not col.get("total")
+    ]
+    headers = ["Name", "Phone"]
+    aligns = ["left", "left"]
+    for col in shop_cols:
+        headers.append(f"{col.get('label') or 'Shop'} owed")
+        aligns.append("right")
+    headers += ["Total due", "Total paid", "Total credit", "Stock value"]
+    aligns += ["right", "right", "right", "right"]
+    fractions = [0.17, 0.11] + [0.08] * len(shop_cols) + [0.11, 0.11, 0.11, 0.11]
+    fraction_total = sum(fractions) or 1.0
+    widths = [frac / fraction_total for frac in fractions]
+
+    rows = []
+    for row in table.get("rows") or []:
+        cells = row.get("cells") if isinstance(row, dict) else row
+        cells = list(cells or [])
+        flat = [
+            _pdf_cell_label(cells[0]) if cells else "—",
+            _pdf_cell_label(cells[1]) if len(cells) > 1 else "—",
+        ]
+        idx = 2
+        for _col in shop_cols:
+            cell = cells[idx] if idx < len(cells) else {}
+            flat.append(
+                str(cell.get("amount") or "0") if isinstance(cell, dict) else "0"
+            )
+            idx += 1
+        total_cell = cells[idx] if idx < len(cells) else {}
+        owed = (
+            str(total_cell.get("amount") or "0")
+            if isinstance(total_cell, dict)
+            else "0"
+        )
+        stock_cell = cells[idx + 1] if idx + 1 < len(cells) else {}
+        paid = row.get("paid") if isinstance(row, dict) else None
+        gross = row.get("gross") if isinstance(row, dict) else None
+        flat += [
+            owed,
+            _money_dense(paid) if paid is not None else "—",
+            _money_dense(gross) if gross is not None else "—",
+            _pdf_cell_label(stock_cell),
+        ]
+        rows.append(flat)
+    return {
+        "kicker": "CREDITS REPORT",
+        "title": table.get("title") or "Client credit accounts by shop",
+        "headers": headers,
+        "aligns": aligns,
+        "widths": widths,
+        "rows": rows,
+        "empty": table.get("empty") or "No data.",
+        "footnote": (
+            (table.get("footnote") or "").strip()
+            + " Total paid and Total credit are the raw receipt sums for the "
+            "same scope."
+        ).strip(),
+    }
+
+
 def _summary_board_kpi_cards(summary: dict) -> list:
     cards = []
     hero = (summary or {}).get("hero") or {}
@@ -4746,6 +4852,12 @@ def build_credits_report_pdf(*, page: dict, filters: dict, company_name: str = "
 
     sections = []
     for table in page.get("tables") or []:
+        if table.get("title") == "Credits by shop":
+            sections.append(_credits_shop_pdf_section(table))
+            continue
+        if table.get("title") == "Client credit accounts by shop":
+            sections.append(_credits_clients_pdf_section(table))
+            continue
         headers, aligns, rows = _flatten_analytics_table(table)
         sections.append(
             {
@@ -9918,6 +10030,8 @@ def _build_clients(filters):
     # client_id -> {shop_id: (docs, amount_or_owed)}
     by_client_shop: dict[int, dict[int, tuple[int, Decimal]]] = {}
     totals_by_client: dict[int, tuple[int, Decimal]] = {}
+    paid_by_client: dict[int, Decimal] = {}
+    gross_by_client: dict[int, Decimal] = {}
     amount_agg = (
         Coalesce(Sum(outstanding_due), _zero())
         if credit_mode
@@ -9926,6 +10040,8 @@ def _build_clients(filters):
     for row in receipts.values("client_id", "shop_id").annotate(
         docs=Count("id"),
         amount=amount_agg,
+        paid=Coalesce(Sum("amount_paid"), _zero()),
+        gross=Coalesce(Sum("total"), _zero()),
     ):
         client_id = row["client_id"]
         if client_id is None:
@@ -9946,6 +10062,12 @@ def _build_clients(filters):
             total_docs + docs_n,
             total_amount + amount,
         )
+        paid_by_client[client_id] = paid_by_client.get(client_id, _zero()) + Decimal(
+            row["paid"] or 0
+        )
+        gross_by_client[client_id] = gross_by_client.get(
+            client_id, _zero()
+        ) + Decimal(row["gross"] or 0)
 
     stock_by_client = _client_credit_stock_map(receipts) if credit_mode else {}
 
@@ -10060,6 +10182,8 @@ def _build_clients(filters):
             {
                 "cells": cells,
                 "search_text": f"{name} {phone}".strip(),
+                "paid": paid_by_client.get(client_id, _zero()),
+                "gross": gross_by_client.get(client_id, _zero()),
             }
         )
 
@@ -10097,7 +10221,14 @@ def _build_clients(filters):
                 title=f"Stock value {_money_ksh(total_stock)}",
             )
         )
-        client_rows.append({"cells": total_cells, "search_text": "Total"})
+        client_rows.append(
+            {
+                "cells": total_cells,
+                "search_text": "Total",
+                "paid": sum(paid_by_client.values(), _zero()),
+                "gross": sum(gross_by_client.values(), _zero()),
+            }
+        )
 
     columns = [
         "Name",
