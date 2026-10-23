@@ -354,8 +354,8 @@ class ShopPortalOfflineSyncTests(TestCase):
         self.assertEqual(receipt.client_phone, "")
 
     def _post_checkout(self, payload, client=None):
-        # Each _portal_client() is a distinct device session — tests reuse one
-        # so the single-session rule does not supersede it mid-test.
+        # Each _portal_client() is a distinct device session — shop portal
+        # sessions coexist, so reusing one client mirrors a single device.
         client = client or self._portal_client()
         return client.post(
             reverse("employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}),

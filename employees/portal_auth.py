@@ -160,8 +160,8 @@ def begin_employee_session(request, user, profile):
     login(request, user)
     restore_shop_portal_session(request, shop_snap)
     store_profile_session(request, profile)
-    # login() rotated/flushed the session id — the shop stamp follows the new
-    # key so a coexisting shop portal session isn't superseded by itself.
+    # login() rotated/flushed the session id — the shop's most-recent-session
+    # stamp follows the new key for a coexisting shop portal session.
     migrate_shop_session_stamp(request, old_key)
     EmployeeProfile.objects.filter(pk=profile.pk).update(
         active_session_key=request.session.session_key or ""

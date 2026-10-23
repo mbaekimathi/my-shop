@@ -158,7 +158,11 @@ def set_shop_portal_session(request, shop):
 
 
 def bind_shop_portal_session(request, shop):
-    """Bind this browser session as the shop's single live portal session."""
+    """Record this browser session as the shop's most recent portal session.
+
+    Diagnostic only — shop portal sessions are not single-session; many
+    devices may be signed in to the same shop at once.
+    """
     session_key = request.session.session_key
     if not session_key:
         return
@@ -199,8 +203,8 @@ def clear_shop_portal_session(request):
             del request.session[key]
     if hasattr(request, "_portal_shop_cache"):
         delattr(request, "_portal_shop_cache")
-    # Release the single-session stamp only when this session still owns it —
-    # a superseded session must not clear the newer device's stamp.
+    # Release the most-recent-session stamp only when this session owns it —
+    # an older device must not clear a newer sign-in's stamp.
     if shop_id and session_key:
         from .models import Shop
 
@@ -236,7 +240,6 @@ def resolve_portal_shop(request):
             "image",
             "is_suspended",
             "is_hidden",
-            "active_session_key",
         )
         .first()
     )
@@ -245,19 +248,8 @@ def resolve_portal_shop(request):
         request._portal_shop_cache = None
         return None
 
-    session_key = request.session.session_key
-    if shop.active_session_key:
-        if shop.active_session_key != session_key:
-            # A newer sign-in on another device owns this shop portal account.
-            clear_shop_portal_session(request)
-            request._portal_shop_cache = None
-            return None
-    elif session_key:
-        # Sessions created before single-session tracking claim the shop on use.
-        Shop.objects.filter(pk=shop.pk, active_session_key="").update(
-            active_session_key=session_key
-        )
-
+    # Shop portal sessions are not single-session: any number of devices may
+    # stay signed in to the same shop until logout or session expiry.
     persist_shop_portal_session(request)
     request._portal_shop_cache = shop
     return shop

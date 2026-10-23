@@ -20,14 +20,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 ## Auth model
 - Two independent session types per browser: employee (Django auth) and shop
   portal (`shop_portal_auth` + `shop_portal_shop_id` session keys).
-- **Single-session enforcement**: `Shop.active_session_key` /
-  `EmployeeProfile.active_session_key` hold the session key of the one live
-  session per account. Stamped at login (`begin_*_portal_session`), migrated on
-  session-key rotation (`migrate_*_session_stamp`), verified in
-  `resolve_portal_shop` / `active_employee_required` / `ping_api` / `_sync_actor`.
-  A newer login on another device supersedes the older one (it gets signed out).
+- **Single-session enforcement (employees only)**: `EmployeeProfile.active_session_key`
+  holds the session key of the one live employee session. Stamped at login
+  (`begin_employee_session`), migrated on session-key rotation
+  (`_migrate_employee_session_stamp`), verified in `active_employee_required` /
+  `ping_api` / `_sync_actor`. A newer login on another device supersedes the
+  older one (it gets signed out). **Shop portal sessions are concurrent** —
+  many devices may be signed in to the same shop at once.
+  `Shop.active_session_key` only records the most recent sign-in for
+  diagnostics (stamped by `bind_shop_portal_session`, migrated by
+  `migrate_shop_session_stamp`); `resolve_portal_shop` does not enforce it.
 - Session-key rotation is bridged by `RotatedSessionMiddleware` (old key →
   pointer → new key, 120s grace) so in-flight tabs survive login rotations.
 - The client-side `session-guard.js` tab lock (localStorage + BroadcastChannel)
-  only covers one browser profile — real enforcement is server-side via the
-  session stamps above.
+  applies to employee workspaces only — shop tabs may run concurrently. It
+  covers one browser profile; real enforcement is server-side via the stamps above.

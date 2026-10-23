@@ -1,8 +1,8 @@
 /**
- * Session expiry redirect + per-mode single-tab lock.
+ * Session expiry redirect + employee single-tab lock.
  *
- * Shop and employee sessions may coexist (one tab each).
- * Duplicate shop+shop or employee+employee tabs are blocked.
+ * Shop sessions may run in many tabs and devices at once. Employee sessions
+ * are single-tab: duplicate employee tabs are blocked.
  */
 
 let redirecting = false;
@@ -173,26 +173,19 @@ function openLockChannel(mode) {
   }
 }
 
-function modeLabel(mode) {
-  return mode === "shop" ? "shop" : "employee";
-}
-
-// The other portal's login page: a blocked employee tab offers the shop
-// login (and vice versa) so the user can run one tab of each kind.
-function altLoginUrl(mode) {
+// A blocked employee tab offers the shop login so both portals can stay open.
+function altLoginUrl() {
   const root = authRoot();
   const declared = root?.getAttribute("data-alt-login-url") || "";
   if (declared) return declared;
-  return mode === "shop"
-    ? "/employees/login/?switch=1"
-    : "/employees/shops/login/?switch=1";
+  return "/employees/shops/login/?switch=1";
 }
 
 function blockPanel() {
   return document.querySelector("[data-session-tab-block]");
 }
 
-function setBlocked(blocked, mode) {
+function setBlocked(blocked) {
   const panel = blockPanel();
   const root = authRoot();
   document.body.classList.toggle("session-tab-blocked", blocked);
@@ -205,23 +198,16 @@ function setBlocked(blocked, mode) {
   const title = panel.querySelector("[data-session-tab-block-title]");
   const detail = panel.querySelector("[data-session-tab-block-detail]");
   const altLogin = panel.querySelector("[data-session-tab-alt-login]");
-  const label = modeLabel(mode);
   if (title) {
-    title.textContent =
-      label === "shop"
-        ? "Shop session already open"
-        : "Employee session already open";
+    title.textContent = "Employee session already open";
   }
   if (detail) {
     detail.textContent =
-      label === "shop"
-        ? "This shop session is open in another tab. You can keep one shop tab and one employee tab at the same time, but not two shop tabs."
-        : "This employee session is open in another tab. You can keep one employee tab and one shop tab at the same time, but not two employee tabs.";
+      "This employee session is open in another tab. Only one employee tab can be active at a time; shop tabs can stay open alongside it.";
   }
   if (altLogin) {
-    altLogin.setAttribute("href", altLoginUrl(mode));
-    altLogin.textContent =
-      label === "shop" ? "Log in as an employee" : "Log in to a shop";
+    altLogin.setAttribute("href", altLoginUrl());
+    altLogin.textContent = "Log in to a shop";
   }
 }
 
@@ -284,7 +270,7 @@ function becomeBlocked(mode) {
     window.clearInterval(tabLockState.heartbeatId);
     tabLockState.heartbeatId = null;
   }
-  setBlocked(true, mode);
+  setBlocked(true);
   // Keep watching: when the owner tab closes or its lock goes stale, this tab
   // takes over automatically instead of staying blocked.
   startReclaim(mode);
@@ -293,7 +279,7 @@ function becomeBlocked(mode) {
 function becomeActive(mode, tabId, channel) {
   if (!tabLockState) return;
   tabLockState.blocked = false;
-  setBlocked(false, mode);
+  setBlocked(false);
   if (tabLockState.reclaimId) {
     window.clearInterval(tabLockState.reclaimId);
     tabLockState.reclaimId = null;
@@ -318,7 +304,9 @@ async function initTabLock() {
   if (!root) return;
 
   const mode = expectedAuthMode();
-  if (mode !== "shop" && mode !== "employee") return;
+  // Shop workspaces allow concurrent sessions in many tabs/devices; only
+  // employee mode is limited to one tab.
+  if (mode !== "employee") return;
 
   // localStorage required for cross-tab coordination
   try {

@@ -35,7 +35,10 @@ class Shop(models.Model):
         blank=True,
         default="",
         editable=False,
-        help_text="Session key of the single live shop portal session.",
+        help_text=(
+            "Session key of the most recent shop portal sign-in. "
+            "Diagnostic only — concurrent shop sessions are allowed."
+        ),
     )
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
