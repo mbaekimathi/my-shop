@@ -68,20 +68,44 @@
     }
   };
 
-  // Restore after a real refresh (reload/back-forward) or after the page's own
-  // POST -> redirect -> GET round-trip (form actions like suspend/edit/delete).
-  const shouldRestoreScroll = () => {
-    const navType =
-      performance.getEntriesByType?.("navigation")?.[0]?.type || "";
-    if (navType === "reload" || navType === "back_forward") return true;
-    try {
-      return (
-        Boolean(document.referrer) &&
-        new URL(document.referrer).pathname === window.location.pathname
-      );
-    } catch (_e) {
-      return false;
-    }
+  // <html> uses scroll-behavior:smooth — force instant jumps and keep
+  // re-applying while late content (images, extra pages) grows the document.
+  const applyScrollRestore = (y) => {
+    const rootEl = document.documentElement;
+    const jump = () => {
+      const prev = rootEl.style.scrollBehavior;
+      rootEl.style.scrollBehavior = "auto";
+      window.scrollTo(0, y);
+      rootEl.style.scrollBehavior = prev;
+    };
+    const finish = () => {
+      restoringScroll = false;
+      saveScrollState();
+    };
+    jump();
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      tries += 1;
+      if (window.scrollY >= y - 8 || tries >= 14) {
+        window.clearInterval(timer);
+        window.removeEventListener("wheel", stopEarly);
+        window.removeEventListener("touchstart", stopEarly);
+        window.removeEventListener("keydown", stopEarly);
+        finish();
+        return;
+      }
+      jump();
+    }, 150);
+    const stopEarly = () => {
+      window.clearInterval(timer);
+      finish();
+    };
+    window.addEventListener("wheel", stopEarly, { once: true, passive: true });
+    window.addEventListener("touchstart", stopEarly, {
+      once: true,
+      passive: true,
+    });
+    window.addEventListener("keydown", stopEarly, { once: true });
   };
 
   import("./offline/catalog-cache.js")
@@ -648,7 +672,10 @@
   window.addEventListener("pagehide", saveScrollState);
   window.addEventListener("beforeunload", saveScrollState);
 
-  const initialState = shouldRestoreScroll() ? readScrollState() : null;
+  // A saved state for this URL means the user was just here (refresh,
+  // back/forward, or the POST -> redirect -> GET round-trip after a form
+  // action) — pick up where they left off.
+  const initialState = readScrollState();
   if (initialState && "scrollRestoration" in history) {
     history.scrollRestoration = "manual";
   }
@@ -685,18 +712,16 @@
         await fetchPage({ page: p, q, sort, append: p > 1 });
         if (lastFetchedPage !== p || !hasMore) break;
       }
-    } finally {
+    } catch (_e) {
+      /* restore best-effort */
+    }
+    // Don't fight a server-rendered open modal (scroll is locked anyway).
+    if (y > 0 && !document.body.classList.contains("workspace-modal-open")) {
+      requestAnimationFrame(() => applyScrollRestore(y));
+    } else {
       restoringScroll = false;
+      saveScrollState();
     }
-    if (y > 0 && window.scrollY < 50) {
-      requestAnimationFrame(() => {
-        window.scrollTo(0, y);
-        window.setTimeout(() => {
-          if (window.scrollY < y - 40) window.scrollTo(0, y);
-        }, 150);
-      });
-    }
-    saveScrollState();
   };
 
   import("./offline/catalog-cache.js")
