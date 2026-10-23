@@ -146,17 +146,25 @@ def _render_analytics(
     context = build_analytics_page(
         profile=profile, request=request, section_slug=section["slug"]
     )
-    if section["slug"] == "credits" and (
-        request.GET.get("download") or ""
-    ).strip().lower() in ("1", "pdf", "csv", "download"):
-        from .analytics_services import credits_report_pdf_response
-
-        return credits_report_pdf_response(
-            page=context.get("page") or {},
-            filters=context,
-        )
     if page_override is not None:
         context["page"] = page_override
+    if (request.GET.get("download") or "").strip().lower() in (
+        "1",
+        "pdf",
+        "csv",
+        "download",
+    ):
+        from .analytics_services import (
+            credits_report_pdf_response,
+            tradings_report_pdf_response,
+        )
+
+        responder = {
+            "credits": credits_report_pdf_response,
+            "tradings": tradings_report_pdf_response,
+        }.get(section["slug"])
+        if responder is not None:
+            return responder(page=context.get("page") or {}, filters=context)
     meta = _analytics_meta(section)
     if meta_override:
         meta = {**meta, **meta_override}

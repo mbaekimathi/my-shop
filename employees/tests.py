@@ -1151,6 +1151,99 @@ class CreditsShopScopeTests(TestCase):
         self.assertTrue(response.content.startswith(b"%PDF"))
         self.assertGreater(len(response.content), 500)
 
+    def test_tradings_report_pdf_download(self):
+        self.client.force_login(self.user)
+        page = self.client.get("/it-support/analytics/tradings/?range=all")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("download=pdf", page.context["page"]["download_href"])
+
+        response = self.client.get(
+            "/it-support/analytics/tradings/?range=all&download=pdf"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("attachment;", response["Content-Disposition"])
+        self.assertIn("tradings-report-", response["Content-Disposition"])
+        self.assertTrue(response.content.startswith(b"%PDF"))
+        self.assertGreater(len(response.content), 500)
+
+    def test_client_tradings_report_pdf_download(self):
+        self.client.force_login(self.user)
+        client = Client.objects.create(
+            full_name="TRADE CLIENT",
+            phone_number="0700009101",
+            phone_normalized="254700009101",
+            created_by=self.it,
+        )
+        ShopReceipt.objects.create(
+            shop=self.shop_a,
+            receipt_number="TR-1",
+            kind=ShopReceiptKind.TRADE_OUT,
+            total=150,
+            amount_paid=0,
+            created_by=self.it,
+            client=client,
+            client_name=client.full_name,
+            client_phone=client.phone_number,
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        detail_url = f"/it-support/analytics/tradings/{client.pk}/"
+        page = self.client.get(f"{detail_url}?range=all")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("download=pdf", page.context["page"]["download_href"])
+
+        response = self.client.get(f"{detail_url}?range=all&download=pdf")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("attachment;", response["Content-Disposition"])
+        self.assertIn("tradings-trade-client-", response["Content-Disposition"])
+        self.assertTrue(response.content.startswith(b"%PDF"))
+        self.assertGreater(len(response.content), 500)
+
+    def test_fully_returned_trade_stays_visible(self):
+        from shops.models import ShopReceiptLine
+
+        self.client.force_login(self.user)
+        client = Client.objects.create(
+            full_name="RETURN CLIENT",
+            phone_number="0700009102",
+            phone_normalized="254700009102",
+            created_by=self.it,
+        )
+        receipt = ShopReceipt.objects.create(
+            shop=self.shop_a,
+            receipt_number="TR-RET-1",
+            kind=ShopReceiptKind.TRADE_OUT,
+            total=0,
+            amount_paid=0,
+            created_by=self.it,
+            client=client,
+            client_name=client.full_name,
+            client_phone=client.phone_number,
+            status=ShopReceiptStatus.CANCELLED,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item_name="RETURNED TV",
+            quantity=1,
+            returned_quantity=1,
+            unit_price=100,
+            line_total=100,
+        )
+
+        section = self.client.get("/it-support/analytics/tradings/?range=all")
+        self.assertEqual(section.status_code, 200)
+        self.assertIn("RETURN CLIENT", section.content.decode())
+
+        page = self.client.get(
+            f"/it-support/analytics/tradings/{client.pk}/?range=all"
+        )
+        self.assertEqual(page.status_code, 200)
+        html = page.content.decode()
+        self.assertIn("TR-RET-1", html)
+        self.assertIn("RETURNED TV", html)
+        self.assertIn("Returned", html)
+
 
 class CreditAuditsEventFilterTests(TestCase):
     def setUp(self):

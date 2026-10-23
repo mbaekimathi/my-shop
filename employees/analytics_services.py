@@ -5000,6 +5000,161 @@ def credit_audit_pdf_response(*, trail: dict):
     return response
 
 
+def _tradings_accounts_pdf_section(table: dict) -> dict:
+    """Simplified client trade rollup: trade in, trade out, balance."""
+    rows = []
+    for row in table.get("rows") or []:
+        cells = row.get("cells") if isinstance(row, dict) else row
+        cells = list(cells or [])
+        flat = [
+            _pdf_cell_label(cells[0]) if cells else "—",
+            _pdf_cell_label(cells[1]) if len(cells) > 1 else "—",
+        ]
+        for idx in (2, 3, 4):
+            flat.append(
+                _pdf_cell_label(cells[idx]) if idx < len(cells) else "—"
+            )
+        rows.append(flat)
+    return {
+        "kicker": "TRADINGS REPORT",
+        "title": table.get("title") or "Client accounts",
+        "headers": ["Client", "Phone", "Trade in", "Trade out", "Balance"],
+        "aligns": ["left", "left", "right", "right", "right"],
+        "widths": [0.28, 0.16, 0.19, 0.19, 0.18],
+        "rows": rows,
+        "empty": table.get("empty") or "No data.",
+    }
+
+
+def _client_trades_pdf_section(table: dict) -> dict:
+    """Simplified per-client trade list: receipt, type, items, money columns."""
+    rows = []
+    for row in table.get("rows") or []:
+        cells = row.get("cells") if isinstance(row, dict) else row
+        cells = list(cells or [])
+
+        def cell_label(idx):
+            return _pdf_cell_label(cells[idx]) if idx < len(cells) else "—"
+
+        items = ""
+        if len(cells) > 4:
+            items_cell = cells[4]
+            if isinstance(items_cell, dict):
+                items = (items_cell.get("title") or "").strip()
+            if not items or items == "—":
+                items = _pdf_cell_label(items_cell)
+        rows.append(
+            [
+                cell_label(0),
+                cell_label(1),
+                cell_label(3),
+                items or "—",
+                cell_label(5),
+                cell_label(6),
+                cell_label(7),
+                cell_label(8),
+            ]
+        )
+    return {
+        "kicker": "TRADINGS REPORT",
+        "title": table.get("title") or "Trades",
+        "headers": [
+            "Trade",
+            "Type",
+            "Shop",
+            "Items",
+            "Value",
+            "Cleared",
+            "Balance",
+            "Status",
+        ],
+        "aligns": [
+            "left",
+            "left",
+            "left",
+            "left",
+            "right",
+            "right",
+            "right",
+            "left",
+        ],
+        "widths": [0.13, 0.09, 0.13, 0.27, 0.11, 0.11, 0.09, 0.07],
+        "rows": rows,
+        "empty": table.get("empty") or "No data.",
+    }
+
+
+def build_tradings_report_pdf(*, page: dict, filters: dict, company_name: str = "") -> bytes:
+    """Landscape A4 PDF of the analytics tradings report."""
+    period_label = filters.get("report_period_label") or "All time"
+    selected = set(filters.get("selected_shop_ids") or [])
+    filter_shops = list(filters.get("filter_shops") or [])
+    if selected:
+        names = [str(shop.name) for shop in filter_shops if shop.pk in selected]
+        shop_label = ", ".join(names) if names else "Selected shops"
+    else:
+        shop_label = "All shops"
+
+    headline = (page.get("headline") or "").strip()
+    client_report = bool(headline) and headline != "Tradings"
+
+    sections = []
+    for table in page.get("tables") or []:
+        if table.get("title") == "Client accounts":
+            sections.append(_tradings_accounts_pdf_section(table))
+        else:
+            sections.append(_client_trades_pdf_section(table))
+
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    return _analytics_report_pdf(
+        title=(
+            f"{headline} — tradings" if client_report else "Tradings report"
+        ),
+        subtitle=(
+            page.get("lead")
+            or "Client trade accounts — trade ins and trade outs."
+        ),
+        brand=brand,
+        meta_lines=[shop_label, period_label],
+        kpi_cards=[
+            (
+                metric.get("label") or "",
+                metric.get("value") or "—",
+                metric.get("hint") or "",
+            )
+            for metric in page.get("metrics") or []
+        ],
+        sections=sections,
+        footer_note=(
+            f"{brand} · Tradings report · {shop_label} · {period_label}"
+        ),
+    )
+
+
+def tradings_report_pdf_response(*, page: dict, filters: dict):
+    """PDF download for the analytics tradings report."""
+    from django.http import HttpResponse
+    from django.utils.text import slugify
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    pdf_bytes = build_tradings_report_pdf(
+        page=page, filters=filters, company_name=company_name
+    )
+    headline = (page.get("headline") or "").strip()
+    stamp = timezone.localtime().strftime("%Y%m%d-%H%M")
+    if headline and headline != "Tradings":
+        filename = f"tradings-{slugify(headline) or 'report'}-{stamp}.pdf"
+    else:
+        filename = f"tradings-report-{stamp}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
+
+
 def supplier_account_url(role, kind: str, supplier_id, *, query: str = "") -> str:
     from django.urls import reverse
 
@@ -9081,7 +9236,6 @@ def _trade_receipts_qs(shop_ids, start, end):
             | Q(kind=ShopReceiptKind.TRADE_IN)
             | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
         )
-        .exclude(status=ShopReceiptStatus.CANCELLED)
     )
 
 
@@ -9119,6 +9273,17 @@ def _trade_receipt_columns():
     ]
 
 
+def _trade_receipt_display_value(receipt) -> Decimal:
+    """Receipt total; fully returned (cancelled) trades keep their line value."""
+    total = Decimal(receipt.total or 0)
+    if total > 0 or receipt.status != ShopReceiptStatus.CANCELLED:
+        return total
+    return sum(
+        (Decimal(line.line_total or 0) for line in receipt.lines.all()),
+        Decimal("0.00"),
+    )
+
+
 def _trade_receipt_rows(qs, *, role, query, client_id):
     """One row per trade receipt, linked to that client's settle page."""
     from django.urls import reverse
@@ -9141,13 +9306,13 @@ def _trade_receipt_rows(qs, *, role, query, client_id):
     for receipt in qs:
         trade_count += 1
         lines = list(receipt.lines.all())
-        qty = sum(int(line.remaining_quantity or 0) for line in lines)
+        qty = sum(int(line.quantity or 0) for line in lines)
         item_units += qty
         line_count = len(lines)
         items_label = ", ".join(
-            f"{line.item_name} ×{line.remaining_quantity}"
+            f"{line.item_name} ×{line.quantity}"
             for line in lines[:3]
-            if line.remaining_quantity > 0
+            if int(line.quantity or 0) > 0
         )
         if line_count > 3:
             items_label = f"{items_label}…"
@@ -9157,7 +9322,7 @@ def _trade_receipt_rows(qs, *, role, query, client_id):
         paid = Decimal(receipt.amount_paid or 0)
         exchange = Decimal(getattr(receipt, "trade_exchange_value", 0) or 0)
         cleared = (paid + exchange).quantize(Decimal("0.01"))
-        value = Decimal(receipt.total or 0)
+        value = _trade_receipt_display_value(receipt)
         if receipt.kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}:
             balance = trade_balance_due(receipt)
         else:
@@ -9181,7 +9346,10 @@ def _trade_receipt_rows(qs, *, role, query, client_id):
         if receipt.client_phone:
             client = f"{client} · {receipt.client_phone}"
 
-        if receipt.kind == ShopReceiptKind.SALE and receipt.settled_from_trade:
+        if receipt.status == ShopReceiptStatus.CANCELLED:
+            status_label = "Returned"
+            status_tone = "bad"
+        elif receipt.kind == ShopReceiptKind.SALE and receipt.settled_from_trade:
             status_label = "Converted to sale"
             status_tone = "good"
         elif balance <= 0:
@@ -9298,6 +9466,7 @@ def _build_tradings(filters):
     query = filters.get("query") or ""
 
     qs = _trade_receipts_qs(shop_ids, start, end).select_related("client")
+    qs = qs.prefetch_related("lines")
 
     accounts = {}
     unlinked = 0
@@ -9325,7 +9494,7 @@ def _build_tradings(filters):
                 "balance": _zero(),
             }
             accounts[receipt.client_id] = bucket
-        value = Decimal(receipt.total or 0)
+        value = _trade_receipt_display_value(receipt)
         if receipt.kind == ShopReceiptKind.TRADE_IN:
             bucket["trade_in_count"] += 1
             bucket["trade_in_value"] += value
@@ -9451,6 +9620,7 @@ def _build_tradings(filters):
         ),
         "alerts": [],
         "show_search": True,
+        "download_href": _pdf_download_href(filters.get("query") or ""),
         "search_placeholder": "Search client or phone",
         "list_table_layout": True,
         "metrics": [
@@ -9530,6 +9700,7 @@ def build_client_tradings_page(*, profile, request, client_id: int) -> dict:
         "back_label": "All clients",
         "alerts": [],
         "show_search": True,
+        "download_href": _pdf_download_href(query),
         "search_placeholder": "Search trade or item",
         "list_table_layout": True,
         "metrics": [
