@@ -10,6 +10,11 @@ from shops.views import expense_supplier_search_api
 
 urlpatterns = [
     path("login/", views.employee_login, name="login"),
+    path(
+        "shops/login/",
+        views.legacy_shop_login_redirect,
+        name="legacy_shop_login",
+    ),
     path("register/", views.employee_register, name="register"),
     path(
         "api/check-employee-id/",

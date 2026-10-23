@@ -168,6 +168,11 @@ def legacy_settings_communications_redirect(request):
     return redirect("employees:settings_section", section="communication-settings")
 
 
+def legacy_shop_login_redirect(request):
+    """Stray /employees/shops/login/ hits → landing page."""
+    return redirect("core:landing")
+
+
 @active_employee_required
 def workspace_module(request, role_segment, module_slug):
     from .module_permissions import employee_may_any, permission_denied_response
