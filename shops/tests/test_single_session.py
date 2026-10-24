@@ -85,6 +85,38 @@ class SingleSessionTests(TestCase):
         self.shop.refresh_from_db()
         self.assertEqual(self.shop.active_session_key, client.session.session_key)
 
+    def test_different_employee_on_other_device_stays_signed_in(self):
+        """A login for employee B must never supersede employee A's session."""
+        user_b = User.objects.create_user(
+            username="800088",
+            password=self.password,
+            email="single-session-b@test.local",
+            first_name="SECOND",
+            last_name="EMPLOYEE",
+            is_active=True,
+        )
+        profile_b = EmployeeProfile.objects.create(
+            user=user_b,
+            employee_id="800088",
+            phone_country_code="+254",
+            phone_number="700000888",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+
+        client_a = self._login_employee()
+        self.assertTrue(self._ping(client_a).get("employee_auth"))
+
+        client_b = Client()
+        response = client_b.post(
+            reverse("employees:login"),
+            {"username": profile_b.employee_id, "password": self.password},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self.assertTrue(self._ping(client_a).get("employee_auth"))
+        self.assertTrue(self._ping(client_b).get("employee_auth"))
+
     def test_second_employee_login_supersedes_first_device(self):
         client_a = self._login_employee()
         self.assertTrue(self._ping(client_a).get("employee_auth"))
