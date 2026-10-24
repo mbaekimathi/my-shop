@@ -51,7 +51,7 @@ from shops.models import (
     ShopReceiptLine,
     ShopReceiptStatus,
 )
-from shops.services import format_simple_doc_number
+from shops.services import _qty_label, _qty_number, format_simple_doc_number
 
 ANALYTICS_SECTIONS = (
     {
@@ -220,7 +220,7 @@ def _shop_col(
 
 def _qty_amount_cell(qty, amount, *, title: str = "", tone: str = "neutral") -> dict:
     """Quantity and amount side by side, styled as distinct values."""
-    qty_label = str(int(qty or 0))
+    qty_label = _qty_label(qty or 0)
     amount_label = _money_dense(amount)
     full = _money_ksh(amount)
     tone_map = {
@@ -729,7 +729,7 @@ def apply_account_payment(
                     "when": movement.created_at,
                 }
                 order.append(key)
-            qty = int(line.quantity or 0)
+            qty = Decimal(line.quantity or 0)
             unit = Decimal(line.buying_price or 0)
             by_movement[key]["total"] += (unit * qty).quantize(Decimal("0.01"))
         order.sort(key=lambda mid: (by_movement[mid]["when"], mid))
@@ -1106,7 +1106,7 @@ def apply_supplier_receipt_payment(
         if not matching_lines:
             raise ValidationError("Stock-in receipt not found.")
         for line in matching_lines:
-            qty = int(line.quantity or 0)
+            qty = Decimal(line.quantity or 0)
             unit = Decimal(line.buying_price or 0)
             receipt_total += (unit * qty).quantize(Decimal("0.01"))
         due = _due_amount(receipt_total, movement.amount_paid)
@@ -1146,7 +1146,7 @@ def apply_supplier_receipt_payment(
                     "paid": Decimal(linked.amount_paid or 0),
                 },
             )
-            qty = int(line.quantity or 0)
+            qty = Decimal(line.quantity or 0)
             unit = Decimal(line.buying_price or 0)
             info["total"] += (unit * qty).quantize(Decimal("0.01"))
         for info in by_movement.values():
@@ -1960,7 +1960,7 @@ def _stock_summary_board(
             "label": "Inventory value",
             "value": _money_ksh(closing),
             "hint": (
-                f"{int(total_units or 0)} units · {item_count} item"
+                f"{_qty_label(total_units)} units · {item_count} item"
                 f"{'s' if item_count != 1 else ''} · net move {_money_dense(net_move)}"
             ),
             "tone": "good",
@@ -2120,7 +2120,9 @@ def _trading_by_shop_for_period(
             if unit <= 0:
                 continue
             remaining = max(
-                0, int(row["quantity"] or 0) - int(row["returned_quantity"] or 0)
+                Decimal("0"),
+                Decimal(row["quantity"] or 0)
+                - Decimal(row["returned_quantity"] or 0),
             )
             if remaining <= 0:
                 continue
@@ -2191,7 +2193,7 @@ def _shrinkage_by_shop_for_period(
             unit = Decimal(fallback_prices.get(row["item_id"]) or 0)
             if unit <= 0:
                 continue
-            qty = int(row["quantity"] or 0)
+            qty = Decimal(row["quantity"] or 0)
             if qty <= 0:
                 continue
             shop_id = row["movement__shop_id"]
@@ -2570,7 +2572,7 @@ def _list_stock_supplier_receipt_rows(*, shop_ids, start, end, search="", limit=
         shop_name = movement.shop.name if movement.shop else "—"
         total = _zero()
         for line in lines:
-            qty = int(line.quantity or 0)
+            qty = Decimal(line.quantity or 0)
             unit = Decimal(line.buying_price or 0)
             total += (unit * qty).quantize(Decimal("0.01"))
         cashier = _cashier_label(getattr(movement, "created_by", None))
@@ -2978,7 +2980,12 @@ def _confirm_receipt_transfer_rows(
         if search_l and search_l not in haystack:
             continue
 
-        units = sum(int(line.quantity or 0) for line in movement.lines.all())
+        units = _qty_number(
+            sum(
+                (Decimal(line.quantity or 0) for line in movement.lines.all()),
+                Decimal("0"),
+            )
+        )
         rows.append(
             {
                 "receipt_id": movement.pk,
@@ -3192,14 +3199,16 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
             )
         lines = []
         for line in row.lines.all():
-            qty = int(line.quantity or 0) - int(line.returned_quantity or 0)
+            qty = Decimal(line.quantity or 0) - Decimal(
+                line.returned_quantity or 0
+            )
             if qty <= 0:
                 continue
             unit = Decimal(line.unit_price or 0)
             lines.append(
                 {
                     "name": line.item_name or "Item",
-                    "qty": qty,
+                    "qty": _qty_number(qty),
                     "unit": _money_ksh(unit),
                     "total": _money_ksh((unit * qty).quantize(Decimal("0.01"))),
                 }
@@ -3442,7 +3451,9 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
             )
         lines = []
         for line in row.lines.all():
-            qty = int(line.quantity or 0) - int(line.returned_quantity or 0)
+            qty = Decimal(line.quantity or 0) - Decimal(
+                line.returned_quantity or 0
+            )
             if qty <= 0:
                 continue
             unit = Decimal(line.unit_price or 0)
@@ -3450,7 +3461,7 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
             lines.append(
                 {
                     "name": line.item_name or "Item",
-                    "qty": qty,
+                    "qty": _qty_number(qty),
                     "unit": _money_ksh(unit),
                     "total": _money_ksh(line_total),
                 }
@@ -5337,7 +5348,7 @@ def build_supplier_account(
         receipt_lines = []
         receipt_total = _zero()
         for line in bundle["lines"]:
-            qty = int(line.quantity or 0)
+            qty = Decimal(line.quantity or 0)
             unit = Decimal(line.buying_price or 0)
             line_total = (unit * qty).quantize(Decimal("0.01"))
             receipt_total += line_total
@@ -5348,7 +5359,7 @@ def build_supplier_account(
                         if line.item
                         else (line.item_name or "Item")
                     ),
-                    "qty": qty,
+                    "qty": _qty_number(qty),
                     "unit": _money_ksh(unit),
                     "total": _money_ksh(line_total),
                     "meta": dict(StockPaymentStatus.choices).get(
@@ -6412,20 +6423,20 @@ def _metric_shop_rows(
         cells = [label]
         for shop in shops:
             qty, amount = by_shop.get(shop.pk, (0, _zero()))
-            total_qty += int(qty or 0)
+            total_qty += Decimal(qty or 0)
             total_amount += Decimal(amount or 0)
             cells.append(
                 _qty_amount_cell(
                     qty,
                     amount,
-                    title=f"{int(qty or 0)} · {_money_ksh(amount)}",
+                    title=f"{_qty_label(qty)} · {_money_ksh(amount)}",
                 )
             )
         cells.append(
             _qty_amount_cell(
                 total_qty,
                 total_amount,
-                title=f"{total_qty} · {_money_ksh(total_amount)}",
+                title=f"{_qty_label(total_qty)} · {_money_ksh(total_amount)}",
             )
         )
         rows.append(cells)
@@ -6650,7 +6661,9 @@ def _trading_by_bucket_for_period(
             if unit <= 0:
                 continue
             remaining = max(
-                0, int(row["quantity"] or 0) - int(row["returned_quantity"] or 0)
+                Decimal("0"),
+                Decimal(row["quantity"] or 0)
+                - Decimal(row["returned_quantity"] or 0),
             )
             if remaining <= 0:
                 continue
@@ -6954,7 +6967,7 @@ def _build_revenue(filters):
                 _qty_amount_cell(
                     qty,
                     amount,
-                    title=f"{int(qty or 0)} · {_money_ksh(amount)}",
+                    title=f"{_qty_label(qty)} · {_money_ksh(amount)}",
                 )
             )
         stock = stock_by_shop.get(shop.pk, _zero())
@@ -8399,7 +8412,7 @@ def _build_sales(filters):
             col_amount = _zero()
             for shop in shops_sorted:
                 qty, amount = by_shop.get(shop.pk, (0, _zero()))
-                total_qty += int(qty or 0)
+                total_qty += Decimal(qty or 0)
                 col_amount += Decimal(amount or 0)
             total_cells.append(_metric_cell(cell_kind, total_qty, col_amount))
         total_cells.append(
@@ -8530,7 +8543,7 @@ def _build_items(filters):
     # item_id -> {name, by_shop: {shop_id: (units, value, cogs)}, totals}
     by_item: dict[int | None, dict] = {}
     for row in sold_lines:
-        units = int(row["units"] or 0)
+        units = Decimal(row["units"] or 0)
         value = Decimal(row["value"] or 0)
         cogs = Decimal(row["cogs"] or 0)
         if units <= 0 and not value:
@@ -8581,7 +8594,9 @@ def _build_items(filters):
             if unit <= 0:
                 continue
             remaining = max(
-                0, int(row["quantity"] or 0) - int(row["returned_quantity"] or 0)
+                Decimal("0"),
+                Decimal(row["quantity"] or 0)
+                - Decimal(row["returned_quantity"] or 0),
             )
             if remaining <= 0:
                 continue
@@ -8706,7 +8721,7 @@ def _build_stock(filters):
         item = row.item
         if item is None:
             continue
-        qty = int(row.quantity or 0)
+        qty = Decimal(row.quantity or 0)
         if qty <= 0:
             continue
         avg = Decimal(row.average_cost or 0)
@@ -8748,7 +8763,9 @@ def _build_stock(filters):
         columns.append(col)
     columns.append({**_pair_total_col(), "band": "total", "band_start": True})
 
-    total_units = sum((e["total_qty"] for e in by_item.values()), 0)
+    total_units = sum(
+        (e["total_qty"] for e in by_item.values()), Decimal("0")
+    )
     item_count = len(by_item)
 
     purchases = _zero()
@@ -8826,7 +8843,7 @@ def _build_stock(filters):
             _alert(
                 "warning",
                 "Stock without cost",
-                f"{zero_cost_qty} unit(s) on hand have average cost 0 — "
+                f"{_qty_label(zero_cost_qty)} unit(s) on hand have average cost 0 — "
                 f"valuation and COGS may be understated.",
                 "Record stock-in with buying price, or revalue after next purchase.",
             )
@@ -8890,7 +8907,7 @@ def _supply_summary_board(
             "value": item_name,
             "hint": (
                 f"{int(delivery_count or 0)} deliveries · "
-                f"{int(unit_count or 0)} units · "
+                f"{_qty_label(unit_count)} units · "
                 f"{int(supplier_count or 0)} supplier"
                 f"{'s' if int(supplier_count or 0) != 1 else ''}"
             ),
@@ -8912,7 +8929,7 @@ def _supply_summary_board(
             },
             {
                 "label": "Units",
-                "value": str(int(unit_count or 0)),
+                "value": _qty_label(unit_count),
                 "hint": "Total quantity received",
                 "icon": "layers",
                 "tone": "neutral",
@@ -9046,7 +9063,7 @@ def _build_supply(filters):
                 "details": [],
             },
         )
-        quantity = int(line.quantity or 0)
+        quantity = Decimal(line.quantity or 0)
         unit_price = Decimal(line.buying_price or 0)
         entry["movement_ids"].add(line.movement_id)
         entry["quantity"] += quantity
@@ -9057,7 +9074,7 @@ def _build_supply(filters):
                     "%d %b %Y, %H:%M"
                 ),
                 "shop": line.movement.shop.name if line.movement.shop_id else "—",
-                "quantity": quantity,
+                "quantity": _qty_number(quantity),
                 "unit_price": _money_ksh(unit_price),
                 "amount": _money_ksh(unit_price * quantity),
             }
@@ -9080,14 +9097,17 @@ def _build_supply(filters):
                 "name": entry["name"],
                 "phone": entry["phone"],
                 "supply_count": len(entry["movement_ids"]),
-                "quantity": entry["quantity"],
+                "quantity": _qty_number(entry["quantity"]),
                 "average_price": _money_ksh(average_price),
                 "total_value": _money_ksh(entry["amount"]),
             }
         )
 
     total_deliveries = sum(row["supply_count"] for row in supplier_rows)
-    total_units = sum(row["quantity"] for row in supplier_rows)
+    total_units = sum(
+        (Decimal(entry["quantity"] or 0) for entry in grouped.values()),
+        Decimal("0"),
+    )
     total_spend = sum(
         (Decimal(entry["amount"] or 0) for entry in grouped.values()), _zero()
     )
@@ -9096,7 +9116,7 @@ def _build_supply(filters):
     )
     totals = {
         "supply_count": total_deliveries,
-        "quantity": total_units,
+        "quantity": _qty_number(total_units),
         "total_value": _money_ksh(total_spend),
         "average_price": _money_ksh(weighted_avg),
     }
@@ -9306,13 +9326,15 @@ def _trade_receipt_rows(qs, *, role, query, client_id):
     for receipt in qs:
         trade_count += 1
         lines = list(receipt.lines.all())
-        qty = sum(int(line.quantity or 0) for line in lines)
+        qty = sum(
+            (Decimal(line.quantity or 0) for line in lines), Decimal("0")
+        )
         item_units += qty
         line_count = len(lines)
         items_label = ", ".join(
-            f"{line.item_name} ×{line.quantity}"
+            f"{line.item_name} ×{_qty_label(line.quantity)}"
             for line in lines[:3]
-            if int(line.quantity or 0) > 0
+            if Decimal(line.quantity or 0) > 0
         )
         if line_count > 3:
             items_label = f"{items_label}…"
@@ -9425,7 +9447,7 @@ def _trade_receipt_rows(qs, *, role, query, client_id):
                 _qty_amount_cell(
                     item_units,
                     trade_count,
-                    title=f"{item_units} units across {trade_count} trades",
+                    title=f"{_qty_label(item_units)} units across {trade_count} trades",
                 ),
                 _money_cell(total_value, title=f"Value {_money_ksh(total_value)}"),
                 _money_cell(
@@ -9770,15 +9792,15 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
 
     lines = []
     for line in receipt.lines.all():
-        remaining = int(line.remaining_quantity or 0)
+        remaining = line.remaining_quantity or 0
         serials = list(line.remaining_serial_numbers or [])
         lines.append(
             {
                 "id": line.pk,
                 "name": line.item_name,
-                "qty": int(line.quantity or 0),
-                "remaining": remaining,
-                "returned": int(line.returned_quantity or 0),
+                "qty": _qty_number(line.quantity),
+                "remaining": _qty_number(remaining),
+                "returned": _qty_number(line.returned_quantity),
                 "unit_price": _money_ksh(line.unit_price),
                 "unit_price_raw": str(Decimal(line.unit_price or 0)),
                 "line_total": _money_ksh(line.line_total),
@@ -9804,7 +9826,7 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
     can_return = (
         receipt.kind == ShopReceiptKind.TRADE_OUT
         and receipt.status != ShopReceiptStatus.CANCELLED
-        and any(int(row["remaining"] or 0) > 0 for row in lines)
+        and any(float(row["remaining"] or 0) > 0 for row in lines)
     )
 
     settlements = []
@@ -10154,7 +10176,9 @@ def _client_credit_stock_map(receipts_qs) -> dict[int, Decimal]:
         for row in missing:
             unit = Decimal(fallback.get(row["item_id"]) or 0)
             remaining = max(
-                0, int(row["quantity"] or 0) - int(row["returned_quantity"] or 0)
+                Decimal("0"),
+                Decimal(row["quantity"] or 0)
+                - Decimal(row["returned_quantity"] or 0),
             )
             if unit <= 0 or remaining <= 0:
                 continue
@@ -10944,7 +10968,7 @@ def _build_suppliers(filters):
         )
         if supplier_id is None:
             continue
-        qty = int(line.quantity or 0)
+        qty = Decimal(line.quantity or 0)
         unit = Decimal(line.buying_price or 0)
         line_total = (unit * qty).quantize(Decimal("0.01"))
         bundle = movements.get(movement.pk)

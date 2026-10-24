@@ -207,16 +207,20 @@ def _credit_receipt_rows(client_id: int) -> tuple[list[dict], Decimal, int, Deci
                 or row.created_by.employee_id
                 or row.created_by.user.username
             )
+        from shops.services import _qty_label
+
         lines = []
         for line in row.lines.all():
-            qty = int(line.quantity or 0) - int(line.returned_quantity or 0)
+            qty = Decimal(line.quantity or 0) - Decimal(
+                line.returned_quantity or 0
+            )
             if qty <= 0:
                 continue
             unit = Decimal(line.unit_price or 0)
             lines.append(
                 {
                     "name": line.item_name or "Item",
-                    "qty": qty,
+                    "qty": _qty_label(qty),
                     "unit": _money_ksh(unit),
                     "total": _money_ksh((unit * qty).quantize(Decimal("0.01"))),
                 }

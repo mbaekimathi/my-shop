@@ -8,7 +8,7 @@ import threading
 from decimal import Decimal, InvalidOperation
 
 from shops.models import ShopReceiptKind
-from shops.services import get_communications_settings
+from shops.services import _qty_label, get_communications_settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def build_credit_sale_notification(receipt, *, request=None) -> str:
     shown = all_lines[:12]
     item_rows = []
     for line in shown:
-        qty = line.quantity
+        qty = _qty_label(line.quantity)
         name = (line.item_name or "Item").strip()
         item_rows.append(f"- {name} x{qty}  {_kes(line.line_total)}")
     extra = len(all_lines) - len(shown)
@@ -186,15 +186,16 @@ def build_stock_supplier_notification(movement, *, shop=None) -> str:
     item_rows = []
     total = Decimal("0")
     for line in shown:
-        qty = int(line.quantity or 0)
+        qty = Decimal(line.quantity or 0)
+        qty_label = _qty_label(qty)
         name = str(getattr(getattr(line, "item", None), "name", None) or "Item").strip()
         line_total = Decimal(line.buying_price or 0) * qty
         total += line_total
-        item_rows.append(f"- {name} x{qty}  {_kes(line_total)}")
+        item_rows.append(f"- {name} x{qty_label}  {_kes(line_total)}")
     extra = len(lines) - len(shown)
     if extra > 0:
         extra_total = sum(
-            (Decimal(line.buying_price or 0) * int(line.quantity or 0) for line in lines[12:]),
+            (Decimal(line.buying_price or 0) * Decimal(line.quantity or 0) for line in lines[12:]),
             Decimal("0"),
         )
         total += extra_total

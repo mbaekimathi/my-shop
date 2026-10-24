@@ -39,6 +39,12 @@
     return n.toFixed(2);
   };
 
+  const roundQty = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    return Math.round(num * 1000) / 1000;
+  };
+
   const escapeHtml = (value) =>
     String(value || "")
       .replace(/&/g, "&amp;")
@@ -130,7 +136,7 @@
   };
 
   const buildCard = (item) => {
-    const stock = Math.max(0, Math.floor(Number(item.stock) || 0));
+    const stock = Math.max(0, roundQty(item.stock));
     const price = money(item.price);
     const minPrice = money(item.min_price);
     const desc = String(item.description || "");
@@ -206,10 +212,11 @@
             type="number"
             class="shop-floor-qty-input"
             data-cart-qty-input
-            min="1"
+            min="0.001"
+            step="0.001"
             ${stockTrackingEnabled && stock > 0 ? `max="${stock}"` : ""}
             value="1"
-            inputmode="numeric"
+            inputmode="decimal"
             aria-label="Quantity in cart"
           >
           <button type="button" class="shop-floor-qty-btn" data-cart-qty="inc" aria-label="Increase quantity">
@@ -585,7 +592,7 @@
           updates.forEach((row) => {
             const id = String(row?.id || "");
             if (!id) return;
-            const qty = Math.max(0, Math.floor(Number(row.quantity) || 0));
+            const qty = Math.max(0, roundQty(row.quantity));
             root
               .querySelectorAll(
                 `[data-cart-item][data-item-id="${CSS.escape(id)}"]`

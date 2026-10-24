@@ -92,8 +92,8 @@
                     data-request-line
                     data-line-id="{{ line.pk }}"
                     data-item-id="{{ line.item_id }}"
-                    data-requested="{{ line.quantity }}"
-                    data-available="{{ line.quantity }}"
+                    data-requested="{{ line.quantity|floatformat:"-3" }}"
+                    data-available="{{ line.quantity|floatformat:"-3" }}"
                     data-track-serial="{% if line.item and line.item.track_serial_number %}1{% else %}0{% endif %}"
                   >
                     <td data-label="Item">
@@ -111,12 +111,12 @@
                           type="number"
                           name="qty_{{ line.pk }}"
                           min="0"
-                          step="1"
+                          step="{% if line.item and line.item.track_serial_number %}1{% else %}0.001{% endif %}"
                           value=""
-                          inputmode="numeric"
+                          inputmode="{% if line.item and line.item.track_serial_number %}numeric{% else %}decimal{% endif %}"
                           data-transfer-qty
                           data-line-id="{{ line.pk }}"
-                          data-must-match="{{ line.quantity }}"
+                          data-must-match="{{ line.quantity|floatformat:"-3" }}"
                           {% if line.item and line.item.track_serial_number %}readonly data-qty-from-serial="1" title="Counted from scanned serials"{% endif %}
                         >
                       </label>
@@ -141,7 +141,7 @@
                   data-serial-mode="transfer"
                   data-line-id="{{ line.pk }}"
                   data-item-id="{{ line.item_id }}"
-                  data-max-qty="{{ line.quantity }}"
+                  data-max-qty="{{ line.quantity|floatformat:"-3" }}"
                   data-qty="0"
                 >
                   <p class="stock-request-serial-label">
@@ -330,7 +330,7 @@
             {% for line in req.lines.all %}
             <li>
               <span class="stock-decision-line-name">{{ line.item.name|default:line.item_name }}</span>
-              <span class="stock-decision-line-qty">{{ line.quantity }}</span>
+              <span class="stock-decision-line-qty">{{ line.quantity|floatformat:"-3" }}</span>
             </li>
             {% empty %}
             <li class="stock-decision-lines-empty">No line items</li>

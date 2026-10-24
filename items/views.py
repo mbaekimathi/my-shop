@@ -1,5 +1,6 @@
 from itertools import groupby
 import json
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
@@ -1317,6 +1318,17 @@ def _parse_id_list(raw_values):
 _SQL_ITEM_IN_LIMIT = 64
 
 
+def _qty_num(value):
+    """Quantity as int-or-float for reports (2 -> 2, 2.5 -> 2.5)."""
+    try:
+        amount = Decimal(str(value if value is not None else 0))
+    except (InvalidOperation, TypeError, ValueError):
+        return 0
+    if amount == amount.to_integral_value():
+        return int(amount)
+    return float(amount)
+
+
 def _item_ids_for_sql(item_ids):
     """Return item_ids for SQL IN, or None to skip IN and filter in Python."""
     if not item_ids:
@@ -1338,7 +1350,7 @@ def _add_item_shop_qty(totals, item_id, shop_id, key, quantity):
     bucket = totals.get((item_id, shop_id))
     if bucket is None:
         return
-    bucket[key] = int(bucket.get(key) or 0) + int(quantity or 0)
+    bucket[key] = _qty_num(bucket.get(key)) + _qty_num(quantity)
 
 
 def _movement_qty_by_item_shop(item_ids, shop_ids, start, end):
@@ -1447,7 +1459,7 @@ def _current_stock_by_item(item_ids, shop_ids):
     for row in rows:
         item_id = row["item_id"]
         if item_id in totals:
-            totals[item_id] = int(row["total"] or 0)
+            totals[item_id] = _qty_num(row["total"])
     return totals
 
 
@@ -1471,7 +1483,7 @@ def _current_stock_by_item_shop(item_ids, shop_ids):
     for row in rows:
         key = (row["item_id"], row["shop_id"])
         if key in totals:
-            totals[key] = int(row["total"] or 0)
+            totals[key] = _qty_num(row["total"])
     return totals
 
 
@@ -1689,7 +1701,7 @@ def _build_low_stock_rows(items, shops, *, include_usage=True):
         shop_rows[0]["is_item_start"] = True
         shop_rows[0]["show_notify"] = True
         shop_rows[0]["show_sync"] = True
-        total_avg_week = sum(int(row["avg_week"] or 0) for row in shop_rows)
+        total_avg_week = sum(_qty_num(row["avg_week"]) for row in shop_rows)
         rows.extend(shop_rows)
         if group_by_shop:
             rows.append(
@@ -1751,7 +1763,7 @@ def _receipt_sale_qty_by_item_shop(item_ids, shop_ids, start, end):
     for row in rows:
         key = (row["item_id"], row["receipt__shop_id"])
         if key in totals:
-            totals[key] += int(row["total"] or 0)
+            totals[key] += _qty_num(row["total"])
     return totals
 
 
@@ -1816,7 +1828,7 @@ def _trade_qty_by_item_shop(item_ids, shop_ids, start, end):
     ):
         key = (row["item_id"], row["movement__shop_id"])
         if key in totals:
-            totals[key] += int(row["total"] or 0)
+            totals[key] += _qty_num(row["total"])
 
     receipt_qs = ShopReceiptLine.objects.filter(
         item_id__isnull=False,
@@ -1833,7 +1845,7 @@ def _trade_qty_by_item_shop(item_ids, shop_ids, start, end):
     ):
         key = (row["item_id"], row["receipt__shop_id"])
         if key in totals:
-            totals[key] += int(row["total"] or 0)
+            totals[key] += _qty_num(row["total"])
     return totals
 
 
@@ -1883,17 +1895,14 @@ def _return_qty_by_item_shop(item_ids, shop_ids, start, end):
                 happened_at = _parse_return_batch_at(batch.get("at"))
                 if happened_at is None or happened_at < start or happened_at >= end:
                     continue
-                try:
-                    qty = int(batch.get("qty") or 0)
-                except (TypeError, ValueError):
-                    qty = 0
+                qty = _qty_num(batch.get("qty"))
                 if qty > 0:
                     totals[key] += qty
             continue
         happened_at = row["receipt__last_returned_at"]
         if happened_at is None or happened_at < start or happened_at >= end:
             continue
-        totals[key] += int(row["returned_quantity"] or 0)
+        totals[key] += _qty_num(row["returned_quantity"])
     return totals
 
 
@@ -1971,7 +1980,7 @@ def _pos_sale_qty_by_item(items, shop_ids, start, end):
     for row in sale_lines.values("product_name").annotate(total=Sum("quantity")):
         key = (row["product_name"] or "").strip().lower()
         for item_id in name_to_ids.get(key, []):
-            totals[item_id] += int(row["total"] or 0)
+            totals[item_id] += _qty_num(row["total"])
     return totals
 
 
@@ -2004,9 +2013,9 @@ def _collapse_item_shop_qty(keyed, item_ids, keys):
             continue
         if isinstance(bucket, dict):
             for key in keys:
-                dest[key] += int(bucket.get(key) or 0)
+                dest[key] += _qty_num(bucket.get(key))
         else:
-            dest[keys[0]] += int(bucket or 0)
+            dest[keys[0]] += _qty_num(bucket)
     return totals
 
 
@@ -2190,8 +2199,8 @@ def _build_item_report_rows(
         stock_trade,
         closing,
     ):
-        sale_qty = int(stock_sale or 0)
-        return_qty = int(stock_return or 0)
+        sale_qty = _qty_num(stock_sale)
+        return_qty = _qty_num(stock_return)
         return {
             "item": item,
             "shop": shop,
@@ -2203,7 +2212,7 @@ def _build_item_report_rows(
             "stock_transfer_in": stock_transfer_in,
             "stock_out": stock_out,
             "stock_transfer_out": stock_transfer_out,
-            "stock_trade": int(stock_trade or 0),
+            "stock_trade": _qty_num(stock_trade),
             "stock_sale": sale_qty,
             "stock_return": return_qty,
             "net_sale": max(0, sale_qty - return_qty),
@@ -2478,7 +2487,7 @@ def _daily_activity_by_item(items, shop_ids, day_start, day_end):
         return daily[key]
 
     def add_qty(item_id, happened_at, field, quantity):
-        qty = int(quantity or 0)
+        qty = _qty_num(quantity)
         if qty == 0:
             return
         dest = bucket(item_id, _local_report_date(happened_at))
@@ -2605,10 +2614,7 @@ def _daily_activity_by_item(items, shop_ids, day_start, day_end):
                     or happened_at >= day_end
                 ):
                     continue
-                try:
-                    qty = int(batch.get("qty") or 0)
-                except (TypeError, ValueError):
-                    qty = 0
+                qty = _qty_num(batch.get("qty"))
                 if qty > 0:
                     add_qty(item_id, happened_at, "return", qty)
             continue
@@ -2807,16 +2813,16 @@ def _build_item_report_daily_rows(items, shop_ids, day_start, day_end):
         activity_days = dates_by_item.get(item.pk) or []
         if not activity_days:
             continue
-        running = int(starting_by_item.get(item.pk) or 0)
+        running = _qty_num(starting_by_item.get(item.pk))
         for day in activity_days:
             bucket = daily.get((item.pk, day)) or _empty_daily_qty_bucket()
-            stock_in = int(bucket["in"] or 0)
-            stock_out = int(bucket["out"] or 0)
-            stock_transfer_in = int(bucket["transfer_in"] or 0)
-            stock_transfer_out = int(bucket["transfer_out"] or 0)
-            stock_sale = int(bucket["sale"] or 0)
-            stock_return = int(bucket["return"] or 0)
-            stock_trade = int(bucket["trade"] or 0)
+            stock_in = _qty_num(bucket["in"])
+            stock_out = _qty_num(bucket["out"])
+            stock_transfer_in = _qty_num(bucket["transfer_in"])
+            stock_transfer_out = _qty_num(bucket["transfer_out"])
+            stock_sale = _qty_num(bucket["sale"])
+            stock_return = _qty_num(bucket["return"])
+            stock_trade = _qty_num(bucket["trade"])
             closing = (
                 running
                 + stock_in
@@ -3034,7 +3040,7 @@ def _timeline_event_from_movement_line(
         ),
         "item_category": line.item.category if line.item else "",
         "item_id": line.item_id,
-        "quantity": line.quantity,
+        "quantity": _qty_num(line.quantity),
         "reason": _stock_out_reason_label(line),
         "payment_status": (
             line.get_payment_status_display() if line.payment_status else ""
@@ -3229,14 +3235,14 @@ def _build_movement_timeline(
                 if is_customer_return:
                     continue
                 if movement.movement_type == StockMovementType.IN:
-                    units_in += line.quantity
+                    units_in += _qty_num(line.quantity)
                 elif movement.movement_type == StockMovementType.OUT:
-                    units_out += line.quantity
+                    units_out += _qty_num(line.quantity)
                 elif (
                     movement.movement_type == StockMovementType.REQUEST
                     and counts_toward_transfer
                 ):
-                    units_request += line.quantity
+                    units_request += _qty_num(line.quantity)
 
     if need_fulfilled_transfers:
         fulfilled_line_qs = StockMovementLine.objects.select_related("item").order_by(
@@ -3291,7 +3297,7 @@ def _build_movement_timeline(
                         transfer_direction=transfer_direction,
                     )
                 )
-                units_request += line.quantity
+                units_request += _qty_num(line.quantity)
 
     # Sales / returns from receipts and legacy POS — skipped for transfer/in/out filters.
     from pos.models import SaleLine
@@ -3372,7 +3378,7 @@ def _build_movement_timeline(
                         )
                     ),
                     "item_id": line.item_id or (matched.pk if matched else None),
-                    "quantity": line.quantity,
+                    "quantity": _qty_num(line.quantity),
                     "reason": "",
                     "payment_status": parties["pay"] if parties["pay"] != "—" else "",
                     "note": "",
@@ -3385,7 +3391,7 @@ def _build_movement_timeline(
                     **parties,
                 }
             )
-            units_sale += line.quantity
+            units_sale += _qty_num(line.quantity)
 
     if need_legacy_returns:
         # Bound by return date in SQL so year filters do not scan all historic returns.
@@ -3449,10 +3455,7 @@ def _build_movement_timeline(
                         or happened_at >= day_end
                     ):
                         continue
-                    try:
-                        qty = int(batch.get("qty") or 0)
-                    except (TypeError, ValueError):
-                        qty = 0
+                    qty = _qty_num(batch.get("qty"))
                     if qty <= 0:
                         continue
                     events.append(
@@ -3536,7 +3539,7 @@ def _build_movement_timeline(
                         )
                     ),
                     "item_id": line.item_id or (matched.pk if matched else None),
-                    "quantity": line.returned_quantity,
+                    "quantity": _qty_num(line.returned_quantity),
                     "reason": "Return",
                     "payment_status": "",
                     "note": f"Return on {line.receipt.receipt_number}",
@@ -3636,7 +3639,7 @@ def _build_movement_timeline(
                     "item_name_snapshot": snapshot_name,
                     "item_category": matched.category if matched else "",
                     "item_id": matched.pk if matched else None,
-                    "quantity": line.quantity,
+                    "quantity": _qty_num(line.quantity),
                     "reason": "",
                     "payment_status": "",
                     "note": "",
@@ -3649,7 +3652,7 @@ def _build_movement_timeline(
                     **parties,
                 }
             )
-            units_sale += line.quantity
+            units_sale += _qty_num(line.quantity)
 
     events.sort(key=lambda row: (row["happened_at"], row.get("movement_id") or 0))
     return events, units_in, units_out, units_request, units_sale
@@ -4137,7 +4140,7 @@ def _blank_movement_item_row(
 
 
 def _apply_movement_event_to_row(row, event, *, transfer_only=""):
-    quantity = int(event.get("quantity") or 0)
+    quantity = _qty_num(event.get("quantity"))
     row["event_count"] += 1
     event_type = event.get("event_type")
     if transfer_only == "in":
@@ -4636,7 +4639,7 @@ def _item_qty_summary_rows(events, event_filter="all"):
         category = (event.get("item_category") or "").strip()
         item_id = event.get("item_id")
         key = _item_qty_summary_group_key(event)
-        qty = int(event.get("quantity") or 0)
+        qty = _qty_num(event.get("quantity"))
         row = totals.get(key)
         if row is None:
             totals[key] = {
@@ -4699,7 +4702,7 @@ def _item_qty_summary_by_type_rows(events):
                 **blanks,
             }
             totals[key] = row
-        row[bucket] += int(event.get("quantity") or 0)
+        row[bucket] += _qty_num(event.get("quantity"))
         if row.get("item_id") is None and item_id is not None:
             row["item_id"] = item_id
         if name and name != "—" and (
@@ -4719,8 +4722,8 @@ def _summary_qty_for_estimate(row, event_filter="all"):
     """Quantity used for estimated buying value on the summary report."""
     if event_filter == "all":
         # Value of units that left stock (out + sold); returns are not added back.
-        return int(row.get("out") or 0) + int(row.get("sale") or 0)
-    return int(row.get("quantity") or 0)
+        return _qty_num(row.get("out")) + _qty_num(row.get("sale"))
+    return _qty_num(row.get("quantity"))
 
 
 def _format_money_pdf(value):
@@ -4805,7 +4808,7 @@ def _audit_system_qty_by_item(item_ids, shop_ids, *, day_end=None):
                 stock_transfer_out=0,
                 stock_return=0,
             )
-            closing += int(shop_closing or 0)
+            closing += _qty_num(shop_closing)
         totals[item_id] = closing
     return totals
 
@@ -4824,7 +4827,7 @@ def _build_audit_summary_rows(
         category = (event.get("item_category") or "").strip()
         item_id = event.get("item_id")
         key = _item_qty_summary_group_key(event)
-        qty = int(event.get("quantity") or 0)
+        qty = _qty_num(event.get("quantity"))
         row = totals.get(key)
         if row is None:
             totals[key] = {
@@ -4876,9 +4879,9 @@ def _build_audit_summary_rows(
     total_system = 0
     for row in sorted_rows:
         events_count = int(row.get("event_count") or 0)
-        qty = int(row.get("quantity") or 0)
+        qty = _qty_num(row.get("quantity"))
         item_id = row.get("item_id")
-        system_qty = int(system_qty_by_item.get(item_id) or 0) if item_id else 0
+        system_qty = _qty_num(system_qty_by_item.get(item_id)) if item_id else 0
         unit_buy = buy_prices.get(item_id) or Decimal("0")
         total_events += events_count
         total_qty += qty
@@ -5150,9 +5153,9 @@ def _stock_report_download(
             total_qty = 0
             total_value = Decimal("0.00")
             for row in typed:
-                qty = int(row.get("quantity") or 0)
+                qty = _qty_num(row.get("quantity"))
                 unit_buy = buy_prices.get(row.get("item_id")) or Decimal("0")
-                est_value = (unit_buy * Decimal(qty)).quantize(Decimal("0.01"))
+                est_value = (unit_buy * Decimal(str(qty))).quantize(Decimal("0.01"))
                 total_qty += qty
                 total_value += est_value
                 summary_rows.append(

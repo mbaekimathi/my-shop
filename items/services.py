@@ -968,8 +968,11 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
         if str(value).strip()
     ]
     target.returned_serial_numbers = existing_returned + [matched_serial]
-    target.returned_quantity = int(target.returned_quantity or 0) + 1
-    remaining_after = max(0, int(target.quantity or 0) - int(target.returned_quantity))
+    target.returned_quantity = _quantize_qty(target.returned_quantity) + 1
+    remaining_after = max(
+        _ZERO_QTY,
+        _quantize_qty(target.quantity) - _quantize_qty(target.returned_quantity),
+    )
     target.line_total = (
         Decimal(target.unit_price or 0) * remaining_after
     ).quantize(Decimal("0.01"))
@@ -1051,7 +1054,9 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
             Decimal("0.01")
         )
         total = (remaining_subtotal + tax_amount).quantize(Decimal("0.01"))
-        any_returned = any(int(line.returned_quantity or 0) > 0 for line in all_lines)
+        any_returned = any(
+            _quantize_qty(line.returned_quantity) > 0 for line in all_lines
+        )
         status = (
             ShopReceiptStatus.PARTIAL_RETURN
             if any_returned
@@ -2578,7 +2583,10 @@ def weekly_usage_avg_by_item_shop(item_ids, shop_ids, *, weeks=LOW_STOCK_USAGE_W
         .annotate(sold=Sum("quantity"), returned=Sum("returned_quantity"))
     )
     for row in rows:
-        net = max(0, int(row["sold"] or 0) - int(row["returned"] or 0))
+        net = max(
+            0.0,
+            float(row["sold"] or 0) - float(row["returned"] or 0),
+        )
         averages[(row["item_id"], row["receipt__shop_id"])] = (
             threshold_from_weekly_avg(net / weeks)
         )
@@ -2597,7 +2605,7 @@ def item_wholesale_sale_advice(item_ids, shop_ids=None):
     from decimal import Decimal
     from statistics import mean
 
-    from django.db.models import Avg, F, IntegerField, Sum, Value
+    from django.db.models import Avg, DecimalField, F, Sum, Value
     from django.db.models.functions import Greatest
 
     from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
@@ -2610,7 +2618,7 @@ def item_wholesale_sale_advice(item_ids, shop_ids=None):
     net_qty = Greatest(
         F("quantity") - F("returned_quantity"),
         Value(0),
-        output_field=IntegerField(),
+        output_field=DecimalField(max_digits=14, decimal_places=3),
     )
     lines = (
         ShopReceiptLine.objects.filter(
@@ -2637,7 +2645,7 @@ def item_wholesale_sale_advice(item_ids, shop_ids=None):
     by_item: dict[int, list[dict]] = {}
     for row in per_txn:
         item_id = row["item_id"]
-        qty = int(row["txn_qty"] or 0)
+        qty = float(row["txn_qty"] or 0)
         if qty <= 0:
             continue
         by_item.setdefault(item_id, []).append(
@@ -4865,6 +4873,13 @@ def build_stock_report_pdf(
             return max(0, len(rows) - 1)
         return len(rows)
 
+    def _num(value):
+        try:
+            number = float(value or 0)
+        except (TypeError, ValueError):
+            return 0
+        return int(number) if number.is_integer() else round(number, 3)
+
     def _sum_qty(rows, col_index=-1):
         total = 0
         if not rows:
@@ -4872,10 +4887,10 @@ def build_stock_report_pdf(
         usable = rows[:-1] if str(rows[-1][0]).strip().lower() == "total" else rows
         for row in usable:
             try:
-                total += int(row[col_index] or 0)
+                total += _num(row[col_index])
             except (TypeError, ValueError, IndexError):
                 continue
-        return total
+        return _num(total)
 
     if is_serials:
         if is_audit:
@@ -4904,9 +4919,9 @@ def build_stock_report_pdf(
         usable = summary_rows or []
         if usable and str(usable[-1][0]).strip().lower() == "total":
             try:
-                audit_events = int(usable[-1][2] or 0)
-                audit_qty = int(usable[-1][3] or 0)
-                audit_system = int(usable[-1][4] or 0)
+                audit_events = _num(usable[-1][2])
+                audit_qty = _num(usable[-1][3])
+                audit_system = _num(usable[-1][4])
             except (TypeError, ValueError, IndexError):
                 pass
         else:
@@ -4932,7 +4947,7 @@ def build_stock_report_pdf(
                 # Qty columns sit before Buy price / Est. value
                 for value in row[2:-2]:
                     try:
-                        qty_total += int(value or 0)
+                        qty_total += _num(value)
                     except (TypeError, ValueError):
                         pass
         else:
@@ -4943,7 +4958,7 @@ def build_stock_report_pdf(
             est_value_label = str(summary_rows[-1][-1] or "—")
         kpi_data = [
             ("ITEMS", str(item_count)),
-            ("UNITS", str(qty_total)),
+            ("UNITS", str(_num(qty_total))),
             ("EST. VALUE", est_value_label),
             ("TYPE", event_filter_label),
         ]

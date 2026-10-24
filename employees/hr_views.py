@@ -9,7 +9,11 @@ from django.views.decorators.http import require_http_methods
 
 from shops.models import Shop
 
-from .access import get_profile_for_request, hr_staff_required, role_url_segment
+from .access import (
+    active_employee_required,
+    get_profile_for_request,
+    role_url_segment,
+)
 from .countries import COUNTRY_DIAL_CODES
 from .models import (
     SHOP_ALLOCATION_ROLES,
@@ -554,9 +558,16 @@ def _hr_management_redirect(profile, page_number=1):
 
 
 def _process_register_post(request):
+    from .module_permissions import employee_may
     from .services import employee_form_data_from_post
 
     form_data = employee_form_data_from_post(request.POST)
+    if not employee_may(
+        get_profile_for_request(request), "hr-management", "register"
+    ):
+        return form_data, [
+            "You do not have permission to register employees."
+        ], True
     password = request.POST.get("password", "")
     password_confirm = request.POST.get("password_confirm", "")
     profile_photo = request.FILES.get("profile_photo")
@@ -626,6 +637,14 @@ def _handle_hr_management_post(request, profile, page_number):
             _managed_employees_queryset(),
             employee_id=original_employee_id,
         )
+        if (
+            profile.role != EmployeeRole.SUPER_ADMIN
+            and target.role == EmployeeRole.SUPER_ADMIN
+        ):
+            messages.error(
+                request, "Only a Super Admin can modify a Super Admin account."
+            )
+            return _hr_management_redirect(profile, page_number), None
         form_data = employee_edit_form_data_from_post(request.POST)
         password = request.POST.get("password", "")
         password_confirm = request.POST.get("password_confirm", "")
@@ -644,6 +663,12 @@ def _handle_hr_management_post(request, profile, page_number):
                 form_errors.append("You cannot remove your own Super Admin role.")
             if form_data["employee_id"] != actor.employee_id:
                 form_errors.append("You cannot change your own employee ID.")
+
+        if (
+            profile.role != EmployeeRole.SUPER_ADMIN
+            and form_data["role"] == EmployeeRole.SUPER_ADMIN
+        ):
+            form_errors.append("Only a Super Admin can assign the Super Admin role.")
 
         if form_errors:
             return None, {
@@ -690,6 +715,14 @@ def _handle_hr_management_post(request, profile, page_number):
             _managed_employees_queryset(),
             employee_id=(request.POST.get("employee_id") or "").strip(),
         )
+        if (
+            profile.role != EmployeeRole.SUPER_ADMIN
+            and target.role == EmployeeRole.SUPER_ADMIN
+        ):
+            messages.error(
+                request, "Only a Super Admin can modify a Super Admin account."
+            )
+            return _hr_management_redirect(profile, page_number), None
         if target.user_id == actor.user_id:
             messages.error(request, "You cannot suspend your own account.")
             return _hr_management_redirect(profile, page_number), None
@@ -707,6 +740,14 @@ def _handle_hr_management_post(request, profile, page_number):
             _managed_employees_queryset(),
             employee_id=(request.POST.get("employee_id") or "").strip(),
         )
+        if (
+            profile.role != EmployeeRole.SUPER_ADMIN
+            and target.role == EmployeeRole.SUPER_ADMIN
+        ):
+            messages.error(
+                request, "Only a Super Admin can modify a Super Admin account."
+            )
+            return _hr_management_redirect(profile, page_number), None
         if target.user_id == actor.user_id:
             messages.error(request, "You cannot delete your own account.")
             return _hr_management_redirect(profile, page_number), None
@@ -822,9 +863,11 @@ def _render_hr_management(request, profile, meta, module, page_sidebar, page_num
     )
 
 
-@hr_staff_required
+@active_employee_required
 @require_http_methods(["GET", "POST"])
 def hr_section(request, role_segment, section):
+    from .module_permissions import require_module_permission
+
     profile = get_profile_for_request(request)
     expected_segment = role_url_segment(profile.role)
     if role_segment != expected_segment:
@@ -837,6 +880,10 @@ def hr_section(request, role_segment, section):
     section_meta = HR_SECTIONS.get(section)
     if section_meta is None:
         raise Http404("HR section not found.")
+
+    denied = require_module_permission(request, profile, "hr-management", section)
+    if denied is not None:
+        return denied
 
     if section == "authorizations":
         try:
@@ -880,13 +927,13 @@ def hr_section(request, role_segment, section):
     )
 
 
-@hr_staff_required
+@active_employee_required
 @require_http_methods(["GET", "POST"])
 def hr_management(request, profile, meta, module, page_sidebar):
     return _render_hr_management(request, profile, meta, module, page_sidebar, page_number=1)
 
 
-@hr_staff_required
+@active_employee_required
 @require_http_methods(["GET", "POST"])
 def hr_management_page(request, role_segment, page=None):
     profile = get_profile_for_request(request)
@@ -929,7 +976,7 @@ def hr_management_page(request, role_segment, page=None):
     )
 
 
-@hr_staff_required
+@active_employee_required
 @require_http_methods(["GET", "POST"])
 def hr_employee_approvals(request, role_segment, page=None):
     from .module_permissions import require_module_permission
@@ -981,6 +1028,7 @@ def hr_employee_approvals(request, role_segment, page=None):
             "meta": meta,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
+            "role_segment": expected_segment,
             "page_sidebar": sidebar_for_hr_management(profile.role, active_view="approvals", profile=profile),
             "employees_page": employees_page,
             "employees": employees_page.object_list,

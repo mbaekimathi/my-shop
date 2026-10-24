@@ -199,7 +199,7 @@ urlpatterns = [
     ),
     path("employee/", views.role_employee, name="role_employee"),
     path(
-        "super-admin/employees/<str:employee_id>/access/",
+        "<role_segment:role_segment>/employees/<str:employee_id>/access/",
         views.update_employee_access,
         name="update_employee_access",
     ),

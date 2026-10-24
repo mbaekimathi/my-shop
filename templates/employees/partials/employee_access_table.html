@@ -61,7 +61,7 @@
               id="approve-{{ employee.employee_id }}"
               class="hr-approve-form staff-access-form"
               method="post"
-              action="{% url 'employees:update_employee_access' employee.employee_id %}"
+              action="{% url 'employees:update_employee_access' role_segment=role_segment employee_id=employee.employee_id %}"
               hidden
             >
               {% csrf_token %}

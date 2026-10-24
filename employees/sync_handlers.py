@@ -284,8 +284,12 @@ def _sync_register_employee(payload: dict) -> dict:
 
 
 def _sync_update_employee_access(employee: EmployeeProfile, payload: dict) -> dict:
-    if employee.role != EmployeeRole.SUPER_ADMIN:
-        raise SyncOperationError("Only Super Admin can update employee access.", "forbidden")
+    from employees.module_permissions import employee_may
+
+    if not employee_may(employee, "hr-management", "approvals"):
+        raise SyncOperationError(
+            "You do not have permission to update employee access.", "forbidden"
+        )
 
     target_id = (payload.get("employee_id") or "").strip()
     new_role = (payload.get("role") or "").strip()
@@ -299,6 +303,17 @@ def _sync_update_employee_access(employee: EmployeeProfile, payload: dict) -> di
     valid_statuses = {c[0] for c in EmployeeStatus.choices}
     if new_role not in valid_roles or new_status not in valid_statuses:
         raise SyncOperationError("Invalid role or status.", "invalid_access")
+
+    if employee.role != EmployeeRole.SUPER_ADMIN:
+        if target.status != EmployeeStatus.PENDING_APPROVAL:
+            raise SyncOperationError(
+                "You can only update employees who are awaiting approval.",
+                "forbidden",
+            )
+        if new_role == EmployeeRole.SUPER_ADMIN:
+            raise SyncOperationError(
+                "Only a Super Admin can assign the Super Admin role.", "forbidden"
+            )
 
     if target.user_id == employee.user_id:
         if new_role != EmployeeRole.SUPER_ADMIN or new_status != EmployeeStatus.ACTIVE:

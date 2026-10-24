@@ -3374,6 +3374,49 @@ def _money(value) -> Decimal:
     return amount
 
 
+_QTY_QUANTUM = Decimal("0.001")
+
+
+def _qty(value) -> Decimal:
+    """Coerce to a non-negative quantity with at most 3 decimal places."""
+    try:
+        amount = Decimal(str(value if value is not None else 0))
+    except (InvalidOperation, TypeError, ValueError):
+        amount = Decimal("0")
+    if amount < 0:
+        amount = Decimal("0")
+    return amount.quantize(_QTY_QUANTUM)
+
+
+def _parse_qty(value) -> Decimal:
+    """Validate a user-entered quantity: > 0, up to 3 decimal places."""
+    try:
+        amount = Decimal(str(value if value is not None else ""))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValidationError("Enter a valid quantity.") from None
+    if amount <= 0:
+        raise ValidationError("Quantity must be greater than zero.")
+    if amount != amount.quantize(_QTY_QUANTUM):
+        raise ValidationError("Quantity allows up to 3 decimal places.")
+    return amount.quantize(_QTY_QUANTUM)
+
+
+def _qty_number(value):
+    """int-or-float quantity for JSON payloads (2 -> 2, 2.5 -> 2.5)."""
+    amount = _qty(value)
+    if amount == amount.to_integral_value():
+        return int(amount)
+    return float(amount)
+
+
+def _qty_label(value) -> str:
+    """Display-friendly qty without trailing zeros."""
+    text = format(_qty(value), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def _normalize_phone(value: str) -> str:
     """Return digits-only Kenyan MSISDN (254XXXXXXXXX) when possible."""
     raw = (value or "").strip()
@@ -3673,8 +3716,8 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
     for line in lines:
         remaining_qty = getattr(line, "remaining_quantity", None)
         if remaining_qty is None:
-            returned_qty = int(getattr(line, "returned_quantity", 0) or 0)
-            remaining_qty = max(0, int(line.quantity or 0) - returned_qty)
+            returned_qty = _qty(getattr(line, "returned_quantity", 0))
+            remaining_qty = max(Decimal("0"), _qty(line.quantity) - returned_qty)
         if remaining_qty <= 0:
             continue
         unit = Decimal(line.unit_price or 0)
@@ -3688,7 +3731,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
             {
                 "name": str(line.item_name or "Item"),
                 "detail": "",
-                "qty": int(remaining_qty),
+                "qty": _qty_number(remaining_qty),
                 "price": _receipt_money(unit),
                 "total": _receipt_money(line_total),
                 "serials": [str(s) for s in serials[:12]],
@@ -3875,18 +3918,18 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
         for line in ticket.get("lines") or []:
             name = str(line.get("name") or "Item")
             detail = str(line.get("detail") or "").strip()
-            qty = int(line.get("qty") or 0)
+            qty_label = _qty_label(line.get("qty") or 0)
             if qty_only:
                 left_max = max(6, width - 4)
                 if len(name) > left_max:
                     rows.append(name[:width])
-                    rows.append(_receipt_pad_line("", str(qty), width))
+                    rows.append(_receipt_pad_line("", qty_label, width))
                 else:
-                    rows.append(_receipt_pad_line(name, str(qty), width))
+                    rows.append(_receipt_pad_line(name, qty_label, width))
             else:
                 price_col = f"@{line.get('price') or '0'}"
                 total_label = str(line.get("total") or "0")
-                right = f"{price_col:<{price_w}} {qty:<{qty_w}d} {total_label:>{total_w}}"
+                right = f"{price_col:<{price_w}} {qty_label:<{qty_w}} {total_label:>{total_w}}"
                 left_max = max(6, width - right_w - 1)
                 if len(name) > left_max:
                     rows.append(name[:width])
@@ -3905,8 +3948,11 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
     if qty_only:
         units = ticket.get("total_units")
         if units is None:
-            units = sum(int(line.get("qty") or 0) for line in (ticket.get("lines") or []))
-        rows.append(_receipt_pad_line("UNITS", str(units), width))
+            units = sum(
+                (_qty(line.get("qty") or 0) for line in (ticket.get("lines") or [])),
+                Decimal("0"),
+            )
+        rows.append(_receipt_pad_line("UNITS", _qty_label(units), width))
     else:
         if ticket.get("show_tax"):
             rows.append(
@@ -4035,7 +4081,7 @@ def build_stock_in_supplier_receipt(movement, *, shop: Shop, authorised_by=None)
     total = Decimal("0")
     for line in lines:
         unit = Decimal(line.buying_price or 0)
-        qty = int(line.quantity or 0)
+        qty = _qty(line.quantity)
         line_total = (unit * qty).quantize(Decimal("0.01"))
         total += line_total
         serials = list(line.serial_numbers or [])
@@ -4043,7 +4089,7 @@ def build_stock_in_supplier_receipt(movement, *, shop: Shop, authorised_by=None)
             {
                 "name": str(getattr(line.item, "name", None) or "Item"),
                 "detail": "",
-                "qty": qty,
+                "qty": _qty_number(qty),
                 "price": _receipt_money(unit),
                 "total": _receipt_money(line_total),
                 "serials": [str(s) for s in serials[:12]],
@@ -4135,9 +4181,9 @@ def build_stock_request_delivery_note(
         )
 
     ticket_lines = []
-    total_units = 0
+    total_units = Decimal("0")
     for line in lines:
-        qty = int(line.quantity or 0)
+        qty = _qty(line.quantity)
         if qty <= 0:
             continue
         total_units += qty
@@ -4146,7 +4192,7 @@ def build_stock_request_delivery_note(
             {
                 "name": str(getattr(line.item, "name", None) or "Item"),
                 "detail": "",
-                "qty": qty,
+                "qty": _qty_number(qty),
                 "price": "0",
                 "total": "0",
                 "serials": [str(s) for s in serials[:12]],
@@ -4196,7 +4242,7 @@ def build_stock_request_delivery_note(
         "lines": ticket_lines,
         "cancelled": False,
         "qty_only": True,
-        "total_units": total_units,
+        "total_units": _qty_number(total_units),
         "subtotal": "0",
         "tax_percent": "0",
         "tax_amount": "0",
@@ -4471,9 +4517,9 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         except (TypeError, ValueError):
             item_id = 0
         try:
-            qty = int(raw.get("qty") or raw.get("quantity") or 0)
-        except (TypeError, ValueError):
-            qty = 0
+            qty = _parse_qty(raw.get("qty") or raw.get("quantity") or 0)
+        except ValidationError:
+            qty = Decimal("0")
         try:
             unit_price = _money(raw.get("price") or raw.get("unit_price") or 0)
         except ValidationError as exc:
@@ -4484,7 +4530,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             raw.get("serials") or raw.get("serial_numbers") or []
         )
         if serials and qty <= 0:
-            qty = len(serials)
+            qty = _qty(len(serials))
         elif serials and qty != len(serials):
             errors.append(
                 "Serial-tracked items need one serial number per unit sold."
@@ -4598,7 +4644,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             ):
                 errors.append(
                     f"Insufficient stock for “{item.name}” "
-                    f"(available {stock.quantity}, requested {qty})."
+                    f"(available {_qty_label(stock.quantity)}, requested {_qty_label(qty)})."
                 )
                 continue
 
@@ -4939,7 +4985,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 stock_updates.append(
                     {
                         "id": item.pk,
-                        "quantity": int(stock.quantity),
+                        "quantity": _qty_number(stock.quantity),
                     }
                 )
             if stocks_to_update:
@@ -4977,7 +5023,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 stock_updates.append(
                     {
                         "id": item.pk,
-                        "quantity": int(stock.quantity),
+                        "quantity": _qty_number(stock.quantity),
                     }
                 )
                 serial_objects = row.get("serial_objects") or {}
@@ -6269,7 +6315,7 @@ def _stock_receipt_list_item(movement) -> dict:
     supplier_phone = f"{dial} {phone}".strip()
     total = Decimal("0.00")
     for line in lines:
-        qty = int(line.quantity or 0)
+        qty = _qty(line.quantity)
         unit = Decimal(line.buying_price or 0)
         total += (unit * qty).quantize(Decimal("0.01"))
     cashier = ""
@@ -6358,9 +6404,9 @@ def _receipt_line_payload(line, *, sold_serials_by_item=None) -> dict:
         "id": line.pk,
         "item_id": line.item_id,
         "item_name": line.item_name,
-        "quantity": int(line.quantity),
-        "returned_quantity": int(line.returned_quantity or 0),
-        "remaining_quantity": remaining,
+        "quantity": _qty_number(line.quantity),
+        "returned_quantity": _qty_number(line.returned_quantity),
+        "remaining_quantity": _qty_number(remaining),
         "unit_price": str(line.unit_price),
         "line_total": str(line.line_total),
         "remaining_total": str(
@@ -6598,7 +6644,7 @@ def _supplier_detail_from_print(
     raw_lines = line_rows or []
     if raw_lines:
         for idx, line in enumerate(raw_lines, start=1):
-            qty = int(line.get("qty") or 1)
+            qty = _qty(line.get("qty") or 1)
             unit = Decimal(line.get("unit") or 0)
             line_total = (unit * qty).quantize(Decimal("0.01"))
             serials = list(line.get("serials") or [])
@@ -6607,9 +6653,9 @@ def _supplier_detail_from_print(
                     "id": idx,
                     "item_id": None,
                     "item_name": line.get("name") or "Item",
-                    "quantity": qty,
+                    "quantity": _qty_number(qty),
                     "returned_quantity": 0,
-                    "remaining_quantity": qty,
+                    "remaining_quantity": _qty_number(qty),
                     "unit_price": str(unit),
                     "line_total": str(line_total),
                     "remaining_total": str(line_total),
@@ -6621,16 +6667,16 @@ def _supplier_detail_from_print(
             )
     else:
         for idx, line in enumerate(ticket.get("lines") or [], start=1):
-            qty = int(line.get("qty") or 1)
+            qty = _qty(line.get("qty") or 1)
             serials = list(line.get("serials") or [])
             lines.append(
                 {
                     "id": idx,
                     "item_id": None,
                     "item_name": line.get("name") or "Item",
-                    "quantity": qty,
+                    "quantity": _qty_number(qty),
                     "returned_quantity": 0,
-                    "remaining_quantity": qty,
+                    "remaining_quantity": _qty_number(qty),
                     "unit_price": str(line.get("price") or "0").replace(",", ""),
                     "line_total": str(line.get("total") or "0").replace(",", ""),
                     "remaining_total": str(line.get("total") or "0").replace(",", ""),
@@ -6779,7 +6825,7 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
             line_rows.append(
                 {
                     "name": str(getattr(line.item, "name", None) or "Item"),
-                    "qty": int(line.quantity or 0),
+                    "qty": _qty_number(line.quantity),
                     "unit": Decimal(line.buying_price or 0),
                     "serials": [str(s) for s in serials],
                 }
@@ -6899,7 +6945,7 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
             line_rows.append(
                 {
                     "name": str(getattr(line.item, "name", None) or "Item"),
-                    "qty": int(line.quantity or 0),
+                    "qty": _qty_number(line.quantity),
                     "unit": Decimal("0"),
                     "serials": [str(s) for s in serials],
                 }
@@ -6930,7 +6976,7 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
 
 
 def _append_receipt_return_batch(
-    line, *, qty: int, serials: list, at, by_id, reason: str = ""
+    line, *, qty, serials: list, at, by_id, reason: str = ""
 ) -> None:
     """Record one return event on the line for date-accurate stock reports."""
     batches = [
@@ -6939,7 +6985,7 @@ def _append_receipt_return_batch(
         if isinstance(batch, dict)
     ]
     batch = {
-        "qty": int(qty),
+        "qty": _qty_number(qty),
         "at": at.isoformat(),
         "by_id": by_id,
         "serials": [str(s).strip() for s in (serials or []) if str(s).strip()],
@@ -6967,7 +7013,7 @@ def _create_trade_out_stock_movement(*, shop: Shop, receipt, actor, lines: list[
     )
 
     prepared = [
-        row for row in lines if row.get("item") is not None and int(row.get("qty") or 0) > 0
+        row for row in lines if row.get("item") is not None and _qty(row.get("qty")) > 0
     ]
     if not prepared:
         return None
@@ -6982,7 +7028,7 @@ def _create_trade_out_stock_movement(*, shop: Shop, receipt, actor, lines: list[
     )
     for row in prepared:
         item = row["item"]
-        qty = int(row["qty"])
+        qty = _qty(row["qty"])
         unit_cost = Decimal(row.get("unit_cost") or 0)
         serials = [
             str(s).strip() for s in (row.get("serial_numbers") or []) if str(s).strip()
@@ -7009,7 +7055,7 @@ def _create_trade_in_stock_movements(*, shop: Shop, receipt, actor, lines: list[
     )
 
     prepared = [
-        row for row in lines if row.get("item") is not None and int(row.get("qty") or 0) > 0
+        row for row in lines if row.get("item") is not None and _qty(row.get("qty")) > 0
     ]
     if not prepared:
         return None
@@ -7028,7 +7074,7 @@ def _create_trade_in_stock_movements(*, shop: Shop, receipt, actor, lines: list[
     )
     for row in prepared:
         item = row["item"]
-        qty = int(row["qty"])
+        qty = _qty(row["qty"])
         unit_cost = Decimal(row.get("unit_cost") or 0)
         serials = [
             str(s).strip() for s in (row.get("serial_numbers") or []) if str(s).strip()
@@ -7067,7 +7113,7 @@ def _create_customer_return_stock_movement(
         StockMovementType,
     )
 
-    prepared = [row for row in lines if row.get("item") is not None and int(row.get("qty") or 0) > 0]
+    prepared = [row for row in lines if row.get("item") is not None and _qty(row.get("qty")) > 0]
     if not prepared:
         return None
 
@@ -7096,7 +7142,7 @@ def _create_customer_return_stock_movement(
 
     for row in prepared:
         item = row["item"]
-        qty = int(row["qty"])
+        qty = _qty(row["qty"])
         unit_cost = Decimal(row.get("unit_cost") or 0)
         serials = [
             str(s).strip() for s in (row.get("serial_numbers") or []) if str(s).strip()
@@ -7187,14 +7233,14 @@ def return_shop_receipt_items(
         except (TypeError, ValueError):
             line_id = 0
         try:
-            qty = int(raw.get("qty") or raw.get("quantity") or 0)
-        except (TypeError, ValueError):
-            qty = 0
+            qty = _parse_qty(raw.get("qty") or raw.get("quantity") or 0)
+        except ValidationError:
+            qty = Decimal("0")
         serials = _normalize_serial_list(
             raw.get("serials") or raw.get("serial_numbers") or []
         )
         if serials and qty <= 0:
-            qty = len(serials)
+            qty = _qty(len(serials))
         elif serials and qty != len(serials):
             errors.append("Serial-tracked returns need one serial per unit.")
             continue
@@ -7208,7 +7254,7 @@ def return_shop_receipt_items(
         remaining = line.remaining_quantity
         if qty > remaining:
             errors.append(
-                f"“{line.item_name}”: only {remaining} unit(s) left to return."
+                f"“{line.item_name}”: only {_qty_label(remaining)} unit(s) left to return."
             )
             continue
 
@@ -7315,7 +7361,7 @@ def return_shop_receipt_items(
         line = row["line"]
         qty = row["qty"]
         serials = row["serial_numbers"]
-        line.returned_quantity = int(line.returned_quantity or 0) + qty
+        line.returned_quantity = _qty(line.returned_quantity) + qty
         if serials:
             existing_returned = [
                 str(s).strip()
@@ -7323,7 +7369,7 @@ def return_shop_receipt_items(
                 if str(s).strip()
             ]
             line.returned_serial_numbers = existing_returned + serials
-        remaining_after = max(0, int(line.quantity) - int(line.returned_quantity))
+        remaining_after = line.remaining_quantity
         line.line_total = (
             Decimal(line.unit_price or 0) * remaining_after
         ).quantize(Decimal("0.01"))
@@ -7351,11 +7397,11 @@ def return_shop_receipt_items(
         )
         stock.quantity += qty
         stock.updated_at = now
-        item.stock = int(item.stock or 0) + qty
+        item.stock = _qty(item.stock) + qty
         item.updated_at = now
         stocks_to_update.append(stock)
         items_to_update.append(item)
-        stock_updates.append({"id": item.pk, "quantity": int(stock.quantity)})
+        stock_updates.append({"id": item.pk, "quantity": _qty_number(stock.quantity)})
         movement_lines.append(
             {
                 "item": item,
@@ -7439,7 +7485,9 @@ def return_shop_receipt_items(
             Decimal("0.01")
         )
         total = (remaining_subtotal + tax_amount).quantize(Decimal("0.01"))
-        any_returned = any(int(line.returned_quantity or 0) > 0 for line in all_lines)
+        any_returned = any(
+            _qty(line.returned_quantity) > 0 for line in all_lines
+        )
         if any_returned:
             status = ShopReceiptStatus.PARTIAL_RETURN
         elif receipt.status == ShopReceiptStatus.CONFIRMED:
@@ -7509,7 +7557,9 @@ def return_shop_receipt_items(
         return_update_fields.append("amount_paid")
     receipt.save(update_fields=return_update_fields)
 
-    returned_units = sum(row["qty"] for row in prepared)
+    returned_units = _qty_label(
+        sum((row["qty"] for row in prepared), Decimal("0"))
+    )
     if status == ShopReceiptStatus.CANCELLED:
         summary = (
             f"Receipt {receipt.receipt_number} fully returned and cancelled "

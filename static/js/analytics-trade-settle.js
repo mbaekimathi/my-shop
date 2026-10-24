@@ -127,9 +127,10 @@
       returnLineIdInput.value = option?.value || "";
     }
     if (returnQtyInput) {
-      returnQtyInput.max = String(Math.max(1, remaining || 1));
-      if (!returnQtyInput.value || Number(returnQtyInput.value) > remaining) {
-        returnQtyInput.value = String(Math.max(1, remaining || 1));
+      const cap = Math.max(0.001, remaining || 0);
+      returnQtyInput.max = String(cap);
+      if (!returnQtyInput.value || Number(returnQtyInput.value) > cap) {
+        returnQtyInput.value = String(cap);
       }
     }
     syncReturnSerials();
@@ -331,8 +332,8 @@
     const trackSerial = option.getAttribute("data-track-serial") === "1";
     const remaining = Math.max(0, Number(option.getAttribute("data-remaining") || 0));
     const qty = Math.max(0, Number(returnQtyInput?.value || 0));
-    if (qty < 1 || qty > remaining) {
-      setStatus(`Enter a quantity between 1 and ${remaining}.`, { error: true });
+    if (qty <= 0 || qty > remaining) {
+      setStatus(`Enter a quantity up to ${remaining}.`, { error: true });
       return;
     }
     const serials = selectedReturnSerials();

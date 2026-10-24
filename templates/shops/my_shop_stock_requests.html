@@ -199,7 +199,7 @@
             </td>
             <td class="stock-request-table-items" data-label="Items">
               {% for line in req.lines.all %}
-              <span>{{ line.item.name|default:line.item_name }} <em>×{{ line.quantity }}</em></span>{% if not forloop.last %}, {% endif %}
+              <span>{{ line.item.name|default:line.item_name }} <em>×{{ line.quantity|floatformat:"-3" }}</em></span>{% if not forloop.last %}, {% endif %}
               {% empty %}
               <span class="stock-request-table-sub">No line items</span>
               {% endfor %}
@@ -283,7 +283,7 @@
             </td>
             <td class="stock-request-table-items" data-label="Items">
               {% for line in req.lines.all %}
-              <span>{{ line.item.name|default:line.item_name }} <em>×{{ line.quantity }}</em></span>{% if not forloop.last %}, {% endif %}
+              <span>{{ line.item.name|default:line.item_name }} <em>×{{ line.quantity|floatformat:"-3" }}</em></span>{% if not forloop.last %}, {% endif %}
               {% empty %}
               <span class="stock-request-table-sub">No line items</span>
               {% endfor %}
@@ -328,7 +328,7 @@
                 {% for line in req.lines.all %}
                 <li
                   data-item-name="{{ line.item.name|default:line.item_name }}"
-                  data-item-qty="{{ line.quantity }}"
+                  data-item-qty="{{ line.quantity|floatformat:"-3" }}"
                   data-line-id="{{ line.pk }}"
                   {% if line.item.track_serial_number %}data-item-tracked="1"{% endif %}
                 >{% for serial in line.serial_numbers %}<span data-serial>{{ serial }}</span>{% endfor %}</li>

@@ -35,3 +35,11 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - The client-side `session-guard.js` tab lock (localStorage + BroadcastChannel)
   applies to employee workspaces only — shop tabs may run concurrently. It
   covers one browser profile; real enforcement is server-side via the stamps above.
+- **HR Management is permission-gated, not role-gated**: any active employee may
+  open `/<role>/hr-management/` pages when the matching toggle under
+  `hr-management` in the permissions matrix (`…/hr-management/permissions/`) is
+  enabled (`employee_may` / `require_module_permission`). Approving registrations
+  requires `hr-management/approvals`. Non-super-admin actors may only update
+  employees still `pending_approval`, may not assign the Super Admin role, and
+  may not modify Super Admin accounts (edit/suspend/delete). The same rules are
+  enforced for queued offline syncs in `sync_handlers._sync_update_employee_access`.

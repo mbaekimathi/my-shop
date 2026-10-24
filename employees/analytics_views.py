@@ -833,10 +833,7 @@ def analytics_trade_settle(request, role_segment, receipt_id):
                 item_id = int(request.POST.get("item_id") or 0)
             except (TypeError, ValueError):
                 item_id = 0
-            try:
-                quantity = int(request.POST.get("quantity") or request.POST.get("qty") or 0)
-            except (TypeError, ValueError):
-                quantity = 0
+            quantity = request.POST.get("quantity") or request.POST.get("qty") or 0
             serials_raw = request.POST.get("serial_numbers") or request.POST.get("serials") or ""
             if isinstance(serials_raw, str) and serials_raw.strip().startswith("["):
                 import json
@@ -875,12 +872,7 @@ def analytics_trade_settle(request, role_segment, receipt_id):
                 line_id = int(request.POST.get("line_id") or 0)
             except (TypeError, ValueError):
                 line_id = 0
-            try:
-                quantity = int(
-                    request.POST.get("quantity") or request.POST.get("qty") or 0
-                )
-            except (TypeError, ValueError):
-                quantity = 0
+            quantity = request.POST.get("quantity") or request.POST.get("qty") or 0
             serials_raw = (
                 request.POST.get("serial_numbers") or request.POST.get("serials") or ""
             )

@@ -194,6 +194,7 @@ def record_trade_exchange(
         StockPaymentStatus,
     )
     from items.services import apply_stock_in_average_cost, _normalize_serial_list
+    from shops.services import _parse_qty, _qty_label, _qty_number
 
     if receipt.kind != ShopReceiptKind.TRADE_OUT:
         raise ValidationError("Only open trade-out receipts accept exchange items.")
@@ -204,12 +205,7 @@ def record_trade_exchange(
     if due <= 0:
         raise ValidationError("This trade-out is already cleared.")
 
-    try:
-        qty = int(quantity)
-    except (TypeError, ValueError):
-        qty = 0
-    if qty <= 0:
-        raise ValidationError("Enter a quantity greater than zero.")
+    qty = _parse_qty(quantity)
 
     unit = _money(buying_price)
     if unit < 0:
@@ -234,7 +230,7 @@ def record_trade_exchange(
     if item.track_serial_number:
         if len(serials) != qty:
             raise ValidationError(
-                f"“{item.name}” needs {qty} serial number(s) for this exchange."
+                f"“{item.name}” needs {_qty_label(qty)} serial number(s) for this exchange."
             )
 
     shop = receipt.shop
@@ -307,7 +303,7 @@ def record_trade_exchange(
             "value": str(value),
             "item_id": item.pk,
             "item_name": item.name,
-            "qty": qty,
+            "qty": _qty_number(qty),
             "buying_price": str(unit),
             "stock_movement_id": movement.pk,
             "serial_numbers": serials,
@@ -339,13 +335,13 @@ def record_trade_exchange(
         "exchange_value": _money(receipt.trade_exchange_value),
         "amount_paid": _money(receipt.amount_paid),
         "item_name": item.name,
-        "quantity": qty,
+        "quantity": _qty_number(qty),
         "value": value,
         "stock_movement_id": movement.pk,
         "stock_updates": [
             {
                 "id": item.pk,
-                "quantity": int(shop_stock.quantity or 0),
+                "quantity": _qty_number(shop_stock.quantity),
             }
         ],
     }
@@ -423,13 +419,20 @@ def record_trade_return(receipt, *, lines, actor=None) -> dict:
     )
     receipt.refresh_from_db()
 
-    returned_units = sum(int(row.get("qty") or row.get("quantity") or 0) for row in lines)
+    from shops.services import _qty, _qty_label, _qty_number
+
+    returned_units = sum(
+        (_qty(row.get("qty") or row.get("quantity")) for row in lines),
+        Decimal("0"),
+    )
     names = []
     for row in lines:
         label = (row.get("item_name") or row.get("name") or "").strip()
         if label:
             names.append(label)
-    detail_label = ", ".join(names[:3]) if names else f"{returned_units} unit(s)"
+    detail_label = (
+        ", ".join(names[:3]) if names else f"{_qty_label(returned_units)} unit(s)"
+    )
 
     update_fields: list[str] = []
     if hasattr(receipt, "trade_settlements"):
@@ -437,7 +440,7 @@ def record_trade_return(receipt, *, lines, actor=None) -> dict:
             receipt,
             {
                 "type": "return",
-                "qty": returned_units,
+                "qty": _qty_number(returned_units),
                 "lines": [
                     {
                         "line_id": row.get("line_id") or row.get("id"),

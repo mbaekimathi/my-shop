@@ -135,6 +135,17 @@ def _redirect_after_employee_access_update(request, list_page=None):
             url = f"{url}?page={page_number}"
         return redirect(url)
 
+    profile = get_profile_for_request(request)
+    if profile is not None and profile.role != EmployeeRole.SUPER_ADMIN:
+        segment = role_url_segment(profile.role)
+        return redirect(
+            page_url(
+                "hr_employee_approvals",
+                page_number,
+                url_kwargs={"role_segment": segment},
+            )
+        )
+
     return redirect(
         page_url("role_super_admin", page_number, fragment="employee-access")
     )
@@ -666,11 +677,12 @@ def role_super_admin(request, page=None):
             "meta": meta,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
+            "role_segment": role_url_segment(profile.role),
             "employees_page": employees_page,
             "employees": employees_page.object_list,
             "role_choices": EmployeeRole.choices,
             "status_choices": EmployeeStatus.choices,
-            "page_sidebar": sidebar_for_super_admin(),
+            "page_sidebar": sidebar_for_super_admin(profile=profile),
             "pagination": pagination_links(
                 employees_page, "role_super_admin", fragment="employee-access"
             ),
@@ -678,10 +690,19 @@ def role_super_admin(request, page=None):
     )
 
 
-@role_required(EmployeeRole.SUPER_ADMIN)
+@active_employee_required
 @require_http_methods(["POST"])
-def update_employee_access(request, employee_id):
-    """Update an employee's role and/or status from Super Admin dropdowns."""
+def update_employee_access(request, role_segment, employee_id):
+    """Update an employee's role and/or status (approvals + access table)."""
+    from .module_permissions import require_module_permission
+
+    profile = get_profile_for_request(request)
+    denied = require_module_permission(
+        request, profile, "hr-management", "approvals"
+    )
+    if denied is not None:
+        return denied
+
     list_page = request.POST.get("list_page", "").strip()
 
     target = (
@@ -705,6 +726,20 @@ def update_employee_access(request, employee_id):
     if new_status not in valid_statuses:
         messages.error(request, "Select a valid status.")
         return _redirect_after_employee_access_update(request, list_page or None)
+
+    if profile.role != EmployeeRole.SUPER_ADMIN:
+        if target.status != EmployeeStatus.PENDING_APPROVAL:
+            messages.error(
+                request,
+                "You can only update employees who are awaiting approval.",
+            )
+            return _redirect_after_employee_access_update(request, list_page or None)
+        if new_role == EmployeeRole.SUPER_ADMIN:
+            messages.error(
+                request,
+                "Only a Super Admin can assign the Super Admin role.",
+            )
+            return _redirect_after_employee_access_update(request, list_page or None)
 
     if target.user_id == request.user.pk:
         if new_role != EmployeeRole.SUPER_ADMIN:
@@ -915,7 +950,7 @@ def _main_website_guide(request, company, main_shop):
     }
 
 
-@role_required(EmployeeRole.IT_SUPPORT)
+@role_required(EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN)
 @require_http_methods(["GET", "POST"])
 def marketing_links(request):
     from shops.models import Shop
@@ -982,7 +1017,7 @@ def marketing_links(request):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": sidebar_for_marketing_links(
-                EmployeeRole.IT_SUPPORT, profile=profile
+                profile.role, profile=profile
             ),
             "marketing_links": links,
             "marketing_is_hosted": is_hosted,

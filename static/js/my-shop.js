@@ -2000,7 +2000,7 @@
     }
     let value = Number(raw);
     if (!Number.isFinite(value) || value < 0) value = 0;
-    value = Math.floor(value);
+    value = Math.round(value * 1000) / 1000;
     if (max > 0 && value > max) value = max;
     input.value = String(value);
     return value;
@@ -2776,8 +2776,8 @@
           base = card.getAttribute("data-item-stock") || "0";
           card.setAttribute("data-item-stock-base", base);
         }
-        const held = Math.max(0, Math.floor(Number(pending[id]) || 0));
-        const qty = Math.max(0, Math.floor(Number(base) || 0) - held);
+        const held = Math.max(0, roundQty(pending[id]));
+        const qty = Math.max(0, roundQty(roundQty(base) - held));
         card.setAttribute("data-item-stock", String(qty));
         const valueEl = card.querySelector(".shop-floor-stock-value");
         if (valueEl) valueEl.textContent = String(qty);
@@ -2794,7 +2794,7 @@
       updates.forEach((row) => {
         const id = String(row?.id || "");
         if (!id) return;
-        const qty = Math.max(0, Math.floor(Number(row.quantity) || 0));
+        const qty = Math.max(0, roundQty(row.quantity));
         cartRoot
           .querySelectorAll(
             `[data-cart-item][data-item-id="${CSS.escape(id)}"]`
@@ -4145,16 +4145,14 @@
               );
               const base = Math.max(
                 0,
-                Math.floor(
-                  Number(
-                    card?.getAttribute("data-item-stock-base") ??
-                      card?.getAttribute("data-item-stock")
-                  ) || 0
+                roundQty(
+                  card?.getAttribute("data-item-stock-base") ??
+                    card?.getAttribute("data-item-stock")
                 )
               );
               return {
                 id: line.id,
-                quantity: Math.max(0, base - Math.max(0, line.qty || 0)),
+                quantity: Math.max(0, roundQty(base - Math.max(0, roundQty(line.qty)))),
               };
             });
             applyStockUpdates(stockUpdates);
@@ -4457,6 +4455,12 @@
 
     const roundMoney = (value) => Math.round(Number(value || 0) * 100) / 100;
 
+    const roundQty = (value) => {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return 0;
+      return Math.round(num * 1000) / 1000;
+    };
+
     const readItemFromEl = (el) => {
       const id = el?.getAttribute?.("data-item-id") || el?.dataset?.itemId || "";
       const listPrice = roundMoney(
@@ -4508,10 +4512,8 @@
         discountAmount,
         stock: Math.max(
           0,
-          Math.floor(
-            Number(
-              el?.getAttribute?.("data-item-stock") || el?.dataset?.itemStock || 0
-            )
+          roundQty(
+            el?.getAttribute?.("data-item-stock") || el?.dataset?.itemStock || 0
           )
         ),
         image:
@@ -4546,7 +4548,7 @@
         if (!Array.isArray(parsed)) return;
         parsed.forEach((line) => {
           if (!line?.id) return;
-          const qty = Math.max(1, Math.floor(Number(line.qty) || 1));
+          const qty = Math.max(0.001, roundQty(Number(line.qty) || 1));
           const listPrice = Number(line.listPrice || line.price) || 0;
           const minPrice = Number(line.minPrice) || 0;
           const storedPrice = Number(line.price) || 0;
@@ -4571,7 +4573,7 @@
               Math.floor(Number(line.discountMinQty) || 0)
             ),
             discountAmount: roundMoney(line.discountAmount || 0),
-            stock: Math.max(0, Math.floor(Number(line.stock) || 0)),
+            stock: Math.max(0, roundQty(line.stock)),
             image: String(line.image || ""),
             qty: trackSerial && serials.length ? serials.length : qty,
             trackSerial,
@@ -4595,8 +4597,8 @@
     };
 
     const clampQty = (qty, stock) => {
-      let next = Math.floor(Number(qty));
-      if (!Number.isFinite(next) || next < 1) next = 0;
+      let next = roundQty(qty);
+      if (!Number.isFinite(next) || next <= 0) next = 0;
       if (
         stockTrackingEnabled &&
         selectedKind() !== "trade_in" &&
@@ -4614,7 +4616,7 @@
       const threshold = Math.max(0, Math.floor(Number(discountMinQty) || 0));
       const amount = roundMoney(discountAmount);
       if (!discountEnabled || threshold <= 0 || amount <= 0) return list;
-      if (Math.floor(Number(qty) || 0) < threshold) return list;
+      if (roundQty(qty) < threshold) return list;
       return clampPrice(list - amount, min, list);
     };
 
@@ -4770,7 +4772,7 @@
         const addBtn = card.querySelector("[data-cart-add]");
         const qtyWrap = card.querySelector("[data-cart-qty-wrap]");
         const qtyInput = card.querySelector("[data-cart-qty-input]");
-        const stock = Math.max(0, Math.floor(Number(card.getAttribute("data-item-stock")) || 0));
+        const stock = Math.max(0, roundQty(card.getAttribute("data-item-stock")));
 
         card.classList.toggle("is-in-cart", inCart);
         if (addBtn) {
@@ -4806,7 +4808,7 @@
       const line = cart.get(activeProductId);
       const stock = Math.max(
         0,
-        Math.floor(Number(productModal.dataset.itemStock || line?.stock || 0))
+        roundQty(productModal.dataset.itemStock || line?.stock || 0)
       );
       const inCart = Boolean(line);
       if (productAdd) {
@@ -5123,12 +5125,13 @@
         const qtyInput = document.createElement("input");
         qtyInput.type = "number";
         qtyInput.className = "shop-cart-qty-input";
-        qtyInput.min = "1";
+        qtyInput.min = "0.001";
+        qtyInput.step = "0.001";
         if (stockTrackingEnabled && selectedKind() !== "trade_in" && line.stock > 0) {
           qtyInput.max = String(line.stock);
         }
         qtyInput.value = String(line.qty);
-        qtyInput.inputMode = "numeric";
+        qtyInput.inputMode = "decimal";
         qtyInput.setAttribute("aria-label", "Quantity");
         qtyInput.dataset.cartQtyInput = "";
 
@@ -5739,7 +5742,7 @@
         serialSaleDescription.textContent = serialSaleItem.description || "";
       }
       if (serialSaleStock) {
-        const stock = Math.max(0, Math.floor(Number(serialSaleItem.stock) || 0));
+        const stock = Math.max(0, roundQty(serialSaleItem.stock));
         serialSaleStock.textContent =
           stock > 0 ? `${stock} in stock` : "Out of stock";
         serialSaleStock.classList.toggle("is-empty", stock <= 0);
@@ -6395,7 +6398,7 @@
         Math.floor(Number(item?.discount_min_qty) || 0)
       ),
       discountAmount: roundMoney(item?.discount_amount),
-      stock: Math.max(0, Math.floor(Number(item?.stock) || 0)),
+      stock: Math.max(0, roundQty(item?.stock)),
       image: String(item?.image_url || ""),
       trackSerial: Boolean(item?.track_serial),
     });
@@ -6530,12 +6533,13 @@
           const qtyInput = document.createElement("input");
           qtyInput.type = "number";
           qtyInput.className = "shop-cart-qty-input";
-          qtyInput.min = "1";
+          qtyInput.min = "0.001";
+          qtyInput.step = "0.001";
           if (!isIn && stockTrackingEnabled && line.stock > 0) {
             qtyInput.max = String(line.stock);
           }
           qtyInput.value = String(line.qty);
-          qtyInput.inputMode = "numeric";
+          qtyInput.inputMode = "decimal";
           qtyInput.setAttribute("aria-label", "Quantity");
           qtyInput.dataset.tradeQtyInput = "";
           const inc = document.createElement("button");

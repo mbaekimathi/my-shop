@@ -62,7 +62,7 @@
         </td>
         <td class="stock-request-table-items" data-label="Items">
           {% for line in req.lines.all %}
-          <span>{{ line.item.name|default:line.item_name }} <em>×{{ line.quantity }}</em></span>{% if not forloop.last %}, {% endif %}
+          <span>{{ line.item.name|default:line.item_name }} <em>×{{ line.quantity|floatformat:"-3" }}</em></span>{% if not forloop.last %}, {% endif %}
           {% empty %}
           <span class="stock-request-table-sub">No line items</span>
           {% endfor %}
@@ -102,7 +102,7 @@
             {% for line in req.lines.all %}
             <li
               data-item-name="{{ line.item.name|default:line.item_name }}"
-              data-item-qty="{{ line.quantity }}"
+              data-item-qty="{{ line.quantity|floatformat:"-3" }}"
               data-line-id="{{ line.pk }}"
               {% if line.item.track_serial_number %}data-item-tracked="1"{% endif %}
             >{% for serial in line.serial_numbers %}<span data-serial>{{ serial }}</span>{% endfor %}</li>
@@ -127,9 +127,11 @@
             {% for line in req.lines.all %}
             <li
               data-line-id="{{ line.pk }}"
+              data-item-id="{{ line.item_id|default:'' }}"
               data-item-name="{{ line.item.name|default:line.item_name }}"
-              data-item-qty="{{ line.quantity }}"
-            ></li>
+              data-item-qty="{{ line.quantity|floatformat:"-3" }}"
+              {% if line.item and line.item.track_serial_number %}data-item-tracked="1"{% endif %}
+            >{% if line.item and line.item.track_serial_number %}{% for serial in line.serial_numbers %}<span data-serial-allowed>{{ serial }}</span>{% endfor %}{% endif %}</li>
             {% endfor %}
           </ul>
           {% else %}
@@ -213,6 +215,17 @@
             </thead>
             <tbody data-stock-request-confirm-lines></tbody>
           </table>
+        </div>
+        <div class="stock-request-serial-panel" data-stock-request-confirm-serial-panel hidden>
+          <div class="stock-transfer-section-label">
+            <i data-lucide="scan-barcode" aria-hidden="true"></i>
+            <span>Serial numbers received</span>
+          </div>
+          <div class="stock-request-serial-list" data-stock-request-confirm-serial-list></div>
+          <small class="stock-serial-hint">
+            Scan or type each serial on the transfer — only serials it lists are
+            accepted, and each match counts as one unit received.
+          </small>
         </div>
         <div class="stock-request-code-panel" data-code-panel>
           <div class="stock-transfer-section-label">
@@ -355,6 +368,8 @@
     const leadEl = modal.querySelector("[data-stock-request-confirm-lead]");
     const statusEl = modal.querySelector("[data-stock-request-confirm-status]");
     const linesEl = modal.querySelector("[data-stock-request-confirm-lines]");
+    const serialPanel = modal.querySelector("[data-stock-request-confirm-serial-panel]");
+    const serialListEl = modal.querySelector("[data-stock-request-confirm-serial-list]");
     const declinePanel = modal.querySelector("[data-stock-request-confirm-decline-panel]");
     const declineReason = modal.querySelector("[data-stock-request-confirm-decline-reason]");
     const declineBtn = modal.querySelector("[data-stock-request-confirm-decline]");
@@ -439,9 +454,236 @@
       }
       let value = Number(raw);
       if (!Number.isFinite(value) || value < 0) value = 0;
-      value = Math.floor(value);
+      value = Math.round(value * 1000) / 1000;
       if (max > 0 && value > max) value = max;
       input.value = String(value);
+    };
+
+    const normalizeSerial = (value) => String(value || "").trim().toUpperCase();
+
+    const qtyLabel = (qty) => {
+      const num = Number(qty);
+      return Number.isFinite(num) ? String(num) : String(qty || "0");
+    };
+
+    const getQtyInput = (lineId) =>
+      linesEl?.querySelector(`[data-transfer-qty][data-line-id="${lineId}"]`);
+
+    const allowedSerials = (block) =>
+      [...(block?.querySelectorAll("[data-serial-allowed]") || [])]
+        .map((el) => normalizeSerial(el.textContent || ""))
+        .filter(Boolean);
+
+    const filledSerialsInBlock = (block) => {
+      const values = [];
+      block?.querySelectorAll("[data-serial-scanned-value]").forEach((el) => {
+        const value = normalizeSerial(el.textContent);
+        if (value) values.push(value);
+      });
+      return values;
+    };
+
+    const syncSerialBlockQty = (block) => {
+      const filled = filledSerialsInBlock(block);
+      const max = Number(block.dataset.maxQty || 0);
+      const qtyInput = getQtyInput(block.dataset.lineId);
+      if (qtyInput?.dataset.qtyFromSerial === "1") {
+        qtyInput.value = String(filled.length);
+      }
+      block.dataset.qty = String(filled.length);
+      const need = block.querySelector("[data-serial-need]");
+      if (need) need.textContent = `${filled.length} / ${max} selected`;
+      const scanned = block.querySelector("[data-serial-scanned]");
+      if (scanned) scanned.hidden = filled.length === 0;
+      return filled.length;
+    };
+
+    const createScannedItem = (block, serial) => {
+      const scanned = block.querySelector("[data-serial-scanned]");
+      if (!scanned || !serial) return null;
+      const li = document.createElement("li");
+      li.className = "stock-request-serial-scanned-item";
+      li.dataset.serialValue = serial;
+
+      const hidden = document.createElement("input");
+      hidden.type = "hidden";
+      hidden.name = `serials_${block.dataset.lineId}`;
+      hidden.value = serial;
+      li.appendChild(hidden);
+
+      const value = document.createElement("span");
+      value.className = "stock-serial-scanned-value";
+      value.setAttribute("data-serial-scanned-value", "");
+      value.textContent = serial;
+      li.appendChild(value);
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "stock-serial-scanned-remove";
+      remove.setAttribute("data-serial-scanned-remove", "");
+      remove.setAttribute("aria-label", `Remove ${serial}`);
+      remove.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
+      li.appendChild(remove);
+
+      scanned.prepend(li);
+      if (window.lucide?.createIcons) window.lucide.createIcons();
+      return li;
+    };
+
+    const hideSerialSuggest = (root) => {
+      const suggest = root?.querySelector("[data-serial-suggest]");
+      if (!suggest) return;
+      suggest.hidden = true;
+      suggest.innerHTML = "";
+    };
+
+    const flagSerialEntry = (entry) => {
+      entry.classList.add("is-duplicate");
+      window.setTimeout(() => entry.classList.remove("is-duplicate"), 700);
+    };
+
+    const serialCommitState = new WeakMap();
+
+    const commitSerialEntry = (block, { serial: override } = {}) => {
+      const entry = block?.querySelector("[data-serial-entry]");
+      if (!entry) return false;
+
+      const state = serialCommitState.get(block) || {
+        busy: false,
+        lastSerial: "",
+        lastAt: 0,
+      };
+      if (state.busy) return false;
+
+      let serial = normalizeSerial(override || entry.value);
+      if (!serial) return false;
+
+      const max = Number(block.dataset.maxQty || 0);
+      const allowed = allowedSerials(block);
+      const filled = filledSerialsInBlock(block);
+      const now = Date.now();
+      if (serial === state.lastSerial && now - state.lastAt < 1000) {
+        entry.value = "";
+        entry.focus?.();
+        return false;
+      }
+      if (filled.includes(serial)) {
+        entry.value = "";
+        flagSerialEntry(entry);
+        entry.focus?.();
+        return false;
+      }
+      if (max > 0 && filled.length >= max) {
+        entry.value = "";
+        entry.focus?.();
+        return false;
+      }
+
+      const root = entry.closest("[data-serial-search-root]");
+      const firstOption = root?.querySelector(
+        ".stock-supplier-suggest-option:not([disabled])"
+      );
+      if (firstOption && allowed.length) {
+        const picked = normalizeSerial(firstOption.textContent);
+        // An exact typed match wins over the first suggestion — a partial
+        // scan must not jump to another serial on the transfer.
+        if (picked && !allowed.includes(serial)) serial = picked;
+      }
+
+      entry.value = "";
+      hideSerialSuggest(root);
+
+      state.busy = true;
+      serialCommitState.set(block, state);
+      let ok = false;
+      try {
+        if (allowed.length) {
+          // Receiving a transfer: serial must be one of the serials recorded
+          // on the transfer itself. Transfers created before serials were
+          // stored have an empty list — accept any serial for those.
+          const match = allowed.find((value) => value === serial);
+          if (!match) {
+            flagSerialEntry(entry);
+            setStatus(`Serial ${serial} is not on this transfer.`, { error: true });
+            return false;
+          }
+          serial = match;
+        }
+        createScannedItem(block, serial);
+        ok = true;
+        state.lastSerial = serial;
+        state.lastAt = Date.now();
+        syncSerialBlockQty(block);
+        syncButtons();
+        if (codeVerified) setStatus("", { ok: true });
+        return true;
+      } finally {
+        state.busy = false;
+        serialCommitState.set(block, state);
+        entry.value = "";
+        entry.focus?.();
+        entry.dispatchEvent(
+          new CustomEvent("myshop:serial-commit-settled", {
+            bubbles: true,
+            detail: { ok, serial },
+          })
+        );
+      }
+    };
+
+    const renderSerialSuggest = (input, results) => {
+      const root = input.closest("[data-serial-search-root]");
+      const suggest = root?.querySelector("[data-serial-suggest]");
+      if (!suggest) return;
+      suggest.innerHTML = "";
+      if (!results.length) {
+        const empty = document.createElement("button");
+        empty.type = "button";
+        empty.className = "stock-supplier-suggest-option is-empty";
+        empty.disabled = true;
+        empty.innerHTML =
+          "<strong>No matching serials</strong><small>Only serials on this transfer</small>";
+        suggest.appendChild(empty);
+        suggest.hidden = false;
+        return;
+      }
+      results.forEach((serial) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "stock-supplier-suggest-option";
+        btn.innerHTML = "<strong></strong>";
+        btn.querySelector("strong").textContent = serial;
+        btn.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          const block = input.closest("[data-serial-block]");
+          if (block) commitSerialEntry(block, { serial });
+        });
+        suggest.appendChild(btn);
+      });
+      suggest.hidden = false;
+    };
+
+    const runSerialSuggest = (input) => {
+      const block = input.closest("[data-serial-block]");
+      if (!block || block.hidden) return;
+      const allowed = allowedSerials(block);
+      if (!allowed.length) {
+        hideSerialSuggest(input.closest("[data-serial-search-root]"));
+        return;
+      }
+      const filled = new Set(filledSerialsInBlock(block));
+      const query = normalizeSerial(input.value);
+      const results = allowed
+        .filter((serial) => !filled.has(serial))
+        .filter((serial) => !query || serial.includes(query))
+        .slice(0, 10);
+      renderSerialSuggest(input, results);
+    };
+
+    let serialSuggestTimer = null;
+    const queueSerialSuggest = (input) => {
+      window.clearTimeout(serialSuggestTimer);
+      serialSuggestTimer = window.setTimeout(() => runSerialSuggest(input), 180);
     };
 
     const verifyLogin = async () => {
@@ -520,8 +762,13 @@
       const items = [...(cell?.querySelectorAll(".stock-request-confirm-data li") || [])].map(
         (li) => ({
           id: (li.getAttribute("data-line-id") || "").trim(),
+          itemId: (li.getAttribute("data-item-id") || "").trim(),
           name: (li.getAttribute("data-item-name") || "").trim(),
           qty: (li.getAttribute("data-item-qty") || "").trim(),
+          tracked: li.getAttribute("data-item-tracked") === "1",
+          serials: [...li.querySelectorAll("[data-serial-allowed]")]
+            .map((el) => (el.textContent || "").trim())
+            .filter(Boolean),
         })
       ).filter((item) => item.id && item.name);
       if (!requestId || !idInput || !linesEl) return;
@@ -534,10 +781,13 @@
       codeVerified = false;
 
       if (leadEl) {
+        const serialNote = items.some((item) => item.tracked)
+          ? " Serial-tracked items need each serial scanned or typed below."
+          : "";
         leadEl.innerHTML =
           `Confirm receipt at <strong>${escapeHtml(toShop)}</strong> from <strong>${escapeHtml(
             fromShop
-          )}</strong>. Enter quantities received below. Confirm only when they match what was sent — otherwise Decline with a reason.`;
+          )}</strong>. Enter quantities received below. Confirm only when they match what was sent — otherwise Decline with a reason.${escapeHtml(serialNote)}`;
       }
 
       if (!items.length) {
@@ -546,10 +796,16 @@
       } else {
         linesEl.innerHTML = items
           .map(
-            (item) => `<tr data-request-line data-line-id="${escapeHtml(item.id)}">
+            (item) => `<tr data-request-line data-line-id="${escapeHtml(item.id)}"${
+              item.tracked ? ' data-track-serial="1"' : ""
+            }>
               <td data-label="Item"><div class="stock-transfer-item"><span>${escapeHtml(
                 item.name
-              )}</span></div></td>
+              )}</span>${
+              item.tracked
+                ? '<em class="stock-request-serial-tag">Serial tracked</em>'
+                : ""
+            }</div></td>
               <td data-label="Received">
                 <label class="stock-transfer-qty-field">
                   <span class="visually-hidden">Received quantity for ${escapeHtml(
@@ -559,12 +815,17 @@
                     type="number"
                     name="qty_${escapeHtml(item.id)}"
                     min="0"
-                    step="1"
+                    step="${item.tracked ? "1" : "0.001"}"
                     value=""
-                    inputmode="numeric"
+                    inputmode="${item.tracked ? "numeric" : "decimal"}"
                     data-transfer-qty
                     data-line-id="${escapeHtml(item.id)}"
                     data-must-match="${escapeHtml(item.qty)}"
+                    ${
+                      item.tracked
+                        ? 'readonly data-qty-from-serial="1" title="Counted from scanned serials"'
+                        : ""
+                    }
                   >
                 </label>
               </td>
@@ -573,10 +834,60 @@
           .join("");
       }
 
+      const trackedItems = items.filter((item) => item.tracked);
+      if (serialPanel && serialListEl) {
+        serialPanel.hidden = trackedItems.length === 0;
+        serialListEl.innerHTML = trackedItems
+          .map(
+            (item) => `<div
+              class="stock-request-serial-block"
+              data-serial-block
+              data-line-id="${escapeHtml(item.id)}"
+              data-item-id="${escapeHtml(item.itemId)}"
+              data-max-qty="${escapeHtml(item.qty)}"
+              data-qty="0"
+            >
+              <p class="stock-request-serial-label">
+                ${escapeHtml(item.name)}
+                <span data-serial-need>0 / ${escapeHtml(qtyLabel(item.qty))} selected</span>
+              </p>
+              <div class="stock-request-serial-entry-wrap" data-serial-search-root data-serial-scan-continuous>
+                <div class="stock-serial-row">
+                  <div class="stock-serial-input-wrap stock-request-serial-wrap">
+                    <input
+                      type="text"
+                      placeholder="Scan or type serial on this transfer"
+                      autocomplete="off"
+                      spellcheck="false"
+                      data-serial-entry
+                      aria-label="Serial received for ${escapeHtml(item.name)}"
+                    >
+                  </div>
+                </div>
+                <div class="stock-supplier-suggest" data-serial-suggest hidden></div>
+              </div>
+              <ul class="stock-request-serial-scanned" data-serial-scanned hidden aria-live="polite"></ul>
+              <ul hidden>
+                ${item.serials
+                  .map((serial) => `<li data-serial-allowed>${escapeHtml(serial)}</li>`)
+                  .join("")}
+              </ul>
+            </div>`
+          )
+          .join("");
+        if (trackedItems.length) {
+          window.MyShopSerialScan?.enhance?.(serialPanel);
+        }
+      }
+
       setStatus("");
       syncButtons();
       setOpen(true);
-      linesEl.querySelector("[data-transfer-qty]")?.focus();
+      const firstSerialEntry =
+        serialPanel && !serialPanel.hidden
+          ? serialPanel.querySelector("[data-serial-entry]")
+          : null;
+      (firstSerialEntry || linesEl.querySelector("[data-transfer-qty]"))?.focus();
     };
 
     document.addEventListener("click", (event) => {
@@ -608,6 +919,66 @@
       if (input.value !== "") clampQty(input);
       syncButtons();
       if (codeVerified) setStatus("", { ok: true });
+    });
+
+    modal.addEventListener("click", (event) => {
+      const remove = event.target.closest?.("[data-serial-scanned-remove]");
+      if (!remove || !modal.contains(remove)) return;
+      const block = remove.closest("[data-serial-block]");
+      remove.closest("li")?.remove();
+      if (block) {
+        syncSerialBlockQty(block);
+        syncButtons();
+      }
+      block?.querySelector("[data-serial-entry]")?.focus?.();
+    });
+
+    modal.addEventListener("input", (event) => {
+      const input = event.target;
+      if (!input.matches?.("[data-serial-entry]") || !modal.contains(input)) return;
+      const block = input.closest("[data-serial-block]");
+      if (!block) return;
+      const raw = String(input.value || "");
+      if (/[\r\n]/.test(raw)) {
+        const serial = normalizeSerial(raw.replace(/[\r\n]+/g, ""));
+        input.value = serial;
+        commitSerialEntry(block, serial ? { serial } : {});
+        return;
+      }
+      input.value = raw.toUpperCase();
+      input.classList.remove("is-duplicate");
+      queueSerialSuggest(input);
+    });
+
+    modal.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const input = event.target;
+      if (!input.matches?.("[data-serial-entry]") || !modal.contains(input)) return;
+      event.preventDefault();
+      const block = input.closest("[data-serial-block]");
+      if (block) commitSerialEntry(block);
+    });
+
+    modal.addEventListener("myshop:serial-applied", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches("[data-serial-entry]") || !modal.contains(target)) return;
+      const block = target.closest("[data-serial-block]");
+      if (!block) return;
+      const serial = normalizeSerial(event.detail?.serial || target.value);
+      commitSerialEntry(block, serial ? { serial } : {});
+    });
+
+    modal.addEventListener("focusin", (event) => {
+      const input = event.target;
+      if (!input.matches?.("[data-serial-entry]") || !modal.contains(input)) return;
+      queueSerialSuggest(input);
+    });
+
+    modal.addEventListener("focusout", (event) => {
+      const root = event.target.closest?.("[data-serial-search-root]");
+      if (!root || !modal.contains(root)) return;
+      window.setTimeout(() => hideSerialSuggest(root), 180);
     });
 
     loginInput?.addEventListener("input", () => {

@@ -104,7 +104,7 @@ export async function pendingQuantitiesForShop(shopId) {
   for (const entry of entries) {
     for (const line of entry.lines || []) {
       const id = String(line?.id ?? "");
-      const q = Math.max(0, Math.floor(Number(line?.qty) || 0));
+      const q = Math.max(0, Math.round((Number(line?.qty) || 0) * 1000) / 1000);
       if (!id || !q) continue;
       qty[id] = (qty[id] || 0) + q;
     }
@@ -230,7 +230,7 @@ export async function patchCachedShopCatalogStock(shopId, updates) {
   updates.forEach((row) => {
     const itemId = String(row?.id ?? "").trim();
     if (!itemId) return;
-    const qty = Math.max(0, Math.floor(Number(row.quantity) || 0));
+    const qty = Math.max(0, Math.round((Number(row.quantity) || 0) * 1000) / 1000);
     qtyById.set(itemId, qty);
   });
   if (!qtyById.size) return 0;

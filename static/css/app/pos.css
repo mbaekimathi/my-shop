@@ -4470,6 +4470,11 @@ html[data-theme="dark"] .shop-serial-modal-media img {
   position: relative;
 }
 
+.stock-request-serial-entry-wrap [data-serial-entry].is-duplicate {
+  border-color: #b42318;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #b42318 18%, transparent);
+}
+
 .stock-request-serial-scanned {
   list-style: none;
   margin: 0.35rem 0 0;

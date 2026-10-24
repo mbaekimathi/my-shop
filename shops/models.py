@@ -245,8 +245,8 @@ class ShopReceiptLine(models.Model):
         related_name="shop_receipt_lines",
     )
     item_name = models.CharField(max_length=200)
-    quantity = models.PositiveIntegerField()
-    returned_quantity = models.PositiveIntegerField(default=0)
+    quantity = models.DecimalField(max_digits=12, decimal_places=3)
+    returned_quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2)
     unit_cost = models.DecimalField(
         max_digits=12,
@@ -276,11 +276,19 @@ class ShopReceiptLine(models.Model):
         ordering = ["id"]
 
     def __str__(self):
-        return f"{self.item_name} × {self.quantity}"
+        qty = self.quantity
+        if qty is not None:
+            qty = qty.normalize()
+        return f"{self.item_name} × {qty}"
 
     @property
-    def remaining_quantity(self) -> int:
-        return max(0, int(self.quantity or 0) - int(self.returned_quantity or 0))
+    def remaining_quantity(self):
+        from decimal import Decimal
+
+        remaining = Decimal(self.quantity or 0) - Decimal(
+            self.returned_quantity or 0
+        )
+        return max(Decimal("0"), remaining)
 
     @property
     def remaining_serial_numbers(self) -> list:

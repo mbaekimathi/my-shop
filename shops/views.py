@@ -6,7 +6,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from django.db.models import Count, IntegerField, Q, Subquery, Sum, Value
+from django.db.models import Count, DecimalField, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -62,6 +62,8 @@ from .daraja_stk import (
     sync_callback_base_from_request,
 )
 from .services import (
+    _qty_label,
+    _qty_number,
     authenticate_shop_login,
     build_expense_supplier_receipt,
     build_stock_in_supplier_receipt,
@@ -788,8 +790,8 @@ def _catalog_rows_for_items(shop, items):
                 "avg_buy_qty": int(item.avg_buy_qty or 1),
                 "discount_min_qty": int(item.discount_min_qty or 0),
                 "discount_amount": str(item.discount_amount or 0),
-                "stock": int(stock_by_item.get(item.pk, 0)),
-                "sold_quantity": int(getattr(item, "sold_quantity", 0) or 0),
+                "stock": _qty_number(stock_by_item.get(item.pk, 0)),
+                "sold_quantity": _qty_number(getattr(item, "sold_quantity", 0) or 0),
                 "track_serial": bool(item.track_serial_number),
                 "image_url": image_url,
             }
@@ -828,12 +830,12 @@ def shop_website(request, shop_id):
             sold_quantity=Coalesce(
                 Sum("shop_receipt_lines__quantity", filter=sale_filter),
                 Value(0),
-                output_field=IntegerField(),
+                output_field=DecimalField(max_digits=14, decimal_places=3),
             )
             - Coalesce(
                 Sum("shop_receipt_lines__returned_quantity", filter=sale_filter),
                 Value(0),
-                output_field=IntegerField(),
+                output_field=DecimalField(max_digits=14, decimal_places=3),
             )
         )
         .order_by("category", "-sold_quantity", "name")
@@ -934,7 +936,7 @@ def shop_website_suggestions(request, shop_id, item_id):
                 sold_quantity=Coalesce(
                     Sum("shop_receipt_lines__quantity", filter=sale_filter),
                     Value(0),
-                    output_field=IntegerField(),
+                    output_field=DecimalField(max_digits=14, decimal_places=3),
                 )
             )
             .order_by("-sold_quantity", "name")[:6]
@@ -1019,8 +1021,11 @@ def _pending_stock_requests_for_shop(shop):
         .order_by("-created_at")
     )
     for movement in requests:
-        movement.units_total = sum(
-            int(line.quantity or 0) for line in movement.lines.all()
+        movement.units_total = _qty_label(
+            sum(
+                (Decimal(line.quantity or 0) for line in movement.lines.all()),
+                Decimal("0"),
+            )
         )
         for line in movement.lines.all():
             # Receiver confirms against sent qty (stock leaves the sender on accept).
@@ -1046,8 +1051,11 @@ def _outgoing_pending_stock_requests_for_shop(shop):
         .order_by("-created_at")
     )
     for movement in rows:
-        movement.units_total = sum(
-            int(line.quantity or 0) for line in movement.lines.all()
+        movement.units_total = _qty_label(
+            sum(
+                (Decimal(line.quantity or 0) for line in movement.lines.all()),
+                Decimal("0"),
+            )
         )
     return rows
 
@@ -1080,7 +1088,7 @@ def _stock_request_status_payload(shop):
         entry = {
             "id": movement["id"],
             "from_shop": movement["shop__name"] or "Another shop",
-            "units": int(movement["units"] or 0),
+            "units": _qty_number(movement["units"]),
             "created_at": created.isoformat() if created else "",
             "unseen": not movement["supplier_notified"],
         }
@@ -1178,7 +1186,12 @@ def _previous_stock_requests_for_shop(shop, *, limit=20):
         movement.counterparty = (
             movement.shop if movement.is_incoming else movement.requested_from_shop
         )
-        movement.units_total = sum(int(line.quantity or 0) for line in movement.lines.all())
+        movement.units_total = _qty_label(
+            sum(
+                (Decimal(line.quantity or 0) for line in movement.lines.all()),
+                Decimal("0"),
+            )
+        )
     return rows
 
 
@@ -1524,7 +1537,7 @@ def _buy_stock_items_context(shop):
         "items_by_category": [],
         "item_count": item_count,
         "category_count": 0,
-        "total_units": int(total_units),
+        "total_units": _qty_number(total_units),
         "selected_shop": shop,
         "stock_mode": "in",
         "countries": COUNTRY_DIAL_CODES,

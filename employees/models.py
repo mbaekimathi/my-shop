@@ -45,6 +45,7 @@ SHOP_ALLOCATION_ROLES = frozenset(
 # Roles with full stock workflow (in / out / transfer / serials / report).
 FULL_STOCK_WORKFLOW_ROLES = frozenset(
     {
+        EmployeeRole.SUPER_ADMIN,
         EmployeeRole.SHOP_MANAGER,
         EmployeeRole.STORE_MANAGER,
         EmployeeRole.IT_SUPPORT,

@@ -591,11 +591,12 @@ def sidebar_for_role_dashboard(
     from .module_permissions import employee_may_any
 
     dashboard_url = reverse(role_home_url_name(role))
-    skip_slugs = ("whatsapp",) if role == EmployeeRole.IT_SUPPORT else ()
+    comms_roles = (EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN)
+    skip_slugs = ("whatsapp",) if role in comms_roles else ()
     primary = _module_sidebar_links(
         role, active_slug=active_slug, profile=profile, skip_slugs=skip_slugs
     )
-    if role == EmployeeRole.IT_SUPPORT:
+    if role in comms_roles:
         primary.append(
             _link(
                 "Marketing links",
@@ -1834,30 +1835,18 @@ def sidebar_for_module(role, module_slug, profile=None):
     )
 
 
-def sidebar_for_super_admin():
+def sidebar_for_super_admin(profile=None):
     """Sidebar links unique to the Super Admin dashboard page."""
-    dashboard_url = reverse("employees:role_super_admin")
-    return resolve_sidebar_hrefs(
-        {
-            "page": "super_admin_dashboard",
-            "dashboard_url": dashboard_url,
-            "omit_dashboard_link": True,
-            "primary": [
-                *_module_sidebar_links(EmployeeRole.SUPER_ADMIN),
-                _link(
-                    "Employee access",
-                    "users-round",
-                    href=f"{dashboard_url}#employee-access",
-                ),
-            ],
-            "footer": _footer_site_links(
-                myshop_active=True,
-                tail=[
-                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
-                ],
-            ),
-        }
+    sidebar = sidebar_for_role_dashboard(EmployeeRole.SUPER_ADMIN, profile=profile)
+    sidebar["page"] = "super_admin_dashboard"
+    sidebar["primary"].append(
+        _link(
+            "Employee access",
+            "users-round",
+            href=f"{sidebar['dashboard_url']}#employee-access",
+        )
     )
+    return sidebar
 
 
 def sidebar_for_profile(role):

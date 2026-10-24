@@ -1121,7 +1121,11 @@
         if (!refund) return false;
         if (refund === "yes") {
           const amount = Number(floatRefundAmount?.value);
-          return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+          return (
+            Number.isFinite(amount) &&
+            amount > 0 &&
+            Math.abs(amount - Math.round(amount * 100) / 100) < 1e-9
+          );
         }
       }
       return true;
@@ -1155,7 +1159,11 @@
           const amount = Number(
             cell.querySelector("[data-stock-refund-amount]")?.value
           );
-          return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+          return (
+            Number.isFinite(amount) &&
+            amount > 0 &&
+            Math.abs(amount - Math.round(amount * 100) / 100) < 1e-9
+          );
         }
       }
       return true;
@@ -1497,9 +1505,13 @@
           }
           if (refund === "yes") {
             const amount = Number(floatRefundAmount?.value);
-            if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+            if (
+              !Number.isFinite(amount) ||
+              amount <= 0 ||
+              Math.abs(amount - Math.round(amount * 100) / 100) >= 1e-9
+            ) {
               return blockSubmit(
-                "Enter refund amount first — whole number greater than zero.",
+                "Enter refund amount first — amount greater than zero, up to 2 decimals.",
                 floatRefundAmount
               );
             }
@@ -3531,7 +3543,11 @@
       if (refund !== "yes" && refund !== "no") return false;
       if (refund === "yes") {
         const amount = Number(inputs.querySelector("[data-stock-refund-amount]")?.value || 0);
-        return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+        return (
+          Number.isFinite(amount) &&
+          amount > 0 &&
+          Math.abs(amount - Math.round(amount * 100) / 100) < 1e-9
+        );
       }
     }
     return true;
@@ -3770,9 +3786,12 @@
           !stockReq.out.refund ||
           ((details.refund === "yes" || details.refund === "no") &&
             (details.refund !== "yes" ||
-              (Number.isInteger(Number(details.refundAmount)) &&
+              (Number.isFinite(Number(details.refundAmount)) &&
                 Number(details.refundAmount) > 0 &&
-                Number.isFinite(Number(details.refundAmount)))));
+                Math.abs(
+                  Number(details.refundAmount) -
+                    Math.round(Number(details.refundAmount) * 100) / 100
+                ) < 1e-9)));
         if (reasonOk && refundOk) {
           appliedDetails = details;
           writeOutMeta(row, details);
@@ -4060,7 +4079,11 @@
       if (details.refund !== "yes" && details.refund !== "no") return false;
       if (details.refund === "yes") {
         const amount = Number(details.refundAmount);
-        return Number.isFinite(amount) && amount > 0 && Number.isInteger(amount);
+        return (
+          Number.isFinite(amount) &&
+          amount > 0 &&
+          Math.abs(amount - Math.round(amount * 100) / 100) < 1e-9
+        );
       }
     }
     return true;
@@ -4286,9 +4309,13 @@
         }
         if (details.refund === "yes") {
           const amount = Number(details.refundAmount);
-          if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+          if (
+            !Number.isFinite(amount) ||
+            amount <= 0 ||
+            Math.abs(amount - Math.round(amount * 100) / 100) >= 1e-9
+          ) {
             return blockSubmit(
-              "Enter refund amount first — whole number greater than zero.",
+              "Enter refund amount first — amount greater than zero, up to 2 decimals.",
               floatRefundAmount
             );
           }
