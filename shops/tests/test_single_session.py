@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
@@ -69,10 +71,23 @@ class SingleSessionTests(TestCase):
         self.assertEqual(response.status_code, 302)
         return client
 
-    def _ping(self, client):
-        response = client.get(reverse("employees:ping"))
+    def _ping(self, client, **kwargs):
+        response = client.get(reverse("employees:ping"), **kwargs)
         self.assertEqual(response.status_code, 200)
         return response.json()
+
+    def _set_idle_ts(self, client, seconds_ago):
+        """Move the stored last-activity mark into the past."""
+        from employees.middleware import IDLE_SESSION_KEY
+
+        session = client.session
+        session[IDLE_SESSION_KEY] = int(time.time()) - seconds_ago
+        session.save()
+
+    def _idle_ts(self, client):
+        from employees.middleware import IDLE_SESSION_KEY
+
+        return client.session.get(IDLE_SESSION_KEY)
 
     def test_login_stamps_session_key(self):
         client = self._login_employee()
@@ -116,6 +131,88 @@ class SingleSessionTests(TestCase):
 
         self.assertTrue(self._ping(client_a).get("employee_auth"))
         self.assertTrue(self._ping(client_b).get("employee_auth"))
+
+    def test_idle_timeout_signs_out_employee(self):
+        """15 minutes without interaction ends the employee session."""
+        client = self._login_employee()
+        self.assertTrue(self._ping(client).get("employee_auth"))
+
+        self._set_idle_ts(client, 901)
+        data = self._ping(client)
+        self.assertFalse(data.get("employee_auth"))
+        self.assertEqual(data.get("auth"), "none")
+
+        response = client.get(reverse("employees:role_shop_cashier"))
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse("employees:login")))
+
+    def test_idle_timeout_ignores_background_polls(self):
+        """Polling endpoints detect expiry but can never postpone it."""
+        client = self._login_employee()
+        self._set_idle_ts(client, 890)
+        last = self._idle_ts(client)
+
+        # Repeated polls inside the window stay signed in without refreshing.
+        self.assertTrue(self._ping(client).get("employee_auth"))
+        self.assertTrue(self._ping(client).get("employee_auth"))
+        self.assertEqual(self._idle_ts(client), last)
+
+        # Past the window the next poll reports the session as ended.
+        self._set_idle_ts(client, 901)
+        self.assertFalse(self._ping(client).get("employee_auth"))
+
+    def test_navigation_refreshes_idle_window(self):
+        client = self._login_employee()
+        self._set_idle_ts(client, 899)
+
+        response = client.get(
+            reverse("employees:role_shop_cashier"),
+            HTTP_SEC_FETCH_MODE="navigate",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(self._idle_ts(client), int(time.time()) - 5)
+
+    def test_activity_header_refreshes_idle_window(self):
+        """Fetch calls stamped with a recent interaction keep the session."""
+        client = self._login_employee()
+        self._set_idle_ts(client, 899)
+
+        data = self._ping(client, HTTP_X_MYSHOP_ACTIVITY="0")
+        self.assertTrue(data.get("employee_auth"))
+        self.assertGreaterEqual(self._idle_ts(client), int(time.time()) - 5)
+
+    def test_stale_activity_header_does_not_refresh(self):
+        """A poll reporting an old interaction must not extend the window."""
+        client = self._login_employee()
+        self._set_idle_ts(client, 880)
+        last = self._idle_ts(client)
+
+        # Still inside the window: the stored activity mark (880s ago) wins
+        # over the even-older interaction reported by this fetch.
+        data = self._ping(client, HTTP_X_MYSHOP_ACTIVITY=str(901 * 1000))
+        self.assertTrue(data.get("employee_auth"))
+        self.assertEqual(self._idle_ts(client), last)
+
+        # Once the stored mark crosses the window the same poll expires.
+        self._set_idle_ts(client, 901)
+        self.assertFalse(
+            self._ping(client, HTTP_X_MYSHOP_ACTIVITY=str(901 * 1000)).get(
+                "employee_auth"
+            )
+        )
+
+    def test_sync_post_does_not_refresh_idle_window(self):
+        """Automated queue replay must not count as user activity."""
+        client = self._login_employee()
+        self._set_idle_ts(client, 899)
+        last = self._idle_ts(client)
+
+        client.post(
+            reverse("employees:sync"),
+            data={"operations": []},
+            content_type="application/json",
+        )
+        self.assertEqual(self._idle_ts(client), last)
 
     def test_second_employee_login_supersedes_first_device(self):
         client_a = self._login_employee()

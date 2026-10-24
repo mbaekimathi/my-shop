@@ -3,10 +3,65 @@
  *
  * Shop sessions may run in many tabs and devices at once. Employee sessions
  * are single-tab: duplicate employee tabs are blocked.
+ *
+ * Same-origin fetches are stamped with the elapsed time since the last real
+ * interaction (X-MyShop-Activity) so the server-side idle timeout can tell
+ * user activity apart from background polls — polls may detect expiry but
+ * can never postpone it.
  */
 
 let redirecting = false;
 let tabLockState = null;
+
+const ACTIVITY_HEADER = "X-MyShop-Activity";
+const ACTIVITY_EVENTS = [
+  "pointerdown",
+  "pointermove",
+  "keydown",
+  "touchstart",
+  "wheel",
+  "scroll",
+];
+let lastUserActivityAt = Date.now();
+let activityTrackerInstalled = false;
+
+function noteUserActivity() {
+  lastUserActivityAt = Date.now();
+}
+
+function installActivityTracker() {
+  if (activityTrackerInstalled) return;
+  activityTrackerInstalled = true;
+  ACTIVITY_EVENTS.forEach((name) => {
+    window.addEventListener(name, noteUserActivity, {
+      passive: true,
+      capture: true,
+    });
+  });
+}
+
+function withActivityStamp(args) {
+  const [input, init] = args;
+  try {
+    const isRequest =
+      typeof Request !== "undefined" && input instanceof Request;
+    const rawUrl = isRequest ? input.url : String(input);
+    if (
+      new URL(rawUrl, window.location.origin).origin !==
+      window.location.origin
+    ) {
+      return args;
+    }
+    const headers = new Headers(isRequest ? input.headers : init?.headers);
+    headers.set(ACTIVITY_HEADER, String(Date.now() - lastUserActivityAt));
+    if (isRequest) {
+      return [new Request(input, { headers }), init];
+    }
+    return [input, { ...(init || {}), headers }];
+  } catch (_err) {
+    return args;
+  }
+}
 
 const LOCK_KEY_PREFIX = "myshop-session-lock:";
 const CHANNEL_PREFIX = "myshop-session-lock-";
@@ -82,7 +137,7 @@ function installFetchGuard() {
   }
   const originalFetch = window.fetch.bind(window);
   const wrapped = async (...args) => {
-    const response = await originalFetch(...args);
+    const response = await originalFetch(...withActivityStamp(args));
     if (
       authRoot() &&
       (response.status === 401 || response.status === 403)
@@ -377,6 +432,7 @@ async function initTabLock() {
 
 export function initSessionGuard() {
   if (!authRoot()) return;
+  installActivityTracker();
   installFetchGuard();
   document.addEventListener("myshop:ping", (event) => {
     onPingDetail(event.detail);

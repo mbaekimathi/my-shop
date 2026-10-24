@@ -82,6 +82,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "employees.middleware.EmployeeIdleTimeoutMiddleware",
     "shops.middleware.ShopFloorSessionMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -198,6 +199,11 @@ SESSION_CACHE_ALIAS = "default"
 SESSION_COOKIE_AGE = int(os.getenv("SESSION_COOKIE_AGE", str(60 * 60 * 24 * 14)))
 SESSION_SAVE_EVERY_REQUEST = False
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+# Employee sessions sign out after this many seconds without user interaction
+# (tracked client-side; background polling does not extend the window).
+EMPLOYEE_IDLE_TIMEOUT_SECONDS = int(
+    os.getenv("EMPLOYEE_IDLE_TIMEOUT_SECONDS", str(15 * 60))
+)
 
 # Prefer Argon2 for new hashes; keep PBKDF2 so existing passwords still verify
 # and upgrade on next successful login.
