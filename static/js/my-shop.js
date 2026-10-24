@@ -926,7 +926,7 @@
             title="Click to pick the serial numbers to send"
           >`
           : `<input
-            type="number"
+            type="text"
             class="stock-create-qty"
             name="quantity"
             min="0.001"
@@ -5043,7 +5043,7 @@
         const pricePrefix = document.createElement("span");
         pricePrefix.textContent = "KSh";
         const priceInput = document.createElement("input");
-        priceInput.type = "number";
+        priceInput.type = "text";
         priceInput.className = "shop-cart-price-input";
         priceInput.min = String(
           selectedKind() === "trade_in"
@@ -5123,7 +5123,7 @@
         dec.innerHTML = '<i data-lucide="minus" aria-hidden="true"></i>';
 
         const qtyInput = document.createElement("input");
-        qtyInput.type = "number";
+        qtyInput.type = "text";
         qtyInput.className = "shop-cart-qty-input";
         qtyInput.min = "0.001";
         qtyInput.step = "0.001";
@@ -6531,7 +6531,7 @@
           dec.setAttribute("aria-label", "Decrease quantity");
           dec.innerHTML = '<i data-lucide="minus" aria-hidden="true"></i>';
           const qtyInput = document.createElement("input");
-          qtyInput.type = "number";
+          qtyInput.type = "text";
           qtyInput.className = "shop-cart-qty-input";
           qtyInput.min = "0.001";
           qtyInput.step = "0.001";
@@ -6566,7 +6566,7 @@
         const prefix = document.createElement("span");
         prefix.textContent = "KSh";
         const priceInput = document.createElement("input");
-        priceInput.type = "number";
+        priceInput.type = "text";
         priceInput.className = "shop-cart-price-input";
         priceInput.min = isIn
           ? "0.01"

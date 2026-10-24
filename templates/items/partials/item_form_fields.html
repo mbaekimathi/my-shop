@@ -24,7 +24,7 @@
   <span class="field-label">Minimum selling price (KSh)</span>
   <div class="currency-field">
     <span class="currency-prefix" aria-hidden="true">KSh</span>
-    <input type="number" name="minimum_selling_price" value="{{ form_data.minimum_selling_price }}" min="0" step="0.01" required id="{{ prefix }}minimum-selling-price" inputmode="decimal">
+    <input type="text" name="minimum_selling_price" value="{{ form_data.minimum_selling_price }}" min="0" step="0.01" required id="{{ prefix }}minimum-selling-price" inputmode="decimal">
   </div>
 </label>
 
@@ -71,7 +71,7 @@
       <div class="currency-field">
         <span class="currency-prefix" aria-hidden="true">KSh</span>
         <input
-          type="number"
+          type="text"
           name="shop_price"
           value="{{ form_data.shop_price }}"
           min="0"
@@ -98,7 +98,7 @@
         <div class="currency-field">
           <span class="currency-prefix" aria-hidden="true">KSh</span>
           <input
-            type="number"
+            type="text"
             name="shop_price_{{ shop.pk }}"
             value="{% with sid=shop.pk|stringformat:'s' %}{% for key, price in form_data.shop_prices.items %}{% if key == sid %}{{ price }}{% endif %}{% endfor %}{% endwith %}"
             min="0"

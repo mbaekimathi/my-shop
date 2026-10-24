@@ -209,7 +209,7 @@
             <i data-lucide="minus" aria-hidden="true"></i>
           </button>
           <input
-            type="number"
+            type="text"
             class="shop-floor-qty-input"
             data-cart-qty-input
             min="0.001"

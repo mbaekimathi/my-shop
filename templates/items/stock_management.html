@@ -555,7 +555,7 @@
                       <label class="stock-inline-field">
                         <span>Qty to stock in</span>
                         <input
-                          type="number"
+                          type="text"
                           name="quantity"
                           min="0.001"
                           step="0.001"
@@ -577,7 +577,7 @@
                           {% endif %}
                         </span>
                         <input
-                          type="number"
+                          type="text"
                           name="buying_price"
                           min="0"
                           step="0.01"
@@ -720,7 +720,7 @@
                       <label class="stock-inline-field">
                         <span>Qty to stock out</span>
                         <input
-                          type="number"
+                          type="text"
                           name="quantity"
                           min="0.001"
                           step="0.001"
@@ -770,7 +770,7 @@
                       <label class="stock-inline-field" data-stock-refund-amount-wrap hidden>
                         <span>Refund amount</span>
                         <input
-                          type="number"
+                          type="text"
                           name="refund_amount"
                           min="0"
                           step="0.01"
@@ -831,7 +831,7 @@
                       <label class="stock-inline-field">
                         <span>Qty to transfer</span>
                         <input
-                          type="number"
+                          type="text"
                           name="quantity"
                           min="0.001"
                           step="0.001"
@@ -1076,7 +1076,7 @@
           <label class="stock-float-field" data-stock-float-refund-amount-wrap hidden>
             <span>Refund amount</span>
             <input
-              type="number"
+              type="text"
               min="0"
               step="0.01"
               placeholder="0"
@@ -1406,7 +1406,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/stock-catalog.js' %}?v=20261019-assets"></script>
+<script defer src="{% static 'js/stock-catalog.js' %}?v=20261024-decimal-inputs"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=20261024-decimals"></script>

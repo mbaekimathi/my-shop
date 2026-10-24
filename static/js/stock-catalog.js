@@ -1013,7 +1013,7 @@
         </div>`
       : `<label class="stock-inline-field">
           <span>${qtyLabel}</span>
-          <input type="number" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
+          <input type="text" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
         </label>`;
     const priceBlock = `<label class="stock-inline-field">
           <span class="stock-inline-label-row">
@@ -1025,7 +1025,7 @@
             }
           </span>
           <input
-            type="number"
+            type="text"
             name="buying_price"
             min="0"
             step="0.01"
@@ -1056,13 +1056,13 @@
         </div>`
         : `<label class="stock-inline-field">
           <span>Qty</span>
-          <input type="number" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
+          <input type="text" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
         </label>`;
       const priceBlockSimple = `<label class="stock-inline-field stock-inline-field--buy">
           <span>Unit buy</span>
           <span class="stock-buy-price-wrap${prev ? " has-prev" : ""}">
             <input
-              type="number"
+              type="text"
               name="buying_price"
               min="0"
               step="0.01"
@@ -1137,7 +1137,7 @@
         </div>`
       : `<label class="stock-inline-field">
           <span>Qty to stock out</span>
-          <input type="number" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
+          <input type="text" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
         </label>`;
     return `
       <div class="stock-in-field-row">
@@ -1179,7 +1179,7 @@
         <label class="stock-inline-field" data-stock-refund-amount-wrap hidden>
           <span>Refund amount</span>
           <input
-            type="number"
+            type="text"
             name="refund_amount"
             min="0"
             step="1"
@@ -1211,7 +1211,7 @@
     return `
     <label class="stock-inline-field">
       <span>Qty to transfer</span>
-      <input type="number" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
+      <input type="text" name="quantity" min="0.001" step="0.001" placeholder="0" inputmode="decimal" data-stock-qty data-stock-field disabled>
     </label>
     <input type="hidden" name="serial_numbers" value="" data-stock-field disabled>`;
   };
@@ -1230,7 +1230,7 @@
     const qtyControl =
       !item.track_serial
         ? `<input
-          type="number"
+          type="text"
           class="stock-list-input"
           name="quantity"
           min="0.001"
@@ -1257,7 +1257,7 @@
     const priceBlock =
       mode === "in"
         ? `<input
-            type="number"
+            type="text"
             class="stock-list-input stock-list-input--price"
             name="buying_price"
             min="0"

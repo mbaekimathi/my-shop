@@ -108,7 +108,7 @@
                       <label class="stock-transfer-qty-field">
                         <span class="visually-hidden">Received quantity for {{ line.item.name|default:line.item_name }}</span>
                         <input
-                          type="number"
+                          type="text"
                           name="qty_{{ line.pk }}"
                           min="0"
                           step="{% if line.item and line.item.track_serial_number %}1{% else %}0.001{% endif %}"

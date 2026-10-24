@@ -459,7 +459,7 @@
       ? `<div class="shop-receipt-return-serials">${serialOptions}</div>`
       : `<label class="shop-receipt-return-qty">
   <span>Qty</span>
-  <input type="number" min="0.001" max="${maxQty}" step="0.001" value="${maxQty}" inputmode="decimal" data-return-qty>
+  <input type="text" min="0.001" max="${maxQty}" step="0.001" value="${maxQty}" inputmode="decimal" data-return-qty>
 </label>`
   }
 </div>`;

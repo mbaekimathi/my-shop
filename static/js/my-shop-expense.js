@@ -295,11 +295,11 @@
             <label class="stock-inline-field shop-expense-field-amount">
               <span>Amount</span>
               <input
-                type="number"
+                type="text"
                 name="amount"
-                min="1"
-                step="1"
-                inputmode="numeric"
+                min="0.01"
+                step="0.01"
+                inputmode="decimal"
                 value="${amount}"
               >
             </label>

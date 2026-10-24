@@ -384,7 +384,7 @@
         <label class="shop-cart-input">
           <span>Cash</span>
           <input
-            type="number"
+            type="text"
             name="cash_amount"
             min="0"
             step="0.01"
@@ -396,7 +396,7 @@
         <label class="shop-cart-input">
           <span>M-Pesa</span>
           <input
-            type="number"
+            type="text"
             name="mpesa_amount"
             min="0"
             step="0.01"
@@ -611,7 +611,7 @@
               <span class="shop-product-price-prefix">KSh</span>
               <input
                 id="shop-product-price-input"
-                type="number"
+                type="text"
                 class="shop-product-price-input"
                 data-product-price-input
                 min="0"
@@ -639,7 +639,7 @@
               <i data-lucide="minus" aria-hidden="true"></i>
             </button>
             <input
-              type="number"
+              type="text"
               class="shop-floor-qty-input shop-product-qty-input"
               data-product-qty-input
               min="0.001"
@@ -825,15 +825,15 @@
   }
 })();
 </script>
-<script defer src="{% static 'js/shop-catalog.js' %}?v=20261024-decimals"></script>
+<script defer src="{% static 'js/shop-catalog.js' %}?v=20261024-decimal-inputs"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=20261019-assets"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=20261024-decimals"></script>
-<script defer src="{% static 'js/stock-catalog.js' %}?v=20261019-assets"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=20261024-decimal-inputs"></script>
+<script defer src="{% static 'js/stock-catalog.js' %}?v=20261024-decimal-inputs"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=20261024-decimals"></script>
-<script defer src="{% static 'js/my-shop-expense.js' %}?v=20261019-assets"></script>
+<script defer src="{% static 'js/my-shop-expense.js' %}?v=20261024-decimal-inputs"></script>
 <script
   defer
   src="{% static 'js/serial-scan.js' %}?v=8"
