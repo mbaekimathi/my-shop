@@ -85,6 +85,7 @@ from .services import (
     find_client_by_phone,
     format_kenya_phone,
     client_phone_for_receipt,
+    get_company_pos_settings,
     get_company_profile,
     get_company_stock_settings,
     get_company_working_hours_settings,
@@ -711,6 +712,82 @@ def my_shop_select(request):
 def my_shop_leave(request):
     clear_active_shop(request)
     return redirect(role_home_url_name(get_profile_for_request(request).role))
+
+
+def _shop_switch_passwordless() -> bool:
+    return bool(
+        getattr(
+            get_company_pos_settings(), "enable_passwordless_shop_switch", False
+        )
+    )
+
+
+@require_http_methods(["GET", "POST"])
+def my_shop_switch(request):
+    """Move the signed-in shop portal session to another shop."""
+    from employees.portal_auth import begin_shop_portal_session
+    from shops.session import session_expired_response
+
+    portal_shop = resolve_portal_shop(request)
+    if portal_shop is None:
+        return session_expired_response(request, as_json=True)
+
+    if request.method == "GET":
+        shops = Shop.objects.filter(
+            is_hidden=False, is_suspended=False
+        ).order_by("name")
+        return JsonResponse(
+            {
+                "ok": True,
+                "passwordless": _shop_switch_passwordless(),
+                "current_shop_id": str(portal_shop.pk),
+                "shops": [
+                    {
+                        "id": str(shop.pk),
+                        "name": shop.name,
+                        "location": shop.location or "",
+                        "login_code": shop.login_code or "",
+                        "image_url": shop.image.url if shop.image else "",
+                    }
+                    for shop in shops
+                ],
+            }
+        )
+
+    shop_id = (request.POST.get("shop_id") or "").strip()
+    shop = (
+        Shop.objects.filter(pk=shop_id, is_hidden=False, is_suspended=False)
+        .only("id", "name", "password_hash", "is_hidden", "is_suspended")
+        .first()
+    )
+    if shop is None:
+        return JsonResponse(
+            {"ok": False, "error": "Select a shop to open."}, status=400
+        )
+    if str(shop.pk) != str(portal_shop.pk):
+        if not _shop_switch_passwordless():
+            # Same bucket as shop sign-in: caps password guessing without
+            # throttling passwordless hops.
+            from employees.throttle import get_client_ip, is_rate_limited
+
+            if is_rate_limited("login", get_client_ip(request)):
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "Too many attempts. Wait a moment and try again.",
+                    },
+                    status=429,
+                )
+            if not verify_shop_password(
+                shop, request.POST.get("password") or ""
+            ):
+                return JsonResponse(
+                    {"ok": False, "error": "Incorrect shop password. Try again."},
+                    status=403,
+                )
+        begin_shop_portal_session(request, shop)
+        set_active_shop(request, shop)
+    return JsonResponse({"ok": True, "redirect": _shop_workspace_url(shop)})
 
 
 def _catalog_base_qs(shop=None):

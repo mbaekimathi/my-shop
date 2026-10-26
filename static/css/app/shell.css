@@ -572,6 +572,15 @@ html[data-theme="dark"] .workspace-header-bell-badge {
   transition: background 0.18s ease, color 0.18s ease;
 }
 
+button.workspace-user-dropdown-item {
+  width: 100%;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .workspace-user-dropdown-item i {
   width: 1.05rem;
   height: 1.05rem;

@@ -67,6 +67,7 @@ POS_SETTING_FIELDS = {
     "enable_discount",
     "enable_stock_tracking",
     "enable_open_close",
+    "enable_passwordless_shop_switch",
     "enable_client_data",
     "require_client_phone",
     "require_client_name",

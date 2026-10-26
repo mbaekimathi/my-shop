@@ -9,6 +9,7 @@ urlpatterns = [
     path("my-shop/", shop_views.my_shop_entry, name="my_shop"),
     path("my-shop/select/", shop_views.my_shop_select, name="my_shop_select"),
     path("my-shop/leave/", shop_views.my_shop_leave, name="my_shop_leave"),
+    path("my-shop/switch/", shop_views.my_shop_switch, name="my_shop_switch"),
     path("shops/login/", shop_views.shop_portal_login, name="shop_login"),
     path("shops/logout/", shop_views.shop_portal_logout, name="shop_logout"),
     path(

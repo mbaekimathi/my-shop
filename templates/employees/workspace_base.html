@@ -5,13 +5,13 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/app/settings.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261026-shop-switch">
 <link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261020-split">
 <link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261025-mobile-cards">
 <link rel="stylesheet" href="{% static 'css/app/credit-note.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261026-shop-switch">
 <link rel="stylesheet" href="{% static 'css/app/comms.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/components.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261019-split">
@@ -124,6 +124,9 @@
 {% if low_stock_alerts %}
 {% include "shops/partials/shop_low_stock_modal.html" %}
 {% endif %}
+{% if workspace.is_shop_portal %}
+{% include "shops/partials/shop_switch_modal.html" %}
+{% endif %}
 {% include "employees/partials/developer_payment_modal.html" %}
 {% endblock %}
 {% endblock %}
@@ -139,6 +142,9 @@
 {% endif %}
 {% if developer_payment_prompt %}
 <script defer src="{% static 'js/developer-payment-prompt.js' %}?v=2"></script>
+{% endif %}
+{% if workspace.is_shop_portal %}
+<script defer src="{% static 'js/shop-switch.js' %}?v=1"></script>
 {% endif %}
 <script defer src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
 <script type="module" src="{% static 'js/session-guard.js' %}?v=6"></script>

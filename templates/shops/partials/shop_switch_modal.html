@@ -1,0 +1,100 @@
+{% load static %}
+<div
+  class="workspace-modal shop-select-modal shop-switch-modal"
+  data-modal="shop-switch"
+  data-shop-switch-modal
+  data-switch-url="{% url 'employees:my_shop_switch' %}"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-shop-switch-close></div>
+  <div
+    class="workspace-modal-dialog shop-select-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shop-switch-title"
+  >
+    <div class="workspace-modal-head shop-select-head">
+      <div>
+        <p class="shop-select-kicker">{{ company_name|default:"MY-SHOP" }}</p>
+        <h2 id="shop-switch-title">Switch shop</h2>
+        <p class="shop-select-lead" data-shop-switch-lead>
+          Choose a shop to open its floor.
+        </p>
+      </div>
+      <button
+        class="workspace-icon-btn"
+        type="button"
+        aria-label="Close"
+        data-modal-close="shop-switch"
+        data-shop-switch-close
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div
+      class="form-alert shop-select-alert"
+      role="alert"
+      data-shop-switch-error
+      hidden
+    >
+      <i data-lucide="alert-circle" aria-hidden="true"></i>
+      <span data-shop-switch-error-text></span>
+    </div>
+
+    <div class="shop-switch-body">
+      <div class="shop-switch-loading" data-shop-switch-loading>
+        <i data-lucide="loader-circle" aria-hidden="true"></i>
+        <p>Loading shops…</p>
+      </div>
+
+      <p class="shop-switch-empty" data-shop-switch-empty hidden>
+        No other shops are available.
+      </p>
+
+      <div class="shop-select-grid" data-shop-switch-list hidden></div>
+    </div>
+
+    <form
+      class="shop-switch-foot"
+      data-shop-switch-form
+      hidden
+      novalidate
+    >
+      <label class="field shop-select-password">
+        <span class="field-label" data-shop-switch-password-label>
+          Shop password
+        </span>
+        <div class="password-field">
+          <input
+            type="password"
+            name="password"
+            autocomplete="off"
+            placeholder="Enter shop password"
+            data-shop-switch-password
+          >
+          <button
+            class="password-toggle"
+            type="button"
+            aria-label="Show password"
+            data-shop-switch-password-toggle
+          >
+            <i data-lucide="eye" aria-hidden="true" data-eye-open></i>
+            <i data-lucide="eye-off" aria-hidden="true" data-eye-closed hidden></i>
+          </button>
+        </div>
+      </label>
+      <div class="workspace-modal-actions shop-select-actions">
+        <button
+          class="btn btn--primary"
+          type="submit"
+          data-shop-switch-submit
+        >
+          <i data-lucide="log-in" aria-hidden="true"></i>
+          <span>Open shop</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

@@ -406,6 +406,10 @@ class CompanyPosSettings(models.Model):
         default=True,
         help_text="When on, staff must open the shop day before selling and are redirected to open/close. When off, open/close is optional.",
     )
+    enable_passwordless_shop_switch = models.BooleanField(
+        default=False,
+        help_text="When on, a signed-in shop session can switch to another shop without re-entering the shop password.",
+    )
     enable_client_data = models.BooleanField(
         default=True,
         help_text="When on, cart can collect client name and phone. When off, client fields are hidden.",

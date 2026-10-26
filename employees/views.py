@@ -1968,6 +1968,13 @@ POS_SETTING_GROUPS = (
         "toggles": (("enable_open_close", "Compulsory open & close"),),
     },
     {
+        "title": "Shop switching",
+        "summary": "",
+        "toggles": (
+            ("enable_passwordless_shop_switch", "Switch shops without password"),
+        ),
+    },
+    {
         "title": "Clients",
         "summary": "",
         "toggles": (
