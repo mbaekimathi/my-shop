@@ -65,6 +65,10 @@ Then:
 
 WhiteNoise serves CSS/JS from `staticfiles/`. Media is served automatically on hosted installs.
 
+> Updating an existing install? Run `deploy.bat` (pull → migrate →
+> collectstatic → Passenger restart touch). `git pull` alone does not
+> refresh the CSS/JS browsers receive — `staticfiles/` is built locally.
+
 ### VPS (Gunicorn + nginx)
 
 ```bash
