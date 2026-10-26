@@ -10,7 +10,7 @@ set "PY=python"
 if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
 
 echo [1/3] Pulling latest code...
-git pull --ff-only
+git pull --ff-only origin main
 if errorlevel 1 (
   echo.
   echo Pull failed. Resolve local changes or conflicts, then re-run deploy.

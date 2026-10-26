@@ -10,7 +10,7 @@ PY=python
 [ -x "venv/bin/python" ] && PY="venv/bin/python"
 
 echo "[1/3] Pulling latest code..."
-git pull --ff-only
+git pull --ff-only origin main
 
 echo "[2/3] Applying database migrations..."
 "$PY" manage.py migrate --noinput
