@@ -277,7 +277,7 @@ def item_management(request, profile, meta, module, page_sidebar):
     from employees.workspace import item_management_url
 
     mode = (request.GET.get("mode") or "view").strip().lower()
-    if mode not in {"view", "discounts", "activity-audits", "suspended"}:
+    if mode not in {"view", "discounts", "activity-audits", "suspended", "images"}:
         mode = "view"
     if mode == "discounts":
         return item_discounts(request, profile, meta, module)
@@ -285,6 +285,8 @@ def item_management(request, profile, meta, module, page_sidebar):
         return item_activity_audits(request, profile, meta, module)
     if mode == "suspended":
         return item_suspended(request, profile, meta, module)
+    if mode == "images":
+        return item_images(request, profile, meta, module)
 
     form_data = dict(EMPTY_FORM)
     form_errors = []
@@ -382,9 +384,15 @@ def item_management(request, profile, meta, module, page_sidebar):
 
         elif action == "toggle_suspend":
             item = get_object_or_404(Item, pk=item_id)
-            toggle_item_suspended(item, actor=profile)
-            state = "suspended" if item.is_suspended else "unsuspended"
-            messages.success(request, f"Item “{item.name}” {state}.")
+            if item.is_suspended:
+                messages.info(
+                    request,
+                    f"Item “{item.name}” is already suspended — "
+                    "unsuspend it from the Suspended items page.",
+                )
+            else:
+                toggle_item_suspended(item, actor=profile)
+                messages.success(request, f"Item “{item.name}” suspended.")
             return redirect(request.path)
 
         elif action == "suspend":
@@ -396,24 +404,13 @@ def item_management(request, profile, meta, module, page_sidebar):
 
         elif action == "delete":
             item = get_object_or_404(Item, pk=item_id)
-            name = item.name
-            if (
-                not item.is_suspended
-                and item.shop_stocks.filter(quantity__gt=0).exists()
-            ):
+            if not item.is_suspended:
                 toggle_item_suspended(item, actor=profile)
-                messages.success(
-                    request,
-                    f"Item “{name}” has stock on hand — suspended instead of deleted.",
-                )
-                return redirect(request.path)
-            try:
-                delete_item(item, actor=profile)
-            except ValidationError as exc:
-                for msg in _validation_errors(exc):
-                    messages.error(request, msg)
-                return redirect(request.path)
-            messages.success(request, f"Item “{name}” deleted.")
+            messages.info(
+                request,
+                f"Item “{item.name}” suspended — clear its stock, then "
+                "delete it from the Suspended items page.",
+            )
             return redirect(request.path)
 
         else:
@@ -429,11 +426,12 @@ def item_management(request, profile, meta, module, page_sidebar):
     from employees.access import role_url_segment
     from employees.workspace import sidebar_for_item_management
 
-    item_count = Item.objects.count()
+    item_count = Item.objects.filter(is_suspended=False).count()
     item_categories = [
         category
         for category in (
-            Item.objects.order_by("category")
+            Item.objects.filter(is_suspended=False)
+            .order_by("category")
             .values_list("category", flat=True)
             .distinct()
         )
@@ -476,6 +474,7 @@ def item_management(request, profile, meta, module, page_sidebar):
             "edit_item": edit_item,
             "module_permissions": caps,
             "item_discounts_url": item_management_url(profile.role, "discounts"),
+            "item_images_url": item_management_url(profile.role, "images"),
             "item_suspended_url": item_management_url(profile.role, "suspended"),
             "item_activity_audits_url": item_management_url(
                 profile.role, "activity-audits"
@@ -531,7 +530,7 @@ def item_discounts(request, profile, meta, module):
             return redirect(item_management_url(profile.role, "discounts"))
 
         item_id = (request.POST.get("item_id") or "").strip()
-        item = get_object_or_404(Item, pk=item_id)
+        item = get_object_or_404(Item.objects.filter(is_suspended=False), pk=item_id)
         list_price = item.shop_price or Decimal("0")
         min_price = item.minimum_selling_price or Decimal("0")
 
@@ -697,7 +696,8 @@ def item_discounts(request, profile, meta, module):
 
     shops = list(_pricing_shops_for_profile(profile))
     items = list(
-        Item.objects.only(
+        Item.objects.filter(is_suspended=False)
+        .only(
             "id",
             "category",
             "name",
@@ -710,7 +710,8 @@ def item_discounts(request, profile, meta, module):
             "discount_amount",
             "is_suspended",
             "image",
-        ).order_by("category", "name")
+        )
+        .order_by("category", "name")
     )
     item_ids = [item.pk for item in items]
     allowed_shop_ids = {shop.pk for shop in shops}
@@ -917,20 +918,42 @@ def item_suspended(request, profile, meta, module):
     suspended_url = item_management_url(profile.role, "suspended")
 
     if request.method == "POST":
+        action = (request.POST.get("action") or "unsuspend").strip()
         denied = require_module_permission(
-            request, profile, "item-management", "toggle_suspend"
+            request,
+            profile,
+            "item-management",
+            "delete" if action == "delete" else "toggle_suspend",
         )
         if denied is not None:
             return denied
-        action = (request.POST.get("action") or "unsuspend").strip()
-        if action != "unsuspend":
-            messages.error(request, "Unknown action.")
-            return redirect(suspended_url)
         item_id = (request.POST.get("item_id") or "").strip()
-        item = get_object_or_404(Item, pk=item_id)
-        if item.is_suspended:
-            toggle_item_suspended(item, actor=profile)
-        messages.success(request, f"Item “{item.name}” unsuspended.")
+        if action == "unsuspend":
+            item = get_object_or_404(Item, pk=item_id)
+            if item.is_suspended:
+                toggle_item_suspended(item, actor=profile)
+            messages.success(request, f"Item “{item.name}” unsuspended.")
+            return redirect(suspended_url)
+        if action == "delete":
+            item = get_object_or_404(
+                Item.objects.filter(is_suspended=True), pk=item_id
+            )
+            name = item.name
+            if item.shop_stocks.filter(quantity__gt=0).exists():
+                messages.error(
+                    request,
+                    f"Clear the remaining stock for “{name}” before deleting it.",
+                )
+                return redirect(suspended_url)
+            try:
+                delete_item(item, actor=profile)
+            except ValidationError as exc:
+                for msg in _validation_errors(exc):
+                    messages.error(request, msg)
+                return redirect(suspended_url)
+            messages.success(request, f"Item “{name}” deleted.")
+            return redirect(suspended_url)
+        messages.error(request, "Unknown action.")
         return redirect(suspended_url)
 
     denied = require_module_permission(request, profile, "item-management", "view")
@@ -938,6 +961,7 @@ def item_suspended(request, profile, meta, module):
         return denied
 
     can_toggle = employee_may(profile, "item-management", "toggle_suspend")
+    can_delete = employee_may(profile, "item-management", "delete")
     stock_shops = list(_pricing_shops_for_profile(profile))
     shop_ids = [shop.pk for shop in stock_shops]
 
@@ -945,6 +969,7 @@ def item_suspended(request, profile, meta, module):
     item_ids = [item.pk for item in items]
 
     qty_map = {}
+    stocked_item_ids = set()
     if item_ids:
         stock_qs = ShopStock.objects.filter(item_id__in=item_ids)
         if shop_ids:
@@ -953,6 +978,10 @@ def item_suspended(request, profile, meta, module):
             "item_id", "shop_id", "quantity"
         ):
             qty_map.setdefault(item_id, {})[shop_id] = qty
+        stocked_item_ids = set(
+            ShopStock.objects.filter(item_id__in=item_ids, quantity__gt=0)
+            .values_list("item_id", flat=True)
+        )
 
     suspended_rows = []
     for item in items:
@@ -961,6 +990,7 @@ def item_suspended(request, profile, meta, module):
         suspended_rows.append(
             {
                 "item": item,
+                "has_stock": item.pk in stocked_item_ids,
                 "shop_stock_rows": [
                     {
                         "shop_name": shop.name,
@@ -1003,6 +1033,144 @@ def item_suspended(request, profile, meta, module):
             "item_count": len(suspended_rows),
             "item_management_url": item_management_url(profile.role, "view"),
             "can_toggle_suspend": can_toggle,
+            "can_delete": can_delete,
+            "module_permissions": module_capabilities(profile, "item-management"),
+        },
+    )
+
+
+@require_http_methods(["GET", "POST"])
+def item_images(request, profile, meta, module):
+    """Bulk item image update — one upload applied to picked items or a category."""
+    from employees.module_permissions import (
+        employee_may,
+        module_capabilities,
+        require_module_permission,
+    )
+    from employees.workspace import item_management_url, sidebar_for_item_management
+
+    from .services import (
+        ALLOWED_IMAGE_TYPES,
+        MAX_IMAGE_BYTES,
+        apply_image_to_items,
+    )
+
+    images_url = item_management_url(profile.role, "images")
+
+    if request.method == "POST":
+        denied = require_module_permission(
+            request, profile, "item-management", "edit"
+        )
+        if denied is not None:
+            return denied
+        action = (request.POST.get("action") or "update_images").strip()
+        if action != "update_images":
+            messages.error(request, "Unknown action.")
+            return redirect(images_url)
+
+        image = request.FILES.get("image")
+        errors = []
+        if image is None:
+            errors.append("Choose an image to upload.")
+        elif image.content_type not in ALLOWED_IMAGE_TYPES:
+            errors.append("Item image must be JPG, PNG, WEBP, or GIF.")
+        elif image.size > MAX_IMAGE_BYTES:
+            errors.append("Item image must be 5 MB or smaller.")
+
+        scope = (request.POST.get("apply_scope") or "items").strip().lower()
+        items = []
+        if scope == "category":
+            category = (request.POST.get("category") or "").strip()
+            if category:
+                items = list(
+                    Item.objects.filter(
+                        category__iexact=category, is_suspended=False
+                    )
+                    .order_by("name")
+                    .prefetch_related("shop_prices")
+                )
+            else:
+                errors.append("Choose the category to update.")
+        else:
+            ids = []
+            seen = set()
+            for raw in request.POST.getlist("item_id"):
+                try:
+                    pk = int(str(raw).strip())
+                except (TypeError, ValueError):
+                    continue
+                if pk > 0 and pk not in seen:
+                    seen.add(pk)
+                    ids.append(pk)
+            if ids:
+                items = list(
+                    Item.objects.filter(pk__in=ids, is_suspended=False)
+                    .order_by("category", "name")
+                    .prefetch_related("shop_prices")
+                )
+        if not errors and not items:
+            errors.append("Select at least one item to update.")
+
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+            return redirect(images_url)
+
+        updated = apply_image_to_items(items, image, actor=profile)
+        messages.success(
+            request,
+            f"Image updated on {updated} item{'s' if updated != 1 else ''}.",
+        )
+        return redirect(images_url)
+
+    denied = require_module_permission(request, profile, "item-management", "view")
+    if denied is not None:
+        return denied
+
+    can_edit = employee_may(profile, "item-management", "edit")
+    items = list(
+        Item.objects.filter(is_suspended=False).order_by("category", "name")
+    )
+    item_groups = []
+    for category, group_items in groupby(
+        items, key=lambda item: item.category or ""
+    ):
+        rows = list(group_items)
+        item_groups.append(
+            {
+                "category": category or "Uncategorised",
+                "items": rows,
+                "count": len(rows),
+            }
+        )
+
+    page_sidebar = sidebar_for_item_management(
+        profile.role, profile=profile, active_mode="images"
+    )
+    meta = {
+        **meta,
+        "title": "Item images",
+        "headline": "Item images",
+        "summary": (
+            "Upload one image and apply it to selected items "
+            "or a whole category."
+        ),
+    }
+
+    return render(
+        request,
+        "items/item_images.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "item_groups": item_groups,
+            "item_count": len(items),
+            "item_management_url": item_management_url(profile.role, "view"),
+            "can_edit_images": can_edit,
             "module_permissions": module_capabilities(profile, "item-management"),
         },
     )

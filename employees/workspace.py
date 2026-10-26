@@ -906,7 +906,13 @@ def sidebar_for_item_management(role, profile=None, *, active_mode="view"):
 
     dashboard_url = reverse(role_home_url_name(role))
     mode = (active_mode or "view").strip().lower()
-    if mode not in {"view", "discounts", "activity-audits", "suspended"}:
+    if mode not in {
+        "view",
+        "discounts",
+        "activity-audits",
+        "suspended",
+        "images",
+    }:
         mode = "view"
     primary = [
         _link("Dashboard", "layout-dashboard", href=dashboard_url),
@@ -921,6 +927,12 @@ def sidebar_for_item_management(role, profile=None, *, active_mode="view"):
             "badge-percent",
             href=item_management_url(role, "discounts"),
             active=mode == "discounts",
+        ),
+        _link(
+            "Item images",
+            "image",
+            href=item_management_url(role, "images"),
+            active=mode == "images",
         ),
         _link(
             "Suspended items",

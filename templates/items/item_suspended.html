@@ -60,7 +60,7 @@
           <th scope="col" class="item-col--shop" title="On-hand stock at {{ shop.name }}">{{ shop.name }}</th>
           {% endfor %}
           <th scope="col" class="item-col--discount-num" title="Total on-hand stock across shops">Total</th>
-          {% if can_toggle_suspend %}
+          {% if can_toggle_suspend or can_delete %}
           <th scope="col" class="item-col--actions"><span class="visually-hidden">Actions</span></th>
           {% endif %}
         </tr>
@@ -102,8 +102,9 @@
           <td class="item-cell--discount-num" data-label="Total">
             <strong>{{ row.total_qty }}</strong>
           </td>
-          {% if can_toggle_suspend %}
+          {% if can_toggle_suspend or can_delete %}
           <td class="item-cell--actions" data-label="Actions">
+            {% if can_toggle_suspend %}
             <form class="item-inline-form" method="post">
               {% csrf_token %}
               <input type="hidden" name="action" value="unsuspend">
@@ -118,6 +119,41 @@
                 <span>Unsuspend</span>
               </button>
             </form>
+            {% endif %}
+            {% if can_delete %}
+              {% if row.has_stock %}
+              <button
+                class="item-discount-save"
+                type="button"
+                disabled
+                title="Clear the item's stock before deleting it"
+                aria-label="{{ row.item.name }} still has stock — clear it before deleting"
+              >
+                <i data-lucide="trash-2" aria-hidden="true"></i>
+                <span>Delete</span>
+              </button>
+              {% else %}
+              <form
+                class="item-inline-form"
+                method="post"
+                data-confirm-delete
+                data-item-name="{{ row.item.name }}"
+              >
+                {% csrf_token %}
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="item_id" value="{{ row.item.pk }}">
+                <button
+                  class="item-discount-save"
+                  type="submit"
+                  title="Delete item"
+                  aria-label="Delete {{ row.item.name }}"
+                >
+                  <i data-lucide="trash-2" aria-hidden="true"></i>
+                  <span>Delete</span>
+                </button>
+              </form>
+              {% endif %}
+            {% endif %}
           </td>
           {% endif %}
         </tr>
@@ -141,4 +177,5 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/item-search.js' %}?v=2"></script>
+<script defer src="{% static 'js/item-suspended.js' %}?v=1"></script>
 {% endblock %}

@@ -33,7 +33,6 @@
   let flatTbody = null;
   const canEdit = panel.dataset.canEdit !== "0";
   const canToggleSuspend = panel.dataset.canToggleSuspend !== "0";
-  const canDelete = panel.dataset.canDelete !== "0";
   let catalogCacheTtl = 60 * 15;
   let lastFetchedPage = 0;
   let restoringScroll = false;
@@ -417,38 +416,27 @@
           }
           ${
             canToggleSuspend
-              ? `<form class="item-inline-form" method="post">
+              ? item.is_suspended
+                ? `<button
+            class="item-action-icon"
+            type="button"
+            disabled
+            title="Suspended — unsuspend from the Suspended items page"
+            aria-label="${escapeHtml(name)} is suspended"
+          >
+            <i data-lucide="pause" aria-hidden="true"></i>
+          </button>`
+                : `<form class="item-inline-form" method="post">
             <input type="hidden" name="csrfmiddlewaretoken" value="${escapeHtml(csrf)}">
             <input type="hidden" name="action" value="toggle_suspend">
             <input type="hidden" name="item_id" value="${item.id}">
             <button
               class="item-action-icon"
               type="submit"
-              title="${item.is_suspended ? "Unsuspend item" : "Suspend item"}"
-              aria-label="${item.is_suspended ? "Unsuspend" : "Suspend"} ${escapeHtml(name)}"
+              title="Suspend item"
+              aria-label="Suspend ${escapeHtml(name)}"
             >
-              <i data-lucide="${item.is_suspended ? "play" : "pause"}" aria-hidden="true"></i>
-            </button>
-          </form>`
-              : ""
-          }
-          ${
-            canDelete
-              ? `<form class="item-inline-form" method="post" data-confirm-delete data-item-name="${escapeHtml(
-                  name
-                )}" data-stock-rows="${escapeHtml(
-                  JSON.stringify(item.stock_rows || [])
-                )}" data-item-suspended="${item.is_suspended ? "1" : "0"}">
-            <input type="hidden" name="csrfmiddlewaretoken" value="${escapeHtml(csrf)}">
-            <input type="hidden" name="action" value="delete">
-            <input type="hidden" name="item_id" value="${item.id}">
-            <button
-              class="item-action-icon item-action-icon--danger"
-              type="submit"
-              title="Delete item"
-              aria-label="Delete ${escapeHtml(name)}"
-            >
-              <i data-lucide="trash-2" aria-hidden="true"></i>
+              <i data-lucide="pause" aria-hidden="true"></i>
             </button>
           </form>`
               : ""

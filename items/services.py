@@ -744,18 +744,22 @@ def build_item_management_catalog_page(
         sort_key = "category"
     order_by = ("name", "category") if sort_key == "name" else ("category", "name")
 
-    qs = Item.objects.only(
-        "id",
-        "category",
-        "name",
-        "description",
-        "minimum_selling_price",
-        "shop_price",
-        "use_individual_shop_prices",
-        "track_serial_number",
-        "is_suspended",
-        "image",
-    ).order_by(*order_by)
+    qs = (
+        Item.objects.filter(is_suspended=False)
+        .only(
+            "id",
+            "category",
+            "name",
+            "description",
+            "minimum_selling_price",
+            "shop_price",
+            "use_individual_shop_prices",
+            "track_serial_number",
+            "is_suspended",
+            "image",
+        )
+        .order_by(*order_by)
+    )
 
     query = (q or "").strip()
     if query:
@@ -1959,6 +1963,61 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None, actor=None) 
             after=snapshot_item_for_audit(item),
         )
         return item
+
+
+def apply_image_to_items(items, image, *, actor=None) -> int:
+    """Store a fresh copy of *image* on every item; returns how many updated.
+
+    Each item gets its own stored file (unique name via item_image_path) so a
+    later single-item replace/remove never deletes a file another item uses.
+    """
+    from django.core.files.base import ContentFile
+
+    from items.activity_audit import log_item_activity
+    from items.models import ItemActivityKind
+
+    items = [item for item in items if getattr(item, "pk", None)]
+    if not items:
+        return 0
+
+    filename = (
+        (getattr(image, "name", "") or "").strip() or "item-image.jpg"
+    )
+    if hasattr(image, "seek"):
+        image.seek(0)
+    payload = image.read()
+
+    updated = 0
+    with transaction.atomic():
+        for item in items:
+            old_image_name = (item.image.name if item.image else "") or ""
+            item.image = ContentFile(payload, name=filename)
+            item.save(update_fields=["image", "updated_at"])
+            if (
+                old_image_name
+                and item.image
+                and old_image_name != item.image.name
+            ):
+                try:
+                    item.image.storage.delete(old_image_name)
+                except OSError:
+                    pass
+            log_item_activity(
+                kind=ItemActivityKind.EDITED,
+                actor=actor or item.created_by,
+                item=item,
+                detail="Updated item image (bulk upload)",
+                meta={
+                    "bulk_image": True,
+                    "replaced_image": bool(old_image_name),
+                },
+                shop_ids=[
+                    shop_price.shop_id
+                    for shop_price in item.shop_prices.all()
+                ],
+            )
+            updated += 1
+    return updated
 
 
 def _sync_item_name_history(item: Item, *, old_name: str, new_name: str) -> None:
@@ -4063,14 +4122,15 @@ def build_item_price_list_document(*, shops=None) -> dict:
     shop_ids = [shop.pk for shop in shops]
 
     items = list(
-        Item.objects.order_by("category", "name").only(
+        Item.objects.filter(is_suspended=False)
+        .order_by("category", "name")
+        .only(
             "id",
             "name",
             "category",
             "shop_price",
             "minimum_selling_price",
             "use_individual_shop_prices",
-            "is_suspended",
         )
     )
 
@@ -4099,10 +4159,6 @@ def build_item_price_list_document(*, shops=None) -> dict:
             flush_category()
             current_category = item.category or "Uncategorised"
 
-        display_name = item.name
-        if item.is_suspended:
-            display_name = f"{display_name} (suspended)"
-
         shop_prices = []
         for shop in shops:
             override = None
@@ -4126,12 +4182,11 @@ def build_item_price_list_document(*, shops=None) -> dict:
 
         current_rows.append(
             {
-                "name": display_name,
+                "name": item.name,
                 "category": item.category or "Uncategorised",
                 "min_price": _format_print_money(item.minimum_selling_price),
                 "shop_price": shop_price_display,
                 "shop_prices": shop_prices,
-                "is_suspended": bool(item.is_suspended),
             }
         )
 

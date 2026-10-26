@@ -2069,6 +2069,12 @@ class ItemDeleteWithStockTests(TestCase):
             self.url, {"action": "delete", "item_id": item.pk}
         )
 
+    def _suspended_delete(self, item):
+        return self.client.post(
+            "/it-support/item-management/?mode=suspended",
+            {"action": "delete", "item_id": item.pk},
+        )
+
     def test_delete_with_stock_suspends_instead(self):
         from items.models import Item, ShopStock
 
@@ -2082,22 +2088,44 @@ class ItemDeleteWithStockTests(TestCase):
         )
         self.assertTrue(Item.objects.filter(pk=self.item.pk).exists())
 
-    def test_delete_without_stock_removes_item(self):
+    def test_delete_always_suspends_first(self):
         from items.models import Item
 
         response = self._delete(self.item)
         self.assertEqual(response.status_code, 302)
+        self.item.refresh_from_db()
+        self.assertTrue(self.item.is_suspended)
+        self.assertTrue(Item.objects.filter(pk=self.item.pk).exists())
+
+    def test_suspended_page_delete_removes_item(self):
+        from items.models import Item
+
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+        response = self._suspended_delete(self.item)
+        self.assertEqual(response.status_code, 302)
         self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
 
-    def test_delete_suspended_item_with_stock_still_deletes(self):
+    def test_suspended_page_delete_blocked_until_stock_cleared(self):
         from items.models import Item, ShopStock
 
         ShopStock.objects.create(shop=self.shop, item=self.item, quantity=4)
         self.item.is_suspended = True
         self.item.save(update_fields=["is_suspended"])
-        response = self._delete(self.item)
+        response = self._suspended_delete(self.item)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Item.objects.filter(pk=self.item.pk).exists())
+
+        ShopStock.objects.filter(item=self.item).update(quantity=0)
+        response = self._suspended_delete(self.item)
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
+
+    def test_suspended_page_delete_rejects_active_item(self):
+        response = self._suspended_delete(self.item)
+        self.assertEqual(response.status_code, 404)
+        self.item.refresh_from_db()
+        self.assertFalse(self.item.is_suspended)
 
     def test_delete_with_movement_history_and_no_stock_removes_item(self):
         from items.models import (
@@ -2115,7 +2143,9 @@ class ItemDeleteWithStockTests(TestCase):
         line = StockMovementLine.objects.create(
             movement=movement, item=self.item, quantity=3
         )
-        response = self._delete(self.item)
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+        response = self._suspended_delete(self.item)
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
         line.refresh_from_db()
@@ -2140,7 +2170,9 @@ class ItemDeleteWithStockTests(TestCase):
         StockMovementLine.objects.create(
             movement=movement, item=self.item, quantity=2
         )
-        response = self._delete(self.item)
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+        response = self._suspended_delete(self.item)
         self.assertEqual(response.status_code, 302)
         self.assertTrue(Item.objects.filter(pk=self.item.pk).exists())
 
@@ -2256,6 +2288,190 @@ class ItemEditAjaxTests(TestCase):
         response = self._edit(item_id="")
         self.assertEqual(response.status_code, 404)
         self.assertFalse(response.json()["ok"])
+
+
+class ItemBulkImageTests(TestCase):
+    def setUp(self):
+        from items.models import Item
+
+        self.password = "bulk-img-pass"
+        self.user = User.objects.create_user(
+            username="840071",
+            password=self.password,
+            email="bulk-img@test.local",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840071",
+            phone_country_code="+254",
+            phone_number="700000992",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.item_a = Item.objects.create(
+            category="DRINKS",
+            name="BULK DRINK A",
+            minimum_selling_price=Decimal("50.00"),
+            shop_price=Decimal("80.00"),
+            created_by=self.profile,
+        )
+        self.item_b = Item.objects.create(
+            category="DRINKS",
+            name="BULK DRINK B",
+            minimum_selling_price=Decimal("60.00"),
+            shop_price=Decimal("90.00"),
+            created_by=self.profile,
+        )
+        self.item_c = Item.objects.create(
+            category="SNACKS",
+            name="BULK SNACK",
+            minimum_selling_price=Decimal("20.00"),
+            shop_price=Decimal("35.00"),
+            created_by=self.profile,
+        )
+        self.url = "/it-support/item-management/?mode=images"
+        self.client.login(username="840071", password=self.password)
+
+    def _upload(self, name="bulk.jpg", content_type="image/jpeg"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        return SimpleUploadedFile(
+            name, b"\xff\xd8\xff\xd9\x00\x02", content_type=content_type
+        )
+
+    def test_images_page_lists_items_grouped_by_category(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "BULK DRINK A")
+        self.assertContains(response, "BULK DRINK B")
+        self.assertContains(response, "BULK SNACK")
+        self.assertContains(response, 'name="apply_scope"')
+        self.assertContains(response, 'name="item_id"')
+
+    def test_item_management_page_links_to_images_mode(self):
+        response = self.client.get("/it-support/item-management/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "mode=images")
+
+    def test_bulk_update_applies_image_to_selected_items(self):
+        response = self.client.post(
+            self.url,
+            {
+                "action": "update_images",
+                "apply_scope": "items",
+                "item_id": [str(self.item_a.pk), str(self.item_b.pk)],
+                "image": self._upload(),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        for item in (self.item_a, self.item_b, self.item_c):
+            item.refresh_from_db()
+        self.assertTrue(self.item_a.image)
+        self.assertTrue(self.item_b.image)
+        self.assertFalse(self.item_c.image)
+        # Each item stores its own copy so later replaces can't break siblings.
+        self.assertNotEqual(self.item_a.image.name, self.item_b.image.name)
+
+    def test_bulk_update_applies_image_to_whole_category(self):
+        response = self.client.post(
+            self.url,
+            {
+                "action": "update_images",
+                "apply_scope": "category",
+                "category": "DRINKS",
+                "image": self._upload(),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        for item in (self.item_a, self.item_b, self.item_c):
+            item.refresh_from_db()
+        self.assertTrue(self.item_a.image)
+        self.assertTrue(self.item_b.image)
+        self.assertFalse(self.item_c.image)
+
+    def test_bulk_update_replaces_existing_image_and_removes_old_file(self):
+        first = self._upload(name="first.jpg")
+        self.item_a.image = first
+        self.item_a.save(update_fields=["image"])
+        old_name = self.item_a.image.name
+
+        response = self.client.post(
+            self.url,
+            {
+                "action": "update_images",
+                "apply_scope": "items",
+                "item_id": [str(self.item_a.pk)],
+                "image": self._upload(),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.item_a.refresh_from_db()
+        self.assertTrue(self.item_a.image)
+        self.assertNotEqual(self.item_a.image.name, old_name)
+        self.assertFalse(self.item_a.image.storage.exists(old_name))
+
+    def test_bulk_update_requires_image_and_items(self):
+        response = self.client.post(
+            self.url,
+            {
+                "action": "update_images",
+                "apply_scope": "items",
+                "item_id": [str(self.item_a.pk)],
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.item_a.refresh_from_db()
+        self.assertFalse(self.item_a.image)
+
+        response = self.client.post(
+            self.url,
+            {
+                "action": "update_images",
+                "apply_scope": "items",
+                "image": self._upload(),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.item_a.refresh_from_db()
+        self.assertFalse(self.item_a.image)
+
+    def test_bulk_update_rejects_non_image_upload(self):
+        response = self.client.post(
+            self.url,
+            {
+                "action": "update_images",
+                "apply_scope": "items",
+                "item_id": [str(self.item_a.pk)],
+                "image": self._upload(
+                    name="bulk.txt", content_type="text/plain"
+                ),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.item_a.refresh_from_db()
+        self.assertFalse(self.item_a.image)
+
+    def test_bulk_update_writes_activity_events(self):
+        from items.models import ItemActivityEvent, ItemActivityKind
+
+        self.client.post(
+            self.url,
+            {
+                "action": "update_images",
+                "apply_scope": "items",
+                "item_id": [str(self.item_a.pk), str(self.item_b.pk)],
+                "image": self._upload(),
+            },
+        )
+        events = ItemActivityEvent.objects.filter(
+            kind=ItemActivityKind.EDITED,
+            item__in=[self.item_a, self.item_b],
+        )
+        self.assertEqual(events.count(), 2)
+        self.assertTrue(
+            all("image" in (event.detail or "") for event in events)
+        )
 
 
 class ItemActivityAuditTests(TestCase):
@@ -3870,3 +4086,43 @@ class SuspendedItemsPageTests(TestCase):
         page = self.client.get("/it-support/item-management/?mode=suspended")
         self.assertContains(page, "No suspended items")
         self.assertNotContains(page, "data-item-row")
+
+    def test_main_list_toggle_suspend_cannot_unsuspend(self):
+        response = self.client.post(
+            "/it-support/item-management/",
+            {"action": "toggle_suspend", "item_id": self.item.pk},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.item.refresh_from_db()
+        self.assertTrue(self.item.is_suspended)
+
+    def test_main_list_toggle_suspend_still_suspends(self):
+        response = self.client.post(
+            "/it-support/item-management/",
+            {"action": "toggle_suspend", "item_id": self.active_item.pk},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.active_item.refresh_from_db()
+        self.assertTrue(self.active_item.is_suspended)
+
+    def test_suspended_item_hidden_from_main_catalog(self):
+        response = self.client.get("/it-support/item-management/catalog/")
+        self.assertEqual(response.status_code, 200)
+        names = [row["name"] for row in response.json()["items"]]
+        self.assertIn("ACTIVE CABLE", names)
+        self.assertNotIn("SUSPENDED CABLE", names)
+        page = self.client.get("/it-support/item-management/")
+        self.assertContains(page, 'data-item-total="1"')
+
+    def test_suspended_item_hidden_from_discounts_and_images(self):
+        for mode in ("discounts", "images"):
+            response = self.client.get(f"/it-support/item-management/?mode={mode}")
+            self.assertEqual(response.status_code, 200, mode)
+            self.assertNotContains(response, "SUSPENDED CABLE")
+            self.assertContains(response, "ACTIVE CABLE")
+
+    def test_suspended_item_hidden_from_price_list(self):
+        response = self.client.get("/it-support/item-management/price-list/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "SUSPENDED CABLE")
+        self.assertContains(response, "ACTIVE CABLE")

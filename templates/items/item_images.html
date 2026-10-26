@@ -1,0 +1,194 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Item images — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="item-panel item-panel--dense"
+  data-animate="rise"
+  data-item-total="{{ item_count }}"
+>
+  <header class="item-panel-head item-discounts-head">
+    <div class="item-panel-head-top">
+      <div class="item-discounts-intro">
+        <p class="item-discounts-kicker">Item management</p>
+        <h2>Item images</h2>
+        <p>Upload one image and apply it to selected items or a whole category.</p>
+      </div>
+      <div class="item-discounts-head-actions">
+        <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ item_management_url }}">
+          <i data-lucide="tags" aria-hidden="true"></i>
+          <span>Registered items</span>
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+        </a>
+        <p class="item-count" data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</p>
+      </div>
+    </div>
+
+    {% if item_count %}
+    <div class="item-search item-discounts-search">
+      <label class="item-search-field">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input
+          type="search"
+          placeholder="Search items…"
+          autocomplete="off"
+          data-item-search
+          aria-label="Search items"
+        >
+      </label>
+    </div>
+    {% endif %}
+  </header>
+
+  {% if not can_edit_images %}
+  <p class="stock-settings-readonly">
+    <i data-lucide="lock" aria-hidden="true"></i>
+    <span>View only — you need edit permission on Item Management to update item images.</span>
+  </p>
+  {% endif %}
+
+  {% if item_count %}
+  <form method="post" enctype="multipart/form-data" data-item-images-form>
+    {% csrf_token %}
+    <input type="hidden" name="action" value="update_images">
+
+    <div class="item-image-bar">
+      <div class="item-image-bar-main">
+        <label class="item-image-drop">
+          <input
+            class="visually-hidden"
+            type="file"
+            name="image"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            data-image-input
+            {% if not can_edit_images %}disabled{% endif %}
+          >
+          <span class="item-image-drop-preview" data-image-preview-wrap hidden>
+            <img src="" alt="" width="56" height="56" data-image-preview>
+          </span>
+          <span class="item-image-drop-copy">
+            <i data-lucide="image-plus" aria-hidden="true"></i>
+            <strong data-image-name>Choose an image</strong>
+            <small>JPG, PNG, WEBP, or GIF — up to 5 MB</small>
+          </span>
+        </label>
+
+        <fieldset class="item-image-scope">
+          <legend>Apply image to</legend>
+          <label class="item-image-scope-option">
+            <input
+              type="radio"
+              name="apply_scope"
+              value="items"
+              checked
+              data-scope-radio
+              {% if not can_edit_images %}disabled{% endif %}
+            >
+            <span>Selected items below</span>
+          </label>
+          <label class="item-image-scope-option">
+            <input
+              type="radio"
+              name="apply_scope"
+              value="category"
+              data-scope-radio
+              {% if not can_edit_images %}disabled{% endif %}
+            >
+            <span>Every item in</span>
+            <select
+              name="category"
+              data-category-select
+              aria-label="Category to update"
+              {% if not can_edit_images %}disabled{% endif %}
+            >
+              <option value="">choose category…</option>
+              {% for group in item_groups %}
+              <option value="{{ group.category }}">{{ group.category }} ({{ group.count }})</option>
+              {% endfor %}
+            </select>
+          </label>
+        </fieldset>
+      </div>
+
+      <div class="item-image-bar-actions">
+        <button class="btn btn--ghost" type="button" data-check-visible {% if not can_edit_images %}disabled{% endif %}>
+          Select visible
+        </button>
+        <button class="btn btn--ghost" type="button" data-clear-checks {% if not can_edit_images %}disabled{% endif %}>
+          Clear
+        </button>
+        <p class="item-count" data-selected-count>0 selected</p>
+        <button class="btn btn--primary" type="submit" data-image-submit {% if not can_edit_images %}disabled{% endif %}>
+          <i data-lucide="image-plus" aria-hidden="true"></i>
+          <span>Apply image</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="item-image-groups" data-item-list>
+      {% for group in item_groups %}
+      <div class="item-image-group" data-item-category-group>
+        <div class="item-image-group-head">
+          <h3 class="item-image-group-title" data-category-label>{{ group.category }}</h3>
+          <div class="item-image-group-side">
+            <span class="item-category-count" data-category-count>{{ group.count }}</span>
+            {% if can_edit_images %}
+            <button class="item-image-group-toggle" type="button" data-group-check>Select all</button>
+            {% endif %}
+          </div>
+        </div>
+        <ul class="item-image-grid">
+          {% for item in group.items %}
+          <li
+            class="item-image-card"
+            data-item-row
+            data-search-text="{{ item.name|lower }} {{ item.category|lower }} {{ item.description|lower }}"
+          >
+            <label class="item-image-card-label">
+              <input
+                type="checkbox"
+                name="item_id"
+                value="{{ item.pk }}"
+                data-item-check
+                {% if not can_edit_images %}disabled{% endif %}
+              >
+              <span class="item-image-card-media">
+                {% if item.public_image_url %}
+                <img src="{{ item.public_image_url }}" alt="" loading="lazy" width="40" height="40">
+                {% else %}
+                <span class="item-image-card-empty" aria-hidden="true">
+                  <i data-lucide="package"></i>
+                </span>
+                {% endif %}
+              </span>
+              <span class="item-image-card-copy">
+                <strong>{{ item.name }}</strong>
+              </span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="item-search-empty" data-item-no-results hidden>
+      <i data-lucide="search-x" aria-hidden="true"></i>
+      <p>No items match your search.</p>
+    </div>
+  </form>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="package" aria-hidden="true"></i>
+    <p>No items registered yet. Register items first, then apply images here.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/item-images.js' %}?v=1"></script>
+<script defer src="{% static 'js/item-search.js' %}?v=2"></script>
+{% endblock %}
