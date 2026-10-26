@@ -82,87 +82,95 @@
   <form id="shop-products-form" method="post" data-shop-products-form>
     {% csrf_token %}
     <div class="item-list">
-      <div class="item-table-wrap">
-        <table class="item-table item-table--dense item-table--products">
-          <thead>
-            <tr>
-              <th scope="col" class="item-col--status">
-                <label class="shop-products-checkall" title="Enable or disable all items">
+      {% regroup rows by item.category as category_groups %}
+      {% for group in category_groups %}
+      <section class="item-category-group" data-category-group>
+        <header class="item-category-head">
+          <h3 class="item-category-title">{{ group.grouper|default:"Uncategorised" }}</h3>
+          <span class="item-category-count" data-category-count>{{ group.list|length }}</span>
+        </header>
+        <div class="item-table-wrap">
+          <table class="item-table item-table--dense item-table--products">
+            <thead>
+              <tr>
+                <th scope="col" class="item-col--status">
+                  <label class="shop-products-checkall" title="Enable or disable all items in this category">
+                    <input
+                      type="checkbox"
+                      data-check-all
+                      aria-label="Enable or disable all {{ group.grouper|default:'items' }}"
+                    >
+                    <span>Sold</span>
+                  </label>
+                </th>
+                <th scope="col" class="item-col--item">Item</th>
+                <th scope="col">Stock</th>
+                <th scope="col">Min price</th>
+                <th scope="col">Shop price</th>
+                <th scope="col" class="item-col--status">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in group.list %}
+              <tr
+                {% if row.item.is_suspended %}class="item-row--suspended"{% endif %}
+                data-product-row
+                data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }}"
+              >
+                <td class="item-cell--status" data-label="Sold">
                   <input
                     type="checkbox"
-                    data-check-all
-                    {% if sold_count == item_count %}checked{% endif %}
-                    aria-label="Enable or disable all items"
+                    name="sold_{{ row.item.pk }}"
+                    value="1"
+                    {% if row.sold %}checked{% endif %}
+                    data-sold-toggle
+                    aria-label="Sell {{ row.item.name }} at {{ shop.name }}"
                   >
-                  <span>Sold</span>
-                </label>
-              </th>
-              <th scope="col" class="item-col--item">Item</th>
-              <th scope="col">Stock</th>
-              <th scope="col">Min price</th>
-              <th scope="col">Shop price</th>
-              <th scope="col" class="item-col--status">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in rows %}
-            <tr
-              {% if row.item.is_suspended %}class="item-row--suspended"{% endif %}
-              data-product-row
-              data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }}"
-            >
-              <td class="item-cell--status" data-label="Sold">
-                <input
-                  type="checkbox"
-                  name="sold_{{ row.item.pk }}"
-                  value="1"
-                  {% if row.sold %}checked{% endif %}
-                  data-sold-toggle
-                  aria-label="Sell {{ row.item.name }} at {{ shop.name }}"
-                >
-              </td>
-              <td class="item-cell--item" data-label="Item">
-                <div class="item-person">
-                  {% if row.item.public_image_url %}
-                  <img class="item-thumb" src="{{ row.item.public_image_url }}" alt="" width="32" height="32">
-                  {% else %}
-                  <span class="item-thumb item-thumb--empty" aria-hidden="true">
-                    <i data-lucide="package"></i>
-                  </span>
-                  {% endif %}
-                  <div class="item-person-copy">
-                    <strong>{{ row.item.name }}</strong>
-                    <small>
-                      {{ row.item.category }}
-                      {% if row.item.is_suspended %}· <span class="status-pill status-pill--suspended">Suspended</span>{% endif %}
-                    </small>
+                </td>
+                <td class="item-cell--item" data-label="Item">
+                  <div class="item-person">
+                    {% if row.item.public_image_url %}
+                    <img class="item-thumb" src="{{ row.item.public_image_url }}" alt="" width="32" height="32">
+                    {% else %}
+                    <span class="item-thumb item-thumb--empty" aria-hidden="true">
+                      <i data-lucide="package"></i>
+                    </span>
+                    {% endif %}
+                    <div class="item-person-copy">
+                      <strong>{{ row.item.name }}</strong>
+                      <small>
+                        {{ row.item.category }}
+                        {% if row.item.is_suspended %}· <span class="status-pill status-pill--suspended">Suspended</span>{% endif %}
+                      </small>
+                    </div>
                   </div>
-                </div>
-              </td>
-              <td data-label="Stock">{{ row.stock_label }}</td>
-              <td data-label="Min price">KSh {{ row.min_price }}</td>
-              <td class="item-cell--price" data-label="Shop price">
-                <div class="currency-field">
-                  <span class="currency-prefix" aria-hidden="true">KSh</span>
-                  <input
-                    type="text"
-                    name="price_{{ row.item.pk }}"
-                    value="{{ row.price }}"
-                    inputmode="decimal"
-                    data-price-input
-                    aria-label="Shop price for {{ row.item.name }}"
-                  >
-                </div>
-              </td>
-              <td class="item-cell--status" data-label="Status">
-                <span class="status-pill status-pill--active" data-status-on {% if not row.sold %}hidden{% endif %}>Enabled</span>
-                <span class="status-pill status-pill--suspended" data-status-off {% if row.sold %}hidden{% endif %}>Disabled</span>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+                </td>
+                <td data-label="Stock">{{ row.stock_label }}</td>
+                <td data-label="Min price">KSh {{ row.min_price }}</td>
+                <td class="item-cell--price" data-label="Shop price">
+                  <div class="currency-field">
+                    <span class="currency-prefix" aria-hidden="true">KSh</span>
+                    <input
+                      type="text"
+                      name="price_{{ row.item.pk }}"
+                      value="{{ row.price }}"
+                      inputmode="decimal"
+                      data-price-input
+                      aria-label="Shop price for {{ row.item.name }}"
+                    >
+                  </div>
+                </td>
+                <td class="item-cell--status" data-label="Status">
+                  <span class="status-pill status-pill--active" data-status-on {% if not row.sold %}hidden{% endif %}>Enabled</span>
+                  <span class="status-pill status-pill--suspended" data-status-off {% if row.sold %}hidden{% endif %}>Disabled</span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% endfor %}
     </div>
     <div class="item-search-empty" data-product-no-results hidden>
       <i data-lucide="search-x" aria-hidden="true"></i>
