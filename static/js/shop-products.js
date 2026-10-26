@@ -103,5 +103,34 @@
   };
 
   searchInput?.addEventListener("input", updateSearch);
+
+  // Collapse the whole form into one JSON field before submitting — hundreds
+  // of per-item inputs can trip Django's DATA_UPLOAD_MAX_NUMBER_FIELDS limit
+  // or host-level request filters (mod_security), which respond with a bare
+  // 400 before the view runs.
+  const form = panel.querySelector("[data-shop-products-form]");
+  const payload = form?.querySelector("[data-products-payload]");
+
+  form?.addEventListener("submit", () => {
+    if (!payload) return;
+    const items = rows.map((row) => {
+      const toggle = soldToggleFor(row);
+      const price = row.querySelector("[data-price-input]");
+      return {
+        id: toggle ? toggle.name.replace(/^sold_/, "") : "",
+        sold: Boolean(toggle?.checked),
+        price: price ? price.value : "",
+      };
+    });
+    payload.value = JSON.stringify(items);
+    rows.forEach((row) => {
+      row
+        .querySelectorAll("[data-sold-toggle], [data-price-input]")
+        .forEach((input) => {
+          input.disabled = true;
+        });
+    });
+  });
+
   refreshCounts();
 })();

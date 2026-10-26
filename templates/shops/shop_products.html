@@ -81,6 +81,7 @@
   {% if rows %}
   <form id="shop-products-form" method="post" data-shop-products-form>
     {% csrf_token %}
+    <input type="hidden" name="items_json" value="" data-products-payload>
     <div class="item-list">
       {% regroup rows by item.category as category_groups %}
       {% for group in category_groups %}

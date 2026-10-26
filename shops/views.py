@@ -387,10 +387,41 @@ def shop_products_management(request, role_segment, shop_id):
 
     if request.method == "POST":
         truthy = {"1", "true", "on", "yes"}
+        # JS collapses every row into a single items_json field so large
+        # catalogs stay under Django's DATA_UPLOAD_MAX_NUMBER_FIELDS limit
+        # and host-level request filters; per-row fields are the fallback.
+        json_rows = {}
+        raw_payload = (request.POST.get("items_json") or "").strip()
+        payload_sent = bool(raw_payload)
+        if payload_sent:
+            try:
+                for entry in json.loads(raw_payload):
+                    if not isinstance(entry, dict):
+                        continue
+                    try:
+                        item_pk = int(str(entry.get("id") or "").strip())
+                    except (TypeError, ValueError):
+                        continue
+                    json_rows[item_pk] = {
+                        "sold": bool(entry.get("sold")),
+                        "price": str(entry.get("price") or ""),
+                    }
+            except (TypeError, ValueError):
+                form_errors.append(
+                    "The submitted product list could not be read. "
+                    "Go back and try again."
+                )
         updates = []
         for item in Item.objects.order_by("category", "name"):
-            raw_price = (request.POST.get(f"price_{item.pk}") or "").strip()
-            sold = (request.POST.get(f"sold_{item.pk}") or "").strip().lower() in truthy
+            if payload_sent:
+                entry = json_rows.get(item.pk) or {}
+                raw_price = (entry.get("price") or "").strip()
+                sold = bool(entry.get("sold"))
+            else:
+                raw_price = (request.POST.get(f"price_{item.pk}") or "").strip()
+                sold = (
+                    request.POST.get(f"sold_{item.pk}") or ""
+                ).strip().lower() in truthy
             price = None
             if raw_price:
                 try:

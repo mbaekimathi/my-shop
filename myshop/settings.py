@@ -42,6 +42,14 @@ CSRF_FAILURE_VIEW = "myshop.csrf.csrf_failure"
 # Long-lived so shop-floor pages left open do not hit CSRF "Page expired".
 CSRF_COOKIE_AGE = int(os.getenv("CSRF_COOKIE_AGE", str(60 * 60 * 24 * 365 * 10)))
 
+# Bulk-management forms (e.g. per-shop product prices) post one field per
+# catalog row; the default 1000 rejects them with a bare 400. The products
+# page already collapses rows into a single JSON field — this is a safeguard
+# for any remaining wide forms.
+DATA_UPLOAD_MAX_NUMBER_FIELDS = int(
+    os.getenv("DATA_UPLOAD_MAX_NUMBER_FIELDS", "10000")
+)
+
 # Optional override; otherwise auto from request / ngrok.
 DARAJA_CALLBACK_BASE_URL = os.getenv("DARAJA_CALLBACK_BASE_URL", "").strip()
 # Hosted production site URL (https://your-domain.com) when callbacks cannot be inferred from requests.
