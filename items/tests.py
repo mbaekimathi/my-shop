@@ -855,7 +855,7 @@ class ItemStockReportRowsTests(TestCase):
             item=self.item,
             quantity=2,
         )
-        # Sender shop: Transfer out, From=sender → To=receiver
+        # Sender shop: Transfer (Sent), From=sender → To=receiver
         out_events, *_ = _build_movement_timeline(
             shop_ids=[self.shop_a.pk],
             day_start=self.day_start,
@@ -873,7 +873,7 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(len(out_transfers), 1)
         out_event = out_transfers[0]
         self.assertEqual(out_event["transfer_direction"], "out")
-        self.assertEqual(out_event["event_label"], "Transfer out")
+        self.assertEqual(out_event["event_label"], "Transfer (Sent)")
         self.assertEqual(out_event["from_label"], self.shop_a.name)
         self.assertEqual(out_event["to_label"], self.shop_b.name)
         self.assertEqual(out_event["from_shop_name"], self.shop_a.name)
@@ -884,7 +884,7 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(out_event["received_by"], "STOCK RECEIVER")
         self.assertEqual(_timeline_type_css_class(out_event), "transfer-out")
 
-        # Receiver shop: Transfer in, same From → To parties
+        # Receiver shop: Transfer (Received), same From → To parties
         in_events, *_ = _build_movement_timeline(
             shop_ids=[self.shop_b.pk],
             day_start=self.day_start,
@@ -902,7 +902,7 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(len(in_transfers), 1)
         in_event = in_transfers[0]
         self.assertEqual(in_event["transfer_direction"], "in")
-        self.assertEqual(in_event["event_label"], "Transfer in")
+        self.assertEqual(in_event["event_label"], "Transfer (Received)")
         self.assertEqual(in_event["from_label"], self.shop_a.name)
         self.assertEqual(in_event["to_label"], self.shop_b.name)
         self.assertEqual(in_event["sent_by"], "STOCK REPORT")

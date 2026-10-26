@@ -425,12 +425,12 @@
         </div>
         {% if page.show_search and table.searchable %}
         <label class="ax-table-search">
-          <span class="visually-hidden">{{ page.search_placeholder|default:"Search" }}</span>
+          <span class="visually-hidden">{% firstof table.search_placeholder page.search_placeholder "Search" %}</span>
           <input
             type="search"
             value="{{ page.search_query|default:'' }}"
-            placeholder="{{ page.search_placeholder|default:'Search…' }}"
-            aria-label="{{ page.search_placeholder|default:'Search' }}"
+            placeholder="{% firstof table.search_placeholder page.search_placeholder 'Search…' %}"
+            aria-label="{% firstof table.search_placeholder page.search_placeholder 'Search' %}"
             data-ax-table-search
             autocomplete="off"
           >
@@ -504,6 +504,10 @@
         {% elif table.title == "Items picked on credit" %}
         <span class="is-flow">Qty · Credit · Paid · % paid</span>
         <span class="is-total">Total</span>
+        {% elif table.title == "Client credit accounts by shop" %}
+        <span>Txns · Owed per shop</span>
+        <span class="is-total">Total</span>
+        <span class="is-result">Stock</span>
         {% else %}
         <span class="is-flow">By shop</span>
         <span class="is-total">Total</span>
@@ -633,7 +637,7 @@
       <p class="ax-footnote">{{ table.footnote }}</p>
       {% endif %}
       {% if page.show_search and table.searchable %}
-      <p class="ax-empty ax-empty-search" hidden>{{ page.search_empty|default:"No rows match that search." }}</p>
+      <p class="ax-empty ax-empty-search" hidden>{% firstof table.search_empty page.search_empty "No rows match that search." %}</p>
       {% endif %}
     </section>
     {% endfor %}
@@ -709,58 +713,60 @@
       syncRange();
     });
 
-    const search = root.querySelector("[data-ax-table-search]");
-    if (!search) return;
-    const scope = search.closest(".ax-card") || root;
-    const rows = [...scope.querySelectorAll(".ax-table tbody tr")];
-    const emptyNote = scope.querySelector(".ax-empty-search");
-    const filterRows = () => {
-      const q = (search.value || "").trim().toLowerCase();
-      const tokens = q.split(/\s+/).filter(Boolean);
-      let visible = 0;
-      rows.forEach((row) => {
-        if (row.classList.contains("ax-row--total")) {
-          row.hidden = false;
-          return;
-        }
-        const haystack = (
-          row.getAttribute("data-search-text") ||
-          row.textContent ||
-          ""
-        ).toLowerCase();
-        const match =
-          !tokens.length || tokens.every((token) => haystack.includes(token));
-        row.hidden = !match;
-        if (match) visible += 1;
+    const searches = [...root.querySelectorAll("[data-ax-table-search]")];
+    searches.forEach((search, index) => {
+      const scope = search.closest(".ax-card") || root;
+      const rows = [...scope.querySelectorAll(".ax-table tbody tr")];
+      const emptyNote = scope.querySelector(".ax-empty-search");
+      const filterRows = () => {
+        const q = (search.value || "").trim().toLowerCase();
+        const tokens = q.split(/\s+/).filter(Boolean);
+        let visible = 0;
+        rows.forEach((row) => {
+          if (row.classList.contains("ax-row--total")) {
+            row.hidden = false;
+            return;
+          }
+          const haystack = (
+            row.getAttribute("data-search-text") ||
+            row.textContent ||
+            ""
+          ).toLowerCase();
+          const match =
+            !tokens.length || tokens.every((token) => haystack.includes(token));
+          row.hidden = !match;
+          if (match) visible += 1;
+        });
+        if (emptyNote) emptyNote.hidden = visible > 0 || !q;
+      };
+      let timer = 0;
+      search.addEventListener("input", () => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(filterRows, 80);
       });
-      if (emptyNote) emptyNote.hidden = visible > 0 || !q;
-    };
-    let timer = 0;
-    search.addEventListener("input", () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(filterRows, 80);
-    });
-    search.addEventListener("search", filterRows);
-    search.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") event.preventDefault();
-    });
-    filterRows();
+      search.addEventListener("search", filterRows);
+      search.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") event.preventDefault();
+      });
+      filterRows();
 
-    // Keep the PDF download in sync with the on-page search filter.
-    const downloadLink = root.querySelector('a[href*="download="]');
-    if (downloadLink) {
-      downloadLink.addEventListener("click", () => {
-        try {
-          const url = new URL(downloadLink.href, window.location.origin);
-          const q = (search.value || "").trim();
-          if (q) url.searchParams.set("q", q);
-          else url.searchParams.delete("q");
-          downloadLink.href = url.toString();
-        } catch (err) {
-          /* leave href as-is */
-        }
-      });
-    }
+      // Keep the PDF download in sync with the first on-page search filter.
+      if (index > 0) return;
+      const downloadLink = root.querySelector('a[href*="download="]');
+      if (downloadLink) {
+        downloadLink.addEventListener("click", () => {
+          try {
+            const url = new URL(downloadLink.href, window.location.origin);
+            const q = (search.value || "").trim();
+            if (q) url.searchParams.set("q", q);
+            else url.searchParams.delete("q");
+            downloadLink.href = url.toString();
+          } catch (err) {
+            /* leave href as-is */
+          }
+        });
+      }
+    });
   })();
 </script>
 {% endblock %}

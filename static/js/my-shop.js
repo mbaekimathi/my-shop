@@ -1,6 +1,6 @@
 (() => {
   const body = document.body;
-  const selectModal = document.querySelector(".shop-select-modal");
+  const selectModal = document.querySelector('[data-modal="shop-select"]');
   const SNOOZE_MS = 5 * 60 * 1000;
 
   if (selectModal) {

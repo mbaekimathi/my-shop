@@ -3085,15 +3085,12 @@ def _transfer_direction(movement, shop_ids):
 
 
 def _transfer_event_label(*, event_type, direction):
+    # Pending requests have been sent but not yet received.
+    if direction == "out" or event_type == "request":
+        return "Transfer (Sent)"
     if direction == "in":
-        base = "Transfer in"
-    elif direction == "out":
-        base = "Transfer out"
-    else:
-        base = "Transfer"
-    if event_type == "request":
-        return f"{base} (sent)"
-    return base
+        return "Transfer (Received)"
+    return "Transfer"
 
 
 def _timeline_type_css_class(event):
@@ -8836,7 +8833,7 @@ def _build_serial_history_events(*, item, serial, shop_ids):
             reason = (line.reason or "").strip().lower()
             if reason == StockOutReason.TRANSFER:
                 event_type = "transfer_fulfilled"
-                event_label = "Transfer"
+                event_label = "Transfer (Sent)"
             elif reason == StockOutReason.RETURN:
                 event_label = "Supplier return"
         if transfer_direction:

@@ -2420,6 +2420,8 @@ def build_credit_report_page(*, profile, request) -> dict:
     filters["search_query"] = (request.GET.get("q") or "").strip()
     filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
     page = _build_credit_report(filters)
+    page["list_table_layout"] = True
+    page["search_query"] = filters["search_query"]
     return {
         **filters,
         "section_slug": "credits",
@@ -5400,8 +5402,23 @@ def build_credit_items_pdf(*, page: dict, filters: dict, company_name: str = "")
 
     sections = []
     for table in page.get("tables") or []:
-        section = _item_report_pdf_section(table)
-        section["kicker"] = "CREDIT ITEMS"
+        if any(
+            isinstance(col, dict) and col.get("quad")
+            for col in table.get("columns") or []
+        ):
+            section = _item_report_pdf_section(table)
+            section["kicker"] = "CREDIT ITEMS"
+        else:
+            headers, aligns, rows = _flatten_analytics_table(table)
+            section = {
+                "kicker": "CREDITS",
+                "title": table.get("title") or "Table",
+                "headers": headers,
+                "aligns": aligns,
+                "rows": rows,
+                "empty": table.get("empty") or "No data.",
+                "footnote": table.get("footnote") or "",
+            }
         sections.append(section)
 
     brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
@@ -11729,6 +11746,18 @@ def _build_credits(filters):
             )
         )
 
+    clients_page = _build_clients({**filters, "from_credits": True})
+    alerts += list(clients_page.get("alerts") or [])
+    client_table = (clients_page.get("tables") or [None])[0]
+    if client_table is not None:
+        client_table["search_placeholder"] = (
+            clients_page.get("search_placeholder")
+            or "Search clients by name or phone…"
+        )
+        client_table["search_empty"] = (
+            clients_page.get("search_empty") or "No clients match that search."
+        )
+
     columns = [{"label": "Item"}]
     for index, shop in enumerate(shops):
         col = _shop_col(shop)
@@ -11765,7 +11794,8 @@ def _build_credits(filters):
         "headline": "Credits",
         "lead": (
             f"Items on credit for {period_label} — each shop column shows "
-            f"qty, credit amount, % paid back, and top credit day."
+            f"qty, credit amount, % paid back, and top credit day. "
+            f"Open a client below to view their account."
         ),
         "alerts": alerts,
         "show_search": True,
@@ -11801,7 +11831,8 @@ def _build_credits(filters):
                 ),
                 shop_grid=True,
                 searchable=True,
-            )
+            ),
+            *([client_table] if client_table is not None else []),
         ],
     }
 
