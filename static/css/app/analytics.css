@@ -2293,6 +2293,45 @@
   color: color-mix(in srgb, var(--accent) 40%, var(--text-strong));
 }
 
+/* Quad cells — qty · amount · pct · day in one shop column (item report). */
+.ax-pair--quad,
+.ax-th-pair--quad,
+.ax-th-pair-cols--quad {
+  grid-template-columns: 2.4rem 5.4rem 2.7rem 2.2rem;
+  width: 13.2rem;
+}
+
+.ax-pair-pct,
+.ax-pair-day {
+  display: block;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--mist-dim);
+}
+
+.ax-pair-day {
+  text-align: center;
+  font-weight: 700;
+  color: var(--mist);
+}
+
+.ax-pair.is-bad .ax-pair-pct {
+  color: color-mix(in srgb, var(--danger) 45%, var(--text-strong));
+}
+
+.ax-pair.is-good .ax-pair-pct {
+  color: color-mix(in srgb, var(--ok) 45%, var(--text-strong));
+}
+
+.ax-table th.ax-th--pair:has(.ax-th-pair--quad),
+.ax-table td.ax-cell--pair:has(.ax-pair--quad) {
+  width: 13.6rem;
+  min-width: 13.6rem;
+}
+
 /* Desktop: fit every shop-matrix column in the viewport (no sideways scroll). */
 @media (min-width: 900px) {
   .ax:not(.ax--list-table) .ax-card:has(.ax-table--shops) {
@@ -2719,6 +2758,15 @@
   font-weight: 700;
 }
 
+.ax--list-table .ax-table tbody tr.ax-row--group td {
+  background: color-mix(in srgb, var(--teal) 9%, var(--surface));
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
 .ax--list-table .ax-table--pl {
   width: max-content;
   max-width: 100%;
@@ -2898,6 +2946,27 @@
 
   .ax--list-table .ax-table .ax-th-pair-cols {
     display: none;
+  }
+
+  /* Quad cells stay four-across (qty · amt · % · day) in list tables. */
+  .ax--list-table .ax-table th.ax-th--pair:has(.ax-th-pair--quad),
+  .ax--list-table .ax-table td.ax-cell--pair:has(.ax-pair--quad) {
+    width: 13.4rem;
+    min-width: 12.4rem;
+    max-width: 14.5rem;
+  }
+
+  .ax--list-table .ax-table .ax-pair--quad {
+    grid-template-columns: 2.35rem minmax(4.3rem, 1fr) 2.7rem 2.15rem;
+    column-gap: 0.35rem;
+    min-width: 12rem;
+  }
+
+  .ax--list-table .ax-table .ax-th-pair-cols--quad {
+    display: grid;
+    grid-template-columns: 2.35rem minmax(4.3rem, 1fr) 2.7rem 2.15rem;
+    column-gap: 0.35rem;
+    min-width: 12rem;
   }
 
   .ax--list-table .ax-table .ax-pair-qty {
@@ -7052,5 +7121,297 @@
   .ax-card-head > span {
     text-align: left;
     white-space: normal;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   List-table pages — unified worksheet look (matches .ovs cards).
+   ───────────────────────────────────────────────────────────── */
+
+.ax--list-table .ax-card {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem 0.95rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.05);
+}
+
+.ax--list-table .ax-card-head {
+  padding: 0 0.05rem 0.55rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.ax--list-table .ax-card-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax--list-table .ax-card-head h3::before {
+  content: "";
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 0.18rem;
+  background: var(--teal);
+  flex-shrink: 0;
+}
+
+.ax--list-table .ax-card-head h3 i {
+  width: 0.8rem;
+  height: 0.8rem;
+  color: var(--mist-dim);
+}
+
+.ax--list-table .ax-kpis {
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.05);
+}
+
+/* Stronger divider under each table header row. */
+.ax--list-table .ax-table thead th {
+  border-bottom: 2px solid color-mix(in srgb, var(--line) 60%, var(--text-strong));
+}
+
+/* Consistent soft tint on Total columns in every list table. */
+.ax--list-table .ax-table thead th.ax-th--total {
+  background: color-mix(in srgb, var(--teal) 10%, var(--surface));
+}
+
+.ax--list-table .ax-table tbody tr td.ax-cell--total {
+  background: color-mix(in srgb, var(--teal) 4%, var(--surface));
+}
+
+.ax--list-table .ax-table tbody tr.ax-row--total td.ax-cell--total {
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+}
+
+/* Till boards + summary tiles — same card chrome as the sheet cards. */
+.ax--list-table .ax-till-card {
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.05);
+}
+
+/* ── List-table responsive polish — PC / tablet / mobile ── */
+@media (max-width: 899px) {
+  /* Keep card titles + hints from squeezing on tablet. */
+  .ax--list-table .ax-card-head {
+    flex-wrap: wrap;
+    gap: 0.3rem 0.6rem;
+  }
+
+  .ax--list-table .ax-card-head > span,
+  .ax--list-table .ax-card-hint {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 699px) {
+  .ax--list-table .ax-card {
+    gap: 0.5rem;
+    padding: 0.7rem 0.65rem 0.65rem;
+    border-radius: 12px;
+  }
+
+  .ax--list-table .ax-kpis {
+    border-radius: 12px;
+  }
+
+  .ax--list-table .ax-till-card {
+    padding: 0.7rem 0.65rem 0.65rem;
+    border-radius: 12px;
+  }
+}
+
+@media (max-width: 400px) {
+  .ax--list-table .ax-card {
+    padding: 0.6rem 0.55rem 0.55rem;
+  }
+}
+
+/* Wide PC screens — give dense shop matrices more room (matches .ovs). */
+@media (min-width: 1400px) {
+  .workspace-main:has(.ax--list-table .ax-table--shops) {
+    width: min(1440px, calc(100% - 2rem));
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Mobile (≤699px): tables collapse into stacked cards.
+   Each td carries data-label → rendered as "Label  value" rows;
+   the first cell becomes the card's title.
+   ───────────────────────────────────────────────────────────── */
+@media (max-width: 699px) {
+  .ax--list-table .ax-table-wrap,
+  .ax--list-table .ax-table-wrap--scroll,
+  .ax--list-table .ax-table-wrap--list {
+    overflow-x: visible;
+    border-top: 0;
+  }
+
+  .ax--list-table .ax-scroll-hint {
+    display: none;
+  }
+
+  .ax--list-table .ax-table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    font-size: 0.76rem;
+  }
+
+  .ax--list-table .ax-table thead {
+    display: none;
+  }
+
+  .ax--list-table .ax-table tbody {
+    display: block;
+  }
+
+  .ax--list-table .ax-table tbody tr {
+    display: block;
+    margin: 0 0 0.55rem;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  .ax--list-table .ax-table tbody tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .ax--list-table .ax-table td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.42rem 0.6rem;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+    white-space: normal;
+    text-align: left;
+    vertical-align: baseline;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax--list-table .ax-table tbody tr td:last-child {
+    border-bottom: 0;
+  }
+
+  .ax--list-table .ax-table td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    max-width: 45%;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--mist-soft);
+  }
+
+  /* First cell = card title band. */
+  .ax--list-table .ax-table-wrap .ax-table tbody tr:nth-child(n) td:first-child {
+    display: block;
+    position: static;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+    box-shadow: none;
+    font-weight: 700;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    text-align: left;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .ax--list-table .ax-table-wrap .ax-table tbody tr:nth-child(n) td:first-child::before {
+    content: none;
+  }
+
+  /* Value cells keep right-aligned content after the label. */
+  .ax--list-table .ax-table td > *:last-child {
+    margin-left: auto;
+    text-align: right;
+  }
+
+  .ax--list-table .ax-table td.ax-cell--pair,
+  .ax--list-table .ax-table td.ax-cell--total {
+    text-align: right;
+    border-left: 0;
+  }
+
+  .ax--list-table .ax-table .ax-pair {
+    display: flex;
+    gap: 0.45rem;
+    align-items: baseline;
+    justify-content: flex-end;
+    width: auto;
+    min-width: 0;
+    margin-inline: 0;
+  }
+
+  .ax--list-table .ax-table .ax-pair-amt {
+    min-width: 0;
+  }
+
+  /* Total rows read as emphasised cards. */
+  .ax--list-table .ax-table tbody tr.ax-row--total {
+    border-color: color-mix(in srgb, var(--teal) 40%, var(--line));
+  }
+
+  /* Zebra handled per-card, not per-cell. */
+  .ax--list-table .ax-table tbody tr:nth-child(even) td {
+    background: transparent;
+  }
+
+  .ax--list-table .ax-table tbody tr:hover td {
+    background: transparent;
+  }
+}
+
+@media (max-width: 699px) {
+  /* Card mode: per-cell band/zebra tints look patchy — clear them,
+     tint the row card itself instead. */
+  .ax--list-table .ax-table tbody tr:nth-child(n) td {
+    background: transparent;
+  }
+
+  .ax--list-table .ax-table tbody tr.ax-row--total {
+    background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+  }
+}
+
+@media (max-width: 699px) {
+  /* Card title band must win over the transparent cell reset above. */
+  .ax--list-table .ax-table-wrap .ax-table tbody tr:nth-child(n) td:first-child {
+    background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+  }
+}
+
+@media (max-width: 699px) {
+  /* Column-group legend is meaningless once columns collapse to cards. */
+  .ax--list-table .ax-band-legend {
+    display: none;
   }
 }

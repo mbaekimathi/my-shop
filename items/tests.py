@@ -2166,6 +2166,98 @@ class ItemDeleteWithStockTests(TestCase):
         )
 
 
+class ItemEditAjaxTests(TestCase):
+    def setUp(self):
+        from items.models import Item
+
+        self.password = "edit-ajax-pass"
+        self.user = User.objects.create_user(
+            username="840061",
+            password=self.password,
+            email="edit-ajax@test.local",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840061",
+            phone_country_code="+254",
+            phone_number="700000991",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="EDIT AJAX SHOP",
+            location="NAIROBI",
+            email="edit-ajax-shop@test.local",
+            phone_number="0700000991",
+            login_code="840161",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.item = Item.objects.create(
+            category="DRINKS",
+            name="EDIT AJAX ITEM",
+            minimum_selling_price=Decimal("80.00"),
+            shop_price=Decimal("100.00"),
+            created_by=self.profile,
+        )
+        self.url = "/it-support/item-management/"
+        self.client.login(username="840061", password=self.password)
+
+    def _edit(self, **overrides):
+        payload = {
+            "action": "edit",
+            "item_id": self.item.pk,
+            "category": "GROCERY",
+            "name": "EDIT AJAX ITEM RENAMED",
+            "description": "Updated in place",
+            "minimum_selling_price": "90",
+            "shop_price": "120",
+            "pricing_mode": "single",
+        }
+        payload.update(overrides)
+        return self.client.post(
+            self.url, payload, HTTP_ACCEPT="application/json"
+        )
+
+    def test_ajax_edit_returns_updated_row(self):
+        response = self._edit()
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertIn("message", data)
+        self.assertEqual(data["item"]["id"], self.item.pk)
+        self.assertEqual(data["item"]["name"], "EDIT AJAX ITEM RENAMED")
+        self.assertEqual(data["item"]["category"], "GROCERY")
+        self.assertEqual(data["item"]["shop_price"], "120.00")
+        self.assertIn("shop_price_rows", data["item"])
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.name, "EDIT AJAX ITEM RENAMED")
+
+    def test_ajax_edit_validation_error_returns_400(self):
+        response = self._edit(name="")
+        self.assertEqual(response.status_code, 400)
+        data = response.json()
+        self.assertFalse(data["ok"])
+        self.assertTrue(data["errors"])
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.name, "EDIT AJAX ITEM")
+
+    def test_ajax_edit_missing_item_returns_json_404(self):
+        response = self._edit(item_id="999999")
+        self.assertEqual(response.status_code, 404)
+        data = response.json()
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["code"], "item_missing")
+        self.assertEqual(data["item_id"], "999999")
+
+    def test_ajax_edit_blank_item_id_returns_json_404(self):
+        # Previously a blank/garbage id leaked a ValueError 500.
+        response = self._edit(item_id="")
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(response.json()["ok"])
+
+
 class ItemActivityAuditTests(TestCase):
     def setUp(self):
         self.password = "activity-pass"

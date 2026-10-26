@@ -216,7 +216,15 @@
         </table>
       </div>`;
     section.querySelector(".item-category-title").textContent = key;
-    root.appendChild(section);
+    const after = [
+      ...root.querySelectorAll("[data-item-category-group]"),
+    ].find(
+      (el) =>
+        (
+          el.querySelector(".item-category-title")?.textContent || ""
+        ).localeCompare(key, undefined, { sensitivity: "base" }) > 0
+    );
+    root.insertBefore(section, after || null);
     groupEls.set(key, section);
     return section.querySelector("tbody");
   };
@@ -739,6 +747,82 @@
       });
     })
     .catch(() => {});
+
+  // Mirrors items.services.item_text_search_q for client-side row filtering.
+  const itemMatchesQuery = (item, query) => {
+    const phrase = String(query || "").trim().toLowerCase();
+    if (!phrase) return true;
+    const name = String(item.name || "").toLowerCase();
+    const category = String(item.category || "").toLowerCase();
+    const description = String(item.description || "").toLowerCase();
+    const tokens = phrase.split(/\s+/).filter(Boolean);
+    if (tokens.length === 1) {
+      const token = tokens[0];
+      return (
+        name.includes(token) ||
+        category.includes(token) ||
+        description.includes(token)
+      );
+    }
+    if (name.includes(phrase)) return true;
+    return tokens.every(
+      (token) => name.includes(token) || category.includes(token)
+    );
+  };
+
+  const insertRowSorted = (tbody, tr, name) => {
+    const next = [...tbody.querySelectorAll("[data-item-row]")].find((row) => {
+      const rowName =
+        row.querySelector(".item-person-copy strong")?.textContent || "";
+      return (
+        rowName.localeCompare(String(name || ""), undefined, {
+          sensitivity: "base",
+        }) > 0
+      );
+    });
+    if (next) tbody.insertBefore(tr, next);
+    else tbody.appendChild(tr);
+  };
+
+  const removeRowById = (id) => {
+    const trigger = [...root.querySelectorAll("[data-edit-item]")].find(
+      (el) => el.dataset.itemId === String(id)
+    );
+    trigger?.closest("[data-item-row]")?.remove();
+  };
+
+  const refreshAfterRowChange = () => {
+    if (activeSort !== "name") refreshGroupCounts();
+    const visible = root.querySelectorAll("[data-item-row]").length;
+    if (noResults) {
+      noResults.hidden = visible > 0 || (!activeQuery && totalCount === 0);
+    }
+    root.hidden = visible === 0 && Boolean(activeQuery);
+    updateCountLabel(visible || totalCount, Boolean(activeQuery));
+    if (window.lucide?.createIcons) window.lucide.createIcons();
+    saveScrollState();
+  };
+
+  // In-place row refresh after an edit that saved without a page reload.
+  document.addEventListener("item-catalog:item-updated", (event) => {
+    const item = event.detail?.item;
+    if (!item || item.id == null) return;
+    const byName = activeSort === "name";
+    removeRowById(item.id);
+    if (itemMatchesQuery(item, activeQuery)) {
+      const tbody = byName ? ensureFlatTable() : ensureGroup(item.category);
+      insertRowSorted(tbody, buildRow(item, { includeCategory: byName }), item.name);
+    }
+    refreshAfterRowChange();
+  });
+
+  // Drop a row whose item no longer exists server-side (stale cache/row).
+  document.addEventListener("item-catalog:item-removed", (event) => {
+    const id = event.detail?.id;
+    if (id == null || id === "") return;
+    removeRowById(id);
+    refreshAfterRowChange();
+  });
 
   boot();
 })();

@@ -21,6 +21,7 @@ from .services import (
     actionable_shops_for_profile,
     apply_serial_status,
     apply_stock_movement,
+    build_item_management_row,
     build_item_price_list_document,
     build_item_price_list_pdf,
     build_stock_catalog_page,
@@ -300,6 +301,7 @@ def item_management(request, profile, meta, module, page_sidebar):
             profile,
             "item-management",
             "toggle_suspend" if action == "suspend" else action,
+            as_json=_wants_json_response(request),
         )
         if denied is not None:
             return denied
@@ -324,7 +326,23 @@ def item_management(request, profile, meta, module, page_sidebar):
                 return redirect(request.path)
 
         elif action == "edit":
-            edit_item = get_object_or_404(Item, pk=item_id)
+            try:
+                edit_item = Item.objects.get(pk=item_id)
+            except (Item.DoesNotExist, TypeError, ValueError):
+                if _wants_json_response(request):
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": (
+                                "This item no longer exists — it may have "
+                                "been deleted. Refresh the list and try again."
+                            ),
+                            "code": "item_missing",
+                            "item_id": item_id,
+                        },
+                        status=404,
+                    )
+                raise Http404("Item not found.")
             form_data = _form_data_from_post(request.POST, profile)
             editable_shop_ids = {
                 shop.pk for shop in _pricing_shops_for_profile(profile)
@@ -338,9 +356,27 @@ def item_management(request, profile, meta, module, page_sidebar):
                     actor=profile,
                 )
             except ValidationError as exc:
+                if _wants_json_response(request):
+                    return JsonResponse(
+                        {"ok": False, "errors": _validation_errors(exc)},
+                        status=400,
+                    )
                 form_errors = _validation_errors(exc)
                 open_edit_modal = True
             else:
+                if _wants_json_response(request):
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "message": (
+                                f"Item “{edit_item.name}” updated successfully."
+                            ),
+                            "item": build_item_management_row(
+                                edit_item,
+                                shops=_pricing_shops_for_profile(profile),
+                            ),
+                        }
+                    )
                 messages.success(request, f"Item “{form_data['name']}” updated successfully.")
                 return redirect(request.path)
 

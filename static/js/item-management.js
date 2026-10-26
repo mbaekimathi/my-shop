@@ -250,6 +250,7 @@
     if (window.initUppercaseInputs) window.initUppercaseInputs(editForm);
 
     resetEditImageControls(dataset.imageUrl || "");
+    clearEditErrors();
 
     setModalOpen(editModal, true);
   };
@@ -259,6 +260,125 @@
     const button = event.target.closest?.("[data-edit-item]");
     if (!button) return;
     openEditFromButton(button);
+  });
+
+  // In-place item editing — save via fetch so the catalog keeps its
+  // search, sort, loaded pages, and scroll position.
+  const clearEditErrors = () => {
+    editModal?.querySelector(".workspace-modal-errors")?.remove();
+  };
+
+  const showEditErrors = (errors) => {
+    if (!editModal || !editForm) return;
+    let list = editModal.querySelector(".workspace-modal-errors");
+    if (!list) {
+      list = document.createElement("ul");
+      list.className = "form-alert-list workspace-modal-errors";
+      editForm.parentNode.insertBefore(list, editForm);
+    }
+    list.innerHTML = "";
+    errors.forEach((message) => {
+      const li = document.createElement("li");
+      li.className = "form-alert";
+      li.textContent = message;
+      list.appendChild(li);
+    });
+    list.scrollIntoView({ block: "nearest" });
+  };
+
+  let editSubmitting = false;
+
+  const postEditForm = () =>
+    // NB: editForm.action is shadowed by the <input name="action"> control —
+    // use getAttribute, which reads the real attribute (null when absent).
+    fetch(editForm.getAttribute("action") || window.location.href, {
+      method: "POST",
+      body: new FormData(editForm),
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    });
+
+  editForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (editSubmitting) return;
+    editSubmitting = true;
+    const submitBtn = editForm.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    clearEditErrors();
+
+    // Retry once on a dropped connection (e.g. a dev-server restart mid-save).
+    // Edits are idempotent — the same payload is replayed unchanged.
+    const attempt = (retriesLeft) =>
+      postEditForm().catch((networkErr) => {
+        if (retriesLeft > 0) return attempt(retriesLeft - 1);
+        throw networkErr;
+      });
+
+    attempt(1)
+      .then(async (response) => {
+        if (response.redirected) {
+          window.location.reload();
+          return;
+        }
+        const data = await response.json().catch(() => null);
+        if (response.ok && data?.ok) {
+          setModalOpen(editModal, false);
+          document.dispatchEvent(
+            new CustomEvent("item-catalog:item-updated", {
+              detail: { item: data.item },
+            })
+          );
+          if (window.showWorkspaceToast) {
+            window.showWorkspaceToast(
+              data.message || "Item updated successfully.",
+              "success"
+            );
+          }
+          import("./offline/catalog-cache.js")
+            .then((mod) =>
+              mod.notifyCatalogChanged?.({
+                scopes: ["all"],
+                reason: "item_edit",
+                softReload: false,
+              })
+            )
+            .catch(() => {});
+          return;
+        }
+        if (data === null) {
+          console.error("Item edit failed:", response.status, response);
+          showEditErrors([
+            `Could not save changes — the server returned an error (HTTP ${response.status}). Try again.`,
+          ]);
+          return;
+        }
+        if (data?.code === "item_missing") {
+          // The row was stale (item deleted elsewhere) — drop it from the
+          // catalog so the user can't keep editing a phantom.
+          document.dispatchEvent(
+            new CustomEvent("item-catalog:item-removed", {
+              detail: { id: data.item_id || itemIdInput?.value },
+            })
+          );
+        }
+        const errors =
+          Array.isArray(data?.errors) && data.errors.length
+            ? data.errors
+            : [data?.error || "Could not save changes. Try again."];
+        showEditErrors(errors);
+      })
+      .catch(() => {
+        showEditErrors([
+          "Could not reach the server. Check your connection and try again.",
+        ]);
+      })
+      .finally(() => {
+        editSubmitting = false;
+        if (submitBtn) submitBtn.disabled = false;
+      });
   });
 
   const deleteModal = document.querySelector('[data-modal="delete-item"]');
@@ -374,6 +494,8 @@
     (event) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
+      // The edit form saves in place via fetch — it flushes catalogs itself.
+      if (form.matches("[data-edit-form]")) return;
       if (form.dataset.catalogFlushed === "1") return;
       const action = String(
         form.querySelector('input[name="action"]')?.value || ""

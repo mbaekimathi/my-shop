@@ -1407,6 +1407,13 @@ def analytics_return_receipts_url(role):
     )
 
 
+def analytics_item_report_url(role):
+    return reverse(
+        "employees:analytics_item_report",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+
+
 def sidebar_for_analytics(role, *, active_view="overview", profile=None):
     """Sidebar for the Analytics overview hub only — not shared with section pages."""
     from .analytics_services import ANALYTICS_DASHBOARD_SECTION_SLUGS, ANALYTICS_SECTIONS
@@ -1438,6 +1445,15 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
                 active=section["slug"] == active_view,
             )
         )
+        if section["slug"] == "items":
+            section_links.append(
+                _link(
+                    "Item report",
+                    "clipboard-list",
+                    href=analytics_item_report_url(role),
+                    active=active_view == "item-report",
+                )
+            )
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
     if show_overview and (profile is None or employee_may(profile, "analytics", "view")):
         primary.append(
@@ -1508,6 +1524,7 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
             )
             primary.append(_link(label, icon, href=href, active=True))
     else:
+        section_slug = "items" if active_view == "item-report" else section_slug
         section = ANALYTICS_SECTION_BY_SLUG.get(section_slug)
         if section is not None and (
             profile is None or employee_may(profile, "analytics", section_slug)
@@ -1517,9 +1534,18 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
                     section["label"],
                     section["icon"],
                     href=analytics_section_url(role, section_slug),
-                    active=True,
+                    active=section_slug == active_view,
                 )
             )
+            if section_slug == "items":
+                primary.append(
+                    _link(
+                        "Item report",
+                        "clipboard-list",
+                        href=analytics_item_report_url(role),
+                        active=active_view == "item-report",
+                    )
+                )
 
     return resolve_sidebar_hrefs(
         {
@@ -1607,9 +1633,13 @@ def sidebar_for_suppliers(role, *, profile=None):
 
 
 def sidebar_for_credits(role, *, profile=None, active="credits"):
-    """Focused sidebar for the credits workspace — Dashboard, Credits, audits."""
+    """Focused sidebar for the credits workspace — Dashboard, Credits, report, audits."""
     dashboard_url = reverse(role_home_url_name(role))
     credits_href = analytics_section_url(role, "credits")
+    report_href = reverse(
+        "employees:analytics_credit_report",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
     audits_href = reverse(
         "employees:analytics_credit_audits",
         kwargs={"role_segment": role_url_segment(role)},
@@ -1625,6 +1655,12 @@ def sidebar_for_credits(role, *, profile=None, active="credits"):
                     "credit-card",
                     href=credits_href,
                     active=active == "credits",
+                ),
+                _link(
+                    "Credit reports",
+                    "file-text",
+                    href=report_href,
+                    active=active == "report",
                 ),
                 _link(
                     "Activity analytics",

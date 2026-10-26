@@ -58,7 +58,7 @@ ANALYTICS_SECTIONS = (
         "slug": "overview",
         "label": "Overview",
         "icon": "layout-grid",
-        "summary": "Result trends — sales, expenses, net, and day open/close balances.",
+        "summary": "Company totals then per shop — sales, credits, stock, expenses, and profit.",
     },
     {
         "slug": "revenue",
@@ -82,7 +82,7 @@ ANALYTICS_SECTIONS = (
         "slug": "credits",
         "label": "Credits",
         "icon": "credit-card",
-        "summary": "Credit receipts by shop — paid, due, stock value, and profit.",
+        "summary": "Items on credit by shop — qty, credit amount, % paid back, and top credit day.",
     },
     {
         "slug": "items",
@@ -2349,6 +2349,7 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
     )
     filters["role"] = profile.role
     filters["query"] = request.GET.urlencode()
+    filters["search_query"] = (request.GET.get("q") or "").strip()
     filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
     filters["expense_category"] = (request.GET.get("category") or "").strip().lower()
     filters["supply_item_id"] = (request.GET.get("item_id") or "").strip()
@@ -2379,6 +2380,50 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         "section_slug": section["slug"],
         "analytics_sections": ANALYTICS_SECTIONS,
         "include_all_time": allow_all_time,
+        "page": page,
+    }
+
+
+def build_item_report_page(*, profile, request) -> dict:
+    """Item report context — per item per shop avg qty, best day, margin."""
+    filters = _filters_context(
+        profile,
+        request,
+        allow_all_time=True,
+        default_all_time=False,
+    )
+    filters["role"] = profile.role
+    filters["query"] = request.GET.urlencode()
+    filters["search_query"] = (request.GET.get("q") or "").strip()
+    page = _build_item_report(filters)
+    page["list_table_layout"] = True
+    page["search_query"] = filters["search_query"]
+    page["download_href"] = _pdf_download_href(filters["query"])
+    return {
+        **filters,
+        "section_slug": "item-report",
+        "include_all_time": True,
+        "page": page,
+    }
+
+
+def build_credit_report_page(*, profile, request) -> dict:
+    """Credit report context — shops rollup plus client credit accounts."""
+    filters = _filters_context(
+        profile,
+        request,
+        allow_all_time=True,
+        default_all_time=False,
+    )
+    filters["role"] = profile.role
+    filters["query"] = request.GET.urlencode()
+    filters["search_query"] = (request.GET.get("q") or "").strip()
+    filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
+    page = _build_credit_report(filters)
+    return {
+        **filters,
+        "section_slug": "credits",
+        "include_all_time": True,
         "page": page,
     }
 
@@ -4453,6 +4498,18 @@ def _analytics_report_pdf(
         parent=head_cell,
         alignment=TA_RIGHT,
     )
+    head_cell_center = ParagraphStyle(
+        "PdfHeadCenter",
+        parent=head_cell,
+        alignment=TA_CENTER,
+    )
+    group_head = ParagraphStyle(
+        "PdfGroupHead",
+        parent=head_cell,
+        fontSize=8,
+        textColor=ink,
+        alignment=TA_CENTER,
+    )
     cell = ParagraphStyle(
         "PdfCell",
         parent=styles["Normal"],
@@ -4475,6 +4532,23 @@ def _analytics_report_pdf(
         "PdfCellRightStrong",
         parent=cell_right,
         fontName=MANROPE_PDF_BOLD,
+    )
+    cell_center = ParagraphStyle(
+        "PdfCellCenter",
+        parent=cell,
+        alignment=TA_CENTER,
+    )
+    cell_center_strong = ParagraphStyle(
+        "PdfCellCenterStrong",
+        parent=cell_center,
+        fontName=MANROPE_PDF_BOLD,
+    )
+    group_cell = ParagraphStyle(
+        "PdfGroupCell",
+        parent=cell,
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7.6,
+        textColor=accent,
     )
     empty_style = ParagraphStyle(
         "PdfEmpty",
@@ -4587,19 +4661,19 @@ def _analytics_report_pdf(
         story.append(kpi)
         story.append(Spacer(1, 6 * mm))
 
-    def _style_data_table(n_rows: int, has_total: bool) -> TableStyle:
+    def _style_data_table(n_rows: int, has_total: bool, head_rows: int = 1) -> TableStyle:
         cmds = [
-            ("BACKGROUND", (0, 0), (-1, 0), surface),
+            ("BACKGROUND", (0, 0), (-1, head_rows - 1), surface),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, 0), 5.5),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 5.5),
-            ("TOPPADDING", (0, 1), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, head_rows - 1), 5.5),
+            ("BOTTOMPADDING", (0, 0), (-1, head_rows - 1), 5.5),
+            ("TOPPADDING", (0, head_rows), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, head_rows), (-1, -1), 5),
             ("LEFTPADDING", (0, 0), (-1, -1), 4),
             ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.9, line_strong),
-            ("LINEBELOW", (0, 1), (-1, -1), 0.4, line),
-            ("BACKGROUND", (0, 1), (-1, -1), white),
+            ("LINEBELOW", (0, 0), (-1, head_rows - 1), 0.9, line_strong),
+            ("LINEBELOW", (0, head_rows), (-1, -1), 0.4, line),
+            ("BACKGROUND", (0, head_rows), (-1, -1), white),
         ]
         if has_total:
             cmds.append(("LINEABOVE", (0, -1), (-1, -1), 1.0, accent))
@@ -4616,6 +4690,7 @@ def _analytics_report_pdf(
         )
         headers = list(section.get("headers") or [])
         aligns = list(section.get("aligns") or []) or ["left"] * len(headers)
+        header_groups = list(section.get("header_groups") or [])
         rows = list(section.get("rows") or [])
         if not headers or not rows:
             story.append(
@@ -4625,51 +4700,139 @@ def _analytics_report_pdf(
                 )
             )
         else:
+            n_cols = len(headers)
+
+            def _cell_style(align, strong=False):
+                if strong:
+                    if align == "right":
+                        return cell_right_strong
+                    if align == "center":
+                        return cell_center_strong
+                    return cell_strong
+                if align == "right":
+                    return cell_right
+                if align == "center":
+                    return cell_center
+                return cell
+
             head_row = [
                 Paragraph(
                     _esc(str(text).upper()),
-                    head_cell_right if aligns[idx] == "right" else head_cell,
+                    (
+                        head_cell_right
+                        if aligns[idx] == "right"
+                        else head_cell_center
+                        if aligns[idx] == "center"
+                        else head_cell
+                    ),
                 )
                 for idx, text in enumerate(headers)
             ]
-            total_last = bool(
-                rows and str(rows[-1][0] or "").strip().lower() == "total"
+            header_rows = [head_row]
+            span_cmds = []
+            if header_groups:
+                top_row = [""] * n_cols
+                col = 0
+                for gidx, (label, span) in enumerate(header_groups):
+                    span = int(span or 1)
+                    top_row[col] = Paragraph(
+                        _esc(str(label or "").upper()), group_head
+                    )
+                    if gidx:
+                        span_cmds.append(
+                            (
+                                "LINEAFTER",
+                                (col - 1, 0),
+                                (col - 1, -1),
+                                0.8,
+                                line_strong,
+                            )
+                        )
+                    if span > 1:
+                        span_cmds.append(
+                            ("SPAN", (col, 0), (col + span - 1, 0))
+                        )
+                    elif gidx == 0:
+                        span_cmds.append(("SPAN", (0, 0), (0, 1)))
+                    col += span
+                header_rows = [top_row, head_row]
+
+            # Backwards-compat: plain rows whose first cell reads "total".
+            legacy_total = (
+                rows
+                and not isinstance(rows[-1], dict)
+                and str((rows[-1] or [""])[0] or "").strip().lower() == "total"
             )
-            table_data = [head_row]
+            body = []
+            row_kinds = []
             for row in rows:
-                is_total = total_last and row is rows[-1]
-                table_data.append(
+                kind = "data"
+                cells = row
+                if isinstance(row, dict):
+                    kind = row.get("kind") or "data"
+                    cells = row.get("cells") or []
+                if kind == "group" or (
+                    isinstance(row, dict) and row.get("group_header")
+                ):
+                    label = row.get("label") if isinstance(row, dict) else ""
+                    body.append(
+                        [Paragraph(_esc(label or ""), group_cell)]
+                        + [""] * (n_cols - 1)
+                    )
+                    row_kinds.append("group")
+                    continue
+                is_total = kind == "total" or (
+                    legacy_total and row is rows[-1]
+                )
+                row_kinds.append("total" if is_total else "data")
+                body.append(
                     [
                         Paragraph(
                             _esc(value),
-                            (
-                                cell_right_strong
-                                if aligns[idx] == "right"
-                                else cell_strong
-                            )
-                            if is_total
-                            else (
-                                cell_right if aligns[idx] == "right" else cell
-                            ),
+                            _cell_style(aligns[idx], is_total),
                         )
-                        for idx, value in enumerate(row)
+                        for idx, value in enumerate(cells)
                     ]
                 )
             fractions = section.get("widths")
-            if fractions and len(fractions) == len(headers):
+            if fractions and len(fractions) == n_cols:
                 col_widths = [usable * frac for frac in fractions]
             else:
                 weights = [
                     1.7 if aligns[idx] == "left" and idx == 0 else (
                         1.15 if aligns[idx] == "left" else 1.0
                     )
-                    for idx in range(len(headers))
+                    for idx in range(n_cols)
                 ]
                 weight_total = sum(weights) or 1.0
                 col_widths = [usable * w / weight_total for w in weights]
-            grid = Table(table_data, colWidths=col_widths, repeatRows=1)
-            grid.setStyle(_style_data_table(len(table_data), total_last))
+            grid = Table(
+                header_rows + body,
+                colWidths=col_widths,
+                repeatRows=len(header_rows),
+            )
+            style = _style_data_table(
+                len(header_rows) + len(body),
+                "total" in row_kinds and row_kinds[-1] == "total",
+                head_rows=len(header_rows),
+            )
+            for cmd in span_cmds:
+                style.add(*cmd)
+            for offset, kind in enumerate(row_kinds):
+                r = offset + len(header_rows)
+                if kind == "group":
+                    style.add("SPAN", (0, r), (-1, r))
+                    style.add("BACKGROUND", (0, r), (-1, r), accent_soft)
+                    style.add("LINEABOVE", (0, r), (-1, r), 0.6, accent)
+                elif kind == "total":
+                    style.add("LINEABOVE", (0, r), (-1, r), 1.0, accent)
+                    style.add("BACKGROUND", (0, r), (-1, r), accent_soft)
+            grid.setStyle(style)
             story.append(grid)
+            footnote = (section.get("footnote") or "").strip()
+            if footnote:
+                story.append(Spacer(1, 1.5 * mm))
+                story.append(Paragraph(_esc(footnote), foot_style))
         story.append(Spacer(1, 6 * mm))
 
     story.append(
@@ -4722,7 +4885,7 @@ def _pdf_cell_label(cell) -> str:
 
 
 def _credits_shop_pdf_section(table: dict) -> dict:
-    """Simplified shop rollup: total, due, paid, profit/loss, stock value."""
+    """Simplified shop rollup: total, due, paid, % paid, profit/loss, stock."""
     rows = []
     for row in table.get("rows") or []:
         cells = row.get("cells") if isinstance(row, dict) else row
@@ -4739,8 +4902,9 @@ def _credits_shop_pdf_section(table: dict) -> dict:
                 amount,
                 _pdf_cell_label(cells[2]) if len(cells) > 2 else "—",
                 _pdf_cell_label(cells[1]) if len(cells) > 1 else "—",
-                _pdf_cell_label(cells[5]) if len(cells) > 5 else "—",
                 _pdf_cell_label(cells[4]) if len(cells) > 4 else "—",
+                _pdf_cell_label(cells[6]) if len(cells) > 6 else "—",
+                _pdf_cell_label(cells[5]) if len(cells) > 5 else "—",
             ]
         )
     return {
@@ -4751,81 +4915,24 @@ def _credits_shop_pdf_section(table: dict) -> dict:
             "Total amount",
             "Total due",
             "Total paid",
+            "% paid",
             "Profit/Loss",
             "Stock value",
         ],
-        "aligns": ["left", "right", "right", "right", "right", "right"],
-        "widths": [0.24, 0.16, 0.15, 0.15, 0.15, 0.15],
+        "aligns": ["left", "right", "right", "right", "right", "right", "right"],
+        "widths": [0.22, 0.15, 0.13, 0.13, 0.10, 0.14, 0.13],
         "rows": rows,
         "empty": table.get("empty") or "No data.",
         "footnote": table.get("footnote") or "",
     }
 
 
-def _credits_clients_pdf_section(table: dict) -> dict:
-    """Simplified client rollup: per-branch owed, due, paid, credit, stock."""
-    columns = list(table.get("columns") or [])
-    shop_cols = [
-        col
-        for col in columns
-        if isinstance(col, dict) and col.get("pair") and not col.get("total")
-    ]
-    headers = ["Name", "Phone"]
-    aligns = ["left", "left"]
-    for col in shop_cols:
-        headers.append(f"{col.get('label') or 'Shop'} owed")
-        aligns.append("right")
-    headers += ["Total due", "Total paid", "Total credit", "Stock value"]
-    aligns += ["right", "right", "right", "right"]
-    fractions = [0.17, 0.11] + [0.08] * len(shop_cols) + [0.11, 0.11, 0.11, 0.11]
-    fraction_total = sum(fractions) or 1.0
-    widths = [frac / fraction_total for frac in fractions]
-
-    rows = []
-    for row in table.get("rows") or []:
-        cells = row.get("cells") if isinstance(row, dict) else row
-        cells = list(cells or [])
-        flat = [
-            _pdf_cell_label(cells[0]) if cells else "—",
-            _pdf_cell_label(cells[1]) if len(cells) > 1 else "—",
-        ]
-        idx = 2
-        for _col in shop_cols:
-            cell = cells[idx] if idx < len(cells) else {}
-            flat.append(
-                str(cell.get("amount") or "0") if isinstance(cell, dict) else "0"
-            )
-            idx += 1
-        total_cell = cells[idx] if idx < len(cells) else {}
-        owed = (
-            str(total_cell.get("amount") or "0")
-            if isinstance(total_cell, dict)
-            else "0"
-        )
-        stock_cell = cells[idx + 1] if idx + 1 < len(cells) else {}
-        paid = row.get("paid") if isinstance(row, dict) else None
-        gross = row.get("gross") if isinstance(row, dict) else None
-        flat += [
-            owed,
-            _money_dense(paid) if paid is not None else "—",
-            _money_dense(gross) if gross is not None else "—",
-            _pdf_cell_label(stock_cell),
-        ]
-        rows.append(flat)
-    return {
-        "kicker": "CREDITS REPORT",
-        "title": table.get("title") or "Client credit accounts by shop",
-        "headers": headers,
-        "aligns": aligns,
-        "widths": widths,
-        "rows": rows,
-        "empty": table.get("empty") or "No data.",
-        "footnote": (
-            (table.get("footnote") or "").strip()
-            + " Total paid and Total credit are the raw receipt sums for the "
-            "same scope."
-        ).strip(),
-    }
+def _credits_items_pdf_section(table: dict) -> dict:
+    """Credit items matrix — quad cells per shop (qty · credit · paid · %)."""
+    section = _item_report_pdf_section(table)
+    section["kicker"] = "CREDITS REPORT"
+    section["title"] = table.get("title") or "Items picked on credit"
+    return section
 
 
 def _summary_board_kpi_cards(summary: dict) -> list:
@@ -4866,8 +4973,8 @@ def build_credits_report_pdf(*, page: dict, filters: dict, company_name: str = "
         if table.get("title") == "Credits by shop":
             sections.append(_credits_shop_pdf_section(table))
             continue
-        if table.get("title") == "Client credit accounts by shop":
-            sections.append(_credits_clients_pdf_section(table))
+        if table.get("title") == "Items picked on credit":
+            sections.append(_credits_items_pdf_section(table))
             continue
         headers, aligns, rows = _flatten_analytics_table(table)
         sections.append(
@@ -4885,7 +4992,9 @@ def build_credits_report_pdf(*, page: dict, filters: dict, company_name: str = "
     brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
     return _analytics_report_pdf(
         title="Credits report",
-        subtitle=(page.get("lead") or "Credit performance by shop and client."),
+        subtitle=(
+            page.get("lead") or "Items picked on credit by shop."
+        ),
         brand=brand,
         meta_lines=[shop_label, period_label],
         kpi_cards=_summary_board_kpi_cards(page.get("summary_board") or {}),
@@ -5160,6 +5269,169 @@ def tradings_report_pdf_response(*, page: dict, filters: dict):
         filename = f"tradings-{slugify(headline) or 'report'}-{stamp}.pdf"
     else:
         filename = f"tradings-report-{stamp}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
+
+
+def _item_report_pdf_section(table: dict) -> dict:
+    """Item report section mirroring the on-page shop-column matrix."""
+    columns = list(table.get("columns") or [])
+    quad_cols = [
+        col for col in columns if isinstance(col, dict) and col.get("quad")
+    ]
+
+    header_groups = [("Item", 1)]
+    headers = [""]
+    aligns = ["left"]
+    for col in quad_cols:
+        header_groups.append((col.get("label") or "Shop", 4))
+        headers += [
+            col.get("sub_qty") or "Qty",
+            col.get("sub_amt") or "Amt",
+            col.get("sub_pct") or "%",
+            col.get("sub_day") or "Day",
+        ]
+        aligns += ["right", "right", "right", "center"]
+
+    rows = []
+    for row in table.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("group_header"):
+            rows.append({"kind": "group", "label": row.get("label") or ""})
+            continue
+        cells = list(row.get("cells") or [])
+        flat = [_pdf_cell_label(cells[0]) if cells else "—"]
+        for cell in cells[1:]:
+            if isinstance(cell, dict) and cell.get("kind") == "quad":
+                flat += [
+                    str(cell.get("qty") or "—"),
+                    str(cell.get("amount") or "—"),
+                    str(cell.get("pct") or "—"),
+                    str(cell.get("day") or "—"),
+                ]
+            else:
+                flat += ["—", "—", "—", "—"]
+        rows.append(
+            {
+                "kind": "total" if row.get("_total") else "data",
+                "cells": flat,
+            }
+        )
+
+    fractions = [0.14]
+    for _col in quad_cols:
+        fractions += [0.042, 0.058, 0.04, 0.036]
+    frac_total = sum(fractions) or 1.0
+    widths = [frac / frac_total for frac in fractions]
+    return {
+        "kicker": "ITEM REPORT",
+        "title": table.get("title") or "Item report by shop",
+        "header_groups": header_groups,
+        "headers": headers,
+        "aligns": aligns,
+        "widths": widths,
+        "rows": rows,
+        "empty": table.get("empty") or "No data.",
+        "footnote": table.get("footnote") or "",
+    }
+
+
+def build_item_report_pdf(*, page: dict, filters: dict, company_name: str = "") -> bytes:
+    """Landscape A4 PDF of the item report (per item x shop averages)."""
+    period_label = filters.get("report_period_label") or "All time"
+    selected = set(filters.get("selected_shop_ids") or [])
+    filter_shops = list(filters.get("filter_shops") or [])
+    if selected:
+        names = [str(shop.name) for shop in filter_shops if shop.pk in selected]
+        shop_label = ", ".join(names) if names else "Selected shops"
+    else:
+        shop_label = "All shops"
+
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    return _analytics_report_pdf(
+        title="Item report",
+        subtitle=(
+            page.get("lead")
+            or "Avg qty, avg profit, and % profit per selling day, per shop."
+        ),
+        brand=brand,
+        meta_lines=[shop_label, period_label],
+        kpi_cards=_summary_board_kpi_cards(page.get("summary_board") or {}),
+        sections=[
+            _item_report_pdf_section(table)
+            for table in page.get("tables") or []
+        ],
+        footer_note=f"{brand} · Item report · {shop_label} · {period_label}",
+    )
+
+
+def item_report_pdf_response(*, page: dict, filters: dict):
+    """PDF download for the item report."""
+    from django.http import HttpResponse
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    pdf_bytes = build_item_report_pdf(
+        page=page, filters=filters, company_name=company_name
+    )
+    stamp = timezone.localtime().strftime("%Y%m%d-%H%M")
+    filename = f"item-report-{stamp}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
+
+
+def build_credit_items_pdf(*, page: dict, filters: dict, company_name: str = "") -> bytes:
+    """Landscape A4 PDF of the credits items matrix (per item x shop)."""
+    period_label = filters.get("report_period_label") or "All time"
+    selected = set(filters.get("selected_shop_ids") or [])
+    filter_shops = list(filters.get("filter_shops") or [])
+    if selected:
+        names = [str(shop.name) for shop in filter_shops if shop.pk in selected]
+        shop_label = ", ".join(names) if names else "Selected shops"
+    else:
+        shop_label = "All shops"
+
+    sections = []
+    for table in page.get("tables") or []:
+        section = _item_report_pdf_section(table)
+        section["kicker"] = "CREDIT ITEMS"
+        sections.append(section)
+
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    return _analytics_report_pdf(
+        title="Credit items report",
+        subtitle=(
+            page.get("lead")
+            or "Qty on credit, credit amount, and % paid back per shop."
+        ),
+        brand=brand,
+        meta_lines=[shop_label, period_label],
+        kpi_cards=_summary_board_kpi_cards(page.get("summary_board") or {}),
+        sections=sections,
+        footer_note=f"{brand} · Credit items report · {shop_label} · {period_label}",
+    )
+
+
+def credit_items_pdf_response(*, page: dict, filters: dict):
+    """PDF download for the credits items matrix."""
+    from django.http import HttpResponse
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    pdf_bytes = build_credit_items_pdf(
+        page=page, filters=filters, company_name=company_name
+    )
+    stamp = timezone.localtime().strftime("%Y%m%d-%H%M")
+    filename = f"credit-items-{stamp}.pdf"
     response = HttpResponse(pdf_bytes, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     response["Content-Length"] = str(len(pdf_bytes))
@@ -6031,374 +6303,380 @@ def _variance_tone(value) -> str:
 
 
 def _build_overview(filters):
-    """Simple result trends: big deltas, sales timeline, shop movement."""
-    from datetime import timedelta
-
-    from django.utils import timezone
-
+    """Raw company totals for the period, then a per-shop breakdown."""
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     start, end = filters["start"], filters["end"]
-    prev_start, prev_end = filters["prev_start"], filters["prev_end"]
-    sales, prev_sales, credits, _quotes, expenses = _common_receipt_sets(filters)
-    day_balances = _day_balance_data(filters)
+    sales, _prev_sales, credits, _quotes, expenses = _common_receipt_sets(filters)
 
-    sales_total = _sum_total(sales)
-    prev_sales_total = _sum_total(prev_sales)
-    sales_subtotal = Decimal(
-        sales.aggregate(amount=Coalesce(Sum("subtotal"), _zero()))["amount"] or 0
-    )
-    credit_subtotal = Decimal(
-        credits.aggregate(amount=Coalesce(Sum("subtotal"), _zero()))["amount"] or 0
-    )
-    net_sales = sales_subtotal + credit_subtotal
-    cogs_by_shop = _cogs_by_shop_for_period(shop_ids=shop_ids, start=start, end=end)
+    sale_docs_by_shop: dict[int, int] = {
+        row["shop_id"]: int(row["docs"] or 0)
+        for row in sales.values("shop_id").annotate(docs=Count("id"))
+    }
+    credit_docs_by_shop: dict[int, int] = {
+        row["shop_id"]: int(row["docs"] or 0)
+        for row in credits.values("shop_id").annotate(docs=Count("id"))
+    }
+    trading = _trading_by_shop_for_period(shop_ids=shop_ids, start=start, end=end)
+    opex_by_shop, drawings_by_shop = _opex_and_drawings_by_shop(expenses)
     shrinkage_by_shop = _shrinkage_by_shop_for_period(
         shop_ids=shop_ids, start=start, end=end
     )
-    opex_by_shop, drawings_by_shop = _opex_and_drawings_by_shop(expenses)
-    cogs_total = sum((amt for _d, amt in cogs_by_shop.values()), _zero())
-    shrinkage_total = sum((amt for _d, amt in shrinkage_by_shop.values()), _zero())
-    opex_total = sum((amt for _d, amt in opex_by_shop.values()), _zero())
-    drawings_total = sum((amt for _d, amt in drawings_by_shop.values()), _zero())
-    gross_total = net_sales - cogs_total
-    operating_total = gross_total - opex_total - shrinkage_total
 
-    prev_sales_qs = _receipts_qs(
-        shop_ids=shop_ids,
-        start=prev_start,
-        end=prev_end,
-        kinds=[ShopReceiptKind.SALE],
-    )
-    prev_credits_qs = _receipts_qs(
-        shop_ids=shop_ids,
-        start=prev_start,
-        end=prev_end,
-        kinds=[ShopReceiptKind.CREDIT],
-    )
-    prev_net_sales = Decimal(
-        prev_sales_qs.aggregate(amount=Coalesce(Sum("subtotal"), _zero()))["amount"]
-        or 0
-    ) + Decimal(
-        prev_credits_qs.aggregate(amount=Coalesce(Sum("subtotal"), _zero()))["amount"]
-        or 0
-    )
-    prev_cogs = sum(
-        (
-            amt
-            for _d, amt in _cogs_by_shop_for_period(
-                shop_ids=shop_ids, start=prev_start, end=prev_end
-            ).values()
-        ),
-        _zero(),
-    )
-    prev_shrinkage = sum(
-        (
-            amt
-            for _d, amt in _shrinkage_by_shop_for_period(
-                shop_ids=shop_ids, start=prev_start, end=prev_end
-            ).values()
-        ),
-        _zero(),
-    )
-    prev_expenses = Expense.objects.filter(
-        shop_id__in=shop_ids,
-        created_at__gte=prev_start,
-        created_at__lt=prev_end,
-    )
-    prev_opex_by_shop, _prev_drawings = _opex_and_drawings_by_shop(prev_expenses)
-    prev_opex = sum((amt for _d, amt in prev_opex_by_shop.values()), _zero())
-    prev_gross = prev_net_sales - prev_cogs
-    prev_operating = prev_gross - prev_opex - prev_shrinkage
-
-    credit_total = _sum_total(credits)
-    credit_payments = Decimal(
-        credits.aggregate(paid=Coalesce(Sum("amount_paid"), _zero()))["paid"] or 0
-    )
-    credit_due = credit_total - credit_payments
-
-    sales_hint, sales_tone = _trend_hint(sales_total, prev_sales_total)
-    expense_hint, expense_tone = _trend_hint(opex_total, prev_opex, invert=True)
-    operating_hint, operating_tone = _trend_hint(operating_total, prev_operating)
-    gross_hint, gross_tone = _trend_hint(gross_total, prev_gross)
-
-    opening_cash = day_balances["totals"]["opening_cash"]
-    closing_cash = day_balances["totals"]["closing_cash"]
-    cash_variance = day_balances["totals"]["cash_variance"]
-    open_days = int(day_balances["totals"]["open_sessions"] or 0)
-    close_days = int(day_balances["totals"]["close_sessions"] or 0)
-
-    duration = end - start
-    if duration <= timedelta(hours=36):
-        step = timedelta(hours=1)
-        label_fmt = "%H:%M"
-        bucket_kind = "hour"
-    elif duration <= timedelta(days=62):
-        step = timedelta(days=1)
-        label_fmt = "%d %b"
-        bucket_kind = "day"
-    else:
-        step = None
-        label_fmt = "%b %Y"
-        bucket_kind = "month"
-
-    def _point_label(moment):
-        local = timezone.localtime(moment)
-        if bucket_kind == "hour":
-            local = local.replace(minute=0, second=0, microsecond=0)
-        elif bucket_kind == "day":
-            local = local.replace(hour=0, minute=0, second=0, microsecond=0)
-        else:
-            local = local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        return local.strftime(label_fmt)
-
-    def _label_map(rows):
-        mapped: dict[str, Decimal] = {}
-        for created_at, amount in rows:
-            if created_at is None:
-                continue
-            key = _point_label(created_at)
-            mapped[key] = mapped.get(key, _zero()) + Decimal(amount or 0)
-        return mapped
-
-    sales_by_label = _label_map(sales.values_list("created_at", "total"))
-    expense_by_label = _label_map(expenses.values_list("created_at", "amount"))
-    credits_by_label = _label_map(credits.values_list("created_at", "total"))
-    payments_by_label = _label_map(
-        credits.values_list("created_at", "amount_paid")
-    )
-
-    labels: list[str] = []
-    if bucket_kind == "month":
-        cursor = timezone.localtime(start).replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
+    def _pct(part, whole) -> Decimal:
+        return (
+            ((part / whole) * Decimal("100")).quantize(Decimal("0.1"))
+            if whole > 0
+            else _zero()
         )
-        end_local = timezone.localtime(end)
-        while cursor < end_local:
-            labels.append(cursor.strftime(label_fmt))
-            year = cursor.year + (1 if cursor.month == 12 else 0)
-            month = 1 if cursor.month == 12 else cursor.month + 1
-            cursor = cursor.replace(year=year, month=month)
-    else:
-        cursor = timezone.localtime(start)
-        if bucket_kind == "day":
-            cursor = cursor.replace(hour=0, minute=0, second=0, microsecond=0)
-        elif bucket_kind == "hour":
-            cursor = cursor.replace(minute=0, second=0, microsecond=0)
-        end_local = timezone.localtime(end)
-        while cursor < end_local:
-            labels.append(cursor.strftime(label_fmt))
-            cursor = cursor + step
 
-    if len(labels) > 48:
-        stride = max(1, len(labels) // 48)
-        labels = labels[::stride]
-
-    timeline = [
-        (
-            label,
-            sales_by_label.get(label, _zero()),
-            expense_by_label.get(label, _zero()),
-        )
-        for label in labels
-    ]
-    line_chart = _trend_line_chart(timeline)
-    credit_timeline = [
-        (
-            label,
-            credits_by_label.get(label, _zero()),
-            payments_by_label.get(label, _zero()),
-        )
-        for label in labels
-    ]
-    credit_line_chart = _trend_line_chart(credit_timeline)
-
-    variance_hint = (
-        "balanced"
-        if cash_variance == 0
-        else f"{'over' if cash_variance > 0 else 'short'} vs expected"
-    )
-    margin_pct = (
-        ((gross_total / net_sales) * Decimal("100")).quantize(Decimal("0.1"))
-        if net_sales > 0
-        else _zero()
-    )
-    trends = [
-        {
-            "label": "Sales",
-            "value": _money_ksh(sales_total),
-            "delta": sales_hint,
-            "tone": sales_tone,
-            "spark": _sparkline([row[1] for row in timeline]),
-        },
-        {
-            "label": "Gross profit",
-            "value": _money_ksh(gross_total),
-            "delta": f"{gross_hint} · margin {margin_pct}%",
-            "tone": gross_tone,
-            "spark": _sparkline([row[1] for row in timeline]),
-        },
-        {
-            "label": "OpEx",
-            "value": _money_ksh(opex_total),
-            "delta": expense_hint,
-            "tone": expense_tone,
-            "spark": _sparkline([row[2] for row in timeline]),
-        },
-        {
-            "label": "Operating profit",
-            "value": _money_ksh(operating_total),
-            "delta": operating_hint,
-            "tone": operating_tone,
-            "spark": _sparkline([row[1] - row[2] for row in timeline]),
-        },
-        {
-            "label": "Opening cash",
-            "value": _money_ksh(opening_cash),
-            "delta": f"{open_days} day{'s' if open_days != 1 else ''} opened",
-            "tone": "neutral",
-            "spark": _sparkline([opening_cash, closing_cash]),
-        },
-        {
-            "label": "Closing cash",
-            "value": _money_ksh(closing_cash),
-            "delta": f"{close_days} day{'s' if close_days != 1 else ''} closed",
-            "tone": "neutral",
-            "spark": _sparkline([opening_cash, closing_cash]),
-        },
-        {
-            "label": "Cash variance",
-            "value": _money_ksh(cash_variance),
-            "delta": variance_hint,
-            "tone": _variance_tone(cash_variance),
-            "spark": _sparkline(
-                [day_balances["totals"]["expected_cash"], closing_cash]
-            ),
-        },
-    ]
-
-    sales_by_shop = {
-        row["shop_id"]: Decimal(row["amount"] or 0)
-        for row in sales.values("shop_id").annotate(
-            amount=Coalesce(Sum("total"), _zero())
-        )
-    }
-    prev_sales_by_shop = {
-        row["shop_id"]: Decimal(row["amount"] or 0)
-        for row in prev_sales.values("shop_id").annotate(
-            amount=Coalesce(Sum("total"), _zero())
-        )
-    }
-
-    balance_by_shop = day_balances["by_shop"]
-    shop_chart_rows = []
+    rows_by_shop: dict[int, dict] = {}
+    total_sale_docs = total_credit_docs = total_expense_docs = 0
+    total_sales = total_credits = _zero()
+    total_stock = total_expenses = _zero()
     for shop in shops:
-        current = sales_by_shop.get(shop.pk, _zero())
-        prior = prev_sales_by_shop.get(shop.pk, _zero())
-        balances = balance_by_shop.get(shop.pk, {})
-        opening = Decimal(balances.get("opening_cash") or 0)
-        closing = Decimal(balances.get("closing_cash") or 0)
-        if not current and not prior and not opening and not closing:
-            continue
-        shop_chart_rows.append(
+        row = trading.get(shop.pk) or {}
+        sale_amt = Decimal(row.get("sale_value") or 0)
+        credit_amt = Decimal(row.get("credit_value") or 0)
+        stock = Decimal(row.get("cogs") or 0)
+        opex_docs, opex_amt = opex_by_shop.get(shop.pk, (0, _zero()))
+        opex_docs = int(opex_docs or 0)
+        opex_amt = Decimal(opex_amt or 0)
+        revenue = sale_amt + credit_amt
+        gross = revenue - stock
+        profit = gross - opex_amt
+        sale_docs = sale_docs_by_shop.get(shop.pk, 0)
+        credit_docs = credit_docs_by_shop.get(shop.pk, 0)
+        rows_by_shop[shop.pk] = {
+            "sale_docs": sale_docs,
+            "sale_amt": sale_amt,
+            "credit_docs": credit_docs,
+            "credit_amt": credit_amt,
+            "docs": sale_docs + credit_docs,
+            "revenue": revenue,
+            "stock": stock,
+            "gross": gross,
+            "gross_pct": _pct(gross, revenue),
+            "expense_docs": opex_docs,
+            "expenses": opex_amt,
+            "profit": profit,
+            "margin": _pct(profit, revenue),
+        }
+        total_sale_docs += sale_docs
+        total_credit_docs += credit_docs
+        total_expense_docs += opex_docs
+        total_sales += sale_amt
+        total_credits += credit_amt
+        total_stock += stock
+        total_expenses += opex_amt
+
+    total_docs = total_sale_docs + total_credit_docs
+    total_revenue = total_sales + total_credits
+    total_gross = total_revenue - total_stock
+    total_profit = total_gross - total_expenses
+    total_gross_pct = _pct(total_gross, total_revenue)
+    total_margin = _pct(total_profit, total_revenue)
+    total_shrinkage = sum(
+        (amt for _docs, amt in shrinkage_by_shop.values()), _zero()
+    )
+    total_drawings = sum(
+        (amt for _docs, amt in drawings_by_shop.values()), _zero()
+    )
+
+    summary_columns = [
+        "Metric",
+        {
+            "label": "Entries",
+            "money": True,
+            "title": "Receipts or expense documents counted",
+        },
+        {"label": "Amount", "money": True},
+    ]
+    summary_rows = [
+        [
+            "All sales",
+            total_sale_docs,
+            _money_cell(total_sales, title=f"All sales {_money_ksh(total_sales)}"),
+        ],
+        [
+            "All credits",
+            total_credit_docs,
+            _money_cell(
+                total_credits, title=f"All credits {_money_ksh(total_credits)}"
+            ),
+        ],
+        {
+            "cells": [
+                "Total revenue",
+                total_docs,
+                _money_cell(
+                    total_revenue,
+                    title=f"Total revenue {_money_ksh(total_revenue)} (sales + credits)",
+                ),
+            ],
+            "key": True,
+        },
+        [
+            "Stock value sold",
+            "—",
+            _money_cell(
+                total_stock,
+                title=f"Stock value sold {_money_ksh(total_stock)} — buying cost of items sold",
+            ),
+        ],
+        {
+            "cells": [
+                "Gross margin",
+                "—",
+                _money_cell(
+                    total_gross,
+                    tone="good" if total_gross >= 0 else "bad",
+                    title=f"Gross margin {_money_ksh(total_gross)} · {total_gross_pct}% of revenue",
+                ),
+            ],
+            "key": True,
+        },
+        [
+            "Expenses cost used",
+            total_expense_docs,
+            _money_cell(
+                total_expenses,
+                tone="warn" if total_expenses > 0 else "neutral",
+                title=f"Expenses {_money_ksh(total_expenses)} — excludes owner drawings",
+            ),
+        ],
+        {
+            "cells": [
+                "Profit",
+                "—",
+                _money_cell(
+                    total_profit,
+                    tone="good" if total_profit >= 0 else "bad",
+                    title=f"Profit {_money_ksh(total_profit)} (gross margin − expenses)",
+                ),
+            ],
+            "key": True,
+        },
+        {
+            "cells": [
+                "Profit margin",
+                "—",
+                _pct_cell(
+                    total_margin,
+                    tone="good" if total_profit >= 0 else "bad",
+                    title=f"Profit margin {total_margin}% of revenue",
+                ),
+            ],
+            "key": True,
+        },
+    ]
+
+    shop_columns = ["Shop"]
+    for label, is_total, band, band_start in (
+        ("Sales", False, "flow", True),
+        ("Credits", False, "flow", False),
+        ("Total revenue", True, "total", True),
+    ):
+        shop_columns.append(
             {
-                "label": shop.name,
-                "opening": opening,
-                "sales": current,
-                "closing": closing,
-                "prior": prior,
-                "sort": max(abs(current), abs(prior), abs(opening), abs(closing)),
+                "label": label,
+                "pair": True,
+                "pair_qty": "Docs",
+                "pair_amt": "Amt",
+                "total": is_total,
+                "band": band,
+                "band_start": band_start,
             }
         )
-    shop_chart_rows.sort(key=lambda row: (-row["sort"], row["label"].lower()))
-    for row in shop_chart_rows:
-        del row["sort"]
-    shop_chart = _shop_movement_chart(shop_chart_rows)
+    shop_columns.extend(
+        [
+            {
+                "label": "Stock sold",
+                "title": "Buying cost of items sold",
+                "band": "result",
+                "band_start": True,
+            },
+            {
+                "label": "Gross margin",
+                "title": "Total revenue − stock value sold",
+                "band": "result",
+            },
+            {
+                "label": "Expenses",
+                "title": "Operating expenses recorded this period (excludes owner drawings)",
+                "pair": True,
+                "pair_qty": "Docs",
+                "pair_amt": "Amt",
+                "band": "result",
+            },
+            {
+                "label": "Profit",
+                "title": "Gross margin − expenses for this period",
+                "band": "result",
+            },
+            {
+                "label": "Margin",
+                "title": "Profit as a share of total revenue",
+                "band": "result",
+            },
+        ]
+    )
+
+    def _shop_cells(name, data):
+        return [
+            name,
+            _qty_amount_cell(
+                data["sale_docs"],
+                data["sale_amt"],
+                title=f"{data['sale_docs']} · {_money_ksh(data['sale_amt'])}",
+            ),
+            _qty_amount_cell(
+                data["credit_docs"],
+                data["credit_amt"],
+                title=f"{data['credit_docs']} · {_money_ksh(data['credit_amt'])}",
+            ),
+            _qty_amount_cell(
+                data["docs"],
+                data["revenue"],
+                title=f"{data['docs']} · {_money_ksh(data['revenue'])}",
+            ),
+            _money_cell(
+                data["stock"],
+                title=f"Stock value sold {_money_ksh(data['stock'])}",
+            ),
+            _money_cell(
+                data["gross"],
+                tone="good" if data["gross"] >= 0 else "bad",
+                title=f"Gross margin {_money_ksh(data['gross'])} · {data['gross_pct']}% of revenue",
+            ),
+            (
+                _qty_amount_cell(
+                    data["expense_docs"],
+                    data["expenses"],
+                    title=f"{data['expense_docs']} expenses · {_money_ksh(data['expenses'])}",
+                    tone="warn" if data["expenses"] > 0 else "neutral",
+                )
+                if data["expense_docs"] or data["expenses"]
+                else "—"
+            ),
+            _money_cell(
+                data["profit"],
+                tone="good" if data["profit"] >= 0 else "bad",
+                title=f"Profit {_money_ksh(data['profit'])} · margin {data['margin']}%",
+            ),
+            _pct_cell(
+                data["margin"],
+                tone="good" if data["profit"] >= 0 else "bad",
+                title=f"Profit margin {data['margin']}%",
+            ),
+        ]
+
+    shops_sorted = sorted(
+        shops,
+        key=lambda shop: (
+            -rows_by_shop.get(shop.pk, {}).get("revenue", _zero()),
+            shop.name.lower(),
+        ),
+    )
+    shop_rows = [
+        _shop_cells(shop.name, rows_by_shop[shop.pk])
+        for shop in shops_sorted
+        if shop.pk in rows_by_shop
+    ]
+    if shop_rows:
+        shop_rows.append(
+            _shop_cells(
+                "All shops",
+                {
+                    "sale_docs": total_sale_docs,
+                    "sale_amt": total_sales,
+                    "credit_docs": total_credit_docs,
+                    "credit_amt": total_credits,
+                    "docs": total_docs,
+                    "revenue": total_revenue,
+                    "stock": total_stock,
+                    "gross": total_gross,
+                    "gross_pct": total_gross_pct,
+                    "expense_docs": total_expense_docs,
+                    "expenses": total_expenses,
+                    "profit": total_profit,
+                    "margin": total_margin,
+                },
+            )
+        )
 
     alerts = []
-    if shrinkage_total > 0:
+    if total_shrinkage > 0:
         alerts.append(
             _alert(
                 "warning",
                 "Shrinkage in period",
-                f"Waste/display stock-outs cost {_money_ksh(shrinkage_total)} "
-                f"(included in operating profit).",
+                f"Waste/display stock-outs cost {_money_ksh(total_shrinkage)} — "
+                "not deducted from the profit figures above.",
                 "Review stock-out reasons on the Stock page.",
             )
         )
-    if drawings_total > 0:
+    if total_drawings > 0:
         alerts.append(
             _alert(
                 "info",
                 "Owner drawings",
-                f"{_money_ksh(drawings_total)} recorded — equity, not operating expense.",
+                f"{_money_ksh(total_drawings)} recorded — equity, not operating expense.",
             )
         )
 
-    return {
-        "headline": "Trends",
+    page = {
+        "headline": "Company overview",
         "lead": (
-            "Operating profit = net sales (ex-tax) − COGS − OpEx − shrinkage. "
-            "Cash variance is till control, not profit."
+            "Raw figures for the selected period. Sales and credits are ex-tax "
+            "item value, net of returns. Stock value sold is the buying cost of "
+            "those items. Gross margin = revenue − stock. Profit = gross margin "
+            "− expenses (owner drawings excluded)."
         ),
         "alerts": alerts,
-        "metrics": [
-            _metric(
-                "Net sales",
-                _money_ksh(net_sales),
-                hint="Sales + credits, ex-tax",
-            ),
-            _metric("COGS", _money_ksh(cogs_total), hint="Cost of goods sold"),
-            _metric(
-                "Gross profit",
-                _money_ksh(gross_total),
-                hint=f"Margin {margin_pct}%",
-                tone="success" if gross_total >= 0 else "danger",
-            ),
-            _metric(
-                "Operating profit",
-                _money_ksh(operating_total),
-                hint="After OpEx and shrinkage",
-                tone="success" if operating_total >= 0 else "danger",
-            ),
-        ],
-        "trends": trends,
-        "charts": [
-            {
-                "kind": "line",
-                "title": "Sales vs expenses",
-                "subtitle": "Through this period",
-                "line": line_chart,
-                "legend_a": "Sales",
-                "legend_b": "Expenses",
-                "empty": "No activity in this period.",
-            },
-            {
-                "kind": "line",
-                "title": "Credits vs payments",
-                "subtitle": (
-                    f"Issued {_money_ksh(credit_total)} · "
-                    f"paid {_money_ksh(credit_payments)} · "
-                    f"due {_money_ksh(credit_due)}"
-                ),
-                "line": credit_line_chart,
-                "legend_a": "Credits",
-                "legend_b": "Payments",
-                "series_b": "payments",
-                "empty": "No credit activity in this period.",
-            },
-            {
-                "kind": "shop_bars",
-                "title": "Shop movement",
-                "subtitle": "Open · sales · close · prior",
-                "bars_chart": shop_chart,
-                "empty": "No shop sales or day balances to chart.",
-            },
-        ],
+        "metrics": [],
+        "trends": [],
+        "charts": [],
         "sections": [],
         "insights": [],
-        "tables": [],
+        "tables": [
+            _table(
+                "Company summary",
+                summary_columns,
+                summary_rows,
+                empty="No activity for the selected period.",
+                shop_grid=False,
+                footnote=(
+                    "Combined figures across the selected shops for this period."
+                ),
+            ),
+            _table(
+                "Individual shops",
+                shop_columns,
+                shop_rows,
+                empty="No shop activity for the selected period.",
+                shop_grid=True,
+                footnote=(
+                    "All figures are for the selected period. "
+                    "Sales and credits are ex-tax item value, net of returns. "
+                    "Stock sold is the buying cost of those items. "
+                    "Expenses exclude owner drawings. "
+                    "Profit = total revenue − stock − expenses."
+                ),
+            ),
+        ],
     }
+    breakdown = _revenue_breakdown_table(
+        filters=filters,
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        sales=sales,
+        credits=credits,
+    )
+    if breakdown is not None:
+        page["tables"].append(breakdown)
+    return page
 
 
 def _metric_shop_columns(shops, *, pair_qty: str = "Docs", pair_amt: str = "Amt") -> list:
@@ -8518,7 +8796,7 @@ def _build_items(filters):
         ShopReceiptLine.objects.filter(receipt__in=trading)
         .values("item_id", "item_name", "receipt__shop_id")
         .annotate(
-            units=Coalesce(Sum(F("quantity") - F("returned_quantity")), 0),
+            units=Coalesce(Sum(F("quantity") - F("returned_quantity")), _zero()),
             value=Coalesce(
                 Sum(
                     ExpressionWrapper(
@@ -8698,6 +8976,507 @@ def _build_items(filters):
                 shop_grid=True,
                 searchable=True,
                 table_class="ax-table--items",
+            )
+        ],
+    }
+
+
+_ITEM_REPORT_WEEKDAY_SHORT = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_ITEM_REPORT_WEEKDAY_FULL = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def _local_report_day(value):
+    """Local calendar date — bucketing stays in Python because MySQL TruncDate
+    on related DateTimeFields can return NULL on some MariaDB/XAMPP setups."""
+    if value is None:
+        return None
+    if timezone.is_naive(value):
+        value = timezone.make_aware(value, timezone.get_current_timezone())
+    return timezone.localtime(value).date()
+
+
+def _num_cell(label, *, title: str = "") -> dict:
+    """Plain right-aligned number cell (shares the money cell styling)."""
+    return {"kind": "money", "label": label, "title": title or label}
+
+
+def _item_report_best_day(entry):
+    """Best-selling weekday for a day/weekday bucket set -> (label, title)."""
+    weekdays = entry["weekdays"]
+    if not weekdays:
+        return "—", ""
+    wd, wd_units = max(weekdays.items(), key=lambda pair: (pair[1], -pair[0]))
+    wd_days = sum(1 for day in entry["days"] if day.weekday() == wd)
+    title = (
+        f"{_ITEM_REPORT_WEEKDAY_FULL[wd]}s — {_qty_label(wd_units)} units "
+        f"across {wd_days} {_ITEM_REPORT_WEEKDAY_FULL[wd]}"
+        f"{'s' if wd_days != 1 else ''}"
+    )
+    if entry["day_units"]:
+        top_day, top_units = max(
+            entry["day_units"].items(), key=lambda pair: (pair[1], pair[0])
+        )
+        title += (
+            f" · top day {top_day.strftime('%d %b %Y')} "
+            f"({_qty_label(top_units)} units)"
+        )
+    return _ITEM_REPORT_WEEKDAY_SHORT[wd], title
+
+
+def _item_report_stats(units, value, cogs, days_count) -> dict:
+    """Per-selling-day averages + profit share for one item x shop cell."""
+    gross = Decimal(value) - Decimal(cogs)
+    return {
+        "gross": gross,
+        "avg_qty": (
+            (Decimal(units) / days_count).quantize(Decimal("0.1"))
+            if days_count
+            else _zero()
+        ),
+        "avg_profit": (
+            (gross / days_count).quantize(Decimal("0.01"))
+            if days_count
+            else _zero()
+        ),
+        "pct": (
+            ((gross / Decimal(value)) * Decimal("100")).quantize(Decimal("0.1"))
+            if value > 0
+            else _zero()
+        ),
+    }
+
+
+def _item_report_quad(*, stats, day, title) -> dict:
+    return {
+        "kind": "quad",
+        "qty": _qty_label(stats["avg_qty"]),
+        "amount": _money_dense(stats["avg_profit"]),
+        "pct": f"{stats['pct']}%",
+        "day": day,
+        "tone": "good" if stats["gross"] >= 0 else "bad",
+        "title": title,
+    }
+
+
+def _item_report_empty_quad(label) -> dict:
+    return {
+        "kind": "quad",
+        "qty": "—",
+        "amount": "—",
+        "pct": "—",
+        "day": "—",
+        "title": f"No sales at {label}",
+    }
+
+
+def _item_report_row(*, meta, cat, shops, shop_name) -> dict:
+    """One matrix row: item + per-shop quad cells + total."""
+    pairs = dict(meta["pairs"])
+    total_units = _zero()
+    total_value = _zero()
+    total_cogs = _zero()
+    merged = {"days": set(), "day_units": {}, "weekdays": {}}
+    for entry in pairs.values():
+        total_units += entry["units"]
+        total_value += entry["value"]
+        total_cogs += entry["cogs"]
+        merged["days"] |= entry["days"]
+        for day, day_qty in entry["day_units"].items():
+            merged["day_units"][day] = merged["day_units"].get(day, _zero()) + day_qty
+        for wd, wd_qty in entry["weekdays"].items():
+            merged["weekdays"][wd] = merged["weekdays"].get(wd, _zero()) + wd_qty
+
+    cells = [{"label": meta["name"]}]
+    for shop in shops:
+        entry = pairs.get(shop.pk)
+        label = shop_name.get(shop.pk) or "Shop"
+        if entry is None or not entry["days"]:
+            cells.append(_item_report_empty_quad(label))
+            continue
+        stats = _item_report_stats(
+            entry["units"], entry["value"], entry["cogs"], len(entry["days"])
+        )
+        day, day_title = _item_report_best_day(entry)
+        cells.append(
+            _item_report_quad(
+                stats=stats,
+                day=day,
+                title=(
+                    f"{label} — avg {_qty_label(stats['avg_qty'])} units/day"
+                    f" · avg {_money_ksh(stats['avg_profit'])}/day"
+                    f" · {stats['pct']}% profit"
+                    f"{f' · {day_title}' if day_title else ''}"
+                ),
+            )
+        )
+    totals = _item_report_stats(
+        total_units, total_value, total_cogs, len(merged["days"])
+    )
+    day, day_title = _item_report_best_day(merged)
+    cells.append(
+        _item_report_quad(
+            stats=totals,
+            day=day,
+            title=(
+                f"All shops — avg {_qty_label(totals['avg_qty'])} units/day"
+                f" · avg {_money_ksh(totals['avg_profit'])}/day"
+                f" · {totals['pct']}% profit"
+                f"{f' · {day_title}' if day_title else ''}"
+            ),
+        )
+    )
+    return {
+        "cells": cells,
+        "search_text": f"{meta['name']} {cat}",
+        "_cat": cat,
+        "_value": total_value,
+        "_cogs": total_cogs,
+    }
+
+
+def _build_item_report(filters):
+    shop_ids = filters["active_shop_ids"]
+    shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
+    shop_name = {
+        shop.pk: ((getattr(shop, "name", None) or "").strip() or "Shop")
+        for shop in shops
+    }
+    start, end = filters["start"], filters["end"]
+
+    trading = _receipts_qs(
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=[ShopReceiptKind.SALE, ShopReceiptKind.CREDIT],
+    )
+    lines = ShopReceiptLine.objects.filter(receipt__in=trading).values(
+        "item_id",
+        "item_name",
+        "receipt__shop_id",
+        "receipt__created_at",
+        "quantity",
+        "returned_quantity",
+        "unit_price",
+        "unit_cost",
+    )
+
+    # (item_id, shop_id) -> totals + local day/weekday buckets.
+    by_pair: dict[tuple, dict] = {}
+    fallback_qty: dict[tuple, Decimal] = {}
+    for row in lines:
+        units = Decimal(row["quantity"] or 0) - Decimal(
+            row["returned_quantity"] or 0
+        )
+        unit_price = Decimal(row["unit_price"] or 0)
+        unit_cost = Decimal(row["unit_cost"] or 0)
+        value = (units * unit_price).quantize(Decimal("0.01"))
+        if units <= 0 and not value:
+            continue
+        key = (row["item_id"], row["receipt__shop_id"])
+        entry = by_pair.get(key)
+        if entry is None:
+            entry = {
+                "name": row["item_name"] or "Item",
+                "units": _zero(),
+                "value": _zero(),
+                "cogs": _zero(),
+                "days": set(),
+                "day_units": {},
+                "weekdays": {},
+            }
+            by_pair[key] = entry
+        elif row["item_name"] and not entry["name"]:
+            entry["name"] = row["item_name"]
+        entry["units"] += units
+        entry["value"] += value
+        if unit_cost > 0:
+            entry["cogs"] += (units * unit_cost).quantize(Decimal("0.01"))
+        else:
+            fallback_qty[key] = fallback_qty.get(key, _zero()) + units
+        if units <= 0:
+            continue
+        day = _local_report_day(row["receipt__created_at"])
+        if day is None:
+            continue
+        entry["days"].add(day)
+        entry["day_units"][day] = entry["day_units"].get(day, _zero()) + units
+        wd = day.weekday()
+        entry["weekdays"][wd] = entry["weekdays"].get(wd, _zero()) + units
+
+    # Fallback COGS for lines with zero unit_cost, per item x shop.
+    if fallback_qty:
+        from items.services import last_buying_prices_for_items
+
+        prices = last_buying_prices_for_items(
+            {key[0] for key in fallback_qty if key[0]}
+        )
+        for key, qty in fallback_qty.items():
+            if qty <= 0 or not key[0]:
+                continue
+            unit = Decimal(prices.get(key[0]) or 0)
+            if unit <= 0:
+                continue
+            entry = by_pair.get(key)
+            if entry is not None:
+                entry["cogs"] += (unit * qty).quantize(Decimal("0.01"))
+
+    item_ids = {key[0] for key in by_pair if key[0]}
+    categories = (
+        dict(Item.objects.filter(pk__in=item_ids).values_list("pk", "category"))
+        if item_ids
+        else {}
+    )
+
+    # Server-side search — same matching as the on-page table filter so the
+    # PDF download honours what the user typed.
+    search_query = (filters.get("search_query") or "").strip().lower()
+    tokens = [token for token in search_query.split() if token]
+    if tokens:
+        def _pair_matches(item_id, name):
+            cat = (categories.get(item_id) or "").strip() or "Uncategorised"
+            haystack = f"{name or ''} {cat}".lower()
+            return all(token in haystack for token in tokens)
+
+        by_pair = {
+            key: entry
+            for key, entry in by_pair.items()
+            if _pair_matches(key[0], entry["name"])
+        }
+        item_ids = {key[0] for key in by_pair if key[0]}
+
+    # Items grouped by category and ranked by profit; each item gets one row
+    # with a quad cell per shop (avg qty · avg profit · % profit · day).
+    item_gross: dict = {}
+    cat_gross: dict = {}
+    item_meta: dict = {}
+    for (item_id, shop_id), entry in by_pair.items():
+        gross = entry["value"] - entry["cogs"]
+        item_gross[item_id] = item_gross.get(item_id, _zero()) + gross
+        meta = item_meta.get(item_id)
+        if meta is None:
+            cat = (categories.get(item_id) or "").strip() or "Uncategorised"
+            meta = {"name": entry["name"], "cat": cat, "pairs": []}
+            item_meta[item_id] = meta
+            cat_gross.setdefault(cat, _zero())
+        meta["pairs"].append((shop_id, entry))
+        cat_gross[meta["cat"]] += gross
+
+    rows = []
+    total_sales = _zero()
+    total_cogs = _zero()
+    for cat in sorted(cat_gross, key=lambda c: (-cat_gross[c], c.lower())):
+        rows.append(
+            {
+                "group_header": True,
+                "label": f"{cat} — {_money_dense(cat_gross[cat])}",
+                "search_text": cat,
+            }
+        )
+        cat_item_ids = sorted(
+            (iid for iid, m in item_meta.items() if m["cat"] == cat),
+            key=lambda iid: (
+                -item_gross[iid],
+                (item_meta[iid]["name"] or "").lower(),
+            ),
+        )
+        for iid in cat_item_ids:
+            rows.append(
+                _item_report_row(
+                    meta=item_meta[iid],
+                    cat=cat,
+                    shops=shops,
+                    shop_name=shop_name,
+                )
+            )
+    for row in rows:
+        if row.get("group_header"):
+            continue
+        total_sales += row["_value"]
+        total_cogs += row["_cogs"]
+
+    # Trailing totals row — a shop's selling days are the union of the days
+    # any listed item sold there; grand totals merge every pair.
+    shop_totals: dict = {}
+    grand = {
+        "units": _zero(),
+        "value": _zero(),
+        "cogs": _zero(),
+        "days": set(),
+        "day_units": {},
+        "weekdays": {},
+    }
+    for (_, sid), entry in by_pair.items():
+        bucket = shop_totals.setdefault(
+            sid,
+            {
+                "units": _zero(),
+                "value": _zero(),
+                "cogs": _zero(),
+                "days": set(),
+                "day_units": {},
+                "weekdays": {},
+            },
+        )
+        for field in ("units", "value", "cogs"):
+            bucket[field] += entry[field]
+            grand[field] += entry[field]
+        for scope in (bucket, grand):
+            scope["days"] |= entry["days"]
+            for day, day_qty in entry["day_units"].items():
+                scope["day_units"][day] = (
+                    scope["day_units"].get(day, _zero()) + day_qty
+                )
+            for wd, wd_qty in entry["weekdays"].items():
+                scope["weekdays"][wd] = (
+                    scope["weekdays"].get(wd, _zero()) + wd_qty
+                )
+
+    if rows:
+        total_cells = [{"label": "All items"}]
+        for shop in shops:
+            bucket = shop_totals.get(shop.pk)
+            label = shop_name.get(shop.pk) or "Shop"
+            if bucket is None or not bucket["days"]:
+                total_cells.append(_item_report_empty_quad(label))
+                continue
+            stats = _item_report_stats(
+                bucket["units"],
+                bucket["value"],
+                bucket["cogs"],
+                len(bucket["days"]),
+            )
+            day, day_title = _item_report_best_day(bucket)
+            total_cells.append(
+                _item_report_quad(
+                    stats=stats,
+                    day=day,
+                    title=(
+                        f"{label} — all items avg "
+                        f"{_qty_label(stats['avg_qty'])} units/day"
+                        f" · avg {_money_ksh(stats['avg_profit'])}/day"
+                        f" · {stats['pct']}% profit"
+                        f"{f' · {day_title}' if day_title else ''}"
+                    ),
+                )
+            )
+        stats = _item_report_stats(
+            grand["units"], grand["value"], grand["cogs"], len(grand["days"])
+        )
+        day, day_title = _item_report_best_day(grand)
+        total_cells.append(
+            _item_report_quad(
+                stats=stats,
+                day=day,
+                title=(
+                    f"All shops — all items avg "
+                    f"{_qty_label(stats['avg_qty'])} units/day"
+                    f" · avg {_money_ksh(stats['avg_profit'])}/day"
+                    f" · {stats['pct']}% profit"
+                    f"{f' · {day_title}' if day_title else ''}"
+                ),
+            )
+        )
+        rows.append(
+            {
+                "cells": total_cells,
+                "search_text": "all items total",
+                "_total": True,
+            }
+        )
+
+    total_gross = total_sales - total_cogs
+    overall_margin = (
+        ((total_gross / total_sales) * Decimal("100")).quantize(Decimal("0.1"))
+        if total_sales > 0
+        else _zero()
+    )
+    loss_makers = sum(1 for gross in item_gross.values() if gross < 0)
+
+    alerts = []
+    if loss_makers:
+        alerts.append(
+            _alert(
+                "warning",
+                "Items sold below cost",
+                f"{loss_makers} item{'s' if loss_makers != 1 else ''} show negative "
+                f"profit in this period.",
+                "Raise selling price or check buying cost.",
+            )
+        )
+
+    board = _items_summary_board(
+        total_sales=total_sales,
+        total_cogs=total_cogs,
+        total_gross=total_gross,
+        overall_margin=overall_margin,
+        loss_makers=loss_makers,
+        item_count=len(item_gross),
+    )
+    board["hero"]["label"] = "Profit"
+    board["hero"]["hint"] = board["hero"]["hint"].replace("Margin", "% profit")
+
+    columns = [{"label": "Item"}]
+    for index, shop in enumerate(shops):
+        col = _shop_col(shop)
+        col.update(
+            {
+                "quad": True,
+                "sub_qty": "Avg qty",
+                "sub_amt": "Avg pft",
+                "sub_pct": "% pft",
+                "sub_day": "Day",
+                "band": "flow",
+            }
+        )
+        if index == 0:
+            col["band_start"] = True
+        columns.append(col)
+    columns.append(
+        {
+            "label": "Total",
+            "title": "All selected shops — per selling day",
+            "quad": True,
+            "sub_qty": "Avg qty",
+            "sub_amt": "Avg pft",
+            "sub_pct": "% pft",
+            "sub_day": "Day",
+            "total": True,
+            "band": "total",
+            "band_start": True,
+        }
+    )
+
+    return {
+        "headline": "Item report",
+        "lead": "Ranked by profit — each shop column shows avg qty, avg profit, % profit, and best-selling day.",
+        "alerts": alerts,
+        "show_search": True,
+        "search_placeholder": "Search items or shops…",
+        "search_empty": "No rows match that search.",
+        "summary_board": board,
+        "insights": [],
+        "tables": [
+            _table(
+                "Item report by shop",
+                columns,
+                rows,
+                empty="No items sold in this period.",
+                footnote=(
+                    "Sales and credits, net of returns. Avg qty and avg "
+                    "profit are per selling day in this period. % profit = "
+                    "profit ÷ revenue. Day is the weekday the item sells "
+                    "the most at that shop — hover for units and top date."
+                ),
+                shop_grid=True,
+                searchable=True,
             )
         ],
     }
@@ -9928,7 +10707,8 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
     }
 
 
-def _build_credits(filters):
+def _build_credit_report(filters):
+    """Detailed credit report — per-shop rollup plus client credit accounts."""
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     start, end = filters["start"], filters["end"]
@@ -9998,6 +10778,11 @@ def _build_credits(filters):
             "band_start": True,
         },
         {
+            "label": "% paid",
+            "title": "Share of credit collected",
+            "band": "total",
+        },
+        {
             "label": "Stock",
             "title": "Buying cost of items sold on credit",
             "band": "result",
@@ -10023,6 +10808,7 @@ def _build_credits(filters):
             if selling > 0
             else _zero()
         )
+        paid_pct = _credit_items_paid_pct(amount, paid)
         table_rows.append(
             [
                 shop.name,
@@ -10036,6 +10822,19 @@ def _build_credits(filters):
                     docs,
                     amount,
                     title=f"{int(docs or 0)} · {_money_ksh(amount)}",
+                ),
+                _pct_cell(
+                    paid_pct,
+                    tone=(
+                        "good"
+                        if paid_pct >= Decimal("100")
+                        else "warn"
+                        if paid_pct > 0
+                        else "bad"
+                        if amount > 0
+                        else "neutral"
+                    ),
+                    title=f"{paid_pct}% of credit paid back",
                 ),
                 _money_cell(stock, title=f"Stock value {_money_ksh(stock)}"),
                 _money_cell(
@@ -10068,6 +10867,7 @@ def _build_credits(filters):
     )
 
     if shops_sorted:
+        total_paid_pct = _credit_items_paid_pct(total_amount, total_paid)
         table_rows.append(
             [
                 "Total",
@@ -10082,6 +10882,19 @@ def _build_credits(filters):
                     total_amount,
                     title=f"{total_docs} · {_money_ksh(total_amount)}",
                 ),
+                _pct_cell(
+                    total_paid_pct,
+                    tone=(
+                        "good"
+                        if total_paid_pct >= Decimal("100")
+                        else "warn"
+                        if total_paid_pct > 0
+                        else "bad"
+                        if total_amount > 0
+                        else "neutral"
+                    ),
+                    title=f"{total_paid_pct}% of credit paid back",
+                ),
                 _money_cell(total_stock, title=f"Stock value {_money_ksh(total_stock)}"),
                 _money_cell(
                     total_profit,
@@ -10095,24 +10908,32 @@ def _build_credits(filters):
         1 for shop in shops_sorted if total_by_shop.get(shop.pk, (0, _zero()))[0] > 0
     )
 
-    clients_page = _build_clients({**filters, "from_credits": True})
+    items_table, unpaid_items = _credit_items_detail_table(filters)
     period_label = filters.get("report_period_label") or "selected period"
 
+    alerts = []
+    if unpaid_items:
+        alerts.append(
+            _alert(
+                "warning",
+                "Items with no payment",
+                f"{unpaid_items} item{'s' if unpaid_items != 1 else ''} on "
+                f"credit show 0% paid back in this period.",
+                "Follow up with the clients holding these credits.",
+            )
+        )
+
     return {
-        "headline": "Credits",
+        "headline": "Credit reports",
         "lead": (
-            f"Credit performance by shop and client credit accounts for "
-            f"{period_label}."
+            f"Items picked on credit by shop — credit, paid back, and "
+            f"balance for {period_label}."
         ),
-        "alerts": list(clients_page.get("alerts") or []),
+        "alerts": alerts,
         "show_search": True,
         "download_href": _pdf_download_href(filters.get("query") or ""),
-        "search_placeholder": clients_page.get(
-            "search_placeholder", "Search clients by name or phone…"
-        ),
-        "search_empty": clients_page.get(
-            "search_empty", "No clients match that search."
-        ),
+        "search_placeholder": "Search items or shops…",
+        "search_empty": "No items match that search.",
         "summary_board": _credits_summary_board(
             total_amount=total_amount,
             total_docs=total_docs,
@@ -10137,12 +10958,851 @@ def _build_credits(filters):
                 shop_grid=True,
                 footnote=(
                     "Paid, Due, and Total are credit receipts in this period. "
-                    "Stock and profit use ex-tax item value net of returns "
-                    "for receipts in this period. Profit = selling value − stock."
+                    "% paid = paid ÷ credit total. Stock and profit use "
+                    "ex-tax item value net of returns for receipts in this "
+                    "period. Profit = selling value − stock."
+                ),
+            ),
+            items_table,
+        ],
+    }
+
+
+def _credit_items_board(
+    *, total_credit, total_paid, total_due, docs, item_count, shop_count
+) -> dict:
+    repaid_pct = (
+        ((total_paid / total_credit) * Decimal("100")).quantize(Decimal("0.1"))
+        if total_credit > 0
+        else _zero()
+    )
+    due_pct = (
+        ((total_due / total_credit) * Decimal("100")).quantize(Decimal("0.1"))
+        if total_credit > 0
+        else _zero()
+    )
+    return {
+        "hero": {
+            "label": "Credit",
+            "value": _money_ksh(total_credit),
+            "hint": (
+                f"{docs} receipt{'s' if docs != 1 else ''} · "
+                f"{item_count} item{'s' if item_count != 1 else ''} · "
+                f"{shop_count} shop{'s' if shop_count != 1 else ''}"
+            ),
+        },
+        "tiles": [
+            {
+                "label": "Paid back",
+                "value": _money_ksh(total_paid),
+                "hint": (
+                    f"{repaid_pct}% of credit"
+                    if total_credit > 0
+                    else "No credits yet"
+                ),
+                "icon": "wallet",
+                "tone": "cash",
+            },
+            {
+                "label": "Still due",
+                "value": _money_ksh(total_due),
+                "hint": (
+                    f"{due_pct}% of credit"
+                    if total_credit > 0
+                    else "No credits yet"
+                ),
+                "icon": "credit-card",
+                "tone": "warn" if total_due > 0 else "good",
+            },
+            {
+                "label": "Repaid",
+                "value": f"{repaid_pct}%",
+                "hint": "Share of credit collected",
+                "icon": "trending-up",
+                "tone": (
+                    "good"
+                    if total_credit > 0 and repaid_pct >= Decimal("100")
+                    else "warn"
+                    if repaid_pct > 0
+                    else "neutral"
+                ),
+            },
+        ],
+    }
+
+
+def _credit_items_best_day(entry):
+    """Weekday the item is credited most -> (label, title)."""
+    weekdays = entry["weekdays"]
+    if not weekdays:
+        return "—", ""
+    wd, wd_units = max(weekdays.items(), key=lambda pair: (pair[1], -pair[0]))
+    wd_days = sum(1 for day in entry["days"] if day.weekday() == wd)
+    title = (
+        f"{_ITEM_REPORT_WEEKDAY_FULL[wd]}s — {_qty_label(wd_units)} units "
+        f"across {wd_days} {_ITEM_REPORT_WEEKDAY_FULL[wd]}"
+        f"{'s' if wd_days != 1 else ''}"
+    )
+    if entry["day_units"]:
+        top_day, top_units = max(
+            entry["day_units"].items(), key=lambda pair: (pair[1], pair[0])
+        )
+        title += (
+            f" · top day {top_day.strftime('%d %b %Y')} "
+            f"({_qty_label(top_units)} units)"
+        )
+    return _ITEM_REPORT_WEEKDAY_SHORT[wd], title
+
+
+def _credit_items_paid_pct(credit, paid) -> Decimal:
+    if credit <= 0:
+        return _zero()
+    pct = (Decimal(paid) / Decimal(credit)) * Decimal("100")
+    if pct > Decimal("100"):
+        pct = Decimal("100")
+    return pct.quantize(Decimal("0.1"))
+
+
+def _credit_items_quad(*, units, credit, paid, day, title) -> dict:
+    pct = _credit_items_paid_pct(credit, paid)
+    return {
+        "kind": "quad",
+        "qty": _qty_label(units),
+        "amount": _money_dense(credit),
+        "pct": f"{pct}%",
+        "day": day,
+        "tone": (
+            "good"
+            if pct >= Decimal("100")
+            else "warn"
+            if pct > 0
+            else "bad"
+            if credit > 0
+            else "neutral"
+        ),
+        "title": title,
+    }
+
+
+def _credit_items_empty_quad(label) -> dict:
+    return {
+        "kind": "quad",
+        "qty": "—",
+        "amount": "—",
+        "pct": "—",
+        "day": "—",
+        "title": f"No credits at {label}",
+    }
+
+
+def _credit_items_cell_title(label, *, units, credit, paid, pct, day_title=""):
+    due = _due_amount(credit, paid)
+    return (
+        f"{label} — {_qty_label(units)} units on credit"
+        f" · {_money_ksh(credit)} credit"
+        f" · {_money_ksh(paid)} paid ({pct}%)"
+        f" · {_money_ksh(due)} due"
+        f"{f' · {day_title}' if day_title else ''}"
+    )
+
+
+def _credit_items_row(*, meta, cat, shops, shop_name) -> dict:
+    """One matrix row: item + per-shop quad cells + total."""
+    pairs = dict(meta["pairs"])
+    total_units = _zero()
+    total_credit = _zero()
+    total_paid = _zero()
+    merged = {"days": set(), "day_units": {}, "weekdays": {}}
+    for entry in pairs.values():
+        total_units += entry["units"]
+        total_credit += entry["credit"]
+        total_paid += entry["paid"]
+        merged["days"] |= entry["days"]
+        for day, day_qty in entry["day_units"].items():
+            merged["day_units"][day] = merged["day_units"].get(day, _zero()) + day_qty
+        for wd, wd_qty in entry["weekdays"].items():
+            merged["weekdays"][wd] = merged["weekdays"].get(wd, _zero()) + wd_qty
+
+    cells = [{"label": meta["name"]}]
+    for shop in shops:
+        entry = pairs.get(shop.pk)
+        label = shop_name.get(shop.pk) or "Shop"
+        if entry is None or not entry["days"]:
+            cells.append(_credit_items_empty_quad(label))
+            continue
+        pct = _credit_items_paid_pct(entry["credit"], entry["paid"])
+        day, day_title = _credit_items_best_day(entry)
+        cells.append(
+            _credit_items_quad(
+                units=entry["units"],
+                credit=entry["credit"],
+                paid=entry["paid"],
+                day=day,
+                title=_credit_items_cell_title(
+                    label,
+                    units=entry["units"],
+                    credit=entry["credit"],
+                    paid=entry["paid"],
+                    pct=pct,
+                    day_title=day_title,
                 ),
             )
-        ]
-        + clients_page["tables"],
+        )
+    pct = _credit_items_paid_pct(total_credit, total_paid)
+    day, day_title = _credit_items_best_day(merged)
+    cells.append(
+        _credit_items_quad(
+            units=total_units,
+            credit=total_credit,
+            paid=total_paid,
+            day=day,
+            title=_credit_items_cell_title(
+                "All shops",
+                units=total_units,
+                credit=total_credit,
+                paid=total_paid,
+                pct=pct,
+                day_title=day_title,
+            ),
+        )
+    )
+    return {
+        "cells": cells,
+        "search_text": f"{meta['name']} {cat}",
+        "_cat": cat,
+        "_credit": total_credit,
+        "_paid": total_paid,
+    }
+
+
+def _credit_items_pairs(filters) -> dict:
+    """(item_id, shop_id) credit aggregates for receipts in the period.
+
+    Payments land on the receipt, not the line — each item gets its share of
+    the receipt total (by net line value) and the receipt's paid ratio is
+    applied to that share, so item credits sum to the real credit figures.
+    """
+    shop_ids = filters["active_shop_ids"]
+    shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
+    shop_name = {
+        shop.pk: ((getattr(shop, "name", None) or "").strip() or "Shop")
+        for shop in shops
+    }
+    start, end = filters["start"], filters["end"]
+
+    receipts = _receipts_qs(
+        shop_ids=shop_ids, start=start, end=end, kinds=[ShopReceiptKind.CREDIT]
+    )
+    receipt_meta: dict[int, dict] = {}
+    for row in receipts.values("id", "shop_id", "total", "amount_paid"):
+        total = Decimal(row["total"] or 0)
+        paid = Decimal(row["amount_paid"] or 0)
+        paid_ratio = _zero()
+        if total > 0:
+            paid_ratio = paid / total
+            if paid_ratio < 0:
+                paid_ratio = _zero()
+            elif paid_ratio > 1:
+                paid_ratio = Decimal("1")
+        receipt_meta[row["id"]] = {
+            "shop_id": row["shop_id"],
+            "total": total,
+            "paid_ratio": paid_ratio,
+        }
+
+    lines = list(
+        ShopReceiptLine.objects.filter(receipt_id__in=set(receipt_meta)).values(
+            "receipt_id",
+            "item_id",
+            "item_name",
+            "receipt__created_at",
+            "quantity",
+            "returned_quantity",
+            "unit_price",
+        )
+    )
+    net_by_receipt: dict[int, Decimal] = {}
+    for row in lines:
+        units = Decimal(row["quantity"] or 0) - Decimal(
+            row["returned_quantity"] or 0
+        )
+        net_by_receipt[row["receipt_id"]] = net_by_receipt.get(
+            row["receipt_id"], _zero()
+        ) + (units * Decimal(row["unit_price"] or 0)).quantize(Decimal("0.01"))
+
+    # (item_id, shop_id) -> totals + local day/weekday buckets.
+    by_pair: dict[tuple, dict] = {}
+    for row in lines:
+        receipt_id = row["receipt_id"]
+        meta = receipt_meta.get(receipt_id)
+        receipt_net = net_by_receipt.get(receipt_id) or _zero()
+        if meta is None or receipt_net <= 0:
+            continue
+        units = Decimal(row["quantity"] or 0) - Decimal(
+            row["returned_quantity"] or 0
+        )
+        line_net = (units * Decimal(row["unit_price"] or 0)).quantize(
+            Decimal("0.01")
+        )
+        credit = line_net * (meta["total"] / receipt_net)
+        key = (row["item_id"], meta["shop_id"])
+        entry = by_pair.get(key)
+        if entry is None:
+            entry = {
+                "name": row["item_name"] or "Item",
+                "units": _zero(),
+                "credit": _zero(),
+                "paid": _zero(),
+                "days": set(),
+                "day_units": {},
+                "weekdays": {},
+            }
+            by_pair[key] = entry
+        elif row["item_name"] and not entry["name"]:
+            entry["name"] = row["item_name"]
+        entry["units"] += units
+        entry["credit"] += credit
+        entry["paid"] += credit * meta["paid_ratio"]
+        if units <= 0:
+            continue
+        day = _local_report_day(row["receipt__created_at"])
+        if day is None:
+            continue
+        entry["days"].add(day)
+        entry["day_units"][day] = entry["day_units"].get(day, _zero()) + units
+        wd = day.weekday()
+        entry["weekdays"][wd] = entry["weekdays"].get(wd, _zero()) + units
+
+    return {
+        "shops": shops,
+        "shop_name": shop_name,
+        "docs": len(receipt_meta),
+        "by_pair": by_pair,
+    }
+
+
+def _credit_items_categories(by_pair) -> dict:
+    item_ids = {key[0] for key in by_pair if key[0]}
+    return (
+        dict(Item.objects.filter(pk__in=item_ids).values_list("pk", "category"))
+        if item_ids
+        else {}
+    )
+
+
+def _credit_items_search(by_pair, categories, search_query: str) -> dict:
+    """Server-side search — same matching as the on-page table filter so the
+    PDF download honours what the user typed."""
+    tokens = [token for token in (search_query or "").strip().lower().split() if token]
+    if not tokens:
+        return by_pair
+
+    def _pair_matches(item_id, name):
+        cat = (categories.get(item_id) or "").strip() or "Uncategorised"
+        haystack = f"{name or ''} {cat}".lower()
+        return all(token in haystack for token in tokens)
+
+    return {
+        key: entry
+        for key, entry in by_pair.items()
+        if _pair_matches(key[0], entry["name"])
+    }
+
+
+def _credit_items_paid_tone(pct, credit) -> str:
+    if pct >= Decimal("100"):
+        return "good"
+    if pct > 0:
+        return "warn"
+    return "bad" if credit > 0 else "neutral"
+
+
+def _credit_report_quad(*, units, credit, paid, title) -> dict:
+    """Quad cell for the credit report matrix: qty · credit · paid · % paid."""
+    pct = _credit_items_paid_pct(credit, paid)
+    return {
+        "kind": "quad",
+        "qty": _qty_label(units),
+        "amount": _money_dense(credit),
+        "pct": _money_dense(paid),
+        "day": f"{pct}%",
+        "tone": _credit_items_paid_tone(pct, credit),
+        "title": title,
+    }
+
+
+def _credit_report_row(*, meta, cat, shops, shop_name) -> dict:
+    """One matrix row: item + per-shop quad cells (qty · credit · paid · %)."""
+    pairs = dict(meta["pairs"])
+    total_units = _zero()
+    total_credit = _zero()
+    total_paid = _zero()
+    for entry in pairs.values():
+        total_units += entry["units"]
+        total_credit += entry["credit"]
+        total_paid += entry["paid"]
+
+    cells = [{"label": meta["name"]}]
+    for shop in shops:
+        entry = pairs.get(shop.pk)
+        label = shop_name.get(shop.pk) or "Shop"
+        if entry is None:
+            cells.append(_credit_items_empty_quad(label))
+            continue
+        pct = _credit_items_paid_pct(entry["credit"], entry["paid"])
+        cells.append(
+            _credit_report_quad(
+                units=entry["units"],
+                credit=entry["credit"],
+                paid=entry["paid"],
+                title=_credit_items_cell_title(
+                    label,
+                    units=entry["units"],
+                    credit=entry["credit"],
+                    paid=entry["paid"],
+                    pct=pct,
+                ),
+            )
+        )
+    pct = _credit_items_paid_pct(total_credit, total_paid)
+    cells.append(
+        _credit_report_quad(
+            units=total_units,
+            credit=total_credit,
+            paid=total_paid,
+            title=_credit_items_cell_title(
+                "All shops",
+                units=total_units,
+                credit=total_credit,
+                paid=total_paid,
+                pct=pct,
+            ),
+        )
+    )
+    return {
+        "cells": cells,
+        "search_text": f"{meta['name']} {cat}",
+        "_cat": cat,
+        "_credit": total_credit,
+        "_paid": total_paid,
+    }
+
+
+def _credit_items_detail_table(filters):
+    """Item x shop matrix — each shop column shows qty, credit, paid, % paid."""
+    pairs_data = _credit_items_pairs(filters)
+    shops = pairs_data["shops"]
+    shop_name = pairs_data["shop_name"]
+    categories = _credit_items_categories(pairs_data["by_pair"])
+    search_query = (filters.get("search_query") or "").strip().lower()
+    by_pair = _credit_items_search(
+        pairs_data["by_pair"], categories, search_query
+    )
+
+    item_credit: dict = {}
+    item_paid: dict = {}
+    item_units: dict = {}
+    cat_credit: dict = {}
+    item_meta: dict = {}
+    for (item_id, shop_id), entry in by_pair.items():
+        item_credit[item_id] = item_credit.get(item_id, _zero()) + entry["credit"]
+        item_paid[item_id] = item_paid.get(item_id, _zero()) + entry["paid"]
+        item_units[item_id] = item_units.get(item_id, _zero()) + entry["units"]
+        meta = item_meta.get(item_id)
+        if meta is None:
+            cat = (categories.get(item_id) or "").strip() or "Uncategorised"
+            meta = {"name": entry["name"], "cat": cat, "pairs": []}
+            item_meta[item_id] = meta
+            cat_credit.setdefault(cat, _zero())
+        meta["pairs"].append((shop_id, entry))
+        cat_credit[meta["cat"]] += entry["credit"]
+
+    rows = []
+    for cat in sorted(cat_credit, key=lambda c: (-cat_credit[c], c.lower())):
+        rows.append(
+            {
+                "group_header": True,
+                "label": f"{cat} — {_money_dense(cat_credit[cat])}",
+                "search_text": cat,
+            }
+        )
+        cat_item_ids = sorted(
+            (iid for iid, m in item_meta.items() if m["cat"] == cat),
+            key=lambda iid: (
+                -item_units[iid],
+                -item_credit[iid],
+                (item_meta[iid]["name"] or "").lower(),
+            ),
+        )
+        for iid in cat_item_ids:
+            rows.append(
+                _credit_report_row(
+                    meta=item_meta[iid],
+                    cat=cat,
+                    shops=shops,
+                    shop_name=shop_name,
+                )
+            )
+
+    # Trailing totals row — grand qty/credit/paid/% paid per shop.
+    shop_totals: dict = {}
+    grand = {"units": _zero(), "credit": _zero(), "paid": _zero()}
+    for (_, sid), entry in by_pair.items():
+        bucket = shop_totals.setdefault(
+            sid, {"units": _zero(), "credit": _zero(), "paid": _zero()}
+        )
+        for field in ("units", "credit", "paid"):
+            bucket[field] += entry[field]
+            grand[field] += entry[field]
+
+    if rows:
+        total_cells = [{"label": "All items"}]
+        for shop in shops:
+            bucket = shop_totals.get(shop.pk)
+            label = shop_name.get(shop.pk) or "Shop"
+            if bucket is None or not bucket["credit"]:
+                total_cells.append(_credit_items_empty_quad(label))
+                continue
+            pct = _credit_items_paid_pct(bucket["credit"], bucket["paid"])
+            total_cells.append(
+                _credit_report_quad(
+                    units=bucket["units"],
+                    credit=bucket["credit"],
+                    paid=bucket["paid"],
+                    title=_credit_items_cell_title(
+                        f"{label} — all items",
+                        units=bucket["units"],
+                        credit=bucket["credit"],
+                        paid=bucket["paid"],
+                        pct=pct,
+                    ),
+                )
+            )
+        pct = _credit_items_paid_pct(grand["credit"], grand["paid"])
+        total_cells.append(
+            _credit_report_quad(
+                units=grand["units"],
+                credit=grand["credit"],
+                paid=grand["paid"],
+                title=_credit_items_cell_title(
+                    "All shops — all items",
+                    units=grand["units"],
+                    credit=grand["credit"],
+                    paid=grand["paid"],
+                    pct=pct,
+                ),
+            )
+        )
+        rows.append(
+            {
+                "cells": total_cells,
+                "search_text": "all items total",
+                "_total": True,
+            }
+        )
+
+    unpaid_items = sum(
+        1
+        for iid in item_meta
+        if item_credit[iid] > 0 and item_paid[iid] <= 0
+    )
+
+    columns = [{"label": "Item"}]
+    for index, shop in enumerate(shops):
+        col = _shop_col(shop)
+        col.update(
+            {
+                "quad": True,
+                "sub_qty": "Qty",
+                "sub_amt": "Credit",
+                "sub_pct": "Paid",
+                "sub_day": "% paid",
+                "band": "flow",
+            }
+        )
+        if index == 0:
+            col["band_start"] = True
+        columns.append(col)
+    columns.append(
+        {
+            "label": "Total",
+            "title": "All selected shops",
+            "quad": True,
+            "sub_qty": "Qty",
+            "sub_amt": "Credit",
+            "sub_pct": "Paid",
+            "sub_day": "% paid",
+            "total": True,
+            "band": "total",
+            "band_start": True,
+        }
+    )
+
+    return (
+        _table(
+            "Items picked on credit",
+            columns,
+            rows,
+            empty="No credit items for selected shops and period.",
+            footnote=(
+                "Categories ranked by credit sales; items ranked by units "
+                "sold on credit. Each shop column shows qty, credit, paid, "
+                "and % paid back — hover a cell for the due amount. Net of "
+                "returns; each item's credit is its share of the receipt "
+                "total (incl. tax)."
+            ),
+            shop_grid=True,
+            searchable=True,
+        ),
+        unpaid_items,
+    )
+
+
+def _build_credits(filters):
+    """Credits landing — items matrix: credit and % paid back per item x shop."""
+    pairs_data = _credit_items_pairs(filters)
+    shops = pairs_data["shops"]
+    shop_name = pairs_data["shop_name"]
+    docs = pairs_data["docs"]
+
+    categories = _credit_items_categories(pairs_data["by_pair"])
+    search_query = (filters.get("search_query") or "").strip().lower()
+    by_pair = _credit_items_search(
+        pairs_data["by_pair"], categories, search_query
+    )
+
+    # Items grouped by category (highest credit sales first) and ranked by
+    # units sold on credit; each item gets one row with a quad cell per shop
+    # (qty · credit · % paid · day).
+    item_credit: dict = {}
+    item_units: dict = {}
+    cat_credit: dict = {}
+    item_meta: dict = {}
+    for (item_id, shop_id), entry in by_pair.items():
+        item_credit[item_id] = item_credit.get(item_id, _zero()) + entry["credit"]
+        item_units[item_id] = item_units.get(item_id, _zero()) + entry["units"]
+        meta = item_meta.get(item_id)
+        if meta is None:
+            cat = (categories.get(item_id) or "").strip() or "Uncategorised"
+            meta = {"name": entry["name"], "cat": cat, "pairs": []}
+            item_meta[item_id] = meta
+            cat_credit.setdefault(cat, _zero())
+        meta["pairs"].append((shop_id, entry))
+        cat_credit[meta["cat"]] += entry["credit"]
+
+    rows = []
+    total_credit = _zero()
+    total_paid = _zero()
+    unpaid_items = 0
+    for cat in sorted(cat_credit, key=lambda c: (-cat_credit[c], c.lower())):
+        rows.append(
+            {
+                "group_header": True,
+                "label": f"{cat} — {_money_dense(cat_credit[cat])}",
+                "search_text": cat,
+            }
+        )
+        cat_item_ids = sorted(
+            (iid for iid, m in item_meta.items() if m["cat"] == cat),
+            key=lambda iid: (
+                -item_units[iid],
+                -item_credit[iid],
+                (item_meta[iid]["name"] or "").lower(),
+            ),
+        )
+        for iid in cat_item_ids:
+            rows.append(
+                _credit_items_row(
+                    meta=item_meta[iid],
+                    cat=cat,
+                    shops=shops,
+                    shop_name=shop_name,
+                )
+            )
+    for row in rows:
+        if row.get("group_header"):
+            continue
+        total_credit += row["_credit"]
+        total_paid += row["_paid"]
+        if row["_credit"] > 0 and row["_paid"] <= 0:
+            unpaid_items += 1
+
+    # Trailing totals row — grand credit/paid per shop across listed items.
+    shop_totals: dict = {}
+    grand = {
+        "units": _zero(),
+        "credit": _zero(),
+        "paid": _zero(),
+        "days": set(),
+        "day_units": {},
+        "weekdays": {},
+    }
+    for (_, sid), entry in by_pair.items():
+        bucket = shop_totals.setdefault(
+            sid,
+            {
+                "units": _zero(),
+                "credit": _zero(),
+                "paid": _zero(),
+                "days": set(),
+                "day_units": {},
+                "weekdays": {},
+            },
+        )
+        for field in ("units", "credit", "paid"):
+            bucket[field] += entry[field]
+            grand[field] += entry[field]
+        for scope in (bucket, grand):
+            scope["days"] |= entry["days"]
+            for day, day_qty in entry["day_units"].items():
+                scope["day_units"][day] = (
+                    scope["day_units"].get(day, _zero()) + day_qty
+                )
+            for wd, wd_qty in entry["weekdays"].items():
+                scope["weekdays"][wd] = (
+                    scope["weekdays"].get(wd, _zero()) + wd_qty
+                )
+
+    if rows:
+        total_cells = [{"label": "All items"}]
+        for shop in shops:
+            bucket = shop_totals.get(shop.pk)
+            label = shop_name.get(shop.pk) or "Shop"
+            if bucket is None or not bucket["days"]:
+                total_cells.append(_credit_items_empty_quad(label))
+                continue
+            pct = _credit_items_paid_pct(bucket["credit"], bucket["paid"])
+            day, day_title = _credit_items_best_day(bucket)
+            total_cells.append(
+                _credit_items_quad(
+                    units=bucket["units"],
+                    credit=bucket["credit"],
+                    paid=bucket["paid"],
+                    day=day,
+                    title=_credit_items_cell_title(
+                        f"{label} — all items",
+                        units=bucket["units"],
+                        credit=bucket["credit"],
+                        paid=bucket["paid"],
+                        pct=pct,
+                        day_title=day_title,
+                    ),
+                )
+            )
+        pct = _credit_items_paid_pct(grand["credit"], grand["paid"])
+        day, day_title = _credit_items_best_day(grand)
+        total_cells.append(
+            _credit_items_quad(
+                units=grand["units"],
+                credit=grand["credit"],
+                paid=grand["paid"],
+                day=day,
+                title=_credit_items_cell_title(
+                    "All shops — all items",
+                    units=grand["units"],
+                    credit=grand["credit"],
+                    paid=grand["paid"],
+                    pct=pct,
+                    day_title=day_title,
+                ),
+            )
+        )
+        rows.append(
+            {
+                "cells": total_cells,
+                "search_text": "all items total",
+                "_total": True,
+            }
+        )
+
+    total_due = _due_amount(total_credit, total_paid)
+
+    alerts = []
+    if unpaid_items:
+        alerts.append(
+            _alert(
+                "warning",
+                "Items with no payment",
+                f"{unpaid_items} item{'s' if unpaid_items != 1 else ''} on "
+                f"credit show 0% paid back in this period.",
+                "Follow up with the clients holding these credits.",
+            )
+        )
+
+    columns = [{"label": "Item"}]
+    for index, shop in enumerate(shops):
+        col = _shop_col(shop)
+        col.update(
+            {
+                "quad": True,
+                "sub_qty": "Qty",
+                "sub_amt": "Credit",
+                "sub_pct": "% paid",
+                "sub_day": "Day",
+                "band": "flow",
+            }
+        )
+        if index == 0:
+            col["band_start"] = True
+        columns.append(col)
+    columns.append(
+        {
+            "label": "Total",
+            "title": "All selected shops",
+            "quad": True,
+            "sub_qty": "Qty",
+            "sub_amt": "Credit",
+            "sub_pct": "% paid",
+            "sub_day": "Day",
+            "total": True,
+            "band": "total",
+            "band_start": True,
+        }
+    )
+
+    period_label = filters.get("report_period_label") or "selected period"
+    return {
+        "headline": "Credits",
+        "lead": (
+            f"Items on credit for {period_label} — each shop column shows "
+            f"qty, credit amount, % paid back, and top credit day."
+        ),
+        "alerts": alerts,
+        "show_search": True,
+        "search_query": search_query,
+        "search_placeholder": "Search items or shops…",
+        "search_empty": "No rows match that search.",
+        "download_href": _pdf_download_href(filters.get("query") or ""),
+        "summary_board": _credit_items_board(
+            total_credit=total_credit,
+            total_paid=total_paid,
+            total_due=total_due,
+            docs=docs,
+            item_count=len(item_credit),
+            shop_count=len(shops),
+        ),
+        "insights": [],
+        "tables": [
+            _table(
+                "Credit items by shop",
+                columns,
+                rows,
+                empty=(
+                    "Select a shop to view credits."
+                    if not shops
+                    else "No credit items for selected shops and period."
+                ),
+                footnote=(
+                    "Credit receipts net of returns, this period. Each item's "
+                    "credit is its share of the receipt total (incl. tax). "
+                    "% paid applies the receipt's collected share to that "
+                    "item — hover a cell for paid and due amounts. Day is the "
+                    "weekday the item is credited most at that shop."
+                ),
+                shop_grid=True,
+                searchable=True,
+            )
+        ],
     }
 
 

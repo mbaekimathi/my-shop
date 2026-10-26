@@ -1139,10 +1139,46 @@ class CreditsShopScopeTests(TestCase):
         self.assertIn("download=pdf", download_href)
         self.assertIn("range=all", download_href)
 
-    def test_credits_report_pdf_download(self):
+    def test_credit_items_pdf_download(self):
         self.client.force_login(self.user)
         response = self.client.get(
             "/it-support/analytics/credits/?range=all&download=pdf"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("attachment;", response["Content-Disposition"])
+        self.assertIn("credit-items-", response["Content-Disposition"])
+        self.assertTrue(response.content.startswith(b"%PDF"))
+        self.assertGreater(len(response.content), 500)
+
+    def test_credits_page_links_to_credit_report(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/analytics/credits/?range=all")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "/it-support/analytics/credits/report/",
+            response.context["credit_report_href"],
+        )
+        html = response.content.decode()
+        self.assertIn("Credit reports", html)
+        self.assertIn("Credit items by shop", html)
+
+    def test_credits_report_page_shows_shop_and_item_tables(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/it-support/analytics/credits/report/?range=all"
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("Credits by shop", html)
+        self.assertIn("Items picked on credit", html)
+        self.assertNotIn("Client credit accounts by shop", html)
+        self.assertIn("Back to credits", html)
+
+    def test_credits_report_pdf_download(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/it-support/analytics/credits/report/?range=all&download=pdf"
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")

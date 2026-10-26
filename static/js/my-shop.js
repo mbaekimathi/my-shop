@@ -4610,6 +4610,13 @@
       return next;
     };
 
+    // Quantity typed into a stepper before the item is in the cart yet —
+    // decimals allowed, kept positive, and capped at tracked stock.
+    const pendingQty = (input, stock) => {
+      const qty = clampQty(input?.value, stock);
+      return qty > 0 ? qty : 1;
+    };
+
     const volumeUnitPrice = (listPrice, minPrice, qty, discountMinQty, discountAmount) => {
       const list = roundMoney(listPrice);
       const min = roundMoney(minPrice);
@@ -4811,23 +4818,32 @@
         roundQty(productModal.dataset.itemStock || line?.stock || 0)
       );
       const inCart = Boolean(line);
+      const outOfStock =
+        stockTrackingEnabled && selectedKind() !== "trade_in" && stock <= 0;
+      const trackSerial =
+        productModal.dataset.itemTrackSerial === "1" || Boolean(line?.trackSerial);
       if (productAdd) {
-        const outOfStock =
-          stockTrackingEnabled && selectedKind() !== "trade_in" && stock <= 0;
         productAdd.hidden = inCart || outOfStock;
         productAdd.disabled = outOfStock;
         const label = productAdd.querySelector("span");
         if (label) label.textContent = outOfStock ? "Out of stock" : "Add to cart";
       }
-      if (productQtyWrap) productQtyWrap.hidden = !inCart;
-      if (productQtyInput && line) {
+      if (productQtyWrap) {
+        productQtyWrap.hidden = outOfStock || (trackSerial && !inCart);
+      }
+      if (productQtyInput) {
         if (stockTrackingEnabled && stock > 0) productQtyInput.max = String(stock);
         else productQtyInput.removeAttribute("max");
-        productQtyInput.value = String(line.qty);
+        if (line) {
+          productQtyInput.value = String(line.qty);
+        } else if (document.activeElement !== productQtyInput) {
+          productQtyInput.value = String(pendingQty(productQtyInput, stock));
+        }
       }
       const inc = productModal.querySelector('[data-product-qty="inc"]');
-      if (inc && line) {
-        inc.disabled = stockTrackingEnabled && stock > 0 && line.qty >= stock;
+      if (inc) {
+        const current = line ? line.qty : roundQty(productQtyInput?.value);
+        inc.disabled = stockTrackingEnabled && stock > 0 && current >= stock;
       }
 
       const listPrice = roundMoney(
@@ -4938,6 +4954,9 @@
       productPriceInput
         ?.closest(".shop-product-price-field")
         ?.classList.toggle("is-locked", !discountEnabled);
+      if (productQtyInput) {
+        productQtyInput.value = String(existing?.qty || 1);
+      }
       syncPriceHint(item.minPrice, salePrice, item.listPrice);
       if (productStock) {
         if (stockTrackingEnabled) {
@@ -5886,7 +5905,9 @@
         productModal.dataset.itemPrice = String(salePrice);
         if (productPriceInput) productPriceInput.value = salePrice.toFixed(2);
       }
-      setQty(item.id, (existing?.qty || 0) + 1, {
+      const qtyToAdd =
+        sourceEl === productModal ? pendingQty(productQtyInput, item.stock) : 1;
+      setQty(item.id, (existing?.qty || 0) + qtyToAdd, {
         ...item,
         price: existing ? existing.price : salePrice,
         listPrice: item.listPrice,
@@ -6289,8 +6310,22 @@
         }
         return;
       }
-      if (!line) return;
       const action = qtyBtn.getAttribute("data-product-qty");
+      if (!line) {
+        if (!productQtyInput) return;
+        const stock = Math.max(
+          0,
+          roundQty(productModal.dataset.itemStock || 0)
+        );
+        const current = pendingQty(productQtyInput, stock);
+        let next =
+          action === "inc" ? current + 1 : Math.max(0.001, current - 1);
+        next = clampQty(next, stock);
+        if (!(next > 0)) next = 0.001;
+        productQtyInput.value = String(next);
+        syncProductControls();
+        return;
+      }
       setQty(activeProductId, action === "inc" ? line.qty + 1 : line.qty - 1, line);
       renderCart();
     });
@@ -6298,7 +6333,15 @@
     productQtyInput?.addEventListener("change", () => {
       if (!activeProductId) return;
       const line = cart.get(activeProductId);
-      if (!line) return;
+      if (!line) {
+        const stock = Math.max(
+          0,
+          roundQty(productModal?.dataset.itemStock || 0)
+        );
+        productQtyInput.value = String(pendingQty(productQtyInput, stock));
+        syncProductControls();
+        return;
+      }
       if (line.trackSerial) {
         openSerialSaleModal(line);
         renderCart();

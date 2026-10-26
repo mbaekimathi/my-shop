@@ -24,6 +24,8 @@ from .analytics_services import (
     build_client_tradings_page,
     build_client_transactions,
     build_confirm_receipts_page,
+    build_credit_report_page,
+    build_item_report_page,
     build_return_receipts_page,
     build_supplier_account,
     build_trade_out_detail,
@@ -155,12 +157,12 @@ def _render_analytics(
         "download",
     ):
         from .analytics_services import (
-            credits_report_pdf_response,
+            credit_items_pdf_response,
             tradings_report_pdf_response,
         )
 
         responder = {
-            "credits": credits_report_pdf_response,
+            "credits": credit_items_pdf_response,
             "tradings": tradings_report_pdf_response,
         }.get(section["slug"])
         if responder is not None:
@@ -168,11 +170,21 @@ def _render_analytics(
     meta = _analytics_meta(section)
     if meta_override:
         meta = {**meta, **meta_override}
+    credit_report_href = ""
+    if section["slug"] == "credits":
+        credit_report_href = reverse(
+            "employees:analytics_credit_report",
+            kwargs={"role_segment": role_url_segment(profile.role)},
+        )
+        if context.get("query"):
+            credit_report_href = f"{credit_report_href}?{context['query']}"
     return render(
         request,
         (
             "employees/analytics_supply.html"
             if section["slug"] == "supply"
+            else "employees/analytics_overview.html"
+            if section["slug"] == "overview"
             else "employees/analytics.html"
         ),
         {
@@ -181,6 +193,7 @@ def _render_analytics(
             "module": module,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
+            "credit_report_href": credit_report_href,
             "credit_audits_href": (
                 reverse(
                     "employees:analytics_credit_audits",
@@ -252,6 +265,164 @@ def analytics_section(request, role_segment, section):
         raise Http404("Module not found.")
 
     return _render_analytics(request, profile, section_slug=section)
+
+
+@active_employee_required
+@require_GET
+def analytics_item_report(request, role_segment):
+    """Item report (/…/analytics/items/report/) — per-shop avg qty/profit matrix."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_item_report",
+            role_segment=expected,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", "items")
+    if denied is not None:
+        return denied
+
+    from .workspace import analytics_section_url
+
+    context = build_item_report_page(profile=profile, request=request)
+    if (request.GET.get("download") or "").strip().lower() in (
+        "1",
+        "pdf",
+        "csv",
+        "download",
+    ):
+        from .analytics_services import item_report_pdf_response
+
+        return item_report_pdf_response(
+            page=context.get("page") or {}, filters=context
+        )
+
+    back_href = analytics_section_url(profile.role, "items")
+    query = request.GET.urlencode()
+    if query:
+        back_href = f"{back_href}?{query}"
+    page = dict(context.get("page") or {})
+    page["back_href"] = back_href
+    page["back_label"] = "Back to items"
+    context["page"] = page
+
+    return render(
+        request,
+        "employees/analytics.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Item report · Analytics",
+                "headline": "Item report",
+                "summary": "Avg qty, avg profit, and % profit per selling day — one column per shop.",
+                "icon": "clipboard-list",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "credit_audits_href": "",
+            "page_sidebar": sidebar_for_analytics_section(
+                profile.role, active_view="item-report", profile=profile
+            ),
+            **context,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_credit_report(request, role_segment):
+    """Credit report (/…/analytics/credits/report/) — shops + client accounts."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_credit_report",
+            role_segment=expected,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", "credits")
+    if denied is not None:
+        return denied
+
+    from django.urls import reverse
+
+    from .workspace import analytics_section_url
+
+    context = build_credit_report_page(profile=profile, request=request)
+    if (request.GET.get("download") or "").strip().lower() in (
+        "1",
+        "pdf",
+        "csv",
+        "download",
+    ):
+        from .analytics_services import credits_report_pdf_response
+
+        return credits_report_pdf_response(
+            page=context.get("page") or {}, filters=context
+        )
+
+    back_href = analytics_section_url(profile.role, "credits")
+    query = request.GET.urlencode()
+    if query:
+        back_href = f"{back_href}?{query}"
+    page = dict(context.get("page") or {})
+    page["back_href"] = back_href
+    page["back_label"] = "Back to credits"
+    context["page"] = page
+
+    return render(
+        request,
+        "employees/analytics.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Credit reports · Credits",
+                "headline": "Credit reports",
+                "summary": "Items picked on credit by shop — credit and % paid back.",
+                "icon": "file-text",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "credit_report_href": "",
+            "credit_audits_href": reverse(
+                "employees:analytics_credit_audits",
+                kwargs={"role_segment": role_url_segment(profile.role)},
+            ),
+            "page_sidebar": sidebar_for_credits(
+                profile.role, profile=profile, active="report"
+            ),
+            **context,
+        },
+    )
 
 
 @active_employee_required

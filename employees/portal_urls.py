@@ -310,6 +310,11 @@ urlpatterns = [
         name="analytics_credit_receipt_update",
     ),
     path(
+        "<role_segment:role_segment>/analytics/credits/report/",
+        analytics_views.analytics_credit_report,
+        name="analytics_credit_report",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/credits/audits/",
         analytics_views.analytics_credit_audits,
         name="analytics_credit_audits",
@@ -388,6 +393,11 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/return/",
         analytics_views.analytics_receipt_return,
         name="analytics_receipt_return",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/items/report/",
+        analytics_views.analytics_item_report,
+        name="analytics_item_report",
     ),
     path(
         "<role_segment:role_segment>/analytics/<slug:section>/",

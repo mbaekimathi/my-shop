@@ -630,6 +630,101 @@ def build_stock_catalog_page(
     }
 
 
+def _item_management_row(
+    item, *, active_shops, prices_list, item_shop_map, item_sold_map, stock_rows
+):
+    description = (item.description or "").strip()
+    if not item.use_individual_shop_prices or not prices_list:
+        shop_price_display = f"KSh {item.shop_price:.2f}"
+    else:
+        low = min(prices_list)
+        high = max(prices_list)
+        shop_price_display = (
+            f"KSh {low:.2f}" if low == high else f"KSh {low:.2f} – {high:.2f}"
+        )
+    shop_price_rows = []
+    for shop in active_shops:
+        override = item_shop_map.get(shop.pk)
+        resolved = (
+            item.resolve_list_price(override)
+            if override is not None
+            else item.resolve_list_price(None)
+        )
+        shop_price_rows.append(
+            {
+                "shop_id": shop.pk,
+                "shop_name": shop.name,
+                "price": f"{resolved:.2f}",
+                "is_sold": item_sold_map.get(shop.pk, True),
+            }
+        )
+    shop_prices = {str(row["shop_id"]): row["price"] for row in shop_price_rows}
+    sold_shops = {str(row["shop_id"]): row["is_sold"] for row in shop_price_rows}
+    image_url = item.public_image_url()
+    return {
+        "id": item.pk,
+        "name": item.name,
+        "category": item.category,
+        "description": description,
+        "minimum_selling_price": f"{item.minimum_selling_price:.2f}",
+        "shop_price": f"{item.shop_price:.2f}",
+        "shop_price_display": shop_price_display,
+        "pricing_mode": (
+            "individual" if item.use_individual_shop_prices else "single"
+        ),
+        "shop_prices": shop_prices,
+        "shop_price_rows": shop_price_rows,
+        "sold_shops": sold_shops,
+        "track_serial": bool(item.track_serial_number),
+        "is_suspended": bool(item.is_suspended),
+        "image_url": image_url,
+        "stock_rows": stock_rows,
+    }
+
+
+def build_item_management_row(item, *, shops=None):
+    """Single row payload in the same shape as the paged management catalog."""
+    active_shops = list(shops) if shops is not None else _active_shops()
+    allowed_shop_ids = {shop.pk for shop in active_shops}
+
+    prices_list = []
+    item_shop_map = {}
+    item_sold_map = {}
+    for shop_id, price, is_sold in ShopItemPrice.objects.filter(
+        item_id=item.pk
+    ).values_list("shop_id", "price", "is_sold"):
+        if allowed_shop_ids and shop_id not in allowed_shop_ids:
+            continue
+        prices_list.append(price)
+        item_shop_map[shop_id] = price
+        item_sold_map[shop_id] = is_sold
+
+    stock_rows = []
+    for stock in (
+        ShopStock.objects.filter(item_id=item.pk, quantity__gt=0)
+        .select_related("shop")
+        .order_by("shop__name")
+    ):
+        if allowed_shop_ids and stock.shop_id not in allowed_shop_ids:
+            continue
+        stock_rows.append(
+            {
+                "shop_id": stock.shop_id,
+                "shop_name": stock.shop.name,
+                "quantity": format(stock.quantity.normalize(), "f"),
+            }
+        )
+
+    return _item_management_row(
+        item,
+        active_shops=active_shops,
+        prices_list=prices_list,
+        item_shop_map=item_shop_map,
+        item_sold_map=item_sold_map,
+        stock_rows=stock_rows,
+    )
+
+
 def build_item_management_catalog_page(
     *, q: str = "", page=1, page_size=48, sort="category", shops=None
 ):
@@ -707,64 +802,17 @@ def build_item_management_catalog_page(
                 }
             )
 
-    rows = []
-    for item in items:
-        description = (item.description or "").strip()
-        prices = prices_list_by_item.get(item.pk) or []
-        item_shop_map = prices_map_by_item.get(item.pk) or {}
-        if not item.use_individual_shop_prices or not prices:
-            shop_price_display = f"KSh {item.shop_price:.2f}"
-        else:
-            low = min(prices)
-            high = max(prices)
-            shop_price_display = (
-                f"KSh {low:.2f}" if low == high else f"KSh {low:.2f} – {high:.2f}"
-            )
-        shop_price_rows = []
-        item_sold_map = sold_map_by_item.get(item.pk) or {}
-        for shop in active_shops:
-            override = item_shop_map.get(shop.pk)
-            resolved = (
-                item.resolve_list_price(override)
-                if override is not None
-                else item.resolve_list_price(None)
-            )
-            shop_price_rows.append(
-                {
-                    "shop_id": shop.pk,
-                    "shop_name": shop.name,
-                    "price": f"{resolved:.2f}",
-                    "is_sold": item_sold_map.get(shop.pk, True),
-                }
-            )
-        shop_prices = {
-            str(row["shop_id"]): row["price"] for row in shop_price_rows
-        }
-        sold_shops = {
-            str(row["shop_id"]): row["is_sold"] for row in shop_price_rows
-        }
-        image_url = item.public_image_url()
-        rows.append(
-            {
-                "id": item.pk,
-                "name": item.name,
-                "category": item.category,
-                "description": description,
-                "minimum_selling_price": f"{item.minimum_selling_price:.2f}",
-                "shop_price": f"{item.shop_price:.2f}",
-                "shop_price_display": shop_price_display,
-                "pricing_mode": (
-                    "individual" if item.use_individual_shop_prices else "single"
-                ),
-                "shop_prices": shop_prices,
-                "shop_price_rows": shop_price_rows,
-                "sold_shops": sold_shops,
-                "track_serial": bool(item.track_serial_number),
-                "is_suspended": bool(item.is_suspended),
-                "image_url": image_url,
-                "stock_rows": stock_rows_by_item.get(item.pk) or [],
-            }
+    rows = [
+        _item_management_row(
+            item,
+            active_shops=active_shops,
+            prices_list=prices_list_by_item.get(item.pk) or [],
+            item_shop_map=prices_map_by_item.get(item.pk) or {},
+            item_sold_map=sold_map_by_item.get(item.pk) or {},
+            stock_rows=stock_rows_by_item.get(item.pk) or [],
         )
+        for item in items
+    ]
 
     return {
         "ok": True,

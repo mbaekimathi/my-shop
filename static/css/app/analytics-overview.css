@@ -1,0 +1,618 @@
+/* Analytics overview — flat worksheet layout. Scoped under .ovs. */
+
+.workspace-main:has(.ovs) {
+  width: min(1440px, calc(100% - 2rem));
+}
+
+.ovs {
+  display: grid;
+  gap: 1.15rem;
+  min-width: 0;
+  color: var(--text-strong);
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+
+.ovs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.65rem 1.25rem;
+}
+
+.ovs-title {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.ovs-title h2 {
+  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.ovs-period {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.16rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--mist-dim);
+}
+
+.ovs-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.ovs-filters select,
+.ovs-filters input {
+  min-height: 2.05rem;
+  min-width: 0;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ovs-filters select {
+  flex: 0 1 auto;
+}
+
+.ovs-filters input[type="date"],
+.ovs-filters input[type="month"] {
+  width: 9rem;
+}
+
+.ovs-filters input[type="number"] {
+  width: 6rem;
+}
+
+.ovs-filters select:focus,
+.ovs-filters input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-color: var(--accent);
+}
+
+.ovs-filters [hidden] {
+  display: none !important;
+}
+
+.ovs-apply {
+  min-height: 2.05rem;
+  padding: 0.3rem 0.9rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #101820;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ovs-apply:hover {
+  background: var(--accent-deep);
+}
+
+.ovs-lead {
+  margin: -0.35rem 0 0;
+  max-width: 78ch;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--mist-dim);
+}
+
+/* ── Alerts ─────────────────────────────────────────────────── */
+
+.ovs-alerts {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.ovs-alert {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--line);
+  border-radius: 0 8px 8px 0;
+  background: var(--panel-muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.ovs-alert.is-warning {
+  border-left-color: var(--accent-deep);
+}
+
+.ovs-alert.is-info {
+  border-left-color: var(--teal);
+}
+
+.ovs-alert.is-danger,
+.ovs-alert.is-error {
+  border-left-color: var(--danger);
+}
+
+.ovs-alert em {
+  font-style: normal;
+  color: var(--mist-dim);
+}
+
+.ovs-alert-link {
+  color: var(--teal);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.ovs-alert-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Sheets ─────────────────────────────────────────────────── */
+
+.ovs-sheet {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.85rem 0.95rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 24px rgba(8, 24, 28, 0.05);
+}
+
+.ovs-sheet-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0 0.05rem 0.55rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ovs-sheet-title::before {
+  content: "";
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 0.18rem;
+  background: var(--teal);
+  flex-shrink: 0;
+}
+
+.ovs-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  scrollbar-width: thin;
+}
+
+.ovs-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.78rem;
+}
+
+.ovs-table th,
+.ovs-table td {
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ovs-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  border-bottom: 2px solid color-mix(in srgb, var(--line) 60%, var(--text-strong));
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ovs-th-name {
+  display: block;
+}
+
+.ovs-th-sub {
+  display: grid;
+  grid-template-columns: 2.6rem minmax(4.5rem, 1fr);
+  gap: 0.55rem;
+  margin-top: 0.14rem;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--mist-soft);
+}
+
+.ovs-th-sub span:last-child {
+  text-align: right;
+}
+
+.ovs-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ovs-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--line) 18%, var(--surface));
+}
+
+.ovs-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+/* Sticky label column when a sheet scrolls sideways. */
+.ovs-table th:first-child,
+.ovs-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 8.5rem;
+  max-width: 14rem;
+  background: var(--surface);
+  box-shadow: 1px 0 0 var(--line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ovs-table thead th:first-child {
+  z-index: 3;
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
+.ovs-table tbody tr:nth-child(even) td:first-child {
+  background: color-mix(in srgb, var(--line) 18%, var(--surface));
+}
+
+.ovs-table tbody tr:hover td:first-child {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+/* Subtotal ("key") rows — read like P&L section results. */
+.ovs-table tbody tr.ovs-tr--key td {
+  background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, var(--text-strong));
+  font-weight: 650;
+}
+
+.ovs-table tbody tr.ovs-tr--key td:first-child {
+  background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+}
+
+.ovs-table tbody tr.ovs-tr--key:hover td {
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+}
+
+/* Totals row + total column divider. */
+.ovs-table tbody tr.ovs-tr--total td {
+  background: color-mix(in srgb, var(--panel-muted) 85%, var(--surface));
+  border-top: 2px solid var(--line);
+  font-weight: 700;
+}
+
+.ovs-table tbody tr.ovs-tr--total td:first-child {
+  background: color-mix(in srgb, var(--panel-muted) 85%, var(--surface));
+}
+
+.ovs-th--total,
+.ovs-td--total {
+  border-left: 2px solid color-mix(in srgb, var(--teal) 40%, var(--line));
+}
+
+/* Soft tint on the Total column, like a highlighted sheet column. */
+.ovs-table th.ovs-th--total {
+  background: color-mix(in srgb, var(--teal) 10%, var(--surface));
+}
+
+.ovs-table tbody tr td.ovs-td--total {
+  background: color-mix(in srgb, var(--teal) 4%, var(--surface));
+}
+
+/* Numbers. */
+.ovs-th--num,
+.ovs-td--num,
+.ovs-td--pair {
+  text-align: right;
+}
+
+.ovs-num {
+  font-weight: 600;
+}
+
+.ovs-num.is-good {
+  color: var(--teal);
+}
+
+.ovs-num.is-bad {
+  color: var(--danger);
+}
+
+.ovs-num.is-warn {
+  color: var(--accent-deep);
+}
+
+/* Docs · Amt pair cells. */
+.ovs-pair {
+  display: grid;
+  grid-template-columns: 2.6rem minmax(4.5rem, 1fr);
+  gap: 0.55rem;
+  align-items: baseline;
+  justify-content: end;
+}
+
+.ovs-pair-qty {
+  font-size: 0.7rem;
+  font-weight: 650;
+  color: var(--mist-soft);
+  text-align: right;
+}
+
+.ovs-pair-amt {
+  font-weight: 700;
+  text-align: right;
+}
+
+.ovs-pair.is-good .ovs-pair-amt {
+  color: var(--teal);
+}
+
+.ovs-pair.is-bad .ovs-pair-amt {
+  color: var(--danger);
+}
+
+.ovs-pair.is-warn .ovs-pair-amt {
+  color: var(--accent-deep);
+}
+
+.ovs-link {
+  color: var(--teal);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.ovs-link:hover {
+  text-decoration: underline;
+}
+
+.ovs-entity-name {
+  display: block;
+}
+
+.ovs-entity-meta {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--mist-soft);
+}
+
+.ovs-note {
+  margin: 0;
+  padding: 0.15rem 0.05rem 0;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
+  font-size: 0.66rem;
+  line-height: 1.5;
+  color: var(--mist-soft);
+}
+
+.ovs-empty {
+  margin: 0;
+  padding: 1rem 0.75rem;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+/* ── Responsive ─────────────────────────────────────────────── */
+
+@media (max-width: 699px) {
+  .ovs {
+    gap: 0.95rem;
+  }
+
+  .ovs-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ovs-filters {
+    width: 100%;
+  }
+
+  .ovs-filters select[name="shop_id"] {
+    flex: 1 1 100%;
+  }
+
+  .ovs-filters input[type="date"],
+  .ovs-filters input[type="month"] {
+    flex: 1 1 8rem;
+    width: auto;
+  }
+
+  .ovs-apply {
+    flex: 1 1 auto;
+  }
+
+  .ovs-table {
+    font-size: 0.74rem;
+  }
+
+  .ovs-table th,
+  .ovs-table td {
+    padding: 0.4rem 0.55rem;
+  }
+
+  .ovs-table th:first-child,
+  .ovs-table td:first-child {
+    min-width: 6.5rem;
+    max-width: 9rem;
+  }
+
+  .ovs-sheet {
+    padding: 0.7rem 0.65rem 0.65rem;
+    border-radius: 12px;
+  }
+
+  .ovs-pair {
+    grid-template-columns: 2.1rem minmax(3.9rem, 1fr);
+    gap: 0.4rem;
+  }
+
+  .ovs-th-sub {
+    grid-template-columns: 2.1rem minmax(3.9rem, 1fr);
+    gap: 0.4rem;
+  }
+}
+
+@media (min-width: 700px) and (max-width: 1199px) {
+  .workspace-main:has(.ovs) {
+    width: calc(100% - 2rem);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Mobile (≤699px): sheets collapse into stacked cards.
+   Each td carries data-label → "Label  value" rows; the first
+   cell becomes the card's title band.
+   ───────────────────────────────────────────────────────────── */
+@media (max-width: 699px) {
+  .ovs-scroll {
+    overflow-x: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .ovs-table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .ovs-table thead {
+    display: none;
+  }
+
+  .ovs-table tbody {
+    display: block;
+  }
+
+  .ovs-table tbody tr {
+    display: block;
+    margin: 0 0 0.55rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  .ovs-table tbody tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .ovs-table tbody tr td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.42rem 0.6rem;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+    border-left: 0;
+    box-shadow: none;
+    position: static;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    text-align: left;
+    white-space: normal;
+    background: transparent;
+  }
+
+  .ovs-table tbody tr td:last-child {
+    border-bottom: 0;
+  }
+
+  .ovs-table tbody tr td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    max-width: 45%;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--mist-soft);
+  }
+
+  /* First cell = card title band. */
+  .ovs-table tbody tr:nth-child(n) td:first-child {
+    display: block;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+    font-weight: 700;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .ovs-table tbody tr:nth-child(n) td:first-child::before {
+    content: none;
+  }
+
+  .ovs-table .ovs-pair {
+    display: flex;
+    gap: 0.45rem;
+    align-items: baseline;
+    justify-content: flex-end;
+  }
+
+  .ovs-table tbody tr.ovs-tr--total {
+    background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+    border-color: color-mix(in srgb, var(--teal) 40%, var(--line));
+  }
+
+  .ovs-table tbody tr.ovs-tr--key td {
+    background: transparent;
+    border-top: 0;
+    font-weight: 650;
+  }
+}
+
+@media (max-width: 699px) {
+  /* Key (subtotal) rows stay emphasised at card level. */
+  .ovs-table tbody tr.ovs-tr--key {
+    background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+  }
+}

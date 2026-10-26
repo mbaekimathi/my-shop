@@ -1,0 +1,134 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/analytics-overview.css' %}?v=20261025-mobile-cards">
+{% endblock %}
+
+{% block workspace_content %}
+<section class="ovs" data-analytics data-ax-section="overview" data-animate="rise">
+  <header class="ovs-head">
+    <div class="ovs-title">
+      <h2>{{ page.headline }}</h2>
+      <span class="ovs-period">{% if page.period_label %}{{ page.period_label }}{% else %}{{ report_period_label }}{% endif %}</span>
+    </div>
+    {% if not page.hide_date_filters %}
+    <form class="ovs-filters" method="get" data-analytics-filters>
+      <select name="shop_id" aria-label="Shop">
+        <option value=""{% if not selected_shop_ids %} selected{% endif %}>All shops</option>
+        {% for shop in filter_shops %}
+        <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+        {% endfor %}
+      </select>
+      {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=include_all_time %}
+      <button type="submit" class="ovs-apply">Apply</button>
+    </form>
+    {% endif %}
+  </header>
+
+  {% if page.lead %}<p class="ovs-lead">{{ page.lead }}</p>{% endif %}
+
+  {% if page.alerts %}
+  <div class="ovs-alerts" aria-label="Decision alerts">
+    {% for alert in page.alerts %}
+    <p class="ovs-alert is-{{ alert.level }}">
+      <strong>{{ alert.title }}.</strong>
+      {{ alert.detail }}
+      {% if alert.href %}<a class="ovs-alert-link" href="{{ alert.href }}">{{ alert.href_label|default:"View" }}</a>{% endif %}
+      {% if alert.action %}<em>{{ alert.action }}</em>{% endif %}
+    </p>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% for table in page.tables %}
+  <section class="ovs-sheet" aria-label="{{ table.title }}">
+    <h3 class="ovs-sheet-title">{{ table.title }}</h3>
+    {% if table.rows %}
+    <div class="ovs-scroll">
+      <table class="ovs-table">
+        <thead>
+          <tr>
+            {% for col in table.columns %}
+            <th
+              {% if col.title %}title="{{ col.title }}"{% endif %}
+              class="{% if forloop.first %}ovs-th--row{% endif %}{% if col.money or col.pair %} ovs-th--num{% endif %}{% if col.total %} ovs-th--total{% endif %}"
+            >
+              <span class="ovs-th-name">{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}</span>
+              {% if col.pair %}<span class="ovs-th-sub"><span>{{ col.pair_qty|default:"Qty" }}</span><span>{{ col.pair_amt|default:"Amt" }}</span></span>{% endif %}
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in table.rows %}
+          {% with cells=row.cells|default:row %}
+          <tr{% if table.shop_grid and forloop.last %} class="ovs-tr--total"{% elif row.key %} class="ovs-tr--key"{% endif %}>
+            {% for cell in cells %}
+            {% for col in table.columns %}
+            {% if forloop.parentloop.counter0 == forloop.counter0 %}
+            <td class="{% if forloop.parentloop.first %}ovs-td--row{% endif %}{% if cell.kind == 'qty_amount' or col.pair %} ovs-td--pair{% elif cell.kind == 'money' or cell.kind == 'pct' or col.money %} ovs-td--num{% endif %}{% if col.total %} ovs-td--total{% endif %}" data-label="{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}">
+              {% if cell.href %}
+              <a class="ovs-link" href="{{ cell.href }}">
+                {% if cell.sub %}<span class="ovs-entity-name">{{ cell.label }}</span><span class="ovs-entity-meta">{{ cell.sub }}</span>{% else %}{{ cell.label }}{% endif %}
+              </a>
+              {% elif cell.kind == "qty_amount" %}
+              <span class="ovs-pair{% if cell.tone and cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>
+                <span class="ovs-pair-qty">{{ cell.qty }}</span>
+                <span class="ovs-pair-amt">{{ cell.amount }}</span>
+              </span>
+              {% elif cell.kind == "money" or cell.kind == "pct" %}
+              <span class="ovs-num{% if cell.tone and cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
+              {% elif cell.tone %}
+              <span class="ovs-num is-{{ cell.tone }}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
+              {% elif cell.label %}
+              <span{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
+              {% else %}
+              {{ cell }}
+              {% endif %}
+            </td>
+            {% endif %}
+            {% endfor %}
+            {% endfor %}
+          </tr>
+          {% endwith %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="ovs-empty">{{ table.empty }}</p>
+    {% endif %}
+    {% if table.footnote %}<p class="ovs-note">{{ table.footnote }}</p>{% endif %}
+  </section>
+  {% endfor %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const root = document.querySelector("[data-analytics]");
+    if (!root) return;
+    root.querySelectorAll("[data-analytics-filters]").forEach((form) => {
+      const rangeSelect = form.querySelector("[data-analytics-range]");
+      const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+      const syncRange = () => {
+        const range = rangeSelect?.value || "day";
+        rangeFields.forEach((field) => {
+          const match = field.getAttribute("data-range-field") === range;
+          field.hidden = !match;
+          field.disabled = !match;
+          field.required = match;
+        });
+      };
+      rangeSelect?.addEventListener("change", syncRange);
+      syncRange();
+    });
+  })();
+</script>
+{% endblock %}
