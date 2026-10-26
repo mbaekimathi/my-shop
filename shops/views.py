@@ -6,9 +6,10 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Count, DecimalField, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.text import slugify
@@ -17,12 +18,18 @@ from django.views.decorators.http import require_http_methods, require_POST
 from employees.access import (
     active_employee_required,
     get_profile_for_request,
+    role_from_url_segment,
     role_home_url_name,
+    role_url_segment,
 )
 from employees.models import SHOP_ASSIGNABLE_ROLES
 from employees.countries import COUNTRY_DIAL_CODES
 from employees.throttle import rate_limit
-from employees.workspace import sidebar_for_my_shop
+from employees.workspace import (
+    get_dashboard_module,
+    sidebar_for_my_shop,
+    sidebar_for_shop_management,
+)
 from employees.services import verify_active_employee_code
 from items.models import (
     Item,
@@ -34,6 +41,9 @@ from items.models import (
     StockRequestStatus,
 )
 from items.services import (
+    _clamp_price,
+    _fallback_list_price,
+    _parse_price,
     apply_stock_movement,
     build_stock_catalog_page,
     last_buying_prices_for_items,
@@ -282,6 +292,7 @@ def shop_management(request, profile, meta, module, page_sidebar):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": page_sidebar,
+            "role_segment": role_url_segment(profile.role),
             "shops": shops,
             "shop_count": len(shops),
             "form_data": form_data,
@@ -290,6 +301,191 @@ def shop_management(request, profile, meta, module, page_sidebar):
             "open_edit_modal": open_edit_modal,
             "edit_shop": edit_shop,
             "module_permissions": caps,
+        },
+    )
+
+
+def _shop_products_rows(shop, submitted=None):
+    """Row dicts for the shop products page: every item, its sold flag and price.
+
+    ``submitted`` carries ``{item_id: {"price": raw, "sold": bool}}`` so a
+    failed POST re-renders exactly what the user typed.
+    """
+    items = list(Item.objects.order_by("category", "name"))
+    price_rows = {
+        row.item_id: row
+        for row in ShopItemPrice.objects.filter(shop=shop).only(
+            "item_id", "price", "is_sold"
+        )
+    }
+    stock_rows = {
+        item_id: qty
+        for item_id, qty in ShopStock.objects.filter(shop=shop).values_list(
+            "item_id", "quantity"
+        )
+    }
+    submitted = submitted or {}
+    rows = []
+    for item in items:
+        existing = price_rows.get(item.pk)
+        default_price = (
+            existing.price if existing is not None else _fallback_list_price(item)
+        )
+        default_sold = existing.is_sold if existing is not None else True
+        entry = submitted.get(item.pk)
+        price_value = (
+            entry["price"] if entry is not None else f"{default_price:.2f}"
+        )
+        sold = entry["sold"] if entry is not None else default_sold
+        rows.append(
+            {
+                "item": item,
+                "price": price_value,
+                "sold": sold,
+                "stock_label": _qty_label(stock_rows.get(item.pk, Decimal("0"))),
+                "min_price": item.minimum_selling_price,
+            }
+        )
+    return rows
+
+
+@active_employee_required
+@require_http_methods(["GET", "POST"])
+def shop_products_management(request, role_segment, shop_id):
+    """Pick which items a shop sells and set that shop's prices, in bulk."""
+    from employees.module_permissions import require_module_permission
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+
+    expected_segment = role_url_segment(profile.role)
+    if role_segment != expected_segment:
+        return redirect(
+            "employees:shop_products_management",
+            role_segment=expected_segment,
+            shop_id=shop_id,
+        )
+
+    denied = require_module_permission(
+        request, profile, "shop-management", "products"
+    )
+    if denied is not None:
+        return denied
+
+    shop = get_object_or_404(Shop, pk=shop_id)
+    if not _shop_management_in_scope(profile, shop):
+        messages.error(request, "You are not allocated to that shop.")
+        return redirect(
+            "employees:workspace_module",
+            role_segment=expected_segment,
+            module_slug="shop-management",
+        )
+
+    form_errors = []
+    submitted = None
+
+    if request.method == "POST":
+        truthy = {"1", "true", "on", "yes"}
+        updates = []
+        for item in Item.objects.order_by("category", "name"):
+            raw_price = (request.POST.get(f"price_{item.pk}") or "").strip()
+            sold = (request.POST.get(f"sold_{item.pk}") or "").strip().lower() in truthy
+            price = None
+            if raw_price:
+                try:
+                    price = _parse_price(raw_price, f"Price for {item.name}")
+                except ValidationError as exc:
+                    form_errors.extend(_validation_errors(exc))
+            updates.append(
+                {
+                    "item": item,
+                    "sold": sold,
+                    "raw_price": raw_price,
+                    "price": price,
+                }
+            )
+
+        if not form_errors:
+            existing_rows = {
+                row.item_id: row
+                for row in ShopItemPrice.objects.filter(shop=shop)
+            }
+            enabled = 0
+            with transaction.atomic():
+                for entry in updates:
+                    item = entry["item"]
+                    if entry["price"] is not None:
+                        price = _clamp_price(
+                            entry["price"], item.minimum_selling_price
+                        )
+                    else:
+                        current = existing_rows.get(item.pk)
+                        price = (
+                            current.price
+                            if current is not None
+                            else _fallback_list_price(item)
+                        )
+                    if entry["sold"]:
+                        enabled += 1
+                    ShopItemPrice.objects.update_or_create(
+                        shop=shop,
+                        item=item,
+                        defaults={"price": price, "is_sold": entry["sold"]},
+                    )
+            messages.success(
+                request,
+                f"Products updated — {enabled} item{'s' if enabled != 1 else ''} "
+                f"enabled at “{shop.name}”.",
+            )
+            return redirect(request.path)
+
+        submitted = {
+            entry["item"].pk: {
+                "price": entry["raw_price"],
+                "sold": entry["sold"],
+            }
+            for entry in updates
+        }
+
+    rows = _shop_products_rows(shop, submitted=submitted)
+    sold_count = sum(1 for row in rows if row["sold"])
+    module = get_dashboard_module("shop-management", profile.role) or {
+        "slug": "shop-management",
+        "label": "Shop Management",
+        "icon": "store",
+        "summary": "Configure shops, floors, and operations.",
+    }
+
+    return render(
+        request,
+        "shops/shop_products.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": f"{shop.name} products",
+                "headline": f"Products at {shop.name}",
+                "summary": "Choose what this shop sells and set its prices.",
+                "icon": "store",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_shop_management(
+                profile.role, profile=profile
+            ),
+            "shop": shop,
+            "rows": rows,
+            "item_count": len(rows),
+            "sold_count": sold_count,
+            "form_errors": form_errors,
+            "shop_management_url": reverse(
+                "employees:workspace_module",
+                kwargs={
+                    "role_segment": expected_segment,
+                    "module_slug": "shop-management",
+                },
+            ),
         },
     )
 

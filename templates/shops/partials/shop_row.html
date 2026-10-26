@@ -35,6 +35,16 @@
   </td>
   <td class="item-cell--actions" data-label="Actions">
     <div class="item-actions">
+      {% if module_permissions.products|default:True %}
+      <a
+        class="item-action-icon"
+        href="{% url 'employees:shop_products_management' role_segment=role_segment shop_id=shop.pk %}"
+        title="Manage products"
+        aria-label="Manage products at {{ shop.name }}"
+      >
+        <i data-lucide="package" aria-hidden="true"></i>
+      </a>
+      {% endif %}
       {% if module_permissions.edit|default:True %}
       <button
         class="item-action-icon"

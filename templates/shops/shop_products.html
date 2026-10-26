@@ -1,0 +1,191 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="item-panel item-panel--dense"
+  data-animate="rise"
+  data-shop-products
+  data-item-total="{{ item_count }}"
+>
+  <div class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Products at {{ shop.name }}</h2>
+        <p>Tick the items this shop sells, set its prices, then save once.</p>
+      </div>
+      <div class="item-discounts-head-actions">
+        <a class="stock-settings-jump" href="{{ shop_management_url }}">
+          <i data-lucide="arrow-left" aria-hidden="true"></i>
+          <span>Back to shops</span>
+        </a>
+        <p class="item-count" data-sold-count>{{ sold_count }} of {{ item_count }} enabled</p>
+        {% if rows %}
+        <button
+          class="btn btn--primary"
+          type="submit"
+          form="shop-products-form"
+        >
+          <i data-lucide="check" aria-hidden="true"></i>
+          <span>Save changes</span>
+        </button>
+        {% endif %}
+      </div>
+    </div>
+    {% if rows %}
+    <div class="item-search">
+      <label class="item-search-field">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input
+          type="search"
+          placeholder="Search by name or category…"
+          autocomplete="off"
+          data-product-search
+          aria-label="Search items"
+        >
+      </label>
+      <div class="item-sort-toggle" role="group" aria-label="Bulk enable or disable">
+        <button
+          type="button"
+          class="item-sort-btn"
+          data-enable-all
+          title="Enable every item at this shop"
+        >
+          <i data-lucide="check-square" aria-hidden="true"></i>
+          <span>Enable all</span>
+        </button>
+        <button
+          type="button"
+          class="item-sort-btn"
+          data-disable-all
+          title="Disable every item at this shop"
+        >
+          <i data-lucide="square" aria-hidden="true"></i>
+          <span>Disable all</span>
+        </button>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if form_errors %}
+  <ul class="form-alert-list">
+    {% for error in form_errors %}
+    <li class="form-alert">{{ error }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if rows %}
+  <form id="shop-products-form" method="post" data-shop-products-form>
+    {% csrf_token %}
+    <div class="item-list">
+      <div class="item-table-wrap">
+        <table class="item-table item-table--dense item-table--products">
+          <thead>
+            <tr>
+              <th scope="col" class="item-col--status">
+                <label class="shop-products-checkall" title="Enable or disable all items">
+                  <input
+                    type="checkbox"
+                    data-check-all
+                    {% if sold_count == item_count %}checked{% endif %}
+                    aria-label="Enable or disable all items"
+                  >
+                  <span>Sold</span>
+                </label>
+              </th>
+              <th scope="col" class="item-col--item">Item</th>
+              <th scope="col">Stock</th>
+              <th scope="col">Min price</th>
+              <th scope="col">Shop price</th>
+              <th scope="col" class="item-col--status">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr
+              {% if row.item.is_suspended %}class="item-row--suspended"{% endif %}
+              data-product-row
+              data-search-text="{{ row.item.name|lower }} {{ row.item.category|lower }}"
+            >
+              <td class="item-cell--status" data-label="Sold">
+                <input
+                  type="checkbox"
+                  name="sold_{{ row.item.pk }}"
+                  value="1"
+                  {% if row.sold %}checked{% endif %}
+                  data-sold-toggle
+                  aria-label="Sell {{ row.item.name }} at {{ shop.name }}"
+                >
+              </td>
+              <td class="item-cell--item" data-label="Item">
+                <div class="item-person">
+                  {% if row.item.public_image_url %}
+                  <img class="item-thumb" src="{{ row.item.public_image_url }}" alt="" width="32" height="32">
+                  {% else %}
+                  <span class="item-thumb item-thumb--empty" aria-hidden="true">
+                    <i data-lucide="package"></i>
+                  </span>
+                  {% endif %}
+                  <div class="item-person-copy">
+                    <strong>{{ row.item.name }}</strong>
+                    <small>
+                      {{ row.item.category }}
+                      {% if row.item.is_suspended %}· <span class="status-pill status-pill--suspended">Suspended</span>{% endif %}
+                    </small>
+                  </div>
+                </div>
+              </td>
+              <td data-label="Stock">{{ row.stock_label }}</td>
+              <td data-label="Min price">KSh {{ row.min_price }}</td>
+              <td class="item-cell--price" data-label="Shop price">
+                <div class="currency-field">
+                  <span class="currency-prefix" aria-hidden="true">KSh</span>
+                  <input
+                    type="text"
+                    name="price_{{ row.item.pk }}"
+                    value="{{ row.price }}"
+                    inputmode="decimal"
+                    data-price-input
+                    aria-label="Shop price for {{ row.item.name }}"
+                  >
+                </div>
+              </td>
+              <td class="item-cell--status" data-label="Status">
+                <span class="status-pill status-pill--active" data-status-on {% if not row.sold %}hidden{% endif %}>Enabled</span>
+                <span class="status-pill status-pill--suspended" data-status-off {% if row.sold %}hidden{% endif %}>Disabled</span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="item-search-empty" data-product-no-results hidden>
+      <i data-lucide="search-x" aria-hidden="true"></i>
+      <p>No items match your search.</p>
+    </div>
+    <div class="shop-products-savebar">
+      <p class="item-count" data-sold-count>{{ sold_count }} of {{ item_count }} enabled</p>
+      <button class="btn btn--primary" type="submit">
+        <i data-lucide="check" aria-hidden="true"></i>
+        <span>Save changes</span>
+      </button>
+    </div>
+  </form>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="package" aria-hidden="true"></i>
+    <p>No items registered yet. Add items in <strong>Item Management</strong> first.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/shop-products.js' %}"></script>
+{% endblock %}

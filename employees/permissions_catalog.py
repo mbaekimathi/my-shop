@@ -92,6 +92,7 @@ PERMISSION_MODULES = (
             {"slug": "view", "label": "View shops"},
             {"slug": "register", "label": "Register shop"},
             {"slug": "edit", "label": "Edit shop"},
+            {"slug": "products", "label": "Shop products"},
             {"slug": "toggle_suspend", "label": "Suspend / unsuspend"},
             {"slug": "toggle_hide", "label": "Hide / show"},
             {"slug": "delete", "label": "Delete shop"},

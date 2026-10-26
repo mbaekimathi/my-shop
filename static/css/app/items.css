@@ -388,3 +388,43 @@
 }
 
 /* HR management — use more of the frame on large screens (avoid 1120px squeeze). */
+
+/* Shop products page — bulk sold flags + per-shop prices. */
+.item-table--products .item-col--item,
+.item-table--products .item-cell--item {
+  position: static;
+  box-shadow: none;
+}
+
+.shop-products-checkall {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.shop-products-checkall input {
+  margin: 0;
+}
+
+.item-table--products td[data-label="Shop price"] .currency-field {
+  min-width: 8.5rem;
+}
+
+.shop-products-savebar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--mist) 5%, var(--surface));
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+}
+
+.shop-products-savebar .item-count {
+  margin: 0 auto 0 0;
+}

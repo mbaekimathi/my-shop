@@ -281,6 +281,11 @@ urlpatterns = [
         name="stock_serial_history",
     ),
     path(
+        "<role_segment:role_segment>/shop-management/products/<int:shop_id>/",
+        shop_views.shop_products_management,
+        name="shop_products_management",
+    ),
+    path(
         "<role_segment:role_segment>/item-management/catalog/",
         views.item_management_catalog_proxy,
         name="item_management_catalog",
