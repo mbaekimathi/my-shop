@@ -430,15 +430,26 @@
 }
 
 /* Item images — bulk image update page. */
+.item-panel--images {
+  /* Sticky toolbar needs a scrollable ancestor — drop the panel clip. */
+  overflow: visible;
+}
+
 .item-image-bar {
+  position: sticky;
+  top: calc(var(--workspace-header-h, 4.35rem) + 0.5rem);
+  z-index: 25;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.85rem;
+  margin: 0 0.6rem 0.55rem;
   padding: 0.85rem 0.95rem;
-  border-bottom: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: 14px;
   background: color-mix(in srgb, var(--mist) 4%, var(--surface));
+  box-shadow: 0 12px 26px -14px rgba(8, 28, 34, 0.35);
 }
 
 .item-image-bar-main {
