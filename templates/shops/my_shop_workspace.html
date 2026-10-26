@@ -10,7 +10,7 @@
   data-shop-cart
   data-shop-id="{{ shop.id }}"
   data-shop-name="{{ shop.name }}"
-  data-shop-view="cards"
+  data-shop-view="scroll"
   data-catalog-api="{{ catalog_url }}"
   data-catalog-page-size="120"
   data-checkout-url="{{ checkout_url }}"
@@ -126,9 +126,9 @@
     <div class="shop-floor-view-toggle" role="group" aria-label="Catalog layout">
       <button
         type="button"
-        class="shop-floor-view-btn is-active"
+        class="shop-floor-view-btn"
         data-shop-view-set="cards"
-        aria-pressed="true"
+        aria-pressed="false"
         title="Card view"
       >
         <i data-lucide="layout-grid" aria-hidden="true"></i>
@@ -146,9 +146,9 @@
       </button>
       <button
         type="button"
-        class="shop-floor-view-btn"
+        class="shop-floor-view-btn is-active"
         data-shop-view-set="scroll"
-        aria-pressed="false"
+        aria-pressed="true"
         title="Horizontal scroll"
       >
         <i data-lucide="gallery-horizontal" aria-hidden="true"></i>
