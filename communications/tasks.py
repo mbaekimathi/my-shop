@@ -1,4 +1,4 @@
-"""Celery / sync / cron processor for staggered WhatsApp sends."""
+"""Celery / sync / cron processor for staggered campaign sends."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from .constants import (
     CAMPAIGN_DONE,
     CAMPAIGN_QUEUED,
     CAMPAIGN_SENDING,
+    CHANNEL_SMS,
     MAX_SEND_ATTEMPTS,
     MSG_FAILED,
     MSG_PENDING,
@@ -201,8 +202,31 @@ def process_pending_queue(*, limit: int | None = None) -> dict[str, int | str]:
     }
 
 
+def _deliver(message: OutboundMessage, *, skip_poll: bool = False) -> dict:
+    """Dispatch one outbound message to its channel's transport."""
+    if message.channel == CHANNEL_SMS:
+        from .sms import send_sms
+
+        return send_sms(
+            phone=(message.phone or "").strip(),
+            message=message.body,
+        )
+    media = (message.image_path or "").strip() or None
+    dest = (message.phone or "").strip()
+    kwargs = {
+        "text": message.body,
+        "media_path": media,
+        "skip_poll": skip_poll,
+    }
+    if "@g.us" in dest or "@c.us" in dest or "@lid" in dest:
+        kwargs["chat_id"] = dest
+    else:
+        kwargs["phone"] = dest
+    return send_whatsapp_message(**kwargs)
+
+
 def _send_one(message: OutboundMessage, *, skip_poll: bool = False) -> None:
-    """Retry a send until Twilio accepts it, or until the error cannot succeed."""
+    """Retry a send until the provider accepts it, or until the error cannot succeed."""
     last_error = ""
     for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
         campaign_status = (
@@ -218,18 +242,7 @@ def _send_one(message: OutboundMessage, *, skip_poll: bool = False) -> None:
             ]
             time.sleep(delay)
 
-        media = (message.image_path or "").strip() or None
-        dest = (message.phone or "").strip()
-        kwargs = {
-            "text": message.body,
-            "media_path": media,
-            "skip_poll": skip_poll,
-        }
-        if "@g.us" in dest or "@c.us" in dest or "@lid" in dest:
-            kwargs["chat_id"] = dest
-        else:
-            kwargs["phone"] = dest
-        result = send_whatsapp_message(**kwargs)
+        result = _deliver(message, skip_poll=skip_poll)
         last_error = _db_safe_error(
             friendly_send_error(result.get("error") or "Send failed")
         )

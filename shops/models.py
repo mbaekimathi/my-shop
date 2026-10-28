@@ -661,6 +661,10 @@ class ShopPosSettings(models.Model):
         default=False,
         help_text="When on, shop receipt values replace company receipt defaults.",
     )
+    override_messages = models.BooleanField(
+        default=False,
+        help_text="When on, shop message drafts replace company message drafts.",
+    )
     enable_sale = models.BooleanField(default=True)
     enable_credit = models.BooleanField(default=True)
     enable_quotation = models.BooleanField(default=True)
@@ -1127,6 +1131,7 @@ class CompanyDeveloperPaymentSettings(models.Model):
 class SmsProvider(models.TextChoices):
     AFRICAS_TALKING = "africas_talking", "Africa's Talking"
     TWILIO = "twilio", "Twilio"
+    BLESSED_TEXTS = "blessed_texts", "BlessedTexts"
     CUSTOM = "custom", "Custom HTTP"
 
 

@@ -4,8 +4,10 @@
     <p>
       {% if shop_settings_section == "pos" %}
       Off uses company POS defaults. On lets this shop set its own checkout options.
-      {% else %}
+      {% elif shop_settings_section == "receipt" %}
       Off uses company receipt defaults. On lets this shop set its own print and receipt look.
+      {% else %}
+      Off uses the company messages. On lets this shop write its own messages.
       {% endif %}
     </p>
   </div>
@@ -15,8 +17,10 @@
         <strong>
           {% if shop_settings_section == "pos" %}
           Use custom shop POS settings
-          {% else %}
+          {% elif shop_settings_section == "receipt" %}
           Use custom shop receipt settings
+          {% else %}
+          Use custom shop messages
           {% endif %}
         </strong>
         <p data-shop-override-status>

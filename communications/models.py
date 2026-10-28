@@ -7,8 +7,13 @@ from .constants import (
     BRIDGE_STATUS_DISCONNECTED,
     CAMPAIGN_STATUS_CHOICES,
     CAMPAIGN_DRAFT,
+    CHANNEL_CHOICES,
+    CHANNEL_WHATSAPP,
+    MESSAGE_STATUS_CHOICES,
+    MESSAGE_STATUS_DRAFT,
     MSG_STATUS_CHOICES,
     MSG_PENDING,
+    TRIGGER_MESSAGE_CHOICES,
 )
 
 
@@ -93,6 +98,12 @@ class OutboundMessage(models.Model):
         related_name="outbound_messages",
     )
     client_name = models.CharField(max_length=200, blank=True, default="")
+    channel = models.CharField(
+        max_length=12,
+        choices=CHANNEL_CHOICES,
+        default=CHANNEL_WHATSAPP,
+        db_index=True,
+    )
     phone = models.CharField(max_length=40, db_index=True)
     body = models.TextField()
     image_path = models.CharField(max_length=500, blank=True, default="")
@@ -164,6 +175,47 @@ class InboundReply(models.Model):
 
     def __str__(self):
         return f"Reply from {self.phone}"
+
+
+class TriggeredMessage(models.Model):
+    """One reusable auto-message for a shop event (sale, credit, quotation).
+
+    ``shop=None`` marks a company message; a shop with custom messages on
+    uses its own copies instead.
+    """
+
+    shop = models.ForeignKey(
+        "shops.Shop",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="triggered_messages",
+    )
+    trigger = models.CharField(
+        max_length=20,
+        choices=TRIGGER_MESSAGE_CHOICES,
+        db_index=True,
+    )
+    delay_minutes = models.PositiveIntegerField(
+        default=0,
+        help_text="0 sends immediately when the event happens.",
+    )
+    body = models.TextField()
+    link = models.CharField(max_length=500, blank=True, default="")
+    status = models.CharField(
+        max_length=12,
+        choices=MESSAGE_STATUS_CHOICES,
+        default=MESSAGE_STATUS_DRAFT,
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.get_trigger_display()} message ({self.status})"
 
 
 WHATSAPP_GROUP_CREATED = "created"

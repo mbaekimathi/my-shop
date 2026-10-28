@@ -10,7 +10,7 @@
   <div class="wa-share-hero__copy">
     <p class="role-eyebrow">
       <i data-lucide="images" aria-hidden="true"></i>
-      <span>WhatsApp · Share items</span>
+      <span>Communications · Share items</span>
     </p>
     <h2 class="workspace-hero-title">Share items</h2>
     <p class="workspace-hero-copy">
@@ -23,9 +23,10 @@
       <strong data-wa-ready-label>{% if bridge.status == "connected" %}Ready{% else %}Setup needed{% endif %}</strong>
       <span>{% if bridge.wa_phone %}{{ bridge.wa_phone }}{% else %}Twilio{% endif %}</span>
     </span>
-    <nav class="wa-share-hero__links" aria-label="WhatsApp settings">
+    <nav class="wa-share-hero__links" aria-label="Channel settings">
       <a href="{{ whatsapp_url }}">WhatsApp settings</a>
       <a href="{{ settings_url }}">Twilio settings</a>
+      <a href="{{ sms_url }}">SMS settings</a>
     </nav>
   </div>
 </section>
@@ -36,13 +37,20 @@
   data-delay="1"
   data-wa-auto
   data-twilio-ready="{% if bridge.status == 'connected' %}1{% else %}0{% endif %}"
+  data-sms-ready="{% if comms.enable_sms and comms.has_sms_credentials %}1{% else %}0{% endif %}"
   data-automations-on="{% if comms.enable_automations %}1{% else %}0{% endif %}"
 >
   {% if bridge.status != "connected" %}
   <p class="wa-auto__banner">
-    Save Twilio in
-    <a href="{{ settings_url }}">Twilio settings</a>
-    before item shares can send.
+    {% if comms.enable_sms and comms.has_sms_credentials %}
+      WhatsApp is not connected —
+      <a href="{{ settings_url }}">save Twilio credentials</a>
+      or send via SMS.
+    {% else %}
+      Save Twilio in
+      <a href="{{ settings_url }}">Twilio settings</a>
+      {% if comms.enable_sms %}or set up <a href="{{ sms_url }}">SMS settings</a> {% endif %}before item shares can send.
+    {% endif %}
   </p>
   {% endif %}
 
@@ -148,7 +156,7 @@
         <div>
           <p class="wa-card__kicker">Step 2</p>
           <h3>Pick items</h3>
-          <p>Selected items go in one WhatsApp, with photos when Twilio can fetch them.</p>
+          <p>Selected items go in one message per channel — WhatsApp gets photos when Twilio can fetch them.</p>
         </div>
         <p class="wa-share__badge">
           <strong data-wa-selected-item-count>0</strong>
@@ -204,7 +212,7 @@
             Showing {{ catalogue_items|length }} of {{ catalogue_item_total }}.
           </p>
         </div>
-        <p class="wa-share__hint">One WhatsApp per person lists every selected item. Photos attach from a public HTTPS / ngrok link, not localhost.</p>
+        <p class="wa-share__hint">One message per person per channel lists every selected item. WhatsApp photos attach from a public HTTPS / ngrok link, not localhost; SMS sends item names and prices as text.</p>
       </div>
     </section>
 
@@ -242,7 +250,7 @@
       <div>
         <p class="wa-card__kicker">Step 3</p>
         <h3>Edit message</h3>
-        <p>The product photo, name, and price appear on the card image. This text is the WhatsApp caption.</p>
+        <p>WhatsApp shows items on a card image with this caption; SMS sends this text plus the item list.</p>
       </div>
     </header>
     <div class="wa-share-composer" data-wa-composer>
@@ -306,6 +314,30 @@
             {% endfor %}
           </select>
         </label>
+        <div class="wa-auto__field wa-share__channels">
+          <span>Send via</span>
+          <div class="wa-share-channel-list">
+            {% for ch in send_channels %}
+            <label class="perm-switch wa-share-channel{% if not ch.ready %} is-denied{% endif %}">
+              <input
+                type="checkbox"
+                class="perm-switch-input"
+                name="channels"
+                value="{{ ch.slug }}"
+                form="wa-share-audience"
+                {% if ch.ready %}checked{% else %}disabled{% endif %}
+                data-wa-channel="{{ ch.slug }}"
+                aria-label="Send via {{ ch.label }}"
+              >
+              <span class="perm-switch-ui" aria-hidden="true"></span>
+              <span class="perm-switch-state">{{ ch.label }}</span>
+              {% if not ch.ready %}
+              <a class="wa-share-channel__setup" href="{{ ch.settings_url }}">set up</a>
+              {% endif %}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
       </div>
       <p class="wa-share__hint" data-wa-schedule-hint>Sends once now.</p>
     </div>
@@ -333,5 +365,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/whatsapp-automations.js' %}?v=16"></script>
+<script defer src="{% static 'js/whatsapp-automations.js' %}?v=17"></script>
 {% endblock %}

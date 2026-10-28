@@ -1151,6 +1151,12 @@ def employee_settings_section(request, section):
     if settings_section["slug"] == "twilio":
         return _company_communications_settings(request, context)
 
+    if settings_section["slug"] == "sms":
+        return _company_sms_settings(request, context)
+
+    if settings_section["slug"] == "message-drafts":
+        return _message_drafts_settings(request, context)
+
     if settings_section["slug"] == "whatsapp":
         module = get_dashboard_module("whatsapp", profile.role) or {
             "slug": "whatsapp",
@@ -1173,7 +1179,7 @@ def _communications_settings_hub(request, context):
 
     profile = context["profile"]
     pages = []
-    for slug in ("twilio", "whatsapp"):
+    for slug in ("twilio", "sms", "whatsapp", "message-drafts"):
         section = get_settings_section(slug)
         if section is None:
             continue
@@ -1181,6 +1187,78 @@ def _communications_settings_hub(request, context):
             pages.append(section)
     context["comms_pages"] = pages
     return render(request, "employees/settings_communications.html", context)
+
+
+def _message_drafts_settings(request, context):
+    from communications.automations import (
+        save_triggered_message,
+        triggered_message_as_dict,
+    )
+    from communications.constants import (
+        MESSAGE_STATUS_CHOICES,
+        TRIGGER_DELAY_UNITS,
+        TRIGGER_MESSAGE_CHOICES,
+        TRIGGER_MESSAGE_PLACEHOLDERS,
+    )
+    from communications.models import TriggeredMessage
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        try:
+            if action == "save_draft":
+                save_triggered_message(request.POST)
+                messages.success(request, "Message saved.")
+            elif action == "set_status":
+                draft = TriggeredMessage.objects.filter(
+                    pk=request.POST.get("draft_id"), shop__isnull=True
+                ).first()
+                if draft is None:
+                    raise ValidationError("Message not found.")
+                draft.status = request.POST.get("status") or draft.status
+                if draft.status not in {value for value, _ in MESSAGE_STATUS_CHOICES}:
+                    raise ValidationError("Unknown status.")
+                draft.save(update_fields=["status", "updated_at"])
+                messages.success(request, "Message updated.")
+            elif action == "delete_draft":
+                TriggeredMessage.objects.filter(
+                    pk=request.POST.get("draft_id"), shop__isnull=True
+                ).delete()
+                messages.success(request, "Message deleted.")
+            else:
+                messages.error(request, "Unknown action.")
+        except ValidationError as exc:
+            messages.error(
+                request,
+                "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc),
+            )
+        return redirect(request.path)
+
+    edit_id = (request.GET.get("edit") or "").strip()
+    editing = (
+        TriggeredMessage.objects.filter(pk=edit_id, shop__isnull=True).first()
+        if edit_id.isdigit()
+        else None
+    )
+    comms = get_communications_settings()
+    context.update(
+        {
+            "drafts": [
+                triggered_message_as_dict(row)
+                for row in TriggeredMessage.objects.filter(shop__isnull=True)
+            ],
+            "editing": triggered_message_as_dict(editing) if editing else None,
+            "trigger_choices": TRIGGER_MESSAGE_CHOICES,
+            "status_choices": MESSAGE_STATUS_CHOICES,
+            "delay_units": TRIGGER_DELAY_UNITS,
+            "placeholders": TRIGGER_MESSAGE_PLACEHOLDERS,
+            "automations_ready": bool(
+                comms.enable_automations and comms.has_twilio_credentials()
+            ),
+            "composer_cancel_url": request.path,
+            "composer_sample_shop": get_company_display_name(),
+        }
+    )
+    return render(request, "employees/settings_message_drafts.html", context)
 
 
 def _payments_settings_hub(request, context):
@@ -1313,6 +1391,107 @@ def _company_communications_settings(request, context):
         }
     )
     return render(request, "employees/settings_twilio.html", context)
+
+
+def _company_sms_settings(request, context):
+    from communications.sms import verify_sms_credentials
+    from shops.models import SmsProvider
+
+    row = get_communications_settings()
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or "application/json" in (request.headers.get("Accept") or "")
+    )
+
+    def _posted(field, current=""):
+        return (request.POST.get(field) or "").strip() or (current or "").strip()
+
+    def _check_credentials():
+        return verify_sms_credentials(
+            _posted("sms_provider", row.sms_provider),
+            _posted("sms_api_key", row.sms_api_key),
+            _posted("sms_api_secret", row.sms_api_secret),
+            api_base_url=_posted("sms_api_base_url", row.sms_api_base_url),
+            row=row,
+        )
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+
+        if action == "test_sms_connection":
+            check = _check_credentials()
+            connected = bool(check.get("ok")) and not check.get("skipped")
+            if connected:
+                message = check.get("detail") or "Connected — provider accepted the credentials."
+            elif check.get("skipped"):
+                message = "Could not reach the provider to confirm the connection."
+            else:
+                message = check.get("error") or "Connection failed — check the credentials."
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "connected": connected,
+                        "skipped": bool(check.get("skipped")),
+                        "message": message,
+                    }
+                )
+            (messages.success if connected else messages.error)(request, message)
+            return redirect(request.path)
+
+        if action == "save_sms_settings":
+            try:
+                check = _check_credentials()
+                if check.get("auth_failed"):
+                    raise ValidationError(
+                        check.get("error")
+                        or "The SMS provider rejected these credentials."
+                    )
+                row = update_sms_settings(
+                    provider=request.POST.get("sms_provider") or "",
+                    api_key=request.POST.get("sms_api_key") or "",
+                    api_secret=request.POST.get("sms_api_secret") or "",
+                    sender_id=request.POST.get("sms_sender_id") or "",
+                    api_base_url=request.POST.get("sms_api_base_url") or "",
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            message = "SMS settings saved."
+            if check.get("ok") and not check.get("skipped"):
+                message = "SMS settings saved — connected."
+                if check.get("detail"):
+                    message = f"{message} {check['detail']}"
+            elif check.get("skipped"):
+                message = "SMS settings saved — connection could not be verified."
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "message": message,
+                        "connected": bool(check.get("ok")) and not check.get("skipped"),
+                        **communications_settings_as_dict(row),
+                    }
+                )
+            messages.success(request, message)
+            return redirect(request.path)
+
+        if wants_json:
+            return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
+        messages.error(request, "Unknown action.")
+        return redirect(request.path)
+
+    context.update(
+        {
+            "comms": communications_settings_as_dict(row),
+            "sms_providers": SmsProvider.choices,
+            "sms_provider_label": dict(SmsProvider.choices).get(row.sms_provider, ""),
+        }
+    )
+    return render(request, "employees/settings_sms.html", context)
 
 
 def _company_daraja_settings(request, context):

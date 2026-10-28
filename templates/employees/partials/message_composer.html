@@ -1,0 +1,161 @@
+{# Shared triggered-message composer.
+   Context: editing, trigger_choices, status_choices, delay_units,
+   placeholders, composer_cancel_url, composer_sample_shop #}
+<div class="msg-compose-grid" data-msg-compose>
+  <section class="msg-card">
+    <div class="msg-card-head">
+      <h3>{% if editing %}Edit message{% else %}New message{% endif %}</h3>
+      <p>
+        Pick the event that sends it, when it goes out, and what it says.
+      </p>
+    </div>
+    <form class="msg-card-body" method="post" data-draft-form>
+      {% csrf_token %}
+      <input type="hidden" name="action" value="save_draft">
+      {% if editing %}
+      <input type="hidden" name="draft_id" value="{{ editing.id }}">
+      {% endif %}
+
+      <div class="msg-field-grid">
+        <label class="msg-field">
+          <span>Trigger</span>
+          <select name="trigger" required>
+            {% for value, label in trigger_choices %}
+            <option
+              value="{{ value }}"
+              {% if editing.trigger == value %}selected{% endif %}
+            >
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="msg-field">
+          <span>Status</span>
+          <select name="status">
+            {% for value, label in status_choices %}
+            <option
+              value="{{ value }}"
+              {% if editing.status == value %}selected{% endif %}
+              {% if not editing and value == "draft" %}selected{% endif %}
+            >
+              {{ label }}{% if value == "draft" %} — saved, not sent{% else %} — sends automatically{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+
+      <fieldset class="msg-timing">
+        <legend class="msg-legend">When to send</legend>
+        <label class="msg-pill">
+          <input
+            type="radio"
+            name="send_timing"
+            value="now"
+            {% if not editing or not editing.delay_minutes %}checked{% endif %}
+          >
+          <span>Immediately</span>
+        </label>
+        <label class="msg-pill">
+          <input
+            type="radio"
+            name="send_timing"
+            value="later"
+            {% if editing and editing.delay_minutes %}checked{% endif %}
+          >
+          <span>After</span>
+        </label>
+        <span class="msg-timing-after" data-delay-fields>
+          <input
+            type="number"
+            name="delay_amount"
+            min="1"
+            max="43200"
+            inputmode="numeric"
+            placeholder="e.g. 30"
+            value="{% if editing and editing.delay_minutes %}{{ editing.delay_amount }}{% endif %}"
+            aria-label="Send after this many"
+          >
+        </span>
+        <span class="msg-timing-after" data-delay-fields>
+          <select name="delay_unit" aria-label="Delay unit">
+            {% for value, label, mult in delay_units %}
+            <option
+              value="{{ value }}"
+              {% if editing.delay_unit == value %}selected{% endif %}
+            >
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+        </span>
+      </fieldset>
+
+      <label class="msg-field">
+        <span>Message</span>
+        <textarea
+          name="body"
+          rows="6"
+          required
+          data-msg-body
+          placeholder="Hi {first_name}, thank you for shopping at {shop_name}. Your receipt is {receipt_number}."
+        >{% if editing %}{{ editing.body }}{% endif %}</textarea>
+      </label>
+      <div class="msg-chips" role="group" aria-label="Insert a placeholder">
+        <span class="msg-chips-label">Insert:</span>
+        {% for token, label in placeholders %}
+        <button type="button" class="msg-chip" data-insert="{{ token }}">
+          {{ label }}
+        </button>
+        {% endfor %}
+      </div>
+
+      <label class="msg-field">
+        <span>Link (optional)</span>
+        <span class="msg-link-wrap">
+          <i data-lucide="link-2" aria-hidden="true"></i>
+          <input
+            type="text"
+            name="link"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="example.com/offer"
+            value="{% if editing %}{{ editing.link }}{% endif %}"
+            data-msg-link
+          >
+        </span>
+        <p class="msg-hint">Sent to the customer on its own line at the end of the message.</p>
+      </label>
+
+      <div class="msg-actions">
+        <button type="submit" class="btn btn--primary">
+          {% if editing %}Save changes{% else %}Save message{% endif %}
+        </button>
+        {% if editing %}
+        <a class="btn btn--ghost" href="{{ composer_cancel_url }}">Cancel</a>
+        {% endif %}
+      </div>
+    </form>
+  </section>
+
+  <aside
+    class="msg-card msg-preview"
+    data-msg-preview
+    data-sample-shop="{{ composer_sample_shop|default:'MY-SHOP' }}"
+  >
+    <div class="msg-card-head">
+      <h3>Preview</h3>
+      <p>How it looks to the customer.</p>
+    </div>
+    <div class="msg-card-body">
+      <div class="msg-preview-frame">
+        <div class="msg-bubble">
+          <span data-pv-body></span>
+          <a href="#" target="_blank" rel="noopener" data-pv-link hidden></a>
+        </div>
+        <p class="msg-preview-meta" data-pv-meta></p>
+      </div>
+    </div>
+  </aside>
+</div>

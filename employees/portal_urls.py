@@ -44,6 +44,11 @@ urlpatterns = [
         name="my_shop_settings_receipt",
     ),
     path(
+        "my-shop/<int:shop_id>/settings/messages/",
+        shop_views.my_shop_settings_messages,
+        name="my_shop_settings_messages",
+    ),
+    path(
         "my-shop/<int:shop_id>/catalog/",
         shop_views.my_shop_catalog,
         name="my_shop_catalog",

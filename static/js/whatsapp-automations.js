@@ -48,6 +48,7 @@
   );
   let messageDirty = false;
   const twilioReady = root.dataset.twilioReady === "1";
+  const smsReady = root.dataset.smsReady === "1";
   const campaignLabels = {
     queued: "Queued",
     sending: "Sending",
@@ -903,7 +904,22 @@
   sendCatalogueBtn?.addEventListener("click", async (event) => {
     const btn = event.currentTarget;
     showMessage("");
-    if (!twilioReady) {
+    const channelInputs = [...root.querySelectorAll("[data-wa-channel]")];
+    if (channelInputs.length) {
+      const channels = channelInputs.filter((el) => el.checked).map((el) => el.value);
+      if (!channels.length) {
+        showMessage("Select at least one channel to send through.", true);
+        return;
+      }
+      if (channels.includes("whatsapp") && !twilioReady) {
+        showMessage("Save Twilio in Settings first, or untick WhatsApp.", true);
+        return;
+      }
+      if (channels.includes("sms") && !smsReady) {
+        showMessage("Save SMS credentials in Settings first, or untick SMS.", true);
+        return;
+      }
+    } else if (!twilioReady) {
       showMessage("Save Twilio in Settings first.", true);
       return;
     }

@@ -99,6 +99,7 @@ from .services import (
     get_company_profile,
     get_company_stock_settings,
     get_company_working_hours_settings,
+    get_communications_settings,
     get_daraja_settings,
     get_effective_pos_settings,
     get_last_closed_shop_day,
@@ -3621,10 +3622,10 @@ def _shop_settings_error(request, message, *, status=400):
 
 
 def _shop_settings_section_context(shop, profile, shops, *, active, section):
+    from shops.services import SHOP_OVERRIDE_FLAGS
+
     shop_row = get_shop_pos_settings(shop)
-    override = (
-        shop_row.override_pos if section == "pos" else shop_row.override_receipt
-    )
+    override = getattr(shop_row, SHOP_OVERRIDE_FLAGS.get(section, "override_pos"))
     return {
         **_shop_floor_chrome(
             shop,
@@ -3657,7 +3658,9 @@ def _handle_shop_settings_post(request, shop, *, section: str):
         except ValidationError as exc:
             message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
             return _shop_settings_error(request, message)
-        flag = row.override_pos if section == "pos" else row.override_receipt
+        from shops.services import SHOP_OVERRIDE_FLAGS
+
+        flag = getattr(row, SHOP_OVERRIDE_FLAGS.get(section, "override_pos"))
         if wants_json:
             return JsonResponse({"ok": True, "override_enabled": bool(flag)})
         messages.success(
@@ -4088,11 +4091,15 @@ def my_shop_settings(request, shop_id):
             },
             "shop_pos_override": shop_row.override_pos,
             "shop_receipt_override": shop_row.override_receipt,
+            "shop_messages_override": shop_row.override_messages,
             "shop_settings_pos_url": reverse(
                 "employees:my_shop_settings_pos", kwargs={"shop_id": shop.pk}
             ),
             "shop_settings_receipt_url": reverse(
                 "employees:my_shop_settings_receipt", kwargs={"shop_id": shop.pk}
+            ),
+            "shop_settings_messages_url": reverse(
+                "employees:my_shop_settings_messages", kwargs={"shop_id": shop.pk}
             ),
         },
     )
@@ -4248,3 +4255,114 @@ def my_shop_settings_receipt(request, shop_id):
         "receipt_font": receipt_font_style(context["pos_settings"]),
     }
     return render(request, "shops/shop_settings_receipt.html", context)
+
+
+@shop_floor_required
+@require_http_methods(["GET", "POST"])
+def my_shop_settings_messages(request, shop_id):
+    """Per-shop auto messages (overrides company message drafts when enabled)."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "shop_settings", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    from communications.automations import (
+        save_triggered_message,
+        triggered_message_as_dict,
+    )
+    from communications.constants import (
+        MESSAGE_STATUS_CHOICES,
+        TRIGGER_DELAY_UNITS,
+        TRIGGER_MESSAGE_CHOICES,
+        TRIGGER_MESSAGE_PLACEHOLDERS,
+    )
+    from communications.models import TriggeredMessage
+
+    shop_row = get_shop_pos_settings(shop)
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        if action == "set_shop_override":
+            return _handle_shop_settings_post(request, shop, section="messages")
+        if not shop_row.override_messages:
+            return _shop_settings_error(
+                request, "Turn on custom shop messages before editing."
+            )
+        try:
+            if action == "save_draft":
+                save_triggered_message(request.POST, shop=shop)
+                messages.success(request, "Message saved.")
+            elif action == "set_status":
+                draft = TriggeredMessage.objects.filter(
+                    pk=request.POST.get("draft_id"), shop=shop
+                ).first()
+                if draft is None:
+                    raise ValidationError("Message not found.")
+                draft.status = request.POST.get("status") or draft.status
+                if draft.status not in {
+                    value for value, _ in MESSAGE_STATUS_CHOICES
+                }:
+                    raise ValidationError("Unknown status.")
+                draft.save(update_fields=["status", "updated_at"])
+                messages.success(request, "Message updated.")
+            elif action == "delete_draft":
+                TriggeredMessage.objects.filter(
+                    pk=request.POST.get("draft_id"), shop=shop
+                ).delete()
+                messages.success(request, "Message deleted.")
+            else:
+                return _shop_settings_error(request, "Unknown action.")
+        except ValidationError as exc:
+            return _shop_settings_error(
+                request,
+                "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc),
+            )
+        return redirect(request.path)
+
+    shops = _shops_for_floor(profile, shop)
+    edit_id = (request.GET.get("edit") or "").strip()
+    editing = (
+        TriggeredMessage.objects.filter(pk=edit_id, shop=shop).first()
+        if edit_id.isdigit()
+        else None
+    )
+    comms = get_communications_settings()
+    context = {
+        **_shop_floor_chrome(
+            shop, profile, shops, active="settings_messages", request=request
+        ),
+        "meta": {
+            "title": f"Shop messages — {shop.name}",
+            "headline": "Shop messages",
+            "summary": (
+                f"Automatic customer messages for {shop.name}."
+            ),
+            "icon": "message-square-text",
+        },
+        "shop_settings_section": "messages",
+        "shop_override_enabled": bool(shop_row.override_messages),
+        "using_company_defaults": not bool(shop_row.override_messages),
+        "drafts": [
+            triggered_message_as_dict(row)
+            for row in TriggeredMessage.objects.filter(shop=shop)
+        ],
+        "company_drafts": [
+            triggered_message_as_dict(row)
+            for row in TriggeredMessage.objects.filter(shop__isnull=True)
+        ],
+        "editing": triggered_message_as_dict(editing) if editing else None,
+        "trigger_choices": TRIGGER_MESSAGE_CHOICES,
+        "status_choices": MESSAGE_STATUS_CHOICES,
+        "delay_units": TRIGGER_DELAY_UNITS,
+        "placeholders": TRIGGER_MESSAGE_PLACEHOLDERS,
+        "automations_ready": bool(
+            comms.enable_automations and comms.has_twilio_credentials()
+        ),
+        "composer_cancel_url": request.path,
+        "composer_sample_shop": shop.name,
+    }
+    return render(request, "shops/shop_settings_messages.html", context)

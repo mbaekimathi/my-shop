@@ -48,12 +48,16 @@ from .campaigns import (
     create_campaign,
     create_catalogue_campaign,
     create_catalogue_campaign_series,
+    normalize_channels,
     recent_campaigns,
     retry_failed_campaign,
 )
 from .constants import (
     AUDIENCE_TYPE_CHOICES,
     CATALOGUE_MESSAGE_PLACEHOLDERS,
+    CHANNEL_LABELS,
+    CHANNEL_SMS,
+    CHANNEL_WHATSAPP,
     LAST_PURCHASE_WINDOWS,
     PLACEHOLDERS,
     SHARE_PERIOD_CHOICES,
@@ -349,6 +353,24 @@ def whatsapp_catalogue(request, role_segment):
         "employees:settings_section",
         kwargs={"section": "whatsapp"},
     )
+    sms_url = reverse("employees:settings_section", kwargs={"section": "sms"})
+    send_channels = [
+        {
+            "slug": CHANNEL_WHATSAPP,
+            "label": CHANNEL_LABELS[CHANNEL_WHATSAPP],
+            "ready": bridge.get("status") == "connected"
+            and bool(comms.get("has_twilio_credentials")),
+            "settings_url": settings_url,
+        },
+        {
+            "slug": CHANNEL_SMS,
+            "label": CHANNEL_LABELS[CHANNEL_SMS],
+            "ready": bool(
+                comms.get("enable_sms") and comms.get("has_sms_credentials")
+            ),
+            "settings_url": sms_url,
+        },
+    ]
     context = {
         "profile": profile,
         "meta": meta,
@@ -377,6 +399,8 @@ def whatsapp_catalogue(request, role_segment):
         "catalogue_item_total": item_total,
         "settings_url": settings_url,
         "whatsapp_url": whatsapp_url,
+        "sms_url": sms_url,
+        "send_channels": send_channels,
         "module_permissions": module_capabilities(profile, "whatsapp"),
         "sandbox_join": sandbox_join_info(),
         "catalogue_placeholders": CATALOGUE_MESSAGE_PLACEHOLDERS,
@@ -953,8 +977,7 @@ def _automation_post(request, profile):
 
 def _send_shop_website_campaign(request, profile):
     row = get_communications_settings()
-    if not row.has_twilio_credentials():
-        raise ValueError("Save Twilio credentials in Settings first.")
+    channels = _channels_from_post(request, row)
     shops = [shop for shop in actionable_shops_for_profile(profile)]
     if row.automation_shop_id:
         shops = [shop for shop in shops if shop.pk == row.automation_shop_id]
@@ -987,6 +1010,7 @@ def _send_shop_website_campaign(request, profile):
         profile=profile,
         body_template="\n".join(lines),
         filters=filters,
+        channels=channels,
     )
 
 
@@ -1111,12 +1135,25 @@ def _companion_item_rows(item_ids: list[int], filters: dict | None) -> list[dict
     ]
 
 
+def _channels_from_post(request, row) -> list[str]:
+    """Validated channel list from POST; defaults to WhatsApp for older clients."""
+    channels = normalize_channels(
+        request.POST.getlist("channels"), default=[CHANNEL_WHATSAPP]
+    )
+    if CHANNEL_WHATSAPP in channels and not row.has_twilio_credentials():
+        raise ValueError("Save Twilio credentials in Settings first.")
+    if CHANNEL_SMS in channels and not (
+        row.enable_sms and row.has_sms_credentials()
+    ):
+        raise ValueError("Enable SMS with saved credentials in SMS settings first.")
+    return channels
+
+
 def _send_catalogue_campaign(request, profile):
     from items.models import Item
 
     row = get_communications_settings()
-    if not row.has_twilio_credentials():
-        raise ValueError("Save Twilio credentials in Settings first.")
+    channels = _channels_from_post(request, row)
     item_ids = _selected_item_ids(request)
     if not item_ids:
         raise ValueError("Select at least one item to share.")
@@ -1161,6 +1198,7 @@ def _send_catalogue_campaign(request, profile):
         period_days=period_days,
         times=times,
         body_template=body_template,
+        channels=channels,
     )
     if not campaigns:
         raise ValueError("Could not queue this share.")

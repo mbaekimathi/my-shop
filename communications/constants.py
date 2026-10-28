@@ -40,6 +40,20 @@ MSG_STATUS_CHOICES = (
     (MSG_CANCELLED, "Cancelled"),
 )
 
+# Outbound delivery channels. "message" is reserved for the in-app Message API.
+CHANNEL_WHATSAPP = "whatsapp"
+CHANNEL_SMS = "sms"
+CHANNEL_MESSAGE = "message"
+
+CHANNEL_CHOICES = (
+    (CHANNEL_WHATSAPP, "WhatsApp"),
+    (CHANNEL_SMS, "SMS"),
+    (CHANNEL_MESSAGE, "Message"),
+)
+
+CHANNEL_VALUES = {value for value, _ in CHANNEL_CHOICES}
+CHANNEL_LABELS = dict(CHANNEL_CHOICES)
+
 # Lifetime spend tiers (KES) based on sum of sale/credit receipt totals.
 SPEND_TIER_LOW = "low"
 SPEND_TIER_MID = "mid"
@@ -112,6 +126,44 @@ CATALOGUE_MESSAGE_PLACEHOLDERS = (
     ("{items}", "Item list"),
     ("{last_product}", "Last product"),
 )
+
+# Triggered message drafts — auto-send one custom message per shop event.
+MESSAGE_STATUS_DRAFT = "draft"
+MESSAGE_STATUS_ACTIVE = "active"
+
+MESSAGE_STATUS_CHOICES = (
+    (MESSAGE_STATUS_DRAFT, "Draft"),
+    (MESSAGE_STATUS_ACTIVE, "Active"),
+)
+
+# Trigger values match ShopReceiptKind values on purpose.
+TRIGGER_SALE = "sale"
+TRIGGER_CREDIT = "credit"
+TRIGGER_QUOTATION = "quotation"
+
+TRIGGER_MESSAGE_CHOICES = (
+    (TRIGGER_SALE, "Sale"),
+    (TRIGGER_CREDIT, "Credit sale"),
+    (TRIGGER_QUOTATION, "Quotation"),
+)
+
+TRIGGER_MESSAGE_PLACEHOLDERS = (
+    ("{first_name}", "Customer first name"),
+    ("{full_name}", "Customer full name"),
+    ("{shop_name}", "Shop name"),
+    ("{total}", "Receipt total"),
+    ("{receipt_number}", "Receipt number"),
+    ("{due_date}", "Credit due date"),
+)
+
+# "Send after N <unit>" — stored as minutes on the draft.
+TRIGGER_DELAY_UNITS = (
+    ("minutes", "minutes", 1),
+    ("hours", "hours", 60),
+    ("days", "days", 1440),
+)
+
+TRIGGER_DELAY_MAX_MINUTES = 43200  # 30 days
 
 # Who should get this? — primary audience groups
 AUDIENCE_SALE = "sale"

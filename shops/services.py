@@ -318,16 +318,25 @@ def get_effective_pos_settings(shop: Shop | None = None) -> CompanyPosSettings:
     return merged
 
 
+SHOP_OVERRIDE_FLAGS = {
+    "pos": "override_pos",
+    "receipt": "override_receipt",
+    "messages": "override_messages",
+}
+
+
 def set_shop_pos_override(*, shop: Shop, section: str, enabled: bool) -> ShopPosSettings:
-    """Enable or disable shop POS/receipt overrides. Enabling seeds from company."""
+    """Enable or disable a shop settings override. Enabling seeds from company."""
     section_key = (section or "").strip().lower()
-    if section_key not in ("pos", "receipt"):
+    flag = SHOP_OVERRIDE_FLAGS.get(section_key)
+    if flag is None:
         raise ValidationError("Unknown shop settings section.")
     row = get_shop_pos_settings(shop)
     company = get_company_pos_settings()
-    flag = "override_pos" if section_key == "pos" else "override_receipt"
     fields_to_copy = (
-        SHOP_POS_FIELD_NAMES if section_key == "pos" else SHOP_RECEIPT_FIELD_NAMES
+        SHOP_POS_FIELD_NAMES
+        if section_key == "pos"
+        else SHOP_RECEIPT_FIELD_NAMES if section_key == "receipt" else ()
     )
     turning_on = bool(enabled) and not getattr(row, flag)
     setattr(row, flag, bool(enabled))
@@ -337,6 +346,10 @@ def set_shop_pos_override(*, shop: Shop, section: str, enabled: bool) -> ShopPos
             setattr(row, name, getattr(company, name))
             update_fields.append(name)
     row.save(update_fields=update_fields)
+    if turning_on and section_key == "messages":
+        from communications.automations import seed_shop_triggered_messages
+
+        seed_shop_triggered_messages(shop)
     _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
 
@@ -5069,6 +5082,15 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         import logging
 
         logging.getLogger(__name__).exception("WhatsApp receipt share failed")
+
+    try:
+        from communications.automations import maybe_send_triggered_messages
+
+        maybe_send_triggered_messages(receipt, request=request)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Triggered messages failed")
 
     return {
         "receipt": receipt,

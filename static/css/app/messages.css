@@ -1,0 +1,294 @@
+/* Triggered-message composer, preview and saved list.
+   Used by the company message-drafts page and the per-shop messages page. */
+
+.msg-compose-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .msg-compose-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.msg-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.msg-card-head {
+  padding: var(--space-4) var(--space-5) 0;
+}
+
+.msg-card-head h3 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.msg-card-head p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.msg-card-body {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+.msg-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media (max-width: 560px) {
+  .msg-field-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.msg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.msg-field > span,
+.msg-legend {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.msg-field input,
+.msg-field select,
+.msg-field textarea,
+.msg-timing-after input,
+.msg-timing-after select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font: inherit;
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.msg-field textarea {
+  min-height: 130px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.msg-field input:focus,
+.msg-field select:focus,
+.msg-field textarea:focus,
+.msg-timing-after input:focus,
+.msg-timing-after select:focus {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: var(--focus-ring);
+}
+
+/* "When to send" segmented pills + inline delay */
+.msg-timing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.msg-timing legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.msg-pill {
+  position: relative;
+}
+
+.msg-pill input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.msg-pill span {
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.msg-pill input:checked + span {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.msg-pill input:focus-visible + span {
+  box-shadow: var(--focus-ring);
+}
+
+.msg-timing-after {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.msg-timing-after input[type="number"] {
+  width: 90px;
+}
+
+.msg-timing-after select {
+  width: auto;
+}
+
+/* Placeholder chips — click to insert into the message */
+.msg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.msg-chips-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.msg-chip {
+  padding: 5px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--link);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.msg-chip:hover {
+  border-color: var(--teal);
+  background: rgba(var(--teal-rgb), 0.08);
+}
+
+/* Link input with icon */
+.msg-link-wrap {
+  position: relative;
+}
+
+.msg-link-wrap .lucide {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.msg-link-wrap input {
+  padding-left: 36px;
+}
+
+.msg-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.msg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Live preview */
+.msg-preview {
+  position: sticky;
+  top: var(--space-5);
+}
+
+@media (max-width: 900px) {
+  .msg-preview {
+    position: static;
+  }
+}
+
+.msg-preview-frame {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+}
+
+.msg-bubble {
+  padding: 12px 14px;
+  background: rgba(var(--teal-rgb), 0.12);
+  border: 1px solid rgba(var(--teal-rgb), 0.25);
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--radius-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.msg-bubble a {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--link);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.msg-preview-meta {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* Saved-messages list */
+.msg-saved-list .pos-settings-row {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.msg-saved-list .pos-settings-copy {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.msg-saved-list form {
+  margin: 0;
+}

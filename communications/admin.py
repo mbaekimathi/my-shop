@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from .models import BroadcastCampaign, OutboundMessage, WhatsAppBridgeState, WhatsAppGroup
+from .models import (
+    BroadcastCampaign,
+    OutboundMessage,
+    TriggeredMessage,
+    WhatsAppBridgeState,
+    WhatsAppGroup,
+)
 
 
 @admin.register(WhatsAppBridgeState)
@@ -48,6 +54,12 @@ class WhatsAppGroupAdmin(admin.ModelAdmin):
     list_filter = ("source",)
     search_fields = ("name", "invite_link")
     filter_horizontal = ("members",)
+
+
+@admin.register(TriggeredMessage)
+class TriggeredMessageAdmin(admin.ModelAdmin):
+    list_display = ("id", "shop", "trigger", "delay_minutes", "status", "updated_at")
+    list_filter = ("shop", "trigger", "status")
 
 
 @admin.register(OutboundMessage)

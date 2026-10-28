@@ -24,13 +24,13 @@
     el.classList.toggle("is-ok", Boolean(text) && !isError);
   }
 
-  function setStatus(selector, configured, hint) {
+  function setStatus(selector, configured, hint, okLabel, badLabel) {
     const el = root.querySelector(selector);
     if (!el) return;
     if (configured) {
-      el.innerHTML = '<span class="daraja-status-pill is-ok">API configured</span>';
+      el.innerHTML = `<span class="daraja-status-pill is-ok">${okLabel || "API configured"}</span>`;
     } else {
-      el.innerHTML = `<span class="daraja-status-pill">Not configured</span><em>${hint}</em>`;
+      el.innerHTML = `<span class="daraja-status-pill">${badLabel || "Not configured"}</span><em>${hint}</em>`;
     }
   }
 
@@ -87,7 +87,9 @@
           setStatus(
             "[data-comms-sms-status]",
             Boolean(data.has_sms_credentials),
-            "Enter API key and sender ID, then save."
+            "Enter API key and sender ID, then save.",
+            "Connected",
+            "Not connected"
           );
         }
         showFormMessage(form, data.message || "API settings saved.");
@@ -95,6 +97,36 @@
         showFormMessage(form, error.message || "Could not save.", true);
       } finally {
         if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  });
+
+  root.querySelectorAll("[data-comms-test-connection]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const form = root.querySelector('[data-comms-form="sms"]');
+      if (!form) return;
+      btn.disabled = true;
+      showFormMessage(form, "Testing connection…");
+      try {
+        const body = new URLSearchParams(new FormData(form));
+        body.set("action", "test_sms_connection");
+        const data = await postSettings(body);
+        if (data.connected) {
+          setStatus("[data-comms-sms-status]", true, "", "Connected");
+        } else if (!data.skipped) {
+          setStatus(
+            "[data-comms-sms-status]",
+            false,
+            "Check the credentials and try again.",
+            "Connected",
+            "Connection failed"
+          );
+        }
+        showFormMessage(form, data.message || "", !data.connected && !data.skipped);
+      } catch (error) {
+        showFormMessage(form, error.message || "Could not test connection.", true);
+      } finally {
+        btn.disabled = false;
       }
     });
   });

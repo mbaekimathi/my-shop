@@ -1,0 +1,104 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/messages.css' %}?v=1">
+{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="item-panel item-panel--dense"
+  data-animate="rise"
+>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">Settings · Communication settings</p>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }}</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ drafts|length }}</strong>
+          <span>message{{ drafts|length|pluralize }}</span>
+        </p>
+      </div>
+    </div>
+  </header>
+
+  {% if not automations_ready %}
+  <p class="daraja-help">
+    Messages marked <strong>Active</strong> only send while WhatsApp automations are on and
+    Twilio is configured. Check
+    <a href="{% url 'employees:settings_section' section='whatsapp' %}">WhatsApp settings</a>
+    and
+    <a href="{% url 'employees:settings_section' section='twilio' %}">Twilio settings</a>.
+  </p>
+  {% endif %}
+
+  {% include "employees/partials/message_composer.html" %}
+
+  <section class="msg-card" style="margin-top: var(--space-5);">
+    <div class="msg-card-head">
+      <h3>Saved messages</h3>
+      <p>Active messages send on each matching event. Drafts never send.</p>
+    </div>
+    <div class="msg-card-body">
+      {% if drafts %}
+      <ul class="pos-settings-list msg-saved-list">
+        {% for draft in drafts %}
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>{{ draft.trigger_label }} · {{ draft.timing_label }}</strong>
+            <p>{{ draft.body|truncatechars:180 }}</p>
+            {% if draft.link %}
+            <p><a href="{{ draft.link }}" target="_blank" rel="noopener">{{ draft.link }}</a></p>
+            {% endif %}
+          </div>
+          <span class="daraja-status-pill{% if draft.is_active %} is-ok{% endif %}">
+            {{ draft.status_label }}
+          </span>
+          <a class="btn btn--ghost" href="?edit={{ draft.id }}">Edit</a>
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="set_status">
+            <input type="hidden" name="draft_id" value="{{ draft.id }}">
+            <input
+              type="hidden"
+              name="status"
+              value="{% if draft.is_active %}draft{% else %}active{% endif %}"
+            >
+            <button type="submit" class="btn btn--ghost">
+              {% if draft.is_active %}Pause{% else %}Activate{% endif %}
+            </button>
+          </form>
+          <form
+            method="post"
+            onsubmit="return confirm('Delete this message?');"
+          >
+            {% csrf_token %}
+            <input type="hidden" name="action" value="delete_draft">
+            <input type="hidden" name="draft_id" value="{{ draft.id }}">
+            <button type="submit" class="btn btn--ghost">Delete</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="dashboard-placeholder">
+        <i data-lucide="message-square-text" aria-hidden="true"></i>
+        <p>No messages yet. Write one above — keep it a draft until it is ready.</p>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/message-drafts.js' %}?v=1"></script>
+{% endblock %}

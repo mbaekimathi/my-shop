@@ -3,6 +3,20 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from shops.services import update_twilio_settings
 
 
+class FakeJsonResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
 class TwilioNumberTests(SimpleTestCase):
     def test_e164_kenya_and_international(self):
         from communications.twilio import _e164
@@ -474,6 +488,222 @@ class TwilioSettingsTests(TestCase):
         self.assertTrue(row.has_twilio_credentials())
         self.assertEqual(row.twilio_account_sid, "ACtest")
         self.assertEqual(row.twilio_from_number, "+14155552671")
+
+
+class SmsSettingsPageTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+        from shops.services import _invalidate_communications_settings_cache
+
+        _invalidate_communications_settings_cache()
+        self.user = User.objects.create_user(
+            username="860022",
+            password="sms-page",
+            email="sms-page@test.local",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="860022",
+            phone_country_code="+254",
+            phone_number="700000022",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+
+    def test_sms_settings_page(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/employees/settings/sms/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "SMS settings")
+        self.assertContains(response, "Sender ID")
+        self.assertContains(response, "Save SMS")
+        self.assertContains(response, "Test connection")
+        self.assertContains(response, "Not connected")
+        self.assertContains(response, "BlessedTexts")
+        labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
+        self.assertIn("Twilio settings", labels)
+        self.assertIn("SMS settings", labels)
+        self.assertIn("WhatsApp settings", labels)
+
+    def test_hub_lists_sms_settings(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/employees/settings/communication-settings/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "SMS settings")
+        self.assertContains(response, 'href="/employees/settings/sms/"')
+
+    def test_save_sms_settings(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/employees/settings/sms/",
+            {
+                "action": "save_sms_settings",
+                "sms_provider": "custom",
+                "sms_api_key": "key-123",
+                "sms_api_secret": "secret-123",
+                "sms_sender_id": "MYSHOP",
+                "sms_api_base_url": "https://sms.example.com",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["has_sms_credentials"])
+        self.assertEqual(data["sms_sender_id"], "MYSHOP")
+
+        response = self.client.get("/employees/settings/sms/")
+        self.assertContains(response, "Connected")
+
+    def test_save_sms_settings_requires_sender_id(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/employees/settings/sms/",
+            {
+                "action": "save_sms_settings",
+                "sms_provider": "custom",
+                "sms_api_key": "key-123",
+                "sms_sender_id": "",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+
+    def test_sms_connection_test_custom_provider_skips_probe(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/employees/settings/sms/",
+            {
+                "action": "test_sms_connection",
+                "sms_provider": "custom",
+                "sms_api_key": "key-123",
+                "sms_sender_id": "MYSHOP",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertFalse(data["connected"])
+        self.assertTrue(data["skipped"])
+
+    def test_save_sms_settings_blessed_texts_checks_balance(self):
+        from unittest.mock import patch
+
+        self.client.force_login(self.user)
+        with patch(
+            "communications.sms.urlopen",
+            lambda request, timeout=30: FakeJsonResponse(
+                b'{"status_code":"1000","balance":"200"}'
+            ),
+        ):
+            response = self.client.post(
+                "/employees/settings/sms/",
+                {
+                    "action": "save_sms_settings",
+                    "sms_provider": "blessed_texts",
+                    "sms_api_key": "bt-key",
+                    "sms_sender_id": "23107",
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["connected"])
+        self.assertIn("200", data["message"])
+        self.assertTrue(data["has_sms_credentials"])
+
+    def test_save_sms_settings_blessed_texts_bad_key_blocked(self):
+        from unittest.mock import patch
+
+        self.client.force_login(self.user)
+        with patch(
+            "communications.sms.urlopen",
+            lambda request, timeout=30: FakeJsonResponse(
+                b'{"status_code":"1002","status_desc":"Invalid API Key"}'
+            ),
+        ):
+            response = self.client.post(
+                "/employees/settings/sms/",
+                {
+                    "action": "save_sms_settings",
+                    "sms_provider": "blessed_texts",
+                    "sms_api_key": "bad-key",
+                    "sms_sender_id": "23107",
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Invalid API Key", response.json()["error"])
+
+    def test_connection_test_blessed_texts_shows_balance(self):
+        from unittest.mock import patch
+
+        self.client.force_login(self.user)
+        with patch(
+            "communications.sms.urlopen",
+            lambda request, timeout=30: FakeJsonResponse(
+                b'{"status_code":"1000","balance":"350"}'
+            ),
+        ):
+            response = self.client.post(
+                "/employees/settings/sms/",
+                {
+                    "action": "test_sms_connection",
+                    "sms_provider": "blessed_texts",
+                    "sms_api_key": "bt-key",
+                    "sms_sender_id": "23107",
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["connected"])
+        self.assertIn("350", data["message"])
+
+    def test_send_sms_blessed_texts(self):
+        import json
+        from unittest.mock import patch
+
+        from communications.sms import send_sms
+        from shops.services import update_sms_settings
+
+        update_sms_settings(
+            provider="blessed_texts",
+            api_key="bt-key",
+            sender_id="23107",
+        )
+        captured = {}
+
+        def fake_urlopen(request, timeout=30):
+            captured["url"] = request.full_url
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeJsonResponse(
+                b'[{"status_code":"1000","status_desc":"Success",'
+                b'"message_id":"abc123","phone":"254721111111","message_cost":"0.5"}]'
+            )
+
+        with patch("communications.sms.urlopen", fake_urlopen):
+            result = send_sms(phone="0721111111", message="Hello world!")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["messageId"], "abc123")
+        self.assertEqual(captured["url"], "https://sms.blessedtexts.com/api/sms/v1/sendsms")
+        self.assertEqual(captured["body"]["api_key"], "bt-key")
+        self.assertEqual(captured["body"]["sender_id"], "23107")
+        self.assertEqual(captured["body"]["phone"], "254721111111")
+        self.assertEqual(captured["body"]["message"], "Hello world!")
 
 
 class WhatsAppAutomationsPageTests(TestCase):
@@ -1235,6 +1465,167 @@ class WhatsAppCataloguePageTests(TestCase):
         card = campaign.image.read()
         self.assertTrue(card.startswith(b"\xff\xd8\xff"))
 
+    def _enable_blessed_texts(self):
+        from shops.services import set_communications_setting, update_sms_settings
+
+        update_sms_settings(
+            provider="blessed_texts", api_key="bt-key", sender_id="23107"
+        )
+        set_communications_setting(field="enable_sms", enabled=True)
+
+    def test_send_via_sms_channel(self):
+        from django.test import override_settings
+
+        from communications.models import BroadcastCampaign, OutboundMessage
+
+        self._enable_blessed_texts()
+        self.client.force_login(self.user)
+        with override_settings(COMMS_SEND_MODE="cron"):
+            response = self.client.post(
+                "/it-support/whatsapp/catalogue/",
+                {
+                    "action": "send_catalogue",
+                    "item_ids": [str(self.item.pk)],
+                    "client_ids": [str(self.customer.pk)],
+                    "channels": ["sms"],
+                    "message_body": "Hi {first_name},\n{items}",
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        campaign = BroadcastCampaign.objects.latest("id")
+        self.assertFalse(campaign.image)
+        message = OutboundMessage.objects.get(campaign=campaign)
+        self.assertEqual(message.channel, "sms")
+        self.assertEqual(message.phone, "254712345678")
+        self.assertFalse(message.image_path)
+        self.assertIn("Hi JANE", message.body)
+        self.assertIn("PIXEL 9", message.body)
+
+    def test_send_via_whatsapp_and_sms_channels(self):
+        from django.test import override_settings
+
+        from communications.models import BroadcastCampaign, OutboundMessage
+
+        update_twilio_settings(
+            account_sid="ACtest",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        self._enable_blessed_texts()
+        self.client.force_login(self.user)
+        with override_settings(COMMS_SEND_MODE="cron"):
+            response = self.client.post(
+                "/it-support/whatsapp/catalogue/",
+                {
+                    "action": "send_catalogue",
+                    "item_ids": [str(self.item.pk)],
+                    "client_ids": [str(self.customer.pk)],
+                    "channels": ["whatsapp", "sms"],
+                    "message_body": "Hi {first_name},\n{items}",
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        campaign = BroadcastCampaign.objects.latest("id")
+        self.assertEqual(campaign.recipient_count, 1)
+        messages = list(OutboundMessage.objects.filter(campaign=campaign))
+        self.assertEqual(len(messages), 2)
+        by_channel = {row.channel: row for row in messages}
+        self.assertEqual(set(by_channel), {"whatsapp", "sms"})
+        sms_row = by_channel["sms"]
+        self.assertEqual(sms_row.phone, "254712345678")
+        self.assertFalse(sms_row.image_path)
+        self.assertIn("PIXEL 9", sms_row.body)
+
+    def test_send_sms_channel_requires_setup(self):
+        update_twilio_settings(
+            account_sid="ACtest",
+            auth_token="secret-token",
+            from_number="+14155552671",
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/it-support/whatsapp/catalogue/",
+            {
+                "action": "send_catalogue",
+                "item_ids": [str(self.item.pk)],
+                "client_ids": [str(self.customer.pk)],
+                "channels": ["sms"],
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("sms", response.json()["error"].lower())
+
+    def test_send_sms_channel_must_be_enabled(self):
+        from shops.services import update_sms_settings
+
+        update_sms_settings(
+            provider="blessed_texts", api_key="bt-key", sender_id="23107"
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/it-support/whatsapp/catalogue/",
+            {
+                "action": "send_catalogue",
+                "item_ids": [str(self.item.pk)],
+                "client_ids": [str(self.customer.pk)],
+                "channels": ["sms"],
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("sms", response.json()["error"].lower())
+
+    def test_worker_routes_sms_channel_to_send_sms(self):
+        from unittest.mock import patch
+
+        from django.test import override_settings
+
+        from communications.models import BroadcastCampaign, OutboundMessage
+        from communications.tasks import _send_one
+
+        self._enable_blessed_texts()
+        self.client.force_login(self.user)
+        with override_settings(COMMS_SEND_MODE="cron"):
+            response = self.client.post(
+                "/it-support/whatsapp/catalogue/",
+                {
+                    "action": "send_catalogue",
+                    "item_ids": [str(self.item.pk)],
+                    "client_ids": [str(self.customer.pk)],
+                    "channels": ["sms"],
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(response.status_code, 200)
+        campaign = BroadcastCampaign.objects.latest("id")
+        message = OutboundMessage.objects.get(campaign=campaign)
+        expected_body = message.body
+        with patch("communications.sms.send_sms") as send_sms:
+            send_sms.return_value = {
+                "ok": True,
+                "messageId": "msg-1",
+                "status": "queued",
+                "error": "",
+            }
+            _send_one(message)
+        send_sms.assert_called_once_with(
+            phone="254712345678",
+            message=expected_body,
+        )
+        message.refresh_from_db()
+        self.assertEqual(message.status, "sent")
+        self.assertEqual(message.wa_message_id, "msg-1")
+
     def test_create_item_calls_catalogue_share(self):
         from unittest.mock import patch
 
@@ -1480,7 +1871,7 @@ class WhatsAppSendLogTests(TestCase):
         self.assertContains(response, "Sent")
         self.assertContains(response, "Back to activities")
         self.assertContains(response, 'href="/it-support/marketing/activities/"')
-        self.assertTrue(response.context["page_sidebar"]["primary"][4].get("active"))
+        self.assertTrue(response.context["page_sidebar"]["primary"][5].get("active"))
 
         json_page = self.client.get(url, HTTP_X_REQUESTED_WITH="XMLHttpRequest")
         self.assertEqual(json_page.status_code, 200)
@@ -1812,6 +2203,280 @@ class CreditSaleNotificationTests(TestCase):
         self.assertTrue(credit_whatsapp_required())
         set_communications_setting(field="auto_payment_reminder", enabled=False)
         self.assertFalse(credit_whatsapp_required())
+
+
+class TriggeredMessageTests(TestCase):
+    def setUp(self):
+        from decimal import Decimal
+
+        from django.contrib.auth.models import User
+
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+        from shops.models import (
+            Client,
+            Shop,
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptStatus,
+        )
+        from shops.services import set_communications_setting, update_twilio_settings
+
+        self.user = User.objects.create_user(
+            username="860031",
+            password="wa-trig",
+            email="wa-trig@test.local",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="860031",
+            phone_country_code="+254",
+            phone_number="700000972",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="TRIG SHOP",
+            location="NAIROBI",
+            email="trig@test.local",
+            phone_number="0700000972",
+            login_code="860131",
+            password_hash="x",
+            created_by=self.it,
+        )
+        self.customer = Client.objects.create(
+            full_name="KIM OTIENO",
+            phone_number="+254795606116",
+            phone_normalized="254795606116",
+            created_by=self.it,
+        )
+        self.receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="SL-TRIG-1",
+            kind=ShopReceiptKind.SALE,
+            total=Decimal("400.00"),
+            amount_paid=Decimal("400.00"),
+            created_by=self.it,
+            client=self.customer,
+            client_name="KIM OTIENO",
+            client_phone="+254795606116",
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+            whatsapp_from="whatsapp:+14155238886",
+        )
+        set_communications_setting(field="enable_automations", enabled=True)
+
+    def tearDown(self):
+        from shops.services import _invalidate_communications_settings_cache
+
+        _invalidate_communications_settings_cache()
+        super().tearDown()
+
+    def _draft(self, **kwargs):
+        from communications.constants import MESSAGE_STATUS_ACTIVE, TRIGGER_SALE
+        from communications.models import TriggeredMessage
+
+        data = {
+            "trigger": TRIGGER_SALE,
+            "body": "Hi {first_name}, thanks for shopping at {shop_name}.",
+            "link": "",
+            "status": MESSAGE_STATUS_ACTIVE,
+            "delay_minutes": 0,
+        }
+        data.update(kwargs)
+        return TriggeredMessage.objects.create(**data)
+
+    def test_render_replaces_placeholders_and_appends_link(self):
+        from communications.automations import render_trigger_message
+
+        body = render_trigger_message(
+            "Hi {first_name}, paid {total} at {shop_name}. Ref {receipt_number}.",
+            self.receipt,
+            link="https://shop.test/offer",
+        )
+        self.assertIn("Hi Kim,", body)
+        self.assertIn("KSh 400", body)
+        self.assertIn("TRIG SHOP", body)
+        self.assertIn("SL-TRIG-1", body)
+        self.assertTrue(body.endswith("https://shop.test/offer"))
+
+    def test_active_draft_queues_campaign_message(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import BroadcastCampaign, OutboundMessage
+
+        self._draft(
+            body="Hi {first_name}, receipt {receipt_number}.",
+            link="https://shop.test/thanks",
+        )
+        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+            maybe_send_triggered_messages(self.receipt)
+
+        enqueue.assert_called_once()
+        campaign = BroadcastCampaign.objects.get()
+        self.assertEqual(campaign.status, "queued")
+        self.assertEqual(campaign.filters["trigger_label"], "Auto message · Sale")
+        message = OutboundMessage.objects.get()
+        self.assertEqual(message.phone, "+254795606116")
+        self.assertIn("Hi Kim,", message.body)
+        self.assertIn("SL-TRIG-1", message.body)
+        self.assertIn("https://shop.test/thanks", message.body)
+
+    def test_delayed_draft_waits_as_scheduled_campaign(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import BroadcastCampaign
+
+        self._draft(delay_minutes=90)
+        with patch("communications.automations.threading.Timer") as timer:
+            maybe_send_triggered_messages(self.receipt)
+
+        campaign = BroadcastCampaign.objects.get()
+        self.assertEqual(campaign.status, "draft")
+        self.assertTrue(campaign.filters.get("send_after"))
+        timer.assert_called_once()
+        self.assertEqual(timer.call_args.args[0], 90 * 60)
+
+    def test_draft_and_wrong_trigger_send_nothing(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.constants import MESSAGE_STATUS_DRAFT, TRIGGER_QUOTATION
+        from communications.models import OutboundMessage
+
+        self._draft(status=MESSAGE_STATUS_DRAFT)
+        self._draft(trigger=TRIGGER_QUOTATION)
+        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+            maybe_send_triggered_messages(self.receipt)
+        enqueue.assert_not_called()
+        self.assertFalse(OutboundMessage.objects.exists())
+
+    def test_automations_off_sends_nothing(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+        from shops.services import set_communications_setting
+
+        self._draft()
+        set_communications_setting(field="enable_automations", enabled=False)
+        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+            maybe_send_triggered_messages(self.receipt)
+        enqueue.assert_not_called()
+        self.assertFalse(OutboundMessage.objects.exists())
+
+    def test_shop_override_on_uses_shop_drafts(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+        from shops.models import ShopPosSettings
+
+        self._draft(body="COMPANY message")
+        self._draft(shop=self.shop, body="SHOP message")
+        ShopPosSettings.objects.create(
+            shop=self.shop, override_messages=True
+        )
+        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+            maybe_send_triggered_messages(self.receipt)
+
+        enqueue.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertIn("SHOP message", message.body)
+        self.assertNotIn("COMPANY message", message.body)
+
+    def test_shop_override_off_falls_back_to_company_drafts(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+
+        self._draft(body="COMPANY message")
+        self._draft(shop=self.shop, body="SHOP message")
+        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+            maybe_send_triggered_messages(self.receipt)
+
+        enqueue.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertIn("COMPANY message", message.body)
+        self.assertNotIn("SHOP message", message.body)
+
+    def test_shop_drafts_do_not_leak_to_other_shops(self):
+        from decimal import Decimal
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+        from shops.models import (
+            Shop,
+            ShopPosSettings,
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptStatus,
+        )
+
+        other_shop = Shop.objects.create(
+            name="OTHER SHOP",
+            location="MOMBASA",
+            email="other@test.local",
+            phone_number="0700000333",
+            login_code="860133",
+            password_hash="x",
+            created_by=self.it,
+        )
+        other_receipt = ShopReceipt.objects.create(
+            shop=other_shop,
+            receipt_number="SL-OTHER-1",
+            kind=ShopReceiptKind.SALE,
+            total=Decimal("100.00"),
+            amount_paid=Decimal("100.00"),
+            created_by=self.it,
+            client=self.customer,
+            client_name="KIM OTIENO",
+            client_phone="+254795606116",
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        self._draft(shop=self.shop, body="SHOP A message")
+        ShopPosSettings.objects.create(
+            shop=self.shop, override_messages=True
+        )
+        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+            maybe_send_triggered_messages(other_receipt)
+        enqueue.assert_not_called()
+        self.assertFalse(OutboundMessage.objects.exists())
+
+    def test_enabling_messages_override_seeds_company_drafts(self):
+        from communications.constants import MESSAGE_STATUS_DRAFT
+        from communications.models import TriggeredMessage
+        from shops.services import set_shop_pos_override
+
+        self._draft(body="COMPANY sale")
+        self._draft(body="COMPANY draft", status=MESSAGE_STATUS_DRAFT)
+        set_shop_pos_override(
+            shop=self.shop, section="messages", enabled=True
+        )
+
+        shop_drafts = TriggeredMessage.objects.filter(shop=self.shop)
+        self.assertEqual(shop_drafts.count(), 2)
+        self.assertTrue(
+            shop_drafts.filter(body="COMPANY sale").exists()
+        )
+        # Turning off falls back to company drafts; re-enabling does not re-seed.
+        set_shop_pos_override(
+            shop=self.shop, section="messages", enabled=False
+        )
+        set_shop_pos_override(
+            shop=self.shop, section="messages", enabled=True
+        )
+        self.assertEqual(
+            TriggeredMessage.objects.filter(shop=self.shop).count(), 2
+        )
 
 
 @override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")

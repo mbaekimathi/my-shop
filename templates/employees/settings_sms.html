@@ -1,0 +1,147 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section
+  class="item-panel item-panel--dense"
+  data-animate="rise"
+  data-comms-settings
+>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">Settings · Communication settings</p>
+        <h2>{{ meta.headline }}</h2>
+        <p class="daraja-form-message">
+          Profile: <strong>{{ comms.deploy_profile_label|default:"Local" }}</strong>
+          {% if comms.credentials_from_env %}
+          — SMS credentials are loaded from server <code>.env</code> on hosted.
+          {% elif comms.is_hosted_deploy %}
+          — set <code>SMS_*</code> in server <code>.env</code>, then restart the app.
+          {% else %}
+          — credentials are saved in this app (local database).
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <div class="pos-settings-groups daraja-settings-groups">
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Text (SMS) API</h3>
+        <p>SMS provider API credentials and sender identity.</p>
+      </div>
+      <form class="daraja-credentials-form" data-comms-form="sms" novalidate{% if comms.credentials_from_env %} hidden{% endif %}>
+        <input type="hidden" name="action" value="save_sms_settings">
+        <div class="daraja-status" data-comms-sms-status>
+          {% if comms.has_sms_credentials %}
+          <span class="daraja-status-pill is-ok">Connected</span>
+          <em>{{ sms_provider_label }} — sender ID {{ comms.sms_sender_id }}.</em>
+          {% else %}
+          <span class="daraja-status-pill">Not connected</span>
+          <em>Enter your provider credentials, then save or test the connection.</em>
+          {% endif %}
+        </div>
+        <div class="daraja-env-picker" role="group" aria-label="SMS provider">
+          {% for value, label in sms_providers %}
+          <label class="daraja-env-option{% if comms.sms_provider == value %} is-active{% endif %}">
+            <input
+              type="radio"
+              name="sms_provider"
+              value="{{ value }}"
+              data-comms-sms-provider
+              {% if comms.sms_provider == value %}checked{% endif %}
+            >
+            <span>
+              <strong>{{ label }}</strong>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+        <div class="daraja-fields">
+          <label class="daraja-field">
+            <span>Sender ID</span>
+            <input
+              type="text"
+              name="sms_sender_id"
+              autocomplete="off"
+              maxlength="32"
+              placeholder="Approved sender name / number"
+              value="{{ comms.sms_sender_id }}"
+              required
+            >
+          </label>
+          <label class="daraja-field">
+            <span>API key / username</span>
+            <input
+              type="text"
+              name="sms_api_key"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="{% if comms.sms_api_key_set %}Saved — enter a new value to replace{% else %}Provider API key or username{% endif %}"
+              {% if not comms.sms_api_key_set %}required{% endif %}
+            >
+          </label>
+          <label class="daraja-field">
+            <span>API secret / auth token</span>
+            <input
+              type="password"
+              name="sms_api_secret"
+              autocomplete="new-password"
+              spellcheck="false"
+              placeholder="{% if comms.sms_api_secret_set %}Saved — enter a new secret to replace{% else %}Optional for some providers{% endif %}"
+            >
+          </label>
+          <label class="daraja-field daraja-field--wide">
+            <span>Custom API base URL</span>
+            <input
+              type="url"
+              name="sms_api_base_url"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Only for Custom HTTP / sandbox endpoints"
+              value="{{ comms.sms_api_base_url }}"
+            >
+          </label>
+        </div>
+        <p class="daraja-help">
+          BlessedTexts: put your <strong>API key</strong> in “API key / username” and the numeric
+          <strong>sender ID</strong> (e.g. <code>23107</code>) in “Sender ID” — “API secret / auth token”
+          and the base URL are not needed. Test connection shows your SMS credit balance.
+        </p>
+        <p class="daraja-help">
+          Africa's Talking: put your AT <strong>username</strong> in “API key / username” and your AT
+          <strong>apiKey</strong> in “API secret / auth token”. For sandbox, set the base URL to
+          <code>https://api.sandbox.africastalking.com</code>.
+        </p>
+        <p class="daraja-help">
+          Twilio: put the <strong>Account SID</strong> in “API key / username” and the
+          <strong>Auth Token</strong> in “API secret / auth token”.
+        </p>
+        <div class="daraja-form-actions">
+          <button type="submit" class="btn btn--primary">Save SMS</button>
+          <button type="button" class="btn btn--ghost" data-comms-test-connection>
+            Test connection
+          </button>
+          <p class="daraja-form-message" data-comms-message hidden></p>
+        </div>
+      </form>
+      {% if comms.credentials_from_env %}
+      <p class="daraja-help">
+        SMS uses <code>SMS_PROVIDER</code>, <code>SMS_API_KEY</code>, <code>SMS_SENDER_ID</code>, and optional
+        <code>SMS_API_SECRET</code> / <code>SMS_API_BASE_URL</code> in server <code>.env</code>.
+      </p>
+      {% endif %}
+    </section>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/communications-settings.js' %}?v=4"></script>
+{% endblock %}

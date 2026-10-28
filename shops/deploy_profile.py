@@ -131,6 +131,8 @@ def hosted_comms_env_overrides() -> dict[str, str]:
             out["sms_provider"] = SmsProvider.TWILIO
         elif provider in {"africas_talking", "africastalking", "at"}:
             out["sms_provider"] = SmsProvider.AFRICAS_TALKING
+        elif provider in {"blessed_texts", "blessedtexts", "bt"}:
+            out["sms_provider"] = SmsProvider.BLESSED_TEXTS
     return out
 
 

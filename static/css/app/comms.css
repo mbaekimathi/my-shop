@@ -3006,6 +3006,26 @@ html[data-theme="dark"] .comms-chat-wallpaper {
   line-height: 1.35;
 }
 
+.wa-share-channel-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1.4rem;
+  padding-top: 0.35rem;
+}
+
+.wa-share-channel.perm-switch {
+  grid-template-columns: auto auto;
+  justify-items: start;
+  align-items: center;
+  column-gap: 0.5rem;
+}
+
+.wa-share-channel__setup {
+  grid-column: 1 / -1;
+  font-size: 0.72rem;
+}
+
 .wa-share__dock {
   position: sticky;
   bottom: 0.75rem;

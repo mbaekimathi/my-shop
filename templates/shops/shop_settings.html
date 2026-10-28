@@ -35,5 +35,16 @@
       {% endif %}
     </p>
   </a>
+  <a class="workspace-card workspace-module-link" href="{{ shop_settings_messages_url }}">
+    <i data-lucide="message-square-text" aria-hidden="true"></i>
+    <h3>Shop messages</h3>
+    <p>
+      {% if shop_messages_override %}
+      Custom automatic messages for this shop.
+      {% else %}
+      Using company messages. Open to customize.
+      {% endif %}
+    </p>
+  </a>
 </div>
 {% endblock %}

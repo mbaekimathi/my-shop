@@ -19,6 +19,10 @@ from .constants import (
     CAMPAIGN_DRAFT,
     CAMPAIGN_QUEUED,
     CAMPAIGN_SENDING,
+    CHANNEL_LABELS,
+    CHANNEL_SMS,
+    CHANNEL_VALUES,
+    CHANNEL_WHATSAPP,
     MSG_CANCELLED,
     MSG_FAILED,
     MSG_MANUAL_REVIEW,
@@ -31,22 +35,41 @@ from .services import constrain_filters_to_profile, query_recipients, render_pla
 logger = logging.getLogger(__name__)
 
 
+def normalize_channels(channels, *, default: list[str] | None = None) -> list[str]:
+    """Deduped valid channel slugs; falls back to ``default`` (WhatsApp) when empty."""
+    out = []
+    for value in channels or default or [CHANNEL_WHATSAPP]:
+        slug = str(value or "").strip().lower()
+        if slug in CHANNEL_VALUES and slug not in out:
+            out.append(slug)
+    if not out:
+        raise ValueError("Pick at least one channel.")
+    return out
+
+
+def _require_whatsapp_ready() -> None:
+    status_payload = fetch_bridge_status()
+    if status_payload.get("status") != BRIDGE_STATUS_CONNECTED:
+        raise ValueError(
+            "Twilio is not configured. Save Account SID, Auth Token, and a From number in Settings."
+        )
+
+
 def create_campaign(
     *,
     profile,
     body_template: str,
     filters: dict | None = None,
     image: UploadedFile | None = None,
+    channels: list[str] | None = None,
 ) -> BroadcastCampaign:
     body = (body_template or "").strip()
     if not body and not image:
         raise ValueError("Message text or an image is required.")
 
-    status_payload = fetch_bridge_status()
-    if status_payload.get("status") != BRIDGE_STATUS_CONNECTED:
-        raise ValueError(
-            "Twilio is not configured. Save Account SID, Auth Token, and a From number in Settings."
-        )
+    channels = normalize_channels(channels)
+    if CHANNEL_WHATSAPP in channels:
+        _require_whatsapp_ready()
 
     parsed = constrain_filters_to_profile(filters, profile)
     recipients = query_recipients(parsed)
@@ -78,13 +101,17 @@ def create_campaign(
             [
                 OutboundMessage(
                     campaign=campaign,
+                    channel=channel,
                     client_id=r.client_id,
                     client_name=r.full_name,
-                    phone=(r.chat_id or r.phone),
+                    phone=(r.chat_id or r.phone)
+                    if channel == CHANNEL_WHATSAPP
+                    else r.phone,
                     body=render_placeholders(body, r),
-                    image_path=image_path,
+                    image_path=image_path if channel == CHANNEL_WHATSAPP else "",
                     status=MSG_PENDING,
                 )
+                for channel in channels
                 for r in recipients
             ]
         )
@@ -210,8 +237,9 @@ def create_catalogue_campaign(
     send_after=None,
     schedule: dict | None = None,
     body_template: str | None = None,
+    channels: list[str] | None = None,
 ) -> BroadcastCampaign:
-    """One WhatsApp per recipient with a product-card image and short caption."""
+    """One message per recipient per channel — WhatsApp gets the product card, SMS gets text."""
     from datetime import timedelta
 
     from .automations import apply_catalogue_message_template, fit_whatsapp_caption
@@ -234,11 +262,10 @@ def create_catalogue_campaign(
             f"Select at most {CATALOGUE_SEND_ITEM_LIMIT} items in one send."
         )
 
-    status_payload = fetch_bridge_status()
-    if status_payload.get("status") != BRIDGE_STATUS_CONNECTED:
-        raise ValueError(
-            "Twilio is not configured. Save Account SID, Auth Token, and a From number in Settings."
-        )
+    channels = normalize_channels(channels)
+    want_whatsapp = CHANNEL_WHATSAPP in channels
+    if want_whatsapp:
+        _require_whatsapp_ready()
 
     parsed = constrain_filters_to_profile(filters, profile)
     recipients = query_recipients(parsed)
@@ -247,10 +274,22 @@ def create_catalogue_campaign(
             raise ValueError("None of the selected contacts match this audience.")
         raise ValueError("No recipients match the selected audience.")
 
-    card = compose_catalogue_card(chosen)
-    caption = apply_catalogue_message_template(
-        body_template or "", chosen, card=bool(card)
+    card = compose_catalogue_card(chosen) if want_whatsapp else None
+    wa_caption = (
+        apply_catalogue_message_template(
+            body_template or "", chosen, card=bool(card)
+        )
+        if want_whatsapp
+        else ""
     )
+    sms_caption = (
+        apply_catalogue_message_template(
+            body_template or "", chosen, card=False
+        )
+        if CHANNEL_SMS in channels
+        else ""
+    )
+    caption = wa_caption or sms_caption
     if not caption:
         raise ValueError("Write a message to send.")
 
@@ -278,7 +317,7 @@ def create_catalogue_campaign(
                 card,
                 save=True,
             )
-        else:
+        elif want_whatsapp:
             collage = compose_catalogue_collage(chosen)
             if collage:
                 campaign.image.save(
@@ -286,27 +325,40 @@ def create_catalogue_campaign(
                     collage,
                     save=True,
                 )
-        media = file_whatsapp_media_url(campaign.image, request=request)
-        if not media:
-            for item in chosen:
-                media = item_whatsapp_media_url(item, request=request)
-                if media:
-                    break
-        body_template = fit_whatsapp_caption(caption, has_media=bool(media))
-        if body_template != campaign.body_template:
-            campaign.body_template = body_template
+        media = ""
+        if want_whatsapp:
+            media = file_whatsapp_media_url(campaign.image, request=request)
+            if not media:
+                for item in chosen:
+                    media = item_whatsapp_media_url(item, request=request)
+                    if media:
+                        break
+            wa_caption = fit_whatsapp_caption(wa_caption, has_media=bool(media))
+        channel_bodies = {
+            CHANNEL_WHATSAPP: wa_caption,
+            CHANNEL_SMS: sms_caption,
+        }
+        stored_body = next(
+            (channel_bodies[ch] for ch in channels if channel_bodies[ch]), caption
+        )
+        if stored_body != campaign.body_template:
+            campaign.body_template = stored_body
             campaign.save(update_fields=["body_template"])
         OutboundMessage.objects.bulk_create(
             [
                 OutboundMessage(
                     campaign=campaign,
+                    channel=channel,
                     client_id=recipient.client_id,
                     client_name=recipient.full_name,
-                    phone=(recipient.chat_id or recipient.phone),
-                    body=render_placeholders(body_template, recipient),
-                    image_path=media,
+                    phone=(recipient.chat_id or recipient.phone)
+                    if channel == CHANNEL_WHATSAPP
+                    else recipient.phone,
+                    body=render_placeholders(channel_bodies[channel], recipient),
+                    image_path=media if channel == CHANNEL_WHATSAPP else "",
                     status=MSG_PENDING,
                 )
+                for channel in channels
                 for recipient in recipients
             ]
         )
@@ -327,6 +379,7 @@ def create_catalogue_campaign_series(
     period_days: int = 1,
     times: int = 1,
     body_template: str | None = None,
+    channels: list[str] | None = None,
 ) -> list[BroadcastCampaign]:
     """Queue the first send now and later waves evenly across the period."""
     from datetime import timedelta
@@ -347,6 +400,7 @@ def create_catalogue_campaign_series(
             send_after=due,
             schedule={**schedule, "wave": index + 1},
             body_template=body_template,
+            channels=channels,
         )
         created.append(campaign)
     return created
@@ -545,6 +599,8 @@ def _campaign_kind_label(filters: dict | None) -> str:
     schedule = data.get("schedule") if isinstance(data.get("schedule"), dict) else {}
     wave = schedule.get("wave")
     total = schedule.get("times")
+    if data.get("trigger_label"):
+        return str(data["trigger_label"])
     if data.get("item_ids"):
         if wave and total and int(total) > 1:
             return f"Item share · {wave} of {total}"
@@ -666,6 +722,7 @@ def campaign_as_dict(
                 "id",
                 "client_id",
                 "client_name",
+                "channel",
                 "phone",
                 "body",
                 "status",
@@ -678,6 +735,9 @@ def campaign_as_dict(
             )
         )
         for row in messages:
+            row["channel_label"] = CHANNEL_LABELS.get(
+                row.get("channel") or "", CHANNEL_LABELS.get(CHANNEL_WHATSAPP, "WhatsApp")
+            )
             row["created_label"] = _format_when(row.get("created_at"))
             row["sent_label"] = _format_when(row.get("sent_at"))
             row["delivered_label"] = _format_when(row.get("delivered_at"))

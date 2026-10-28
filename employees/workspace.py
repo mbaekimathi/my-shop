@@ -84,7 +84,7 @@ DASHBOARD_MODULES = (
         "slug": "whatsapp",
         "label": "Communications",
         "icon": "messages-square",
-        "summary": "Twilio credentials and WhatsApp automations, broadcasts, and item shares.",
+        "summary": "Twilio and SMS credentials plus WhatsApp automations, broadcasts, and item shares.",
     },
 )
 
@@ -222,7 +222,7 @@ def _workspace_parent_url(request, role):
         section = kwargs.get("section")
         if section == "company-receipt":
             return settings_section_url("company-pos")
-        if section in {"twilio", "whatsapp"}:
+        if section in {"twilio", "sms", "whatsapp", "message-drafts"}:
             return settings_section_url("communication-settings")
         return reverse("employees:settings")
 
@@ -665,7 +665,9 @@ def sidebar_for_my_shop(
     shops = shops or []
     print_channels = list(print_channels or [])
     omit_dashboard_link = False
-    settings_actives = frozenset({"settings", "settings_pos", "settings_receipt"})
+    settings_actives = frozenset(
+        {"settings", "settings_pos", "settings_receipt", "settings_messages"}
+    )
     if portal and shop is not None:
         dashboard_url = reverse(
             "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
@@ -811,6 +813,17 @@ def sidebar_for_my_shop(
                         kwargs={"shop_id": shop.pk},
                     ),
                     active=active == "settings_receipt",
+                )
+            )
+            primary.append(
+                _link(
+                    "Shop messages",
+                    "message-square-text",
+                    href=reverse(
+                        "employees:my_shop_settings_messages",
+                        kwargs={"shop_id": shop.pk},
+                    ),
+                    active=active == "settings_messages",
                 )
             )
         elif active == "stock_requests" and _allowed("stock_requests"):
@@ -1810,29 +1823,23 @@ def sidebar_for_marketing_links(role, *, profile=None, active_view="marketing"):
 
 
 def sidebar_for_communications(role, *, active_view="home", profile=None):
-    """Sidebar for Twilio settings and WhatsApp settings."""
+    """Sidebar for Twilio, SMS, and WhatsApp settings."""
     from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
-    twilio_section = get_settings_section("twilio")
-    whatsapp_section = get_settings_section("whatsapp")
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-    if profile is None or employee_may(profile, "settings", "twilio"):
+    for slug in ("twilio", "sms", "whatsapp", "message-drafts"):
+        section = get_settings_section(slug)
+        if section is None:
+            continue
+        if profile is not None and not employee_may(profile, "settings", slug):
+            continue
         primary.append(
             _link(
-                twilio_section["label"],
-                twilio_section["icon"],
-                href=twilio_section["href"],
-                active=active_view == "twilio",
-            )
-        )
-    if profile is None or employee_may(profile, "settings", "whatsapp"):
-        primary.append(
-            _link(
-                whatsapp_section["label"],
-                whatsapp_section["icon"],
-                href=whatsapp_section["href"],
-                active=active_view == "whatsapp",
+                section["label"],
+                section["icon"],
+                href=section["href"],
+                active=active_view == slug,
             )
         )
     return resolve_sidebar_hrefs(
@@ -1841,7 +1848,8 @@ def sidebar_for_communications(role, *, active_view="home", profile=None):
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
-                settings_active=active_view in {"home", "twilio", "whatsapp"},
+                settings_active=active_view
+                in {"home", "twilio", "sms", "whatsapp", "message-drafts"},
                 profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
@@ -1945,7 +1953,7 @@ SETTINGS_SECTIONS = (
         "slug": "communication-settings",
         "label": "Communication settings",
         "icon": "messages-square",
-        "summary": "Twilio credentials and WhatsApp automations, broadcasts, and item shares.",
+        "summary": "Twilio and SMS credentials plus WhatsApp automations, broadcasts, and item shares.",
     },
     {
         "slug": "working-hours",
@@ -1986,10 +1994,24 @@ SETTINGS_NESTED_SECTIONS = (
         "parent": "communication-settings",
     },
     {
+        "slug": "sms",
+        "label": "SMS settings",
+        "icon": "message-square",
+        "summary": "SMS provider credentials, sender ID, and connection status.",
+        "parent": "communication-settings",
+    },
+    {
         "slug": "whatsapp",
         "label": "WhatsApp settings",
         "icon": "messages-square",
         "summary": "Choose what to send automatically and who receives it on WhatsApp.",
+        "parent": "communication-settings",
+    },
+    {
+        "slug": "message-drafts",
+        "label": "Message drafts",
+        "icon": "message-square-text",
+        "summary": "Write a message once and send it automatically on a sale, credit sale, or quotation.",
         "parent": "communication-settings",
     },
 )
@@ -2000,7 +2022,9 @@ POS_SIDEBAR_SLUGS = frozenset({"company-pos", "company-receipt"})
 PAYMENTS_SIDEBAR_SLUGS = frozenset(
     {"company-payments", "company-daraja", "developer-payments"}
 )
-COMMS_SIDEBAR_SLUGS = frozenset({"communication-settings", "twilio", "whatsapp"})
+COMMS_SIDEBAR_SLUGS = frozenset(
+    {"communication-settings", "twilio", "sms", "whatsapp", "message-drafts"}
+)
 
 
 def settings_section_url(section):

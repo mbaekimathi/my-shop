@@ -7,8 +7,13 @@ import re
 import threading
 from decimal import Decimal, InvalidOperation
 
+from django.core.exceptions import ValidationError
+from django.utils import timezone
+
 from shops.models import ShopReceiptKind
 from shops.services import _qty_label, get_communications_settings
+
+from .constants import MESSAGE_STATUS_ACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -450,6 +455,278 @@ def maybe_send_new_item_catalogue(item, *, request=None) -> None:
             "New item WhatsApp share failed for item %s",
             getattr(item, "pk", None),
         )
+
+
+def render_trigger_message(template: str, receipt, *, link: str = "") -> str:
+    """Expand {placeholders} for a triggered message — plain str.replace only."""
+    client_name = (getattr(receipt, "client_name", "") or "").strip()
+    first = client_name.split()[0].title() if client_name else "Customer"
+    shop_name = (
+        getattr(getattr(receipt, "shop", None), "name", "") or ""
+    ).strip() or "our shop"
+    due_date = getattr(receipt, "credit_due_date", None)
+    replacements = {
+        "{first_name}": first,
+        "{full_name}": client_name or "Customer",
+        "{shop_name}": shop_name,
+        "{total}": _kes(getattr(receipt, "total", None)),
+        "{receipt_number}": (getattr(receipt, "receipt_number", "") or "").strip(),
+        "{due_date}": due_date.strftime("%d %b %Y") if due_date else "",
+    }
+    body = template or ""
+    for key, value in replacements.items():
+        body = body.replace(key, value)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    url = (link or "").strip()
+    if url:
+        body = f"{body}\n\n{url}" if body else url
+    return body
+
+
+def maybe_send_triggered_messages(receipt, *, request=None) -> None:
+    """Queue active message drafts whose trigger matches this receipt kind."""
+    from .models import TriggeredMessage
+
+    row = get_communications_settings()
+    if not row.enable_automations or not row.has_twilio_credentials():
+        return
+    kind = receipt.kind
+    if kind not in {
+        ShopReceiptKind.SALE,
+        ShopReceiptKind.QUOTATION,
+        ShopReceiptKind.CREDIT,
+    }:
+        return
+    shop = getattr(receipt, "shop", None)
+    drafts = list(
+        TriggeredMessage.objects.filter(
+            trigger=kind,
+            status=MESSAGE_STATUS_ACTIVE,
+            **_triggered_message_scope(shop),
+        )
+    )
+    if not drafts:
+        return
+    phone = (receipt.client_phone or "").strip()
+    if not phone and receipt.client_id:
+        phone = (getattr(receipt.client, "phone_number", "") or "").strip()
+    if not phone:
+        return
+    for draft in drafts:
+        body = render_trigger_message(draft.body, receipt, link=draft.link)
+        if not body:
+            continue
+        _queue_triggered_send(
+            phone=phone,
+            body=body,
+            receipt=receipt,
+            delay_minutes=draft.delay_minutes,
+            label=f"Auto message · {draft.get_trigger_display()}",
+        )
+
+
+def _triggered_message_scope(shop) -> dict:
+    """Shop with custom messages on reads its own drafts; else company drafts."""
+    if getattr(shop, "pk", None) is None:
+        return {"shop__isnull": True}
+    from shops.models import ShopPosSettings
+
+    custom = (
+        ShopPosSettings.objects.filter(shop_id=shop.pk)
+        .values_list("override_messages", flat=True)
+        .first()
+    )
+    return {"shop_id": shop.pk} if custom else {"shop__isnull": True}
+
+
+def seed_shop_triggered_messages(shop) -> int:
+    """Copy company message drafts into the shop scope (only while it has none)."""
+    from .models import TriggeredMessage
+
+    if shop is None or TriggeredMessage.objects.filter(shop_id=shop.pk).exists():
+        return 0
+    rows = [
+        TriggeredMessage(
+            shop=shop,
+            trigger=draft.trigger,
+            delay_minutes=draft.delay_minutes,
+            body=draft.body,
+            link=draft.link,
+            status=draft.status,
+        )
+        for draft in TriggeredMessage.objects.filter(shop__isnull=True)
+    ]
+    TriggeredMessage.objects.bulk_create(rows)
+    return len(rows)
+
+
+def _queue_triggered_send(
+    *,
+    phone: str,
+    body: str,
+    receipt,
+    delay_minutes: int,
+    label: str,
+) -> None:
+    """Persist a one-recipient campaign; the queue worker sends it when due."""
+    from datetime import timedelta
+
+    from .campaigns import enqueue_campaign
+    from .constants import CAMPAIGN_DRAFT, CAMPAIGN_QUEUED, MSG_PENDING
+    from .models import BroadcastCampaign, OutboundMessage
+
+    delay = max(0, int(delay_minutes or 0))
+    due_at = timezone.now() + timedelta(minutes=delay)
+    campaign = BroadcastCampaign.objects.create(
+        created_by=getattr(receipt, "created_by", None),
+        body_template=body,
+        filters={
+            "triggered_message": True,
+            "trigger_label": label,
+            "send_after": due_at.isoformat(),
+            "receipt_id": getattr(receipt, "pk", None),
+        },
+        status=CAMPAIGN_QUEUED if delay <= 0 else CAMPAIGN_DRAFT,
+        recipient_count=1,
+    )
+    client = getattr(receipt, "client", None)
+    OutboundMessage.objects.create(
+        campaign=campaign,
+        client=client if getattr(client, "pk", None) else None,
+        client_name=(getattr(receipt, "client_name", "") or "").strip(),
+        phone=phone,
+        body=body,
+        status=MSG_PENDING,
+    )
+    if delay <= 0:
+        try:
+            enqueue_campaign(campaign.pk)
+        except Exception:
+            logger.exception(
+                "Triggered send enqueue failed for campaign %s", campaign.pk
+            )
+        return
+    timer = threading.Timer(delay * 60, _promote_due_sends)
+    timer.daemon = True
+    timer.start()
+
+
+def _promote_due_sends() -> None:
+    try:
+        from .campaigns import promote_due_campaigns
+
+        promote_due_campaigns()
+    except Exception:
+        logger.exception("Scheduled message promotion failed")
+
+
+def _delay_parts(delay_minutes: int) -> tuple[int, str]:
+    minutes = max(0, int(delay_minutes or 0))
+    if minutes and minutes % 1440 == 0:
+        return minutes // 1440, "days"
+    if minutes and minutes % 60 == 0:
+        return minutes // 60, "hours"
+    return minutes, "minutes"
+
+
+def _timing_label(delay_minutes: int) -> str:
+    from .constants import TRIGGER_DELAY_UNITS
+
+    amount, unit = _delay_parts(delay_minutes)
+    if not amount:
+        return "Immediately"
+    unit_label = dict(
+        (value, label.rstrip("s") if amount == 1 else label)
+        for value, label, _ in TRIGGER_DELAY_UNITS
+    ).get(unit, unit)
+    return f"After {amount} {unit_label}"
+
+
+def triggered_message_as_dict(row) -> dict:
+    amount, unit = _delay_parts(row.delay_minutes)
+    return {
+        "id": row.pk,
+        "trigger": row.trigger,
+        "trigger_label": row.get_trigger_display(),
+        "delay_minutes": row.delay_minutes,
+        "delay_amount": amount,
+        "delay_unit": unit,
+        "timing_label": _timing_label(row.delay_minutes),
+        "body": row.body,
+        "link": row.link,
+        "status": row.status,
+        "status_label": row.get_status_display(),
+        "is_active": row.status == MESSAGE_STATUS_ACTIVE,
+    }
+
+
+def _triggered_delay_minutes(data) -> int:
+    from .constants import TRIGGER_DELAY_MAX_MINUTES, TRIGGER_DELAY_UNITS
+
+    timing = (data.get("send_timing") or "now").strip()
+    if timing != "later":
+        return 0
+    try:
+        amount = int(data.get("delay_amount") or 0)
+    except (TypeError, ValueError):
+        amount = 0
+    unit = (data.get("delay_unit") or "minutes").strip()
+    factor = {value: mult for value, _, mult in TRIGGER_DELAY_UNITS}.get(unit, 1)
+    minutes = max(0, amount) * factor
+    if minutes <= 0 or minutes > TRIGGER_DELAY_MAX_MINUTES:
+        raise ValidationError("Enter a send delay between 1 minute and 30 days.")
+    return minutes
+
+
+def save_triggered_message(data, *, shop=None):
+    """Create or update a TriggeredMessage from the settings form POST.
+
+    ``shop=None`` edits company messages; a Shop edits only that shop's own.
+    """
+    from .constants import (
+        MESSAGE_STATUS_ACTIVE,
+        MESSAGE_STATUS_DRAFT,
+        TRIGGER_MESSAGE_CHOICES,
+    )
+    from .models import TriggeredMessage
+
+    scope_id = shop.pk if shop is not None else None
+    draft = None
+    raw_id = (data.get("draft_id") or "").strip()
+    if raw_id:
+        draft = TriggeredMessage.objects.filter(
+            pk=raw_id, shop_id=scope_id
+        ).first()
+        if draft is None:
+            raise ValidationError("Message not found.")
+
+    trigger = (data.get("trigger") or "").strip()
+    if trigger not in {value for value, _ in TRIGGER_MESSAGE_CHOICES}:
+        raise ValidationError("Choose when this message should send.")
+
+    body = (data.get("body") or "").strip()
+    if not body:
+        raise ValidationError("Write the message to send.")
+
+    link = (data.get("link") or "").strip()[:500]
+    if link and not link.lower().startswith(("http://", "https://")):
+        link = f"https://{link}"
+
+    status = (data.get("status") or "").strip()
+    if status not in {MESSAGE_STATUS_DRAFT, MESSAGE_STATUS_ACTIVE}:
+        status = MESSAGE_STATUS_DRAFT
+
+    delay_minutes = _triggered_delay_minutes(data)
+
+    if draft is None:
+        draft = TriggeredMessage(trigger=trigger, shop=shop)
+    draft.trigger = trigger
+    draft.delay_minutes = delay_minutes
+    draft.body = body
+    draft.link = link
+    draft.status = status
+    draft.save()
+    return draft
 
 
 def _queue_send(phone: str, body: str, *, name: str) -> None:
