@@ -3401,6 +3401,16 @@ html[data-theme="dark"] .comms-chat-wallpaper {
   margin-top: 0;
 }
 
+.wa-act-tabs {
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  margin-top: 0.5rem;
+  margin-bottom: 0;
+}
+
+.wa-act-tabs .td-tab {
+  min-height: 2.1rem;
+}
+
 .wa-act-empty {
   margin: 0;
   padding: 1.1rem 1rem 1.2rem;

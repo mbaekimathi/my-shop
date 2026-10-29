@@ -14,24 +14,16 @@
     document.querySelector("input[name=csrfmiddlewaretoken]")?.value ||
     readCookie("csrftoken") ||
     "";
-  const pendingEl = root.querySelector("[data-wa-pending]");
-  const historyEl = root.querySelector("[data-wa-history]");
-  const messageEl = root.querySelector("[data-wa-message]");
-  const pendingCountEl = root.querySelector("[data-wa-pending-count]");
-  const historyCountEl = root.querySelector("[data-wa-history-count]");
+  const feedEl = root.querySelector("[data-wa-feed]");
+  const feedCountEl = root.querySelector("[data-wa-feed-count]");
+  const tabButtons = Array.from(root.querySelectorAll("[data-wa-channel]"));
   const waitingSummaryEl = document.querySelector("[data-wa-summary-waiting]");
   const scheduledSummaryEl = document.querySelector("[data-wa-summary-scheduled]");
   const historySummaryEl = document.querySelector("[data-wa-summary-history]");
 
-  const campaignLabels = {
-    queued: "Queued",
-    sending: "Sending",
-    done: "Sent",
-    cancelled: "Cancelled",
-    draft: "Scheduled",
-  };
-
   let pollTimer = 0;
+  let activeChannel = tabButtons[0]?.dataset.waChannel || "";
+  let lastPayload = null;
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -45,142 +37,142 @@
     if (window.lucide?.createIcons) window.lucide.createIcons();
   }
 
-  function showMessage(text, isError) {
-    if (!messageEl) return;
-    messageEl.hidden = !text;
-    messageEl.textContent = text || "";
-    messageEl.classList.toggle("is-error", Boolean(isError));
-    messageEl.classList.toggle("is-ok", Boolean(text) && !isError);
-  }
-
   function plural(count, one, many) {
     const n = Number(count || 0);
     return `${n} ${n === 1 ? one : many}`;
   }
 
-  function sendProgress(send) {
-    return send.progress_label || plural(send.recipient_count, "person", "people");
-  }
-
-  function statusLabel(send) {
-    return send.status_label || campaignLabels[send.status] || send.status || "";
-  }
-
-  function kindLabel(send) {
-    return send.kind_label || "WhatsApp send";
-  }
-
-  function whenLabel(send) {
-    return send.timing_label || send.send_after_label || send.created_label || "";
-  }
-
-  function previewText(send) {
-    const text = String(send.body_preview || "").trim();
-    return text || "WhatsApp message";
-  }
-
-  function detailHref(send) {
-    if (send.detail_url) return send.detail_url;
+  function detailHref(row) {
+    if (row.detail_url) return row.detail_url;
     const base = window.location.pathname.replace(/\/?$/, "/");
-    return `${base}${send.id}/`;
+    return `${base}${row.campaign_id}/`;
   }
 
-  function actionButtons(send) {
-    const tools = [
-      send.can_cancel
-        ? `<button class="btn btn--ghost" type="button" data-wa-cancel="${send.id}">Cancel</button>`
-        : "",
-      send.can_retry
-        ? `<button class="btn btn--ghost" type="button" data-wa-retry="${send.id}">Retry failed</button>`
-        : "",
-    ].filter(Boolean);
-    return tools.length ? `<div class="wa-act-tools">${tools.join("")}</div>` : "—";
+  function channels(payload) {
+    return Array.isArray(payload?.channels) ? payload.channels : [];
   }
 
-  function renderTable(target, rows, emptyText) {
-    if (!target) return;
-    if (!rows.length) {
-      target.innerHTML = `<p class="wa-act-empty">${escapeHtml(emptyText)}</p>`;
-      return;
+  function channelFeed(payload, slug) {
+    const match = channels(payload).find((chan) => chan.slug === slug);
+    return match || channels(payload)[0] || null;
+  }
+
+  function feedCountLabel(channel) {
+    if (!channel) return "";
+    const parts = [plural(channel.total, "message", "messages")];
+    if (Number(channel.waiting || 0) > 0) parts.push(`${channel.waiting} waiting`);
+    if (Number(channel.failed || 0) > 0) parts.push(`${channel.failed} failed`);
+    if (Number(channel.total || 0) > Number(channel.shown || 0)) {
+      parts.push(`showing latest ${channel.shown}`);
     }
-    target.innerHTML = `<table class="staff-table staff-table--dense wa-act-table">
-      <thead>
-        <tr>
-          <th>What</th>
-          <th>When</th>
-          <th>People</th>
-          <th>Status</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows
-          .map((send) => {
-            return `<tr class="wa-act-row" data-send-id="${send.id}">
-              <td data-label="What">
-                <a class="wa-act-toggle" href="${escapeHtml(detailHref(send))}">
-                  <strong>${escapeHtml(kindLabel(send))}</strong>
-                  <span>${escapeHtml(previewText(send))}</span>
-                </a>
-              </td>
-              <td data-label="When">${escapeHtml(whenLabel(send))}</td>
-              <td data-label="People">${escapeHtml(sendProgress(send))}</td>
-              <td data-label="Status">
-                <span class="wa-auto__send-status" data-status="${escapeHtml(send.status || "")}">${escapeHtml(
-                  statusLabel(send)
-                )}</span>
-              </td>
-              <td data-label="Actions">${actionButtons(send)}</td>
-            </tr>`;
-          })
-          .join("")}
-      </tbody>
-    </table>`;
+    return parts.join(" · ");
   }
 
-  function setCount(el, count, one, many) {
-    if (!el) return;
-    el.textContent = plural(count, one, many);
+  function messageRow(row) {
+    const status = row.display_status || row.status || "";
+    const error =
+      row.error && (status === "failed" || row.status === "failed")
+        ? `<em class="wa-person__error">${escapeHtml(row.error)}</em>`
+        : "";
+    return `<tr class="wa-act-row" data-message-id="${row.id}">
+      <td data-label="To">
+        <a class="wa-act-toggle" href="${escapeHtml(detailHref(row))}">
+          <strong>${escapeHtml(row.client_name || "Customer")}</strong>
+          <span>${escapeHtml(row.phone || "")}</span>
+        </a>
+      </td>
+      <td data-label="Message">
+        <a class="wa-act-toggle" href="${escapeHtml(detailHref(row))}">
+          <strong>${escapeHtml(row.kind_label || "Message")}</strong>
+          <span>${escapeHtml(row.body_preview || row.body || "Message")}</span>
+        </a>
+      </td>
+      <td data-label="Status">
+        <span class="wa-auto__send-status" data-status="${escapeHtml(status)}">${escapeHtml(
+          row.status_label || status
+        )}</span>
+        ${error}
+      </td>
+      <td data-label="When">${escapeHtml(row.when_label || row.created_label || "")}</td>
+    </tr>`;
+  }
+
+  function renderFeed(payload) {
+    if (!feedEl) return;
+    const channel = channelFeed(payload, activeChannel);
+    if (!channel || !channel.messages.length) {
+      feedEl.innerHTML = `<p class="wa-act-empty">${escapeHtml(
+        root.dataset.feedEmpty ||
+          "Nothing on this channel yet. Queued and sent messages will show up here."
+      )}</p>`;
+    } else {
+      feedEl.innerHTML = `<table class="staff-table staff-table--dense wa-act-table">
+        <thead>
+          <tr>
+            <th>To</th>
+            <th>Message</th>
+            <th>Status</th>
+            <th>When</th>
+          </tr>
+        </thead>
+        <tbody>${channel.messages.map(messageRow).join("")}</tbody>
+      </table>`;
+    }
+    if (feedCountEl) feedCountEl.textContent = feedCountLabel(channel);
+  }
+
+  function renderTabs(payload) {
+    tabButtons.forEach((button) => {
+      const slug = button.dataset.waChannel;
+      const channel = channelFeed(payload, slug);
+      const label = button.querySelector("span");
+      if (label && channel) {
+        const badges = [];
+        if (Number(channel.waiting || 0) > 0) badges.push(`${channel.waiting} waiting`);
+        if (Number(channel.failed || 0) > 0) badges.push(`${channel.failed} failed`);
+        label.textContent = badges.length
+          ? `${channel.label} · ${badges.join(" · ")}`
+          : channel.label;
+      }
+      const isActive = slug === activeChannel;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
   }
 
   function needsPoll(payload) {
     const pending = payload?.pending || [];
     const history = payload?.history || [];
-    const rows = [...pending, ...history];
-    return rows.some(
-      (send) =>
-        send.status === "queued" ||
-        send.status === "sending" ||
-        send.status === "draft" ||
-        Number(send.pending_count || 0) > 0
+    if (
+      [...pending, ...history].some(
+        (send) =>
+          send.status === "queued" ||
+          send.status === "sending" ||
+          send.status === "draft" ||
+          Number(send.pending_count || 0) > 0
+      )
+    ) {
+      return true;
+    }
+    return channels(payload).some((channel) =>
+      (channel.messages || []).some(
+        (row) => row.status === "pending" || row.display_status === "queued"
+      )
     );
   }
 
   function renderActivities(payload) {
-    const data = payload && typeof payload === "object" ? payload : { pending: [], history: [], summary: {} };
-    const pending = Array.isArray(data.pending) ? data.pending : [];
-    const history = Array.isArray(data.history) ? data.history : [];
+    const data =
+      payload && typeof payload === "object"
+        ? payload
+        : { pending: [], history: [], channels: [], summary: {} };
+    lastPayload = data;
+    renderTabs(data);
+    renderFeed(data);
     const summary = data.summary || {};
-
-    renderTable(
-      pendingEl,
-      pending,
-      root.dataset.pendingEmpty ||
-        "Nothing waiting. Scheduled item shares and queued messages will show up here."
-    );
-    renderTable(
-      historyEl,
-      history,
-      root.dataset.historyEmpty ||
-        "No completed sends yet. Share items, then check back here."
-    );
-
-    setCount(pendingCountEl, pending.length, "batch", "batches");
-    setCount(historyCountEl, history.length, "send", "sends");
     if (waitingSummaryEl) waitingSummaryEl.textContent = String(summary.waiting_messages || 0);
     if (scheduledSummaryEl) scheduledSummaryEl.textContent = String(summary.scheduled_batches || 0);
     if (historySummaryEl) historySummaryEl.textContent = String(summary.history_batches || 0);
-
     refreshIcons();
     if (needsPoll(data)) startPoll();
     else stopPoll();
@@ -220,34 +212,19 @@
     pollTimer = 0;
   }
 
-  root.addEventListener("click", async (event) => {
-    const cancelBtn = event.target.closest("[data-wa-cancel]");
-    const retryBtn = event.target.closest("[data-wa-retry]");
-    if (!cancelBtn && !retryBtn) return;
-
-    const action = cancelBtn ? "cancel_campaign" : "retry_failed";
-    const campaignId = (cancelBtn || retryBtn).dataset.waCancel || (cancelBtn || retryBtn).dataset.waRetry;
-    const button = cancelBtn || retryBtn;
-    button.disabled = true;
-    showMessage("");
-    try {
-      const data = await post(
-        new URLSearchParams({ action, campaign_id: String(campaignId || "") })
-      );
-      showMessage(data.message || "Updated.");
-      renderActivities(data.activities);
-    } catch (error) {
-      showMessage(error.message || "Could not update.", true);
-    } finally {
-      button.disabled = false;
-    }
+  tabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      activeChannel = button.dataset.waChannel || activeChannel;
+      renderTabs(lastPayload || {});
+      renderFeed(lastPayload || {});
+    });
   });
 
   const initialNode = document.getElementById("wa-activities-data");
   try {
     renderActivities(initialNode ? JSON.parse(initialNode.textContent || "{}") : {});
   } catch (error) {
-    renderActivities({ pending: [], history: [], summary: {} });
+    renderActivities({ pending: [], history: [], channels: [], summary: {} });
   }
 })();
 
@@ -335,6 +312,7 @@
         <tr>
           <th>Person</th>
           <th>Phone</th>
+          <th>Channel</th>
           <th>Status</th>
           <th>When</th>
           <th>Message sent</th>
@@ -352,6 +330,7 @@
             return `<tr>
               <td data-label="Person"><strong>${escapeHtml(person.client_name || "Contact")}</strong></td>
               <td data-label="Phone">${escapeHtml(person.phone || "")}</td>
+              <td data-label="Channel">${escapeHtml(person.channel_label || "WhatsApp")}</td>
               <td data-label="Status">
                 <span class="wa-auto__pill" data-status="${escapeHtml(status)}">${escapeHtml(
                   person.status_label || messageLabels[status] || status

@@ -1065,14 +1065,16 @@ class WhatsAppCataloguePageTests(TestCase):
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
         self.assertEqual(labels, ["Dashboard", "Communication settings", "Message drafts", "Share items", "Contacts", "Inbox", "Activities"])
         self.assertTrue(response.context["page_sidebar"]["primary"][6].get("active"))
-        self.assertContains(response, "Waiting to send")
-        self.assertContains(response, "Sent history")
-        self.assertContains(response, "Nothing waiting. Scheduled item shares and queued messages will show up here.")
+        self.assertContains(response, "Message activity")
+        self.assertContains(response, "Nothing on this channel yet. Queued and sent messages will show up here.")
         self.assertContains(response, 'href="/it-support/whatsapp/catalogue/"')
         self.assertContains(response, 'href="/it-support/whatsapp/contacts/"')
         self.assertIn("pending", response.context["activities"])
         self.assertIn("history", response.context["activities"])
-        self.assertContains(response, "Open a send to see the message")
+        channels = response.context["activities"]["channels"]
+        self.assertEqual(
+            [chan["slug"] for chan in channels], ["whatsapp", "sms", "message"]
+        )
 
     def test_caption_includes_name_and_price(self):
         from communications.automations import build_item_catalogue_caption
@@ -1425,7 +1427,8 @@ class WhatsAppCataloguePageTests(TestCase):
 
         page = self.client.get("/it-support/marketing/activities/")
         self.assertEqual(page.status_code, 200)
-        self.assertContains(page, "Waiting to send")
+        self.assertContains(page, "Message activity")
+        self.assertContains(page, "WhatsApp")
         self.assertContains(page, "Item share")
         cancel = self.client.post(
             "/it-support/marketing/activities/",
@@ -1826,7 +1829,7 @@ class WhatsAppSendLogTests(TestCase):
 
         self.client.force_login(self.user)
         response = self.client.post(
-            "/employees/settings/whatsapp/",
+            "/it-support/marketing/activities/",
             {"action": "cancel_campaign", "campaign_id": str(self.campaign.pk)},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
             HTTP_ACCEPT="application/json",
@@ -1918,7 +1921,7 @@ class WhatsAppSendLogTests(TestCase):
         self.campaign.save(update_fields=["status"])
         self.client.force_login(self.user)
         response = self.client.post(
-            "/employees/settings/whatsapp/",
+            "/it-support/marketing/activities/",
             {"action": "cancel_campaign", "campaign_id": str(self.campaign.pk)},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
             HTTP_ACCEPT="application/json",
@@ -2427,6 +2430,32 @@ class TriggeredMessageTests(TestCase):
             OutboundMessage.objects.values_list("channel", flat=True),
             ["whatsapp", "sms"],
         )
+
+    def test_activities_feed_lists_triggered_sms_with_status(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.campaigns import activities_payload
+
+        self._enable_sms()
+        self._draft(channel="sms", body="SMS for {first_name}.")
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign"),
+        ):
+            maybe_send_triggered_messages(self.receipt)
+
+        feeds = {chan["slug"]: chan for chan in activities_payload()["channels"]}
+        sms_feed = feeds["sms"]["messages"]
+        self.assertEqual(len(sms_feed), 1)
+        row = sms_feed[0]
+        self.assertIn("SMS for Kim.", row["body"])
+        self.assertEqual(row["display_status"], "queued")
+        self.assertEqual(row["client_name"], "KIM OTIENO")
+        self.assertTrue(row["is_triggered"])
+        self.assertIn("Sale", row["kind_label"])
+        self.assertEqual(feeds["sms"]["waiting"], 1)
+        self.assertEqual(feeds["whatsapp"]["messages"], [])
 
     def test_sms_draft_skipped_without_sms_setup(self):
         from unittest.mock import patch

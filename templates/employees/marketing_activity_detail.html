@@ -86,6 +86,7 @@
           <tr>
             <th>Person</th>
             <th>Phone</th>
+            <th>Channel</th>
             <th>Status</th>
             <th>When</th>
             <th>Message sent</th>
@@ -96,6 +97,7 @@
           <tr>
             <td data-label="Person"><strong>{{ person.client_name|default:"Contact" }}</strong></td>
             <td data-label="Phone">{{ person.phone }}</td>
+            <td data-label="Channel">{{ person.channel_label|default:"WhatsApp" }}</td>
             <td data-label="Status">
               <span class="wa-auto__pill" data-status="{{ person.display_status }}">{{ person.status_label }}</span>
               {% if person.error and person.display_status == "failed" %}

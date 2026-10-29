@@ -13,9 +13,11 @@
     </p>
     <h2 class="workspace-hero-title">Activities</h2>
     <p class="workspace-hero-copy">
-      See WhatsApp shares that are still waiting, then what already went out.
-      Cancel a scheduled send before it leaves the queue. If something failed, fix Twilio in
-      <a href="{{ settings_url }}">Twilio settings</a>, then retry.
+      Every queued and sent message per channel — WhatsApp, SMS, and Message —
+      including the sale, credit, and quotation auto messages once they are
+      activated. Open a message for the full text and each recipient's status.
+      If something failed, fix the channel in
+      <a href="{{ settings_url }}">messaging settings</a>, then retry.
     </p>
   </div>
   <div class="wa-share-hero__aside" data-wa-summary>
@@ -38,8 +40,7 @@
 </section>
 
 <section class="wa-activities" data-animate="rise" data-delay="1" data-wa-activities
-  data-pending-empty="Nothing waiting. Scheduled item shares and queued messages will show up here."
-  data-history-empty="No completed sends yet. Share items, then check back here."
+  data-feed-empty="Nothing on this channel yet. Queued and sent messages will show up here."
 >
   {{ activities|json_script:"wa-activities-data" }}
   <p class="wa-auto__banner daraja-form-message" data-wa-message hidden></p>
@@ -48,37 +49,26 @@
     <header class="item-panel-head">
       <div class="item-panel-head-top">
         <div>
-          <h2>Waiting to send</h2>
-          <p>Automated and scheduled messages that have not been sent yet. Open a send to see the message, who it went to, and each person's status.</p>
+          <h2>Message activity</h2>
+          <p>All messages per channel, newest first — broadcasts plus the sale, credit, and quotation auto messages. Open a row for the full send.</p>
         </div>
-        <p class="item-count" data-wa-pending-count>
-          {{ activities.summary.pending_batches|default:0 }} batch{{ activities.summary.pending_batches|default:0|pluralize }}
-        </p>
+        <p class="item-count" data-wa-feed-count></p>
       </div>
+      <nav class="td-tabs wa-act-tabs" data-wa-channel-tabs>
+        {% for chan in activities.channels %}
+        <button
+          type="button"
+          class="td-tab{% if forloop.first %} is-active{% endif %}"
+          data-wa-channel="{{ chan.slug }}"
+          aria-pressed="{% if forloop.first %}true{% else %}false{% endif %}"
+        >
+          <span>{{ chan.label }}</span>
+        </button>
+        {% endfor %}
+      </nav>
     </header>
-    <div class="staff-table-wrap perm-table-scroll" data-wa-pending>
-      {% if not activities.pending %}
-      <p class="wa-act-empty">Nothing waiting. Scheduled item shares and queued messages will show up here.</p>
-      {% endif %}
-    </div>
-  </section>
-
-  <section class="item-panel item-panel--dense wa-act-panel">
-    <header class="item-panel-head">
-      <div class="item-panel-head-top">
-        <div>
-          <h2>Sent history</h2>
-          <p>Messages that already left the queue — sent, viewed, cancelled, or failed. Open a send for the full message and each recipient.</p>
-        </div>
-        <p class="item-count" data-wa-history-count>
-          {{ activities.summary.history_batches|default:0 }} send{{ activities.summary.history_batches|default:0|pluralize }}
-        </p>
-      </div>
-    </header>
-    <div class="staff-table-wrap perm-table-scroll" data-wa-history>
-      {% if not activities.history %}
-      <p class="wa-act-empty">No completed sends yet. Share items, then check back here.</p>
-      {% endif %}
+    <div class="staff-table-wrap perm-table-scroll" data-wa-feed>
+      <p class="wa-act-empty">Nothing on this channel yet. Queued and sent messages will show up here.</p>
     </div>
   </section>
 </section>

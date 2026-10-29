@@ -9,6 +9,7 @@ from typing import Any
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from .twilio import bridge_state_as_dict, fetch_bridge_status
@@ -19,6 +20,7 @@ from .constants import (
     CAMPAIGN_DRAFT,
     CAMPAIGN_QUEUED,
     CAMPAIGN_SENDING,
+    CHANNEL_CHOICES,
     CHANNEL_LABELS,
     CHANNEL_SMS,
     CHANNEL_VALUES,
@@ -858,6 +860,7 @@ def activities_payload(*, limit: int = 50) -> dict[str, Any]:
     return {
         "pending": pending,
         "history": history,
+        "channels": channel_activities_payload(),
         "summary": {
             "pending_batches": len(pending),
             "scheduled_batches": scheduled,
@@ -866,6 +869,85 @@ def activities_payload(*, limit: int = 50) -> dict[str, Any]:
             "history_batches": len(history),
         },
     }
+
+
+def channel_activities_payload(*, per_channel: int = 60) -> list[dict[str, Any]]:
+    """Recent individual messages grouped by channel (WhatsApp, SMS, Message).
+
+    Triggered sends (sale / credit / quotation) appear here too — they are
+    queued as one-recipient campaigns, so each row shows its message and
+    delivery status.
+    """
+    cap = max(1, per_channel)
+    counts = {
+        row["channel"]: row
+        for row in OutboundMessage.objects.values("channel").annotate(
+            total=Count("id"),
+            waiting=Count("id", filter=Q(status=MSG_PENDING)),
+            failed=Count(
+                "id", filter=Q(status__in=[MSG_FAILED, MSG_MANUAL_REVIEW])
+            ),
+        )
+    }
+    feeds = []
+    for slug, label in CHANNEL_CHOICES:
+        rows = list(
+            OutboundMessage.objects.filter(channel=slug)
+            .select_related("campaign")
+            .order_by("-created_at")[:cap]
+        )
+        feed = []
+        for message in rows:
+            campaign = message.campaign
+            filters = campaign.filters if isinstance(campaign.filters, dict) else {}
+            body = (message.body or "").strip() or (campaign.body_template or "").strip()
+            labels = {
+                "created_label": _format_when(message.created_at),
+                "sent_label": _format_when(message.sent_at),
+                "delivered_label": _format_when(message.delivered_at),
+                "read_label": _format_when(message.read_at),
+                "updated_label": _format_when(message.updated_at),
+            }
+            display = outbound_display_status(
+                status=message.status or "",
+                read_at=message.read_at,
+                delivered_at=message.delivered_at,
+            )
+            feed.append(
+                {
+                    "id": message.pk,
+                    "campaign_id": campaign.pk,
+                    "kind_label": _campaign_kind_label(filters),
+                    "client_name": (message.client_name or "").strip() or "Customer",
+                    "phone": message.phone or "",
+                    "body": body,
+                    "body_preview": body.replace("\n", " ")[:140],
+                    "status": message.status or "",
+                    "display_status": display,
+                    "status_label": outbound_status_label(display),
+                    "when_label": _message_when_label(display, labels),
+                    "created_label": labels["created_label"],
+                    "error": (message.error or "").strip(),
+                    "is_triggered": bool(filters.get("triggered_message")),
+                    "campaign_status": campaign.status,
+                    "campaign_status_label": _campaign_status_label(
+                        campaign, is_scheduled=False
+                    ),
+                }
+            )
+        stats = counts.get(slug) or {}
+        feeds.append(
+            {
+                "slug": slug,
+                "label": label,
+                "waiting": int(stats.get("waiting") or 0),
+                "failed": int(stats.get("failed") or 0),
+                "total": int(stats.get("total") or 0),
+                "shown": len(feed),
+                "messages": feed,
+            }
+        )
+    return feeds
 
 
 def _run_campaign_inline(campaign_id: int) -> None:

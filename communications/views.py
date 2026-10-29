@@ -552,7 +552,7 @@ def whatsapp_inbox(request, role_segment):
 @active_employee_required
 @require_http_methods(["GET", "POST"])
 def marketing_activities(request, role_segment):
-    """WhatsApp send history: queued, delivered, viewed, cancel, and retry."""
+    """Message activity per channel: queued, delivered, viewed, cancel, and retry."""
     profile, deny = _guard(request, role_segment)
     if deny:
         return deny
@@ -567,7 +567,7 @@ def marketing_activities(request, role_segment):
     meta = {
         "title": "Activities",
         "headline": "Activities",
-        "summary": "Track WhatsApp item shares: queued, sent, viewed, cancelled, and failed.",
+        "summary": "Track WhatsApp, SMS, and message activity: queued, sent, viewed, cancelled, and failed.",
         "icon": "history",
     }
     try:
