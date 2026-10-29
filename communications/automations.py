@@ -457,7 +457,9 @@ def maybe_send_new_item_catalogue(item, *, request=None) -> None:
         )
 
 
-def render_trigger_message(template: str, receipt, *, link: str = "") -> str:
+def render_trigger_message(
+    template: str, receipt, *, link: str = "", request=None
+) -> str:
     """Expand {placeholders} for a triggered message — plain str.replace only."""
     client_name = (getattr(receipt, "client_name", "") or "").strip()
     first = client_name.split()[0].title() if client_name else "Customer"
@@ -472,12 +474,20 @@ def render_trigger_message(template: str, receipt, *, link: str = "") -> str:
         "{total}": _kes(getattr(receipt, "total", None)),
         "{receipt_number}": (getattr(receipt, "receipt_number", "") or "").strip(),
         "{due_date}": due_date.strftime("%d %b %Y") if due_date else "",
+        "{account_link}": "",
     }
     body = template or ""
+    url = (link or "").strip()
+    if "{account_link}" in body or "{account_link}" in url:
+        replacements["{account_link}"] = _credit_account_pay_url(
+            receipt, request=request
+        )
     for key, value in replacements.items():
         body = body.replace(key, value)
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
-    url = (link or "").strip()
+    for key, value in replacements.items():
+        url = url.replace(key, value)
+    url = url.strip()
     if url:
         body = f"{body}\n\n{url}" if body else url
     return body
@@ -513,7 +523,9 @@ def maybe_send_triggered_messages(receipt, *, request=None) -> None:
     if not phone:
         return
     for draft in drafts:
-        body = render_trigger_message(draft.body, receipt, link=draft.link)
+        body = render_trigger_message(
+            draft.body, receipt, link=draft.link, request=request
+        )
         if not body:
             continue
         _queue_triggered_send(
@@ -654,6 +666,7 @@ def triggered_message_as_dict(row) -> dict:
         "timing_label": _timing_label(row.delay_minutes),
         "body": row.body,
         "link": row.link,
+        "link_is_account": (row.link or "").strip() == "{account_link}",
         "status": row.status,
         "status_label": row.get_status_display(),
         "is_active": row.status == MESSAGE_STATUS_ACTIVE,
@@ -709,7 +722,9 @@ def save_triggered_message(data, *, shop=None):
         raise ValidationError("Write the message to send.")
 
     link = (data.get("link") or "").strip()[:500]
-    if link and not link.lower().startswith(("http://", "https://")):
+    if link and link.startswith("{"):
+        pass  # {account_link}-style token — resolves per customer at send time
+    elif link and not link.lower().startswith(("http://", "https://")):
         link = f"https://{link}"
 
     status = (data.get("status") or "").strip()

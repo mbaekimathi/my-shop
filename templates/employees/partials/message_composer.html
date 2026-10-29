@@ -125,7 +125,16 @@
             data-msg-link
           >
         </span>
-        <p class="msg-hint">Sent to the customer on its own line at the end of the message.</p>
+        <p class="msg-hint">
+          Sent to the customer on its own line at the end of the message.
+          Use {account_link} to send each customer a private link to their own credit account.
+        </p>
+        <span class="msg-chips" role="group" aria-label="Fill the link field">
+          <span class="msg-chips-label">Insert:</span>
+          <button type="button" class="msg-chip" data-link-insert="{account_link}">
+            Customer credit account
+          </button>
+        </span>
       </label>
 
       <div class="msg-actions">

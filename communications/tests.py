@@ -2316,7 +2316,43 @@ class TriggeredMessageTests(TestCase):
         self.assertIn("SL-TRIG-1", body)
         self.assertTrue(body.endswith("https://shop.test/offer"))
 
-    def test_active_draft_queues_campaign_message(self):
+    @override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")
+    def test_account_link_placeholder_resolves_per_client(self):
+        from communications.automations import render_trigger_message
+        from shops.credit_note import unsign_client_credit_token
+
+        body = render_trigger_message(
+            "Hi {first_name}, view your account.",
+            self.receipt,
+            link="{account_link}",
+        )
+        url = body.rsplit("\n", 1)[-1].strip()
+        self.assertTrue(url.startswith("https://pay.myshop.test/credit-note/"))
+        token = url.rstrip("/").rsplit("/", 1)[-1]
+        self.assertEqual(unsign_client_credit_token(token), self.customer.pk)
+
+    def test_account_link_placeholder_omitted_without_client(self):
+        from communications.automations import render_trigger_message
+
+        self.receipt.client = None
+        self.receipt.save(update_fields=["client"])
+        body = render_trigger_message(
+            "Hi {first_name}.", self.receipt, link="{account_link}"
+        )
+        self.assertNotIn("/credit-note/", body)
+
+    def test_save_draft_keeps_account_link_token_verbatim(self):
+        from communications.automations import save_triggered_message
+
+        draft = save_triggered_message(
+            {
+                "trigger": "sale",
+                "body": "Hi {first_name}.",
+                "link": "{account_link}",
+                "status": "draft",
+            }
+        )
+        self.assertEqual(draft.link, "{account_link}")
         from unittest.mock import patch
 
         from communications.automations import maybe_send_triggered_messages

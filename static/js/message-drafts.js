@@ -24,6 +24,7 @@
     total: "KSh 400.00",
     receipt_number: "SL-0001",
     due_date: "in 30 days",
+    account_link: "https://myshop.example/credit-note/AbC123",
   };
 
   function timingValue() {
@@ -54,7 +55,10 @@
     });
     pvBody.textContent = text;
 
-    const url = (link?.value || "").trim();
+    let url = (link?.value || "").trim();
+    Object.entries(sample).forEach(([key, value]) => {
+      url = url.split(`{${key}}`).join(value);
+    });
     if (pvLink) {
       if (url) {
         pvLink.textContent = url;
@@ -92,6 +96,15 @@
       body.value = body.value.slice(0, start) + token + body.value.slice(end);
       body.focus();
       body.selectionStart = body.selectionEnd = start + token.length;
+      renderPreview();
+    });
+  });
+
+  root.querySelectorAll("[data-link-insert]").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      if (!link) return;
+      link.value = chip.dataset.linkInsert;
+      link.focus();
       renderPreview();
     });
   });

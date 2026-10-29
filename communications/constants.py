@@ -154,6 +154,7 @@ TRIGGER_MESSAGE_PLACEHOLDERS = (
     ("{total}", "Receipt total"),
     ("{receipt_number}", "Receipt number"),
     ("{due_date}", "Credit due date"),
+    ("{account_link}", "Credit account link"),
 )
 
 # "Send after N <unit>" — stored as minutes on the draft.
