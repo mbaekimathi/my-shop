@@ -3,7 +3,7 @@ from django.urls import path
 from items import views as item_views
 
 from . import views
-from shops import credit_note_views, receipt_doc_views
+from shops import credit_note_views, receipt_doc_views, trade_note_views
 
 app_name = "core"
 
@@ -35,6 +35,11 @@ urlpatterns = [
         "credit-note/<str:token>/stk/<str:payment_id>/",
         credit_note_views.credit_note_stk_status,
         name="credit_note_stk_status",
+    ),
+    path(
+        "trades/<str:token>/",
+        trade_note_views.trade_note_page,
+        name="trade_note",
     ),
     path(
         "receipt/<str:token>/",

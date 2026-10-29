@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from datetime import timezone as dt_timezone
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 from django.db.models import (
     Case,
@@ -444,6 +447,30 @@ def _parse_receipt_id_set(receipt_ids) -> set[int]:
     return parsed
 
 
+def _notify_supplier_after_payment(
+    *, kind: str, account_id: int, amount, balance_after, receipt_ref: str = ""
+) -> None:
+    """Post-commit: tell the supplier their payment arrived."""
+    try:
+        from communications.automations import maybe_send_supplier_payment_notice
+
+        model = ExpenseSupplier if kind == "expense" else Supplier
+        supplier = model.objects.filter(pk=account_id).first()
+        if supplier is None:
+            return
+        maybe_send_supplier_payment_notice(
+            supplier,
+            kind=kind,
+            amount=amount,
+            balance_after=balance_after,
+            receipt_ref=receipt_ref,
+        )
+    except Exception:
+        logger.exception(
+            "Supplier payment notice failed for %s account %s", kind, account_id
+        )
+
+
 def apply_account_payment(
     *,
     profile,
@@ -690,6 +717,14 @@ def apply_account_payment(
                 (_due_amount(row.amount, row.amount_paid) for row in expenses),
                 _zero(),
             )
+            transaction.on_commit(
+                lambda: _notify_supplier_after_payment(
+                    kind="expense",
+                    account_id=supplier.pk,
+                    amount=pay_amount,
+                    balance_after=balance_after,
+                )
+            )
             return {
                 "ok": True,
                 "kind": kind,
@@ -786,6 +821,14 @@ def apply_account_payment(
             balance_after += _due_amount(
                 by_movement[mid]["total"], movement.amount_paid
             )
+        transaction.on_commit(
+            lambda: _notify_supplier_after_payment(
+                kind="stock",
+                account_id=supplier.pk,
+                amount=pay_amount,
+                balance_after=balance_after,
+            )
+        )
         return {
             "ok": True,
             "kind": kind,
@@ -1065,6 +1108,15 @@ def apply_supplier_receipt_payment(
                 _zero(),
             )
             number = format_simple_doc_number("E", expense.pk)
+            transaction.on_commit(
+                lambda: _notify_supplier_after_payment(
+                    kind="expense",
+                    account_id=supplier.pk,
+                    amount=pay_amount,
+                    balance_after=balance_after,
+                    receipt_ref=number,
+                )
+            )
             return {
                 "ok": True,
                 "kind": kind,
@@ -1152,6 +1204,15 @@ def apply_supplier_receipt_payment(
         for info in by_movement.values():
             balance_after += _due_amount(info["total"], info["paid"])
         number = format_simple_doc_number("I", movement.pk)
+        transaction.on_commit(
+            lambda: _notify_supplier_after_payment(
+                kind="stock",
+                account_id=supplier.pk,
+                amount=pay_amount,
+                balance_after=balance_after,
+                receipt_ref=number,
+            )
+        )
         return {
             "ok": True,
             "kind": kind,

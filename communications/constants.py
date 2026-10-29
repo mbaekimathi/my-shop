@@ -161,6 +161,7 @@ TRIGGER_MESSAGE_PLACEHOLDERS = (
     ("{receipt_number}", "Receipt number"),
     ("{due_date}", "Credit due date"),
     ("{account_link}", "Credit account link"),
+    ("{trade_link}", "Trade account link"),
     ("{receipt_link}", "Receipt link"),
     ("{quotation_link}", "Quotation link"),
 )

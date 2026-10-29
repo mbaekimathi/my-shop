@@ -261,6 +261,11 @@ urlpatterns = [
         name="role_settings",
     ),
     path(
+        "<role_segment:role_segment>/settings/communications/",
+        views.legacy_settings_communications_redirect,
+        name="legacy_role_settings_communications",
+    ),
+    path(
         "<role_segment:role_segment>/settings/<slug:section>/",
         views.employee_settings_section,
         name="role_settings_section",

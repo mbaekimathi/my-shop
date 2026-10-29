@@ -243,13 +243,7 @@ def build_stock_supplier_notification(movement, *, shop=None) -> str:
         total += extra_total
         item_rows.append(f"- and {extra} more item(s)")
     items_block = "\n".join(item_rows) if item_rows else "- Stock received"
-    payment = ""
-    if first and (first.payment_status or "").strip():
-        from items.models import StockPaymentStatus
-
-        payment = dict(StockPaymentStatus.choices).get(
-            first.payment_status, first.payment_status.replace("_", " ").title()
-        )
+    payment = _movement_payment_line(movement, total=total)
     from shops.services import DOC_NUMBER_PREFIX, format_simple_doc_number
 
     ref = format_simple_doc_number(DOC_NUMBER_PREFIX["stock_in"], movement.pk)
@@ -316,14 +310,87 @@ def build_expense_supplier_notification(expenses, *, shop=None) -> str:
     return "\n".join(parts).strip()
 
 
+def _movement_payment_line(movement, *, total) -> str:
+    """Paid vs unpaid wording for a stock movement, with the balance due."""
+    from items.models import StockPaymentStatus
+
+    status = (getattr(movement, "payment_status", "") or "").strip()
+    if not status:
+        statuses = {
+            (line.payment_status or "").strip() for line in movement.lines.all()
+        }
+        statuses.discard("")
+        if statuses == {StockPaymentStatus.PAID}:
+            status = StockPaymentStatus.PAID
+        elif statuses and StockPaymentStatus.PAID in statuses:
+            status = StockPaymentStatus.PARTIAL
+        elif statuses:
+            status = next(iter(statuses))
+    paid = Decimal(getattr(movement, "amount_paid", 0) or 0)
+    due = Decimal(total or 0) - paid
+    if due < 0:
+        due = Decimal("0")
+    if status == StockPaymentStatus.PAID or due <= 0:
+        return "Payment: Paid in full. Thank you."
+    if status == StockPaymentStatus.PARTIAL or paid > 0:
+        return (
+            f"Payment: Part paid — balance {_kes(due)}. "
+            "We'll confirm once it's settled."
+        )
+    return (
+        f"Payment: Unpaid — balance {_kes(due)}. "
+        "We'll confirm once it's settled."
+    )
+
+
+def _supplier_notice_channels(row) -> list[str]:
+    """Delivery channels ready for supplier notices (WhatsApp and/or SMS)."""
+    return [
+        channel
+        for channel in (CHANNEL_WHATSAPP, CHANNEL_SMS)
+        if _triggered_channel_ready(row, channel)
+    ]
+
+
+def _queue_supplier_notice(
+    phone: str, body: str, *, label: str, party_name: str = ""
+) -> None:
+    """Persist a supplier notice campaign, then deliver it off the request path.
+
+    Rows are created inline so a worker recycle can never lose the send;
+    only provider delivery runs on a daemon thread and the cron queue
+    worker finishes anything left queued.
+    """
+    row = get_communications_settings()
+    channels = _supplier_notice_channels(row)
+    if not channels:
+        return
+    campaign_id = _queue_triggered_send(
+        phone=phone,
+        body=body,
+        receipt=None,
+        delay_minutes=0,
+        label=label,
+        channels=channels,
+        party_name=party_name,
+    )
+    if not campaign_id:
+        return
+    thread = threading.Thread(
+        target=_dispatch_queued_triggered,
+        args=([campaign_id],),
+        daemon=True,
+        name="comms-supplier-notice",
+    )
+    thread.start()
+
+
 def maybe_send_stock_supplier_notice(movement, *, shop=None) -> None:
-    """Send Buy stock WhatsApp to the supplier when that automation is on."""
+    """Message the supplier after Buy stock when that automation is on."""
     from items.models import StockEntrySource, StockMovementType
 
     row = get_communications_settings()
     if not row.enable_automations or not row.auto_stock_supplier:
-        return
-    if not row.has_twilio_credentials():
         return
     if getattr(movement, "movement_type", "") != StockMovementType.IN:
         return
@@ -334,19 +401,23 @@ def maybe_send_stock_supplier_notice(movement, *, shop=None) -> None:
     if not phone or not body:
         if not phone:
             logger.warning(
-                "Buy stock WhatsApp skipped for movement %s: no supplier phone.",
+                "Buy stock supplier notice skipped for movement %s: no supplier phone.",
                 getattr(movement, "pk", None),
             )
         return
-    _queue_send(phone, body, name=f"comms-auto-stock-{movement.pk}")
+    first = movement.lines.first()
+    _queue_supplier_notice(
+        phone,
+        body,
+        label="Supplier notice · Buy stock",
+        party_name=(getattr(first, "supplier_name", "") or "").strip(),
+    )
 
 
 def maybe_send_expense_supplier_notice(expense=None, *, expenses=None, shop=None) -> None:
-    """Send Register expense WhatsApp to the supplier when that automation is on."""
+    """Message the supplier after Register expense when that automation is on."""
     row = get_communications_settings()
     if not row.enable_automations or not row.auto_expense_supplier:
-        return
-    if not row.has_twilio_credentials():
         return
     rows = [item for item in (expenses or []) if item is not None]
     if not rows and expense is not None:
@@ -362,11 +433,75 @@ def maybe_send_expense_supplier_notice(expense=None, *, expenses=None, shop=None
     if not phone or not body:
         if not phone:
             logger.warning(
-                "Expense WhatsApp skipped for expense %s: no supplier phone.",
+                "Expense supplier notice skipped for expense %s: no supplier phone.",
                 getattr(first, "pk", None),
             )
         return
-    _queue_send(phone, body, name=f"comms-auto-expense-{first.pk}")
+    _queue_supplier_notice(
+        phone,
+        body,
+        label="Supplier notice · Expense",
+        party_name=(getattr(first, "supplier_name", "") or "").strip(),
+    )
+
+
+def build_supplier_payment_notification(
+    supplier_name: str, *, amount, balance_after, receipt_ref: str = ""
+) -> str:
+    """Supplier-facing confirmation when a payment is applied to their account."""
+    name = _party_first_name(supplier_name, fallback="there")
+    parts = [
+        f"Hi {name},",
+        "",
+        f"We paid {_kes(amount)} for your supplies.",
+    ]
+    ref = (receipt_ref or "").strip()
+    if ref:
+        parts.append(f"Ref {ref}")
+    remaining = Decimal(balance_after or 0)
+    if remaining > 0:
+        parts.append(f"Balance left: {_kes(remaining)}")
+    else:
+        parts.append("Your account is now fully settled.")
+    parts.extend(["", "Thank you."])
+    return "\n".join(parts).strip()
+
+
+def maybe_send_supplier_payment_notice(
+    supplier, *, kind: str, amount, balance_after, receipt_ref: str = ""
+) -> None:
+    """Message a supplier when a payment is applied to their supplies/expenses."""
+    row = get_communications_settings()
+    if not row.enable_automations:
+        return
+    enabled = (
+        row.auto_expense_supplier if kind == "expense" else row.auto_stock_supplier
+    )
+    if not enabled:
+        return
+    phone = _supplier_whatsapp_phone(
+        dial=getattr(supplier, "phone_country_code", ""),
+        national=getattr(supplier, "phone_number", ""),
+    )
+    body = build_supplier_payment_notification(
+        getattr(supplier, "name", ""),
+        amount=amount,
+        balance_after=balance_after,
+        receipt_ref=receipt_ref,
+    )
+    if not phone or not body:
+        if not phone:
+            logger.warning(
+                "Supplier payment notice skipped for %s: no supplier phone.",
+                getattr(supplier, "pk", "?"),
+            )
+        return
+    _queue_supplier_notice(
+        phone,
+        body,
+        label="Supplier notice · Payment",
+        party_name=(getattr(supplier, "name", "") or "").strip(),
+    )
 
 
 def build_item_catalogue_caption(item) -> str:
@@ -494,6 +629,29 @@ def maybe_send_new_item_catalogue(item, *, request=None) -> None:
         )
 
 
+def _trade_account_url(receipt, *, request=None) -> str:
+    """Signed public URL for the receipt client's trade account, or "" if none."""
+    client_id = getattr(receipt, "client_id", None)
+    if not client_id:
+        return ""
+    try:
+        from shops.trade_link import client_trade_url
+
+        url = (client_trade_url(int(client_id), request=request) or "").strip()
+    except Exception:
+        logger.exception(
+            "Trade account URL failed for receipt %s", getattr(receipt, "pk", None)
+        )
+        return ""
+    if not url.lower().startswith(("http://", "https://")):
+        logger.warning(
+            "Trade account URL is not clickable for receipt %s.",
+            getattr(receipt, "pk", None),
+        )
+        return ""
+    return url
+
+
 def _receipt_doc_url(receipt, *, quotation: bool, request=None) -> str:
     """Signed public URL for this receipt's document page, or "" if mismatched."""
     is_quotation = getattr(receipt, "kind", "") == ShopReceiptKind.QUOTATION
@@ -542,6 +700,7 @@ def render_trigger_message(
         "{receipt_number}": (getattr(receipt, "receipt_number", "") or "").strip(),
         "{due_date}": due_date.strftime("%d %b %Y") if due_date else "",
         "{account_link}": "",
+        "{trade_link}": "",
         "{receipt_link}": "",
         "{quotation_link}": "",
     }
@@ -549,6 +708,10 @@ def render_trigger_message(
     url = (link or "").strip()
     if "{account_link}" in body or "{account_link}" in url:
         replacements["{account_link}"] = _credit_account_pay_url(
+            receipt, request=request
+        )
+    if "{trade_link}" in body or "{trade_link}" in url:
+        replacements["{trade_link}"] = _trade_account_url(
             receipt, request=request
         )
     if "{receipt_link}" in body or "{receipt_link}" in url:
@@ -744,6 +907,7 @@ def _queue_triggered_send(
     delay_minutes: int,
     label: str,
     channels: list[str],
+    party_name: str = "",
 ) -> int | None:
     """Persist a one-recipient campaign; return its pk when it is due to send now."""
     from datetime import timedelta
@@ -766,13 +930,16 @@ def _queue_triggered_send(
         recipient_count=1,
     )
     client = getattr(receipt, "client", None)
+    recipient_name = (party_name or "").strip() or (
+        getattr(receipt, "client_name", "") or ""
+    ).strip()
     OutboundMessage.objects.bulk_create(
         [
             OutboundMessage(
                 campaign=campaign,
                 channel=channel,
                 client=client if getattr(client, "pk", None) else None,
-                client_name=(getattr(receipt, "client_name", "") or "").strip(),
+                client_name=recipient_name,
                 phone=phone,
                 body=body,
                 status=MSG_PENDING,
@@ -862,6 +1029,7 @@ def _timing_label(delay_minutes: int) -> str:
 
 _LINK_TOKEN_LABELS = {
     "{account_link}": "Each customer receives their own credit account link.",
+    "{trade_link}": "Each customer receives their own trade account link.",
     "{receipt_link}": "Each customer receives a private link to this receipt.",
     "{quotation_link}": "Each customer receives a private link to this quotation.",
 }

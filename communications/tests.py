@@ -773,7 +773,7 @@ class WhatsAppAutomationsPageTests(TestCase):
         self.assertContains(response, "Register expense")
         self.assertContains(
             response,
-            "Send a WhatsApp notice to the supplier after stock is bought from the shop popup.",
+            "Message the supplier after stock is bought",
         )
         self.assertContains(
             response,
@@ -2452,6 +2452,103 @@ class TriggeredMessageTests(TestCase):
         self.assertContains(response, "Quotation")
         self.assertContains(response, "QT-TRIG-2")
         self.assertEqual(self.client.get(f"/receipt/{token}/").status_code, 404)
+
+    @override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")
+    def test_trade_link_placeholder_resolves_per_client(self):
+        from communications.automations import render_trigger_message
+        from shops.trade_link import unsign_client_trade_token
+
+        body = render_trigger_message(
+            "Hi {first_name}, view your trades.",
+            self.receipt,
+            link="{trade_link}",
+        )
+        url = body.rsplit("\n", 1)[-1].strip()
+        self.assertTrue(url.startswith("https://pay.myshop.test/trades/"))
+        token = url.rstrip("/").rsplit("/", 1)[-1]
+        self.assertEqual(unsign_client_trade_token(token), self.customer.pk)
+
+    def test_trade_link_placeholder_omitted_without_client(self):
+        from communications.automations import render_trigger_message
+
+        self.receipt.client = None
+        self.receipt.save(update_fields=["client"])
+        body = render_trigger_message(
+            "Hi {first_name}.", self.receipt, link="{trade_link}"
+        )
+        self.assertNotIn("/trades/", body)
+
+    def test_public_trade_page_shows_only_that_clients_trades(self):
+        from decimal import Decimal
+
+        from shops.models import (
+            Client,
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptLine,
+            ShopReceiptStatus,
+        )
+        from shops.trade_link import sign_client_trade_token
+
+        trade = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="TO-TRIG-1",
+            kind=ShopReceiptKind.TRADE_OUT,
+            total=Decimal("500.00"),
+            amount_paid=Decimal("200.00"),
+            created_by=self.it,
+            client=self.customer,
+            client_name="KIM OTIENO",
+            client_phone="+254795606116",
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=trade,
+            item_name="DRILL MACHINE",
+            quantity=Decimal("1"),
+            unit_price=Decimal("500.00"),
+            line_total=Decimal("500.00"),
+        )
+        other_client = Client.objects.create(
+            full_name="JANE DOE",
+            phone_number="+254722000111",
+            phone_normalized="254722000111",
+            created_by=self.it,
+        )
+        other_trade = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="TO-OTHER-1",
+            kind=ShopReceiptKind.TRADE_OUT,
+            total=Decimal("900.00"),
+            created_by=self.it,
+            client=other_client,
+            client_name="JANE DOE",
+            status=ShopReceiptStatus.ACTIVE,
+        )
+
+        token = sign_client_trade_token(self.customer.pk)
+        response = self.client.get(f"/trades/{token}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "TO-TRIG-1")
+        self.assertContains(response, "DRILL MACHINE")
+        self.assertContains(response, "KSh 300")
+        self.assertNotContains(response, "TO-OTHER-1")
+        # Tampered/foreign tokens cannot reach a trade account.
+        self.assertEqual(self.client.get("/trades/bogus-token/").status_code, 404)
+
+    def test_draft_save_keeps_trade_link_token_verbatim(self):
+        from communications.automations import save_triggered_message
+
+        draft = save_triggered_message(
+            {
+                "trigger": "trade_out",
+                "body": "Hi {first_name}.",
+                "link": "{trade_link}",
+                "status": "draft",
+            }
+        )
+        self.assertEqual(draft.link, "{trade_link}")
+
         from unittest.mock import patch
 
         from communications.automations import maybe_send_triggered_messages
@@ -3215,6 +3312,7 @@ class SupplierAutomationTests(TestCase):
             whatsapp_from="whatsapp:+14155238886",
         )
         set_communications_setting(field="enable_automations", enabled=True)
+        set_communications_setting(field="enable_whatsapp", enabled=True)
         set_communications_setting(field="auto_stock_supplier", enabled=True)
         set_communications_setting(field="auto_expense_supplier", enabled=True)
 
@@ -3232,8 +3330,34 @@ class SupplierAutomationTests(TestCase):
         self.assertIn("We received stock at SUPPLIER WA SHOP.", body)
         self.assertIn("RICE 5KG x2", body)
         self.assertIn("Total: KSh 800", body)
-        self.assertIn("Payment: Paid", body)
+        self.assertIn("Payment: Paid in full", body)
         self.assertIn("Ref I", body)
+
+    def test_unpaid_supply_notice_states_balance(self):
+        from decimal import Decimal
+
+        from communications.automations import build_stock_supplier_notification
+        from items.models import StockMovement, StockMovementLine
+
+        movement = StockMovement.objects.create(
+            movement_type=self.movement.movement_type,
+            entry_source=self.movement.entry_source,
+            shop=self.shop,
+            created_by=self.it,
+        )
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=self.item,
+            quantity=1,
+            buying_price=Decimal("300.00"),
+            payment_status="unpaid",
+            supplier_name="KIM SUPPLIES",
+            supplier_phone_country_code="+254",
+            supplier_phone_number="795606115",
+        )
+        body = build_stock_supplier_notification(movement)
+        self.assertIn("Payment: Unpaid — balance KSh 300", body)
+        self.assertIn("once it's settled", body)
 
     def test_expense_supplier_notice_text(self):
         from communications.automations import build_expense_supplier_notification
@@ -3246,64 +3370,176 @@ class SupplierAutomationTests(TestCase):
         self.assertIn("Payment: Unpaid", body)
         self.assertIn("Ref E", body)
 
-    def test_buy_stock_sends_whatsapp(self):
+    def test_buy_stock_queues_supplier_notice(self):
         from unittest.mock import patch
 
         from communications.automations import maybe_send_stock_supplier_notice
+        from communications.models import OutboundMessage
 
-        with (
-            patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.twilio.send_whatsapp_message") as send,
-        ):
-            send.return_value = {"ok": True, "messageId": "SMSTOCK1"}
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
             maybe_send_stock_supplier_notice(self.movement)
-        send.assert_called_once()
-        self.assertEqual(send.call_args.kwargs["phone"], "+254795606115")
-        self.assertIn("We received stock at SUPPLIER WA SHOP.", send.call_args.kwargs["text"])
+        dispatch.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertEqual(message.channel, "whatsapp")
+        self.assertEqual(message.phone, "+254795606115")
+        self.assertIn("We received stock at SUPPLIER WA SHOP.", message.body)
+        self.assertIn("Payment: Paid in full", message.body)
+        self.assertEqual(message.client_name, "KIM SUPPLIES")
 
-    def test_register_expense_sends_whatsapp(self):
+    def test_register_expense_queues_supplier_notice(self):
         from unittest.mock import patch
 
         from communications.automations import maybe_send_expense_supplier_notice
+        from communications.models import OutboundMessage
 
-        with (
-            patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.twilio.send_whatsapp_message") as send,
-        ):
-            send.return_value = {"ok": True, "messageId": "SMEXP1"}
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
             maybe_send_expense_supplier_notice(expense=self.expense)
-        send.assert_called_once()
-        self.assertEqual(send.call_args.kwargs["phone"], "+254712345678")
-        self.assertIn("We recorded an expense at SUPPLIER WA SHOP.", send.call_args.kwargs["text"])
+        dispatch.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertEqual(message.channel, "whatsapp")
+        self.assertEqual(message.phone, "+254712345678")
+        self.assertIn("We recorded an expense at SUPPLIER WA SHOP.", message.body)
 
     def test_stock_send_skipped_when_toggle_off(self):
         from unittest.mock import patch
 
         from communications.automations import maybe_send_stock_supplier_notice
+        from communications.models import OutboundMessage
         from shops.services import set_communications_setting
 
         set_communications_setting(field="auto_stock_supplier", enabled=False)
-        with (
-            patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.twilio.send_whatsapp_message") as send,
-        ):
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
             maybe_send_stock_supplier_notice(self.movement)
-        send.assert_not_called()
+        dispatch.assert_not_called()
+        self.assertFalse(OutboundMessage.objects.exists())
 
     def test_warehouse_stock_in_does_not_send(self):
         from unittest.mock import patch
 
         from communications.automations import maybe_send_stock_supplier_notice
+        from communications.models import OutboundMessage
         from items.models import StockEntrySource
 
         self.movement.entry_source = StockEntrySource.STOCK_MANAGEMENT
         self.movement.save(update_fields=["entry_source"])
-        with (
-            patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.twilio.send_whatsapp_message") as send,
-        ):
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
             maybe_send_stock_supplier_notice(self.movement)
-        send.assert_not_called()
+        dispatch.assert_not_called()
+        self.assertFalse(OutboundMessage.objects.exists())
+
+    def test_supplier_payment_notice_text(self):
+        from communications.automations import build_supplier_payment_notification
+
+        body = build_supplier_payment_notification(
+            "KIM SUPPLIES", amount="400", balance_after="600", receipt_ref="I7"
+        )
+        self.assertIn("Hi Kim,", body)
+        self.assertIn("We paid KSh 400 for your supplies.", body)
+        self.assertIn("Ref I7", body)
+        self.assertIn("Balance left: KSh 600", body)
+
+        settled = build_supplier_payment_notification(
+            "KIM SUPPLIES", amount="400", balance_after="0"
+        )
+        self.assertIn("Your account is now fully settled.", settled)
+
+    def test_supplier_payment_notice_queues_message(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_supplier_payment_notice
+        from communications.models import OutboundMessage
+        from items.models import Supplier
+
+        supplier = Supplier.objects.create(
+            name="KIM SUPPLIES",
+            phone_country_code="+254",
+            phone_number="795606115",
+        )
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
+            maybe_send_supplier_payment_notice(
+                supplier,
+                kind="stock",
+                amount="400",
+                balance_after="600",
+                receipt_ref="I7",
+            )
+        dispatch.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertEqual(message.phone, "+254795606115")
+        self.assertIn("We paid KSh 400 for your supplies.", message.body)
+        self.assertIn("Balance left: KSh 600", message.body)
+        self.assertEqual(message.client_name, "KIM SUPPLIES")
+
+    def test_supplier_payment_notice_skipped_when_toggle_off(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_supplier_payment_notice
+        from communications.models import OutboundMessage
+        from items.models import Supplier
+        from shops.services import set_communications_setting
+
+        supplier = Supplier.objects.create(
+            name="KIM SUPPLIES",
+            phone_country_code="+254",
+            phone_number="795606115",
+        )
+        set_communications_setting(field="auto_stock_supplier", enabled=False)
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
+            maybe_send_supplier_payment_notice(
+                supplier, kind="stock", amount="400", balance_after="0"
+            )
+        dispatch.assert_not_called()
+        self.assertFalse(OutboundMessage.objects.exists())
+
+    def test_paying_unpaid_supply_notifies_supplier(self):
+        """End-to-end: paying a stock supplier queues them a payment notice."""
+        from unittest.mock import patch
+
+        from communications.models import OutboundMessage
+        from employees.analytics_services import apply_supplier_receipt_payment
+        from items.models import Supplier, StockPaymentStatus
+
+        supplier = Supplier.objects.create(
+            name="KIM SUPPLIES",
+            phone_country_code="+254",
+            phone_number="795606115",
+        )
+        self.it.assigned_shops.add(self.shop)
+        self.movement.lines.update(payment_status=StockPaymentStatus.UNPAID)
+        with (
+            patch(
+                "django.db.transaction.on_commit",
+                side_effect=lambda cb: cb(),
+            ),
+            patch(
+                "communications.automations._dispatch_triggered_send"
+            ) as dispatch,
+        ):
+            result = apply_supplier_receipt_payment(
+                profile=self.it,
+                kind="stock",
+                account_id=supplier.pk,
+                receipt_id=self.movement.pk,
+                amount="800",
+            )
+        self.assertTrue(result["ok"])
+        dispatch.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertEqual(message.phone, "+254795606115")
+        self.assertIn("We paid KSh 800 for your supplies.", message.body)
+        self.assertIn("fully settled", message.body)
 
 
 class WhatsAppInboxTests(TestCase):

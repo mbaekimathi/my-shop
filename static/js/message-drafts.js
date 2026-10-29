@@ -25,6 +25,7 @@
     receipt_number: "SL-0001",
     due_date: "in 30 days",
     account_link: "https://myshop.example/credit-note/AbC123",
+    trade_link: "https://myshop.example/trades/TdE901",
     receipt_link: "https://myshop.example/receipt/XyZ456",
     quotation_link: "https://myshop.example/quotation/QrT789",
   };

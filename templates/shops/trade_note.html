@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ client_name }} · Your trades — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block body_class %}page-credit-note{% endblock %}
+
+{% block extra_head %}
+<meta name="robots" content="noindex, nofollow">
+{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261026-shop-switch">
+<link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/credit-note.css' %}?v=20261029-responsive">
+<link rel="stylesheet" href="{% static 'css/app/components.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261019-split">
+{% endblock %}
+
+{% block body %}
+<div class="credit-note-shell">
+  <header class="credit-note-topbar">
+    <div class="credit-note-topbar-brand">
+      {% if company_logo_url %}
+      <img src="{{ company_logo_url }}" alt="" class="credit-note-logo" width="32" height="32">
+      {% else %}
+      <span class="credit-note-logo-fallback" aria-hidden="true"></span>
+      {% endif %}
+      <div class="credit-note-topbar-copy">
+        <strong>{{ company_name|default:"MY-SHOP" }}</strong>
+        {% if site_domain %}<span>{{ site_domain }}</span>{% endif %}
+      </div>
+    </div>
+    <span class="credit-note-secure">
+      <i data-lucide="shield-check" aria-hidden="true"></i>
+      <span>Secure link</span>
+    </span>
+  </header>
+
+  <main
+    class="credit-note-page"
+    data-credit-note
+    data-animate="rise"
+    data-pay-url=""
+    data-stk-initiate-url=""
+    data-stk-status-url-template=""
+    data-stk-ready="0"
+    data-balance-raw=""
+  >
+    <section class="credit-note-hero">
+      <div class="credit-note-hero-main">
+        <div class="credit-note-avatar" aria-hidden="true">{{ client_name|slice:":1"|upper }}</div>
+        <div class="credit-note-hero-copy">
+          <p class="credit-note-kicker">Your trade account</p>
+          <h1>{{ client_name }}</h1>
+          {% if client_phone %}
+          <p class="credit-note-phone">
+            <i data-lucide="phone" aria-hidden="true"></i>
+            <span>{{ client_phone }}</span>
+          </p>
+          {% endif %}
+        </div>
+      </div>
+      <div class="credit-note-balance-card{% if can_pay %} is-due{% else %} is-clear{% endif %}">
+        <span class="credit-note-balance-label">Outstanding trade balance</span>
+        <strong class="credit-note-balance-value">{{ balance }}</strong>
+        {% if receipt_count %}
+        <em class="credit-note-balance-hint">{{ receipt_count }} trade transaction{{ receipt_count|pluralize }}</em>
+        {% endif %}
+      </div>
+    </section>
+
+    {% if summary_tiles %}
+    <section class="credit-note-stats" aria-label="Trade summary">
+      {% for tile in summary_tiles %}
+      <article class="credit-note-stat is-{{ tile.tone|default:'neutral' }}">
+        {% if tile.icon %}<i data-lucide="{{ tile.icon }}" aria-hidden="true"></i>{% endif %}
+        <div>
+          <span>{{ tile.label }}</span>
+          <strong>{{ tile.value }}</strong>
+          {% if tile.hint %}<em>{{ tile.hint }}</em>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="credit-note-block credit-note-block--ledger" aria-labelledby="trade-note-ledger-title">
+      <header class="credit-note-block-head">
+        <div class="credit-note-block-icon is-ledger" aria-hidden="true">
+          <i data-lucide="repeat"></i>
+        </div>
+        <div>
+          <p class="credit-note-block-kicker">Trade history</p>
+          <h2 id="trade-note-ledger-title">{{ ledger_title|default:"Your trades" }}</h2>
+          {% if receipt_count %}
+          <p class="credit-note-block-lead">{{ receipt_count }} transaction{{ receipt_count|pluralize }} on your account</p>
+          {% else %}
+          <p class="credit-note-block-lead">Trade-ins and trade-outs linked to you</p>
+          {% endif %}
+        </div>
+      </header>
+      <div class="credit-note-ledger">
+        {% if rows %}
+        <div class="credit-note-table-wrap">
+          <table class="credit-note-table credit-note-table--stack">
+            <thead>
+              <tr>
+                <th>Receipt</th>
+                <th>Type</th>
+                <th>Shop</th>
+                <th>Status</th>
+                <th>Total</th>
+                <th>Settled</th>
+                <th>Balance</th>
+                <th>When</th>
+                <th class="credit-note-table-actions">Items</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rows %}
+              {{ row.lines|json_script:row.id }}
+              <tr class="credit-note-row is-{{ row.status_tone|default:'neutral' }}">
+                <td class="credit-note-cell-primary" data-label="Receipt">{{ row.number }}</td>
+                <td data-label="Type">{{ row.type }}</td>
+                <td data-label="Shop">{{ row.shop }}</td>
+                <td data-label="Status">
+                  <span class="ax-status is-{{ row.status_tone|default:'neutral' }}">{{ row.status }}</span>
+                </td>
+                <td data-label="Total">{{ row.total }}</td>
+                <td data-label="Settled">{{ row.paid }}</td>
+                <td data-label="Balance" class="credit-note-due">{{ row.due }}</td>
+                <td data-label="When">{% if row.when %}{{ row.when|date:"d M Y · H:i" }}{% else %}—{% endif %}</td>
+                <td class="credit-note-table-actions" data-label="Items">
+                  <button
+                    type="button"
+                    class="credit-note-view-btn"
+                    data-credit-note-view
+                    data-lines-id="{{ row.id }}"
+                    data-receipt-number="{{ row.number }}"
+                    data-receipt-shop="{{ row.shop }}"
+                    data-receipt-total="{{ row.total }}"
+                    data-receipt-due="{{ row.due }}"
+                    aria-label="View items on {{ row.number }}"
+                  >
+                    <i data-lucide="eye" aria-hidden="true"></i>
+                    <span>View</span>
+                  </button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="ax-empty credit-note-empty">{{ empty_message|default:"No trade transactions found." }}</p>
+        {% endif %}
+      </div>
+    </section>
+  </main>
+
+  <footer class="credit-note-foot">
+    <span>{{ company_name|default:"MY-SHOP" }}</span>
+    {% if site_domain %}<span aria-hidden="true">·</span><span>{{ site_domain }}</span>{% endif %}
+  </footer>
+</div>
+
+<div class="workspace-modal credit-note-modal" data-credit-note-modal hidden>
+  <div class="workspace-modal-backdrop" data-credit-note-modal-close></div>
+  <div class="workspace-modal-dialog credit-note-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="trade-note-modal-title">
+    <div class="credit-note-modal-head">
+      <div>
+        <p class="credit-note-modal-kicker">Receipt items</p>
+        <h2 id="trade-note-modal-title" data-credit-note-modal-title>Receipt</h2>
+        <p class="credit-note-modal-meta" data-credit-note-modal-meta></p>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-credit-note-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="credit-note-modal-body" data-credit-note-modal-body></div>
+  </div>
+</div>
+
+<script src="{% static 'js/credit-note.js' %}?v=5" defer></script>
+{% endblock %}

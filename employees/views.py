@@ -181,7 +181,7 @@ def legacy_communications_redirect(request, role_segment):
 
 
 @active_employee_required
-def legacy_settings_communications_redirect(request):
+def legacy_settings_communications_redirect(request, **_kwargs):
     """Old /settings/communications/ → /settings/communication-settings/."""
     profile = get_profile_for_request(request)
     return redirect(

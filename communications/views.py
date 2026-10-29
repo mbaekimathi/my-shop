@@ -687,14 +687,14 @@ def _automation_toggles(comms: dict) -> list[dict]:
         {
             "field": "auto_stock_supplier",
             "label": "Buy stock",
-            "summary": "Send a WhatsApp notice to the supplier after stock is bought from the shop popup.",
+            "summary": "Message the supplier after stock is bought — marking whether it was paid — and again when their balance is paid.",
             "icon": "package-plus",
             "enabled": bool(comms.get("auto_stock_supplier")),
         },
         {
             "field": "auto_expense_supplier",
             "label": "Register expense",
-            "summary": "Send a WhatsApp notice to the supplier after an expense is registered from the shop popup.",
+            "summary": "Message the supplier after an expense is registered, and again when their balance is paid.",
             "icon": "banknote",
             "enabled": bool(comms.get("auto_expense_supplier")),
         },
