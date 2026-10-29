@@ -1826,7 +1826,7 @@ def sidebar_for_communications(role, *, active_view="home", profile=None):
 
     dashboard_url = reverse(role_home_url_name(role))
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-    for slug in ("twilio", "sms", "whatsapp"):
+    for slug in ("twilio", "sms", "whatsapp", "message-drafts"):
         section = get_settings_section(role, slug)
         if section is None:
             continue

@@ -127,6 +127,8 @@ def maybe_send_receipt_share(receipt, *, message: str = "", request=None) -> Non
         ShopReceiptKind.CREDIT,
     }:
         return
+    if _deliverable_triggered_draft_exists(receipt, row):
+        return
     phone = (receipt.client_phone or "").strip()
     if not phone and receipt.client_id:
         phone = (getattr(receipt.client, "phone_number", "") or "").strip()
@@ -151,6 +153,34 @@ def credit_whatsapp_required() -> bool:
         and row.auto_payment_reminder
         and row.has_twilio_credentials()
     )
+
+
+def _deliverable_triggered_draft_exists(receipt, row) -> bool:
+    """An active draft for this receipt kind with at least one ready channel.
+
+    When true, the drafted message supersedes the legacy auto receipt share so
+    the customer gets one message, not two.
+    """
+    from .models import TriggeredMessage
+
+    try:
+        drafts = TriggeredMessage.objects.filter(
+            trigger=receipt.kind,
+            status=MESSAGE_STATUS_ACTIVE,
+            **_triggered_message_scope(getattr(receipt, "shop", None)),
+        )
+        for draft in drafts:
+            if any(
+                _triggered_channel_ready(row, channel)
+                for channel in _trigger_channels(draft)
+            ):
+                return True
+    except Exception:
+        logger.exception(
+            "Triggered draft check failed for receipt %s",
+            getattr(receipt, "pk", "?"),
+        )
+    return False
 
 
 def _party_first_name(raw: str, *, fallback: str = "there") -> str:
@@ -501,10 +531,10 @@ def render_trigger_message(
 
 
 def _triggered_channel_ready(row, channel: str) -> bool:
-    """Whether the company settings can actually deliver on this channel."""
+    """Whether the company enabled this channel and saved working credentials."""
     if channel == CHANNEL_SMS:
         return bool(row.enable_sms and row.has_sms_credentials())
-    return bool(row.has_twilio_credentials())
+    return bool(row.enable_whatsapp and row.has_twilio_credentials())
 
 
 def _trigger_channels(draft) -> list[str]:

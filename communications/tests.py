@@ -2283,6 +2283,7 @@ class TriggeredMessageTests(TestCase):
             from_number="+14155552671",
             whatsapp_from="whatsapp:+14155238886",
         )
+        set_communications_setting(field="enable_whatsapp", enabled=True)
         set_communications_setting(field="enable_automations", enabled=True)
 
     def tearDown(self):
@@ -2380,6 +2381,49 @@ class TriggeredMessageTests(TestCase):
         self.assertIn("Hi Kim,", message.body)
         self.assertIn("SL-TRIG-1", message.body)
         self.assertIn("https://shop.test/thanks", message.body)
+
+    def test_whatsapp_draft_skipped_when_whatsapp_channel_off(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+        from shops.services import set_communications_setting
+
+        set_communications_setting(field="enable_whatsapp", enabled=False)
+        self._draft(channel="whatsapp")
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
+            maybe_send_triggered_messages(self.receipt)
+
+        enqueue.assert_not_called()
+        self.assertFalse(OutboundMessage.objects.exists())
+
+    def test_active_draft_suppresses_legacy_receipt_share(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_receipt_share
+        from shops.services import set_communications_setting
+
+        set_communications_setting(field="auto_sale_receipt", enabled=True)
+        self._draft(channel="whatsapp")
+        with patch("communications.automations._queue_send") as queue_send:
+            maybe_send_receipt_share(self.receipt, message="receipt text")
+
+        queue_send.assert_not_called()
+
+    def test_legacy_receipt_share_sends_when_no_active_draft(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_receipt_share
+        from shops.services import set_communications_setting
+
+        set_communications_setting(field="auto_sale_receipt", enabled=True)
+        with patch("communications.automations._queue_send") as queue_send:
+            maybe_send_receipt_share(self.receipt, message="receipt text")
+
+        queue_send.assert_called_once()
 
     def _enable_sms(self):
         from shops.models import SmsProvider
