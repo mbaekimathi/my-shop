@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 AT_API_BASE = "https://api.africastalking.com"
 BLESSED_TEXTS_API_BASE = "https://sms.blessedtexts.com"
 
+# Cloudflare blocks the default "Python-urllib/x.y" signature (error 1010).
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
 
 def _skipped() -> dict[str, Any]:
     return {"ok": True, "skipped": True, "auth_failed": False, "error": "", "detail": ""}
@@ -44,6 +50,14 @@ def _fail(error: str, *, auth_failed: bool = False) -> dict[str, Any]:
 
 def _base_url(value: str, default: str) -> str:
     return (value or "").strip().rstrip("/") or default
+
+
+def _blessed_texts_base(api_base_url: str) -> str:
+    """Base URL for BlessedTexts; tolerate users pasting the full /api/sms/v1 path."""
+    base = _base_url(api_base_url, BLESSED_TEXTS_API_BASE)
+    if base.endswith("/api/sms/v1"):
+        base = base[: -len("/api/sms/v1")]
+    return base
 
 
 def _read_error_body(exc: HTTPError) -> str:
@@ -74,7 +88,11 @@ def _post_json(url: str, payload: dict, *, timeout: int = 15) -> tuple[Any, str]
         url,
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        },
     )
     try:
         with urlopen(request, timeout=timeout) as response:
@@ -102,7 +120,11 @@ def _verify_africas_talking(
     request = Request(
         url,
         method="GET",
-        headers={"apiKey": api_key, "Accept": "application/json"},
+        headers={
+            "apiKey": api_key,
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        },
     )
     try:
         with urlopen(request, timeout=12) as response:
@@ -155,7 +177,7 @@ def _verify_blessed_texts(api_key: str, api_base_url: str = "") -> dict[str, Any
     api_key = (api_key or "").strip()
     if not api_key:
         return _fail("BlessedTexts API key is required.", auth_failed=True)
-    url = f"{_base_url(api_base_url, BLESSED_TEXTS_API_BASE)}/api/sms/v1/credit-balance"
+    url = f"{_blessed_texts_base(api_base_url)}/api/sms/v1/credit-balance"
     payload, error = _post_json(url, {"api_key": api_key})
     if payload is None:
         if error.startswith("Could not reach"):
@@ -216,7 +238,7 @@ def _sms_result(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _blessed_texts_send(row, numbers: list[str], text: str) -> dict[str, Any]:
-    url = f"{_base_url(row.sms_api_base_url, BLESSED_TEXTS_API_BASE)}/api/sms/v1/sendsms"
+    url = f"{_blessed_texts_base(row.sms_api_base_url)}/api/sms/v1/sendsms"
     payload, error = _post_json(
         url,
         {
@@ -270,6 +292,7 @@ def _africas_talking_send(row, numbers: list[str], text: str) -> dict[str, Any]:
             "apiKey": (row.sms_api_secret or "").strip(),
             "Accept": "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": USER_AGENT,
         },
     )
     try:
