@@ -2357,6 +2357,101 @@ class TriggeredMessageTests(TestCase):
             }
         )
         self.assertEqual(draft.link, "{account_link}")
+
+    @override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")
+    def test_receipt_link_placeholder_resolves_per_receipt(self):
+        from communications.automations import render_trigger_message
+        from shops.receipt_link import unsign_receipt_doc_token
+
+        body = render_trigger_message(
+            "Hi {first_name}, view your receipt.",
+            self.receipt,
+            link="{receipt_link}",
+        )
+        url = body.rsplit("\n", 1)[-1].strip()
+        self.assertTrue(url.startswith("https://pay.myshop.test/receipt/"))
+        token = url.rstrip("/").rsplit("/", 1)[-1]
+        self.assertEqual(unsign_receipt_doc_token(token), self.receipt.pk)
+
+    @override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")
+    def test_quotation_link_resolves_only_for_quotations(self):
+        from decimal import Decimal
+
+        from communications.automations import render_trigger_message
+        from shops.models import ShopReceipt, ShopReceiptKind, ShopReceiptStatus
+        from shops.receipt_link import unsign_receipt_doc_token
+
+        body = render_trigger_message(
+            "Hi {first_name}.", self.receipt, link="{quotation_link}"
+        )
+        self.assertNotIn("/quotation/", body)
+
+        quotation = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="QT-TRIG-1",
+            kind=ShopReceiptKind.QUOTATION,
+            total=Decimal("900.00"),
+            created_by=self.it,
+            client=self.customer,
+            client_name="KIM OTIENO",
+            client_phone="+254795606116",
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        body = render_trigger_message(
+            "Hi {first_name}.", quotation, link="{quotation_link}"
+        )
+        url = body.rsplit("\n", 1)[-1].strip()
+        self.assertTrue(url.startswith("https://pay.myshop.test/quotation/"))
+        token = url.rstrip("/").rsplit("/", 1)[-1]
+        self.assertEqual(unsign_receipt_doc_token(token), quotation.pk)
+
+    def test_public_receipt_page_shows_signed_document_only(self):
+        from decimal import Decimal
+
+        from shops.models import ShopReceiptLine
+        from shops.receipt_link import sign_receipt_doc_token
+
+        ShopReceiptLine.objects.create(
+            receipt=self.receipt,
+            item_name="CEMENT BAG",
+            quantity=Decimal("1"),
+            unit_price=Decimal("400.00"),
+            line_total=Decimal("400.00"),
+        )
+        token = sign_receipt_doc_token(self.receipt.pk)
+        response = self.client.get(f"/receipt/{token}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "SL-TRIG-1")
+        self.assertContains(response, "CEMENT BAG")
+        self.assertContains(response, "KIM OTIENO")
+        # Wrong door: a sale document is not a quotation.
+        self.assertEqual(self.client.get(f"/quotation/{token}/").status_code, 404)
+        # Unsigned/tampered tokens cannot reach any document.
+        self.assertEqual(self.client.get("/receipt/bogus-token/").status_code, 404)
+
+    def test_public_quotation_page_renders(self):
+        from decimal import Decimal
+
+        from shops.models import ShopReceipt, ShopReceiptKind, ShopReceiptStatus
+        from shops.receipt_link import sign_receipt_doc_token
+
+        quotation = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="QT-TRIG-2",
+            kind=ShopReceiptKind.QUOTATION,
+            total=Decimal("900.00"),
+            created_by=self.it,
+            client=self.customer,
+            client_name="KIM OTIENO",
+            client_phone="+254795606116",
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        token = sign_receipt_doc_token(quotation.pk)
+        response = self.client.get(f"/quotation/{token}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Quotation")
+        self.assertContains(response, "QT-TRIG-2")
+        self.assertEqual(self.client.get(f"/receipt/{token}/").status_code, 404)
         from unittest.mock import patch
 
         from communications.automations import maybe_send_triggered_messages

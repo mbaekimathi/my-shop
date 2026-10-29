@@ -161,6 +161,8 @@ TRIGGER_MESSAGE_PLACEHOLDERS = (
     ("{receipt_number}", "Receipt number"),
     ("{due_date}", "Credit due date"),
     ("{account_link}", "Credit account link"),
+    ("{receipt_link}", "Receipt link"),
+    ("{quotation_link}", "Quotation link"),
 )
 
 # Delivery channel for a triggered message draft.

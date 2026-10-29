@@ -494,6 +494,36 @@ def maybe_send_new_item_catalogue(item, *, request=None) -> None:
         )
 
 
+def _receipt_doc_url(receipt, *, quotation: bool, request=None) -> str:
+    """Signed public URL for this receipt's document page, or "" if mismatched."""
+    is_quotation = getattr(receipt, "kind", "") == ShopReceiptKind.QUOTATION
+    if is_quotation != quotation:
+        return ""
+    receipt_id = getattr(receipt, "pk", None)
+    if not receipt_id:
+        return ""
+    try:
+        from shops.receipt_link import client_receipt_doc_url
+
+        url = (
+            client_receipt_doc_url(
+                int(receipt_id), quotation=quotation, request=request
+            )
+            or ""
+        ).strip()
+    except Exception:
+        logger.exception(
+            "Receipt document URL failed for receipt %s", receipt_id
+        )
+        return ""
+    if not url.lower().startswith(("http://", "https://")):
+        logger.warning(
+            "Receipt document URL is not clickable for receipt %s.", receipt_id
+        )
+        return ""
+    return url
+
+
 def render_trigger_message(
     template: str, receipt, *, link: str = "", request=None
 ) -> str:
@@ -512,12 +542,22 @@ def render_trigger_message(
         "{receipt_number}": (getattr(receipt, "receipt_number", "") or "").strip(),
         "{due_date}": due_date.strftime("%d %b %Y") if due_date else "",
         "{account_link}": "",
+        "{receipt_link}": "",
+        "{quotation_link}": "",
     }
     body = template or ""
     url = (link or "").strip()
     if "{account_link}" in body or "{account_link}" in url:
         replacements["{account_link}"] = _credit_account_pay_url(
             receipt, request=request
+        )
+    if "{receipt_link}" in body or "{receipt_link}" in url:
+        replacements["{receipt_link}"] = _receipt_doc_url(
+            receipt, quotation=False, request=request
+        )
+    if "{quotation_link}" in body or "{quotation_link}" in url:
+        replacements["{quotation_link}"] = _receipt_doc_url(
+            receipt, quotation=True, request=request
         )
     for key, value in replacements.items():
         body = body.replace(key, value)
@@ -550,8 +590,11 @@ def _trigger_channels(draft) -> list[str]:
 def maybe_send_triggered_messages(receipt, *, request=None) -> None:
     """Queue active message drafts whose trigger matches this receipt kind.
 
-    Returns immediately — drafts are resolved and queued on a daemon
-    thread so checkout never waits on provider or queue work.
+    Drafts are resolved and queued campaigns created inline — a few fast
+    writes — so a send is never lost if the worker process recycles after
+    the response (Passenger/cPanel kills daemon threads). Only provider
+    delivery runs on a background thread; the cron worker remains the
+    durable fallback for anything left queued.
     """
     kind = receipt.kind
     if kind not in {
@@ -570,9 +613,12 @@ def maybe_send_triggered_messages(receipt, *, request=None) -> None:
         for channel in (CHANNEL_WHATSAPP, CHANNEL_SMS)
     ):
         return
+    campaign_ids = _queue_triggered_messages(receipt, request)
+    if not campaign_ids:
+        return
     thread = threading.Thread(
-        target=_queue_triggered_messages,
-        args=(receipt, request),
+        target=_dispatch_queued_triggered,
+        args=(campaign_ids,),
         daemon=True,
         name=f"comms-triggered-{getattr(receipt, 'pk', 'new')}",
     )
@@ -586,11 +632,24 @@ def _close_thread_connections() -> None:
     close_old_connections()
 
 
-def _queue_triggered_messages(receipt, request) -> None:
+def _dispatch_queued_triggered(campaign_ids) -> None:
+    """Deliver queued triggered campaigns on a background thread.
+
+    If this thread is killed mid-flight the campaigns stay QUEUED and the
+    next `process_comms_queue` run finishes them — nothing is lost.
+    """
+    try:
+        for campaign_id in campaign_ids:
+            _dispatch_triggered_send(campaign_id)
+    finally:
+        _close_thread_connections()
+
+
+def _queue_triggered_messages(receipt, request) -> list[int]:
+    """Create triggered campaigns for this receipt; return pks due to send now."""
     from .models import TriggeredMessage
 
     try:
-        _close_thread_connections()
         row = get_communications_settings()
         drafts = list(
             TriggeredMessage.objects.filter(
@@ -600,12 +659,13 @@ def _queue_triggered_messages(receipt, request) -> None:
             )
         )
         if not drafts:
-            return
+            return []
         phone = (receipt.client_phone or "").strip()
         if not phone and receipt.client_id:
             phone = (getattr(receipt.client, "phone_number", "") or "").strip()
         if not phone:
-            return
+            return []
+        due_now = []
         for draft in drafts:
             channels = [
                 channel
@@ -619,7 +679,7 @@ def _queue_triggered_messages(receipt, request) -> None:
             )
             if not body:
                 continue
-            _queue_triggered_send(
+            campaign_id = _queue_triggered_send(
                 phone=phone,
                 body=body,
                 receipt=receipt,
@@ -627,11 +687,15 @@ def _queue_triggered_messages(receipt, request) -> None:
                 label=f"Auto message · {draft.get_trigger_display()}",
                 channels=channels,
             )
+            if campaign_id:
+                due_now.append(campaign_id)
+        return due_now
     except Exception:
         logger.exception(
             "Triggered messages failed for receipt %s",
             getattr(receipt, "pk", "?"),
         )
+        return []
     finally:
         _close_thread_connections()
 
@@ -680,8 +744,8 @@ def _queue_triggered_send(
     delay_minutes: int,
     label: str,
     channels: list[str],
-) -> None:
-    """Persist a one-recipient campaign; the queue worker sends it when due."""
+) -> int | None:
+    """Persist a one-recipient campaign; return its pk when it is due to send now."""
     from datetime import timedelta
 
     from .constants import CAMPAIGN_DRAFT, CAMPAIGN_QUEUED, MSG_PENDING
@@ -717,11 +781,11 @@ def _queue_triggered_send(
         ]
     )
     if delay <= 0:
-        _dispatch_triggered_send(campaign.pk)
-        return
+        return campaign.pk
     timer = threading.Timer(delay * 60, _promote_due_sends)
     timer.daemon = True
     timer.start()
+    return None
 
 
 def _dispatch_triggered_send(campaign_id: int) -> None:
@@ -796,8 +860,16 @@ def _timing_label(delay_minutes: int) -> str:
     return f"After {amount} {unit_label}"
 
 
+_LINK_TOKEN_LABELS = {
+    "{account_link}": "Each customer receives their own credit account link.",
+    "{receipt_link}": "Each customer receives a private link to this receipt.",
+    "{quotation_link}": "Each customer receives a private link to this quotation.",
+}
+
+
 def triggered_message_as_dict(row) -> dict:
     amount, unit = _delay_parts(row.delay_minutes)
+    link = (row.link or "").strip()
     return {
         "id": row.pk,
         "trigger": row.trigger,
@@ -808,7 +880,8 @@ def triggered_message_as_dict(row) -> dict:
         "timing_label": _timing_label(row.delay_minutes),
         "body": row.body,
         "link": row.link,
-        "link_is_account": (row.link or "").strip() == "{account_link}",
+        "link_is_account": link == "{account_link}",
+        "link_label": _LINK_TOKEN_LABELS.get(link, ""),
         "channel": row.channel,
         "channel_label": row.get_channel_display(),
         "status": row.status,

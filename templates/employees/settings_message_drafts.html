@@ -55,8 +55,8 @@
             <strong>{{ draft.trigger_label }} · {{ draft.timing_label }} · {{ draft.channel_label }}</strong>
             <p>{{ draft.body|truncatechars:180 }}</p>
             {% if draft.link %}
-              {% if draft.link_is_account %}
-              <p>Each customer receives their own credit account link.</p>
+              {% if draft.link_label %}
+              <p>{{ draft.link_label }}</p>
               {% else %}
               <p><a href="{{ draft.link }}" target="_blank" rel="noopener">{{ draft.link }}</a></p>
               {% endif %}

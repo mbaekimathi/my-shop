@@ -140,12 +140,19 @@
         </span>
         <p class="msg-hint">
           Sent to the customer on its own line at the end of the message.
-          Use {account_link} to send each customer a private link to their own credit account.
+          Use {account_link}, {receipt_link} or {quotation_link} to send each
+          customer a private link to their own document — only they can open it.
         </p>
         <span class="msg-chips" role="group" aria-label="Fill the link field">
           <span class="msg-chips-label">Insert:</span>
           <button type="button" class="msg-chip" data-link-insert="{account_link}">
             Customer credit account
+          </button>
+          <button type="button" class="msg-chip" data-link-insert="{receipt_link}">
+            This receipt
+          </button>
+          <button type="button" class="msg-chip" data-link-insert="{quotation_link}">
+            This quotation
           </button>
         </span>
       </label>

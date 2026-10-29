@@ -867,3 +867,82 @@
     align-self: flex-start;
   }
 }
+
+/* Phones + portrait tablets: nothing may overflow the viewport. */
+@media (max-width: 768px) {
+  .credit-note-table {
+    min-width: 0;
+  }
+
+  .credit-note-table th,
+  .credit-note-table td {
+    white-space: normal;
+  }
+
+  /* Keep iOS from zooming the page when a pay field gets focus. */
+  .credit-note-input-wrap input {
+    font-size: 1rem;
+  }
+
+  .credit-note-table--stack thead {
+    display: none;
+  }
+
+  .credit-note-table--stack tbody {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.5rem;
+  }
+
+  .credit-note-table--stack tbody tr {
+    display: grid;
+    gap: 0.1rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+
+  .credit-note-table--stack tbody td,
+  .credit-note-table--stack tbody tr:nth-child(even) td,
+  .credit-note-table--stack tbody tr:hover td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.55rem;
+    padding: 0.2rem 0;
+    border: 0;
+    text-align: right;
+    background: transparent;
+  }
+
+  .credit-note-table--stack tbody td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+    text-align: left;
+  }
+
+  .credit-note-table--stack .credit-note-cell-primary,
+  .credit-note-table--stack tbody tr:nth-child(even) .credit-note-cell-primary,
+  .credit-note-table--stack tbody tr:hover .credit-note-cell-primary {
+    position: static;
+    min-width: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .credit-note-table--stack .credit-note-table-actions {
+    width: auto;
+    text-align: right;
+  }
+
+  .credit-note-table--totals td:last-child {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+}
