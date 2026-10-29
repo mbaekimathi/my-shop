@@ -13,6 +13,8 @@ from .constants import (
     MESSAGE_STATUS_DRAFT,
     MSG_STATUS_CHOICES,
     MSG_PENDING,
+    TRIGGER_CHANNEL_CHOICES,
+    TRIGGER_CHANNEL_WHATSAPP,
     TRIGGER_MESSAGE_CHOICES,
 )
 
@@ -202,6 +204,11 @@ class TriggeredMessage(models.Model):
     )
     body = models.TextField()
     link = models.CharField(max_length=500, blank=True, default="")
+    channel = models.CharField(
+        max_length=12,
+        choices=TRIGGER_CHANNEL_CHOICES,
+        default=TRIGGER_CHANNEL_WHATSAPP,
+    )
     status = models.CharField(
         max_length=12,
         choices=MESSAGE_STATUS_CHOICES,

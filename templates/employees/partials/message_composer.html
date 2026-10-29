@@ -44,6 +44,19 @@
             {% endfor %}
           </select>
         </label>
+        <label class="msg-field">
+          <span>Send via</span>
+          <select name="channel">
+            {% for value, label in channel_choices %}
+            <option
+              value="{{ value }}"
+              {% if editing.channel == value %}selected{% endif %}
+            >
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
       </div>
 
       <fieldset class="msg-timing">

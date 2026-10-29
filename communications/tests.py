@@ -2362,7 +2362,10 @@ class TriggeredMessageTests(TestCase):
             body="Hi {first_name}, receipt {receipt_number}.",
             link="https://shop.test/thanks",
         )
-        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
             maybe_send_triggered_messages(self.receipt)
 
         enqueue.assert_called_once()
@@ -2375,6 +2378,72 @@ class TriggeredMessageTests(TestCase):
         self.assertIn("SL-TRIG-1", message.body)
         self.assertIn("https://shop.test/thanks", message.body)
 
+    def _enable_sms(self):
+        from shops.models import SmsProvider
+        from shops.services import set_communications_setting, update_sms_settings
+
+        update_sms_settings(
+            provider=SmsProvider.BLESSED_TEXTS,
+            api_key="sms-key",
+            sender_id="23107",
+        )
+        set_communications_setting(field="enable_sms", enabled=True)
+
+    def test_sms_channel_draft_queues_sms_message(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+
+        self._enable_sms()
+        self._draft(channel="sms", body="SMS for {first_name}.")
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
+            maybe_send_triggered_messages(self.receipt)
+
+        enqueue.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertEqual(message.channel, "sms")
+        self.assertIn("SMS for Kim.", message.body)
+
+    def test_both_channel_draft_queues_two_messages(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+
+        self._enable_sms()
+        self._draft(channel="both")
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
+            maybe_send_triggered_messages(self.receipt)
+
+        enqueue.assert_called_once()
+        self.assertCountEqual(
+            OutboundMessage.objects.values_list("channel", flat=True),
+            ["whatsapp", "sms"],
+        )
+
+    def test_sms_draft_skipped_without_sms_setup(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+
+        self._draft(channel="sms")
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
+            maybe_send_triggered_messages(self.receipt)
+
+        enqueue.assert_not_called()
+        self.assertFalse(OutboundMessage.objects.exists())
+
     def test_delayed_draft_waits_as_scheduled_campaign(self):
         from unittest.mock import patch
 
@@ -2382,7 +2451,10 @@ class TriggeredMessageTests(TestCase):
         from communications.models import BroadcastCampaign
 
         self._draft(delay_minutes=90)
-        with patch("communications.automations.threading.Timer") as timer:
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.automations.threading.Timer") as timer,
+        ):
             maybe_send_triggered_messages(self.receipt)
 
         campaign = BroadcastCampaign.objects.get()
@@ -2400,7 +2472,10 @@ class TriggeredMessageTests(TestCase):
 
         self._draft(status=MESSAGE_STATUS_DRAFT)
         self._draft(trigger=TRIGGER_QUOTATION)
-        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
             maybe_send_triggered_messages(self.receipt)
         enqueue.assert_not_called()
         self.assertFalse(OutboundMessage.objects.exists())
@@ -2414,7 +2489,10 @@ class TriggeredMessageTests(TestCase):
 
         self._draft()
         set_communications_setting(field="enable_automations", enabled=False)
-        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
             maybe_send_triggered_messages(self.receipt)
         enqueue.assert_not_called()
         self.assertFalse(OutboundMessage.objects.exists())
@@ -2431,7 +2509,10 @@ class TriggeredMessageTests(TestCase):
         ShopPosSettings.objects.create(
             shop=self.shop, override_messages=True
         )
-        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
             maybe_send_triggered_messages(self.receipt)
 
         enqueue.assert_called_once()
@@ -2447,7 +2528,10 @@ class TriggeredMessageTests(TestCase):
 
         self._draft(body="COMPANY message")
         self._draft(shop=self.shop, body="SHOP message")
-        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
             maybe_send_triggered_messages(self.receipt)
 
         enqueue.assert_called_once()
@@ -2494,7 +2578,10 @@ class TriggeredMessageTests(TestCase):
         ShopPosSettings.objects.create(
             shop=self.shop, override_messages=True
         )
-        with patch("communications.campaigns.enqueue_campaign") as enqueue:
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
             maybe_send_triggered_messages(other_receipt)
         enqueue.assert_not_called()
         self.assertFalse(OutboundMessage.objects.exists())

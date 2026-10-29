@@ -31,11 +31,11 @@
 
   {% if not automations_ready %}
   <p class="daraja-help">
-    Messages marked <strong>Active</strong> only send while WhatsApp automations are on and
-    Twilio is configured. Check
+    Messages marked <strong>Active</strong> only send while automations are on and a
+    channel is configured. Check
     <a href="{% url 'employees:role_settings_section' role_segment=role_segment section='whatsapp' %}">WhatsApp settings</a>
-    and
-    <a href="{% url 'employees:role_settings_section' role_segment=role_segment section='twilio' %}">Twilio settings</a>.
+    or
+    <a href="{% url 'employees:role_settings_section' role_segment=role_segment section='sms' %}">SMS settings</a>.
   </p>
   {% endif %}
 
@@ -52,7 +52,7 @@
         {% for draft in drafts %}
         <li class="pos-settings-row">
           <div class="pos-settings-copy">
-            <strong>{{ draft.trigger_label }} · {{ draft.timing_label }}</strong>
+            <strong>{{ draft.trigger_label }} · {{ draft.timing_label }} · {{ draft.channel_label }}</strong>
             <p>{{ draft.body|truncatechars:180 }}</p>
             {% if draft.link %}
               {% if draft.link_is_account %}

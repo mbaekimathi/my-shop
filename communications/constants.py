@@ -157,6 +157,19 @@ TRIGGER_MESSAGE_PLACEHOLDERS = (
     ("{account_link}", "Credit account link"),
 )
 
+# Delivery channel for a triggered message draft.
+TRIGGER_CHANNEL_WHATSAPP = CHANNEL_WHATSAPP
+TRIGGER_CHANNEL_SMS = CHANNEL_SMS
+TRIGGER_CHANNEL_BOTH = "both"
+
+TRIGGER_CHANNEL_CHOICES = (
+    (TRIGGER_CHANNEL_WHATSAPP, "WhatsApp"),
+    (TRIGGER_CHANNEL_SMS, "SMS"),
+    (TRIGGER_CHANNEL_BOTH, "WhatsApp + SMS"),
+)
+
+TRIGGER_CHANNEL_VALUES = {value for value, _ in TRIGGER_CHANNEL_CHOICES}
+
 # "Send after N <unit>" — stored as minutes on the draft.
 TRIGGER_DELAY_UNITS = (
     ("minutes", "minutes", 1),

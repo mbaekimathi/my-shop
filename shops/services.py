@@ -1148,9 +1148,12 @@ def set_communications_setting(*, field: str, enabled: bool) -> CompanyCommunica
             raise ValidationError(
                 "Enable at least one channel (WhatsApp, Message, or Text) before bulk send."
             )
-        if field == "enable_automations" and not effective.has_twilio_credentials():
+        if field == "enable_automations" and not (
+            effective.has_twilio_credentials()
+            or (effective.enable_sms and effective.has_sms_credentials())
+        ):
             raise ValidationError(
-                "Set Twilio credentials in server .env before turning on automations."
+                "Set Twilio credentials or enable Text/SMS before turning on automations."
             )
         if field.startswith("auto_") and not effective.has_twilio_credentials():
             raise ValidationError(

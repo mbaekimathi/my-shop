@@ -38,8 +38,8 @@
 
   {% if not automations_ready %}
   <p class="daraja-help">
-    Messages marked <strong>Active</strong> only send while WhatsApp automations are
-    on and Twilio is configured — ask a manager to check the company settings.
+    Messages marked <strong>Active</strong> only send while automations are on
+    and a channel is configured — ask a manager to check the company settings.
   </p>
   {% endif %}
 
@@ -61,7 +61,7 @@
           {% for draft in drafts %}
           <li class="pos-settings-row">
             <div class="pos-settings-copy">
-              <strong>{{ draft.trigger_label }} · {{ draft.timing_label }}</strong>
+              <strong>{{ draft.trigger_label }} · {{ draft.timing_label }} · {{ draft.channel_label }}</strong>
               <p>{{ draft.body|truncatechars:180 }}</p>
               {% if draft.link %}
                 {% if draft.link_is_account %}
@@ -125,7 +125,7 @@
         {% for draft in company_drafts %}
         <li class="pos-settings-row">
           <div class="pos-settings-copy">
-            <strong>{{ draft.trigger_label }} · {{ draft.timing_label }}</strong>
+            <strong>{{ draft.trigger_label }} · {{ draft.timing_label }} · {{ draft.channel_label }}</strong>
             <p>{{ draft.body|truncatechars:180 }}</p>
             {% if draft.link %}
               {% if draft.link_is_account %}

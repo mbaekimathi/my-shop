@@ -4312,6 +4312,7 @@ def my_shop_settings_messages(request, shop_id):
     )
     from communications.constants import (
         MESSAGE_STATUS_CHOICES,
+        TRIGGER_CHANNEL_CHOICES,
         TRIGGER_DELAY_UNITS,
         TRIGGER_MESSAGE_CHOICES,
         TRIGGER_MESSAGE_PLACEHOLDERS,
@@ -4393,10 +4394,15 @@ def my_shop_settings_messages(request, shop_id):
         "editing": triggered_message_as_dict(editing) if editing else None,
         "trigger_choices": TRIGGER_MESSAGE_CHOICES,
         "status_choices": MESSAGE_STATUS_CHOICES,
+        "channel_choices": TRIGGER_CHANNEL_CHOICES,
         "delay_units": TRIGGER_DELAY_UNITS,
         "placeholders": TRIGGER_MESSAGE_PLACEHOLDERS,
         "automations_ready": bool(
-            comms.enable_automations and comms.has_twilio_credentials()
+            comms.enable_automations
+            and (
+                comms.has_twilio_credentials()
+                or (comms.enable_sms and comms.has_sms_credentials())
+            )
         ),
         "composer_cancel_url": request.path,
         "composer_sample_shop": shop.name,

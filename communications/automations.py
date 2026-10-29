@@ -8,12 +8,19 @@ import threading
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
+from django.db import close_old_connections, connection
 from django.utils import timezone
 
 from shops.models import ShopReceiptKind
 from shops.services import _qty_label, get_communications_settings
 
-from .constants import MESSAGE_STATUS_ACTIVE
+from .constants import (
+    CHANNEL_SMS,
+    CHANNEL_WHATSAPP,
+    MESSAGE_STATUS_ACTIVE,
+    TRIGGER_CHANNEL_BOTH,
+    TRIGGER_CHANNEL_VALUES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -493,13 +500,29 @@ def render_trigger_message(
     return body
 
 
-def maybe_send_triggered_messages(receipt, *, request=None) -> None:
-    """Queue active message drafts whose trigger matches this receipt kind."""
-    from .models import TriggeredMessage
+def _triggered_channel_ready(row, channel: str) -> bool:
+    """Whether the company settings can actually deliver on this channel."""
+    if channel == CHANNEL_SMS:
+        return bool(row.enable_sms and row.has_sms_credentials())
+    return bool(row.has_twilio_credentials())
 
-    row = get_communications_settings()
-    if not row.enable_automations or not row.has_twilio_credentials():
-        return
+
+def _trigger_channels(draft) -> list[str]:
+    """Outbound channels for a draft; unknown values fall back to WhatsApp."""
+    value = (getattr(draft, "channel", "") or "").strip()
+    if value == TRIGGER_CHANNEL_BOTH:
+        return [CHANNEL_WHATSAPP, CHANNEL_SMS]
+    if value in {CHANNEL_WHATSAPP, CHANNEL_SMS}:
+        return [value]
+    return [CHANNEL_WHATSAPP]
+
+
+def maybe_send_triggered_messages(receipt, *, request=None) -> None:
+    """Queue active message drafts whose trigger matches this receipt kind.
+
+    Returns immediately — drafts are resolved and queued on a daemon
+    thread so checkout never waits on provider or queue work.
+    """
     kind = receipt.kind
     if kind not in {
         ShopReceiptKind.SALE,
@@ -507,34 +530,78 @@ def maybe_send_triggered_messages(receipt, *, request=None) -> None:
         ShopReceiptKind.CREDIT,
     }:
         return
-    shop = getattr(receipt, "shop", None)
-    drafts = list(
-        TriggeredMessage.objects.filter(
-            trigger=kind,
-            status=MESSAGE_STATUS_ACTIVE,
-            **_triggered_message_scope(shop),
-        )
+    row = get_communications_settings()
+    if not row.enable_automations:
+        return
+    if not any(
+        _triggered_channel_ready(row, channel)
+        for channel in (CHANNEL_WHATSAPP, CHANNEL_SMS)
+    ):
+        return
+    thread = threading.Thread(
+        target=_queue_triggered_messages,
+        args=(receipt, request),
+        daemon=True,
+        name=f"comms-triggered-{getattr(receipt, 'pk', 'new')}",
     )
-    if not drafts:
+    thread.start()
+
+
+def _close_thread_connections() -> None:
+    """Drop this thread's DB handles — never inside an open transaction."""
+    if connection.in_atomic_block:
         return
-    phone = (receipt.client_phone or "").strip()
-    if not phone and receipt.client_id:
-        phone = (getattr(receipt.client, "phone_number", "") or "").strip()
-    if not phone:
-        return
-    for draft in drafts:
-        body = render_trigger_message(
-            draft.body, receipt, link=draft.link, request=request
+    close_old_connections()
+
+
+def _queue_triggered_messages(receipt, request) -> None:
+    from .models import TriggeredMessage
+
+    try:
+        _close_thread_connections()
+        row = get_communications_settings()
+        drafts = list(
+            TriggeredMessage.objects.filter(
+                trigger=receipt.kind,
+                status=MESSAGE_STATUS_ACTIVE,
+                **_triggered_message_scope(getattr(receipt, "shop", None)),
+            )
         )
-        if not body:
-            continue
-        _queue_triggered_send(
-            phone=phone,
-            body=body,
-            receipt=receipt,
-            delay_minutes=draft.delay_minutes,
-            label=f"Auto message · {draft.get_trigger_display()}",
+        if not drafts:
+            return
+        phone = (receipt.client_phone or "").strip()
+        if not phone and receipt.client_id:
+            phone = (getattr(receipt.client, "phone_number", "") or "").strip()
+        if not phone:
+            return
+        for draft in drafts:
+            channels = [
+                channel
+                for channel in _trigger_channels(draft)
+                if _triggered_channel_ready(row, channel)
+            ]
+            if not channels:
+                continue
+            body = render_trigger_message(
+                draft.body, receipt, link=draft.link, request=request
+            )
+            if not body:
+                continue
+            _queue_triggered_send(
+                phone=phone,
+                body=body,
+                receipt=receipt,
+                delay_minutes=draft.delay_minutes,
+                label=f"Auto message · {draft.get_trigger_display()}",
+                channels=channels,
+            )
+    except Exception:
+        logger.exception(
+            "Triggered messages failed for receipt %s",
+            getattr(receipt, "pk", "?"),
         )
+    finally:
+        _close_thread_connections()
 
 
 def _triggered_message_scope(shop) -> dict:
@@ -564,6 +631,7 @@ def seed_shop_triggered_messages(shop) -> int:
             delay_minutes=draft.delay_minutes,
             body=draft.body,
             link=draft.link,
+            channel=draft.channel,
             status=draft.status,
         )
         for draft in TriggeredMessage.objects.filter(shop__isnull=True)
@@ -579,6 +647,7 @@ def _queue_triggered_send(
     receipt,
     delay_minutes: int,
     label: str,
+    channels: list[str],
 ) -> None:
     """Persist a one-recipient campaign; the queue worker sends it when due."""
     from datetime import timedelta
@@ -602,13 +671,19 @@ def _queue_triggered_send(
         recipient_count=1,
     )
     client = getattr(receipt, "client", None)
-    OutboundMessage.objects.create(
-        campaign=campaign,
-        client=client if getattr(client, "pk", None) else None,
-        client_name=(getattr(receipt, "client_name", "") or "").strip(),
-        phone=phone,
-        body=body,
-        status=MSG_PENDING,
+    OutboundMessage.objects.bulk_create(
+        [
+            OutboundMessage(
+                campaign=campaign,
+                channel=channel,
+                client=client if getattr(client, "pk", None) else None,
+                client_name=(getattr(receipt, "client_name", "") or "").strip(),
+                phone=phone,
+                body=body,
+                status=MSG_PENDING,
+            )
+            for channel in channels
+        ]
     )
     if delay <= 0:
         try:
@@ -667,6 +742,8 @@ def triggered_message_as_dict(row) -> dict:
         "body": row.body,
         "link": row.link,
         "link_is_account": (row.link or "").strip() == "{account_link}",
+        "channel": row.channel,
+        "channel_label": row.get_channel_display(),
         "status": row.status,
         "status_label": row.get_status_display(),
         "is_active": row.status == MESSAGE_STATUS_ACTIVE,
@@ -733,12 +810,18 @@ def save_triggered_message(data, *, shop=None):
 
     delay_minutes = _triggered_delay_minutes(data)
 
+    channel = (data.get("channel") or "").strip()
+    if channel and channel not in TRIGGER_CHANNEL_VALUES:
+        raise ValidationError("Choose how this message should be sent.")
+
     if draft is None:
         draft = TriggeredMessage(trigger=trigger, shop=shop)
     draft.trigger = trigger
     draft.delay_minutes = delay_minutes
     draft.body = body
     draft.link = link
+    if channel:
+        draft.channel = channel
     draft.status = status
     draft.save()
     return draft
