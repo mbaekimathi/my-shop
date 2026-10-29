@@ -558,6 +558,8 @@ def maybe_send_triggered_messages(receipt, *, request=None) -> None:
         ShopReceiptKind.SALE,
         ShopReceiptKind.QUOTATION,
         ShopReceiptKind.CREDIT,
+        ShopReceiptKind.TRADE_OUT,
+        ShopReceiptKind.TRADE_IN,
     }:
         return
     row = get_communications_settings()
@@ -682,7 +684,6 @@ def _queue_triggered_send(
     """Persist a one-recipient campaign; the queue worker sends it when due."""
     from datetime import timedelta
 
-    from .campaigns import enqueue_campaign
     from .constants import CAMPAIGN_DRAFT, CAMPAIGN_QUEUED, MSG_PENDING
     from .models import BroadcastCampaign, OutboundMessage
 
@@ -716,16 +717,52 @@ def _queue_triggered_send(
         ]
     )
     if delay <= 0:
-        try:
-            enqueue_campaign(campaign.pk)
-        except Exception:
-            logger.exception(
-                "Triggered send enqueue failed for campaign %s", campaign.pk
-            )
+        _dispatch_triggered_send(campaign.pk)
         return
     timer = threading.Timer(delay * 60, _promote_due_sends)
     timer.daemon = True
     timer.start()
+
+
+def _dispatch_triggered_send(campaign_id: int) -> None:
+    """Send a triggered campaign without making the customer wait for cron.
+
+    Triggered sends are one or two messages and this already runs on a daemon
+    thread off the request path, so when the queue would otherwise sit until
+    the next `process_comms_queue` cron tick we deliver on this thread. When a
+    real worker exists (Celery/Redis, or inline mode) the normal dispatcher is
+    used instead. Broadcasts keep using `enqueue_campaign` unchanged.
+    """
+    from django.conf import settings
+
+    from .campaigns import enqueue_campaign
+    from .tasks import process_campaign_sync
+
+    mode = (getattr(settings, "COMMS_SEND_MODE", "auto") or "auto").strip().lower()
+    celery_ready = mode in {"auto", "celery"} and getattr(
+        settings, "REDIS_ENABLED", False
+    )
+    inline_mode = mode == "inline" or (
+        mode == "auto"
+        and (
+            getattr(settings, "DEBUG", False)
+            or getattr(settings, "COMMS_INLINE_SEND", False)
+        )
+    )
+    if celery_ready or inline_mode:
+        try:
+            enqueue_campaign(campaign_id)
+        except Exception:
+            logger.exception(
+                "Triggered send enqueue failed for campaign %s", campaign_id
+            )
+        return
+    try:
+        process_campaign_sync(campaign_id)
+    except Exception:
+        logger.exception(
+            "Triggered send inline processing failed for campaign %s", campaign_id
+        )
 
 
 def _promote_due_sends() -> None:

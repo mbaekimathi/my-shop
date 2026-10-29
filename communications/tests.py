@@ -1987,7 +1987,7 @@ class WhatsAppRetryTests(TestCase):
         self.client.force_login(self.user)
         with override_settings(COMMS_SEND_MODE="cron"):
             response = self.client.post(
-                "/employees/settings/whatsapp/",
+                "/it-support/marketing/activities/",
                 {"action": "retry_failed", "campaign_id": str(self.campaign.pk)},
                 HTTP_X_REQUESTED_WITH="XMLHttpRequest",
                 HTTP_ACCEPT="application/json",
@@ -2368,11 +2368,11 @@ class TriggeredMessageTests(TestCase):
         )
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(self.receipt)
 
-        enqueue.assert_called_once()
+        dispatch.assert_called_once()
         campaign = BroadcastCampaign.objects.get()
         self.assertEqual(campaign.status, "queued")
         self.assertEqual(campaign.filters["trigger_label"], "Auto message · Sale")
@@ -2393,11 +2393,11 @@ class TriggeredMessageTests(TestCase):
         self._draft(channel="whatsapp")
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(self.receipt)
 
-        enqueue.assert_not_called()
+        dispatch.assert_not_called()
         self.assertFalse(OutboundMessage.objects.exists())
 
     def test_active_draft_suppresses_legacy_receipt_share(self):
@@ -2436,6 +2436,41 @@ class TriggeredMessageTests(TestCase):
         )
         set_communications_setting(field="enable_sms", enabled=True)
 
+    def test_trade_out_draft_queues_message(self):
+        from decimal import Decimal
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+        from shops.models import ShopReceipt, ShopReceiptKind, ShopReceiptStatus
+
+        trade_receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="TO-TRIG-1",
+            kind=ShopReceiptKind.TRADE_OUT,
+            total=Decimal("150.00"),
+            amount_paid=Decimal("150.00"),
+            created_by=self.it,
+            client=self.customer,
+            client_name="KIM OTIENO",
+            client_phone="+254795606116",
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        self._draft(trigger="trade_out", channel="whatsapp")
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
+        ):
+            maybe_send_triggered_messages(trade_receipt)
+
+        dispatch.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertEqual(message.channel, "whatsapp")
+        self.assertEqual(message.phone, "+254795606116")
+        self.assertIn("Auto message · Trade out", str(
+            message.campaign.filters.get("trigger_label")
+        ))
+
     def test_sms_channel_draft_queues_sms_message(self):
         from unittest.mock import patch
 
@@ -2446,11 +2481,11 @@ class TriggeredMessageTests(TestCase):
         self._draft(channel="sms", body="SMS for {first_name}.")
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(self.receipt)
 
-        enqueue.assert_called_once()
+        dispatch.assert_called_once()
         message = OutboundMessage.objects.get()
         self.assertEqual(message.channel, "sms")
         self.assertIn("SMS for Kim.", message.body)
@@ -2465,11 +2500,11 @@ class TriggeredMessageTests(TestCase):
         self._draft(channel="both")
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(self.receipt)
 
-        enqueue.assert_called_once()
+        dispatch.assert_called_once()
         self.assertCountEqual(
             OutboundMessage.objects.values_list("channel", flat=True),
             ["whatsapp", "sms"],
@@ -2485,7 +2520,7 @@ class TriggeredMessageTests(TestCase):
         self._draft(channel="sms", body="SMS for {first_name}.")
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign"),
+            patch("communications.automations._dispatch_triggered_send"),
         ):
             maybe_send_triggered_messages(self.receipt)
 
@@ -2510,11 +2545,11 @@ class TriggeredMessageTests(TestCase):
         self._draft(channel="sms")
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(self.receipt)
 
-        enqueue.assert_not_called()
+        dispatch.assert_not_called()
         self.assertFalse(OutboundMessage.objects.exists())
 
     def test_delayed_draft_waits_as_scheduled_campaign(self):
@@ -2547,10 +2582,10 @@ class TriggeredMessageTests(TestCase):
         self._draft(trigger=TRIGGER_QUOTATION)
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(self.receipt)
-        enqueue.assert_not_called()
+        dispatch.assert_not_called()
         self.assertFalse(OutboundMessage.objects.exists())
 
     def test_automations_off_sends_nothing(self):
@@ -2564,10 +2599,10 @@ class TriggeredMessageTests(TestCase):
         set_communications_setting(field="enable_automations", enabled=False)
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(self.receipt)
-        enqueue.assert_not_called()
+        dispatch.assert_not_called()
         self.assertFalse(OutboundMessage.objects.exists())
 
     def test_shop_override_on_uses_shop_drafts(self):
@@ -2584,11 +2619,11 @@ class TriggeredMessageTests(TestCase):
         )
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(self.receipt)
 
-        enqueue.assert_called_once()
+        dispatch.assert_called_once()
         message = OutboundMessage.objects.get()
         self.assertIn("SHOP message", message.body)
         self.assertNotIn("COMPANY message", message.body)
@@ -2603,11 +2638,11 @@ class TriggeredMessageTests(TestCase):
         self._draft(shop=self.shop, body="SHOP message")
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(self.receipt)
 
-        enqueue.assert_called_once()
+        dispatch.assert_called_once()
         message = OutboundMessage.objects.get()
         self.assertIn("COMPANY message", message.body)
         self.assertNotIn("SHOP message", message.body)
@@ -2653,10 +2688,10 @@ class TriggeredMessageTests(TestCase):
         )
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
-            patch("communications.campaigns.enqueue_campaign") as enqueue,
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
         ):
             maybe_send_triggered_messages(other_receipt)
-        enqueue.assert_not_called()
+        dispatch.assert_not_called()
         self.assertFalse(OutboundMessage.objects.exists())
 
     def test_enabling_messages_override_seeds_company_drafts(self):
@@ -2685,6 +2720,152 @@ class TriggeredMessageTests(TestCase):
         self.assertEqual(
             TriggeredMessage.objects.filter(shop=self.shop).count(), 2
         )
+
+
+class TriggeredDispatchTests(TestCase):
+    @override_settings(COMMS_SEND_MODE="cron")
+    def test_cron_mode_sends_triggered_campaign_inline(self):
+        from unittest.mock import patch
+
+        from communications.automations import _dispatch_triggered_send
+
+        with (
+            patch("communications.tasks.process_campaign_sync") as process,
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
+            _dispatch_triggered_send(42)
+        process.assert_called_once_with(42)
+        enqueue.assert_not_called()
+
+    @override_settings(COMMS_SEND_MODE="auto", REDIS_ENABLED=True)
+    def test_celery_ready_uses_normal_enqueue(self):
+        from unittest.mock import patch
+
+        from communications.automations import _dispatch_triggered_send
+
+        with (
+            patch("communications.tasks.process_campaign_sync") as process,
+            patch("communications.campaigns.enqueue_campaign") as enqueue,
+        ):
+            _dispatch_triggered_send(42)
+        enqueue.assert_called_once_with(42)
+        process.assert_not_called()
+
+
+class SmsBatchSendTests(TestCase):
+    def _campaign(self):
+        from communications.models import BroadcastCampaign
+
+        return BroadcastCampaign.objects.create(
+            body_template="Sale alert",
+            status="queued",
+            recipient_count=3,
+        )
+
+    def _message(self, campaign, phone, body="Sale alert"):
+        from communications.models import OutboundMessage
+
+        return OutboundMessage.objects.create(
+            campaign=campaign,
+            channel="sms",
+            phone=phone,
+            body=body,
+            status="pending",
+        )
+
+    def test_sms_recipients_send_in_batched_provider_calls(self):
+        from unittest.mock import patch
+
+        from communications.models import OutboundMessage
+        from communications.tasks import process_campaign_sync
+
+        campaign = self._campaign()
+        self._message(campaign, "+254700000001")
+        self._message(campaign, "+254700000002")
+        self._message(campaign, "+254700000003", body="Different body")
+
+        def fake_send(*, phone, message, **kwargs):
+            numbers = str(phone).split(",")
+            return {
+                "ok": True,
+                "results": [
+                    {
+                        "ok": True,
+                        "phone": number,
+                        "status": "1000",
+                        "message_id": f"id-{number}",
+                    }
+                    for number in numbers
+                ],
+            }
+
+        with patch("communications.sms.send_sms", side_effect=fake_send) as send:
+            process_campaign_sync(campaign.pk)
+
+        # One API call per distinct body — not one per recipient.
+        self.assertEqual(send.call_count, 2)
+        for message in OutboundMessage.objects.all():
+            self.assertEqual(message.status, "sent")
+            self.assertTrue(message.wa_message_id.startswith("id-"))
+        campaign.refresh_from_db()
+        self.assertEqual(campaign.status, "done")
+
+    def test_sms_batch_permanent_error_fails_without_retry(self):
+        from unittest.mock import patch
+
+        from communications.models import OutboundMessage
+        from communications.tasks import process_campaign_sync
+
+        campaign = self._campaign()
+        self._message(campaign, "+254700000001")
+
+        with patch(
+            "communications.sms.send_sms",
+            return_value={
+                "ok": False,
+                "results": [
+                    {
+                        "ok": False,
+                        "phone": "254700000001",
+                        "status": "1002",
+                        "error": "Invalid API Key (1002)",
+                        "retryable": False,
+                    }
+                ],
+                "error": "Invalid API Key (1002)",
+            },
+        ) as send:
+            process_campaign_sync(campaign.pk)
+
+        send.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertEqual(message.status, "failed")
+        self.assertIn("Invalid API Key", message.error)
+
+
+class SmsResultTests(TestCase):
+    def test_sms_result_surfaces_retryable_only_when_all_rows_flagged(self):
+        from communications.sms import _sms_result
+
+        result = _sms_result([{"ok": False, "error": "Insufficient balance", "retryable": False}])
+        self.assertFalse(result["retryable"])
+        unflagged = _sms_result([{"ok": False, "error": "Could not reach SMS provider"}])
+        self.assertNotIn("retryable", unflagged)
+
+    def test_send_sms_validation_errors_are_not_retried(self):
+        from communications.sms import send_sms
+
+        self.assertFalse(send_sms(phone="", message="hi")["retryable"])
+        self.assertFalse(send_sms(phone="+254700000001", message="")["retryable"])
+
+    def test_failure_retryable_classification(self):
+        from communications.sms import _sms_failure_retryable
+
+        self.assertFalse(_sms_failure_retryable("Invalid API Key", "1002"))
+        self.assertFalse(_sms_failure_retryable("Insufficient balance"))
+        self.assertFalse(_sms_failure_retryable("InvalidPhoneNumber"))
+        self.assertTrue(_sms_failure_retryable("Could not reach provider"))
+        self.assertTrue(_sms_failure_retryable("Request timed out"))
 
 
 @override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")

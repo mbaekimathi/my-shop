@@ -110,6 +110,8 @@ SEND_DELAY_MAX_SECONDS = 3
 SEND_CONCURRENCY = 3
 MAX_SEND_ATTEMPTS = 8
 SEND_RETRY_BACKOFF_SECONDS = (0.8, 1.6, 3.0, 5.0, 8.0, 12.0, 16.0)
+# SMS providers accept many recipients per HTTP call — cap each batched request.
+SMS_BATCH_LIMIT = 50
 
 PLACEHOLDERS = (
     "{first_name}",
@@ -140,11 +142,15 @@ MESSAGE_STATUS_CHOICES = (
 TRIGGER_SALE = "sale"
 TRIGGER_CREDIT = "credit"
 TRIGGER_QUOTATION = "quotation"
+TRIGGER_TRADE_OUT = "trade_out"
+TRIGGER_TRADE_IN = "trade_in"
 
 TRIGGER_MESSAGE_CHOICES = (
     (TRIGGER_SALE, "Sale"),
     (TRIGGER_CREDIT, "Credit sale"),
     (TRIGGER_QUOTATION, "Quotation"),
+    (TRIGGER_TRADE_OUT, "Trade out"),
+    (TRIGGER_TRADE_IN, "Trade in"),
 )
 
 TRIGGER_MESSAGE_PLACEHOLDERS = (

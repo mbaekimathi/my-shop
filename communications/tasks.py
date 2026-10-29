@@ -34,6 +34,7 @@ from .constants import (
     SEND_DELAY_MAX_SECONDS,
     SEND_DELAY_MIN_SECONDS,
     SEND_RETRY_BACKOFF_SECONDS,
+    SMS_BATCH_LIMIT,
 )
 from .models import BroadcastCampaign, OutboundMessage
 from .replies import note_outbound_sent
@@ -104,6 +105,11 @@ def process_campaign_sync(
     concurrency = max(1, int(getattr(settings, "COMMS_SEND_CONCURRENCY", SEND_CONCURRENCY) or SEND_CONCURRENCY))
     attempted = 0
 
+    # SMS providers accept many recipients per call — send identical bodies in
+    # batches instead of one request (and one pacing delay) per recipient.
+    sms_pending = [m for m in pending if m.channel == CHANNEL_SMS]
+    pending = [m for m in pending if m.channel != CHANNEL_SMS]
+
     def _is_cancelled() -> bool:
         return (
             BroadcastCampaign.objects.filter(pk=campaign_id)
@@ -151,10 +157,124 @@ def process_campaign_sync(
         finally:
             pool.shutdown(wait=True)
 
+    attempted += _send_sms_grouped(sms_pending, is_cancelled=_is_cancelled)
+
     campaign = BroadcastCampaign.objects.get(pk=campaign_id)
     if _finish_campaign_if_complete(campaign):
         return f"campaign {campaign_id} done"
     return f"campaign {campaign_id} progress ({attempted} attempted)"
+
+
+def _send_sms_grouped(messages, *, is_cancelled) -> int:
+    """Send same-body SMS messages in batched provider calls.
+
+    Providers (BlessedTexts, Africa's Talking) accept comma-separated numbers in
+    one request and return a per-recipient result, so a 500-contact blast needs
+    ~10 API calls instead of 500 — far faster on cron-driven shared hosting.
+    Recipients whose result rows report permanent errors fail immediately;
+    transient failures stay pending and retry on the next queue pass.
+    """
+    if not messages:
+        return 0
+    from shops.services import _normalize_phone
+
+    from .sms import send_sms
+
+    groups: dict[str, list] = {}
+    for message in messages:
+        groups.setdefault(message.body or "", []).append(message)
+
+    attempted = 0
+    paced = False
+    for body, group in groups.items():
+        for start in range(0, len(group), SMS_BATCH_LIMIT):
+            if is_cancelled():
+                return attempted
+            chunk = group[start : start + SMS_BATCH_LIMIT]
+            if paced:
+                time.sleep(random.uniform(SEND_DELAY_MIN_SECONDS, SEND_DELAY_MAX_SECONDS))
+                if is_cancelled():
+                    return attempted
+            paced = True
+            phones = [(_normalize_phone(m.phone), m) for m in chunk]
+            sendable = [phone for phone, _ in phones if phone]
+            if not sendable:
+                continue
+            result = send_sms(phone=",".join(dict.fromkeys(sendable)), message=body)
+            rows = result.get("results") or []
+            by_phone = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                key = _normalize_phone(str(row.get("phone") or ""))
+                if key:
+                    by_phone[key] = row
+            # No per-recipient rows at all (auth/transport failure): apply the
+            # batch-level outcome to each member so permanent errors fail fast.
+            aggregate = None
+            if not rows and not result.get("ok"):
+                aggregate = {
+                    "ok": False,
+                    "error": str(result.get("error") or "Send failed"),
+                    "retryable": result.get("retryable"),
+                }
+            for phone, message in phones:
+                if not phone:
+                    continue  # unrecognised number — a solo pass will mark it failed
+                _apply_sms_send_result(
+                    message,
+                    by_phone.get(phone) or aggregate,
+                    fallback_error=str(result.get("error") or ""),
+                )
+                attempted += 1
+    return attempted
+
+
+def _apply_sms_send_result(message, row, *, fallback_error: str) -> None:
+    """Fold one recipient's batched-send outcome into its OutboundMessage row."""
+    with transaction.atomic():
+        locked = OutboundMessage.objects.select_for_update().get(pk=message.pk)
+        if locked.status != MSG_PENDING:
+            return
+        locked.attempt_count = (locked.attempt_count or 0) + 1
+        if row is not None and row.get("ok"):
+            locked.status = MSG_SENT
+            locked.error = ""
+            locked.sent_at = timezone.now()
+            locked.wa_message_id = str(row.get("message_id") or "")[:200]
+            locked.provider_status = str(row.get("status") or "sent")[:40]
+            locked.body = ""
+            locked.image_path = ""
+            locked.save(
+                update_fields=[
+                    "attempt_count",
+                    "status",
+                    "error",
+                    "sent_at",
+                    "wa_message_id",
+                    "provider_status",
+                    "body",
+                    "image_path",
+                    "updated_at",
+                ]
+            )
+            note_outbound_sent()
+            return
+        if row is None:
+            # Provider returned nothing for this recipient — keep it pending so
+            # the next queue pass (or a solo retry) can settle it.
+            locked.save(update_fields=["attempt_count", "updated_at"])
+            return
+        error = _db_safe_error(
+            friendly_send_error(str(row.get("error") or fallback_error or "Send failed"))
+        )
+        retryable = row.get("retryable")
+        if retryable is None:
+            retryable = is_retryable_error(error)
+        if is_auth_error(error) or not retryable or locked.attempt_count >= MAX_SEND_ATTEMPTS:
+            locked.status = MSG_FAILED
+            locked.error = error
+        locked.save(update_fields=["attempt_count", "status", "error", "updated_at"])
 
 
 def process_pending_queue(*, limit: int | None = None) -> dict[str, int | str]:

@@ -225,9 +225,32 @@ def verify_sms_credentials(
     return _skipped()
 
 
+def _sms_failure_retryable(*parts: str) -> bool:
+    """True unless the provider error text describes a permanent rejection."""
+    text = " ".join(str(part or "") for part in parts).lower()
+    return not any(
+        token in text
+        for token in (
+            "invalid",
+            "insufficient",
+            "balance",
+            "api key",
+            "unauthorized",
+            "forbidden",
+            "not allowed",
+            "permission",
+            "blocked",
+            "blacklist",
+            "sender",
+            "not supported",
+        )
+    )
+
+
 def _sms_result(results: list[dict[str, Any]]) -> dict[str, Any]:
-    errors = [str(row.get("error") or row.get("status_desc") or "Send failed") for row in results if not row.get("ok")]
-    return {
+    failed = [row for row in results if not row.get("ok")]
+    errors = [str(row.get("error") or row.get("status_desc") or "Send failed") for row in failed]
+    payload: dict[str, Any] = {
         "ok": bool(results) and not errors,
         "results": results,
         "error": "; ".join(errors)[:300],
@@ -235,6 +258,11 @@ def _sms_result(results: list[dict[str, Any]]) -> dict[str, Any]:
             (str(row.get("message_id") or "") for row in results if row.get("ok")), ""
         ),
     }
+    # When every failed recipient carries an explicit classification, surface it
+    # so the worker stops retrying permanent errors instead of burning attempts.
+    if failed and all("retryable" in row for row in failed):
+        payload["retryable"] = any(row["retryable"] for row in failed)
+    return payload
 
 
 def _blessed_texts_send(row, numbers: list[str], text: str) -> dict[str, Any]:
@@ -258,17 +286,18 @@ def _blessed_texts_send(row, numbers: list[str], text: str) -> dict[str, Any]:
         item = item if isinstance(item, dict) else {}
         code = str(item.get("status_code") or "")
         desc = str(item.get("status_desc") or "")
-        results.append(
-            {
-                "ok": code == "1000",
-                "phone": str(item.get("phone") or ""),
-                "status": code,
-                "status_desc": desc,
-                "message_id": str(item.get("message_id") or ""),
-                "cost": str(item.get("message_cost") or ""),
-                "error": "" if code == "1000" else desc or f"Status {code}",
-            }
-        )
+        row_result = {
+            "ok": code == "1000",
+            "phone": str(item.get("phone") or ""),
+            "status": code,
+            "status_desc": desc,
+            "message_id": str(item.get("message_id") or ""),
+            "cost": str(item.get("message_cost") or ""),
+            "error": "" if code == "1000" else desc or f"Status {code}",
+        }
+        if code != "1000":
+            row_result["retryable"] = _sms_failure_retryable(desc, code)
+        results.append(row_result)
     if not results:
         return _sms_result([{"ok": False, "error": "Empty response from BlessedTexts."}])
     return _sms_result(results)
@@ -308,21 +337,26 @@ def _africas_talking_send(row, numbers: list[str], text: str) -> dict[str, Any]:
         return _sms_result([{"ok": False, "error": str(exc)}])
     data = payload.get("SMSMessageData") or {}
     recipients = data.get("Recipients") or []
-    results = [
-        {
-            "ok": str(item.get("statusCode") or "") == "101"
-            or str(item.get("status") or "").lower() == "success",
+    results = []
+    for item in recipients:
+        if not isinstance(item, dict):
+            continue
+        ok = (
+            str(item.get("statusCode") or "") == "101"
+            or str(item.get("status") or "").lower() == "success"
+        )
+        status = str(item.get("status") or "")
+        row_result = {
+            "ok": ok,
             "phone": str(item.get("number") or ""),
-            "status": str(item.get("status") or ""),
+            "status": status,
             "message_id": str(item.get("messageId") or ""),
             "cost": str(item.get("cost") or ""),
-            "error": ""
-            if str(item.get("statusCode") or "") == "101"
-            else str(item.get("status") or "Send failed"),
+            "error": "" if ok else status or "Send failed",
         }
-        for item in recipients
-        if isinstance(item, dict)
-    ]
+        if not ok:
+            row_result["retryable"] = _sms_failure_retryable(status)
+        results.append(row_result)
     if not results:
         message = str(data.get("Message") or "Empty response from Africa's Talking.")
         return _sms_result([{"ok": False, "error": message}])
@@ -381,16 +415,26 @@ def send_sms(*, phone: str, message: str, row=None) -> dict[str, Any]:
     row = row or get_communications_settings()
     text = (message or "").strip()
     if not text:
-        return {"ok": False, "results": [], "error": "Message is required."}
+        return {"ok": False, "results": [], "error": "Message is required.", "retryable": False}
     numbers = []
     for part in str(phone or "").split(","):
         normalized = _normalize_phone(part)
         if normalized and normalized not in numbers:
             numbers.append(normalized)
     if not numbers:
-        return {"ok": False, "results": [], "error": "No valid recipient phone number."}
+        return {
+            "ok": False,
+            "results": [],
+            "error": "No valid recipient phone number.",
+            "retryable": False,
+        }
     if not row.has_sms_credentials():
-        return {"ok": False, "results": [], "error": "SMS credentials are not configured."}
+        return {
+            "ok": False,
+            "results": [],
+            "error": "SMS credentials are not configured.",
+            "retryable": False,
+        }
 
     provider = (row.sms_provider or "").strip()
     if provider == SmsProvider.BLESSED_TEXTS:
@@ -403,4 +447,5 @@ def send_sms(*, phone: str, message: str, row=None) -> dict[str, Any]:
         "ok": False,
         "results": [],
         "error": f"Unsupported SMS provider: {provider or 'none'}.",
+        "retryable": False,
     }

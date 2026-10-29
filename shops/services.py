@@ -4199,6 +4199,7 @@ def build_stock_in_supplier_receipt(movement, *, shop: Shop, authorised_by=None)
         "payment": payment_label,
         "payment_details": {"label": "", "lines": []},
         "footer": "Supplier copy · Goods received",
+        "maintainer": receipt_maintainer_line(pos),
     }
 
     paper = (
@@ -4324,6 +4325,7 @@ def build_stock_request_delivery_note(
         "payment": "",
         "payment_details": {"label": "", "lines": []},
         "footer": footer,
+        "maintainer": receipt_maintainer_line(pos),
     }
     paper = (
         pos.receipt_paper_width
@@ -4451,6 +4453,7 @@ def build_expense_supplier_receipt(
         "payment": payment_label,
         "payment_details": {"label": "", "lines": []},
         "footer": "Expense claim · Payment voucher",
+        "maintainer": receipt_maintainer_line(pos),
     }
     paper = (
         pos.receipt_paper_width
