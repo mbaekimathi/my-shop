@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from typing import Any
 
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Case, Count, F, Q, When
 from django.utils import timezone
+
+from shops.models import Shop, ShopReceipt
 
 from .twilio import bridge_state_as_dict, fetch_bridge_status
 from .constants import (
@@ -30,6 +33,8 @@ from .constants import (
     MSG_MANUAL_REVIEW,
     MSG_PENDING,
     MSG_SENT,
+    TRIGGER_LABEL_PREFIX,
+    TRIGGER_MESSAGE_CHOICES,
 )
 from .models import BroadcastCampaign, OutboundMessage
 from .services import constrain_filters_to_profile, query_recipients, render_placeholders
@@ -610,6 +615,211 @@ def _campaign_kind_label(filters: dict | None) -> str:
     return "WhatsApp broadcast"
 
 
+_TERMINAL_MESSAGE_STATUSES = (MSG_CANCELLED, MSG_FAILED, MSG_MANUAL_REVIEW)
+
+
+def _kind_slug_from_label(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(label or "").strip().lower()).strip("-")
+    return f"auto-{slug}" if slug else "auto"
+
+
+def _campaign_kind_slug(filters: dict | None) -> str:
+    """Stable slug grouping a campaign's kind for the Activities type filter."""
+    data = filters or {}
+    label = str(data.get("trigger_label") or "").strip()
+    if label:
+        return _kind_slug_from_label(label.split("·")[-1])
+    if data.get("item_ids"):
+        return "item-share"
+    return "broadcast"
+
+
+def _campaign_type_label(filters: dict | None) -> str:
+    data = filters or {}
+    label = str(data.get("trigger_label") or "").strip()
+    if label:
+        return label
+    if data.get("item_ids"):
+        return "Item share"
+    return "Broadcast"
+
+
+def activity_kind_choices() -> list[dict[str, str]]:
+    """Type options for the Activities filter — covers every kind label produced."""
+    kinds = [
+        {"slug": "broadcast", "label": "Broadcast"},
+        {"slug": "item-share", "label": "Item share"},
+    ]
+    kinds.extend(
+        {
+            "slug": _kind_slug_from_label(display),
+            "label": f"{TRIGGER_LABEL_PREFIX}{display}",
+        }
+        for _value, display in TRIGGER_MESSAGE_CHOICES
+    )
+    return kinds
+
+
+def activity_status_choices() -> list[dict[str, str]]:
+    return [
+        {"slug": slug, "label": label}
+        for slug, label in (
+            ("queued", "Waiting"),
+            ("sent", "Sent"),
+            ("delivered", "Delivered"),
+            ("viewed", "Viewed"),
+            ("failed", "Failed"),
+            ("cancelled", "Cancelled"),
+        )
+    ]
+
+
+def _status_filter_q(slug: str) -> Q | None:
+    """Match ``outbound_display_status`` for the Activities status filter."""
+    slug = (slug or "").strip().lower()
+    if not slug:
+        return None
+    live = ~Q(status__in=_TERMINAL_MESSAGE_STATUSES)
+    if slug == "cancelled":
+        return Q(status=MSG_CANCELLED)
+    if slug == "failed":
+        return Q(status__in=[MSG_FAILED, MSG_MANUAL_REVIEW])
+    if slug == "viewed":
+        return live & Q(read_at__isnull=False)
+    if slug == "delivered":
+        return live & Q(read_at__isnull=True, delivered_at__isnull=False)
+    if slug == "sent":
+        return live & Q(
+            read_at__isnull=True, delivered_at__isnull=True, status=MSG_SENT
+        )
+    if slug == "queued":
+        return live & Q(read_at__isnull=True, delivered_at__isnull=True) & ~Q(
+            status=MSG_SENT
+        )
+    return Q(pk__in=[])
+
+
+def _kind_filter_q(slug: str) -> Q | None:
+    slug = (slug or "").strip().lower()
+    if not slug:
+        return None
+    if slug == "broadcast":
+        return Q(campaign__filters__trigger_label__isnull=True) & Q(
+            campaign__filters__item_ids__isnull=True
+        )
+    if slug == "item-share":
+        return Q(campaign__filters__trigger_label__isnull=True) & Q(
+            campaign__filters__item_ids__isnull=False
+        )
+    for _value, display in TRIGGER_MESSAGE_CHOICES:
+        if slug == _kind_slug_from_label(display):
+            return Q(
+                campaign__filters__trigger_label=(
+                    f"{TRIGGER_LABEL_PREFIX}{display}"
+                )
+            )
+    if slug == "auto":
+        return Q(campaign__filters__trigger_label__isnull=False)
+    return Q(pk__in=[])
+
+
+def _activity_day(raw):
+    from datetime import date as date_type
+
+    try:
+        return date_type.fromisoformat(str(raw or "").strip())
+    except ValueError:
+        return None
+
+
+def _shop_filter_q(shop_id) -> Q | None:
+    """Match messages whose send relates to the given shop.
+
+    Campaigns record a single ``shop_id``, a ``shop_ids`` scope, or the
+    ``receipt_id`` that triggered the send — a shop-scoped send matches
+    when the shop appears in any of those.
+    """
+    try:
+        shop_pk = int(shop_id or 0)
+    except (TypeError, ValueError):
+        shop_pk = 0
+    if shop_pk <= 0:
+        return None
+    q = Q(campaign__filters__shop_id=shop_pk) | Q(
+        campaign__filters__shop_ids__contains=shop_pk
+    )
+    receipt_ids = list(
+        ShopReceipt.objects.filter(shop_id=shop_pk).values_list("pk", flat=True)
+    )
+    if receipt_ids:
+        q |= Q(campaign__filters__receipt_id__in=receipt_ids)
+    return q
+
+
+def _campaign_shop_id(
+    filters: dict | None, receipt_shops: dict[int, int] | None = None
+) -> int | None:
+    """Single shop pk behind a campaign, when it can be pinned to one shop."""
+    data = filters or {}
+    try:
+        if data.get("shop_id"):
+            return int(data["shop_id"])
+    except (TypeError, ValueError):
+        pass
+    receipt_id = data.get("receipt_id")
+    if receipt_id and receipt_shops:
+        try:
+            return receipt_shops.get(int(receipt_id))
+        except (TypeError, ValueError):
+            pass
+    ids = data.get("shop_ids")
+    if isinstance(ids, list) and len(ids) == 1:
+        try:
+            return int(ids[0])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _campaign_shop_label(
+    filters: dict | None,
+    receipt_shops: dict[int, int] | None,
+    shop_names: dict[int, str],
+) -> str:
+    shop_id = _campaign_shop_id(filters, receipt_shops)
+    if shop_id:
+        return shop_names.get(shop_id) or "—"
+    if isinstance((filters or {}).get("shop_ids"), list):
+        return "All shops"
+    return "—"
+
+
+def _message_activity_dt(display_status: str, message: OutboundMessage):
+    """Timestamp backing the row's When column — mirrors _message_when_label."""
+    if display_status == "viewed":
+        stamp = message.read_at
+    elif display_status == "delivered":
+        stamp = message.delivered_at or message.sent_at
+    elif display_status == "sent":
+        stamp = message.sent_at
+    elif display_status in {"cancelled", "failed"}:
+        stamp = message.updated_at
+    else:
+        stamp = None
+    return stamp or message.created_at
+
+
+def _activity_at_expression():
+    """SQL mirror of _message_activity_dt for day filtering."""
+    return Case(
+        When(status__in=list(_TERMINAL_MESSAGE_STATUSES), then=F("updated_at")),
+        When(read_at__isnull=False, then=F("read_at")),
+        When(delivered_at__isnull=False, then=F("delivered_at")),
+        When(sent_at__isnull=False, then=F("sent_at")),
+        default=F("created_at"),
+    )
+
+
 def _campaign_status_label(campaign: BroadcastCampaign, *, is_scheduled: bool) -> str:
     if campaign.status == CAMPAIGN_DRAFT or is_scheduled:
         return "Scheduled"
@@ -827,7 +1037,14 @@ def recent_campaigns(limit: int = 10) -> list[dict[str, Any]]:
     return [campaign_as_dict(c) for c in rows]
 
 
-def activities_payload(*, limit: int = 50) -> dict[str, Any]:
+def activities_payload(
+    *,
+    limit: int = 50,
+    status: str = "",
+    kind: str = "",
+    day: str = "",
+    shop: str = "",
+) -> dict[str, Any]:
     """Split sends into waiting vs history for the Activities page."""
     cap = max(1, limit)
     waiting_qs = list(
@@ -860,7 +1077,11 @@ def activities_payload(*, limit: int = 50) -> dict[str, Any]:
     return {
         "pending": pending,
         "history": history,
-        "channels": channel_activities_payload(),
+        "channels": channel_activities_payload(
+            status=status, kind=kind, day=day, shop=shop
+        ),
+        "kinds": activity_kind_choices(),
+        "statuses": activity_status_choices(),
         "summary": {
             "pending_batches": len(pending),
             "scheduled_batches": scheduled,
@@ -871,14 +1092,34 @@ def activities_payload(*, limit: int = 50) -> dict[str, Any]:
     }
 
 
-def channel_activities_payload(*, per_channel: int = 60) -> list[dict[str, Any]]:
+def channel_activities_payload(
+    *,
+    per_channel: int = 120,
+    status: str = "",
+    kind: str = "",
+    day: str = "",
+    shop: str = "",
+) -> list[dict[str, Any]]:
     """Recent individual messages grouped by channel (WhatsApp, SMS, Message).
 
     Triggered sends (sale / credit / quotation) appear here too — they are
     queued as one-recipient campaigns, so each row shows its message and
-    delivery status.
+    delivery status. ``status`` / ``kind`` / ``day`` / ``shop`` narrow each
+    channel's feed to messages matching that display status, activity type,
+    the local date of the timestamp shown in the When column, or the shop
+    the send relates to.
     """
     cap = max(1, per_channel)
+    day_value = _activity_day(day)
+    status_q = _status_filter_q(status)
+    kind_q = _kind_filter_q(kind)
+    shop_q = _shop_filter_q(shop)
+    filtered = (
+        status_q is not None
+        or kind_q is not None
+        or day_value is not None
+        or shop_q is not None
+    )
     counts = {
         row["channel"]: row
         for row in OutboundMessage.objects.values("channel").annotate(
@@ -891,10 +1132,60 @@ def channel_activities_payload(*, per_channel: int = 60) -> list[dict[str, Any]]
     }
     feeds = []
     for slug, label in CHANNEL_CHOICES:
-        rows = list(
+        qs = (
             OutboundMessage.objects.filter(channel=slug)
             .select_related("campaign")
-            .order_by("-created_at")[:cap]
+            .order_by("-created_at")
+        )
+        if status_q is not None:
+            qs = qs.filter(status_q)
+        if kind_q is not None:
+            qs = qs.filter(kind_q)
+        if shop_q is not None:
+            qs = qs.filter(shop_q)
+        if day_value is not None:
+            from datetime import datetime, time, timedelta
+
+            tz = timezone.get_current_timezone()
+            day_start = timezone.make_aware(
+                datetime.combine(day_value, time.min), tz
+            )
+            qs = qs.annotate(activity_at=_activity_at_expression()).filter(
+                activity_at__gte=day_start,
+                activity_at__lt=day_start + timedelta(days=1),
+            )
+        rows = list(qs[:cap])
+        receipt_ids = set()
+        for message in rows:
+            data = message.campaign.filters
+            raw_id = data.get("receipt_id") if isinstance(data, dict) else None
+            try:
+                if raw_id:
+                    receipt_ids.add(int(raw_id))
+            except (TypeError, ValueError):
+                continue
+        receipt_shops = (
+            dict(
+                ShopReceipt.objects.filter(pk__in=receipt_ids).values_list(
+                    "pk", "shop_id"
+                )
+            )
+            if receipt_ids
+            else {}
+        )
+        row_shops = {
+            message.pk: _campaign_shop_id(
+                message.campaign.filters
+                if isinstance(message.campaign.filters, dict)
+                else {},
+                receipt_shops,
+            )
+            for message in rows
+        }
+        shop_names = dict(
+            Shop.objects.filter(
+                pk__in={sid for sid in row_shops.values() if sid}
+            ).values_list("pk", "name")
         )
         feed = []
         for message in rows:
@@ -918,6 +1209,17 @@ def channel_activities_payload(*, per_channel: int = 60) -> list[dict[str, Any]]
                     "id": message.pk,
                     "campaign_id": campaign.pk,
                     "kind_label": _campaign_kind_label(filters),
+                    "kind_slug": _campaign_kind_slug(filters),
+                    "type_label": _campaign_type_label(filters),
+                    "shop_id": row_shops.get(message.pk),
+                    "shop_label": _campaign_shop_label(
+                        filters, receipt_shops, shop_names
+                    ),
+                    "day_key": (
+                        timezone.localtime(_message_activity_dt(display, message))
+                        .date()
+                        .isoformat()
+                    ),
                     "client_name": (message.client_name or "").strip() or "Customer",
                     "phone": message.phone or "",
                     "body": body,
@@ -944,6 +1246,7 @@ def channel_activities_payload(*, per_channel: int = 60) -> list[dict[str, Any]]
                 "failed": int(stats.get("failed") or 0),
                 "total": int(stats.get("total") or 0),
                 "shown": len(feed),
+                "filtered": filtered,
                 "messages": feed,
             }
         )

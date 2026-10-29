@@ -3411,6 +3411,34 @@ html[data-theme="dark"] .comms-chat-wallpaper {
   min-height: 2.1rem;
 }
 
+.wa-act-filters {
+  margin-top: 0.15rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--line) 28%, var(--surface));
+  gap: 0.45rem 0.55rem;
+}
+
+.wa-act-filters .stock-report-field {
+  min-width: 7.5rem;
+}
+
+.wa-act-filters .stock-report-field select,
+.wa-act-filters .stock-report-field input[type="date"] {
+  min-height: 1.95rem;
+  padding: 0.28rem 0.45rem;
+  border-radius: 7px;
+  font-size: 0.8rem;
+}
+
+.wa-act-clear {
+  min-height: 1.95rem;
+  padding: 0.28rem 0.75rem;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  margin-left: auto;
+}
+
 .wa-act-empty {
   margin: 0;
   padding: 1.1rem 1rem 1.2rem;
@@ -3423,7 +3451,7 @@ html[data-theme="dark"] .comms-chat-wallpaper {
 }
 
 .wa-act-table {
-  min-width: 52rem;
+  min-width: 60rem;
 }
 
 .wa-act-table td,

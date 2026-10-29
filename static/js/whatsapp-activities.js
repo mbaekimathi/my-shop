@@ -20,10 +20,21 @@
   const waitingSummaryEl = document.querySelector("[data-wa-summary-waiting]");
   const scheduledSummaryEl = document.querySelector("[data-wa-summary-scheduled]");
   const historySummaryEl = document.querySelector("[data-wa-summary-history]");
+  const statusFilterEl = root.querySelector("[data-wa-filter-status]");
+  const typeFilterEl = root.querySelector("[data-wa-filter-type]");
+  const shopFilterEl = root.querySelector("[data-wa-filter-shop]");
+  const dayFilterEl = root.querySelector("[data-wa-filter-day]");
+  const clearFiltersEl = root.querySelector("[data-wa-filter-clear]");
 
   let pollTimer = 0;
   let activeChannel = tabButtons[0]?.dataset.waChannel || "";
   let lastPayload = null;
+  const filters = {
+    status: statusFilterEl?.value || "",
+    type: typeFilterEl?.value || "",
+    shop: shopFilterEl?.value || "",
+    day: dayFilterEl?.value || "",
+  };
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -57,13 +68,21 @@
     return match || channels(payload)[0] || null;
   }
 
+  function filtersActive() {
+    return Boolean(filters.status || filters.type || filters.shop || filters.day);
+  }
+
   function feedCountLabel(channel) {
     if (!channel) return "";
     const parts = [plural(channel.total, "message", "messages")];
-    if (Number(channel.waiting || 0) > 0) parts.push(`${channel.waiting} waiting`);
-    if (Number(channel.failed || 0) > 0) parts.push(`${channel.failed} failed`);
-    if (Number(channel.total || 0) > Number(channel.shown || 0)) {
-      parts.push(`showing latest ${channel.shown}`);
+    if (filtersActive()) {
+      parts.push(`${plural(channel.shown, "match", "matches")}`);
+    } else {
+      if (Number(channel.waiting || 0) > 0) parts.push(`${channel.waiting} waiting`);
+      if (Number(channel.failed || 0) > 0) parts.push(`${channel.failed} failed`);
+      if (Number(channel.total || 0) > Number(channel.shown || 0)) {
+        parts.push(`showing latest ${channel.shown}`);
+      }
     }
     return parts.join(" · ");
   }
@@ -87,6 +106,7 @@
           <span>${escapeHtml(row.body_preview || row.body || "Message")}</span>
         </a>
       </td>
+      <td data-label="Shop">${escapeHtml(row.shop_label || "All shops")}</td>
       <td data-label="Status">
         <span class="wa-auto__send-status" data-status="${escapeHtml(status)}">${escapeHtml(
           row.status_label || status
@@ -101,16 +121,18 @@
     if (!feedEl) return;
     const channel = channelFeed(payload, activeChannel);
     if (!channel || !channel.messages.length) {
-      feedEl.innerHTML = `<p class="wa-act-empty">${escapeHtml(
-        root.dataset.feedEmpty ||
-          "Nothing on this channel yet. Queued and sent messages will show up here."
-      )}</p>`;
+      const emptyText = filtersActive()
+        ? "No messages match the selected filters."
+        : root.dataset.feedEmpty ||
+          "Nothing on this channel yet. Queued and sent messages will show up here.";
+      feedEl.innerHTML = `<p class="wa-act-empty">${escapeHtml(emptyText)}</p>`;
     } else {
       feedEl.innerHTML = `<table class="staff-table staff-table--dense wa-act-table">
         <thead>
           <tr>
             <th>To</th>
             <th>Message</th>
+            <th>Shop</th>
             <th>Status</th>
             <th>When</th>
           </tr>
@@ -197,12 +219,25 @@
     return data;
   }
 
+  function filterParams() {
+    const params = new URLSearchParams({ action: "refresh_sends" });
+    if (filters.status) params.set("status", filters.status);
+    if (filters.type) params.set("type", filters.type);
+    if (filters.shop) params.set("shop", filters.shop);
+    if (filters.day) params.set("day", filters.day);
+    return params;
+  }
+
+  function refreshActivities() {
+    return post(filterParams())
+      .then((data) => renderActivities(data.activities))
+      .catch(() => {});
+  }
+
   function startPoll() {
     if (pollTimer) return;
     pollTimer = window.setInterval(() => {
-      post(new URLSearchParams({ action: "refresh_sends" }))
-        .then((data) => renderActivities(data.activities))
-        .catch(() => {});
+      refreshActivities();
     }, 4000);
   }
 
@@ -210,6 +245,49 @@
     if (!pollTimer) return;
     window.clearInterval(pollTimer);
     pollTimer = 0;
+  }
+
+  function syncFilterUrl() {
+    const url = new URL(window.location.href);
+    ["status", "type", "shop", "day"].forEach((key) => {
+      if (filters[key]) url.searchParams.set(key, filters[key]);
+      else url.searchParams.delete(key);
+    });
+    window.history.replaceState({}, "", url);
+  }
+
+  function updateClearButton() {
+    if (clearFiltersEl) clearFiltersEl.hidden = !filtersActive();
+  }
+
+  function readFilters() {
+    filters.status = statusFilterEl?.value || "";
+    filters.type = typeFilterEl?.value || "";
+    filters.shop = shopFilterEl?.value || "";
+    filters.day = dayFilterEl?.value || "";
+  }
+
+  [statusFilterEl, typeFilterEl, shopFilterEl, dayFilterEl].forEach((el) => {
+    if (!el) return;
+    el.addEventListener("change", () => {
+      readFilters();
+      updateClearButton();
+      syncFilterUrl();
+      refreshActivities();
+    });
+  });
+
+  if (clearFiltersEl) {
+    clearFiltersEl.addEventListener("click", () => {
+      if (statusFilterEl) statusFilterEl.value = "";
+      if (typeFilterEl) typeFilterEl.value = "";
+      if (shopFilterEl) shopFilterEl.value = "";
+      if (dayFilterEl) dayFilterEl.value = "";
+      readFilters();
+      updateClearButton();
+      syncFilterUrl();
+      refreshActivities();
+    });
   }
 
   tabButtons.forEach((button) => {

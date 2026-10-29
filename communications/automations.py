@@ -20,6 +20,7 @@ from .constants import (
     MESSAGE_STATUS_ACTIVE,
     TRIGGER_CHANNEL_BOTH,
     TRIGGER_CHANNEL_VALUES,
+    TRIGGER_LABEL_PREFIX,
     TRIGGER_SUPPLIER_PAYMENT,
     TRIGGER_SUPPLY,
 )
@@ -355,7 +356,7 @@ def _supplier_notice_channels(row) -> list[str]:
 
 
 def _queue_supplier_notice(
-    phone: str, body: str, *, label: str, party_name: str = ""
+    phone: str, body: str, *, label: str, party_name: str = "", shop=None
 ) -> None:
     """Persist a supplier notice campaign, then deliver it off the request path.
 
@@ -375,6 +376,7 @@ def _queue_supplier_notice(
         label=label,
         channels=channels,
         party_name=party_name,
+        shop=shop,
     )
     if not campaign_id:
         return
@@ -401,7 +403,7 @@ def _supplier_trigger_drafts(trigger: str, *, shop=None):
 
 
 def _queue_supplier_drafts(
-    *, phone, party_name, drafts, row, render_data
+    *, phone, party_name, drafts, row, render_data, shop=None
 ) -> list[int]:
     """Queue supplier drafts via the durable campaign path; return due-now pks."""
     due_now = []
@@ -423,9 +425,10 @@ def _queue_supplier_drafts(
             body=body,
             receipt=None,
             delay_minutes=draft.delay_minutes,
-            label=f"Auto message · {draft.get_trigger_display()}",
+            label=f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}",
             channels=channels,
             party_name=party_name,
+            shop=shop,
         )
         if campaign_id:
             due_now.append(campaign_id)
@@ -470,7 +473,10 @@ def maybe_send_stock_supplier_notice(movement, *, shop=None) -> None:
         return
     if getattr(movement, "movement_type", "") != StockMovementType.IN:
         return
-    if getattr(movement, "entry_source", "") != StockEntrySource.BUY_ITEMS:
+    if getattr(movement, "entry_source", "") not in {
+        StockEntrySource.BUY_ITEMS,
+        StockEntrySource.STOCK_MANAGEMENT,
+    }:
         return
     phone = _stock_supplier_phone(movement)
     if not phone:
@@ -498,6 +504,7 @@ def maybe_send_stock_supplier_notice(movement, *, shop=None) -> None:
                 "receipt_ref": _movement_doc_ref(movement),
                 "shop_name": getattr(shop_obj, "name", ""),
             },
+            shop=shop_obj,
         )
         _dispatch_supplier_campaigns(
             due_now, name=f"comms-supplier-supply-{movement.pk}"
@@ -513,6 +520,7 @@ def maybe_send_stock_supplier_notice(movement, *, shop=None) -> None:
         body,
         label="Supplier notice · Buy stock",
         party_name=supplier_name,
+        shop=shop_obj,
     )
 
 
@@ -544,6 +552,7 @@ def maybe_send_expense_supplier_notice(expense=None, *, expenses=None, shop=None
         body,
         label="Supplier notice · Expense",
         party_name=(getattr(first, "supplier_name", "") or "").strip(),
+        shop=shop or getattr(first, "shop", None),
     )
 
 
@@ -610,6 +619,7 @@ def maybe_send_supplier_payment_notice(
                 "receipt_ref": receipt_ref,
                 "shop_name": getattr(shop, "name", ""),
             },
+            shop=shop,
         )
         _dispatch_supplier_campaigns(
             due_now, name=f"comms-supplier-pay-{getattr(supplier, 'pk', 'x')}"
@@ -633,6 +643,7 @@ def maybe_send_supplier_payment_notice(
         body,
         label="Supplier notice · Payment",
         party_name=supplier_name,
+        shop=shop,
     )
 
 
@@ -1025,7 +1036,7 @@ def _queue_triggered_messages(receipt, request) -> list[int]:
                 body=body,
                 receipt=receipt,
                 delay_minutes=draft.delay_minutes,
-                label=f"Auto message · {draft.get_trigger_display()}",
+                label=f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}",
                 channels=channels,
             )
             if campaign_id:
@@ -1086,6 +1097,7 @@ def _queue_triggered_send(
     label: str,
     channels: list[str],
     party_name: str = "",
+    shop=None,
 ) -> int | None:
     """Persist a one-recipient campaign; return its pk when it is due to send now."""
     from datetime import timedelta
@@ -1103,6 +1115,7 @@ def _queue_triggered_send(
             "trigger_label": label,
             "send_after": due_at.isoformat(),
             "receipt_id": getattr(receipt, "pk", None),
+            "shop_id": getattr(receipt, "shop_id", None) or getattr(shop, "pk", None),
         },
         status=CAMPAIGN_QUEUED if delay <= 0 else CAMPAIGN_DRAFT,
         recipient_count=1,

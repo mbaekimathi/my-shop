@@ -185,6 +185,9 @@ TRIGGER_CHANNEL_CHOICES = (
 
 TRIGGER_CHANNEL_VALUES = {value for value, _ in TRIGGER_CHANNEL_CHOICES}
 
+# Prefix used for the campaign ``trigger_label`` stored on auto-sent messages.
+TRIGGER_LABEL_PREFIX = "Auto message · "
+
 # "Send after N <unit>" — stored as minutes on the draft.
 TRIGGER_DELAY_UNITS = (
     ("minutes", "minutes", 1),

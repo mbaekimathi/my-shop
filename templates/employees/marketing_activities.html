@@ -66,6 +66,45 @@
         </button>
         {% endfor %}
       </nav>
+      <div class="stock-report-filters wa-act-filters" data-wa-filters>
+        <label class="stock-report-field">
+          <span>Status</span>
+          <select data-wa-filter-status aria-label="Filter activities by status">
+            <option value="">All statuses</option>
+            {% for opt in activities.statuses %}
+            <option value="{{ opt.slug }}"{% if opt.slug == activity_filters.status %} selected{% endif %}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="stock-report-field">
+          <span>Type</span>
+          <select data-wa-filter-type aria-label="Filter activities by message type">
+            <option value="">All types</option>
+            {% for opt in activities.kinds %}
+            <option value="{{ opt.slug }}"{% if opt.slug == activity_filters.type %} selected{% endif %}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="stock-report-field">
+          <span>Shop</span>
+          <select data-wa-filter-shop aria-label="Filter activities by shop">
+            <option value="">All shops</option>
+            {% for shop in activity_shops %}
+            <option value="{{ shop.pk }}"{% if activity_filters.shop == shop.pk|stringformat:"s" %} selected{% endif %}>{{ shop.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="stock-report-field">
+          <span>Day</span>
+          <input type="date" data-wa-filter-day value="{{ activity_filters.day }}" aria-label="Filter activities by day">
+        </label>
+        <button
+          type="button"
+          class="stock-report-apply stock-report-apply--ghost wa-act-clear"
+          data-wa-filter-clear
+          {% if not activity_filters.status and not activity_filters.type and not activity_filters.day and not activity_filters.shop %}hidden{% endif %}
+        >Clear</button>
+      </div>
     </header>
     <div class="staff-table-wrap perm-table-scroll" data-wa-feed>
       <p class="wa-act-empty">Nothing on this channel yet. Queued and sent messages will show up here.</p>
@@ -76,5 +115,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/whatsapp-activities.js' %}?v=2"></script>
+<script defer src="{% static 'js/whatsapp-activities.js' %}?v=4"></script>
 {% endblock %}

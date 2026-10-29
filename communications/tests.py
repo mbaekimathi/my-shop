@@ -2734,6 +2734,39 @@ class TriggeredMessageTests(TestCase):
         self.assertEqual(feeds["sms"]["waiting"], 1)
         self.assertEqual(feeds["whatsapp"]["messages"], [])
 
+    def test_activities_feed_shows_shop_and_filters_by_it(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.campaigns import channel_activities_payload
+        from shops.models import Shop
+
+        self._enable_sms()
+        self._draft(channel="sms", body="SMS for {first_name}.")
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.automations._dispatch_triggered_send"),
+        ):
+            maybe_send_triggered_messages(self.receipt)
+
+        feeds = {c["slug"]: c for c in channel_activities_payload()}
+        row = feeds["sms"]["messages"][0]
+        self.assertEqual(row["shop_id"], self.shop.pk)
+        self.assertEqual(row["shop_label"], "TRIG SHOP")
+
+        other = Shop.objects.create(
+            name="OTHER SHOP",
+            location="NAIROBI",
+            email="other@test.local",
+            phone_number="0700000999",
+            login_code="860132",
+            password_hash="x",
+        )
+        own = {c["slug"]: c for c in channel_activities_payload(shop=str(self.shop.pk))}
+        self.assertEqual(len(own["sms"]["messages"]), 1)
+        elsewhere = {c["slug"]: c for c in channel_activities_payload(shop=str(other.pk))}
+        self.assertEqual(elsewhere["sms"]["messages"], [])
+
     def test_sms_draft_skipped_without_sms_setup(self):
         from unittest.mock import patch
 
@@ -3425,7 +3458,7 @@ class SupplierAutomationTests(TestCase):
         dispatch.assert_not_called()
         self.assertFalse(OutboundMessage.objects.exists())
 
-    def test_warehouse_stock_in_does_not_send(self):
+    def test_stock_management_stock_in_sends(self):
         from unittest.mock import patch
 
         from communications.automations import maybe_send_stock_supplier_notice
@@ -3433,6 +3466,22 @@ class SupplierAutomationTests(TestCase):
         from items.models import StockEntrySource
 
         self.movement.entry_source = StockEntrySource.STOCK_MANAGEMENT
+        self.movement.save(update_fields=["entry_source"])
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
+            maybe_send_stock_supplier_notice(self.movement)
+        dispatch.assert_called_once()
+        self.assertTrue(OutboundMessage.objects.exists())
+
+    def test_customer_return_stock_in_does_not_send(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_stock_supplier_notice
+        from communications.models import OutboundMessage
+        from items.models import StockEntrySource
+
+        self.movement.entry_source = StockEntrySource.CUSTOMER_RETURN
         self.movement.save(update_fields=["entry_source"])
         with patch(
             "communications.automations._dispatch_triggered_send"

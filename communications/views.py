@@ -574,6 +574,12 @@ def marketing_activities(request, role_segment):
         sync_outbound_delivery_status()
     except Exception:
         logger.exception("Twilio delivery sync failed")
+    activity_filters = {
+        "status": (request.GET.get("status") or "").strip().lower(),
+        "type": (request.GET.get("type") or "").strip().lower(),
+        "day": (request.GET.get("day") or "").strip(),
+        "shop": (request.GET.get("shop") or "").strip(),
+    }
     settings_url = settings_section_url(profile.role, "twilio")
     context = {
         "profile": profile,
@@ -585,7 +591,14 @@ def marketing_activities(request, role_segment):
             profile.role, profile=profile, active_view="activities"
         ),
         "recent_sends": recent_campaigns(8),
-        "activities": activities_payload(),
+        "activities": activities_payload(
+            status=activity_filters["status"],
+            kind=activity_filters["type"],
+            day=activity_filters["day"],
+            shop=activity_filters["shop"],
+        ),
+        "activity_filters": activity_filters,
+        "activity_shops": actionable_shops_for_profile(profile),
         "settings_url": settings_url,
         "module_permissions": module_capabilities(profile, "whatsapp"),
     }
@@ -756,6 +769,16 @@ def _json_wants(request) -> bool:
     )
 
 
+def _filtered_activities(request) -> dict:
+    params = request.POST if request.method == "POST" else request.GET
+    return activities_payload(
+        status=params.get("status") or "",
+        kind=params.get("type") or "",
+        day=params.get("day") or "",
+        shop=params.get("shop") or "",
+    )
+
+
 def _automation_post(request, profile):
     from django.contrib import messages
     from django.core.exceptions import ValidationError
@@ -919,7 +942,7 @@ def _automation_post(request, profile):
         except Exception:
             pass
         if wants_json:
-            return JsonResponse({"ok": True, "sends": recent_campaigns(8), "activities": activities_payload()})
+            return JsonResponse({"ok": True, "sends": recent_campaigns(8), "activities": _filtered_activities(request)})
         return redirect(request.path)
 
     if action == "cancel_campaign":
@@ -940,7 +963,7 @@ def _automation_post(request, profile):
                     "message": "Send cancelled. Messages already handed to Twilio cannot be recalled.",
                     "campaign": campaign_as_dict(campaign),
                     "sends": recent_campaigns(8),
-                    "activities": activities_payload(),
+                    "activities": _filtered_activities(request),
                 }
             )
         messages.success(request, "Send cancelled.")
@@ -964,7 +987,7 @@ def _automation_post(request, profile):
                     "message": "Retrying failed messages.",
                     "campaign": campaign_as_dict(campaign),
                     "sends": recent_campaigns(8),
-                    "activities": activities_payload(),
+                    "activities": _filtered_activities(request),
                 }
             )
         messages.success(request, "Retrying failed messages.")

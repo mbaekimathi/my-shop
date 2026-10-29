@@ -3296,7 +3296,8 @@ def apply_stock_movement(
     if (
         last_movement is not None
         and last_movement.movement_type == StockMovementType.IN
-        and last_movement.entry_source == StockEntrySource.BUY_ITEMS
+        and last_movement.entry_source
+        in {StockEntrySource.BUY_ITEMS, StockEntrySource.STOCK_MANAGEMENT}
     ):
         try:
             from communications.automations import maybe_send_stock_supplier_notice
