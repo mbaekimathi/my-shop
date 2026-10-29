@@ -471,6 +471,11 @@
     font-size: 0.82em;
     font-weight: 800 !important;
   }
+  .receipt-ticket-maintainer {
+    margin-top: 0.35em;
+    font-size: 0.82em;
+    font-weight: 800 !important;
+  }
   .receipt-ticket-qr {
     display: grid;
     justify-items: center;
@@ -714,6 +719,11 @@
   ${
     t.return_notice
       ? `<p class="receipt-ticket-footer receipt-ticket-return-notice">${escapeHtml(t.return_notice)}</p>`
+      : ""
+  }
+  ${
+    t.maintainer
+      ? `<p class="receipt-ticket-footer receipt-ticket-maintainer">${escapeHtml(t.maintainer)}</p>`
       : ""
   }
   ${qrBlock}

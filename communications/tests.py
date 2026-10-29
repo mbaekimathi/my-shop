@@ -794,6 +794,18 @@ class WhatsAppAutomationsPageTests(TestCase):
         response = self.client.get("/it-support/whatsapp/")
         self.assertRedirects(response, "/employees/settings/communication-settings/")
 
+    def test_message_drafts_page_uses_marketing_sidebar(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/settings/message-drafts/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Message drafts")
+        labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
+        self.assertEqual(
+            labels,
+            ["Dashboard", "Communication settings", "Message drafts", "Share items", "Contacts", "Inbox", "Activities"],
+        )
+        self.assertTrue(response.context["page_sidebar"]["primary"][2].get("active"))
+
     def test_communications_hub_links_to_twilio_and_whatsapp(self):
         self.client.force_login(self.user)
         response = self.client.get("/employees/settings/communication-settings/")
@@ -991,20 +1003,20 @@ class WhatsAppCataloguePageTests(TestCase):
         response = self.client.get("/it-support/whatsapp/catalogue/")
         self.assertEqual(response.status_code, 200)
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
-        self.assertEqual(labels, ["Dashboard", "Share items", "Contacts", "Inbox", "Activities"])
-        self.assertTrue(response.context["page_sidebar"]["primary"][1].get("active"))
-        self.assertFalse(response.context["page_sidebar"]["primary"][2].get("active"))
+        self.assertEqual(labels, ["Dashboard", "Message drafts", "Share items", "Contacts", "Inbox", "Activities"])
+        self.assertTrue(response.context["page_sidebar"]["primary"][2].get("active"))
+        self.assertFalse(response.context["page_sidebar"]["primary"][3].get("active"))
         self.assertIn(
             "/it-support/whatsapp/contacts/",
-            response.context["page_sidebar"]["primary"][2]["href"],
-        )
-        self.assertIn(
-            "/it-support/whatsapp/inbox/",
             response.context["page_sidebar"]["primary"][3]["href"],
         )
         self.assertIn(
-            "/it-support/marketing/activities/",
+            "/it-support/whatsapp/inbox/",
             response.context["page_sidebar"]["primary"][4]["href"],
+        )
+        self.assertIn(
+            "/it-support/marketing/activities/",
+            response.context["page_sidebar"]["primary"][5]["href"],
         )
         self.assertContains(response, "Who to share with")
         self.assertContains(response, "Pick items")
@@ -1051,8 +1063,8 @@ class WhatsAppCataloguePageTests(TestCase):
         response = self.client.get("/it-support/marketing/activities/")
         self.assertEqual(response.status_code, 200)
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
-        self.assertEqual(labels, ["Dashboard", "Communication settings", "Share items", "Contacts", "Inbox", "Activities"])
-        self.assertTrue(response.context["page_sidebar"]["primary"][5].get("active"))
+        self.assertEqual(labels, ["Dashboard", "Communication settings", "Message drafts", "Share items", "Contacts", "Inbox", "Activities"])
+        self.assertTrue(response.context["page_sidebar"]["primary"][6].get("active"))
         self.assertContains(response, "Waiting to send")
         self.assertContains(response, "Sent history")
         self.assertContains(response, "Nothing waiting. Scheduled item shares and queued messages will show up here.")
@@ -1691,9 +1703,9 @@ class WhatsAppContactsPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
         self.assertEqual(
-            labels, ["Dashboard", "Communication settings", "Share items", "Contacts", "Inbox", "Activities"]
+            labels, ["Dashboard", "Communication settings", "Message drafts", "Share items", "Contacts", "Inbox", "Activities"]
         )
-        self.assertTrue(response.context["page_sidebar"]["primary"][3].get("active"))
+        self.assertTrue(response.context["page_sidebar"]["primary"][4].get("active"))
         names = [row["full_name"] for row in response.context["contacts"]]
         self.assertEqual(response.context["contact_count"], 2)
         self.assertIn("JANE DOE", names)
@@ -1871,7 +1883,7 @@ class WhatsAppSendLogTests(TestCase):
         self.assertContains(response, "Sent")
         self.assertContains(response, "Back to activities")
         self.assertContains(response, 'href="/it-support/marketing/activities/"')
-        self.assertTrue(response.context["page_sidebar"]["primary"][5].get("active"))
+        self.assertTrue(response.context["page_sidebar"]["primary"][6].get("active"))
 
         json_page = self.client.get(url, HTTP_X_REQUESTED_WITH="XMLHttpRequest")
         self.assertEqual(json_page.status_code, 200)
@@ -2881,9 +2893,9 @@ class WhatsAppInboxTests(TestCase):
         labels = [item["label"] for item in page.context["page_sidebar"]["primary"]]
         self.assertEqual(
             labels,
-            ["Dashboard", "Communication settings", "Share items", "Contacts", "Inbox", "Activities"],
+            ["Dashboard", "Communication settings", "Message drafts", "Share items", "Contacts", "Inbox", "Activities"],
         )
-        self.assertTrue(page.context["page_sidebar"]["primary"][4].get("active"))
+        self.assertTrue(page.context["page_sidebar"]["primary"][5].get("active"))
         self.assertEqual(page.context["inbox"]["count"], 1)
 
     def test_join_messages_are_not_stored(self):

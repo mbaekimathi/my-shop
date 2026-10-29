@@ -645,10 +645,22 @@
       sample.ticket.party_phone_full || sample.ticket.party_phone || ""
     );
     const displayPhone = showClientPhone ? fullPhone : maskClientPhoneDigits(fullPhone);
+    const maintainerOn = Boolean(
+      root.querySelector(
+        '[data-pos-toggle][data-field="show_maintainer_on_receipt"]'
+      )?.checked
+    );
+    const maintainerPhone = String(
+      root.querySelector("[data-maintainer-phone]")?.value || ""
+    ).trim();
     const ticket = {
       ...sample.ticket,
       party_phone: displayPhone,
       party_phone_print: displayPhone,
+      maintainer:
+        maintainerOn && maintainerPhone
+          ? `System maintained by ${maintainerPhone}`
+          : "",
     };
     const paperWidth =
       root.querySelector("[data-receipt-paper]:checked")?.value ||
@@ -793,4 +805,66 @@
     receiptPhoneInput.addEventListener("change", saveReceiptPhone);
     receiptPhoneInput.addEventListener("blur", saveReceiptPhone);
   }
+
+  const maintainerPhoneInput = root.querySelector("[data-maintainer-phone]");
+  const maintainerPhoneRow = root.querySelector("[data-maintainer-phone-row]");
+  const maintainerToggle = root.querySelector(
+    '[data-pos-toggle][data-field="show_maintainer_on_receipt"]'
+  );
+
+  function syncMaintainerPreview() {
+    const show = Boolean(maintainerToggle?.checked);
+    const phone = String(maintainerPhoneInput?.value || "").trim();
+    const text = show && phone ? `System maintained by ${phone}` : "";
+    if (maintainerPhoneRow) maintainerPhoneRow.hidden = !show;
+    root.querySelectorAll("[data-receipt-maintainer]").forEach((el) => {
+      el.textContent = text;
+      el.hidden = !text;
+    });
+  }
+
+  if (maintainerToggle) {
+    maintainerToggle.addEventListener("change", () => {
+      window.setTimeout(syncMaintainerPreview, 0);
+    });
+  }
+
+  if (maintainerPhoneInput) {
+    let maintainerTimer = 0;
+    let savedMaintainerPhone = maintainerPhoneInput.value || "";
+
+    const saveMaintainerPhone = async () => {
+      const next = (maintainerPhoneInput.value || "").trim();
+      if (next === savedMaintainerPhone) return;
+      maintainerPhoneInput.classList.add("is-saving");
+      try {
+        const data = await postSettings(
+          new URLSearchParams({
+            action: "set_maintainer_phone",
+            maintainer_phone: next,
+          })
+        );
+        savedMaintainerPhone = data.maintainer_phone || "";
+        maintainerPhoneInput.value = savedMaintainerPhone;
+        maintainerPhoneInput.classList.remove("is-error");
+      } catch (error) {
+        maintainerPhoneInput.classList.add("is-error");
+        maintainerPhoneInput.value = savedMaintainerPhone;
+        window.alert(error.message || "Could not save maintainer phone.");
+      } finally {
+        maintainerPhoneInput.classList.remove("is-saving");
+        syncMaintainerPreview();
+      }
+    };
+
+    maintainerPhoneInput.addEventListener("input", () => {
+      syncMaintainerPreview();
+      window.clearTimeout(maintainerTimer);
+      maintainerTimer = window.setTimeout(saveMaintainerPhone, 700);
+    });
+    maintainerPhoneInput.addEventListener("change", saveMaintainerPhone);
+    maintainerPhoneInput.addEventListener("blur", saveMaintainerPhone);
+  }
+
+  syncMaintainerPreview();
 })();

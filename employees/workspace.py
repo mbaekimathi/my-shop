@@ -213,18 +213,23 @@ def _workspace_parent_url(request, role):
     if view_name in {
         "employees:profile",
         "employees:settings",
+        "employees:role_settings",
         "employees:workspace_module",
         "employees:marketing_links",
     }:
         return dashboard
 
-    if view_name == "employees:settings_section":
+    if view_name in {"employees:settings_section", "employees:role_settings_section"}:
         section = kwargs.get("section")
         if section == "company-receipt":
-            return settings_section_url("company-pos")
-        if section in {"twilio", "sms", "whatsapp", "message-drafts"}:
-            return settings_section_url("communication-settings")
-        return reverse("employees:settings")
+            return settings_section_url(role, "company-pos")
+        if section == "message-drafts":
+            if role in (EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN):
+                return marketing_links_url()
+            return settings_url(role)
+        if section in {"twilio", "sms", "whatsapp"}:
+            return settings_section_url(role, "communication-settings")
+        return settings_url(role)
 
     if view_name in {
         "employees:whatsapp_catalogue",
@@ -488,7 +493,11 @@ def _footer_site_links(
             _link(
                 "System settings",
                 "settings",
-                url_name="employees:settings",
+                href=(
+                    settings_url(profile.role)
+                    if profile is not None
+                    else reverse("employees:settings")
+                ),
                 active=settings_active,
             )
         )
@@ -588,8 +597,6 @@ def sidebar_for_role_dashboard(
     role, profile=None, *, active_slug=None, omit_dashboard_link=True
 ):
     """Sidebar links for role home / dashboard pages."""
-    from .module_permissions import employee_may_any
-
     dashboard_url = reverse(role_home_url_name(role))
     comms_roles = (EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN)
     skip_slugs = ("whatsapp",) if role in comms_roles else ()
@@ -605,24 +612,6 @@ def sidebar_for_role_dashboard(
                 active=active_slug == "marketing",
             )
         )
-        unread = 0
-        if profile is None or employee_may_any(profile, "whatsapp"):
-            if profile is not None:
-                try:
-                    from communications.replies import unread_reply_count
-
-                    unread = unread_reply_count()
-                except Exception:
-                    unread = 0
-            primary.append(
-                _link(
-                    "WhatsApp",
-                    "messages-square",
-                    href=whatsapp_inbox_url(role),
-                    active=active_slug == "whatsapp-inbox",
-                    badge=unread,
-                )
-            )
     return resolve_sidebar_hrefs(
         {
             "page": "role_dashboard",
@@ -1746,7 +1735,7 @@ def sidebar_for_client_credit_account(
 
 
 def sidebar_for_marketing_links(role, *, profile=None, active_view="marketing"):
-    """Sidebar for Marketing links: Communication settings, Share items, Contacts, Inbox, and Activities."""
+    """Sidebar for Marketing links: Communication settings, Message drafts, Share items, Contacts, Inbox, and Activities."""
     from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
@@ -1758,7 +1747,16 @@ def sidebar_for_marketing_links(role, *, profile=None, active_view="marketing"):
             _link(
                 "Communication settings",
                 "messages-square",
-                href=settings_section_url("communication-settings"),
+                href=settings_section_url(role, "communication-settings"),
+            )
+        )
+    if profile is None or employee_may(profile, "settings", "message-drafts"):
+        primary.append(
+            _link(
+                "Message drafts",
+                "message-square-text",
+                href=settings_section_url(role, "message-drafts"),
+                active=active_view == "message-drafts",
             )
         )
     if profile is None or employee_may(profile, "whatsapp", "view"):
@@ -1828,8 +1826,8 @@ def sidebar_for_communications(role, *, active_view="home", profile=None):
 
     dashboard_url = reverse(role_home_url_name(role))
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-    for slug in ("twilio", "sms", "whatsapp", "message-drafts"):
-        section = get_settings_section(slug)
+    for slug in ("twilio", "sms", "whatsapp"):
+        section = get_settings_section(role, slug)
         if section is None:
             continue
         if profile is not None and not employee_may(profile, "settings", slug):
@@ -1848,8 +1846,7 @@ def sidebar_for_communications(role, *, active_view="home", profile=None):
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
-                settings_active=active_view
-                in {"home", "twilio", "sms", "whatsapp", "message-drafts"},
+                settings_active=active_view in {"home", "twilio", "sms", "whatsapp"},
                 profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
@@ -2023,32 +2020,45 @@ PAYMENTS_SIDEBAR_SLUGS = frozenset(
     {"company-payments", "company-daraja", "developer-payments"}
 )
 COMMS_SIDEBAR_SLUGS = frozenset(
-    {"communication-settings", "twilio", "sms", "whatsapp", "message-drafts"}
+    {"communication-settings", "twilio", "sms", "whatsapp"}
 )
 
 
-def settings_section_url(section):
-    return reverse("employees:settings_section", kwargs={"section": section})
+def settings_url(role):
+    return reverse(
+        "employees:role_settings",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
 
 
-def get_settings_sections(*, active_slug=None):
+def settings_section_url(role, section):
+    return reverse(
+        "employees:role_settings_section",
+        kwargs={
+            "role_segment": role_url_segment(role),
+            "section": section,
+        },
+    )
+
+
+def get_settings_sections(role, *, active_slug=None):
     return [
         {
             **section,
-            "href": settings_section_url(section["slug"]),
+            "href": settings_section_url(role, section["slug"]),
             "active": section["slug"] == active_slug if active_slug else False,
         }
         for section in SETTINGS_SECTIONS
     ]
 
 
-def get_settings_section(slug):
+def get_settings_section(role, slug):
     section = SETTINGS_SECTION_BY_SLUG.get(slug) or SETTINGS_NESTED_BY_SLUG.get(slug)
     if section is None:
         return None
     return {
         **section,
-        "href": settings_section_url(section["slug"]),
+        "href": settings_section_url(role, section["slug"]),
     }
 
 
@@ -2068,14 +2078,14 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
         return profile is None or employee_may(profile, "settings", submodule)
 
     dashboard_url = reverse(role_home_url_name(role))
-    settings_url = reverse("employees:settings")
+    settings_home_url = settings_url(role)
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
     if _allowed("home"):
         primary.append(
             _link(
                 "System settings",
                 "settings",
-                href=settings_url,
+                href=settings_home_url,
                 active=active_view == "home",
             )
         )
@@ -2087,13 +2097,13 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
                 href=section["href"],
                 active=False,
             )
-            for section in get_settings_sections()
+            for section in get_settings_sections(role)
             if _allowed(section["slug"])
         ]
         primary.extend(section_links)
     elif active_view in POS_SIDEBAR_SLUGS:
-        pos_section = get_settings_section("company-pos")
-        receipt_section = get_settings_section("company-receipt")
+        pos_section = get_settings_section(role, "company-pos")
+        receipt_section = get_settings_section(role, "company-receipt")
         if _allowed("company-pos"):
             primary.append(
                 _link(
@@ -2113,9 +2123,9 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
                 )
             )
     elif active_view in PAYMENTS_SIDEBAR_SLUGS:
-        payments_section = get_settings_section("company-payments")
-        daraja_section = get_settings_section("company-daraja")
-        developer_section = get_settings_section("developer-payments")
+        payments_section = get_settings_section(role, "company-payments")
+        daraja_section = get_settings_section(role, "company-daraja")
+        developer_section = get_settings_section(role, "developer-payments")
         if _allowed("company-payments"):
             primary.append(
                 _link(
@@ -2143,6 +2153,10 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
                     active=active_view == "developer-payments",
                 )
             )
+    elif active_view == "message-drafts":
+        return sidebar_for_marketing_links(
+            role, profile=profile, active_view="message-drafts"
+        )
     elif active_view in COMMS_SIDEBAR_SLUGS:
         mapped = "home" if active_view == "communication-settings" else active_view
         return sidebar_for_communications(

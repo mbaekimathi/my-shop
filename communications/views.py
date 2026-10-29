@@ -25,6 +25,7 @@ from employees.module_permissions import (
 )
 from employees.workspace import (
     get_dashboard_module,
+    settings_section_url,
     sidebar_for_communications,
     sidebar_for_marketing_links,
 )
@@ -274,7 +275,7 @@ def communications_dashboard(request, profile, meta, module, page_sidebar=None):
         profile,
     )
     people = _people_payload(profile, audience_filters)
-    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
+    settings_url = settings_section_url(profile.role, "twilio")
     catalogue_url = reverse(
         "employees:whatsapp_catalogue",
         kwargs={"role_segment": segment},
@@ -348,12 +349,9 @@ def whatsapp_catalogue(request, role_segment):
     scoped = constrain_filters_to_profile({}, profile)
     items, item_total = _share_item_rows(audience_filters)
     filter_items, _ = _catalogue_item_rows()
-    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
-    whatsapp_url = reverse(
-        "employees:settings_section",
-        kwargs={"section": "whatsapp"},
-    )
-    sms_url = reverse("employees:settings_section", kwargs={"section": "sms"})
+    settings_url = settings_section_url(profile.role, "twilio")
+    whatsapp_url = settings_section_url(profile.role, "whatsapp")
+    sms_url = settings_section_url(profile.role, "sms")
     send_channels = [
         {
             "slug": CHANNEL_WHATSAPP,
@@ -529,7 +527,7 @@ def whatsapp_inbox(request, role_segment):
         "summary": "Chats on the Twilio WhatsApp number.",
         "icon": "messages-square",
     }
-    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
+    settings_url = settings_section_url(profile.role, "twilio")
     bridge = fetch_bridge_status()
     context = {
         "profile": profile,
@@ -576,7 +574,7 @@ def marketing_activities(request, role_segment):
         sync_outbound_delivery_status()
     except Exception:
         logger.exception("Twilio delivery sync failed")
-    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
+    settings_url = settings_section_url(profile.role, "twilio")
     context = {
         "profile": profile,
         "meta": meta,
@@ -615,7 +613,7 @@ def marketing_activity_detail(request, role_segment, campaign_id):
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return JsonResponse({"ok": True, "campaign": activity})
 
-    settings_url = reverse("employees:settings_section", kwargs={"section": "twilio"})
+    settings_url = settings_section_url(profile.role, "twilio")
     activities_url = reverse(
         "employees:marketing_activities",
         kwargs={"role_segment": role_segment},

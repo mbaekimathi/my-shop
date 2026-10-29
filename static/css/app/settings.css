@@ -2489,6 +2489,13 @@
   color: #111827;
 }
 
+.receipt-ticket-maintainer {
+  margin-top: 0.35em;
+  font-size: 0.78em;
+  font-weight: 700;
+  color: #4b5563;
+}
+
 .receipt-ticket-qr {
   display: grid;
   justify-items: center;

@@ -16,7 +16,7 @@
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
-        <p class="stock-kicker">Settings · Communication settings</p>
+        <p class="stock-kicker">Communications · Message drafts</p>
         <h2>{{ meta.headline }}</h2>
         <p>{{ meta.summary }}</p>
       </div>
@@ -33,9 +33,9 @@
   <p class="daraja-help">
     Messages marked <strong>Active</strong> only send while WhatsApp automations are on and
     Twilio is configured. Check
-    <a href="{% url 'employees:settings_section' section='whatsapp' %}">WhatsApp settings</a>
+    <a href="{% url 'employees:role_settings_section' role_segment=role_segment section='whatsapp' %}">WhatsApp settings</a>
     and
-    <a href="{% url 'employees:settings_section' section='twilio' %}">Twilio settings</a>.
+    <a href="{% url 'employees:role_settings_section' role_segment=role_segment section='twilio' %}">Twilio settings</a>.
   </p>
   {% endif %}
 

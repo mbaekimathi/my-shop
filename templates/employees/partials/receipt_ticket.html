@@ -169,6 +169,7 @@
   {% if p.return_notice %}
   <p class="receipt-ticket-footer receipt-ticket-return-notice">{{ p.return_notice }}</p>
   {% endif %}
+  <p class="receipt-ticket-footer receipt-ticket-maintainer" data-receipt-maintainer{% if not p.maintainer %} hidden{% endif %}>{{ p.maintainer }}</p>
 
   <div class="receipt-ticket-qr" data-receipt-qr-block{% if not p.qr.ready %} hidden{% endif %}>
     {% if p.qr.image_data_url %}

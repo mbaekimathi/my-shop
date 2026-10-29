@@ -42,8 +42,10 @@ class SessionMetaSyncTests(TestCase):
         # promote to super_admin in DB mid-session
         EmployeeProfile.objects.filter(pk=self.profile.pk).update(role=EmployeeRole.SUPER_ADMIN)
 
+        # legacy settings URL redirects to the promoted role's segment
         r = c.get("/employees/settings/")
-        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.headers["Location"], "/super-admin/settings/")
         # session mirror refreshed
         self.assertEqual(c.session.get(SESSION_PROFILE_KEY)["role"], "super_admin")
         # role-gated view now reachable (would previously redirect to /employee/)
@@ -70,6 +72,6 @@ class SessionMetaSyncTests(TestCase):
 
     def test_settings_shows_real_role(self):
         c = self._login()
-        r = c.get("/employees/settings/")
+        r = c.get("/employee/settings/")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.context["role_label"], "Employee")

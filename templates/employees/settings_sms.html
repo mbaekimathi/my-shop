@@ -17,10 +17,10 @@
         <h2>{{ meta.headline }}</h2>
         <p class="daraja-form-message">
           Profile: <strong>{{ comms.deploy_profile_label|default:"Local" }}</strong>
-          {% if comms.credentials_from_env %}
+          {% if comms.sms_credentials_from_env %}
           — SMS credentials are loaded from server <code>.env</code> on hosted.
           {% elif comms.is_hosted_deploy %}
-          — set <code>SMS_*</code> in server <code>.env</code>, then restart the app.
+          — credentials are saved in this app; <code>SMS_*</code> values in server <code>.env</code> take precedence.
           {% else %}
           — credentials are saved in this app (local database).
           {% endif %}
@@ -35,7 +35,7 @@
         <h3>Text (SMS) API</h3>
         <p>SMS provider API credentials and sender identity.</p>
       </div>
-      <form class="daraja-credentials-form" data-comms-form="sms" novalidate{% if comms.credentials_from_env %} hidden{% endif %}>
+      <form class="daraja-credentials-form" data-comms-form="sms" novalidate{% if comms.sms_credentials_from_env %} hidden{% endif %}>
         <input type="hidden" name="action" value="save_sms_settings">
         <div class="daraja-status" data-comms-sms-status>
           {% if comms.has_sms_credentials %}
@@ -130,7 +130,7 @@
           <p class="daraja-form-message" data-comms-message hidden></p>
         </div>
       </form>
-      {% if comms.credentials_from_env %}
+      {% if comms.sms_credentials_from_env %}
       <p class="daraja-help">
         SMS uses <code>SMS_PROVIDER</code>, <code>SMS_API_KEY</code>, <code>SMS_SENDER_ID</code>, and optional
         <code>SMS_API_SECRET</code> / <code>SMS_API_BASE_URL</code> in server <code>.env</code>.

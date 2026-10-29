@@ -51,6 +51,8 @@ from shops.services import (
     set_stk_provider,
     stk_shop_activation_status,
     update_nexus_stk_settings,
+    receipt_maintainer_line,
+    set_maintainer_phone,
     set_mpesa_payment_details,
     set_receipt_font_style,
     set_receipt_number_formats,
@@ -100,6 +102,7 @@ from .workspace import (
     get_dashboard_module,
     get_settings_section,
     get_settings_sections,
+    settings_section_url,
     sidebar_for_marketing_links,
     sidebar_for_module,
     sidebar_for_profile,
@@ -170,13 +173,40 @@ def _render_role_page(request, expected_role):
 @active_employee_required
 def legacy_communications_redirect(request, role_segment):
     """Old /…/communications/ bookmarks → communication settings."""
-    return redirect("employees:settings_section", section="communication-settings")
+    profile = get_profile_for_request(request)
+    return redirect(
+        settings_section_url(profile.role, "communication-settings")
+    )
 
 
 @active_employee_required
 def legacy_settings_communications_redirect(request):
     """Old /settings/communications/ → /settings/communication-settings/."""
-    return redirect("employees:settings_section", section="communication-settings")
+    profile = get_profile_for_request(request)
+    return redirect(
+        settings_section_url(profile.role, "communication-settings")
+    )
+
+
+@active_employee_required
+def legacy_settings_redirect(request):
+    """Old /employees/settings/ → role-scoped settings home."""
+    profile = get_profile_for_request(request)
+    return redirect(
+        "employees:role_settings",
+        role_segment=role_url_segment(profile.role),
+    )
+
+
+@active_employee_required
+def legacy_settings_section_redirect(request, section):
+    """Old /employees/settings/<section>/ → role-scoped settings section."""
+    profile = get_profile_for_request(request)
+    return redirect(
+        "employees:role_settings_section",
+        role_segment=role_url_segment(profile.role),
+        section=section,
+    )
 
 
 def legacy_shop_login_redirect(request):
@@ -212,7 +242,11 @@ def workspace_module(request, role_segment, module_slug):
         )
 
     if module_slug == "whatsapp":
-        return redirect("employees:settings_section", section="communication-settings")
+        return redirect(
+            "employees:role_settings_section",
+            role_segment=expected_segment,
+            section="communication-settings",
+        )
 
     page_sidebar = sidebar_for_module(profile.role, module_slug, profile=profile)
     meta = {
@@ -1056,10 +1090,17 @@ def employee_profile(request):
 
 
 @active_employee_required
-def employee_settings(request):
+def employee_settings(request, role_segment):
     from .module_permissions import employee_may, require_module_permission
 
     profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+    expected_segment = role_url_segment(profile.role)
+    if role_segment != expected_segment:
+        return redirect(
+            "employees:role_settings", role_segment=expected_segment
+        )
     denied = require_module_permission(request, profile, "settings", "home")
     if denied is not None:
         return denied
@@ -1079,7 +1120,7 @@ def employee_settings(request):
             "status_label": profile.get_status_display(),
             "settings_sections": [
                 section
-                for section in get_settings_sections()
+                for section in get_settings_sections(profile.role)
                 if employee_may(profile, "settings", section["slug"])
             ],
             "page_sidebar": sidebar_for_settings(
@@ -1091,11 +1132,20 @@ def employee_settings(request):
 
 @active_employee_required
 @require_http_methods(["GET", "POST"])
-def employee_settings_section(request, section):
+def employee_settings_section(request, role_segment, section):
     from .module_permissions import require_module_permission
 
     profile = get_profile_for_request(request)
-    settings_section = get_settings_section(section)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+    expected_segment = role_url_segment(profile.role)
+    if role_segment != expected_segment:
+        return redirect(
+            "employees:role_settings_section",
+            role_segment=expected_segment,
+            section=section,
+        )
+    settings_section = get_settings_section(profile.role, section)
     if settings_section is None:
         raise Http404("Settings section not found.")
 
@@ -1115,6 +1165,7 @@ def employee_settings_section(request, section):
         "profile": profile,
         "meta": meta,
         "settings_section": settings_section,
+        "role_segment": expected_segment,
         "role_label": profile.get_role_display(),
         "status_label": profile.get_status_display(),
         "page_sidebar": sidebar_for_settings(
@@ -1180,7 +1231,7 @@ def _communications_settings_hub(request, context):
     profile = context["profile"]
     pages = []
     for slug in ("twilio", "sms", "whatsapp", "message-drafts"):
-        section = get_settings_section(slug)
+        section = get_settings_section(profile.role, slug)
         if section is None:
             continue
         if employee_may(profile, "settings", slug):
@@ -1267,7 +1318,7 @@ def _payments_settings_hub(request, context):
     profile = context["profile"]
     pages = []
     for slug in ("company-daraja", "developer-payments"):
-        section = get_settings_section(slug)
+        section = get_settings_section(profile.role, slug)
         if section is None:
             continue
         if employee_may(profile, "settings", slug):
@@ -2435,6 +2486,27 @@ def _company_pos_settings(
                 )
             messages.success(request, "Receipt QR settings updated.")
             return redirect(request.path)
+        if action == "set_maintainer_phone":
+            try:
+                row = set_maintainer_phone(
+                    phone_number=request.POST.get("maintainer_phone") or ""
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "maintainer_phone": row.maintainer_phone or "",
+                        "maintainer": receipt_maintainer_line(row),
+                    }
+                )
+            messages.success(request, "Maintainer phone updated.")
+            return redirect(request.path)
         if wants_json:
             return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
         messages.error(request, "Unknown action.")
@@ -2506,8 +2578,8 @@ def _company_pos_settings(
             "pos_enabled_count": enabled_count,
             "pos_toggle_count": toggle_count,
             "stk_shop": stk_shop,
-            "daraja_settings_url": reverse(
-                "employees:settings_section", kwargs={"section": "company-daraja"}
+            "daraja_settings_url": settings_section_url(
+                context["profile"].role, "company-daraja"
             ),
             "tax_percent_value": f"{pos.tax_percent:.0f}",
             "receipt_paper_width": paper_width,
@@ -2555,6 +2627,10 @@ def _company_pos_settings(
                 ("website", "Company website"),
                 ("receipt_details", "Receipt details"),
             ),
+            "show_maintainer_on_receipt": bool(
+                getattr(pos, "show_maintainer_on_receipt", False)
+            ),
+            "maintainer_phone": getattr(pos, "maintainer_phone", "") or "",
             "receipt_preview": {
                 "logo_url": "",
                 "shop_name": (company.name or "WESTLANDS BRANCH").upper(),
@@ -2624,6 +2700,7 @@ def _company_pos_settings(
                 ),
                 "footer": "Thank you for shopping with us",
                 "return_notice": "Goods once bought cannot be returned",
+                "maintainer": receipt_maintainer_line(pos),
             },
         }
     )
@@ -2697,6 +2774,7 @@ def _company_pos_settings(
             "payment_details": context["receipt_preview"]["payment_details"],
             "footer": context["receipt_preview"]["footer"],
             "return_notice": context["receipt_preview"].get("return_notice") or "",
+            "maintainer": context["receipt_preview"].get("maintainer") or "",
         },
         "qr": context["receipt_qr"],
         "paper_width": paper_width,

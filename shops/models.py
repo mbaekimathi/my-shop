@@ -494,6 +494,11 @@ class CompanyPosSettings(models.Model):
         default="website",
     )
     receipt_qr_website = models.CharField(max_length=255, blank=True, default="")
+    show_maintainer_on_receipt = models.BooleanField(
+        default=False,
+        help_text="When on, receipts print a 'System maintained by' line with the maintainer phone.",
+    )
+    maintainer_phone = models.CharField(max_length=40, blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -767,6 +772,11 @@ class ShopPosSettings(models.Model):
         default="website",
     )
     receipt_qr_website = models.CharField(max_length=255, blank=True, default="")
+    show_maintainer_on_receipt = models.BooleanField(
+        default=False,
+        help_text="When on, receipts print a 'System maintained by' line with the maintainer phone.",
+    )
+    maintainer_phone = models.CharField(max_length=40, blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

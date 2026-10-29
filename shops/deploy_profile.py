@@ -79,8 +79,15 @@ def hosted_daraja_credentials_locked() -> bool:
 
 
 def hosted_comms_secrets_locked() -> bool:
-    """On hosted, Twilio / SMS / Message credentials come from server .env only."""
+    """On hosted, Twilio / Message credentials come from server .env only."""
     return is_hosted_deploy()
+
+
+def hosted_sms_credentials_locked() -> bool:
+    """Hosted: SMS is UI-editable unless SMS_* values in server .env pin it there."""
+    if not is_hosted_deploy():
+        return False
+    return any(field in hosted_comms_env_overrides() for field in HOSTED_SMS_ENV)
 
 
 def hosted_stk_enable_locked() -> bool:
@@ -144,7 +151,7 @@ def comms_deploy_meta() -> dict:
         "is_hosted_deploy": is_hosted_deploy(),
         "credentials_from_env": locked,
         "twilio_credentials_from_env": locked,
-        "sms_credentials_from_env": locked,
+        "sms_credentials_from_env": hosted_sms_credentials_locked(),
         "message_credentials_from_env": locked,
         "hosted_env_keys": sorted(overrides.keys()),
         "hosted_twilio_env_keys": sorted(
@@ -224,13 +231,21 @@ def apply_hosted_env_overlays(row: CompanyDarajaSettings) -> CompanyDarajaSettin
 def apply_hosted_comms_env_overlays(
     row: CompanyCommunicationsSettings,
 ) -> CompanyCommunicationsSettings:
-    """Hosted: Twilio / SMS / Message credentials from .env only (not DB)."""
+    """Hosted: Twilio / Message credentials from .env only (not DB).
+
+    SMS fields stay UI/DB-managed on hosted unless an SMS_* value is set in
+    server .env — then the whole SMS group comes from .env instead.
+    """
     if not is_hosted_deploy():
         return row
     effective = clone_comms_row(row)
+    overrides = hosted_comms_env_overrides()
+    sms_env_managed = any(field in overrides for field in HOSTED_SMS_ENV)
     for field in HOSTED_COMMS_CREDENTIAL_FIELDS:
+        if field in HOSTED_SMS_ENV and not sms_env_managed:
+            continue
         setattr(effective, field, "")
-    for field, value in hosted_comms_env_overrides().items():
+    for field, value in overrides.items():
         setattr(effective, field, value)
     return effective
 

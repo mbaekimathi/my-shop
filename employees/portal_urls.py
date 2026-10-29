@@ -256,6 +256,16 @@ urlpatterns = [
         name="hr_section",
     ),
     path(
+        "<role_segment:role_segment>/settings/",
+        views.employee_settings,
+        name="role_settings",
+    ),
+    path(
+        "<role_segment:role_segment>/settings/<slug:section>/",
+        views.employee_settings_section,
+        name="role_settings_section",
+    ),
+    path(
         "<role_segment:role_segment>/stock-management/catalog/",
         views.stock_management_catalog_proxy,
         name="stock_management_catalog",

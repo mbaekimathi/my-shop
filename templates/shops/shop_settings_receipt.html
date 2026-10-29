@@ -501,6 +501,53 @@
         </ul>
       </div>
     </section>
+
+    <section class="pos-settings-group receipt-maintainer-group">
+      <div class="pos-settings-group-head">
+        <h3>System maintenance</h3>
+        <p>Support contact printed at the bottom of receipts.</p>
+      </div>
+      <ul class="pos-settings-list">
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>Show "System maintained by" on receipt</strong>
+          </div>
+          <label class="perm-switch">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if show_maintainer_on_receipt %}checked{% endif %}
+              data-pos-toggle
+              data-field="show_maintainer_on_receipt"
+              aria-label="Show system maintainer on receipt"
+              {% if using_company_defaults %}disabled{% endif %}
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if show_maintainer_on_receipt %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+        <li class="pos-settings-row pos-settings-row--format" data-maintainer-phone-row{% if not show_maintainer_on_receipt %} hidden{% endif %}>
+          <div class="pos-settings-copy">
+            <strong>Maintainer phone</strong>
+            <p>Prints as “System maintained by &lt;phone&gt;”.</p>
+          </div>
+          <label class="receipt-format-field receipt-format-field--wide">
+            <input
+              type="text"
+              inputmode="tel"
+              maxlength="40"
+              autocomplete="tel"
+              placeholder="07XX XXX XXX"
+              value="{{ maintainer_phone }}"
+              data-maintainer-phone
+              aria-label="System maintainer phone number"
+            >
+          </label>
+        </li>
+      </ul>
+    </section>
     </div>
   </div>
 
@@ -567,7 +614,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=20261019-assets"></script>
-<script defer src="{% static 'js/receipt-settings.js' %}?v=10"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261029-assets"></script>
+<script defer src="{% static 'js/receipt-settings.js' %}?v=11"></script>
 <script defer src="{% static 'js/shop-settings.js' %}?v=1"></script>
 {% endblock %}

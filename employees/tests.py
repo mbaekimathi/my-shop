@@ -152,15 +152,20 @@ class ConfirmSalesReceiptTests(TestCase):
         self.assertIn("kind_options", context)
 
 
-class DashboardSidebarLinkTests(SimpleTestCase):
+class DashboardSidebarLinkTests(TestCase):
     def test_role_dashboard_omits_dashboard_link(self):
         sidebar = sidebar_for_role_dashboard(EmployeeRole.IT_SUPPORT)
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertNotIn("Dashboard", labels)
         self.assertIn("Marketing links", labels)
-        self.assertIn("WhatsApp", labels)
-        whatsapp = next(item for item in sidebar["primary"] if item["label"] == "WhatsApp")
-        self.assertIn("/it-support/whatsapp/inbox/", whatsapp["href"])
+        self.assertNotIn("WhatsApp", labels)
+
+    def test_whatsapp_link_lives_in_marketing_sidebar(self):
+        sidebar = sidebar_for_marketing_links(EmployeeRole.IT_SUPPORT)
+        inbox = next(
+            item for item in sidebar["primary"] if item["label"] == "Inbox"
+        )
+        self.assertIn("/it-support/whatsapp/inbox/", inbox["href"])
 
     def test_reused_dashboard_nav_on_other_pages_includes_dashboard(self):
         sidebar = sidebar_for_role_dashboard(
@@ -1587,11 +1592,9 @@ class MarketingLinksPageTests(TestCase):
                 "HR Management",
                 "Shop Management",
                 "Marketing links",
-                "WhatsApp",
             ],
         )
-        self.assertIn("/it-support/marketing/", home.context["page_sidebar"]["primary"][-2]["href"])
-        self.assertIn("/it-support/whatsapp/inbox/", home.context["page_sidebar"]["primary"][-1]["href"])
+        self.assertIn("/it-support/marketing/", home.context["page_sidebar"]["primary"][-1]["href"])
 
         response = self.client.get("/it-support/marketing/")
         self.assertEqual(response.status_code, 200)
@@ -1605,27 +1608,31 @@ class MarketingLinksPageTests(TestCase):
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
         self.assertEqual(
             labels,
-            ["Dashboard", "Communication settings", "Share items", "Contacts", "Inbox", "Activities"],
+            ["Dashboard", "Communication settings", "Message drafts", "Share items", "Contacts", "Inbox", "Activities"],
         )
         self.assertIn(
             "/settings/communication-settings/",
             response.context["page_sidebar"]["primary"][1]["href"],
         )
         self.assertIn(
-            "/it-support/whatsapp/catalogue/",
+            "/settings/message-drafts/",
             response.context["page_sidebar"]["primary"][2]["href"],
         )
         self.assertIn(
-            "/it-support/whatsapp/contacts/",
+            "/it-support/whatsapp/catalogue/",
             response.context["page_sidebar"]["primary"][3]["href"],
         )
         self.assertIn(
-            "/it-support/whatsapp/inbox/",
+            "/it-support/whatsapp/contacts/",
             response.context["page_sidebar"]["primary"][4]["href"],
         )
         self.assertIn(
-            "/it-support/marketing/activities/",
+            "/it-support/whatsapp/inbox/",
             response.context["page_sidebar"]["primary"][5]["href"],
+        )
+        self.assertIn(
+            "/it-support/marketing/activities/",
+            response.context["page_sidebar"]["primary"][6]["href"],
         )
         shop = response.context["marketing_links"][0]
         self.assertEqual(len(shop["variants"]), 1)

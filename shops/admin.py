@@ -88,6 +88,8 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "enable_receipt_qr",
         "receipt_qr_content",
         "receipt_qr_website",
+        "show_maintainer_on_receipt",
+        "maintainer_phone",
         "updated_at",
     )
     readonly_fields = ("updated_at",)

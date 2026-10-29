@@ -112,6 +112,7 @@ from .services import (
     pos_settings_as_dict,
     preview_receipt_number,
     receipt_font_style,
+    receipt_maintainer_line,
     receipt_phone_for_shop,
     receipt_qr_for_settings,
     register_owner_drawing,
@@ -119,6 +120,7 @@ from .services import (
     return_shop_receipt_items,
     search_clients_by_name,
     search_expense_suppliers,
+    set_shop_maintainer_phone,
     set_shop_mpesa_payment_details,
     set_shop_pos_override,
     set_shop_pos_setting,
@@ -1707,7 +1709,13 @@ def my_shop_workspace(request, shop_id):
             "stk_off_label": daraja_settings.stk_not_ready_reason() or "STK unavailable",
             "stk_blocker_message": daraja_settings.stk_blocker_message(),
             "stk_settings_url": reverse(
-                "employees:settings_section", kwargs={"section": "company-daraja"}
+                "employees:role_settings_section",
+                kwargs={
+                    "role_segment": role_url_segment(
+                        profile.role if profile else None
+                    ),
+                    "section": "company-daraja",
+                },
             ),
             "cart_kinds": cart_kinds,
             "trade_kinds": trade_kinds,
@@ -3883,6 +3891,28 @@ def _handle_shop_settings_post(request, shop, *, section: str):
         messages.success(request, "Receipt QR settings updated.")
         return redirect(request.path)
 
+    if action == "set_maintainer_phone":
+        try:
+            row = set_shop_maintainer_phone(
+                shop=shop,
+                phone_number=request.POST.get("maintainer_phone") or "",
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "maintainer_phone": row.maintainer_phone or "",
+                    "maintainer": receipt_maintainer_line(
+                        get_effective_pos_settings(shop)
+                    ),
+                }
+            )
+        messages.success(request, "Maintainer phone updated.")
+        return redirect(request.path)
+
     if wants_json:
         return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
     messages.error(request, "Unknown action.")
@@ -3985,6 +4015,10 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
         ),
         "receipt_phone_number": (getattr(shop, "receipt_phone_number", None) or ""),
         "company_phone_number": (company.phone_number or "").strip(),
+        "show_maintainer_on_receipt": bool(
+            getattr(pos, "show_maintainer_on_receipt", False)
+        ),
+        "maintainer_phone": getattr(pos, "maintainer_phone", "") or "",
         "receipt_preview": {
             "logo_url": "",
             "shop_name": shop.name,
@@ -4054,6 +4088,7 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
             ),
             "footer": "Thank you for shopping with us",
             "return_notice": "Goods once bought cannot be returned",
+            "maintainer": receipt_maintainer_line(pos),
         },
     }
 
@@ -4249,6 +4284,7 @@ def my_shop_settings_receipt(request, shop_id):
             "payment_details": context["receipt_preview"]["payment_details"],
             "footer": context["receipt_preview"]["footer"],
             "return_notice": context["receipt_preview"].get("return_notice") or "",
+            "maintainer": context["receipt_preview"].get("maintainer") or "",
             "qr": qr,
         },
         "receipt_paper_width": context["receipt_paper_width"],

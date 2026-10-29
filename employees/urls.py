@@ -44,7 +44,7 @@ urlpatterns = [
     path("pending/", views.pending_approval, name="pending"),
     path("dashboard/", views.dashboard, name="dashboard"),
     path("profile/", views.employee_profile, name="profile"),
-    path("settings/", views.employee_settings, name="settings"),
+    path("settings/", views.legacy_settings_redirect, name="settings"),
     path(
         "settings/communications/",
         views.legacy_settings_communications_redirect,
@@ -52,7 +52,7 @@ urlpatterns = [
     ),
     path(
         "settings/<slug:section>/",
-        views.employee_settings_section,
+        views.legacy_settings_section_redirect,
         name="settings_section",
     ),
     path(

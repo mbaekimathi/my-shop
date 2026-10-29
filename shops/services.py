@@ -78,6 +78,7 @@ POS_SETTING_FIELDS = {
     "enable_print_wifi",
     "enable_receipt_payment_methods",
     "show_client_phone_on_receipt",
+    "show_maintainer_on_receipt",
 }
 
 # Shop override sections (POS page vs Receipt page).
@@ -125,6 +126,8 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "enable_receipt_qr",
         "receipt_qr_content",
         "receipt_qr_website",
+        "show_maintainer_on_receipt",
+        "maintainer_phone",
     }
 )
 SHOP_POS_COPY_FIELDS = tuple(SHOP_POS_FIELD_NAMES | SHOP_RECEIPT_FIELD_NAMES)
@@ -570,6 +573,23 @@ def set_shop_receipt_qr_settings(
             "updated_at",
         ]
     )
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
+def set_shop_maintainer_phone(
+    *, shop: Shop, phone_number: str = ""
+) -> ShopPosSettings:
+    raw = (phone_number or "").strip()
+    if raw and not PHONE_RE.match(raw):
+        raise ValidationError("Enter a valid maintainer phone number.")
+    row = get_shop_pos_settings(shop)
+    if not row.override_receipt:
+        raise ValidationError(
+            "Turn on custom shop receipt settings before changing the maintainer phone."
+        )
+    row.maintainer_phone = raw
+    row.save(update_fields=["maintainer_phone", "updated_at"])
     _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
 
@@ -1116,7 +1136,7 @@ def set_communications_setting(*, field: str, enabled: bool) -> CompanyCommunica
             )
         if field == "enable_sms" and not effective.has_sms_credentials():
             raise ValidationError(
-                "Set SMS credentials in server .env (SMS_API_KEY, SMS_SENDER_ID) before enabling Text."
+                "Save SMS credentials (provider, API key, sender ID) before enabling Text."
             )
         if field == "enable_message" and not (effective.message_from_name or "").strip():
             raise ValidationError(
@@ -1263,12 +1283,12 @@ def update_sms_settings(
     sender_id: str = "",
     api_base_url: str = "",
 ) -> CompanyCommunicationsSettings:
-    from shops.deploy_profile import hosted_comms_secrets_locked
+    from shops.deploy_profile import hosted_sms_credentials_locked
 
-    if hosted_comms_secrets_locked():
+    if hosted_sms_credentials_locked():
         raise ValidationError(
-            "SMS credentials on hosted are loaded from server .env only "
-            "(SMS_PROVIDER, SMS_API_KEY, SMS_SENDER_ID, …). Update .env and restart the app."
+            "SMS credentials are pinned to server .env (SMS_PROVIDER, SMS_API_KEY, "
+            "SMS_SENDER_ID, …). Remove them to manage SMS here, or update .env and restart."
         )
     row = get_communications_settings_db()
     provider = (provider or "").strip() or row.sms_provider
@@ -2051,7 +2071,13 @@ def developer_payment_prompt_for_request(request) -> dict | None:
     if request is None:
         return None
     path = getattr(request, "path", "") or ""
-    if path.startswith("/employees/settings"):
+    match = getattr(request, "resolver_match", None)
+    if match and match.url_name in {
+        "settings",
+        "settings_section",
+        "role_settings",
+        "role_settings_section",
+    }:
         return None
     if path.startswith("/employees/login") or path.startswith("/employees/register"):
         return None
@@ -2567,6 +2593,17 @@ def set_receipt_qr_settings(
             "updated_at",
         ]
     )
+    _invalidate_pos_settings_cache()
+    return settings_row
+
+
+def set_maintainer_phone(*, phone_number: str = "") -> CompanyPosSettings:
+    raw = (phone_number or "").strip()
+    if raw and not PHONE_RE.match(raw):
+        raise ValidationError("Enter a valid maintainer phone number.")
+    settings_row = get_company_pos_settings()
+    settings_row.maintainer_phone = raw
+    settings_row.save(update_fields=["maintainer_phone", "updated_at"])
     _invalidate_pos_settings_cache()
     return settings_row
 
@@ -3160,6 +3197,10 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
             else "website"
         ),
         "receipt_qr_website": row.receipt_qr_website or "",
+        "show_maintainer_on_receipt": bool(
+            getattr(row, "show_maintainer_on_receipt", False)
+        ),
+        "maintainer_phone": getattr(row, "maintainer_phone", "") or "",
         "kinds": row.enabled_kinds(),
         "payment_methods": row.enabled_payment_methods(),
         "cash_sale_checkout": row.cash_sale_checkout_enabled(),
@@ -3606,6 +3647,17 @@ def _receipt_center(text: str, width: int) -> str:
 RECEIPT_NO_RETURN_NOTICE = "Goods once bought cannot be returned"
 
 
+def receipt_maintainer_line(settings_row: CompanyPosSettings | None = None) -> str:
+    """'System maintained by <phone>' footer line, or "" when off/unset."""
+    row = settings_row or get_company_pos_settings()
+    if not getattr(row, "show_maintainer_on_receipt", False):
+        return ""
+    phone = (getattr(row, "maintainer_phone", "") or "").strip()
+    if not phone:
+        return ""
+    return f"System maintained by {phone}"
+
+
 def _receipt_center_wrap(text: str, width: int) -> list[str]:
     """Center a sentence, wrapping onto extra lines when the paper is narrow."""
     words = str(text or "").split()
@@ -3833,6 +3885,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         },
         "footer": doc_meta["footer"],
         "return_notice": doc_meta.get("return_notice") or "",
+        "maintainer": receipt_maintainer_line(pos),
     }
 
 
@@ -4008,6 +4061,9 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
     notice = (ticket.get("return_notice") or "").strip()
     if notice:
         rows.extend(_receipt_center_wrap(notice, width))
+    maintainer = (ticket.get("maintainer") or "").strip()
+    if maintainer:
+        rows.extend(_receipt_center_wrap(maintainer, width))
     return "\n".join(rows)
 
 
