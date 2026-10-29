@@ -85,19 +85,31 @@ def get_profile_meta(user):
 
 
 def get_employee_meta_for_request(request):
-    """Return session-backed employee meta, with one lean DB fallback per request."""
+    """Return the employee's current meta, read fresh from the DB per request.
+
+    The session copy (SESSION_PROFILE_KEY) is only a display mirror for paths
+    that read it directly — never trusted for auth decisions. Trusting it
+    would keep role/status changes made after login from taking effect until
+    re-login, and could bleed meta across users sharing session state.
+    """
     cached = getattr(request, REQUEST_META_ATTR, None)
     if cached is not None:
         return cached
 
-    session_meta = request.session.get(SESSION_PROFILE_KEY) or {}
-    if session_meta.get("employee_id") and session_meta.get("role") and session_meta.get("status"):
-        setattr(request, REQUEST_META_ATTR, session_meta)
-        return session_meta
-
     meta = get_profile_meta(request.user)
-    if meta is not None:
-        setattr(request, REQUEST_META_ATTR, meta)
+    if meta is None:
+        return None
+
+    meta = {
+        "user_id": request.user.pk,
+        "employee_id": meta["employee_id"],
+        "role": meta["role"],
+        "status": meta["status"],
+    }
+    session = getattr(request, "session", None)
+    if session is not None and session.get(SESSION_PROFILE_KEY) != meta:
+        session[SESSION_PROFILE_KEY] = meta
+    setattr(request, REQUEST_META_ATTR, meta)
     return meta
 
 
@@ -217,13 +229,6 @@ def active_employee_required(view_func):
                 request,
                 message="No employee profile is linked to this account.",
             )
-
-        request.session[SESSION_PROFILE_KEY] = {
-            "user_id": request.user.pk,
-            "employee_id": meta["employee_id"],
-            "role": meta["role"],
-            "status": meta["status"],
-        }
 
         if not employee_session_is_current(request):
             from .portal_auth import end_employee_session
