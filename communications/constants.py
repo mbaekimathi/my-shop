@@ -138,12 +138,15 @@ MESSAGE_STATUS_CHOICES = (
     (MESSAGE_STATUS_ACTIVE, "Active"),
 )
 
-# Trigger values match ShopReceiptKind values on purpose.
+# Trigger values match ShopReceiptKind values on purpose; supplier triggers
+# are event names, not receipt kinds.
 TRIGGER_SALE = "sale"
 TRIGGER_CREDIT = "credit"
 TRIGGER_QUOTATION = "quotation"
 TRIGGER_TRADE_OUT = "trade_out"
 TRIGGER_TRADE_IN = "trade_in"
+TRIGGER_SUPPLY = "supply"
+TRIGGER_SUPPLIER_PAYMENT = "supplier_payment"
 
 TRIGGER_MESSAGE_CHOICES = (
     (TRIGGER_SALE, "Sale"),
@@ -151,6 +154,8 @@ TRIGGER_MESSAGE_CHOICES = (
     (TRIGGER_QUOTATION, "Quotation"),
     (TRIGGER_TRADE_OUT, "Trade out"),
     (TRIGGER_TRADE_IN, "Trade in"),
+    (TRIGGER_SUPPLY, "Supply received"),
+    (TRIGGER_SUPPLIER_PAYMENT, "Supplier paid"),
 )
 
 TRIGGER_MESSAGE_PLACEHOLDERS = (
@@ -158,6 +163,7 @@ TRIGGER_MESSAGE_PLACEHOLDERS = (
     ("{full_name}", "Customer full name"),
     ("{shop_name}", "Shop name"),
     ("{total}", "Receipt total"),
+    ("{balance}", "Balance due"),
     ("{receipt_number}", "Receipt number"),
     ("{due_date}", "Credit due date"),
     ("{account_link}", "Credit account link"),

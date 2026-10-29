@@ -448,7 +448,13 @@ def _parse_receipt_id_set(receipt_ids) -> set[int]:
 
 
 def _notify_supplier_after_payment(
-    *, kind: str, account_id: int, amount, balance_after, receipt_ref: str = ""
+    *,
+    kind: str,
+    account_id: int,
+    amount,
+    balance_after,
+    receipt_ref: str = "",
+    shop=None,
 ) -> None:
     """Post-commit: tell the supplier their payment arrived."""
     try:
@@ -464,6 +470,7 @@ def _notify_supplier_after_payment(
             amount=amount,
             balance_after=balance_after,
             receipt_ref=receipt_ref,
+            shop=shop,
         )
     except Exception:
         logger.exception(
@@ -1115,6 +1122,7 @@ def apply_supplier_receipt_payment(
                     amount=pay_amount,
                     balance_after=balance_after,
                     receipt_ref=number,
+                    shop=expense.shop,
                 )
             )
             return {
@@ -1211,6 +1219,7 @@ def apply_supplier_receipt_payment(
                 amount=pay_amount,
                 balance_after=balance_after,
                 receipt_ref=number,
+                shop=movement.shop,
             )
         )
         return {

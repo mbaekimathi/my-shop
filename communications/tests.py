@@ -2310,7 +2310,7 @@ class TriggeredMessageTests(TestCase):
         from communications.automations import render_trigger_message
 
         body = render_trigger_message(
-            "Hi {first_name}, paid {total} at {shop_name}. Ref {receipt_number}.",
+            "Hi {first_name}, paid {total} at {shop_name}. Ref {receipt_number}. Balance {balance}.",
             self.receipt,
             link="https://shop.test/offer",
         )
@@ -2319,6 +2319,12 @@ class TriggeredMessageTests(TestCase):
         self.assertIn("TRIG SHOP", body)
         self.assertIn("SL-TRIG-1", body)
         self.assertTrue(body.endswith("https://shop.test/offer"))
+
+        credit = self.receipt
+        credit.amount_paid = 150
+        credit.save(update_fields=["amount_paid"])
+        body = render_trigger_message("Owe {balance}", self.receipt)
+        self.assertIn("KSh 250", body)
 
     @override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")
     def test_account_link_placeholder_resolves_per_client(self):
@@ -3540,6 +3546,107 @@ class SupplierAutomationTests(TestCase):
         self.assertEqual(message.phone, "+254795606115")
         self.assertIn("We paid KSh 800 for your supplies.", message.body)
         self.assertIn("fully settled", message.body)
+
+    def test_supply_draft_sends_custom_message(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_stock_supplier_notice
+        from communications.models import OutboundMessage, TriggeredMessage
+
+        TriggeredMessage.objects.create(
+            trigger="supply",
+            body="Supply received {first_name}: {total} ({balance} unpaid) ref {receipt_number} at {shop_name}.",
+            channel="whatsapp",
+            status="active",
+        )
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
+            maybe_send_stock_supplier_notice(self.movement)
+        dispatch.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertEqual(message.channel, "whatsapp")
+        self.assertEqual(message.phone, "+254795606115")
+        self.assertIn("Supply received Kim:", message.body)
+        self.assertIn("KSh 800", message.body)
+        self.assertIn("ref I", message.body)
+        self.assertNotIn("We received stock", message.body)
+        self.assertEqual(message.client_name, "KIM SUPPLIES")
+
+    def test_supply_draft_sends_even_when_legacy_toggle_off(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_stock_supplier_notice
+        from communications.models import OutboundMessage, TriggeredMessage
+        from shops.services import set_communications_setting
+
+        set_communications_setting(field="auto_stock_supplier", enabled=False)
+        TriggeredMessage.objects.create(
+            trigger="supply",
+            body="Custom supply note.",
+            channel="whatsapp",
+            status="active",
+        )
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
+            maybe_send_stock_supplier_notice(self.movement)
+        dispatch.assert_called_once()
+        self.assertEqual(OutboundMessage.objects.get().body, "Custom supply note.")
+
+    def test_supplier_payment_draft_sends_custom_message(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_supplier_payment_notice
+        from communications.models import OutboundMessage, TriggeredMessage
+        from items.models import Supplier
+
+        supplier = Supplier.objects.create(
+            name="KIM SUPPLIES",
+            phone_country_code="+254",
+            phone_number="795606115",
+        )
+        TriggeredMessage.objects.create(
+            trigger="supplier_payment",
+            body="Paid {total} to {full_name}; {balance} left. {receipt_number}",
+            channel="whatsapp",
+            status="active",
+        )
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
+            maybe_send_supplier_payment_notice(
+                supplier,
+                kind="stock",
+                amount="400",
+                balance_after="600",
+                receipt_ref="I7",
+            )
+        dispatch.assert_called_once()
+        message = OutboundMessage.objects.get()
+        self.assertEqual(
+            message.body, "Paid KSh 400 to KIM SUPPLIES; KSh 600 left. I7"
+        )
+        self.assertEqual(message.phone, "+254795606115")
+
+    def test_render_supplier_message_placeholders(self):
+        from communications.automations import render_supplier_trigger_message
+
+        body = render_supplier_trigger_message(
+            "Hi {first_name} ({full_name}), total {total}, balance {balance}, ref {receipt_number}, {shop_name}.",
+            supplier_name="KIM SUPPLIES LTD",
+            total="800",
+            balance="300",
+            receipt_ref="I7",
+            shop_name="SUPPLIER WA SHOP",
+            link="https://shop.test/docs",
+        )
+        self.assertIn("Hi Kim (KIM SUPPLIES LTD)", body)
+        self.assertIn("total KSh 800", body)
+        self.assertIn("balance KSh 300", body)
+        self.assertIn("ref I7", body)
+        self.assertIn("SUPPLIER WA SHOP.", body)
+        self.assertTrue(body.endswith("https://shop.test/docs"))
 
 
 class WhatsAppInboxTests(TestCase):

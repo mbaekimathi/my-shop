@@ -20,6 +20,8 @@ from .constants import (
     MESSAGE_STATUS_ACTIVE,
     TRIGGER_CHANNEL_BOTH,
     TRIGGER_CHANNEL_VALUES,
+    TRIGGER_SUPPLIER_PAYMENT,
+    TRIGGER_SUPPLY,
 )
 
 logger = logging.getLogger(__name__)
@@ -385,32 +387,132 @@ def _queue_supplier_notice(
     thread.start()
 
 
+def _supplier_trigger_drafts(trigger: str, *, shop=None):
+    """Active supplier-facing drafts for a trigger, scoped like receipt drafts."""
+    from .models import TriggeredMessage
+
+    return list(
+        TriggeredMessage.objects.filter(
+            trigger=trigger,
+            status=MESSAGE_STATUS_ACTIVE,
+            **_triggered_message_scope(shop),
+        )
+    )
+
+
+def _queue_supplier_drafts(
+    *, phone, party_name, drafts, row, render_data
+) -> list[int]:
+    """Queue supplier drafts via the durable campaign path; return due-now pks."""
+    due_now = []
+    for draft in drafts:
+        channels = [
+            channel
+            for channel in _trigger_channels(draft)
+            if _triggered_channel_ready(row, channel)
+        ]
+        if not channels:
+            continue
+        body = render_supplier_trigger_message(
+            draft.body, link=draft.link, **render_data
+        )
+        if not body:
+            continue
+        campaign_id = _queue_triggered_send(
+            phone=phone,
+            body=body,
+            receipt=None,
+            delay_minutes=draft.delay_minutes,
+            label=f"Auto message · {draft.get_trigger_display()}",
+            channels=channels,
+            party_name=party_name,
+        )
+        if campaign_id:
+            due_now.append(campaign_id)
+    return due_now
+
+
+def _dispatch_supplier_campaigns(campaign_ids, *, name: str) -> None:
+    if not campaign_ids:
+        return
+    thread = threading.Thread(
+        target=_dispatch_queued_triggered,
+        args=(campaign_ids,),
+        daemon=True,
+        name=name,
+    )
+    thread.start()
+
+
+def _movement_supply_total(movement) -> Decimal:
+    total = Decimal("0")
+    for line in movement.lines.all():
+        total += Decimal(line.buying_price or 0) * Decimal(line.quantity or 0)
+    return total.quantize(Decimal("0.01"))
+
+
+def _movement_doc_ref(movement) -> str:
+    from shops.services import DOC_NUMBER_PREFIX, format_simple_doc_number
+
+    return format_simple_doc_number(DOC_NUMBER_PREFIX["stock_in"], movement.pk)
+
+
 def maybe_send_stock_supplier_notice(movement, *, shop=None) -> None:
-    """Message the supplier after Buy stock when that automation is on."""
+    """Message the supplier after Buy stock when that automation is on.
+
+    An active "Supply received" draft supersedes the built-in message —
+    same as receipt drafts superseding the legacy receipt share.
+    """
     from items.models import StockEntrySource, StockMovementType
 
     row = get_communications_settings()
-    if not row.enable_automations or not row.auto_stock_supplier:
+    if not row.enable_automations:
         return
     if getattr(movement, "movement_type", "") != StockMovementType.IN:
         return
     if getattr(movement, "entry_source", "") != StockEntrySource.BUY_ITEMS:
         return
     phone = _stock_supplier_phone(movement)
-    body = build_stock_supplier_notification(movement, shop=shop)
-    if not phone or not body:
-        if not phone:
-            logger.warning(
-                "Buy stock supplier notice skipped for movement %s: no supplier phone.",
-                getattr(movement, "pk", None),
-            )
+    if not phone:
+        logger.warning(
+            "Buy stock supplier notice skipped for movement %s: no supplier phone.",
+            getattr(movement, "pk", None),
+        )
         return
     first = movement.lines.first()
+    supplier_name = (getattr(first, "supplier_name", "") or "").strip()
+    shop_obj = shop or getattr(movement, "shop", None)
+    drafts = _supplier_trigger_drafts(TRIGGER_SUPPLY, shop=shop_obj)
+    if drafts:
+        total = _movement_supply_total(movement)
+        due = total - Decimal(getattr(movement, "amount_paid", 0) or 0)
+        due_now = _queue_supplier_drafts(
+            phone=phone,
+            party_name=supplier_name,
+            drafts=drafts,
+            row=row,
+            render_data={
+                "supplier_name": supplier_name,
+                "total": total,
+                "balance": max(due, Decimal("0")),
+                "receipt_ref": _movement_doc_ref(movement),
+                "shop_name": getattr(shop_obj, "name", ""),
+            },
+        )
+        _dispatch_supplier_campaigns(
+            due_now, name=f"comms-supplier-supply-{movement.pk}"
+        )
+        return
+    if not row.auto_stock_supplier:
+        return
+    body = build_stock_supplier_notification(movement, shop=shop)
+    if not body:
+        return
     _queue_supplier_notice(
         phone,
         body,
         label="Supplier notice · Buy stock",
-        party_name=(getattr(first, "supplier_name", "") or "").strip(),
+        party_name=supplier_name,
     )
 
 
@@ -468,39 +570,69 @@ def build_supplier_payment_notification(
 
 
 def maybe_send_supplier_payment_notice(
-    supplier, *, kind: str, amount, balance_after, receipt_ref: str = ""
+    supplier,
+    *,
+    kind: str,
+    amount,
+    balance_after,
+    receipt_ref: str = "",
+    shop=None,
 ) -> None:
-    """Message a supplier when a payment is applied to their supplies/expenses."""
+    """Message a supplier when a payment is applied to their supplies/expenses.
+
+    An active "Supplier paid" draft supersedes the built-in message.
+    """
     row = get_communications_settings()
     if not row.enable_automations:
+        return
+    phone = _supplier_whatsapp_phone(
+        dial=getattr(supplier, "phone_country_code", ""),
+        national=getattr(supplier, "phone_number", ""),
+    )
+    if not phone:
+        logger.warning(
+            "Supplier payment notice skipped for %s: no supplier phone.",
+            getattr(supplier, "pk", "?"),
+        )
+        return
+    supplier_name = (getattr(supplier, "name", "") or "").strip()
+    drafts = _supplier_trigger_drafts(TRIGGER_SUPPLIER_PAYMENT, shop=shop)
+    if drafts:
+        due_now = _queue_supplier_drafts(
+            phone=phone,
+            party_name=supplier_name,
+            drafts=drafts,
+            row=row,
+            render_data={
+                "supplier_name": supplier_name,
+                "total": amount,
+                "balance": balance_after,
+                "receipt_ref": receipt_ref,
+                "shop_name": getattr(shop, "name", ""),
+            },
+        )
+        _dispatch_supplier_campaigns(
+            due_now, name=f"comms-supplier-pay-{getattr(supplier, 'pk', 'x')}"
+        )
         return
     enabled = (
         row.auto_expense_supplier if kind == "expense" else row.auto_stock_supplier
     )
     if not enabled:
         return
-    phone = _supplier_whatsapp_phone(
-        dial=getattr(supplier, "phone_country_code", ""),
-        national=getattr(supplier, "phone_number", ""),
-    )
     body = build_supplier_payment_notification(
-        getattr(supplier, "name", ""),
+        supplier_name,
         amount=amount,
         balance_after=balance_after,
         receipt_ref=receipt_ref,
     )
-    if not phone or not body:
-        if not phone:
-            logger.warning(
-                "Supplier payment notice skipped for %s: no supplier phone.",
-                getattr(supplier, "pk", "?"),
-            )
+    if not body:
         return
     _queue_supplier_notice(
         phone,
         body,
         label="Supplier notice · Payment",
-        party_name=(getattr(supplier, "name", "") or "").strip(),
+        party_name=supplier_name,
     )
 
 
@@ -692,11 +824,19 @@ def render_trigger_message(
         getattr(getattr(receipt, "shop", None), "name", "") or ""
     ).strip() or "our shop"
     due_date = getattr(receipt, "credit_due_date", None)
+    due = (
+        Decimal(getattr(receipt, "total", 0) or 0)
+        - Decimal(getattr(receipt, "amount_paid", 0) or 0)
+        - Decimal(getattr(receipt, "trade_exchange_value", 0) or 0)
+    )
+    if due < 0:
+        due = Decimal("0")
     replacements = {
         "{first_name}": first,
         "{full_name}": client_name or "Customer",
         "{shop_name}": shop_name,
         "{total}": _kes(getattr(receipt, "total", None)),
+        "{balance}": _kes(due),
         "{receipt_number}": (getattr(receipt, "receipt_number", "") or "").strip(),
         "{due_date}": due_date.strftime("%d %b %Y") if due_date else "",
         "{account_link}": "",
@@ -722,6 +862,44 @@ def render_trigger_message(
         replacements["{quotation_link}"] = _receipt_doc_url(
             receipt, quotation=True, request=request
         )
+    for key, value in replacements.items():
+        body = body.replace(key, value)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    for key, value in replacements.items():
+        url = url.replace(key, value)
+    url = url.strip()
+    if url:
+        body = f"{body}\n\n{url}" if body else url
+    return body
+
+
+def render_supplier_trigger_message(
+    template: str,
+    *,
+    supplier_name: str = "",
+    total=None,
+    balance=None,
+    receipt_ref: str = "",
+    shop_name: str = "",
+    link: str = "",
+) -> str:
+    """Expand {placeholders} for a supplier-facing triggered message."""
+    name = (supplier_name or "").strip()
+    replacements = {
+        "{first_name}": name.split()[0].title() if name else "there",
+        "{full_name}": name or "there",
+        "{shop_name}": (shop_name or "").strip() or "our shop",
+        "{total}": _kes(total),
+        "{balance}": _kes(balance),
+        "{receipt_number}": (receipt_ref or "").strip(),
+        "{due_date}": "",
+        "{account_link}": "",
+        "{trade_link}": "",
+        "{receipt_link}": "",
+        "{quotation_link}": "",
+    }
+    body = template or ""
+    url = (link or "").strip()
     for key, value in replacements.items():
         body = body.replace(key, value)
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
