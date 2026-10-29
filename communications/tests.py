@@ -515,7 +515,7 @@ class SmsSettingsPageTests(TestCase):
 
     def test_sms_settings_page(self):
         self.client.force_login(self.user)
-        response = self.client.get("/employees/settings/sms/")
+        response = self.client.get("/it-support/settings/sms/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "SMS settings")
         self.assertContains(response, "Sender ID")
@@ -530,15 +530,15 @@ class SmsSettingsPageTests(TestCase):
 
     def test_hub_lists_sms_settings(self):
         self.client.force_login(self.user)
-        response = self.client.get("/employees/settings/communication-settings/")
+        response = self.client.get("/it-support/settings/communication-settings/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "SMS settings")
-        self.assertContains(response, 'href="/employees/settings/sms/"')
+        self.assertContains(response, 'href="/it-support/settings/sms/"')
 
     def test_save_sms_settings(self):
         self.client.force_login(self.user)
         response = self.client.post(
-            "/employees/settings/sms/",
+            "/it-support/settings/sms/",
             {
                 "action": "save_sms_settings",
                 "sms_provider": "custom",
@@ -556,13 +556,13 @@ class SmsSettingsPageTests(TestCase):
         self.assertTrue(data["has_sms_credentials"])
         self.assertEqual(data["sms_sender_id"], "MYSHOP")
 
-        response = self.client.get("/employees/settings/sms/")
+        response = self.client.get("/it-support/settings/sms/")
         self.assertContains(response, "Connected")
 
     def test_save_sms_settings_requires_sender_id(self):
         self.client.force_login(self.user)
         response = self.client.post(
-            "/employees/settings/sms/",
+            "/it-support/settings/sms/",
             {
                 "action": "save_sms_settings",
                 "sms_provider": "custom",
@@ -578,7 +578,7 @@ class SmsSettingsPageTests(TestCase):
     def test_sms_connection_test_custom_provider_skips_probe(self):
         self.client.force_login(self.user)
         response = self.client.post(
-            "/employees/settings/sms/",
+            "/it-support/settings/sms/",
             {
                 "action": "test_sms_connection",
                 "sms_provider": "custom",
@@ -605,7 +605,7 @@ class SmsSettingsPageTests(TestCase):
             ),
         ):
             response = self.client.post(
-                "/employees/settings/sms/",
+                "/it-support/settings/sms/",
                 {
                     "action": "save_sms_settings",
                     "sms_provider": "blessed_texts",
@@ -633,7 +633,7 @@ class SmsSettingsPageTests(TestCase):
             ),
         ):
             response = self.client.post(
-                "/employees/settings/sms/",
+                "/it-support/settings/sms/",
                 {
                     "action": "save_sms_settings",
                     "sms_provider": "blessed_texts",
@@ -657,7 +657,7 @@ class SmsSettingsPageTests(TestCase):
             ),
         ):
             response = self.client.post(
-                "/employees/settings/sms/",
+                "/it-support/settings/sms/",
                 {
                     "action": "test_sms_connection",
                     "sms_provider": "blessed_texts",
@@ -763,7 +763,7 @@ class WhatsAppAutomationsPageTests(TestCase):
 
     def test_page_shows_what_to_send(self):
         self.client.force_login(self.user)
-        response = self.client.get("/employees/settings/whatsapp/")
+        response = self.client.get("/it-support/settings/whatsapp/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "WhatsApp settings")
         self.assertContains(response, "What to send")
@@ -792,7 +792,7 @@ class WhatsAppAutomationsPageTests(TestCase):
     def test_workspace_page_redirects_to_communications_settings(self):
         self.client.force_login(self.user)
         response = self.client.get("/it-support/whatsapp/")
-        self.assertRedirects(response, "/employees/settings/communication-settings/")
+        self.assertRedirects(response, "/it-support/settings/communication-settings/")
 
     def test_message_drafts_page_uses_marketing_sidebar(self):
         self.client.force_login(self.user)
@@ -808,12 +808,12 @@ class WhatsAppAutomationsPageTests(TestCase):
 
     def test_communications_hub_links_to_twilio_and_whatsapp(self):
         self.client.force_login(self.user)
-        response = self.client.get("/employees/settings/communication-settings/")
+        response = self.client.get("/it-support/settings/communication-settings/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Twilio settings")
         self.assertContains(response, "WhatsApp settings")
-        self.assertContains(response, 'href="/employees/settings/twilio/"')
-        self.assertContains(response, 'href="/employees/settings/whatsapp/"')
+        self.assertContains(response, 'href="/it-support/settings/twilio/"')
+        self.assertContains(response, 'href="/it-support/settings/whatsapp/"')
         labels = [item["label"] for item in response.context["page_sidebar"]["primary"]]
         self.assertNotIn("Marketing links", labels)
         self.assertNotIn("Communication settings", labels)
@@ -823,12 +823,12 @@ class WhatsAppAutomationsPageTests(TestCase):
 
     def test_old_communications_url_redirects(self):
         self.client.force_login(self.user)
-        response = self.client.get("/employees/settings/communications/")
-        self.assertRedirects(response, "/employees/settings/communication-settings/")
+        response = self.client.get("/it-support/settings/communications/")
+        self.assertRedirects(response, "/it-support/settings/communication-settings/")
 
     def test_twilio_settings_page(self):
         self.client.force_login(self.user)
-        response = self.client.get("/employees/settings/twilio/")
+        response = self.client.get("/it-support/settings/twilio/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Account SID")
         self.assertContains(response, "Save Twilio")
@@ -844,7 +844,7 @@ class WhatsAppAutomationsPageTests(TestCase):
     def test_save_audience(self):
         self.client.force_login(self.user)
         response = self.client.post(
-            "/employees/settings/whatsapp/",
+            "/it-support/settings/whatsapp/",
             {
                 "action": "save_audience",
                 "audience_type": "sale",
@@ -874,7 +874,7 @@ class WhatsAppAutomationsPageTests(TestCase):
         )
         self.client.force_login(self.user)
         response = self.client.post(
-            "/employees/settings/whatsapp/",
+            "/it-support/settings/whatsapp/",
             {"action": "send_website"},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
             HTTP_ACCEPT="application/json",
@@ -914,7 +914,7 @@ class WhatsAppAutomationsPageTests(TestCase):
         self.client.force_login(self.user)
         with override_settings(COMMS_SEND_MODE="cron"):
             response = self.client.post(
-                "/employees/settings/whatsapp/",
+                "/it-support/settings/whatsapp/",
                 {
                     "action": "send_website",
                     "client_ids": [str(self.customer.pk)],

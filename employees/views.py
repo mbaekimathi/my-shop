@@ -43,6 +43,7 @@ from shops.services import (
     preview_receipt_number,
     receipt_font_style,
     receipt_qr_for_settings,
+    set_communications_setting,
     set_company_pos_setting,
     set_company_tax_percent,
     set_daraja_environment,
@@ -1474,6 +1475,39 @@ def _company_sms_settings(request, context):
 
     if request.method == "POST":
         action = (request.POST.get("action") or "").strip()
+
+        if action == "toggle_sms_enabled":
+            enabled = (request.POST.get("enabled") or "").strip().lower() in {
+                "1",
+                "true",
+                "on",
+                "yes",
+            }
+            try:
+                row = set_communications_setting(field="enable_sms", enabled=enabled)
+            except ValidationError as exc:
+                message = (
+                    "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                )
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            message = (
+                "Text (SMS) channel enabled — drafts can now send SMS."
+                if enabled
+                else "Text (SMS) channel disabled — no SMS will send."
+            )
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "message": message,
+                        **communications_settings_as_dict(row),
+                    }
+                )
+            messages.success(request, message)
+            return redirect(request.path)
 
         if action == "test_sms_connection":
             check = _check_credentials()

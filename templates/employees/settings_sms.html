@@ -35,6 +35,32 @@
         <h3>Text (SMS) API</h3>
         <p>SMS provider API credentials and sender identity.</p>
       </div>
+      <form class="daraja-credentials-form" data-comms-form="sms-channel" novalidate>
+        <input type="hidden" name="action" value="toggle_sms_enabled">
+        <div class="daraja-status" data-comms-sms-channel-status>
+          {% if comms.enable_sms %}
+          <span class="daraja-status-pill is-ok">SMS channel on</span>
+          <em>Triggered drafts and broadcasts can send text messages.</em>
+          {% else %}
+          <span class="daraja-status-pill">SMS channel off</span>
+          <em>Nothing sends SMS while this is off — drafts stay queued or skipped.</em>
+          {% endif %}
+        </div>
+        <label class="perm-switch wa-card__master">
+          <input
+            type="checkbox"
+            class="perm-switch-input"
+            name="enabled"
+            value="1"
+            {% if comms.enable_sms %}checked{% endif %}
+            data-comms-channel-toggle
+            aria-label="Enable SMS channel"
+          >
+          <span class="perm-switch-ui" aria-hidden="true"></span>
+          <span class="perm-switch-state" data-comms-channel-state>{% if comms.enable_sms %}On{% else %}Off{% endif %}</span>
+        </label>
+        <p class="daraja-form-message" data-comms-message hidden></p>
+      </form>
       <form class="daraja-credentials-form" data-comms-form="sms" novalidate{% if comms.sms_credentials_from_env %} hidden{% endif %}>
         <input type="hidden" name="action" value="save_sms_settings">
         <div class="daraja-status" data-comms-sms-status>
@@ -143,5 +169,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/communications-settings.js' %}?v=4"></script>
+<script src="{% static 'js/communications-settings.js' %}?v=5"></script>
 {% endblock %}

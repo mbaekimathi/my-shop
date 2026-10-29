@@ -101,6 +101,34 @@
     });
   });
 
+  root.querySelectorAll("[data-comms-channel-toggle]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const form = input.closest("form");
+      if (!form) return;
+      const stateLabel = form.querySelector("[data-comms-channel-state]");
+      input.disabled = true;
+      showFormMessage(form, "");
+      try {
+        const body = new URLSearchParams(new FormData(form));
+        body.set("enabled", input.checked ? "1" : "0");
+        const data = await postSettings(body);
+        if (stateLabel) stateLabel.textContent = input.checked ? "On" : "Off";
+        const status = root.querySelector("[data-comms-sms-channel-status]");
+        if (status) {
+          status.innerHTML = input.checked
+            ? '<span class="daraja-status-pill is-ok">SMS channel on</span><em>Triggered drafts and broadcasts can send text messages.</em>'
+            : '<span class="daraja-status-pill">SMS channel off</span><em>Nothing sends SMS while this is off — drafts stay queued or skipped.</em>';
+        }
+        showFormMessage(form, data.message || "Saved.");
+      } catch (error) {
+        input.checked = !input.checked;
+        showFormMessage(form, error.message || "Could not save.", true);
+      } finally {
+        input.disabled = false;
+      }
+    });
+  });
+
   root.querySelectorAll("[data-comms-test-connection]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const form = root.querySelector('[data-comms-form="sms"]');
