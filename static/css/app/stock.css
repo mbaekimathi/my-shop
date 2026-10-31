@@ -6231,7 +6231,13 @@
   opacity: 0.55;
 }
 
-.stock-report-table tr.is-suspended td[data-label="Item"] strong {
+.stock-item-badge--deleted {
+  background: color-mix(in srgb, var(--mist) 14%, var(--surface));
+  color: var(--mist-dim);
+}
+
+.stock-report-table tr.is-suspended td[data-label="Item"] strong,
+.stock-report-table tr.is-deleted td[data-label="Item"] strong {
   opacity: 0.65;
 }
 

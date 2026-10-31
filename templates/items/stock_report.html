@@ -256,12 +256,12 @@
                 data-stock-live-row
                 data-item-group="{{ row.item_id }}"
                 data-search-text="{{ row.item_name|lower }} {{ row.item_category|lower }} {{ row.shop_name|lower }}"
-                class="{% if row.is_suspended %}is-suspended {% endif %}{% if movement_item_group_by_shop %}{% if row.is_item_total %}is-item-total{% elif row.is_item_start %}is-item-start{% else %}is-shop-follow{% endif %}{% endif %}"
+                class="{% if row.is_suspended %}is-suspended {% endif %}{% if row.is_deleted %}is-deleted {% endif %}{% if movement_item_group_by_shop %}{% if row.is_item_total %}is-item-total{% elif row.is_item_start %}is-item-start{% else %}is-shop-follow{% endif %}{% endif %}"
               >
                 <td data-label="Item">
                   {% if not movement_item_group_by_shop or row.is_item_start %}
                   <strong>{{ row.item_name }}</strong>
-                  {% if row.is_suspended %}<span class="stock-item-badge">Suspended</span>{% endif %}
+                  {% if row.is_deleted %}<span class="stock-item-badge stock-item-badge--deleted">Deleted</span>{% elif row.is_suspended %}<span class="stock-item-badge">Suspended</span>{% endif %}
                   {% if row.item_category %}
                   <span class="stock-report-from">{{ row.item_category }}</span>
                   {% endif %}
@@ -412,7 +412,7 @@
               {% if not is_item_movement_detail %}
               <td data-label="Item">
                 <strong>{{ event.item_name }}</strong>
-                {% if event.item_suspended %}<span class="stock-item-badge">Suspended</span>{% endif %}
+                {% if event.item_deleted %}<span class="stock-item-badge stock-item-badge--deleted">Deleted</span>{% elif event.item_suspended %}<span class="stock-item-badge">Suspended</span>{% endif %}
                 {% if event.item_category %}
                 <span class="stock-report-from">{{ event.item_category }}</span>
                 {% endif %}

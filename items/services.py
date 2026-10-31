@@ -598,14 +598,18 @@ def build_stock_catalog_page(
     if include_totals:
         if shop_id and not use_multi_shop:
             total_units = (
-                ShopStock.objects.filter(shop_id=shop_id).aggregate(
+                ShopStock.objects.filter(
+                    shop_id=shop_id, item__is_suspended=False
+                ).aggregate(
                     total=Sum("quantity")
                 )["total"]
                 or 0
             )
         elif view_shop_ids:
             total_units = (
-                ShopStock.objects.filter(shop_id__in=view_shop_ids).aggregate(
+                ShopStock.objects.filter(
+                    shop_id__in=view_shop_ids, item__is_suspended=False
+                ).aggregate(
                     total=Sum("quantity")
                 )["total"]
                 or 0

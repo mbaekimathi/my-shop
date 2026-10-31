@@ -1847,7 +1847,9 @@ def _buy_stock_items_context(shop):
 
     item_count = Item.objects.filter(is_suspended=False).count()
     total_units = (
-        ShopStock.objects.filter(shop=shop).aggregate(total=Sum("quantity"))["total"]
+        ShopStock.objects.filter(shop=shop, item__is_suspended=False).aggregate(
+            total=Sum("quantity")
+        )["total"]
         or 0
     )
     return {
@@ -2219,7 +2221,9 @@ def my_shop_stock_request_from_stock(request, shop_id):
     }
 
     stock_rows = list(
-        ShopStock.objects.filter(shop=shop).values_list("item_id", "quantity")
+        ShopStock.objects.filter(shop=shop, item__is_suspended=False).values_list(
+            "item_id", "quantity"
+        )
     )
     stocks = {
         str(item_id): _format_qty(qty)

@@ -159,7 +159,9 @@
             {% if row.item_category %}
             <span class="stock-report-from">{{ row.item_category }}</span>
             {% endif %}
-            {% if row.item_suspended %}
+            {% if row.item_deleted %}
+            <span class="stock-item-badge stock-item-badge--deleted">Deleted</span>
+            {% elif row.item_suspended %}
             <span class="stock-item-badge">Suspended</span>
             {% endif %}
           </td>

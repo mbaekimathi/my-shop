@@ -2235,6 +2235,19 @@ def _item_name_alias_map(items):
     return name_to_ids, sorted(raw_names)
 
 
+def _preferred_item(item_ids, item_by_id):
+    """Deterministic pick for an ambiguous item-name match.
+
+    Prefer non-suspended items (the live product), then the lowest id, so a
+    name shared by duplicate or renamed items always resolves the same way.
+    """
+    candidates = [item_by_id[i] for i in item_ids if i in item_by_id]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda i: (bool(i.is_suspended), i.pk))
+    return candidates[0]
+
+
 def _movement_item_display_name(matched, snapshot_name=""):
     """Prefer live Item.name; fall back to the sale-time snapshot."""
     if matched is not None:
@@ -2269,10 +2282,12 @@ def _pos_sale_qty_by_item(items, shop_ids, start, end):
             sale__employee__assigned_shops__in=shop_ids
         ).distinct()
 
+    items_by_id = {item.pk: item for item in items}
     for row in sale_lines.values("product_name").annotate(total=Sum("quantity")):
         key = (row["product_name"] or "").strip().lower()
-        for item_id in name_to_ids.get(key, []):
-            totals[item_id] += _qty_num(row["total"])
+        pick = _preferred_item(name_to_ids.get(key) or [], items_by_id)
+        if pick is not None:
+            totals[pick.pk] += _qty_num(row["total"])
     return totals
 
 
@@ -2869,10 +2884,12 @@ def _daily_activity_by_item(items, shop_ids, day_start, day_end):
             pos_qs = pos_qs.filter(
                 sale__employee__assigned_shops__in=shop_ids
             ).distinct()
+        pos_items_by_id = {item.pk: item for item in items}
         for row in pos_qs.values("product_name", "quantity", "sale__sold_at"):
             key = (row["product_name"] or "").strip().lower()
-            for item_id in name_to_ids.get(key, []):
-                add_qty(item_id, row["sale__sold_at"], "sale", row["quantity"])
+            pick = _preferred_item(name_to_ids.get(key) or [], pos_items_by_id)
+            if pick is not None:
+                add_qty(pick.pk, row["sale__sold_at"], "sale", row["quantity"])
 
     # Customer returns (batch-aware).
     return_qs = ShopReceiptLine.objects.filter(
@@ -3592,14 +3609,13 @@ def _build_movement_timeline(
     from pos.models import SaleLine
     from shops.models import ShopReceiptKind, ShopReceiptLine, ShopReceiptStatus
 
-    item_by_name = {
-        (item.name or "").strip().lower(): item for item in report_items
-    }
     item_by_id = {item.pk: item for item in report_items}
     pos_name_to_ids, pos_raw_names = _item_name_alias_map(report_items)
+    item_by_name = {}
     for key, item_ids in pos_name_to_ids.items():
-        if key not in item_by_name and item_ids:
-            item_by_name[key] = item_by_id.get(item_ids[0])
+        candidate = _preferred_item(item_ids, item_by_id)
+        if candidate is not None:
+            item_by_name[key] = candidate
 
     if need_receipt_sales:
         receipt_lines = (
@@ -3666,7 +3682,7 @@ def _build_movement_timeline(
                             else ""
                         )
                     ),
-                    "item_id": line.item_id or (matched.pk if matched else None),
+                    "item_id": line.item_id,
                     "quantity": _qty_num(line.quantity),
                     "reason": "",
                     "payment_status": parties["pay"] if parties["pay"] != "—" else "",
@@ -3773,8 +3789,7 @@ def _build_movement_timeline(
                                     else ""
                                 )
                             ),
-                            "item_id": line.item_id
-                            or (matched.pk if matched else None),
+                            "item_id": line.item_id,
                             "quantity": qty,
                             "reason": "Return",
                             "payment_status": "",
@@ -3827,7 +3842,7 @@ def _build_movement_timeline(
                             else ""
                         )
                     ),
-                    "item_id": line.item_id or (matched.pk if matched else None),
+                    "item_id": line.item_id,
                     "quantity": _qty_num(line.returned_quantity),
                     "reason": "Return",
                     "payment_status": "",
@@ -3894,13 +3909,12 @@ def _build_movement_timeline(
             key = (line.product_name or "").strip().lower()
             if allowed_names and key not in allowed_names:
                 continue
-            matched_ids = pos_name_to_ids.get(key) or []
-            matched = None
-            for item_id in matched_ids:
-                if item_id in allowed_item_ids:
-                    matched = item_by_id.get(item_id)
-                    if matched is not None:
-                        break
+            allowed_ids = [
+                item_id
+                for item_id in (pos_name_to_ids.get(key) or [])
+                if item_id in allowed_item_ids
+            ]
+            matched = _preferred_item(allowed_ids, item_by_id)
             if matched is None:
                 matched = item_by_name.get(key)
             sale_shop_id = None
@@ -3946,7 +3960,9 @@ def _build_movement_timeline(
     events.sort(key=lambda row: (row["happened_at"], row.get("movement_id") or 0))
     suspended_ids = _suspended_item_ids(event.get("item_id") for event in events)
     for event in events:
-        event["item_suspended"] = event.get("item_id") in suspended_ids
+        item_id = event.get("item_id")
+        event["item_suspended"] = item_id in suspended_ids
+        event["item_deleted"] = item_id is None
     return events, units_in, units_out, units_request, units_sale
 
 
@@ -4418,6 +4434,7 @@ def _blank_movement_item_row(
         "is_item_start": False,
         "is_item_total": False,
         "is_suspended": False,
+        "is_deleted": False,
         "event_count": 0,
         "units_in": 0,
         "units_out": 0,
@@ -4492,10 +4509,13 @@ def _group_movement_events_by_item(
                 groups[key] = row
             _apply_movement_event_to_row(row, event)
         item_ids = [row["item_id"] for row in groups.values() if row.get("item_id")]
-        stock_by_item = _current_stock_by_item(item_ids, shop_ids)
         suspended_ids = _suspended_item_ids(item_ids)
+        stock_by_item = _current_stock_by_item(
+            [i for i in item_ids if i not in suspended_ids], shop_ids
+        )
         for row in groups.values():
             item_id = row.get("item_id")
+            row["is_deleted"] = item_id is None
             if item_id:
                 row["current_stock"] = stock_by_item.get(item_id, 0)
                 row["is_suspended"] = item_id in suspended_ids
@@ -4577,8 +4597,10 @@ def _group_movement_events_by_item(
     if extra_items and not require_events:
         extra_item_ids = [item.pk for item in extra_items if getattr(item, "pk", None)]
     stock_item_ids = list({*event_item_ids, *extra_item_ids})
-    stock_by_shop = _current_stock_by_item_shop(stock_item_ids, shop_ids)
     suspended_ids = _suspended_item_ids(stock_item_ids)
+    stock_by_shop = _current_stock_by_item_shop(
+        [i for i in stock_item_ids if i not in suspended_ids], shop_ids
+    )
     if extra_items and not require_events:
         for item in extra_items:
             if item.pk in items:
@@ -4630,8 +4652,10 @@ def _group_movement_events_by_item(
         group_suspended = (
             bool(group.get("item_id")) and group["item_id"] in suspended_ids
         )
+        group_deleted = not group.get("item_id")
         for row in shop_rows:
             row["is_suspended"] = group_suspended
+            row["is_deleted"] = group_deleted
         rows.extend(shop_rows)
         last_times = [row["last_at"] for row in shop_rows if row.get("last_at")]
         total = _blank_movement_item_row(
@@ -4643,6 +4667,7 @@ def _group_movement_events_by_item(
         )
         total["is_item_total"] = True
         total["is_suspended"] = group_suspended
+        total["is_deleted"] = group_deleted
         total["event_count"] = sum(row["event_count"] for row in shop_rows)
         total["units_in"] = sum(row["units_in"] for row in shop_rows)
         total["units_out"] = sum(row["units_out"] for row in shop_rows)
@@ -4950,6 +4975,7 @@ def _item_qty_summary_rows(events, event_filter="all"):
                 "item_category": category,
                 "quantity": qty,
                 "item_suspended": bool(event.get("item_suspended")),
+                "item_deleted": item_id is None,
             }
         else:
             row["quantity"] += qty
@@ -5005,6 +5031,7 @@ def _item_qty_summary_by_type_rows(events):
                 "item_name": name,
                 "item_category": category,
                 "item_suspended": False,
+                "item_deleted": item_id is None,
                 **blanks,
             }
             totals[key] = row
@@ -5046,10 +5073,14 @@ def _format_money_pdf(value):
     return f"{amount:,.2f}"
 
 
-def _pdf_item_label(name, is_suspended=False):
-    """Item label with the suspended marker used on report PDFs."""
+def _pdf_item_label(name, is_suspended=False, is_deleted=False):
+    """Item label with the suspended/deleted marker used on report PDFs."""
     name = str(name or "")
-    return f"{name} · Suspended" if is_suspended else name
+    if is_deleted:
+        return f"{name} · Deleted"
+    if is_suspended:
+        return f"{name} · Suspended"
+    return name
 
 
 def _buying_prices_for_summary(rows, shop_ids=None):
@@ -5151,6 +5182,7 @@ def _build_audit_summary_rows(
                 "quantity": qty,
                 "event_count": 1,
                 "item_suspended": bool(event.get("item_suspended")),
+                "item_deleted": item_id is None,
             }
         else:
             row["quantity"] += qty
@@ -5206,7 +5238,9 @@ def _build_audit_summary_rows(
         rows.append(
             [
                 _pdf_item_label(
-                    row.get("item_name") or "—", row.get("item_suspended")
+                    row.get("item_name") or "—",
+                    row.get("item_suspended"),
+                    row.get("item_deleted"),
                 ),
                 _format_money_pdf(unit_buy),
                 events_count,
@@ -5367,7 +5401,11 @@ def _stock_report_download(
         for row in sorted_items:
             last_date, last_time = _format_movement_pdf_date_time(row.get("last_at"))
             line = [
-                _pdf_item_label(row.get("item_name"), row.get("is_suspended")),
+                _pdf_item_label(
+                    row.get("item_name"),
+                    row.get("is_suspended"),
+                    row.get("is_deleted"),
+                ),
                 row.get("item_category") or "",
             ]
             if movement_item_group_by_shop:
@@ -5430,7 +5468,9 @@ def _stock_report_download(
                 summary_rows.append(
                     [
                         _pdf_item_label(
-                            row["item_name"], row.get("item_suspended")
+                            row["item_name"],
+                            row.get("item_suspended"),
+                            row.get("item_deleted"),
                         ),
                         row["item_category"],
                         row["in"],
@@ -5482,7 +5522,9 @@ def _stock_report_download(
                 summary_rows.append(
                     [
                         _pdf_item_label(
-                            row["item_name"], row.get("item_suspended")
+                            row["item_name"],
+                            row.get("item_suspended"),
+                            row.get("item_deleted"),
                         ),
                         row["item_category"],
                         qty,
@@ -5530,7 +5572,9 @@ def _stock_report_download(
                     time_value,
                     event.get("event_label") or event.get("event_type") or "",
                     _pdf_item_label(
-                        event.get("item_name"), event.get("item_suspended")
+                        event.get("item_name"),
+                        event.get("item_suspended"),
+                        event.get("item_deleted"),
                     ),
                     event.get("quantity") or 0,
                     event.get("receipt_number") or "",
@@ -5918,10 +5962,13 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
                         if (item.name or "").strip().lower() in names
                     }
             if timeline_item_ids and shop_ids_for_query:
+                # Usable on-hand only — suspended items' leftover stock is
+                # ended and lives on the Suspended items page instead.
                 stock_total = (
                     ShopStock.objects.filter(
                         shop_id__in=shop_ids_for_query,
                         item_id__in=list(timeline_item_ids),
+                        item__is_suspended=False,
                     ).aggregate(total=Sum("quantity"))["total"]
                     or 0
                 )
@@ -7421,7 +7468,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
         display_shops = [selected_shop] if selected_shop else all_shops
         if selected_shop:
             shop_total_units = (
-                ShopStock.objects.filter(shop=selected_shop).aggregate(
+                ShopStock.objects.filter(
+                    shop=selected_shop, item__is_suspended=False
+                ).aggregate(
                     total=Sum("quantity")
                 )["total"]
                 or 0
@@ -7429,7 +7478,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
         elif all_shops:
             shop_total_units = (
                 ShopStock.objects.filter(
-                    shop_id__in=[shop.pk for shop in all_shops]
+                    shop_id__in=[shop.pk for shop in all_shops],
+                    item__is_suspended=False,
                 ).aggregate(total=Sum("quantity"))["total"]
                 or 0
             )
@@ -7444,7 +7494,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
         display_shops = list(selected_shops) if selected_shops else list(shops)
         shop_total_units = (
             ShopStock.objects.filter(
-                shop_id__in=[shop.pk for shop in display_shops]
+                shop_id__in=[shop.pk for shop in display_shops],
+                item__is_suspended=False,
             ).aggregate(total=Sum("quantity"))["total"]
             or 0
         )
@@ -7460,7 +7511,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
         display_shops = [selected_shop, requested_from_shop]
         shop_total_units = (
             ShopStock.objects.filter(
-                shop_id__in=[selected_shop.pk, requested_from_shop.pk]
+                shop_id__in=[selected_shop.pk, requested_from_shop.pk],
+                item__is_suspended=False,
             ).aggregate(total=Sum("quantity"))["total"]
             or 0
         )
@@ -7474,9 +7526,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
     elif use_stock_catalog_api and selected_shop is not None:
         display_shops = [selected_shop]
         shop_total_units = (
-            ShopStock.objects.filter(shop=selected_shop).aggregate(total=Sum("quantity"))[
-                "total"
-            ]
+            ShopStock.objects.filter(
+                shop=selected_shop, item__is_suspended=False
+            ).aggregate(total=Sum("quantity"))["total"]
             or 0
         )
     else:
@@ -8246,6 +8298,7 @@ def stock_serial_movements(request, profile, meta, module):
                     "item_name": event["item_name"],
                     "item_category": event["item_category"],
                     "item_suspended": bool(event.get("item_suspended")),
+                    "item_deleted": bool(event.get("item_deleted")),
                     "serial_number": serial,
                     "shop_name": event.get("shop_name") or "—",
                     "from_label": event.get("from_label", "—"),
