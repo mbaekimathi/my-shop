@@ -427,7 +427,7 @@ def build_stock_catalog_page(
     q: str = "",
     page=1,
     page_size=48,
-    include_suspended: bool = True,
+    include_suspended: bool = False,
     include_totals: bool = True,
 ):
     """
@@ -2046,7 +2046,55 @@ def toggle_item_suspended(item: Item, *, actor=None) -> Item:
     return item
 
 
-def delete_item(item: Item, *, actor=None) -> None:
+def _write_off_item_stock(item: Item, *, actor=None) -> Decimal:
+    """Record stock-out movements for the item's remaining on-hand stock.
+
+    Used when a suspended item is force-deleted: each shop's leftover quantity
+    gets a Stock Out movement so the write-off stays visible in stock audits
+    after the item row (and its ShopStock/serial rows) are gone.
+    """
+    total = _ZERO_QTY
+    stocks = item.shop_stocks.filter(quantity__gt=0).select_related("shop")
+    for stock in stocks:
+        qty = _quantize_qty(stock.quantity)
+        if qty <= 0:
+            continue
+        movement = StockMovement.objects.create(
+            movement_type=StockMovementType.OUT,
+            entry_source=StockEntrySource.STOCK_MANAGEMENT,
+            shop=stock.shop,
+            notes=f"Stock written off — item “{item.name}” force-deleted.",
+            created_by=actor,
+        )
+        serials = []
+        if item.track_serial_number:
+            serials = list(
+                ItemSerial.objects.filter(
+                    item=item, shop=stock.shop, is_available=True
+                )
+                .order_by("serial_number")
+                .values_list("serial_number", flat=True)
+            )
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=item,
+            item_name=item.name or "",
+            quantity=qty,
+            unit_cost=_money_cost(stock.average_cost),
+            reason=StockOutReason.WASTE,
+            note=f"Write-off — “{item.name}” force-deleted from suspended items.",
+            serial_numbers=serials,
+        )
+        total += qty
+    return total
+
+
+def delete_item(item: Item, *, actor=None, force: bool = False) -> Decimal:
+    """Delete an item and return the quantity written off (0 when none).
+
+    With ``force=True`` any remaining on-hand stock is written off as stock-out
+    movements first; the ShopStock/serial rows then cascade-delete with the item.
+    """
     if item.stock_movement_lines.filter(
         movement__movement_type=StockMovementType.REQUEST,
         movement__request_status=StockRequestStatus.PENDING,
@@ -2064,25 +2112,35 @@ def delete_item(item: Item, *, actor=None) -> None:
     shop_ids = list(item.shop_prices.values_list("shop_id", flat=True))
     # Keep the name on stock movement history after the item row is gone.
     item.stock_movement_lines.filter(item_name="").update(item_name=item_name)
-    if item.image:
-        item.image.delete(save=False)
-    try:
-        item.delete()
-    except ProtectedError as exc:
-        raise ValidationError(
-            f"“{item_name}” cannot be deleted because related records still reference it. "
-            "Suspend it instead to hide it from sales."
-        ) from exc
+    with transaction.atomic():
+        written_off = _write_off_item_stock(item, actor=actor) if force else _ZERO_QTY
+        if item.image:
+            item.image.delete(save=False)
+        try:
+            item.delete()
+        except ProtectedError as exc:
+            raise ValidationError(
+                f"“{item_name}” cannot be deleted because related records still reference it. "
+                "Suspend it instead to hide it from sales."
+            ) from exc
     log_item_activity(
         kind=ItemActivityKind.DELETED,
         actor=actor,
         item=None,
         item_name=item_name,
         item_category=item_category,
-        detail=f"Deleted from {item_category}" if item_category else "Deleted item",
-        meta={"item_id": item_id},
+        detail=(
+            f"Deleted from {item_category}" if item_category else "Deleted item"
+        )
+        + (f" — {format(written_off.normalize(), 'f')} units written off" if written_off else ""),
+        meta=(
+            {"item_id": item_id, "stock_written_off": str(written_off)}
+            if written_off
+            else {"item_id": item_id}
+        ),
         shop_ids=shop_ids,
     )
+    return written_off
 
 
 def _parse_serial_numbers(raw_value: str) -> list[str]:
@@ -3689,7 +3747,9 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
     shop_ids = [shop.pk for shop in shops]
 
     items = list(
-        Item.objects.order_by("category", "name").only(
+        Item.objects.filter(is_suspended=False)
+        .order_by("category", "name")
+        .only(
             "id",
             "name",
             "category",

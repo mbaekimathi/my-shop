@@ -159,6 +159,9 @@
             {% if row.item_category %}
             <span class="stock-report-from">{{ row.item_category }}</span>
             {% endif %}
+            {% if row.item_suspended %}
+            <span class="stock-item-badge">Suspended</span>
+            {% endif %}
           </td>
           <td class="stock-serials-col--serial" data-label="Serial">
             <strong class="stock-serial-number">{{ row.serial_number }}</strong>

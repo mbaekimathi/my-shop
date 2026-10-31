@@ -314,7 +314,9 @@ def _shop_products_rows(shop, submitted=None):
     ``submitted`` carries ``{item_id: {"price": raw, "sold": bool}}`` so a
     failed POST re-renders exactly what the user typed.
     """
-    items = list(Item.objects.order_by("category", "name"))
+    items = list(
+        Item.objects.filter(is_suspended=False).order_by("category", "name")
+    )
     price_rows = {
         row.item_id: row
         for row in ShopItemPrice.objects.filter(shop=shop).only(
@@ -415,7 +417,9 @@ def shop_products_management(request, role_segment, shop_id):
                     "Go back and try again."
                 )
         updates = []
-        for item in Item.objects.order_by("category", "name"):
+        for item in Item.objects.filter(is_suspended=False).order_by(
+            "category", "name"
+        ):
             if payload_sent:
                 entry = json_rows.get(item.pk) or {}
                 raw_price = (entry.get("price") or "").strip()
@@ -1841,7 +1845,7 @@ def _buy_stock_items_context(shop):
 
     from shops.services import get_company_stock_settings
 
-    item_count = Item.objects.count()
+    item_count = Item.objects.filter(is_suspended=False).count()
     total_units = (
         ShopStock.objects.filter(shop=shop).aggregate(total=Sum("quantity"))["total"]
         or 0
@@ -1891,7 +1895,7 @@ def my_shop_buy_stock_catalog(request, shop_id):
         q=request.GET.get("q") or "",
         page=request.GET.get("page") or 1,
         page_size=request.GET.get("page_size") or 48,
-        include_suspended=True,
+        include_suspended=False,
         include_totals=False,
     )
     return JsonResponse(payload)

@@ -2106,20 +2106,183 @@ class ItemDeleteWithStockTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
 
-    def test_suspended_page_delete_blocked_until_stock_cleared(self):
-        from items.models import Item, ShopStock
+    def test_suspended_page_delete_force_writes_off_stock(self):
+        from decimal import Decimal as D
 
-        ShopStock.objects.create(shop=self.shop, item=self.item, quantity=4)
+        from items.models import (
+            Item,
+            ShopStock,
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+            StockOutReason,
+        )
+
+        ShopStock.objects.create(
+            shop=self.shop, item=self.item, quantity=4, average_cost=D("55.00")
+        )
         self.item.is_suspended = True
         self.item.save(update_fields=["is_suspended"])
         response = self._suspended_delete(self.item)
         self.assertEqual(response.status_code, 302)
+        self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
+        self.assertFalse(ShopStock.objects.filter(item_id=self.item.pk).exists())
+
+        movement = StockMovement.objects.get(
+            movement_type=StockMovementType.OUT, shop=self.shop
+        )
+        line = StockMovementLine.objects.get(movement=movement)
+        self.assertIsNone(line.item_id)
+        self.assertEqual(line.item_name, "DELETE STOCK ITEM")
+        self.assertEqual(line.quantity, D("4.000"))
+        self.assertEqual(line.unit_cost, D("55.00"))
+        self.assertEqual(line.reason, StockOutReason.WASTE)
+
+    def test_suspended_page_delete_all_removes_every_suspended_item(self):
+        from items.models import Item, ShopStock, StockMovement, StockMovementType
+
+        other = Item.objects.create(
+            category="DRINKS",
+            name="SECOND SUSPENDED",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+            is_suspended=True,
+        )
+        ShopStock.objects.create(shop=self.shop, item=other, quantity=2)
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+        active = Item.objects.create(
+            category="DRINKS",
+            name="STILL ACTIVE",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+
+        response = self.client.post(
+            "/it-support/item-management/?mode=suspended",
+            {"action": "delete_all"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Item.objects.filter(is_suspended=True).exists())
+        self.assertTrue(Item.objects.filter(pk=active.pk).exists())
+        self.assertEqual(
+            StockMovement.objects.filter(movement_type=StockMovementType.OUT).count(),
+            1,
+        )
+
+    def test_suspended_page_bulk_unsuspend(self):
+        from items.models import Item
+
+        other = Item.objects.create(
+            category="DRINKS",
+            name="SECOND SUSPENDED",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+            is_suspended=True,
+        )
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+        active = Item.objects.create(
+            category="DRINKS",
+            name="STILL ACTIVE",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+
+        response = self.client.post(
+            "/it-support/item-management/?mode=suspended",
+            {
+                "action": "unsuspend_bulk",
+                "item_id": [str(self.item.pk), str(other.pk)],
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Item.objects.filter(is_suspended=True).exists())
+        active.refresh_from_db()
+        self.assertFalse(active.is_suspended)
+
+    def test_suspended_page_bulk_delete_selected_only(self):
+        from items.models import Item, ShopStock, StockMovement, StockMovementType
+
+        other = Item.objects.create(
+            category="DRINKS",
+            name="SECOND SUSPENDED",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+            is_suspended=True,
+        )
+        keep = Item.objects.create(
+            category="DRINKS",
+            name="KEEP SUSPENDED",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+            is_suspended=True,
+        )
+        ShopStock.objects.create(shop=self.shop, item=other, quantity=3)
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+
+        response = self.client.post(
+            "/it-support/item-management/?mode=suspended",
+            {
+                "action": "delete_bulk",
+                "item_id": [str(self.item.pk), str(other.pk)],
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Item.objects.filter(pk__in=[self.item.pk, other.pk]).exists())
+        self.assertTrue(Item.objects.filter(pk=keep.pk).exists())
+        self.assertEqual(
+            StockMovement.objects.filter(movement_type=StockMovementType.OUT).count(),
+            1,
+        )
+
+    def test_suspended_page_bulk_delete_empty_selection(self):
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+
+        response = self.client.post(
+            "/it-support/item-management/?mode=suspended",
+            {"action": "delete_bulk"},
+        )
+        self.assertEqual(response.status_code, 302)
+        from items.models import Item
+
         self.assertTrue(Item.objects.filter(pk=self.item.pk).exists())
 
-        ShopStock.objects.filter(item=self.item).update(quantity=0)
-        response = self._suspended_delete(self.item)
+    def test_suspended_page_delete_all_skips_pending_transfer_items(self):
+        from items.models import (
+            Item,
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+            StockRequestStatus,
+        )
+
+        self.item.is_suspended = True
+        self.item.save(update_fields=["is_suspended"])
+        movement = StockMovement.objects.create(
+            movement_type=StockMovementType.REQUEST,
+            shop=self.shop,
+            request_status=StockRequestStatus.PENDING,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=movement, item=self.item, quantity=2
+        )
+
+        response = self.client.post(
+            "/it-support/item-management/?mode=suspended",
+            {"action": "delete_all"},
+        )
         self.assertEqual(response.status_code, 302)
-        self.assertFalse(Item.objects.filter(pk=self.item.pk).exists())
+        self.assertTrue(Item.objects.filter(pk=self.item.pk).exists())
 
     def test_suspended_page_delete_rejects_active_item(self):
         response = self._suspended_delete(self.item)

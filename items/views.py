@@ -903,6 +903,24 @@ def item_activity_audits(request, profile, meta, module):
     )
 
 
+def _delete_suspended_items(items, *, actor):
+    """Force-delete suspended items; return (deleted, written_off, skipped_names)."""
+    deleted = 0
+    written_total = Decimal("0")
+    skipped = []
+    for item in items:
+        name = item.name
+        try:
+            written_total += (
+                delete_item(item, actor=actor, force=True) or Decimal("0")
+            )
+        except ValidationError:
+            skipped.append(name)
+            continue
+        deleted += 1
+    return deleted, written_total, skipped
+
+
 @require_http_methods(["GET", "POST"])
 def item_suspended(request, profile, meta, module):
     """Suspended items with per-shop on-hand stock and an unsuspend action."""
@@ -923,7 +941,9 @@ def item_suspended(request, profile, meta, module):
             request,
             profile,
             "item-management",
-            "delete" if action == "delete" else "toggle_suspend",
+            "delete"
+            if action in {"delete", "delete_all", "delete_bulk"}
+            else "toggle_suspend",
         )
         if denied is not None:
             return denied
@@ -934,24 +954,80 @@ def item_suspended(request, profile, meta, module):
                 toggle_item_suspended(item, actor=profile)
             messages.success(request, f"Item “{item.name}” unsuspended.")
             return redirect(suspended_url)
+        if action == "unsuspend_bulk":
+            items = list(
+                Item.objects.filter(
+                    is_suspended=True, pk__in=request.POST.getlist("item_id")
+                )
+            )
+            for item in items:
+                toggle_item_suspended(item, actor=profile)
+            if items:
+                messages.success(
+                    request,
+                    f"{len(items)} item{'s' if len(items) != 1 else ''} unsuspended.",
+                )
+            else:
+                messages.info(request, "Select at least one suspended item.")
+            return redirect(suspended_url)
         if action == "delete":
             item = get_object_or_404(
                 Item.objects.filter(is_suspended=True), pk=item_id
             )
             name = item.name
-            if item.shop_stocks.filter(quantity__gt=0).exists():
-                messages.error(
-                    request,
-                    f"Clear the remaining stock for “{name}” before deleting it.",
-                )
-                return redirect(suspended_url)
             try:
-                delete_item(item, actor=profile)
+                written_off = delete_item(item, actor=profile, force=True)
             except ValidationError as exc:
                 for msg in _validation_errors(exc):
                     messages.error(request, msg)
                 return redirect(suspended_url)
-            messages.success(request, f"Item “{name}” deleted.")
+            if written_off:
+                messages.success(
+                    request,
+                    f"Item “{name}” deleted — "
+                    f"{format(written_off.normalize(), 'f')} units written off.",
+                )
+            else:
+                messages.success(request, f"Item “{name}” deleted.")
+            return redirect(suspended_url)
+        if action in {"delete_all", "delete_bulk"}:
+            if action == "delete_bulk":
+                items = list(
+                    Item.objects.filter(
+                        is_suspended=True,
+                        pk__in=request.POST.getlist("item_id"),
+                    ).order_by("pk")
+                )
+                if not items:
+                    messages.info(
+                        request, "Select at least one suspended item to delete."
+                    )
+                    return redirect(suspended_url)
+            else:
+                items = list(
+                    Item.objects.filter(is_suspended=True).order_by("pk")
+                )
+            deleted, written_total, skipped = _delete_suspended_items(
+                items, actor=profile
+            )
+            if deleted:
+                detail = f"{deleted} suspended item{'s' if deleted != 1 else ''} deleted."
+                if written_total:
+                    detail += (
+                        f" {format(written_total.normalize(), 'f')} units "
+                        "written off."
+                    )
+                messages.success(request, detail)
+            if skipped:
+                shown = ", ".join(skipped[:5])
+                extra = f" +{len(skipped) - 5} more" if len(skipped) > 5 else ""
+                messages.error(
+                    request,
+                    f"Could not delete {len(skipped)} item"
+                    f"{'s' if len(skipped) != 1 else ''}: {shown}{extra}.",
+                )
+            if not deleted and not skipped:
+                messages.info(request, "No suspended items to delete.")
             return redirect(suspended_url)
         messages.error(request, "Unknown action.")
         return redirect(suspended_url)
@@ -1665,6 +1741,18 @@ def _current_stock_by_item(item_ids, shop_ids):
         if item_id in totals:
             totals[item_id] = _qty_num(row["total"])
     return totals
+
+
+def _suspended_item_ids(item_ids) -> set:
+    """IDs from ``item_ids`` whose Item is currently suspended (one query)."""
+    ids = {int(pk) for pk in (item_ids or []) if pk}
+    if not ids:
+        return set()
+    return set(
+        Item.objects.filter(pk__in=ids, is_suspended=True).values_list(
+            "pk", flat=True
+        )
+    )
 
 
 def _current_stock_by_item_shop(item_ids, shop_ids):
@@ -3856,6 +3944,9 @@ def _build_movement_timeline(
             units_sale += _qty_num(line.quantity)
 
     events.sort(key=lambda row: (row["happened_at"], row.get("movement_id") or 0))
+    suspended_ids = _suspended_item_ids(event.get("item_id") for event in events)
+    for event in events:
+        event["item_suspended"] = event.get("item_id") in suspended_ids
     return events, units_in, units_out, units_request, units_sale
 
 
@@ -4326,6 +4417,7 @@ def _blank_movement_item_row(
         "shop_name": shop_name,
         "is_item_start": False,
         "is_item_total": False,
+        "is_suspended": False,
         "event_count": 0,
         "units_in": 0,
         "units_out": 0,
@@ -4401,10 +4493,12 @@ def _group_movement_events_by_item(
             _apply_movement_event_to_row(row, event)
         item_ids = [row["item_id"] for row in groups.values() if row.get("item_id")]
         stock_by_item = _current_stock_by_item(item_ids, shop_ids)
+        suspended_ids = _suspended_item_ids(item_ids)
         for row in groups.values():
             item_id = row.get("item_id")
             if item_id:
                 row["current_stock"] = stock_by_item.get(item_id, 0)
+                row["is_suspended"] = item_id in suspended_ids
         return sorted(
             groups.values(),
             key=lambda row: (row["item_name"].lower(), row.get("item_id") or 0),
@@ -4484,6 +4578,7 @@ def _group_movement_events_by_item(
         extra_item_ids = [item.pk for item in extra_items if getattr(item, "pk", None)]
     stock_item_ids = list({*event_item_ids, *extra_item_ids})
     stock_by_shop = _current_stock_by_item_shop(stock_item_ids, shop_ids)
+    suspended_ids = _suspended_item_ids(stock_item_ids)
     if extra_items and not require_events:
         for item in extra_items:
             if item.pk in items:
@@ -4532,6 +4627,11 @@ def _group_movement_events_by_item(
         ):
             continue
         shop_rows[0]["is_item_start"] = True
+        group_suspended = (
+            bool(group.get("item_id")) and group["item_id"] in suspended_ids
+        )
+        for row in shop_rows:
+            row["is_suspended"] = group_suspended
         rows.extend(shop_rows)
         last_times = [row["last_at"] for row in shop_rows if row.get("last_at")]
         total = _blank_movement_item_row(
@@ -4542,6 +4642,7 @@ def _group_movement_events_by_item(
             shop_name="Total",
         )
         total["is_item_total"] = True
+        total["is_suspended"] = group_suspended
         total["event_count"] = sum(row["event_count"] for row in shop_rows)
         total["units_in"] = sum(row["units_in"] for row in shop_rows)
         total["units_out"] = sum(row["units_out"] for row in shop_rows)
@@ -4848,9 +4949,12 @@ def _item_qty_summary_rows(events, event_filter="all"):
                 "item_name": name,
                 "item_category": category,
                 "quantity": qty,
+                "item_suspended": bool(event.get("item_suspended")),
             }
         else:
             row["quantity"] += qty
+            if event.get("item_suspended"):
+                row["item_suspended"] = True
             if row.get("item_id") is None and item_id is not None:
                 row["item_id"] = item_id
             # Prefer a non-empty live display name if later events have one.
@@ -4900,9 +5004,12 @@ def _item_qty_summary_by_type_rows(events):
                 "item_id": item_id,
                 "item_name": name,
                 "item_category": category,
+                "item_suspended": False,
                 **blanks,
             }
             totals[key] = row
+        if event.get("item_suspended"):
+            row["item_suspended"] = True
         row[bucket] += _qty_num(event.get("quantity"))
         if row.get("item_id") is None and item_id is not None:
             row["item_id"] = item_id
@@ -4937,6 +5044,12 @@ def _format_money_pdf(value):
     except Exception:
         amount = Decimal("0.00")
     return f"{amount:,.2f}"
+
+
+def _pdf_item_label(name, is_suspended=False):
+    """Item label with the suspended marker used on report PDFs."""
+    name = str(name or "")
+    return f"{name} · Suspended" if is_suspended else name
 
 
 def _buying_prices_for_summary(rows, shop_ids=None):
@@ -5037,10 +5150,13 @@ def _build_audit_summary_rows(
                 "item_category": category,
                 "quantity": qty,
                 "event_count": 1,
+                "item_suspended": bool(event.get("item_suspended")),
             }
         else:
             row["quantity"] += qty
             row["event_count"] += 1
+            if event.get("item_suspended"):
+                row["item_suspended"] = True
             if row.get("item_id") is None and item_id is not None:
                 row["item_id"] = item_id
             if name and name != "—" and (
@@ -5089,7 +5205,9 @@ def _build_audit_summary_rows(
         total_system += system_qty
         rows.append(
             [
-                row.get("item_name") or "—",
+                _pdf_item_label(
+                    row.get("item_name") or "—", row.get("item_suspended")
+                ),
                 _format_money_pdf(unit_buy),
                 events_count,
                 qty,
@@ -5249,7 +5367,7 @@ def _stock_report_download(
         for row in sorted_items:
             last_date, last_time = _format_movement_pdf_date_time(row.get("last_at"))
             line = [
-                row.get("item_name") or "",
+                _pdf_item_label(row.get("item_name"), row.get("is_suspended")),
                 row.get("item_category") or "",
             ]
             if movement_item_group_by_shop:
@@ -5311,7 +5429,9 @@ def _stock_report_download(
                 total_value += est_value
                 summary_rows.append(
                     [
-                        row["item_name"],
+                        _pdf_item_label(
+                            row["item_name"], row.get("item_suspended")
+                        ),
                         row["item_category"],
                         row["in"],
                         row["out"],
@@ -5361,7 +5481,9 @@ def _stock_report_download(
                 total_value += est_value
                 summary_rows.append(
                     [
-                        row["item_name"],
+                        _pdf_item_label(
+                            row["item_name"], row.get("item_suspended")
+                        ),
                         row["item_category"],
                         qty,
                         _format_money_pdf(unit_buy),
@@ -5407,7 +5529,9 @@ def _stock_report_download(
                     date_value,
                     time_value,
                     event.get("event_label") or event.get("event_type") or "",
-                    event.get("item_name") or "",
+                    _pdf_item_label(
+                        event.get("item_name"), event.get("item_suspended")
+                    ),
                     event.get("quantity") or 0,
                     event.get("receipt_number") or "",
                     event.get("from_label") or "",
@@ -5462,7 +5586,10 @@ def _stock_report_download(
                     line.append("")
             line.extend(
                 [
-                    getattr(item, "name", None) or row.get("item_name") or "",
+                    _pdf_item_label(
+                        getattr(item, "name", None) or row.get("item_name"),
+                        getattr(item, "is_suspended", False),
+                    ),
                     getattr(item, "category", None) or row.get("item_category") or "",
                 ]
             )
@@ -5550,7 +5677,9 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         from django.http import JsonResponse
 
         picker_items = list(
-            Item.objects.order_by("category", "name").values("id", "name", "category")
+            Item.objects.order_by("category", "name").values(
+                "id", "name", "category", "is_suspended"
+            )
         )
         return JsonResponse({"items": picker_items})
 
@@ -5593,12 +5722,19 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     )
     if need_full_item_catalog:
         all_items = list(
-            Item.objects.order_by("category", "name").only("id", "name", "category")
+            Item.objects.order_by("category", "name").only(
+                "id", "name", "category", "is_suspended"
+            )
         )
         items_by_id = {item.pk: item for item in all_items}
         filter_items_json = json.dumps(
             [
-                {"id": item.pk, "name": item.name, "category": item.category}
+                {
+                    "id": item.pk,
+                    "name": item.name,
+                    "category": item.category,
+                    "is_suspended": bool(item.is_suspended),
+                }
                 for item in all_items
             ]
         )
@@ -5609,7 +5745,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         if selected_item_ids_raw:
             selected_only = list(
                 Item.objects.filter(pk__in=selected_item_ids_raw)
-                .only("id", "name", "category")
+                .only("id", "name", "category", "is_suspended")
                 .order_by("category", "name")
             )
             items_by_id = {item.pk: item for item in selected_only}
@@ -6201,7 +6337,7 @@ def stock_low_stock_settings(request, profile, meta, module):
                 parsed_id = int((request.POST.get("item_id") or "").strip())
             except (TypeError, ValueError):
                 parsed_id = 0
-            return Item.objects.filter(pk=parsed_id).first()
+            return Item.objects.filter(pk=parsed_id, is_suspended=False).first()
 
         if action == "save_low_stock":
             item = _load_item()
@@ -6283,7 +6419,9 @@ def stock_low_stock_settings(request, profile, meta, module):
                 items = [item]
             else:
                 items = list(
-                    Item.objects.only(*LOW_STOCK_ITEM_ONLY).order_by("category", "name")
+                    Item.objects.filter(is_suspended=False)
+                    .only(*LOW_STOCK_ITEM_ONLY)
+                    .order_by("category", "name")
                 )
             _sync_shop_thresholds_from_usage(items, shops)
             if wants_json:
@@ -6317,7 +6455,7 @@ def stock_low_stock_settings(request, profile, meta, module):
                 "on",
                 "yes",
             )
-            updated = Item.objects.update(
+            updated = Item.objects.filter(is_suspended=False).update(
                 low_stock_notify=notify,
                 updated_at=timezone.now(),
             )
@@ -6340,7 +6478,9 @@ def stock_low_stock_settings(request, profile, meta, module):
 
     allocated_shops = actionable_shops_for_profile(profile)
     items = list(
-        Item.objects.only(*LOW_STOCK_ITEM_ONLY).order_by("category", "name")
+        Item.objects.filter(is_suspended=False)
+        .only(*LOW_STOCK_ITEM_ONLY)
+        .order_by("category", "name")
     )
     low_stock_items, notify_count, group_by_shop = _build_low_stock_rows(
         items, allocated_shops
@@ -7264,7 +7404,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         use_stock_catalog_api = True
 
     items_by_category = []
-    item_count = Item.objects.count()
+    item_count = Item.objects.filter(is_suspended=False).count()
     category_count = 0
     shop_total_units = 0
     display_shops = []
@@ -7294,7 +7434,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
                 or 0
             )
         category_count = (
-            Item.objects.order_by("category").values("category").distinct().count()
+            Item.objects.filter(is_suspended=False)
+            .order_by("category")
+            .values("category")
+            .distinct()
+            .count()
         )
     elif mode in ("in", "out") and shops:
         display_shops = list(selected_shops) if selected_shops else list(shops)
@@ -7305,7 +7449,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
             or 0
         )
         category_count = (
-            Item.objects.order_by("category").values("category").distinct().count()
+            Item.objects.filter(is_suspended=False)
+            .order_by("category")
+            .values("category")
+            .distinct()
+            .count()
         )
     elif mode == "request" and request_pair_ready:
         # Sending shop and receiving shop.
@@ -7317,7 +7465,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
             or 0
         )
         category_count = (
-            Item.objects.order_by("category").values("category").distinct().count()
+            Item.objects.filter(is_suspended=False)
+            .order_by("category")
+            .values("category")
+            .distinct()
+            .count()
         )
     elif use_stock_catalog_api and selected_shop is not None:
         display_shops = [selected_shop]
@@ -7494,7 +7646,7 @@ def stock_management_catalog(request, role_segment):
             q=request.GET.get("q") or "",
             page=request.GET.get("page") or 1,
             page_size=request.GET.get("page_size") or 48,
-            include_suspended=True,
+            include_suspended=False,
         )
         return JsonResponse(payload)
 
@@ -7552,7 +7704,7 @@ def stock_management_catalog(request, role_segment):
             q=request.GET.get("q") or "",
             page=request.GET.get("page") or 1,
             page_size=request.GET.get("page_size") or 48,
-            include_suspended=True,
+            include_suspended=False,
         )
         return JsonResponse(payload)
 
@@ -7565,7 +7717,7 @@ def stock_management_catalog(request, role_segment):
         q=request.GET.get("q") or "",
         page=request.GET.get("page") or 1,
         page_size=request.GET.get("page_size") or 48,
-        include_suspended=True,
+        include_suspended=False,
     )
     return JsonResponse(payload)
 
@@ -7777,7 +7929,9 @@ def stock_serials(request, profile, meta, module):
     serial_matched_ids: set = set()
     shop_in_map: dict[int, dict[int, int]] = {}
     if shop_ids:
-        items_qs = Item.objects.filter(track_serial_number=True).annotate(
+        items_qs = Item.objects.filter(
+            track_serial_number=True, is_suspended=False
+        ).annotate(
             serial_total=Count(
                 "serials",
                 filter=Q(serials__shop_id__in=shop_ids),
@@ -8091,6 +8245,7 @@ def stock_serial_movements(request, profile, meta, module):
                     "event_label": event["event_label"],
                     "item_name": event["item_name"],
                     "item_category": event["item_category"],
+                    "item_suspended": bool(event.get("item_suspended")),
                     "serial_number": serial,
                     "shop_name": event.get("shop_name") or "—",
                     "from_label": event.get("from_label", "—"),

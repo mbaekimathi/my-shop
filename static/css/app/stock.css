@@ -6231,6 +6231,15 @@
   opacity: 0.55;
 }
 
+.stock-report-table tr.is-suspended td[data-label="Item"] strong {
+  opacity: 0.65;
+}
+
+.stock-report-item-chip .stock-item-badge,
+.stock-report-item-focus .stock-item-badge {
+  margin-left: 0.25rem;
+}
+
 .stock-panel .dashboard-placeholder,
 .stock-panel .item-search-empty {
   color: var(--mist-dim);

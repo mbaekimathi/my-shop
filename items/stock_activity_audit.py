@@ -133,7 +133,16 @@ def build_stock_activity_audits(
         lines = getattr(movement, "prefetched_lines", None)
         if lines is None:
             lines = list(movement.lines.all())
-        item_names = [line.item.name for line in lines[:3] if getattr(line, "item", None)]
+        item_names = []
+        for line in lines[:3]:
+            live_item = getattr(line, "item", None)
+            name = (
+                live_item.name
+                if live_item is not None
+                else (getattr(line, "item_name", "") or "")
+            )
+            if name:
+                item_names.append(name)
         extra = max(0, len(lines) - len(item_names))
         if item_names and extra:
             detail_items = f"{', '.join(item_names)} +{extra}"

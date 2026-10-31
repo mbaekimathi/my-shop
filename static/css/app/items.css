@@ -715,3 +715,31 @@
   opacity: 0.45;
   pointer-events: none;
 }
+
+/* Suspended items — bulk select. */
+.item-head-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.item-head-check input,
+.item-row-check {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.item-row-check {
+  flex: none;
+  align-self: center;
+}
+
+.item-bulk-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.item-bulk-actions .item-count {
+  margin: 0;
+}

@@ -22,6 +22,63 @@
           <span>Registered items</span>
           <i data-lucide="arrow-up-right" aria-hidden="true"></i>
         </a>
+        {% if can_toggle_suspend or can_delete %}
+        <form
+          class="item-inline-form item-bulk-actions"
+          id="suspended-bulk-form"
+          method="post"
+          data-bulk-form
+        >
+          {% csrf_token %}
+          <p class="item-count" data-selected-count>0 selected</p>
+          {% if can_toggle_suspend %}
+          <button
+            class="item-discount-save"
+            type="submit"
+            name="action"
+            value="unsuspend_bulk"
+            data-bulk-submit
+            title="Unsuspend the selected items"
+          >
+            <i data-lucide="play" aria-hidden="true"></i>
+            <span>Unsuspend</span>
+          </button>
+          {% endif %}
+          {% if can_delete %}
+          <button
+            class="item-discount-save"
+            type="submit"
+            name="action"
+            value="delete_bulk"
+            data-bulk-submit
+            title="Delete the selected items — remaining stock is written off"
+          >
+            <i data-lucide="trash-2" aria-hidden="true"></i>
+            <span>Delete</span>
+          </button>
+          {% endif %}
+        </form>
+        {% endif %}
+        {% if can_delete and item_count %}
+        <form
+          class="item-inline-form"
+          method="post"
+          data-confirm-delete-all
+          data-item-count="{{ item_count }}"
+        >
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete_all">
+          <button
+            class="item-discount-save"
+            type="submit"
+            title="Delete all suspended items — remaining stock is written off"
+            aria-label="Delete all {{ item_count }} suspended items"
+          >
+            <i data-lucide="trash-2" aria-hidden="true"></i>
+            <span>Delete all</span>
+          </button>
+        </form>
+        {% endif %}
         <p class="item-count" data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</p>
       </div>
     </div>
@@ -54,7 +111,19 @@
     <table class="item-table item-table--dense">
       <thead>
         <tr>
-          <th scope="col" class="item-col--item">Item</th>
+          <th scope="col" class="item-col--item">
+            <span class="item-head-check">
+              {% if can_toggle_suspend or can_delete %}
+              <input
+                type="checkbox"
+                data-select-all
+                aria-label="Select all suspended items"
+                title="Select all"
+              >
+              {% endif %}
+              <span>Item</span>
+            </span>
+          </th>
           <th scope="col" class="item-col--range">Category</th>
           {% for shop in stock_shops %}
           <th scope="col" class="item-col--shop" title="On-hand stock at {{ shop.name }}">{{ shop.name }}</th>
@@ -74,6 +143,18 @@
         >
           <td class="item-cell--item" data-label="Item">
             <div class="item-person">
+              {% if can_toggle_suspend or can_delete %}
+              <input
+                type="checkbox"
+                class="item-row-check"
+                name="item_id"
+                value="{{ row.item.pk }}"
+                form="suspended-bulk-form"
+                data-item-check
+                data-has-stock="{% if row.has_stock %}true{% else %}false{% endif %}"
+                aria-label="Select {{ row.item.name }}"
+              >
+              {% endif %}
               {% if row.item.image %}
               <img class="item-thumb" src="{{ row.item.image.url }}" alt="" width="32" height="32">
               {% else %}
@@ -121,38 +202,26 @@
             </form>
             {% endif %}
             {% if can_delete %}
-              {% if row.has_stock %}
+            <form
+              class="item-inline-form"
+              method="post"
+              data-confirm-delete
+              data-item-name="{{ row.item.name }}"
+              data-has-stock="{% if row.has_stock %}true{% else %}false{% endif %}"
+            >
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="item_id" value="{{ row.item.pk }}">
               <button
                 class="item-discount-save"
-                type="button"
-                disabled
-                title="Clear the item's stock before deleting it"
-                aria-label="{{ row.item.name }} still has stock — clear it before deleting"
+                type="submit"
+                title="{% if row.has_stock %}Delete item — remaining stock will be written off{% else %}Delete item{% endif %}"
+                aria-label="Delete {{ row.item.name }}{% if row.has_stock %} (stock will be written off){% endif %}"
               >
                 <i data-lucide="trash-2" aria-hidden="true"></i>
                 <span>Delete</span>
               </button>
-              {% else %}
-              <form
-                class="item-inline-form"
-                method="post"
-                data-confirm-delete
-                data-item-name="{{ row.item.name }}"
-              >
-                {% csrf_token %}
-                <input type="hidden" name="action" value="delete">
-                <input type="hidden" name="item_id" value="{{ row.item.pk }}">
-                <button
-                  class="item-discount-save"
-                  type="submit"
-                  title="Delete item"
-                  aria-label="Delete {{ row.item.name }}"
-                >
-                  <i data-lucide="trash-2" aria-hidden="true"></i>
-                  <span>Delete</span>
-                </button>
-              </form>
-              {% endif %}
+            </form>
             {% endif %}
           </td>
           {% endif %}
@@ -177,5 +246,5 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/item-search.js' %}?v=2"></script>
-<script defer src="{% static 'js/item-suspended.js' %}?v=1"></script>
+<script defer src="{% static 'js/item-suspended.js' %}?v=3"></script>
 {% endblock %}
