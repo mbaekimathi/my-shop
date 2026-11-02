@@ -61,6 +61,9 @@
         {% if page.expense_category %}
         <input type="hidden" name="category" value="{{ page.expense_category }}">
         {% endif %}
+        {% if page.view == "items" %}
+        <input type="hidden" name="view" value="items">
+        {% endif %}
         {% if section_slug == "clients" %}
         <select name="receipt_kind" aria-label="Client activity">
           <option value="all"{% if page.receipt_kind == 'all' or not page.receipt_kind %} selected{% endif %}>All types</option>
@@ -410,6 +413,18 @@
     </article>
     {% endfor %}
   </div>
+  {% endif %}
+
+  {% if page.view_tabs %}
+  <nav class="ax-tabs" aria-label="View">
+    {% for tab in page.view_tabs %}
+    <a
+      class="ax-tab{% if tab.active %} is-active{% endif %}"
+      href="{{ tab.href }}"
+      {% if tab.active %}aria-current="page"{% endif %}
+    >{{ tab.label }}</a>
+    {% endfor %}
+  </nav>
   {% endif %}
 
   {% if page.tables %}

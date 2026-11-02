@@ -36,6 +36,36 @@
   min-width: 0;
 }
 
+.ax-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.ax-tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.28rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.ax-tab:hover {
+  background: color-mix(in srgb, var(--mist) 6%, var(--surface));
+}
+
+.ax-tab.is-active {
+  border-color: color-mix(in srgb, var(--teal) 55%, var(--line));
+  background: color-mix(in srgb, var(--teal) 12%, var(--surface));
+  color: var(--teal);
+}
+
 .ax-pay-modal-dialog {
   width: min(28rem, calc(100vw - 1.5rem));
 }

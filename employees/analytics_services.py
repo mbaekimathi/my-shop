@@ -5292,10 +5292,24 @@ def build_tradings_report_pdf(*, page: dict, filters: dict, company_name: str = 
 
     sections = []
     for table in page.get("tables") or []:
-        if table.get("title") == "Client accounts":
+        title = table.get("title")
+        if title == "Client accounts":
             sections.append(_tradings_accounts_pdf_section(table))
-        else:
+        elif title == "Trades":
             sections.append(_client_trades_pdf_section(table))
+        else:
+            headers, aligns, rows = _flatten_analytics_table(table)
+            sections.append(
+                {
+                    "kicker": "TRADINGS REPORT",
+                    "title": title or "Table",
+                    "headers": headers,
+                    "aligns": aligns,
+                    "rows": rows,
+                    "empty": table.get("empty") or "No data.",
+                    "footnote": table.get("footnote") or "",
+                }
+            )
 
     brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
     return _analytics_report_pdf(
@@ -10547,6 +10561,179 @@ def _build_tradings(filters):
     }
 
 
+def _trade_view_href(query: str, view: str) -> str:
+    """Current filter query with the view tab swapped."""
+    from urllib.parse import parse_qs, urlencode
+
+    params = parse_qs(query or "", keep_blank_values=True)
+    flat = {key: values[0] for key, values in params.items()}
+    flat.pop("download", None)
+    if view == "trades":
+        flat.pop("view", None)
+    else:
+        flat["view"] = view
+    return f"?{urlencode(flat)}"
+
+
+def _client_trade_items_table(receipts) -> dict:
+    """Per-item quantity rollup across one client's trade receipts."""
+    buckets: dict = {}
+    for receipt in receipts:
+        is_trade_in = receipt.kind == ShopReceiptKind.TRADE_IN
+        for line in receipt.lines.all():
+            qty = Decimal(line.quantity or 0) - Decimal(
+                line.returned_quantity or 0
+            )
+            if qty <= 0:
+                continue
+            name = (line.item_name or "Item").strip() or "Item"
+            key = line.item_id or f"name:{name.lower()}"
+            bucket = buckets.get(key)
+            if bucket is None:
+                bucket = {
+                    "name": name,
+                    "qty_in": Decimal("0"),
+                    "qty_out": Decimal("0"),
+                    "value_in": _zero(),
+                    "value_out": _zero(),
+                }
+                buckets[key] = bucket
+            value = (Decimal(line.unit_price or 0) * qty).quantize(
+                Decimal("0.01")
+            )
+            if is_trade_in:
+                bucket["qty_in"] += qty
+                bucket["value_in"] += value
+            else:
+                bucket["qty_out"] += qty
+                bucket["value_out"] += value
+
+    ordered = sorted(
+        buckets.values(),
+        key=lambda row: (
+            -(row["qty_in"] + row["qty_out"]),
+            row["name"].lower(),
+        ),
+    )
+
+    columns = [
+        "Item",
+        {
+            "label": "Trade in",
+            "title": "Qty and value received from the client",
+            "pair": True,
+            "pair_qty": "Qty",
+            "pair_amt": "Amt",
+            "band": "cash",
+            "band_start": True,
+        },
+        {
+            "label": "Trade out",
+            "title": "Qty and value given to the client",
+            "pair": True,
+            "pair_qty": "Qty",
+            "pair_amt": "Amt",
+            "band": "mpesa",
+            "band_start": True,
+        },
+        {
+            "label": "Total",
+            "title": "Trade in + trade out",
+            "pair": True,
+            "pair_qty": "Qty",
+            "pair_amt": "Amt",
+            "total": True,
+            "band": "total",
+            "band_start": True,
+        },
+    ]
+
+    rows = []
+    total_qty_in = Decimal("0")
+    total_qty_out = Decimal("0")
+    total_value_in = _zero()
+    total_value_out = _zero()
+    for bucket in ordered:
+        total_qty_in += bucket["qty_in"]
+        total_qty_out += bucket["qty_out"]
+        total_value_in += bucket["value_in"]
+        total_value_out += bucket["value_out"]
+        total_qty = bucket["qty_in"] + bucket["qty_out"]
+        total_value = bucket["value_in"] + bucket["value_out"]
+        rows.append(
+            {
+                "search_text": bucket["name"],
+                "cells": [
+                    bucket["name"],
+                    _qty_amount_cell(
+                        bucket["qty_in"],
+                        bucket["value_in"],
+                        title=(
+                            f"{_qty_label(bucket['qty_in'])} in · "
+                            f"{_money_ksh(bucket['value_in'])}"
+                        ),
+                    ),
+                    _qty_amount_cell(
+                        bucket["qty_out"],
+                        bucket["value_out"],
+                        title=(
+                            f"{_qty_label(bucket['qty_out'])} out · "
+                            f"{_money_ksh(bucket['value_out'])}"
+                        ),
+                    ),
+                    _qty_amount_cell(
+                        total_qty,
+                        total_value,
+                        title=(
+                            f"{_qty_label(total_qty)} · "
+                            f"{_money_ksh(total_value)}"
+                        ),
+                    ),
+                ],
+            }
+        )
+
+    if rows:
+        rows.append(
+            [
+                "Total",
+                _qty_amount_cell(
+                    total_qty_in,
+                    total_value_in,
+                    title=(
+                        f"{_qty_label(total_qty_in)} in · "
+                        f"{_money_ksh(total_value_in)}"
+                    ),
+                ),
+                _qty_amount_cell(
+                    total_qty_out,
+                    total_value_out,
+                    title=(
+                        f"{_qty_label(total_qty_out)} out · "
+                        f"{_money_ksh(total_value_out)}"
+                    ),
+                ),
+                _qty_amount_cell(
+                    total_qty_in + total_qty_out,
+                    total_value_in + total_value_out,
+                    title=(
+                        f"{_qty_label(total_qty_in + total_qty_out)} · "
+                        f"{_money_ksh(total_value_in + total_value_out)}"
+                    ),
+                ),
+            ]
+        )
+
+    return _table(
+        "Items",
+        columns,
+        rows,
+        empty="No traded items for this client in the selected period.",
+        footnote="Quantities net of returned items.",
+        searchable=True,
+    )
+
+
 def build_client_tradings_page(*, profile, request, client_id: int) -> dict:
     """Trade ins and trade outs for one client."""
     from employees.workspace import analytics_section_url
@@ -10577,6 +10764,36 @@ def build_client_tradings_page(*, profile, request, client_id: int) -> dict:
         back_href = f"{back_href}?{query}"
     period_label = filters.get("report_period_label") or "selected period"
     phone = (client.phone_number or "").strip()
+
+    view = (request.GET.get("view") or "").strip().lower()
+    show_items = view == "items"
+    view_tabs = [
+        {
+            "label": "Trades",
+            "href": _trade_view_href(query, "trades"),
+            "active": not show_items,
+        },
+        {
+            "label": "Items",
+            "href": _trade_view_href(query, "items"),
+            "active": show_items,
+        },
+    ]
+    if show_items:
+        tables = [_client_trade_items_table(qs)]
+        search_placeholder = "Search item"
+    else:
+        tables = [
+            _table(
+                "Trades",
+                _trade_receipt_columns(),
+                summary["rows"],
+                empty="No trade ins or trade outs for this client in the selected period.",
+                footnote="Open a trade to pay, exchange, or return items.",
+                searchable=True,
+            )
+        ]
+        search_placeholder = "Search trade or item"
     return {
         "headline": client.full_name,
         "lead": (
@@ -10589,8 +10806,10 @@ def build_client_tradings_page(*, profile, request, client_id: int) -> dict:
         "alerts": [],
         "show_search": True,
         "download_href": _pdf_download_href(query),
-        "search_placeholder": "Search trade or item",
+        "search_placeholder": search_placeholder,
         "list_table_layout": True,
+        "view": "items" if show_items else "trades",
+        "view_tabs": view_tabs,
         "metrics": [
             {
                 "label": "Trade in",
@@ -10614,16 +10833,7 @@ def build_client_tradings_page(*, profile, request, client_id: int) -> dict:
             },
         ],
         "insights": [],
-        "tables": [
-            _table(
-                "Trades",
-                _trade_receipt_columns(),
-                summary["rows"],
-                empty="No trade ins or trade outs for this client in the selected period.",
-                footnote="Open a trade to pay, exchange, or return items.",
-                searchable=True,
-            )
-        ],
+        "tables": tables,
     }
 
 

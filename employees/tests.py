@@ -1285,6 +1285,97 @@ class CreditsShopScopeTests(TestCase):
         self.assertIn("RETURNED TV", html)
         self.assertIn("Returned", html)
 
+    def test_client_tradings_items_view(self):
+        from shops.models import ShopReceiptLine
+
+        self.client.force_login(self.user)
+        client = Client.objects.create(
+            full_name="ITEM CLIENT",
+            phone_number="0700009103",
+            phone_normalized="254700009103",
+            created_by=self.it,
+        )
+        trade_out = ShopReceipt.objects.create(
+            shop=self.shop_a,
+            receipt_number="TR-OUT-1",
+            kind=ShopReceiptKind.TRADE_OUT,
+            total=300,
+            amount_paid=0,
+            created_by=self.it,
+            client=client,
+            client_name=client.full_name,
+            client_phone=client.phone_number,
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=trade_out,
+            item_name="TRADED PHONE",
+            quantity=2,
+            unit_price=150,
+            line_total=300,
+        )
+        trade_in = ShopReceipt.objects.create(
+            shop=self.shop_a,
+            receipt_number="TR-IN-1",
+            kind=ShopReceiptKind.TRADE_IN,
+            total=50,
+            amount_paid=0,
+            created_by=self.it,
+            client=client,
+            client_name=client.full_name,
+            client_phone=client.phone_number,
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=trade_in,
+            item_name="TRADED CHARGER",
+            quantity=1,
+            unit_price=50,
+            line_total=50,
+        )
+
+        detail_url = f"/it-support/analytics/tradings/{client.pk}/"
+        page = self.client.get(f"{detail_url}?range=all")
+        self.assertEqual(page.status_code, 200)
+        tabs = {
+            tab["label"]: tab for tab in page.context["page"]["view_tabs"]
+        }
+        self.assertTrue(tabs["Trades"]["active"])
+        self.assertFalse(tabs["Items"]["active"])
+        self.assertIn("view=items", tabs["Items"]["href"])
+        self.assertIn("range=all", tabs["Items"]["href"])
+
+        items = self.client.get(f"{detail_url}?range=all&view=items")
+        self.assertEqual(items.status_code, 200)
+        tabs = {
+            tab["label"]: tab for tab in items.context["page"]["view_tabs"]
+        }
+        self.assertTrue(tabs["Items"]["active"])
+        html = items.content.decode()
+        self.assertIn("TRADED PHONE", html)
+        self.assertIn("TRADED CHARGER", html)
+
+        table = items.context["page"]["tables"][0]
+        self.assertEqual(table["title"], "Items")
+        rows = {
+            row["cells"][0]: row["cells"]
+            for row in table["rows"]
+            if isinstance(row, dict)
+        }
+        self.assertEqual(rows["TRADED PHONE"][1]["qty"], "0")
+        self.assertEqual(rows["TRADED PHONE"][2]["qty"], "2")
+        self.assertEqual(rows["TRADED PHONE"][3]["qty"], "2")
+        self.assertEqual(rows["TRADED CHARGER"][1]["qty"], "1")
+        self.assertEqual(rows["TRADED CHARGER"][2]["qty"], "0")
+        self.assertEqual(rows["TRADED CHARGER"][3]["qty"], "1")
+
+        response = self.client.get(
+            f"{detail_url}?range=all&view=items&download=pdf"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF"))
+
 
 class CreditAuditsEventFilterTests(TestCase):
     def setUp(self):
