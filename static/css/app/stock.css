@@ -1393,9 +1393,11 @@
 .stock-panel--view .stock-matrix-scroll--list {
   border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
   border-radius: 10px;
-  overflow: hidden;
+  overflow-x: auto;
   box-shadow: none;
   background: var(--surface);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .stock-panel--view .stock-matrix--view {
@@ -1628,7 +1630,15 @@
 
   .stock-panel--view .stock-matrix--view {
     table-layout: auto;
+  }
+
+  .stock-panel--view .stock-matrix--view.stock-matrix--all {
     min-width: 38rem;
+  }
+
+  .stock-panel--view .stock-matrix--view .stock-matrix-item-col {
+    min-width: 8.5rem;
+    padding-inline: 0.65rem;
   }
 
   .stock-view-toolbar .stock-view-print {
@@ -1651,6 +1661,21 @@
   .stock-view-catalog-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .stock-view-catalog {
+    padding: 0.65rem 0.6rem 0.75rem;
+    border-radius: 12px;
+  }
+
+  .stock-panel--view .stock-matrix--view .stock-matrix-item-col {
+    min-width: 7.25rem;
+    padding-inline: 0.5rem;
+  }
+
+  .stock-panel--view .stock-matrix--view th,
+  .stock-panel--view .stock-matrix--view td {
+    padding: 0.45rem 0.5rem;
   }
 }
 
