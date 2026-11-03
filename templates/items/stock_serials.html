@@ -51,6 +51,7 @@
     <p>No shops are allocated to your account.</p>
   </div>
   {% elif rows %}
+  <p class="stock-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
   <div class="stock-matrix-scroll stock-matrix-scroll--list stock-serials-scroll">
     <table class="stock-serials-table stock-serials-table--list{% if show_all_shops %} stock-serials-table--shops{% endif %}">
       <thead>

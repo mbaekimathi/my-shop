@@ -344,6 +344,11 @@
       <p>Choose the sending shop and the receiving shop to continue.</p>
     </div>
     {% elif use_stock_catalog_api and item_count %}
+    {% if stock_mode == 'in' or stock_mode == 'out' %}
+    {% if not shop_filter_active or selected_shops|length > 1 %}
+    <p class="stock-scroll-hint" aria-hidden="true">Scroll sideways for all shop columns</p>
+    {% endif %}
+    {% endif %}
     <div class="stock-matrix-wrap" data-item-list>
       <div data-stock-catalog-root>
         <div class="dashboard-placeholder" data-stock-catalog-loading>

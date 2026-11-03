@@ -7436,3 +7436,64 @@
 }
 
 /* —— MY-SHOP floor & shop picker —— */
+
+/* —— Mobile: sideways scrolling for wide stock tables —— */
+@media (max-width: 899px) {
+  /* Scroll-edge shadows show there are more columns off-screen. */
+  .stock-matrix-scroll,
+  .stock-serials-scroll,
+  .low-stock-table-wrap,
+  .stock-request-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    background-image:
+      linear-gradient(to right, var(--surface) 30%, rgba(255, 255, 255, 0)),
+      linear-gradient(to left, var(--surface) 30%, rgba(255, 255, 255, 0)),
+      linear-gradient(to right, rgba(15, 42, 46, 0.22), rgba(15, 42, 46, 0)),
+      linear-gradient(to left, rgba(15, 42, 46, 0.22), rgba(15, 42, 46, 0));
+    background-position: 0 0, 100% 0, 0 0, 100% 0;
+    background-repeat: no-repeat;
+    background-size: 32px 100%, 32px 100%, 10px 100%, 10px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
+
+  html[data-theme="dark"] .stock-matrix-scroll,
+  html[data-theme="dark"] .stock-serials-scroll,
+  html[data-theme="dark"] .low-stock-table-wrap,
+  html[data-theme="dark"] .stock-request-table-wrap {
+    background-image:
+      linear-gradient(to right, var(--surface) 30%, rgba(255, 255, 255, 0)),
+      linear-gradient(to left, var(--surface) 30%, rgba(255, 255, 255, 0)),
+      linear-gradient(to right, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0)),
+      linear-gradient(to left, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0));
+  }
+
+  .stock-panel .stock-scroll-hint {
+    display: block;
+  }
+
+  .stock-stats {
+    flex-wrap: wrap;
+  }
+
+  .stock-report-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 0.5rem;
+  }
+
+  .stock-report-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .stock-report-type-menu {
+    min-width: min(11.5rem, 100%);
+  }
+
+  .stock-pending-body {
+    padding: 0.7rem 0.7rem 0.85rem;
+  }
+}
