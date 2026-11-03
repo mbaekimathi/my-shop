@@ -3863,6 +3863,143 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
     return document
 
 
+def build_stock_print_xlsx(
+    *,
+    document: dict,
+    company_name: str,
+    printed_at,
+) -> bytes:
+    """Render the stock print document as an Excel (.xlsx) workbook."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    layout = (document.get("layout") or "items").strip().lower()
+    shops = list(document.get("shops") or [])
+    item_count = int(document.get("item_count") or 0)
+    shop_label = (document.get("shop_label") or "").strip()
+
+    subtitle = document.get("title") or "Stock list"
+    if shop_label:
+        subtitle = f"{subtitle} · {shop_label}"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Stock list"
+
+    header_fill = PatternFill("solid", fgColor="D0D0D0")
+    category_fill = PatternFill("solid", fgColor="EFEFEF")
+    total_font = Font(bold=True)
+    head_font = Font(bold=True, size=10)
+    cat_font = Font(bold=True, size=10)
+    num_align = Alignment(horizontal="right")
+    head_border = Border(bottom=Side(style="thin", color="808080"))
+
+    if layout == "prices":
+        if len(shops) == 1:
+            columns = ["Category", "Item", "Price"]
+        else:
+            columns = ["Category", "Item"] + [
+                str(shop.get("name") or "Shop") for shop in shops
+            ]
+    elif layout == "stock":
+        columns = ["Category", "Item"] + [
+            str(shop.get("name") or "Shop") for shop in shops
+        ]
+        if len(shops) > 1:
+            columns.append("Total")
+    else:
+        columns = ["Category", "Item", "Qty", "Notes"]
+
+    numeric_columns = (
+        set(range(3, len(columns) + 1)) if layout in ("prices", "stock") else set()
+    )
+
+    ws.cell(row=1, column=1, value=(company_name or "MY-SHOP").strip() or "MY-SHOP").font = Font(
+        bold=True, size=14
+    )
+    item_word = "item" if item_count == 1 else "items"
+    meta = f"{subtitle} · {item_count} {item_word}"
+    if printed_at:
+        meta = f"{meta} · {printed_at.strftime('%d %b %Y · %H:%M')}"
+    ws.cell(row=2, column=1, value=meta).font = Font(size=9, color="555555")
+
+    header_row = 4
+    for col_idx, label in enumerate(columns, start=1):
+        cell = ws.cell(row=header_row, column=col_idx, value=label)
+        cell.font = head_font
+        cell.fill = header_fill
+        cell.border = head_border
+        if col_idx in numeric_columns:
+            cell.alignment = num_align
+
+    def _number(text) -> float:
+        try:
+            return float(str(text or "0").replace(",", "").strip() or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    row_idx = header_row
+    for group in document.get("categories") or []:
+        row_idx += 1
+        for col_idx in range(1, len(columns) + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.fill = category_fill
+            if col_idx == 1:
+                cell.value = group.get("name") or "Uncategorised"
+                cell.font = cat_font
+        for row in group.get("rows") or []:
+            row_idx += 1
+            ws.cell(row=row_idx, column=1, value=row.get("category") or "")
+            ws.cell(row=row_idx, column=2, value=row.get("name") or "")
+            if layout == "prices":
+                if len(shops) == 1:
+                    cell = ws.cell(
+                        row=row_idx, column=3, value=_number(row.get("price"))
+                    )
+                    cell.number_format = "#,##0.00"
+                else:
+                    for offset, entry in enumerate(row.get("prices") or []):
+                        cell = ws.cell(
+                            row=row_idx,
+                            column=3 + offset,
+                            value=_number(entry.get("price")),
+                        )
+                        cell.number_format = "#,##0.00"
+            elif layout == "stock":
+                for offset, entry in enumerate(row.get("quantities") or []):
+                    cell = ws.cell(
+                        row=row_idx,
+                        column=3 + offset,
+                        value=_number(entry.get("qty")),
+                    )
+                    cell.number_format = "#,##0.###"
+                if len(shops) > 1:
+                    cell = ws.cell(
+                        row=row_idx,
+                        column=3 + len(shops),
+                        value=_number(row.get("total")),
+                    )
+                    cell.number_format = "#,##0.###"
+                    cell.font = total_font
+
+    last_col = get_column_letter(len(columns))
+    ws.freeze_panes = f"A{header_row + 1}"
+    ws.auto_filter.ref = f"A{header_row}:{last_col}{max(row_idx, header_row)}"
+
+    widths = {1: 22, 2: 46}
+    for col_idx in range(3, len(columns) + 1):
+        widths[col_idx] = 16 if layout != "items" else (30 if col_idx == 4 else 12)
+    for col_idx, width in widths.items():
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 def build_stock_print_pdf(
     *,
     document: dict,

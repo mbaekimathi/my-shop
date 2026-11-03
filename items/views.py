@@ -27,6 +27,7 @@ from .services import (
     build_stock_catalog_page,
     build_stock_print_document,
     build_stock_print_pdf,
+    build_stock_print_xlsx,
     build_stock_report_pdf,
     check_serials_already_in_stock,
     create_item,
@@ -9344,18 +9345,32 @@ def stock_management_print(request, role_segment):
         )
 
     if as_download:
-        paper = "a4"
-        pdf_bytes = build_stock_print_pdf(
-            document=document,
-            company_name=company_name,
-            printed_at=printed_at,
-        )
         stamp = printed_at.strftime("%Y-%m-%d")
         layout_slug = layout.replace(" ", "-")
-        filename = f"stock-list-a4-{layout_slug}-{stamp}.pdf"
-        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        file_format = (request.GET.get("format") or "").strip().lower()
+        if file_format == "xlsx":
+            xlsx_bytes = build_stock_print_xlsx(
+                document=document,
+                company_name=company_name,
+                printed_at=printed_at,
+            )
+            filename = f"stock-list-{layout_slug}-{stamp}.xlsx"
+            response = HttpResponse(
+                xlsx_bytes,
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            response["Content-Length"] = str(len(xlsx_bytes))
+        else:
+            paper = "a4"
+            pdf_bytes = build_stock_print_pdf(
+                document=document,
+                company_name=company_name,
+                printed_at=printed_at,
+            )
+            filename = f"stock-list-a4-{layout_slug}-{stamp}.pdf"
+            response = HttpResponse(pdf_bytes, content_type="application/pdf")
+            response["Content-Length"] = str(len(pdf_bytes))
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
-        response["Content-Length"] = str(len(pdf_bytes))
         return response
 
     context = {

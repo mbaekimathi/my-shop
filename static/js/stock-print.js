@@ -15,6 +15,7 @@
   const pagesEl = modal.querySelector("[data-stock-print-pages]");
   const shopSelect = document.querySelector("[data-stock-shop-nav]");
   const downloadBtn = modal.querySelector("[data-stock-print-download-a4]");
+  const excelBtn = modal.querySelector("[data-stock-print-download-xlsx]");
 
   const PAPER_SIZES = {
     a4: { w: 920, h: 720 },
@@ -221,31 +222,38 @@
     if (event.key === "Escape" && !modal.hidden) closeModal();
   });
 
-  downloadBtn?.addEventListener("click", async (event) => {
-    event.preventDefault();
+  const downloadStockFile = async (button, { format }) => {
     if (!printUrl) {
       setStatus("Print URL is missing.", { error: true });
       return;
     }
 
+    const isExcel = format === "xlsx";
     const built = buildParams({ paper: "a4", download: true });
     if (built.error) {
       setStatus(built.error, { error: true });
       return;
     }
+    if (isExcel) built.params.set("format", "xlsx");
 
+    const label = isExcel ? "Excel file" : "A4 PDF";
+    const extension = isExcel ? ".xlsx" : ".pdf";
     const url = `${printUrl}?${built.params.toString()}`;
-    downloadBtn.disabled = true;
-    setStatus("Preparing A4 PDF…");
+    button.disabled = true;
+    setStatus(`Preparing ${label}…`);
 
     try {
       const response = await fetch(url, {
         method: "GET",
         credentials: "same-origin",
-        headers: { Accept: "application/pdf" },
+        headers: {
+          Accept: isExcel
+            ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            : "application/pdf",
+        },
       });
       if (!response.ok) {
-        let message = "Could not download the A4 PDF.";
+        let message = `Could not download the ${label}.`;
         try {
           const contentType = response.headers.get("Content-Type") || "";
           if (contentType.includes("application/json")) {
@@ -263,7 +271,9 @@
       }
 
       const blob = await response.blob();
-      const fallbackName = `stock-list-a4-${new Date().toISOString().slice(0, 10)}.pdf`;
+      const fallbackName = `stock-list-${isExcel ? "excel" : "a4"}-${new Date()
+        .toISOString()
+        .slice(0, 10)}${extension}`;
       const filename = filenameFromDisposition(
         response.headers.get("Content-Disposition"),
         fallbackName
@@ -271,17 +281,31 @@
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
+      link.download = filename.endsWith(extension)
+        ? filename
+        : `${filename}${extension}`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
       closeModal();
     } catch (err) {
-      setStatus(err?.message || "Could not download the A4 PDF.", { error: true });
+      setStatus(err?.message || `Could not download the ${label}.`, {
+        error: true,
+      });
     } finally {
-      downloadBtn.disabled = false;
+      button.disabled = false;
     }
+  };
+
+  downloadBtn?.addEventListener("click", (event) => {
+    event.preventDefault();
+    downloadStockFile(downloadBtn, { format: "pdf" });
+  });
+
+  excelBtn?.addEventListener("click", (event) => {
+    event.preventDefault();
+    downloadStockFile(excelBtn, { format: "xlsx" });
   });
 
   const extractPrintError = (html) => {
