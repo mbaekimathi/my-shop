@@ -1197,7 +1197,7 @@
       </fieldset>
 
       <div class="stock-print-shops" data-stock-print-shops hidden>
-        <p class="stock-print-shops-label">Shops</p>
+        <p class="stock-print-shops-label">Shops <small class="stock-print-shops-hint">— all shops if none ticked</small></p>
         <div class="stock-print-shop-list">
           {% for shop in shops %}
           <label class="stock-print-shop">
@@ -1420,6 +1420,6 @@
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% if stock_mode == 'view' %}
-<script defer src="{% static 'js/stock-print.js' %}?v=8"></script>
+<script defer src="{% static 'js/stock-print.js' %}?v=9"></script>
 {% endif %}
 {% endblock %}

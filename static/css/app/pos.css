@@ -9834,6 +9834,12 @@ body.serial-scan-open {
   color: var(--mist-dim);
 }
 
+.stock-print-shops-hint {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .stock-print-shop-list {
   display: grid;
   gap: 0.28rem;

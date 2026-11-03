@@ -69,10 +69,12 @@
     });
   };
 
-  const selectedShopIds = () =>
-    [...(modal.querySelectorAll("[data-stock-print-shop]:checked") || [])].map(
-      (el) => el.value
-    );
+  const selectedShopIds = () => {
+    const boxes = [...(modal.querySelectorAll("[data-stock-print-shop]") || [])];
+    const checked = boxes.filter((el) => el.checked).map((el) => el.value);
+    // Nothing checked means all shops.
+    return checked.length ? checked : boxes.map((el) => el.value);
+  };
 
   const buildParams = ({
     paper,
@@ -91,7 +93,7 @@
     if (layout === "prices" || layout === "stock") {
       const shopIds = selectedShopIds();
       if (!shopIds.length) {
-        return { error: "Select at least one shop.", params: null };
+        return { error: "No shops available.", params: null };
       }
       shopIds.forEach((id) => params.append("shop_id", id));
     }
