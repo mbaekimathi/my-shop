@@ -486,6 +486,7 @@ def apply_account_payment(
     amount,
     payment_method: str = "cash",
     stk_payment_id: str = "",
+    mpesa_receipt_number: str = "",
     shop_ids=None,
     start=None,
     end=None,
@@ -527,7 +528,8 @@ def apply_account_payment(
     else:
         shop_ids = allocated
     cleared = 0
-    mpesa_receipt_number = ""
+    mpesa_receipt_number = (mpesa_receipt_number or "").strip()
+    stk_payment = None
 
     with transaction.atomic():
         if kind == "credit":
@@ -535,7 +537,10 @@ def apply_account_payment(
             if client is None:
                 raise ValidationError("Client not found.")
 
-            if method == "mpesa":
+            if method == "mpesa" and not (stk_payment_id or "").strip():
+                if not mpesa_receipt_number:
+                    raise ValidationError("Enter the M-Pesa receipt number.")
+            elif method == "mpesa":
                 from shops.daraja_stk import require_successful_stk, stk_ready
 
                 if not stk_ready():
@@ -623,7 +628,7 @@ def apply_account_payment(
                     mpesa_receipt_number=mpesa_receipt_number,
                 )
 
-            if method == "mpesa":
+            if method == "mpesa" and stk_payment is not None:
                 stk_payment.applied = True
                 stk_payment.save(update_fields=["applied", "updated_at"])
 
@@ -928,6 +933,7 @@ def apply_credit_receipt_payment(
     amount,
     payment_method: str = "cash",
     stk_payment_id: str = "",
+    mpesa_receipt_number: str = "",
 ) -> dict:
     """Apply a payment to one credit receipt (not FIFO across the account)."""
     from django.core.exceptions import ValidationError
@@ -938,7 +944,8 @@ def apply_credit_receipt_payment(
         raise ValidationError("Choose cash or M-Pesa.")
 
     pay_amount = _parse_pay_amount(amount)
-    mpesa_receipt_number = ""
+    mpesa_receipt_number = (mpesa_receipt_number or "").strip()
+    stk_payment = None
 
     with transaction.atomic():
         receipt = _credit_receipt_for_profile(profile, receipt_id)
@@ -951,7 +958,10 @@ def apply_credit_receipt_payment(
         if pay_amount > due:
             raise ValidationError(f"Amount exceeds due on this receipt ({_money_ksh(due)}).")
 
-        if method == "mpesa":
+        if method == "mpesa" and not (stk_payment_id or "").strip():
+            if not mpesa_receipt_number:
+                raise ValidationError("Enter the M-Pesa receipt number.")
+        elif method == "mpesa":
             from shops.daraja_stk import require_successful_stk, stk_ready
 
             if not stk_ready():
@@ -2492,6 +2502,44 @@ def build_credit_report_page(*, profile, request) -> dict:
     page = _build_credit_report(filters)
     page["list_table_layout"] = True
     page["search_query"] = filters["search_query"]
+    return {
+        **filters,
+        "section_slug": "credits",
+        "include_all_time": True,
+        "page": page,
+    }
+
+
+def build_credit_clients_page(*, profile, request) -> dict:
+    """Credit clients context — client credit accounts by shop."""
+    filters = _filters_context(
+        profile,
+        request,
+        allow_all_time=True,
+        default_all_time=False,
+    )
+    filters["role"] = profile.role
+    filters["query"] = request.GET.urlencode()
+    filters["search_query"] = (request.GET.get("q") or "").strip()
+    filters["receipt_kind"] = "credits"
+    filters["from_credits"] = True
+    filters["clients_from"] = "credit-clients"
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    filters["credits_home_href"] = reverse(
+        "employees:analytics_credit_clients",
+        kwargs={"role_segment": role_url_segment(profile.role)},
+    )
+    page = _build_clients(filters)
+    page["list_table_layout"] = True
+    page["search_query"] = filters["search_query"]
+    page["headline"] = "Credit clients"
+    page["lead"] = (
+        "Clients with credit receipts in the selected shops — open a client "
+        "to view their credit account."
+    )
     return {
         **filters,
         "section_slug": "credits",
@@ -12287,6 +12335,13 @@ def _build_clients(filters):
     }
     kind_label = kind_labels.get(receipt_kind, "documents")
 
+    clients_from = (filters.get("clients_from") or "").strip()
+    row_query = query
+    if clients_from:
+        row_query = (
+            f"{query}&from={clients_from}" if query else f"from={clients_from}"
+        )
+
     client_rows = []
     for (
         _sort_amount,
@@ -12299,7 +12354,7 @@ def _build_clients(filters):
     ) in ranked:
         client_cell = {
             "href": client_credit_account_url(
-                role, client_id, query=query, from_credits=from_credits
+                role, client_id, query=row_query, from_credits=from_credits
             ),
             "label": name,
         }
@@ -12427,7 +12482,10 @@ def _build_clients(filters):
             from employees.workspace import analytics_section_url
 
             all_query = _query_with_all_time(query)
-            all_href = analytics_section_url(role, "credits")
+            all_href = (
+                filters.get("credits_home_href")
+                or analytics_section_url(role, "credits")
+            )
             if all_query:
                 all_href = f"{all_href}?{all_query}"
             alerts.append(

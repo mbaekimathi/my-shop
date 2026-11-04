@@ -24,6 +24,7 @@ from .analytics_services import (
     build_client_tradings_page,
     build_client_transactions,
     build_confirm_receipts_page,
+    build_credit_clients_page,
     build_credit_report_page,
     build_item_report_page,
     build_return_receipts_page,
@@ -171,13 +172,21 @@ def _render_analytics(
     if meta_override:
         meta = {**meta, **meta_override}
     credit_report_href = ""
+    credit_clients_href = ""
     if section["slug"] == "credits":
         credit_report_href = reverse(
             "employees:analytics_credit_report",
             kwargs={"role_segment": role_url_segment(profile.role)},
         )
+        credit_clients_href = reverse(
+            "employees:analytics_credit_clients",
+            kwargs={"role_segment": role_url_segment(profile.role)},
+        )
         if context.get("query"):
             credit_report_href = f"{credit_report_href}?{context['query']}"
+            credit_clients_href = (
+                f"{credit_clients_href}?{context['query']}"
+            )
     return render(
         request,
         (
@@ -194,6 +203,7 @@ def _render_analytics(
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "credit_report_href": credit_report_href,
+            "credit_clients_href": credit_clients_href,
             "credit_audits_href": (
                 reverse(
                     "employees:analytics_credit_audits",
@@ -398,6 +408,13 @@ def analytics_credit_report(request, role_segment):
     page["back_label"] = "Back to credits"
     context["page"] = page
 
+    clients_href = reverse(
+        "employees:analytics_credit_clients",
+        kwargs={"role_segment": role_url_segment(profile.role)},
+    )
+    if query:
+        clients_href = f"{clients_href}?{query}"
+
     return render(
         request,
         "employees/analytics.html",
@@ -413,12 +430,94 @@ def analytics_credit_report(request, role_segment):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "credit_report_href": "",
+            "credit_clients_href": clients_href,
             "credit_audits_href": reverse(
                 "employees:analytics_credit_audits",
                 kwargs={"role_segment": role_url_segment(profile.role)},
             ),
             "page_sidebar": sidebar_for_credits(
                 profile.role, profile=profile, active="report"
+            ),
+            **context,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_credit_clients(request, role_segment):
+    """Credit clients (/…/analytics/credits/clients/) — accounts by shop."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_credit_clients",
+            role_segment=expected,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", "credits")
+    if denied is not None:
+        return denied
+
+    from django.urls import reverse
+
+    from .workspace import analytics_section_url
+
+    context = build_credit_clients_page(profile=profile, request=request)
+    segment = role_url_segment(profile.role)
+    query = request.GET.urlencode()
+    back_href = analytics_section_url(profile.role, "credits")
+    if query:
+        back_href = f"{back_href}?{query}"
+    page = dict(context.get("page") or {})
+    page["back_href"] = back_href
+    page["back_label"] = "Back to credits"
+    context["page"] = page
+
+    report_href = reverse(
+        "employees:analytics_credit_report",
+        kwargs={"role_segment": segment},
+    )
+    if context.get("query"):
+        report_href = f"{report_href}?{context['query']}"
+
+    return render(
+        request,
+        "employees/analytics.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Credit clients · Credits",
+                "headline": "Credit clients",
+                "summary": (
+                    "Client credit accounts by shop — open a client to view "
+                    "their account."
+                ),
+                "icon": "contact",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "credit_report_href": report_href,
+            "credit_audits_href": reverse(
+                "employees:analytics_credit_audits",
+                kwargs={"role_segment": segment},
+            ),
+            "page_sidebar": sidebar_for_credits(
+                profile.role, profile=profile, active="clients"
             ),
             **context,
         },
@@ -737,9 +836,27 @@ def analytics_client_credit(request, role_segment, client_id):
         profile=profile, client_id=client_id, request=request
     )
     query = request.GET.urlencode()
-    back_href = analytics_section_url(profile.role, "credits")
-    if query:
-        back_href = f"{back_href}?{query}"
+    back_label = "Back to credits"
+    if (request.GET.get("from") or "").strip().lower() == "credit-clients":
+        from urllib.parse import parse_qs, urlencode
+
+        from django.urls import reverse
+
+        back_label = "Back to credit clients"
+        back_href = reverse(
+            "employees:analytics_credit_clients",
+            kwargs={"role_segment": expected},
+        )
+        params = parse_qs(query, keep_blank_values=True)
+        params.pop("from", None)
+        flat = {key: values[0] for key, values in params.items()}
+        cleaned = urlencode(flat)
+        if cleaned:
+            back_href = f"{back_href}?{cleaned}"
+    else:
+        back_href = analytics_section_url(profile.role, "credits")
+        if query:
+            back_href = f"{back_href}?{query}"
 
     return render(
         request,
@@ -762,7 +879,7 @@ def analytics_client_credit(request, role_segment, client_id):
                 active="account",
             ),
             "back_href": back_href,
-            "back_label": "Back to credits",
+            "back_label": back_label,
             "pay_url": _pay_url_for(profile),
             "stk_ready": daraja_stk_ready(),
             "stk_off_label": (
@@ -1371,6 +1488,7 @@ def analytics_account_pay(request, role_segment):
         receipt_ids.append(receipt_id)
     payment_method = (request.POST.get("payment_method") or "cash").strip().lower()
     stk_payment_id = (request.POST.get("stk_payment_id") or "").strip()
+    mpesa_receipt_number = (request.POST.get("mpesa_receipt_number") or "").strip()
 
     try:
         if len(receipt_ids) == 1 and kind == "credit":
@@ -1380,6 +1498,7 @@ def analytics_account_pay(request, role_segment):
                 amount=request.POST.get("amount"),
                 payment_method=payment_method,
                 stk_payment_id=stk_payment_id,
+                mpesa_receipt_number=mpesa_receipt_number,
             )
         elif len(receipt_ids) == 1 and kind in ("expense", "stock"):
             result = apply_supplier_receipt_payment(
@@ -1399,6 +1518,7 @@ def analytics_account_pay(request, role_segment):
                 amount=request.POST.get("amount"),
                 payment_method=payment_method,
                 stk_payment_id=stk_payment_id,
+                mpesa_receipt_number=mpesa_receipt_number,
                 shop_ids=request.POST.getlist("shop_id"),
                 start=date_filter.get("start"),
                 end=date_filter.get("end"),
@@ -1421,6 +1541,7 @@ def analytics_account_pay(request, role_segment):
                 amount=request.POST.get("amount"),
                 payment_method=payment_method,
                 stk_payment_id=stk_payment_id,
+                mpesa_receipt_number=mpesa_receipt_number,
                 shop_ids=request.POST.getlist("shop_id"),
                 start=date_filter.get("start"),
                 end=date_filter.get("end"),

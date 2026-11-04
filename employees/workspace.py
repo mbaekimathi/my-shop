@@ -1647,9 +1647,13 @@ def sidebar_for_suppliers(role, *, profile=None):
 
 
 def sidebar_for_credits(role, *, profile=None, active="credits"):
-    """Focused sidebar for the credits workspace — Dashboard, Credits, report, audits."""
+    """Focused sidebar for the credits workspace — Dashboard, Credits, clients, report, audits."""
     dashboard_url = reverse(role_home_url_name(role))
     credits_href = analytics_section_url(role, "credits")
+    clients_href = reverse(
+        "employees:analytics_credit_clients",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
     report_href = reverse(
         "employees:analytics_credit_report",
         kwargs={"role_segment": role_url_segment(role)},
@@ -1669,6 +1673,12 @@ def sidebar_for_credits(role, *, profile=None, active="credits"):
                     "credit-card",
                     href=credits_href,
                     active=active == "credits",
+                ),
+                _link(
+                    "Credit clients",
+                    "users",
+                    href=clients_href,
+                    active=active == "clients",
                 ),
                 _link(
                     "Credit reports",

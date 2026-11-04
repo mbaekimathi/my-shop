@@ -153,6 +153,8 @@
     const stkReady = payModal.getAttribute("data-stk-ready") === "1";
     const phoneRow = payModal.querySelector("[data-ax-pay-phone-row]");
     const phoneInput = payModal.querySelector("[data-ax-pay-phone]");
+    const mpesaRow = payModal.querySelector("[data-ax-pay-mpesa-row]");
+    const mpesaRefInput = payModal.querySelector("[data-ax-pay-mpesa-ref]");
     const stkIdInput = payModal.querySelector("[data-ax-stk-id]");
     const receiptIdInput = payModal.querySelector("[data-ax-pay-receipt-id]");
     const receiptIdsWrap = payModal.querySelector("[data-ax-pay-receipt-ids]");
@@ -185,7 +187,10 @@
         const input = label.querySelector("input");
         label.classList.toggle("is-active", Boolean(input?.checked));
       });
-      if (phoneRow) phoneRow.hidden = method !== "mpesa";
+      if (phoneRow) phoneRow.hidden = method !== "mpesa_stk";
+      if (mpesaRow) mpesaRow.hidden = method !== "mpesa";
+      if (mpesaRefInput) mpesaRefInput.required = method === "mpesa";
+      if (phoneInput) phoneInput.required = method === "mpesa_stk";
     }
 
     function setPayStatus(message, { error = false } = {}) {
@@ -291,6 +296,7 @@
       }
       if (paySubmit) paySubmit.disabled = dueNumber <= 0;
       if (stkIdInput) stkIdInput.value = "";
+      if (mpesaRefInput) mpesaRefInput.value = "";
       const cash = payModal.querySelector('[data-ax-pay-method][value="cash"]');
       if (cash) cash.checked = true;
       syncMethodUi();
@@ -361,6 +367,12 @@
 
       try {
         if (method === "mpesa") {
+          const ref = (mpesaRefInput?.value || "").trim();
+          if (!ref) {
+            throw new Error("Enter the M-Pesa receipt number.");
+          }
+          setPayStatus("Recording payment…");
+        } else if (method === "mpesa_stk") {
           if (!stkReady || !stkInitiateUrl) {
             throw new Error("STK Push is not enabled in Daraja settings.");
           }
@@ -403,7 +415,7 @@
         }
 
         const body = new FormData(payForm);
-        body.set("payment_method", method);
+        body.set("payment_method", method === "mpesa_stk" ? "mpesa" : method);
         const response = await fetch(payUrl, {
           method: "POST",
           headers: {
@@ -558,6 +570,8 @@
     const manageAmount = manageModal.querySelector("[data-ax-receipt-manage-amount]");
     const managePhoneRow = manageModal.querySelector("[data-ax-receipt-manage-phone-row]");
     const managePhone = manageModal.querySelector("[data-ax-receipt-manage-phone]");
+    const manageMpesaRow = manageModal.querySelector("[data-ax-receipt-manage-mpesa-row]");
+    const manageMpesaRef = manageModal.querySelector("[data-ax-receipt-manage-mpesa-ref]");
     const manageStkId = manageModal.querySelector("[data-ax-receipt-manage-stk-id]");
     const manageStatus = manageModal.querySelector("[data-ax-receipt-manage-status]");
     const managePaySubmit = manageModal.querySelector("[data-ax-receipt-manage-pay-submit]");
@@ -598,7 +612,10 @@
         const input = label.querySelector("input");
         label.classList.toggle("is-active", Boolean(input?.checked));
       });
-      if (managePhoneRow) managePhoneRow.hidden = method !== "mpesa";
+      if (managePhoneRow) managePhoneRow.hidden = method !== "mpesa_stk";
+      if (manageMpesaRow) manageMpesaRow.hidden = method !== "mpesa";
+      if (manageMpesaRef) manageMpesaRef.required = method === "mpesa";
+      if (managePhone) managePhone.required = method === "mpesa_stk";
     }
 
     function setManageStatus(message, { error = false } = {}) {
@@ -801,6 +818,12 @@
 
       try {
         if (method === "mpesa") {
+          const ref = (manageMpesaRef?.value || "").trim();
+          if (!ref) {
+            throw new Error("Enter the M-Pesa receipt number.");
+          }
+          setManageStatus("Recording payment…");
+        } else if (method === "mpesa_stk") {
           if (!stkReady || !stkInitiateUrl) {
             throw new Error("STK Push is not enabled in Daraja settings.");
           }
@@ -842,7 +865,7 @@
         }
 
         const body = new FormData(manageForm);
-        body.set("payment_method", method);
+        body.set("payment_method", method === "mpesa_stk" ? "mpesa" : method);
         const response = await fetch(payUrl, {
           method: "POST",
           headers: {

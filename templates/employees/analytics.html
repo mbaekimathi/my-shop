@@ -35,6 +35,11 @@
         </a>
       </div>
       {% endif %}
+      {% if credit_clients_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ credit_clients_href }}">Credit clients</a>
+      </div>
+      {% endif %}
       {% if credit_report_href %}
       <div class="ax-top-actions">
         <a class="ax-apply ax-apply--ghost" href="{{ credit_report_href }}">Credit reports</a>

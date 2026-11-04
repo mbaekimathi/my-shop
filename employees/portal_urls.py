@@ -361,6 +361,11 @@ urlpatterns = [
         name="analytics_client_account",
     ),
     path(
+        "<role_segment:role_segment>/analytics/credits/clients/",
+        analytics_views.analytics_credit_clients,
+        name="analytics_credit_clients",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/credits/clients/<int:client_id>/",
         analytics_views.analytics_client_credit,
         name="analytics_client_credit",

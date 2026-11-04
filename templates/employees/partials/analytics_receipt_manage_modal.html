@@ -68,17 +68,38 @@
               <input type="radio" name="payment_method" value="cash" checked data-ax-receipt-manage-method>
               <span>Cash</span>
             </label>
-            <label class="ax-pay-method{% if not stk_ready %} is-disabled{% endif %}">
+            <label class="ax-pay-method">
               <input
                 type="radio"
                 name="payment_method"
                 value="mpesa"
                 data-ax-receipt-manage-method
+              >
+              <span>M-Pesa</span>
+            </label>
+            <label class="ax-pay-method{% if not stk_ready %} is-disabled{% endif %}">
+              <input
+                type="radio"
+                name="payment_method"
+                value="mpesa_stk"
+                data-ax-receipt-manage-method
                 {% if not stk_ready %}disabled{% endif %}
               >
-              <span>M-Pesa{% if not stk_ready %} ({{ stk_off_label|default:"STK off" }}){% endif %}</span>
+              <span>M-Pesa STK{% if not stk_ready %} ({{ stk_off_label|default:"STK off" }}){% endif %}</span>
             </label>
           </div>
+
+          <label class="ax-pay-label ax-pay-mpesa-row" data-ax-receipt-manage-mpesa-row hidden>
+            M-Pesa receipt no.
+            <input
+              class="ax-pay-input"
+              type="text"
+              name="mpesa_receipt_number"
+              placeholder="e.g. TKL4X2ABCD"
+              autocomplete="off"
+              data-ax-receipt-manage-mpesa-ref
+            >
+          </label>
 
           <label class="ax-pay-label ax-pay-phone-row" data-ax-receipt-manage-phone-row hidden>
             Phone for STK
