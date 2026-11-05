@@ -5,7 +5,7 @@
 {% block body_class %}page-auth page-auth--portal{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/auth.css' %}?v=20261019-components">
+<link rel="stylesheet" href="{% static 'css/auth.css' %}?v=20261106-shop-select">
 {% endblock %}
 
 {% block body %}
@@ -33,7 +33,7 @@
       </p>
       <p class="auth-visual-lead" data-auth-visual-lead>
         {% if login_mode == 'shop' %}
-          Open your shop floor with the branch code and password.
+          Choose a shop, then enter its password to open the floor.
         {% else %}
           Access your workspace with your employee ID and password.
         {% endif %}
@@ -45,7 +45,7 @@
         </li>
         <li data-auth-point="shop">
           <i data-lucide="store" aria-hidden="true"></i>
-          <span>Shops open with the shared branch login code</span>
+          <span>Choose a shop, then enter its password</span>
         </li>
         <li>
           <i data-lucide="shield-check" aria-hidden="true"></i>
@@ -74,7 +74,7 @@
       <header class="auth-head">
         <p class="auth-eyebrow">{{ company_name|default:"MY-SHOP" }} access</p>
         <h1>Sign in</h1>
-        <p>Choose how you want to enter, then use your 6-digit code.</p>
+        <p>Choose how you want to enter. Staff use an employee ID. Shops are chosen from the list.</p>
       </header>
 
       <div class="auth-mode-tabs" role="tablist" aria-label="Sign-in type">
@@ -109,7 +109,7 @@
           </span>
           <span class="auth-mode-tab-copy">
             <strong>Shop</strong>
-            <em>Branch code</em>
+            <em>Select shop</em>
           </span>
         </button>
       </div>
@@ -213,7 +213,7 @@
           <div>
             <p class="auth-panel-kicker">Branch access</p>
             <h2 id="shop-login-title">Shop Login</h2>
-            <p>Use the shop’s shared 6-digit code and password.</p>
+            <p>Choose a shop, then enter its password.</p>
           </div>
         </header>
 
@@ -235,21 +235,23 @@
           {% csrf_token %}
           {% if switch %}<input type="hidden" name="switch" value="1">{% endif %}
           <label class="field">
-            <span>Shop code</span>
-            <input
-              type="text"
-              name="login_code"
-              value="{{ shop_login_code }}"
-              autocomplete="section-shop username"
+            <span>Shop</span>
+            <select
+              name="shop_id"
               required
-              inputmode="numeric"
-              pattern="\d{6}"
-              maxlength="6"
-              placeholder="e.g. 104220"
-              data-code-input
-              data-focus-next
+              data-shop-select
               {% if login_mode == 'shop' %}autofocus{% endif %}
             >
+              <option value="" disabled {% if not selected_shop_id and login_shops|length != 1 %}selected{% endif %}>
+                {% if login_shops %}Select a shop{% else %}No shops available{% endif %}
+              </option>
+              {% for shop in login_shops %}
+              <option
+                value="{{ shop.pk }}"
+                {% if selected_shop_id == shop.pk|stringformat:'s' or not selected_shop_id and login_shops|length == 1 %}selected{% endif %}
+              >{{ shop.name }} — {{ shop.location }}</option>
+              {% endfor %}
+            </select>
           </label>
           <label class="field">
             <span>Password</span>
@@ -281,5 +283,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/auth.js' %}"></script>
+<script src="{% static 'js/auth.js' %}?v=20261106-shop-select"></script>
 {% endblock %}

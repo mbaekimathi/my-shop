@@ -1,6 +1,32 @@
 (() => {
   const root = document.querySelector("[data-stock-settings]");
   if (!root) return;
+
+  const visibilityForm = root.querySelector("[data-stock-visibility-form]");
+  if (visibilityForm) {
+    const panels = visibilityForm.querySelectorAll("[data-hide-panel]");
+    const syncPanels = () => {
+      const mode =
+        visibilityForm.querySelector("input[name=hide_stock_mode]:checked")
+          ?.value || "show";
+      panels.forEach((panel) => {
+        panel.hidden = panel.getAttribute("data-hide-panel") !== mode;
+      });
+    };
+    visibilityForm
+      .querySelectorAll("input[name=hide_stock_mode]")
+      .forEach((input) => input.addEventListener("change", syncPanels));
+    const search = visibilityForm.querySelector("[data-hide-item-search]");
+    search?.addEventListener("input", () => {
+      const query = search.value.trim().toLowerCase();
+      visibilityForm.querySelectorAll("[data-hide-item]").forEach((row) => {
+        const hay = (row.getAttribute("data-search") || "").toLowerCase();
+        row.hidden = Boolean(query) && !hay.includes(query);
+      });
+    });
+    syncPanels();
+  }
+
   if (root.getAttribute("data-can-edit") !== "1") return;
 
   const readCookie = (name) => {

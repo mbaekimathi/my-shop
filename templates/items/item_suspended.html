@@ -1,5 +1,5 @@
 {% extends "employees/workspace_base.html" %}
-{% load static %}
+{% load static stock_visibility %}
 
 {% block title %}Suspended items — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
@@ -173,15 +173,16 @@
           <td data-label="Category">{{ row.item.category|default:"—" }}</td>
           {% for shop_row in row.shop_stock_rows %}
           <td class="item-cell--shop" data-label="{{ shop_row.shop_name }}">
+            {% stock_qty shop_row.quantity row.item.pk row.item.category as shown_qty %}
             {% if shop_row.has_stock %}
-            <strong>{{ shop_row.quantity }}</strong>
+            <strong{% if shown_qty == "Hidden" %} class="is-hidden"{% endif %}>{{ shown_qty }}</strong>
             {% else %}
-            <span class="item-sold-empty">{{ shop_row.quantity }}</span>
+            <span class="item-sold-empty{% if shown_qty == 'Hidden' %} is-hidden{% endif %}">{{ shown_qty }}</span>
             {% endif %}
           </td>
           {% endfor %}
           <td class="item-cell--discount-num" data-label="Total">
-            <strong>{{ row.total_qty }}</strong>
+            <strong>{% stock_qty row.total_qty row.item.pk row.item.category %}</strong>
           </td>
           {% if can_toggle_suspend or can_delete %}
           <td class="item-cell--actions" data-label="Actions">

@@ -89,6 +89,7 @@ def rate_limit(scope: str, *, methods=None):
                         rate_limited=True,
                         employee_username=(request.POST.get("username") or "").strip(),
                         shop_login_code=(request.POST.get("login_code") or "").strip(),
+                        selected_shop_id=(request.POST.get("shop_id") or "").strip(),
                         next_url=(request.POST.get("next") or request.GET.get("next") or ""),
                     )
                     response.status_code = 429

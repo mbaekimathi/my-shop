@@ -1,4 +1,10 @@
 (() => {
+  const stockCountLabel = (qty, hidden) => {
+    const n = Number(qty) || 0;
+    if (hidden) return n > 0 ? "In stock" : "Out of stock";
+    return n > 0 ? `${n} in stock` : "Out of stock";
+  };
+
   const body = document.body;
   const selectModal = document.querySelector('[data-modal="shop-select"]');
   const SNOOZE_MS = 5 * 60 * 1000;
@@ -2780,9 +2786,13 @@
         const qty = Math.max(0, roundQty(roundQty(base) - held));
         card.setAttribute("data-item-stock", String(qty));
         const valueEl = card.querySelector(".shop-floor-stock-value");
-        if (valueEl) valueEl.textContent = String(qty);
+        const hidden = card.getAttribute("data-stock-hidden") === "1";
+        if (valueEl && !hidden) valueEl.textContent = String(qty);
         const stockWrap = card.querySelector(".shop-floor-stock");
-        if (stockWrap) stockWrap.classList.toggle("is-empty", qty <= 0);
+        if (stockWrap) {
+          if (hidden) stockWrap.hidden = true;
+          stockWrap.classList.toggle("is-empty", qty <= 0);
+        }
         card.classList.toggle("is-out", stockTrackingEnabled && qty <= 0);
       });
       syncCardControls();
@@ -2803,17 +2813,20 @@
             card.setAttribute("data-item-stock-base", String(qty));
             card.setAttribute("data-item-stock", String(qty));
             const valueEl = card.querySelector(".shop-floor-stock-value");
-            if (valueEl) valueEl.textContent = String(qty);
+            const hidden = card.getAttribute("data-stock-hidden") === "1";
+            if (valueEl && !hidden) valueEl.textContent = String(qty);
             const stockWrap = card.querySelector(".shop-floor-stock");
-            if (stockWrap) stockWrap.classList.toggle("is-empty", qty <= 0);
+            if (stockWrap) {
+              if (hidden) stockWrap.hidden = true;
+              stockWrap.classList.toggle("is-empty", qty <= 0);
+            }
           });
         if (productModal?.dataset.itemId === id) {
           productModal.dataset.itemStock = String(qty);
           if (productStock) {
-            if (stockTrackingEnabled) {
+            if (stockTrackingEnabled && productModal.dataset.stockHidden !== "1") {
               productStock.hidden = false;
-              productStock.textContent =
-                qty > 0 ? `${qty} in stock` : "Out of stock";
+              productStock.textContent = stockCountLabel(qty, false);
               productStock.classList.toggle("is-empty", qty <= 0);
             } else {
               productStock.hidden = true;
@@ -4516,6 +4529,9 @@
             el?.getAttribute?.("data-item-stock") || el?.dataset?.itemStock || 0
           )
         ),
+        stockHidden:
+          (el?.getAttribute?.("data-stock-hidden") || el?.dataset?.stockHidden || "") ===
+          "1",
         image:
           el?.getAttribute?.("data-item-image") || el?.dataset?.itemImage || "",
         trackSerial:
@@ -4574,6 +4590,7 @@
             ),
             discountAmount: roundMoney(line.discountAmount || 0),
             stock: Math.max(0, roundQty(line.stock)),
+            stockHidden: Boolean(line.stockHidden),
             image: String(line.image || ""),
             qty: trackSerial && serials.length ? serials.length : qty,
             trackSerial,
@@ -4929,6 +4946,7 @@
       activeProductId = item.id;
       productModal.dataset.itemId = item.id;
       productModal.dataset.itemStock = String(item.stock);
+      productModal.dataset.stockHidden = item.stockHidden ? "1" : "0";
       productModal.dataset.itemName = item.name;
       productModal.dataset.itemCategory = item.category;
       productModal.dataset.itemDescription = item.description;
@@ -4959,10 +4977,9 @@
       }
       syncPriceHint(item.minPrice, salePrice, item.listPrice);
       if (productStock) {
-        if (stockTrackingEnabled) {
+        if (stockTrackingEnabled && !item.stockHidden) {
           productStock.hidden = false;
-          productStock.textContent =
-            item.stock > 0 ? `${item.stock} in stock` : "Out of stock";
+          productStock.textContent = stockCountLabel(item.stock, false);
           productStock.classList.toggle("is-empty", item.stock <= 0);
         } else {
           productStock.hidden = true;
@@ -5762,9 +5779,11 @@
       }
       if (serialSaleStock) {
         const stock = Math.max(0, roundQty(serialSaleItem.stock));
-        serialSaleStock.textContent =
-          stock > 0 ? `${stock} in stock` : "Out of stock";
-        serialSaleStock.classList.toggle("is-empty", stock <= 0);
+        serialSaleStock.hidden = Boolean(serialSaleItem.stockHidden);
+        if (!serialSaleItem.stockHidden) {
+          serialSaleStock.textContent = stockCountLabel(stock, false);
+          serialSaleStock.classList.toggle("is-empty", stock <= 0);
+        }
       }
       if (serialSaleMedia) {
         if (serialSaleItem.image) {
@@ -5832,7 +5851,9 @@
         serials.length > serialSaleItem.stock
       ) {
         setSerialSaleStatus(
-          `Only ${serialSaleItem.stock} unit${serialSaleItem.stock === 1 ? "" : "s"} in stock.`,
+          serialSaleItem.stockHidden
+            ? "Not enough stock for that many serials."
+            : `Only ${serialSaleItem.stock} unit${serialSaleItem.stock === 1 ? "" : "s"} in stock.`,
           { error: true }
         );
         return false;
@@ -6442,6 +6463,7 @@
       ),
       discountAmount: roundMoney(item?.discount_amount),
       stock: Math.max(0, roundQty(item?.stock)),
+      stockHidden: Boolean(item?.stock_hidden),
       image: String(item?.image_url || ""),
       trackSerial: Boolean(item?.track_serial),
     });
@@ -6464,9 +6486,11 @@
           item.category,
           item.trackSerial ? "Serial tracked" : "",
           stockTrackingEnabled
-            ? out
-              ? "Out of stock"
-              : `${item.stock} in stock`
+            ? item.stockHidden
+              ? ""
+              : out
+                ? "Out of stock"
+                : stockCountLabel(item.stock, false)
             : "",
           money(item.price),
         ]

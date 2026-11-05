@@ -1,3 +1,4 @@
+{% load stock_visibility %}
 {% if low_stock_alerts %}
 <div
   class="workspace-modal shop-low-stock-modal"
@@ -46,7 +47,7 @@
             {% endif %}
           </div>
           <div class="shop-low-stock-qty">
-            <strong>{{ row.quantity }}</strong>
+            <strong>{% stock_qty row.quantity row.item_id row.category %}</strong>
             <span class="shop-low-stock-meta">alert {{ row.threshold }}</span>
           </div>
         </li>

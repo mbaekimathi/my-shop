@@ -46,6 +46,102 @@
   </p>
   {% endif %}
 
+  <article class="stock-settings-card stock-settings-card--visibility">
+    <header class="stock-settings-card-head">
+      <span class="stock-settings-card-icon" aria-hidden="true">
+        <i data-lucide="eye-off"></i>
+      </span>
+      <div class="stock-settings-card-titles">
+        <h3>Stock numbers</h3>
+        <p>Hide the current quantity. Stock in, stock out, transfers, and sales still use the real number.</p>
+      </div>
+    </header>
+    <form class="stock-visibility-form" method="post" data-stock-visibility-form>
+      {% csrf_token %}
+      <input type="hidden" name="mode" value="settings">
+      <input type="hidden" name="action" value="save_stock_visibility">
+      <fieldset class="stock-visibility-modes">
+        <legend class="stock-settings-section-label">Who can see the number</legend>
+        <label class="stock-visibility-mode">
+          <input type="radio" name="hide_stock_mode" value="show" {% if hide_stock_mode == "show" %}checked{% endif %} {% if not can_edit_stock_settings %}disabled{% endif %}>
+          <span>Show stock numbers</span>
+        </label>
+        <label class="stock-visibility-mode">
+          <input type="radio" name="hide_stock_mode" value="all" {% if hide_stock_mode == "all" %}checked{% endif %} {% if not can_edit_stock_settings %}disabled{% endif %}>
+          <span>Hide all current stock</span>
+        </label>
+        <label class="stock-visibility-mode">
+          <input type="radio" name="hide_stock_mode" value="category" {% if hide_stock_mode == "category" %}checked{% endif %} {% if not can_edit_stock_settings %}disabled{% endif %}>
+          <span>Hide selected categories</span>
+        </label>
+        <label class="stock-visibility-mode">
+          <input type="radio" name="hide_stock_mode" value="items" {% if hide_stock_mode == "items" %}checked{% endif %} {% if not can_edit_stock_settings %}disabled{% endif %}>
+          <span>Hide selected items</span>
+        </label>
+      </fieldset>
+
+      <div class="stock-visibility-panel" data-hide-panel="category" {% if hide_stock_mode != "category" %}hidden{% endif %}>
+        <p class="stock-settings-section-label">Categories</p>
+        {% if visibility_categories %}
+        <ul class="stock-visibility-list">
+          {% for category in visibility_categories %}
+          <li>
+            <label>
+              <input
+                type="checkbox"
+                name="hide_stock_categories"
+                value="{{ category.value }}"
+                {% if category.value in hide_stock_categories %}checked{% endif %}
+                {% if not can_edit_stock_settings %}disabled{% endif %}
+              >
+              <span>{{ category.label }}</span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="stock-settings-footnote">No categories yet.</p>
+        {% endif %}
+      </div>
+
+      <div class="stock-visibility-panel" data-hide-panel="items" {% if hide_stock_mode != "items" %}hidden{% endif %}>
+        <label class="stock-visibility-search">
+          <span class="visually-hidden">Search items</span>
+          <input type="search" placeholder="Search items" data-hide-item-search autocomplete="off">
+        </label>
+        {% if visibility_items %}
+        <ul class="stock-visibility-list stock-visibility-list--items">
+          {% for item in visibility_items %}
+          <li data-hide-item data-search="{{ item.name|lower }} {{ item.category|lower }}">
+            <label>
+              <input
+                type="checkbox"
+                name="hide_stock_item_ids"
+                value="{{ item.id }}"
+                {% if item.id in hide_stock_item_ids %}checked{% endif %}
+                {% if not can_edit_stock_settings %}disabled{% endif %}
+              >
+              <span>
+                <strong>{{ item.name }}</strong>
+                {% if item.category %}<em>{{ item.category }}</em>{% endif %}
+              </span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="stock-settings-footnote">No items yet.</p>
+        {% endif %}
+      </div>
+
+      {% if can_edit_stock_settings %}
+      <div class="stock-visibility-actions">
+        <button type="submit" class="btn btn--primary">Save visibility</button>
+      </div>
+      {% endif %}
+    </form>
+  </article>
+
   <div class="stock-settings-grid">
     {% for group in stock_setting_groups %}
     <article class="stock-settings-card stock-settings-card--{{ group.key }}">
@@ -133,5 +229,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-settings.js' %}?v=2"></script>
+<script src="{% static 'js/stock-settings.js' %}?v=20261106-hide-stock"></script>
 {% endblock %}

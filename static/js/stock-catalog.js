@@ -110,6 +110,11 @@
     return Math.round(n * 1000) / 1000;
   };
 
+  const stockIsHidden = (item) => Boolean(item?.stock_hidden);
+  const qtyClass = (item, qty) =>
+    stockIsHidden(item) ? " is-hidden" : qty === 0 ? " is-empty" : "";
+  const visibleQty = (item, qty) => (stockIsHidden(item) ? "Hidden" : qty);
+
   const simpleMode = panel.hasAttribute("data-stock-catalog-simple");
   const searchFirst = panel.hasAttribute("data-stock-catalog-search-first");
   // Buy-stock popup: preload once, then filter in memory (no DB per keystroke).
@@ -1304,7 +1309,7 @@
         data-item-stock="${stockQty}"
         data-track-serial="${track}"
       >
-        <span class="stock-list-stock${stockQty === 0 ? " is-empty" : ""}" data-stock-display-qty>${stockQty}</span>
+        <span class="stock-list-stock${qtyClass(item, stockQty)}" data-stock-display-qty>${visibleQty(item, stockQty)}</span>
         <input type="hidden" name="item_id" value="${item.id}" disabled data-stock-field>
         <input type="hidden" name="line_shop_id" value="${shop.id}" disabled data-stock-field>
         ${qtyControl}
@@ -1364,27 +1369,36 @@
     }
 
     if (readOnlyMatrix) {
-      const quantities = Array.isArray(item.shop_quantities)
-        ? item.shop_quantities.map((q) => normalizeStockQty(q))
-        : [stock];
-      const rowTotal = Number.isFinite(Number(item.row_total))
-        ? normalizeStockQty(item.row_total)
-        : normalizeStockQty(quantities.reduce((sum, q) => sum + q, 0));
+      const hidden = stockIsHidden(item);
+      const quantities = hidden
+        ? Array.isArray(item.shop_quantities)
+          ? item.shop_quantities.map(() => null)
+          : [null]
+        : Array.isArray(item.shop_quantities)
+          ? item.shop_quantities.map((q) => normalizeStockQty(q))
+          : [stock];
+      const rowTotal = hidden
+        ? null
+        : Number.isFinite(Number(item.row_total))
+          ? normalizeStockQty(item.row_total)
+          : normalizeStockQty(quantities.reduce((sum, q) => sum + q, 0));
+      const qtyText = (qty) =>
+        hidden ? "Hidden" : qty === 0 ? "—" : qty;
       const qtyCells = showAllShops
         ? quantities
             .map(
               (qty) =>
                 `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
-                  qty === 0 ? " is-empty" : ""
-                }">${qty === 0 ? "—" : qty}</span></td>`
+                  hidden ? " is-hidden" : qty === 0 ? " is-empty" : ""
+                }">${qtyText(qty)}</span></td>`
             )
             .join("") +
           `<td class="stock-matrix-total-col"><span class="stock-matrix-qty stock-matrix-qty--total${
-            rowTotal === 0 ? " is-empty" : ""
-          }">${rowTotal === 0 ? "—" : rowTotal}</span></td>`
+            hidden ? " is-hidden" : rowTotal === 0 ? " is-empty" : ""
+          }">${qtyText(rowTotal)}</span></td>`
         : `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
-            (quantities[0] || 0) === 0 ? " is-empty" : ""
-          }">${(quantities[0] || 0) === 0 ? "—" : quantities[0] || 0}</span></td>`;
+            hidden ? " is-hidden" : (quantities[0] || 0) === 0 ? " is-empty" : ""
+          }">${qtyText(quantities[0] || 0)}</span></td>`;
       const header = document.createElement("tr");
       header.className = `stock-matrix-row${
         item.is_suspended ? " is-suspended" : ""
@@ -1449,7 +1463,7 @@
             </div>
             <p class="buy-stock-pick-meta">
               ${escapeHtml(category || "Item")}
-              · in shop ${stock}
+              · ${stockIsHidden(item) ? "stock hidden" : `in shop ${stock}`}
               ${item.track_serial ? " · Serial" : ""}
               ${item.is_suspended ? " · Suspended" : ""}
             </p>
@@ -1496,13 +1510,11 @@
         </button>
       </th>
       <td class="stock-matrix-shop-col">
-        <span class="stock-matrix-qty${stock === 0 ? " is-empty" : ""}" data-stock-display-qty>${stock}</span>
+        <span class="stock-matrix-qty${qtyClass(item, stock)}" data-stock-display-qty>${visibleQty(item, stock)}</span>
       </td>
       ${
         mode === "request"
-          ? `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
-              fromQty === 0 ? " is-empty" : ""
-            }">${fromQty}</span></td>`
+          ? `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${qtyClass(item, fromQty)}">${visibleQty(item, fromQty)}</span></td>`
           : ""
       }
       ${

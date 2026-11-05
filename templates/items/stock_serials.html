@@ -1,5 +1,5 @@
 {% extends "employees/workspace_base.html" %}
-{% load static %}
+{% load static stock_visibility %}
 
 {% block title %}Serials — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
@@ -76,11 +76,13 @@
           </td>
           {% for qty in row.shop_in_stock %}
           <td class="stock-serials-col--num" data-label="Shop">
-            <span class="stock-matrix-qty stock-report-qty--in{% if qty == 0 %} is-empty{% endif %}">{{ qty }}</span>
+            {% stock_qty qty row.item.pk row.item.category as shown_qty %}
+            <span class="stock-matrix-qty stock-report-qty--in{% if shown_qty == 'Hidden' %} is-hidden{% elif qty == 0 %} is-empty{% endif %}">{{ shown_qty }}</span>
           </td>
           {% endfor %}
           <td class="stock-serials-col--num" data-label="In stock">
-            <span class="stock-matrix-qty stock-report-qty--in{% if row.in_stock == 0 %} is-empty{% endif %}">{{ row.in_stock }}</span>
+            {% stock_qty row.in_stock row.item.pk row.item.category as shown_in %}
+            <span class="stock-matrix-qty stock-report-qty--in{% if shown_in == 'Hidden' %} is-hidden{% elif row.in_stock == 0 %} is-empty{% endif %}">{{ shown_in }}</span>
           </td>
           <td class="stock-serials-col--num" data-label="Out / sold">
             <span class="stock-matrix-qty stock-report-qty--out{% if row.out == 0 %} is-empty{% endif %}">{{ row.out }}</span>

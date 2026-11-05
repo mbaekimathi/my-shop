@@ -34,7 +34,7 @@
       },
       shop: {
         kicker: "Branch portal",
-        lead: "Open your shop floor with the branch code and password.",
+        lead: "Choose a shop, then enter its password to open the floor.",
       },
     };
 
@@ -63,9 +63,11 @@
       });
       if (focus) {
         const activePanel = portal.querySelector(`[data-auth-panel="${mode}"]`);
-        const codeInput = activePanel?.querySelector("[data-code-input]");
-        codeInput?.focus();
-        codeInput?.select?.();
+        const focusTarget = activePanel?.querySelector(
+          "[data-shop-select], [data-code-input]"
+        );
+        focusTarget?.focus();
+        if (focusTarget?.matches("[data-code-input]")) focusTarget.select?.();
       }
       refreshIcons();
     };
@@ -113,15 +115,23 @@
     portal.querySelectorAll("[data-auth-form]").forEach((form) => {
       form.addEventListener("submit", (event) => {
         const code = form.querySelector("[data-code-input]");
+        const shopSelect = form.querySelector("[data-shop-select]");
         const password = form.querySelector("[data-password-input]");
         const submit = form.querySelector("[data-auth-submit]");
         const label = form.querySelector("[data-auth-submit-label]");
-        const digits = String(code?.value || "").replace(/\D+/g, "").slice(0, 6);
 
-        if (code) code.value = digits;
-        if (digits.length !== 6) {
+        if (code) {
+          const digits = String(code.value || "").replace(/\D+/g, "").slice(0, 6);
+          code.value = digits;
+          if (digits.length !== 6) {
+            event.preventDefault();
+            code.focus();
+            return;
+          }
+        }
+        if (shopSelect && !shopSelect.value) {
           event.preventDefault();
-          code?.focus();
+          shopSelect.focus();
           return;
         }
         if (!String(password?.value || "")) {

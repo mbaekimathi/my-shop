@@ -1,5 +1,5 @@
 {% extends "employees/workspace_base.html" %}
-{% load static humanize %}
+{% load static humanize stock_visibility %}
 
 {% block title %}Stock Management — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
@@ -100,13 +100,13 @@
           </p>
           {% if stock_mode == 'view' and all_shops %}
           <p class="stock-stat">
-            <strong>{{ total_units }}</strong>
+            <strong>{% if hide_stock_numbers %}Hidden{% else %}{{ total_units }}{% endif %}</strong>
             <span>{% if selected_shop %}units at {{ selected_shop.name }}{% else %}units across all shops{% endif %}</span>
           </p>
           {% elif stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
           {% if shops %}
           <p class="stock-stat">
-            <strong>{{ total_units }}</strong>
+            <strong>{% if hide_stock_numbers %}Hidden{% else %}{{ total_units }}{% endif %}</strong>
             <span>
               {% if stock_mode == 'request' and request_pair_ready %}
               units for selected shops
@@ -120,7 +120,7 @@
           {% endif %}
           {% elif selected_shop %}
           <p class="stock-stat">
-            <strong>{{ total_units }}</strong>
+            <strong>{% if hide_stock_numbers %}Hidden{% else %}{{ total_units }}{% endif %}</strong>
             <span>units at {{ selected_shop.name }}</span>
           </p>
           {% endif %}
@@ -146,7 +146,7 @@
       <section class="stock-summary-board" aria-label="Stock summary">
         <article class="stock-summary-hero">
           <span class="stock-summary-hero-label">Units on hand</span>
-          <strong class="stock-summary-hero-value">{{ total_units|intcomma }}</strong>
+          <strong class="stock-summary-hero-value{% if hide_stock_numbers %} is-hidden{% endif %}">{% if hide_stock_numbers %}Hidden{% else %}{{ total_units|intcomma }}{% endif %}</strong>
           <em class="stock-summary-hero-hint">
             {% if selected_shop %}{{ selected_shop.name }}{% else %}Across all shops{% endif %}
           </em>
@@ -483,15 +483,18 @@
                 {% if show_all_shops %}
                 {% for qty in row.shop_quantities %}
                 <td class="stock-matrix-shop-col">
-                  <span class="stock-matrix-qty{% if qty == 0 %} is-empty{% endif %}">{{ qty }}</span>
+                  {% stock_qty qty item.pk item.category as shown_qty %}
+                  <span class="stock-matrix-qty{% if shown_qty == 'Hidden' %} is-hidden{% elif qty == 0 %} is-empty{% endif %}">{{ shown_qty }}</span>
                 </td>
                 {% endfor %}
                 <td class="stock-matrix-total-col">
-                  <span class="stock-matrix-qty stock-matrix-qty--total{% if row.row_total == 0 %} is-empty{% endif %}">{{ row.row_total }}</span>
+                  {% stock_qty row.row_total item.pk item.category as shown_total %}
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_total == 'Hidden' %} is-hidden{% elif row.row_total == 0 %} is-empty{% endif %}">{{ shown_total }}</span>
                 </td>
                 {% else %}
                 <td class="stock-matrix-shop-col">
-                  <span class="stock-matrix-qty{% if row.shop_qty == 0 %} is-empty{% endif %}">{{ row.shop_qty }}</span>
+                  {% stock_qty row.shop_qty item.pk item.category as shown_qty %}
+                  <span class="stock-matrix-qty{% if shown_qty == 'Hidden' %} is-hidden{% elif row.shop_qty == 0 %} is-empty{% endif %}">{{ shown_qty }}</span>
                 </td>
                 {% endif %}
               </tr>
@@ -520,10 +523,11 @@
                   </button>
                 </th>
                 <td class="stock-matrix-shop-col">
+                  {% stock_qty row.shop_qty item.pk item.category as shown_qty %}
                   <span
-                    class="stock-matrix-qty{% if row.shop_qty == 0 %} is-empty{% endif %}"
+                    class="stock-matrix-qty{% if shown_qty == 'Hidden' %} is-hidden{% elif row.shop_qty == 0 %} is-empty{% endif %}"
                     data-stock-display-qty
-                  >{{ row.shop_qty }}</span>
+                  >{{ shown_qty }}</span>
                 </td>
                 {% if stock_mode == 'out' %}
                 <td class="stock-matrix-shop-col stock-matrix-balance-col">
@@ -1199,6 +1203,14 @@
             <small>Quantities for the shop(s) you select</small>
           </span>
         </label>
+
+        <label class="stock-print-option">
+          <input type="radio" name="print_layout" value="balances">
+          <span>
+            <strong>Opening, sold, and closing</strong>
+            <small>Opening, sold, closing, and a column for the actual shop stock</small>
+          </span>
+        </label>
       </fieldset>
 
       <div class="stock-print-shops" data-stock-print-shops hidden>
@@ -1415,7 +1427,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/stock-catalog.js' %}?v=20261024-decimal-inputs"></script>
+<script defer src="{% static 'js/stock-catalog.js' %}?v=20261106-hide-stock"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=20261024-decimals"></script>
@@ -1425,6 +1437,6 @@
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% if stock_mode == 'view' %}
-<script defer src="{% static 'js/stock-print.js' %}?v=9"></script>
+<script defer src="{% static 'js/stock-print.js' %}?v=10"></script>
 {% endif %}
 {% endblock %}

@@ -1,5 +1,5 @@
 {% extends "employees/workspace_base.html" %}
-{% load static %}
+{% load static stock_visibility %}
 
 {% block title %}{{ item.name }} · Serials — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
@@ -14,7 +14,7 @@
       </div>
       <div class="stock-stats">
         <p class="stock-stat">
-          <strong>{{ in_stock_count }}</strong>
+          <strong>{% stock_qty in_stock_count item.pk item.category %}</strong>
           <span>in stock</span>
         </p>
         <p class="stock-stat">
@@ -27,7 +27,7 @@
         </p>
         {% if returned_count %}
         <p class="stock-stat" title="Returned serials by where they are now">
-          <strong>{{ returned_in_stock_count }} · {{ returned_out_count }} · {{ returned_sold_count }}</strong>
+          <strong>{% stock_qty returned_in_stock_count item.pk item.category %} · {{ returned_out_count }} · {{ returned_sold_count }}</strong>
           <span>returned: in stock · out · sold</span>
         </p>
         {% endif %}

@@ -648,7 +648,8 @@ html[data-theme="dark"] .auth-card--portal[data-login-mode="shop"] {
   box-shadow: 0 0 0 3px rgba(var(--teal-rgb), 0.16);
 }
 
-.auth-panel--shop .field input:focus {
+.auth-panel--shop .field input:focus,
+.auth-panel--shop .field select:focus {
   border-color: rgba(var(--accent-rgb), 0.55);
   box-shadow: var(--focus-ring);
 }
@@ -720,12 +721,17 @@ html[data-theme="dark"] .auth-card--portal[data-login-mode="shop"] {
 }
 
 .auth-card .field input,
+.auth-card .field select,
 .auth-card .phone-field > input[type="tel"],
 .auth-card .country-trigger {
   min-height: 2.9rem;
   border-radius: 10px;
   border-color: var(--auth-input-border);
   background: var(--input-bg);
+}
+
+.auth-card .field select {
+  padding-right: 2.2rem;
 }
 
 .auth-card .field input:focus,

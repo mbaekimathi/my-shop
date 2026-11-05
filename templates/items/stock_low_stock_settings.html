@@ -1,5 +1,5 @@
 {% extends "employees/workspace_base.html" %}
-{% load static %}
+{% load static stock_visibility %}
 
 {% block title %}Low Stock Alerts — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
@@ -135,7 +135,8 @@
               {% endif %}
             </td>
             <td class="low-stock-units low-stock-num">
-              <strong data-low-stock-units>{{ row.total_units }}</strong>
+              {% stock_qty row.total_units row.item.pk row.item.category as shown_units %}
+              <strong data-low-stock-units data-units="{{ row.total_units }}"{% if shown_units == "Hidden" %} data-stock-hidden="1" class="is-hidden"{% endif %}>{{ shown_units }}</strong>
             </td>
             <td class="low-stock-avg low-stock-num">
               {% if row.avg_week %}

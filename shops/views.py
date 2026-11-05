@@ -75,6 +75,7 @@ from .services import (
     _qty_label,
     _qty_number,
     authenticate_shop_login,
+    authenticate_shop_selection,
     build_expense_supplier_receipt,
     build_stock_in_supplier_receipt,
     build_stock_request_dispatch_note,
@@ -776,7 +777,7 @@ def _require_my_shop_permission(
 @rate_limit("login", methods=("POST",))
 @require_http_methods(["GET", "POST"])
 def shop_portal_login(request):
-    """Public shop portal: sign in with 6-digit shop code + password."""
+    """Public shop portal: choose a shop, then sign in with its password."""
     from employees.portal_auth import (
         begin_shop_portal_session,
         render_portal_login,
@@ -795,10 +796,26 @@ def shop_portal_login(request):
 
     error = None
     login_code = ""
+    selected_shop_id = ""
     if request.method == "POST":
-        login_code = re.sub(r"\D+", "", request.POST.get("login_code") or "")[:6]
         password = request.POST.get("password") or ""
-        if len(login_code) != 6:
+        raw_shop_id = (request.POST.get("shop_id") or "").strip()
+        login_code = re.sub(r"\D+", "", request.POST.get("login_code") or "")[:6]
+        if raw_shop_id or "shop_id" in request.POST:
+            selected_shop_id = raw_shop_id if raw_shop_id.isdigit() else ""
+            if not selected_shop_id:
+                error = "Select a shop to open."
+            elif len(password) < 1:
+                error = "Enter the shop password."
+            else:
+                shop = authenticate_shop_selection(selected_shop_id, password)
+                if shop is None:
+                    error = "Invalid shop or password. Please try again."
+                else:
+                    begin_shop_portal_session(request, shop)
+                    return redirect(_shop_workspace_url(shop))
+        elif len(login_code) != 6:
+            # Older clients still post the 6-digit shop code.
             error = "Enter the 6-digit shop code."
         elif len(password) < 1:
             error = "Enter the shop password."
@@ -815,6 +832,7 @@ def shop_portal_login(request):
         login_mode="shop",
         shop_error=error,
         shop_login_code=login_code,
+        selected_shop_id=selected_shop_id,
         switch=switching,
     )
 
@@ -1082,6 +1100,9 @@ def _catalog_rows_for_items(shop, items):
             shop=shop, item_id__in=item_ids
         ).values_list("item_id", "price")
     }
+    from shops.services import item_stock_is_hidden, stock_hide_state
+
+    hide_state = stock_hide_state()
     rows = []
     for item in items:
         override = price_by_item.get(item.pk) if item.use_individual_shop_prices else None
@@ -1102,6 +1123,7 @@ def _catalog_rows_for_items(shop, items):
                 "discount_min_qty": int(item.discount_min_qty or 0),
                 "discount_amount": str(item.discount_amount or 0),
                 "stock": _qty_number(stock_by_item.get(item.pk, 0)),
+                "stock_hidden": item_stock_is_hidden(item.pk, item.category, hide_state),
                 "sold_quantity": _qty_number(getattr(item, "sold_quantity", 0) or 0),
                 "track_serial": bool(item.track_serial_number),
                 "image_url": image_url,

@@ -787,6 +787,13 @@ class ShopPosSettings(models.Model):
         return f"POS settings — {self.shop.name}"
 
 
+class StockNumberVisibility(models.TextChoices):
+    SHOW = "show", "Show stock numbers"
+    ALL = "all", "Hide all"
+    CATEGORY = "category", "Hide selected categories"
+    ITEMS = "items", "Hide selected items"
+
+
 class CompanyStockSettings(models.Model):
 
     """Company-wide compulsory fields for stock in/out/request (singleton row)."""
@@ -805,6 +812,15 @@ class CompanyStockSettings(models.Model):
 
     # Legacy unused column (was phone last-4; last-4 applies to sell serials only).
     enable_supplier_last4_search = models.BooleanField(default=False)
+
+    # Hide the on-hand number only. Movements, sales, and transfers still use the real quantity.
+    hide_stock_mode = models.CharField(
+        max_length=16,
+        choices=StockNumberVisibility.choices,
+        default=StockNumberVisibility.SHOW,
+    )
+    hide_stock_categories = models.JSONField(default=list, blank=True)
+    hide_stock_item_ids = models.JSONField(default=list, blank=True)
 
     updated_at = models.DateTimeField(auto_now=True)
 

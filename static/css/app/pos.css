@@ -2116,6 +2116,10 @@
   color: var(--danger-text);
 }
 
+.shop-floor-item[data-stock-hidden="1"] .shop-floor-stock {
+  display: none;
+}
+
 .shop-floor-stock-label {
   display: none;
 }

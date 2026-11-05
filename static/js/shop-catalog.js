@@ -137,6 +137,7 @@
 
   const buildCard = (item) => {
     const stock = Math.max(0, roundQty(item.stock));
+    const hideStock = Boolean(item.stock_hidden);
     const price = money(item.price);
     const minPrice = money(item.min_price);
     const desc = String(item.description || "");
@@ -172,6 +173,7 @@
     );
     article.setAttribute("data-item-stock-base", String(stock));
     article.setAttribute("data-item-stock", String(stock));
+    if (hideStock) article.setAttribute("data-stock-hidden", "1");
     article.setAttribute("data-item-track-serial", trackSerial);
     if (imageUrl) article.setAttribute("data-item-image", imageUrl);
     article.setAttribute(
@@ -214,7 +216,7 @@
             data-cart-qty-input
             min="0.001"
             step="0.001"
-            ${stockTrackingEnabled && stock > 0 ? `max="${stock}"` : ""}
+            ${stockTrackingEnabled && !hideStock && stock > 0 ? `max="${stock}"` : ""}
             value="1"
             inputmode="decimal"
             aria-label="Quantity in cart"
@@ -241,7 +243,7 @@
       </button>
       <div class="shop-floor-item-meta">
         ${
-          stockTrackingEnabled
+          stockTrackingEnabled && !hideStock
             ? `<span class="shop-floor-stock${out ? " is-empty" : ""}">
           <span class="shop-floor-stock-label">Stock</span>
           <span class="shop-floor-stock-value">${stock}</span>
@@ -601,9 +603,13 @@
                 card.setAttribute("data-item-stock-base", String(qty));
                 card.setAttribute("data-item-stock", String(qty));
                 const valueEl = card.querySelector(".shop-floor-stock-value");
-                if (valueEl) valueEl.textContent = String(qty);
+                const hidden = card.getAttribute("data-stock-hidden") === "1";
+                if (valueEl && !hidden) valueEl.textContent = String(qty);
                 const stockWrap = card.querySelector(".shop-floor-stock");
-                if (stockWrap) stockWrap.classList.toggle("is-empty", qty <= 0);
+                if (stockWrap) {
+                  if (hidden) stockWrap.hidden = true;
+                  stockWrap.classList.toggle("is-empty", qty <= 0);
+                }
                 card.classList.toggle(
                   "is-out",
                   stockTrackingEnabled && qty <= 0

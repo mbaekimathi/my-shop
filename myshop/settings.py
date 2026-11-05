@@ -192,7 +192,7 @@ if REDIS_ENABLED:
             "TIMEOUT": int(os.getenv("CACHE_TIMEOUT", "300")),
         }
     }
-    SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
+    SESSION_ENGINE = "myshop.session_store.cached_db"
 else:
     CACHES = {
         "default": {
@@ -201,7 +201,7 @@ else:
             "TIMEOUT": int(os.getenv("CACHE_TIMEOUT", "300")),
         }
     }
-    SESSION_ENGINE = "django.contrib.sessions.backends.db"
+    SESSION_ENGINE = "myshop.session_store.db"
 
 SESSION_CACHE_ALIAS = "default"
 SESSION_COOKIE_AGE = int(os.getenv("SESSION_COOKIE_AGE", str(60 * 60 * 24 * 14)))

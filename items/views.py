@@ -6559,8 +6559,11 @@ def stock_settings(request, profile, meta, module):
     from employees.workspace import sidebar_for_stock_management, stock_management_url
     from shops.services import (
         get_company_stock_settings,
+        save_stock_visibility,
         set_company_stock_setting,
+        stock_hide_state,
         stock_settings_as_dict,
+        category_form_token,
     )
 
     page_sidebar = sidebar_for_stock_management(
@@ -6615,6 +6618,35 @@ def stock_settings(request, profile, meta, module):
                     }
                 )
             messages.success(request, "Stock setting updated.")
+            return redirect(stock_management_url(profile.role, "settings"))
+
+        if action == "save_stock_visibility":
+            try:
+                save_stock_visibility(
+                    mode=request.POST.get("hide_stock_mode"),
+                    categories=request.POST.getlist("hide_stock_categories"),
+                    item_ids=request.POST.getlist("hide_stock_item_ids"),
+                )
+            except ValidationError as exc:
+                message = (
+                    exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+                )
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(stock_management_url(profile.role, "settings"))
+            if wants_json:
+                state = stock_hide_state()
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "mode": state["mode"],
+                        "categories": state["categories"],
+                        "item_ids": state["item_ids"],
+                        "active": state["active"],
+                    }
+                )
+            messages.success(request, "Stock number visibility updated.")
             return redirect(stock_management_url(profile.role, "settings"))
 
         if wants_json:
@@ -6716,6 +6748,19 @@ def stock_settings(request, profile, meta, module):
         if toggle["enabled"]
     )
     toggle_count = sum(len(group["toggles"]) for group in setting_groups)
+    hide_state = stock_hide_state(settings_row)
+    visibility_categories = [
+        {"value": category_form_token(name), "label": name or "Uncategorised"}
+        for name in Item.objects.filter(is_suspended=False)
+        .order_by("category")
+        .values_list("category", flat=True)
+        .distinct()
+    ]
+    visibility_items = list(
+        Item.objects.filter(is_suspended=False)
+        .order_by("category", "name")
+        .values("id", "name", "category")
+    )
 
     return render(
         request,
@@ -6731,6 +6776,13 @@ def stock_settings(request, profile, meta, module):
             "stock_settings_toggle_count": toggle_count,
             "stock_requirements_json": json.dumps(settings_row.as_requirements_dict()),
             "low_stock_settings_url": stock_management_url(profile.role, "low-stock"),
+            "hide_stock_mode": hide_state["mode"],
+            "hide_stock_categories": [
+                category_form_token(name) for name in hide_state["categories"]
+            ],
+            "hide_stock_item_ids": hide_state["item_ids"],
+            "visibility_categories": visibility_categories,
+            "visibility_items": visibility_items,
         },
     )
 
@@ -7555,11 +7607,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
     selected_shop_ids_json = _json.dumps(selected_shop_ids)
     selected_shop_ids_csv = ",".join(str(sid) for sid in selected_shop_ids)
 
-    from shops.services import get_company_stock_settings
+    from shops.services import get_company_stock_settings, stock_hide_state
 
-    stock_requirements_json = _json.dumps(
-        get_company_stock_settings().as_requirements_dict()
-    )
+    stock_settings_row = get_company_stock_settings()
+    stock_requirements_json = _json.dumps(stock_settings_row.as_requirements_dict())
+    hide_stock_numbers = stock_hide_state(stock_settings_row)["active"]
 
     if shop_filter_active:
         if len(selected_shops) == 1:
@@ -7625,6 +7677,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "item_count": item_count,
             "category_count": category_count,
             "total_units": shop_total_units,
+            "hide_stock_numbers": hide_stock_numbers,
             "stock_mode": mode,
             "is_read_only": mode == "view",
             "countries": COUNTRY_DIAL_CODES,
@@ -9268,7 +9321,7 @@ def stock_management_print(request, role_segment):
         return denied
 
     layout = (request.GET.get("layout") or "items").strip().lower()
-    if layout not in ("items", "prices", "stock"):
+    if layout not in ("items", "prices", "stock", "balances"):
         layout = "items"
 
     paper = (request.GET.get("paper") or "a4").strip().lower()
@@ -9281,7 +9334,7 @@ def stock_management_print(request, role_segment):
     shops_by_id = {shop.pk: shop for shop in all_shops}
 
     selected_shops = []
-    if layout in ("prices", "stock"):
+    if layout in ("prices", "stock", "balances"):
         raw_ids = request.GET.getlist("shop_id")
         if not raw_ids and request.GET.get("shop_ids"):
             raw_ids = [

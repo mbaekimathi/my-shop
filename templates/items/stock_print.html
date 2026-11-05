@@ -261,16 +261,23 @@
     body.paper-a4 .sheet-subtitle { font-size: 9pt; }
     body.paper-a4 .sheet-meta { font-size: 8.5pt; }
     body.paper-a4 .meta-chip { font-size: 7.5pt; }
-    body.paper-a4 table.sheet-grid th { font-size: 7.5pt; }
-    body.paper-a4 table.sheet-grid td { font-size: 10pt; }
-    body.paper-a4 table.sheet-grid .col-item { width: 42%; }
-    body.paper-a4 table.sheet-grid .col-qty { width: 12%; }
-    body.paper-a4 table.sheet-grid .col-notes { width: 23%; }
-    body.paper-a4 table.sheet-grid .col-extra { width: 23%; }
-    body.paper-a4 table.sheet-grid .num { width: 5.25rem; }
-    body.paper-a4 table.sheet-grid.cols-many .col-item { width: 28%; }
+    body.paper-a4 table.sheet-grid th { font-size: 7pt; }
+    body.paper-a4 table.sheet-grid td { font-size: 8pt; padding: 0.45mm 1.1mm; }
+    body.paper-a4 table.sheet-grid .col-item { width: 46%; }
+    body.paper-a4 table.sheet-grid .col-write { width: 18%; }
+    body.paper-a4 table.sheet-grid .col-system { width: 18%; text-align: center; background: #fff7e8; }
+    body.paper-a4 table.sheet-grid .col-closing { width: 18%; text-align: center; background: #ecfdf5; }
+    body.paper-a4 table.sheet-grid td.blank { height: 4.6mm; }
+    body.paper-a4.layout-stock table.sheet-grid .col-item { width: 40%; }
+    body.paper-a4 table.sheet-grid.cols-many .col-item { width: 30%; }
     body.paper-a4 table.sheet-grid.cols-many .num { width: auto; }
 
+    .sheet-hint {
+      margin: 0.15rem 0 0.4rem;
+      font-size: 7.5pt;
+      font-weight: 650;
+      line-height: 1.3;
+    }
     @media (max-width: 720px) {
       body.paper-a4 {
         padding: 0.65rem 0.45rem 1rem;
@@ -433,7 +440,7 @@
         background: #fff;
       }
       {% else %}
-      @page { size: A4; margin: 8mm 7mm 9mm; }
+      @page { size: A4; margin: 6mm 6mm 7mm; }
       body.paper-a4 {
         padding: 0;
         width: auto;
@@ -461,7 +468,7 @@
     }
   </style>
 </head>
-<body class="paper-{{ paper|default:'a4' }}">
+<body class="paper-{{ paper|default:'a4' }}{% if document %} layout-{{ document.layout }}{% if document.shops|length > 1 %} shops-many{% endif %}{% endif %}">
   <div class="print-toolbar">
     <button type="button" class="primary" onclick="window.print()">Print / Save PDF</button>
     {% if not is_download %}
@@ -500,39 +507,57 @@
     </div>
   </header>
 
-  {% for group in document.categories %}
-  {% if paper == "a4" and document.layout != "items" and document.shops|length > 3 %}
-  <div class="sheet-grid-wrap">
+  {% if paper == "a4" or paper == "" %}
+  <p class="sheet-hint">
+    {% if document.layout == "balances" %}
+      Opening is the system balance at the start of today. Sold is today's sales. Closing is the balance now. Write the counted quantity in Actual shop stock.
+    {% elif document.layout == "stock" %}
+      Item names are in the first column. Qty is the current system balance.
+    {% elif document.layout == "prices" %}
+      Item names are in the first column, with the selling price beside each name.
+    {% else %}
+      Item names are in the first column. Write Shop qty, Count, and Note in the blank columns.
+    {% endif %}
+  </p>
   {% endif %}
-  <table class="sheet-grid{% if paper == 'a4' and document.layout != 'items' and document.shops|length > 3 %} cols-many{% endif %}">
+
+  {% for group in document.categories %}
+  <table class="sheet-grid{% if paper == 'a4' and document.layout == 'prices' and document.shops|length > 3 %} cols-many{% endif %}">
     <thead>
       <tr class="category-row">
-        <th colspan="{% if paper == '80' or paper == '50' %}3{% elif document.layout == 'items' %}4{% elif document.layout == 'prices' %}{% if document.shops|length == 1 %}2{% else %}{{ document.shops|length|add:1 }}{% endif %}{% elif document.layout == 'stock' %}{% if document.shops|length > 1 %}{{ document.shops|length|add:2 }}{% else %}2{% endif %}{% else %}2{% endif %}">{{ group.name }}</th>
+        <th colspan="{% if paper == '80' or paper == '50' %}3{% elif document.layout == 'items' %}4{% elif document.layout == 'balances' %}5{% elif document.layout == 'stock' %}{% if document.shops|length <= 1 %}2{% else %}{{ document.shops|length|add:2 }}{% endif %}{% elif document.layout == 'prices' %}{% if document.shops|length <= 1 %}2{% else %}{{ document.shops|length|add:1 }}{% endif %}{% else %}2{% endif %}">{{ group.name }}</th>
       </tr>
       <tr>
         <th class="col-item">Item</th>
         {% if paper == "80" or paper == "50" %}
           <th class="col-stock">Stock</th>
           <th class="col-stock">Stock</th>
-        {% elif document.layout == "items" %}
-          <th class="col-qty">Qty</th>
-          <th class="col-notes">Notes</th>
-          <th class="col-extra">&nbsp;</th>
+        {% elif document.layout == "balances" %}
+          <th class="col-system">Opening</th>
+          <th class="num">Sold</th>
+          <th class="col-closing">Closing</th>
+          <th class="col-write">Actual shop stock</th>
+        {% elif document.layout == "stock" %}
+          {% if document.shops|length <= 1 %}
+          <th class="num">Qty</th>
+          {% else %}
+            {% for shop in document.shops %}
+            <th class="num">{{ shop.name }}</th>
+            {% endfor %}
+            <th class="num">Total</th>
+          {% endif %}
         {% elif document.layout == "prices" %}
-          {% if document.shops|length == 1 %}
+          {% if document.shops|length <= 1 %}
           <th class="num">Price</th>
           {% else %}
             {% for shop in document.shops %}
             <th class="num">{{ shop.name }}</th>
             {% endfor %}
           {% endif %}
-        {% elif document.layout == "stock" %}
-          {% for shop in document.shops %}
-          <th class="num">{{ shop.name }}</th>
-          {% endfor %}
-          {% if document.shops|length > 1 %}
-          <th class="num">Total</th>
-          {% endif %}
+        {% else %}
+          <th class="col-write">Shop qty</th>
+          <th class="col-write">Count</th>
+          <th class="col-write">Note</th>
         {% endif %}
       </tr>
     </thead>
@@ -543,33 +568,37 @@
         {% if paper == "80" or paper == "50" %}
           <td class="blank col-stock">&nbsp;</td>
           <td class="blank col-stock">&nbsp;</td>
-        {% elif document.layout == "items" %}
-          <td class="blank col-qty">&nbsp;</td>
-          <td class="blank col-notes">&nbsp;</td>
-          <td class="blank col-extra">&nbsp;</td>
+        {% elif document.layout == "balances" %}
+          <td class="num col-system">{{ row.opening }}</td>
+          <td class="num">{{ row.sold }}</td>
+          <td class="num col-closing">{{ row.closing }}</td>
+          <td class="blank col-write">&nbsp;</td>
+        {% elif document.layout == "stock" %}
+          {% if document.shops|length <= 1 %}
+          <td class="num">{{ row.qty }}</td>
+          {% else %}
+            {% for qty in row.quantities %}
+            <td class="num">{{ qty.qty }}</td>
+            {% endfor %}
+            <td class="num">{{ row.total }}</td>
+          {% endif %}
         {% elif document.layout == "prices" %}
-          {% if document.shops|length == 1 %}
+          {% if document.shops|length <= 1 %}
           <td class="num">{{ row.price }}</td>
           {% else %}
             {% for price in row.prices %}
             <td class="num">{{ price.price }}</td>
             {% endfor %}
           {% endif %}
-        {% elif document.layout == "stock" %}
-          {% for qty in row.quantities %}
-          <td class="num">{{ qty.qty }}</td>
-          {% endfor %}
-          {% if document.shops|length > 1 %}
-          <td class="num">{{ row.total }}</td>
-          {% endif %}
+        {% else %}
+          <td class="blank col-write">&nbsp;</td>
+          <td class="blank col-write">&nbsp;</td>
+          <td class="blank col-write">&nbsp;</td>
         {% endif %}
       </tr>
       {% endfor %}
     </tbody>
   </table>
-  {% if paper == "a4" and document.layout != "items" and document.shops|length > 3 %}
-  </div>
-  {% endif %}
   {% empty %}
   <p class="footnote"><span>No items to print.</span></p>
   {% endfor %}

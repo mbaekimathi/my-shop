@@ -1,5 +1,5 @@
 {% extends "employees/workspace_base.html" %}
-{% load static %}
+{% load static stock_visibility %}
 
 {% block title %}{% if is_movements_page %}Stock Movement{% else %}Stock Report{% endif %} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
@@ -279,7 +279,8 @@
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if row.units_sale == 0 %} is-empty{% endif %}">{{ row.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return{% if row.units_return == 0 %} is-empty{% endif %}">{{ row.units_return }}</span></td>
                 <td data-label="Current stock">
-                  <span class="stock-matrix-qty stock-matrix-qty--total{% if row.current_stock == 0 %} is-empty{% endif %}">{{ row.current_stock }}</span>
+                  {% stock_qty row.current_stock row.item_id row.item_category as shown_stock %}
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_stock == 'Hidden' %} is-hidden{% elif row.current_stock == 0 %} is-empty{% endif %}">{{ shown_stock }}</span>
                 </td>
                 <td data-label="Last activity">
                   {% if row.last_at %}
@@ -317,7 +318,7 @@
                 <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade">{{ movement_item_totals.units_trade }}</span></td>
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale">{{ movement_item_totals.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ movement_item_totals.units_return }}</span></td>
-                <td data-label="Current stock"><span class="stock-matrix-qty stock-matrix-qty--total">{{ movement_item_totals.current_stock }}</span></td>
+                <td data-label="Current stock">{% stock_level_total movement_item_totals.current_stock as shown_total %}<span class="stock-matrix-qty stock-matrix-qty--total{% if shown_total == 'Hidden' %} is-hidden{% endif %}">{{ shown_total }}</span></td>
                 <td data-label="Last activity"></td>
                 <td data-label="Actions"></td>
               </tr>
@@ -525,7 +526,8 @@
                 <strong>Current stock</strong>
               </td>
               <td data-label="Qty" class="is-center">
-                <span class="stock-matrix-qty stock-report-qty--transfer-in">{{ timeline_current_stock|default:0 }}</span>
+                {% if detail_item %}{% stock_qty timeline_current_stock detail_item.pk detail_item.category as shown_timeline %}{% else %}{% stock_level_total timeline_current_stock as shown_timeline %}{% endif %}
+                <span class="stock-matrix-qty stock-report-qty--transfer-in{% if shown_timeline == 'Hidden' %} is-hidden{% endif %}">{{ shown_timeline }}</span>
               </td>
               <td colspan="7" data-label=""></td>
             </tr>
@@ -617,7 +619,8 @@
               <td data-label="Shop">{% if row.is_item_total %}<strong>Total</strong>{% else %}{{ row.shop_name }}{% endif %}</td>
               {% endif %}
               <td data-label="Starting stock">
-                <span class="stock-matrix-qty{% if row.starting_stock == 0 %} is-empty{% endif %}">{{ row.starting_stock }}</span>
+                {% stock_qty row.starting_stock row.item.pk row.item.category as shown_start %}
+                <span class="stock-matrix-qty{% if shown_start == 'Hidden' %} is-hidden{% elif row.starting_stock == 0 %} is-empty{% endif %}">{{ shown_start }}</span>
               </td>
               <td data-label="Stock in">
                 <span class="stock-matrix-qty stock-report-qty--in{% if row.stock_in == 0 %} is-empty{% endif %}">{{ row.stock_in }}</span>
@@ -641,7 +644,8 @@
                 <span class="stock-matrix-qty stock-report-qty--return{% if row.stock_return == 0 %} is-empty{% endif %}">{{ row.stock_return }}</span>
               </td>
               <td data-label="Closing stock">
-                <span class="stock-matrix-qty stock-matrix-qty--total{% if row.closing_stock == 0 %} is-empty{% endif %}">{{ row.closing_stock }}</span>
+                {% stock_qty row.closing_stock row.item.pk row.item.category as shown_close %}
+                <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_close == 'Hidden' %} is-hidden{% elif row.closing_stock == 0 %} is-empty{% endif %}">{{ shown_close }}</span>
               </td>
             </tr>
             {% endfor %}
@@ -659,7 +663,7 @@
               {% endif %}
               <td data-label="Starting stock">
                 {% if not is_daily_report or not item_report_show_item_col %}
-                <span class="stock-matrix-qty">{{ item_report_totals.starting_stock }}</span>
+                <span class="stock-matrix-qty">{% stock_level_total item_report_totals.starting_stock %}</span>
                 {% endif %}
               </td>
               <td data-label="Stock in"><span class="stock-matrix-qty stock-report-qty--in">{{ item_report_totals.stock_in }}</span></td>
@@ -673,7 +677,7 @@
               <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ item_report_totals.stock_return }}</span></td>
               <td data-label="Closing stock">
                 {% if not is_daily_report or not item_report_show_item_col %}
-                <span class="stock-matrix-qty stock-matrix-qty--total">{{ item_report_totals.closing_stock }}</span>
+                <span class="stock-matrix-qty stock-matrix-qty--total">{% stock_level_total item_report_totals.closing_stock %}</span>
                 {% endif %}
               </td>
             </tr>

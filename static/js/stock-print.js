@@ -50,7 +50,7 @@
 
   const syncShopsVisibility = () => {
     const layout = selectedLayout();
-    const needsShops = layout === "prices" || layout === "stock";
+    const needsShops = layout === "prices" || layout === "stock" || layout === "balances";
     if (shopsPanel) shopsPanel.hidden = !needsShops;
   };
 
@@ -90,7 +90,7 @@
     if (download) params.set("download", "1");
     if (estimate) params.set("estimate", "1");
 
-    if (layout === "prices" || layout === "stock") {
+    if (layout === "prices" || layout === "stock" || layout === "balances") {
       const shopIds = selectedShopIds();
       if (!shopIds.length) {
         return { error: "No shops available.", params: null };

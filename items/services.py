@@ -540,6 +540,9 @@ def build_stock_catalog_page(
             if shop:
                 shops_meta.append({"id": shop.pk, "name": shop.name})
 
+    from shops.services import HIDDEN_STOCK_LABEL, item_stock_is_hidden, stock_hide_state
+
+    hide_state = stock_hide_state()
     rows = []
     for item in items:
         description = (item.description or "").strip()
@@ -592,6 +595,14 @@ def build_stock_catalog_page(
                     format(item.resolve_list_price(shop_override), "f")
                 )
             row["selling_prices"] = selling_prices
+        hidden = item_stock_is_hidden(item.pk, item.category, hide_state)
+        row["stock_hidden"] = hidden
+        if hidden and mode == "view":
+            row["shop_qty"] = None
+            row["requested_from_qty"] = None
+            if use_multi_shop:
+                row["shop_quantities"] = [None] * len(view_shop_ids)
+                row["row_total"] = None
         rows.append(row)
 
     total_units = 0
@@ -623,7 +634,12 @@ def build_stock_catalog_page(
         "page_size": page_size,
         "has_more": has_more,
         "next_page": next_page,
-        "total_units": _format_qty(total_units),
+        "total_units": (
+            HIDDEN_STOCK_LABEL
+            if mode == "view" and hide_state["active"]
+            else _format_qty(total_units)
+        ),
+        "stock_numbers_hidden": bool(hide_state["active"]),
         "items": rows,
         "q": query,
         "shop_id": shop_id,
@@ -3700,15 +3716,19 @@ def respond_to_stock_request(
     return movement
 
 
-STOCK_PRINT_LAYOUTS = ("items", "prices", "stock")
+STOCK_PRINT_LAYOUTS = ("items", "prices", "stock", "balances")
 
-# A4 printable height with @page margins 8mm / 9mm (297 - 17).
-_STOCK_PRINT_A4_PAGE_MM = 280.0
-_STOCK_PRINT_A4_HEADER_MM = 20.0
-_STOCK_PRINT_A4_FOOTNOTE_MM = 6.0
-_STOCK_PRINT_A4_CATEGORY_OVERHEAD_MM = 7.2
-_STOCK_PRINT_A4_ROW_MM = 5.0
-_STOCK_PRINT_A4_TABLE_GAP_MM = 1.5
+# Card grid: 297mm page minus 6mm top and 7mm bottom.
+_STOCK_PRINT_A4_PAGE_MM = 284.0
+_STOCK_PRINT_A4_HEADER_MM = 18.0
+_STOCK_PRINT_A4_FOOTNOTE_MM = 8.0
+# Legacy single-column table (item price list) still uses the older rhythm.
+_STOCK_PRINT_A4_LEGACY_PAGE_MM = 280.0
+_STOCK_PRINT_A4_LEGACY_HEADER_MM = 20.0
+_STOCK_PRINT_A4_LEGACY_FOOTNOTE_MM = 6.0
+_STOCK_PRINT_A4_LEGACY_CATEGORY_MM = 7.2
+_STOCK_PRINT_A4_LEGACY_ROW_MM = 5.0
+_STOCK_PRINT_A4_LEGACY_GAP_MM = 1.5
 
 
 def estimate_stock_print_a4_pages(document: dict | None) -> int:
@@ -3722,14 +3742,23 @@ def estimate_stock_print_a4_pages(document: dict | None) -> int:
     if item_count <= 0 and not categories:
         return 1
 
+    layout = (document.get("layout") or "").strip().lower()
+    if layout not in STOCK_PRINT_LAYOUTS:
+        height = _STOCK_PRINT_A4_LEGACY_HEADER_MM + _STOCK_PRINT_A4_LEGACY_FOOTNOTE_MM
+        for group in categories:
+            rows = len(group.get("rows") or [])
+            height += (
+                _STOCK_PRINT_A4_LEGACY_CATEGORY_MM
+                + rows * _STOCK_PRINT_A4_LEGACY_ROW_MM
+                + _STOCK_PRINT_A4_LEGACY_GAP_MM
+            )
+        return max(1, math.ceil(height / _STOCK_PRINT_A4_LEGACY_PAGE_MM))
+
+    # One item per row: name in the first column, write-in columns beside it.
     height = _STOCK_PRINT_A4_HEADER_MM + _STOCK_PRINT_A4_FOOTNOTE_MM
     for group in categories:
         rows = len(group.get("rows") or [])
-        height += (
-            _STOCK_PRINT_A4_CATEGORY_OVERHEAD_MM
-            + rows * _STOCK_PRINT_A4_ROW_MM
-            + _STOCK_PRINT_A4_TABLE_GAP_MM
-        )
+        height += 6.2 + rows * 4.7 + 1.5
     return max(1, math.ceil(height / _STOCK_PRINT_A4_PAGE_MM))
 
 
@@ -3739,6 +3768,70 @@ def _format_print_money(value) -> str:
     except (InvalidOperation, TypeError, ValueError):
         amount = Decimal("0")
     return f"{amount.quantize(Decimal('0.01')):,.2f}"
+
+
+def _print_today_balances(item_ids, shop_ids):
+    """Opening at local midnight, units sold today, and current closing qty.
+
+    Opening is the system on-hand rewound to the start of today. Sold is
+    receipt sales (including credit) since then. Closing is on-hand now.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from items.views import (
+        _current_stock_by_item_shop,
+        _item_report_closing_starting,
+        _movement_qty_by_item_shop,
+        _qty_num,
+        _receipt_sale_qty_by_item_shop,
+        _return_qty_by_item_shop,
+        _transfer_qty_by_item_shop,
+    )
+
+    now = timezone.localtime()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    item_ids = list(item_ids or [])
+    shop_ids = list(shop_ids or [])
+    empty = {
+        (item_id, shop_id): {"opening": 0, "sold": 0, "closing": 0}
+        for item_id in item_ids
+        for shop_id in shop_ids
+    }
+    if not item_ids or not shop_ids:
+        return empty, day_start
+
+    current = _current_stock_by_item_shop(item_ids, shop_ids)
+    moves = _movement_qty_by_item_shop(item_ids, shop_ids, day_start, day_end)
+    transfers = _transfer_qty_by_item_shop(item_ids, shop_ids, day_start, day_end)
+    sales = _receipt_sale_qty_by_item_shop(item_ids, shop_ids, day_start, day_end)
+    returns = _return_qty_by_item_shop(item_ids, shop_ids, day_start, day_end)
+    balances = {}
+    for item_id in item_ids:
+        for shop_id in shop_ids:
+            key = (item_id, shop_id)
+            move = moves.get(key) or {"in": 0, "out": 0}
+            transfer = transfers.get(key) or {"in": 0, "out": 0}
+            sold = _qty_num(sales.get(key) or 0)
+            opening, closing = _item_report_closing_starting(
+                current=_qty_num(current.get(key) or 0),
+                after_in=0,
+                after_out=0,
+                after_sale=0,
+                after_transfer_in=0,
+                after_transfer_out=0,
+                after_return=0,
+                stock_in=_qty_num(move.get("in")),
+                stock_out=_qty_num(move.get("out")),
+                stock_sale=sold,
+                stock_transfer_in=_qty_num(transfer.get("in")),
+                stock_transfer_out=_qty_num(transfer.get("out")),
+                stock_return=_qty_num(returns.get(key) or 0),
+            )
+            balances[key] = {"opening": opening, "sold": sold, "closing": closing}
+    return balances, day_start
 
 
 def build_stock_print_document(*, layout: str, shops) -> dict:
@@ -3771,6 +3864,14 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
         ).values_list("item_id", "shop_id", "quantity"):
             stock_map[(item_id, shop_id)] = _quantize_qty(qty)
 
+    day_balances: dict[tuple[int, int], dict] = {}
+    balance_day = ""
+    if layout == "balances":
+        day_balances, day_start = _print_today_balances(
+            [item.pk for item in items], shop_ids
+        )
+        balance_day = day_start.strftime("%d %b %Y")
+
     price_overrides: dict[tuple[int, int], Decimal] = {}
     if layout == "prices" and shop_ids and items:
         item_ids = [item.pk for item in items]
@@ -3780,6 +3881,9 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
             if price is not None:
                 price_overrides[(item_id, shop_id)] = Decimal(price)
 
+    from shops.services import HIDDEN_STOCK_LABEL, item_stock_is_hidden, stock_hide_state
+
+    hide_state = stock_hide_state() if layout in ("stock", "balances") else None
     categories: list[dict] = []
     current_category = None
     current_rows: list[dict] = []
@@ -3819,6 +3923,7 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
             if len(shops) == 1:
                 row["price"] = prices[0]["price"] if prices else "0.00"
         elif layout == "stock":
+            hidden = item_stock_is_hidden(item.pk, item.category, hide_state)
             quantities = []
             row_total = _ZERO_QTY
             for shop in shops:
@@ -3828,11 +3933,60 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
                     {
                         "shop_id": shop.pk,
                         "shop_name": shop.name,
-                        "qty": _format_qty(qty),
+                        "qty": HIDDEN_STOCK_LABEL if hidden else _format_qty(qty),
                     }
                 )
             row["quantities"] = quantities
-            row["total"] = _format_qty(row_total)
+            row["total"] = HIDDEN_STOCK_LABEL if hidden else _format_qty(row_total)
+            if len(shops) == 1:
+                row["qty"] = quantities[0]["qty"] if quantities else "0"
+        elif layout == "balances":
+            hidden = item_stock_is_hidden(item.pk, item.category, hide_state)
+            quantities = []
+            opening_total = 0
+            sold_total = 0
+            closing_total = 0
+            for shop in shops:
+                figures = day_balances.get((item.pk, shop.pk)) or {
+                    "opening": 0,
+                    "sold": 0,
+                    "closing": 0,
+                }
+                opening_total += figures["opening"]
+                sold_total += figures["sold"]
+                closing_total += figures["closing"]
+                label = HIDDEN_STOCK_LABEL if hidden else None
+                quantities.append(
+                    {
+                        "shop_id": shop.pk,
+                        "shop_name": shop.name,
+                        "opening": label or _format_qty(figures["opening"]),
+                        "sold": label or _format_qty(figures["sold"]),
+                        "closing": label or _format_qty(figures["closing"]),
+                        "qty": label or _format_qty(figures["closing"]),
+                    }
+                )
+
+            def _show(total, key):
+                if hidden:
+                    return HIDDEN_STOCK_LABEL
+                if len(quantities) <= 1:
+                    return quantities[0][key] if quantities else "0"
+                parts = [
+                    f"{entry['shop_name']}: {entry[key]}" for entry in quantities
+                ]
+                parts.append(f"Total {_format_qty(total)}")
+                return " · ".join(parts)
+
+            row["quantities"] = quantities
+            row["opening"] = _show(opening_total, "opening")
+            row["sold"] = _show(sold_total, "sold")
+            row["closing"] = _show(closing_total, "closing")
+            hidden_or = HIDDEN_STOCK_LABEL if hidden else None
+            row["opening_total"] = hidden_or or _format_qty(opening_total)
+            row["sold_total"] = hidden_or or _format_qty(sold_total)
+            row["closing_total"] = hidden_or or _format_qty(closing_total)
+            row["total"] = row["closing_total"]
 
         current_rows.append(row)
 
@@ -3842,13 +3996,16 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
         "items": "Items only",
         "prices": "Items and price",
         "stock": "Items with current stock",
+        "balances": "Opening, sold, and closing",
     }
     shop_label = ""
-    if layout in ("prices", "stock"):
+    if layout in ("prices", "stock", "balances"):
         if len(shops) == 1:
             shop_label = shops[0].name
         elif shops:
             shop_label = f"{len(shops)} shops"
+    if layout == "balances" and balance_day:
+        shop_label = f"{shop_label} · {balance_day}" if shop_label else balance_day
 
     item_count = sum(len(group["rows"]) for group in categories)
     document = {
@@ -3858,6 +4015,7 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
         "shops": [{"id": shop.pk, "name": shop.name} for shop in shops],
         "categories": categories,
         "item_count": item_count,
+        "balance_day": balance_day,
     }
     document["a4_page_estimate"] = estimate_stock_print_a4_pages(document)
     return document
@@ -3904,18 +4062,34 @@ def build_stock_print_xlsx(
             columns = ["Category", "Item"] + [
                 str(shop.get("name") or "Shop") for shop in shops
             ]
+    elif layout == "balances":
+        if len(shops) <= 1:
+            columns = ["Category", "Item", "Opening", "Sold", "Closing"]
+        else:
+            columns = ["Category", "Item"]
+            for shop in shops:
+                name = str(shop.get("name") or "Shop")
+                columns.extend([f"{name} opening", f"{name} sold", f"{name} closing"])
+            columns.extend(["Opening", "Sold", "Closing"])
+        columns.append("Actual shop stock")
     elif layout == "stock":
-        columns = ["Category", "Item"] + [
-            str(shop.get("name") or "Shop") for shop in shops
-        ]
-        if len(shops) > 1:
+        if len(shops) <= 1:
+            columns = ["Category", "Item", "Qty"]
+        else:
+            columns = ["Category", "Item"] + [
+                str(shop.get("name") or "Shop") for shop in shops
+            ]
             columns.append("Total")
     else:
         columns = ["Category", "Item", "Qty", "Notes"]
 
     numeric_columns = (
-        set(range(3, len(columns) + 1)) if layout in ("prices", "stock") else set()
+        set(range(3, len(columns) + 1))
+        if layout in ("prices", "stock", "balances")
+        else set()
     )
+    if layout == "balances" and columns:
+        numeric_columns.discard(len(columns))
 
     ws.cell(row=1, column=1, value=(company_name or "MY-SHOP").strip() or "MY-SHOP").font = Font(
         bold=True, size=14
@@ -3968,18 +4142,56 @@ def build_stock_print_xlsx(
                             value=_number(entry.get("price")),
                         )
                         cell.number_format = "#,##0.00"
+            elif layout == "balances":
+                def _write_qty(column, value, *, bold=False):
+                    text = str(value if value is not None else "0")
+                    cell = ws.cell(row=row_idx, column=column)
+                    try:
+                        cell.value = float(text.replace(",", "").strip() or 0)
+                        cell.number_format = "#,##0.###"
+                    except ValueError:
+                        cell.value = text
+                    if bold:
+                        cell.font = total_font
+
+                quantities = list(row.get("quantities") or [])
+                if len(shops) <= 1:
+                    entry = quantities[0] if quantities else {}
+                    _write_qty(3, entry.get("opening", row.get("opening")))
+                    _write_qty(4, entry.get("sold", row.get("sold")))
+                    _write_qty(5, entry.get("closing", row.get("closing")))
+                    ws.cell(row=row_idx, column=6, value=None)
+                else:
+                    column = 3
+                    for entry in quantities:
+                        _write_qty(column, entry.get("opening"))
+                        _write_qty(column + 1, entry.get("sold"))
+                        _write_qty(column + 2, entry.get("closing"))
+                        column += 3
+                    _write_qty(column, row.get("opening_total"), bold=True)
+                    _write_qty(column + 1, row.get("sold_total"), bold=True)
+                    _write_qty(column + 2, row.get("closing_total"), bold=True)
+                    ws.cell(row=row_idx, column=column + 3, value=None)
             elif layout == "stock":
-                for offset, entry in enumerate(row.get("quantities") or []):
+                quantities = list(row.get("quantities") or [])
+                if len(shops) <= 1:
                     cell = ws.cell(
                         row=row_idx,
-                        column=3 + offset,
-                        value=_number(entry.get("qty")),
+                        column=3,
+                        value=_number(row.get("qty") or (quantities[0].get("qty") if quantities else 0)),
                     )
                     cell.number_format = "#,##0.###"
-                if len(shops) > 1:
+                else:
+                    for offset, entry in enumerate(quantities):
+                        cell = ws.cell(
+                            row=row_idx,
+                            column=3 + offset,
+                            value=_number(entry.get("qty")),
+                        )
+                        cell.number_format = "#,##0.###"
                     cell = ws.cell(
                         row=row_idx,
-                        column=3 + len(shops),
+                        column=3 + len(quantities),
                         value=_number(row.get("total")),
                     )
                     cell.number_format = "#,##0.###"
@@ -4006,15 +4218,21 @@ def build_stock_print_pdf(
     company_name: str,
     printed_at,
 ) -> bytes:
-    """Render the stock print document as an A4 PDF."""
+    """Render the stock print document as a compact A4 table.
+
+    Item names stay in the first column. Items-only sheets add three
+    write-in columns (Shop qty, Count, Note). Current-stock sheets show
+    today's opening balance, units sold, and closing balance.
+    """
     from io import BytesIO
 
     from reportlab.lib import colors
-    from reportlab.lib.enums import TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
     from reportlab.platypus import (
+        KeepTogether,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
@@ -4030,10 +4248,10 @@ def build_stock_print_pdf(
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        leftMargin=8 * mm,
-        rightMargin=8 * mm,
-        topMargin=8 * mm,
-        bottomMargin=9 * mm,
+        leftMargin=6 * mm,
+        rightMargin=6 * mm,
+        topMargin=6 * mm,
+        bottomMargin=7 * mm,
         title=f"{company_name} — {document.get('title') or 'Stock list'}",
         author=company_name or "MY-SHOP",
     )
@@ -4044,7 +4262,6 @@ def build_stock_print_pdf(
     line_soft = colors.HexColor("#333333")
     head_fill = colors.HexColor("#d0d0d0")
     category_fill = colors.HexColor("#b8b8b8")
-    row_alt = colors.HexColor("#ececec")
     accent = colors.HexColor("#000000")
 
     styles = getSampleStyleSheet()
@@ -4061,10 +4278,10 @@ def build_stock_print_pdf(
         "StockTitle",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=14,
+        fontSize=12,
         textColor=ink,
-        leading=17,
-        spaceAfter=1,
+        leading=14,
+        spaceAfter=0,
     )
     subtitle_style = ParagraphStyle(
         "StockSubtitle",
@@ -4092,29 +4309,86 @@ def build_stock_print_pdf(
         leading=10,
         alignment=TA_RIGHT,
     )
-    cell_style = ParagraphStyle(
-        "StockCell",
+    foot_style = ParagraphStyle(
+        "StockFoot",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=9,
+        fontSize=6.5,
         textColor=ink,
-        leading=11,
+        leading=8,
     )
-    head_cell = ParagraphStyle(
-        "StockHeadCell",
+    hint_style = ParagraphStyle(
+        "StockHint",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=6.5,
+        textColor=muted,
+        leading=8,
+    )
+    card_name = ParagraphStyle(
+        "StockCardName",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7,
+        textColor=ink,
+        leading=8.2,
+    )
+    card_label = ParagraphStyle(
+        "StockCardLabel",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=5.5,
+        textColor=ink,
+        leading=6.6,
+    )
+    card_head = ParagraphStyle(
+        "StockCardHead",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=5.2,
+        textColor=ink,
+        leading=6.2,
+        alignment=TA_CENTER,
+    )
+    card_system = ParagraphStyle(
+        "StockCardSystem",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
         fontSize=7.5,
         textColor=ink,
         leading=9,
+        alignment=TA_CENTER,
     )
-    foot_style = ParagraphStyle(
-        "StockFoot",
+    card_system_multi = ParagraphStyle(
+        "StockCardSystemMulti",
+        parent=card_system,
+        fontSize=5.6,
+        leading=6.8,
+    )
+    card_price = ParagraphStyle(
+        "StockCardPrice",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=8,
+        textColor=ink,
+        leading=10,
+        alignment=TA_RIGHT,
+    )
+    card_price_line = ParagraphStyle(
+        "StockCardPriceLine",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=6.2,
+        textColor=ink,
+        leading=7.6,
+    )
+    cat_style = ParagraphStyle(
+        "StockCat",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
         fontSize=7,
         textColor=ink,
-        leading=9,
+        leading=8.5,
     )
 
     layout = (document.get("layout") or "items").strip().lower()
@@ -4162,124 +4436,150 @@ def build_stock_print_pdf(
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                 ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("LINEBELOW", (0, 0), (-1, -1), 1.25, line),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("LINEBELOW", (0, 0), (-1, -1), 1.1, line),
             ]
         )
     )
 
-    story: list = [header, Spacer(1, 4 * mm)]
-
-    def _col_count() -> int:
-        if layout == "items":
-            return 4
-        if layout == "prices":
-            return 2 if len(shops) <= 1 else 1 + len(shops)
-        if layout == "stock":
-            return (len(shops) + 1) if len(shops) > 1 else max(2, 1 + len(shops))
-        return 2
-
-    def _header_labels() -> list[str]:
-        labels = ["Item"]
-        if layout == "items":
-            labels.extend(["Qty", "Notes", ""])
-        elif layout == "prices":
-            if len(shops) <= 1:
-                labels.append("Price")
-            else:
-                labels.extend([shop.get("name") or "Shop" for shop in shops])
-        elif layout == "stock":
-            labels.extend([shop.get("name") or "Shop" for shop in shops])
-            if len(shops) > 1:
-                labels.append("Total")
-        return labels
-
-    def _row_values(row: dict) -> list:
-        values = [Paragraph(_esc(row.get("name") or ""), cell_style)]
-        if layout == "items":
-            values.extend(["", "", ""])
-        elif layout == "prices":
-            if len(shops) <= 1:
-                values.append(_esc(row.get("price") or "0.00"))
-            else:
-                for price in row.get("prices") or []:
-                    values.append(_esc(price.get("price") or "0.00"))
-        elif layout == "stock":
-            for qty in row.get("quantities") or []:
-                values.append(str(qty.get("qty") if qty.get("qty") is not None else 0))
-            if len(shops) > 1:
-                values.append(str(row.get("total") if row.get("total") is not None else 0))
-        return values
-
-    labels = _header_labels()
-    ncols = max(len(labels), _col_count())
-    usable = doc.width
-
-    if layout == "items":
-        col_widths = [
-            usable * 0.42,
-            usable * 0.12,
-            usable * 0.23,
-            usable * 0.23,
-        ]
-    elif ncols <= 2:
-        col_widths = [usable * 0.62, usable * 0.38]
+    if layout == "balances":
+        hint = "Opening is the system balance at the start of today. Sold is today's sales. Closing is the balance now. Write the counted quantity in Actual shop stock."
+    elif layout == "stock":
+        hint = "Item names are in the first column. Qty is the current system balance."
+    elif layout == "prices":
+        hint = "Item names are in the first column, with the selling price beside each name."
     else:
-        item_w = usable * (0.28 if ncols > 4 else 0.36)
-        rest = (usable - item_w) / max(1, ncols - 1)
-        col_widths = [item_w] + [rest] * (ncols - 1)
+        hint = "Item names are in the first column. Write Shop qty, Count, and Note in the blank columns."
+
+    story: list = [header, Spacer(1, 1.1 * mm), Paragraph(_esc(hint), hint_style), Spacer(1, 1.3 * mm)]
+
+    usable = doc.width
+    row_alt = colors.HexColor("#f3f3f3")
+    system_fill = colors.HexColor("#fff7e8")
+
+    if layout == "balances":
+        labels = ["Item", "Opening", "Sold", "Closing", "Actual shop stock"]
+        col_widths = [
+            usable * 0.34,
+            usable * 0.15,
+            usable * 0.14,
+            usable * 0.15,
+            usable * 0.22,
+        ]
+        system_col = 1
+    elif layout == "stock":
+        if len(shops) <= 1:
+            labels = ["Item", "Qty"]
+            col_widths = [usable * 0.72, usable * 0.28]
+        else:
+            labels = ["Item"] + [str(shop.get("name") or "Shop") for shop in shops] + ["Total"]
+            item_w = usable * (0.28 if len(labels) > 4 else 0.40)
+            rest = (usable - item_w) / max(1, len(labels) - 1)
+            col_widths = [item_w] + [rest] * (len(labels) - 1)
+        system_col = None
+    elif layout == "prices":
+        if len(shops) <= 1:
+            labels = ["Item", "Price"]
+            col_widths = [usable * 0.68, usable * 0.32]
+        else:
+            labels = ["Item"] + [str(shop.get("name") or "Shop") for shop in shops]
+            item_w = usable * (0.30 if len(labels) > 4 else 0.40)
+            rest = (usable - item_w) / max(1, len(labels) - 1)
+            col_widths = [item_w] + [rest] * (len(labels) - 1)
+        system_col = None
+    else:
+        labels = ["Item", "Shop qty", "Count", "Note"]
+        col_widths = [
+            usable * 0.46,
+            usable * 0.18,
+            usable * 0.18,
+            usable * 0.18,
+        ]
+        system_col = None
+
+    ncols = len(labels)
+
+    def _cells(row: dict) -> list:
+        cells = [Paragraph(_esc(row.get("name") or ""), card_name)]
+        if layout == "balances":
+            balance_style = (
+                card_system_multi
+                if len(row.get("quantities") or []) > 1
+                else card_system
+            )
+            cells.append(Paragraph(_esc(row.get("opening") or "0"), balance_style))
+            cells.append(Paragraph(_esc(row.get("sold") or "0"), balance_style))
+            cells.append(Paragraph(_esc(row.get("closing") or "0"), balance_style))
+            cells.append("")
+        elif layout == "stock":
+            if len(shops) <= 1:
+                cells.append(Paragraph(_esc(row.get("qty") or "0"), card_system))
+            else:
+                for entry in row.get("quantities") or []:
+                    cells.append(Paragraph(_esc(entry.get("qty") or "0"), card_system))
+                cells.append(Paragraph(_esc(row.get("total") or "0"), card_system))
+        elif layout == "prices":
+            if len(shops) <= 1:
+                prices = list(row.get("prices") or [])
+                amount = row.get("price") or (prices[0].get("price") if prices else "0.00")
+                cells.append(Paragraph(_esc(amount), card_price))
+            else:
+                for entry in row.get("prices") or []:
+                    cells.append(Paragraph(_esc(entry.get("price") or "0.00"), card_price))
+        else:
+            cells.extend(["", "", ""])
+        while len(cells) < ncols:
+            cells.append("")
+        return cells[:ncols]
 
     categories = document.get("categories") or []
     if not categories:
         story.append(Paragraph("No items to print.", foot_style))
     else:
         for group in categories:
-            cat_name = _esc(str(group.get("name") or "Uncategorised").upper())
-            cat_row = [Paragraph(cat_name, head_cell)] + [""] * (ncols - 1)
-            head_row = []
-            for label in labels[:ncols]:
-                head_row.append(Paragraph(_esc(label), head_cell) if label else "")
-            while len(head_row) < ncols:
-                head_row.append("")
-
-            data = [cat_row, head_row]
+            head = []
+            for index, label in enumerate(labels):
+                style = card_name if index == 0 else card_head
+                head.append(Paragraph(_esc(label).upper(), style))
+            data = [
+                [Paragraph(_esc(str(group.get("name") or "Uncategorised").upper()), cat_style)]
+                + [""] * (ncols - 1),
+                head,
+            ]
             for row in group.get("rows") or []:
-                values = _row_values(row)
-                while len(values) < ncols:
-                    values.append("")
-                data.append(values[:ncols])
+                data.append(_cells(row))
 
-            table = Table(data, colWidths=col_widths[:ncols], repeatRows=2)
-            style_cmds = [
+            table = Table(data, colWidths=col_widths, repeatRows=2)
+            cmds = [
                 ("FONTNAME", (0, 0), (-1, -1), MANROPE_PDF),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
                 ("TEXTCOLOR", (0, 0), (-1, -1), ink),
-                ("GRID", (0, 0), (-1, -1), 0.4, line_soft),
-                ("BOX", (0, 0), (-1, -1), 0.8, line),
+                ("GRID", (0, 0), (-1, -1), 0.35, line_soft),
+                ("BOX", (0, 0), (-1, -1), 0.7, line),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 3),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-                ("TOPPADDING", (0, 0), (-1, -1), 2.2),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, 1), 1.3),
+                ("BOTTOMPADDING", (0, 0), (-1, 1), 1.1),
+                ("TOPPADDING", (0, 2), (-1, -1), 1.6),
+                ("BOTTOMPADDING", (0, 2), (-1, -1), 1.6),
                 ("BACKGROUND", (0, 0), (-1, 0), category_fill),
                 ("SPAN", (0, 0), (-1, 0)),
                 ("BACKGROUND", (0, 1), (-1, 1), head_fill),
-                ("FONTNAME", (0, 1), (-1, 1), MANROPE_PDF_BOLD),
-                ("FONTSIZE", (0, 1), (-1, 1), 7.5),
                 ("ALIGN", (1, 1), (-1, 1), "CENTER"),
-                ("ALIGN", (1, 2), (-1, -1), "RIGHT"),
-                ("LINEBEFORE", (1, 0), (1, -1), 0.7, line),
+                ("ALIGN", (1, 2), (-1, -1), "CENTER"),
+                ("ALIGN", (0, 2), (0, -1), "LEFT"),
             ]
             for r in range(2, len(data)):
                 if (r - 2) % 2 == 1:
-                    style_cmds.append(("BACKGROUND", (0, r), (-1, r), row_alt))
-            if layout == "items":
-                # Blank write-in columns stay left-aligned / empty.
-                style_cmds.append(("ALIGN", (1, 2), (-1, -1), "LEFT"))
-
-            table.setStyle(TableStyle(style_cmds))
+                    cmds.append(("BACKGROUND", (0, r), (0, r), row_alt))
+            if system_col is not None and len(data) > 2:
+                cmds.append(("BACKGROUND", (1, 2), (1, -1), system_fill))
+                cmds.append(
+                    ("BACKGROUND", (3, 2), (3, -1), colors.HexColor("#ecfdf5"))
+                )
+            table.setStyle(TableStyle(cmds))
             story.append(table)
-            story.append(Spacer(1, 2.2 * mm))
+            story.append(Spacer(1, 1.6 * mm))
 
     foot = Table(
         [

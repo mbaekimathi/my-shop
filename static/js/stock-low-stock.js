@@ -100,14 +100,20 @@
       }
       if (row.classList.contains("is-item-total")) {
         if (unitsEl && data.total_units != null) {
-          unitsEl.textContent = String(data.total_units);
+          unitsEl.dataset.units = String(data.total_units);
+          unitsEl.textContent =
+            unitsEl.dataset.stockHidden === "1" ? "Hidden" : String(data.total_units);
         }
         setBadge(row, { notify, isLow: data.is_low });
         return;
       }
       const shop = shopsById.get(row.dataset.shopId || "");
       if (shop) {
-        if (unitsEl) unitsEl.textContent = String(shop.units ?? 0);
+        if (unitsEl) {
+          unitsEl.dataset.units = String(shop.units ?? 0);
+          unitsEl.textContent =
+            unitsEl.dataset.stockHidden === "1" ? "Hidden" : String(shop.units ?? 0);
+        }
         applyThresholdInput(thresholdInput, shop, row);
         setBadge(row, { notify, isLow: shop.is_low });
         return;
@@ -140,9 +146,8 @@
       let anyLow = false;
       rows.forEach((row) => {
         if (row.classList.contains("is-item-total")) return;
-        const units = Number(
-          row.querySelector("[data-low-stock-units]")?.textContent || 0
-        );
+        const unitsEl = row.querySelector("[data-low-stock-units]");
+        const units = Number(unitsEl?.dataset.units || unitsEl?.textContent || 0);
         const threshold = Number(
           row.dataset.effectiveThreshold ||
             row.querySelector("[data-low-stock-threshold]")?.placeholder ||

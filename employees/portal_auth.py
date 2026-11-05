@@ -15,15 +15,21 @@ def portal_login_context(
     next_url="",
     employee_username="",
     shop_login_code="",
+    selected_shop_id="",
     rate_limited=False,
     switch=False,
 ):
+    from shops.services import public_login_shops
+
     if rate_limited and not employee_error and not shop_error:
         message = "Too many sign-in attempts. Wait a moment and try again."
         if login_mode == "shop":
             shop_error = message
         else:
             employee_error = message
+    shop_id = str(selected_shop_id or "").strip()
+    if not shop_id.isdigit():
+        shop_id = ""
     return {
         "login_mode": login_mode if login_mode in {"employee", "shop"} else "employee",
         "employee_error": employee_error,
@@ -31,6 +37,8 @@ def portal_login_context(
         "next_url": next_url or "",
         "employee_username": employee_username or "",
         "shop_login_code": shop_login_code or "",
+        "selected_shop_id": shop_id,
+        "login_shops": public_login_shops(),
         "switch": bool(switch),
     }
 

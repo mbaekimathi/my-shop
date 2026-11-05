@@ -643,6 +643,122 @@ def stock_settings_as_dict(settings_row: CompanyStockSettings | None = None) -> 
     }
 
 
+HIDDEN_STOCK_LABEL = "Hidden"
+BLANK_CATEGORY_TOKEN = "__blank__"
+
+
+def category_form_token(name: str) -> str:
+    text = str(name or "")
+    return BLANK_CATEGORY_TOKEN if text == "" else text
+
+
+def category_from_form_token(token: str) -> str:
+    text = str(token or "")
+    return "" if text == BLANK_CATEGORY_TOKEN else text.strip()
+
+
+def stock_hide_state(settings_row: CompanyStockSettings | None = None) -> dict:
+    """How current stock numbers are masked. Operations still use the real quantity."""
+    row = settings_row or get_company_stock_settings()
+    mode = (row.hide_stock_mode or "show").strip().lower()
+    categories = []
+    for raw in row.hide_stock_categories or []:
+        text = "" if raw is None else str(raw).strip()
+        if text not in categories:
+            categories.append(text)
+    item_ids = []
+    for raw in row.hide_stock_item_ids or []:
+        try:
+            item_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if item_id not in item_ids:
+            item_ids.append(item_id)
+    active = mode == "all" or (
+        mode == "category" and bool(categories)
+    ) or (mode == "items" and bool(item_ids))
+    return {
+        "mode": mode if mode in {"show", "all", "category", "items"} else "show",
+        "categories": categories,
+        "category_set": set(categories),
+        "item_ids": item_ids,
+        "item_id_set": set(item_ids),
+        "active": active,
+    }
+
+
+def item_stock_is_hidden(item_id, category="", state=None) -> bool:
+    state = state or stock_hide_state()
+    mode = state["mode"]
+    if mode == "all":
+        return True
+    if mode == "category":
+        return str(category or "").strip() in state["category_set"]
+    if mode == "items":
+        try:
+            return int(item_id) in state["item_id_set"]
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def save_stock_visibility(*, mode: str, categories, item_ids) -> CompanyStockSettings:
+    from items.models import Item
+
+    mode = (mode or "show").strip().lower()
+    if mode not in {"show", "all", "category", "items"}:
+        raise ValidationError("Choose whether to show or hide stock numbers.")
+
+    cleaned_categories = []
+    for raw in categories or []:
+        text = category_from_form_token(raw)
+        if text not in cleaned_categories:
+            cleaned_categories.append(text)
+
+    cleaned_ids = []
+    for raw in item_ids or []:
+        try:
+            item_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if item_id not in cleaned_ids:
+            cleaned_ids.append(item_id)
+
+    if mode == "category":
+        known = set(
+            Item.objects.filter(is_suspended=False).values_list("category", flat=True)
+        )
+        cleaned_categories = [name for name in cleaned_categories if name in known]
+        if not cleaned_categories:
+            raise ValidationError("Select at least one category to hide.")
+    if mode == "items":
+        found = set(
+            Item.objects.filter(pk__in=cleaned_ids, is_suspended=False).values_list(
+                "pk", flat=True
+            )
+        )
+        cleaned_ids = [item_id for item_id in cleaned_ids if item_id in found]
+        if not cleaned_ids:
+            raise ValidationError("Select at least one item to hide.")
+
+    row = get_company_stock_settings()
+    row.hide_stock_mode = mode
+    if mode == "category":
+        row.hide_stock_categories = cleaned_categories
+    if mode == "items":
+        row.hide_stock_item_ids = cleaned_ids
+    row.save(
+        update_fields=[
+            "hide_stock_mode",
+            "hide_stock_categories",
+            "hide_stock_item_ids",
+            "updated_at",
+        ]
+    )
+    _invalidate_stock_settings_cache()
+    return get_company_stock_settings()
+
+
 WORKING_HOURS_DAY_FIELDS = frozenset(field for field, _label, _short in WORKING_DAY_FIELDS)
 WEEKDAY_WORK_FIELDS = tuple(field for field, _label, _short in WORKING_DAY_FIELDS)
 
@@ -3420,6 +3536,59 @@ def authenticate_shop_login(login_code: str, password: str):
     if not verify_shop_password(shop, password):
         return None
     return shop
+
+
+def authenticate_shop_selection(shop_id, password: str):
+    """
+    Authenticate a shop portal sign-in from a shop chosen on the login page.
+
+    Returns the Shop on success, or None when the id is missing, the shop is
+    hidden or suspended, or the password is wrong. A dummy password check
+    runs when the shop is missing so timing does not reveal which ids exist.
+    """
+    password = password or ""
+    if len(password) < 1:
+        return None
+    try:
+        pk = int(shop_id)
+    except (TypeError, ValueError):
+        check_password(password, _shop_login_dummy_hash())
+        return None
+    if pk < 1:
+        check_password(password, _shop_login_dummy_hash())
+        return None
+
+    shop = (
+        Shop.objects.filter(pk=pk)
+        .only(
+            "id",
+            "name",
+            "location",
+            "login_code",
+            "password_hash",
+            "is_suspended",
+            "is_hidden",
+        )
+        .first()
+    )
+    if shop is None:
+        check_password(password, _shop_login_dummy_hash())
+        return None
+    if shop.is_hidden or shop.is_suspended:
+        check_password(password, shop.password_hash or _shop_login_dummy_hash())
+        return None
+    if not verify_shop_password(shop, password):
+        return None
+    return shop
+
+
+def public_login_shops():
+    """Active shops a visitor can choose on the public sign-in page."""
+    return list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False)
+        .only("id", "name", "location")
+        .order_by("name", "id")
+    )
 
 
 def _money(value) -> Decimal:
