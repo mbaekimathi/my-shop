@@ -1217,6 +1217,20 @@ def sidebar_for_stock_management(
                             active=active_mode == "activity-audits",
                         )
                     )
+                from shops.services import company_pos_analytics_section_visible
+
+                if (
+                    company_pos_analytics_section_visible("tradings")
+                    and (profile is None or employee_may(profile, "analytics", "tradings"))
+                ):
+                    primary.append(
+                        _link(
+                            "Tradings",
+                            "repeat",
+                            href=analytics_section_url(role, "tradings"),
+                            active=False,
+                        )
+                    )
                 if active_mode == "view" and _allowed("print"):
                     primary.append(
                         _action("Print stock", "printer", action="print-stock")

@@ -7416,6 +7416,418 @@ def _create_customer_return_stock_movement(
     return movement
 
 
+def _create_trade_in_return_stock_movement(
+    *,
+    shop: Shop,
+    receipt,
+    actor,
+    occurred_at,
+    lines: list[dict],
+    reason: str = "",
+):
+    """Ledger-only stock-out when a trade-in item is returned to the client."""
+    from items.models import (
+        StockEntrySource,
+        StockMovement,
+        StockMovementLine,
+        StockMovementType,
+        StockOutReason,
+    )
+
+    prepared = [
+        row for row in lines if row.get("item") is not None and _qty(row.get("qty")) > 0
+    ]
+    if not prepared:
+        return None
+
+    reason_text = (reason or "").strip()
+    notes = f"Trade in return on {receipt.receipt_number}"
+    if reason_text:
+        notes = f"{notes}: {reason_text}"
+    movement = StockMovement.objects.create(
+        movement_type=StockMovementType.OUT,
+        entry_source=StockEntrySource.TRADE_IN,
+        shop=shop,
+        created_by=actor,
+        notes=notes,
+        supplier_notified=True,
+    )
+    StockMovement.objects.filter(pk=movement.pk).update(created_at=occurred_at)
+    movement.created_at = occurred_at
+
+    for row in prepared:
+        item = row["item"]
+        qty = _qty(row["qty"])
+        unit_cost = Decimal(row.get("unit_cost") or 0)
+        serials = [
+            str(s).strip() for s in (row.get("serial_numbers") or []) if str(s).strip()
+        ]
+        line_note = f"Trade in return on {receipt.receipt_number}"
+        if reason_text:
+            line_note = f"{line_note}: {reason_text}"
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=item,
+            quantity=qty,
+            unit_cost=unit_cost,
+            reason=StockOutReason.TRADE_IN,
+            note=line_note,
+            serial_numbers=serials,
+        )
+    return movement
+
+
+@transaction.atomic
+def return_trade_in_receipt_items(
+    *, shop: Shop, receipt_id: int, payload: dict, actor=None
+) -> dict:
+    """
+    Reverse a trade-in: remove returned goods from shop stock and lower the
+    amount owed on the trade-in receipt.
+    """
+    from employees.services import verify_active_employee_code
+    from items.models import Item, ItemSerial, ShopStock
+    from items.services import _normalize_serial_list
+
+    from .models import ShopReceipt, ShopReceiptLine
+
+    if actor is not None:
+        authorising = actor
+    else:
+        login_code = (payload.get("login_code") or "").strip()
+        authorising = verify_active_employee_code(login_code)
+        if authorising is None:
+            raise ValidationError("Enter a valid active staff 6-digit ID.")
+
+        from employees.module_permissions import ensure_employee_may
+
+        ensure_employee_may(
+            authorising,
+            "my-shop",
+            "return_receipt",
+            message="You do not have permission to return receipts.",
+        )
+
+    try:
+        receipt = (
+            ShopReceipt.objects.select_for_update()
+            .select_related("shop")
+            .prefetch_related("lines")
+            .get(pk=receipt_id, shop=shop)
+        )
+    except ShopReceipt.DoesNotExist as exc:
+        raise ValidationError("Receipt not found for this shop.") from exc
+
+    if receipt.kind != ShopReceiptKind.TRADE_IN:
+        raise ValidationError("Only trade-in receipts can use this return path.")
+    if receipt.status == ShopReceiptStatus.CANCELLED:
+        raise ValidationError("This trade-in is already fully returned.")
+
+    reason = (payload.get("reason") or payload.get("return_reason") or "").strip()
+    if not reason:
+        raise ValidationError("Enter a reason for the return.")
+    if len(reason) > 500:
+        raise ValidationError("Return reason must be 500 characters or fewer.")
+
+    raw_lines = payload.get("lines") or []
+    if not isinstance(raw_lines, list) or not raw_lines:
+        raise ValidationError("Select at least one item to return.")
+
+    lines_by_id = {line.pk: line for line in receipt.lines.all()}
+    prepared = []
+    errors = []
+    item_ids = set()
+
+    for raw in raw_lines:
+        try:
+            line_id = int(raw.get("line_id") or raw.get("id") or 0)
+        except (TypeError, ValueError):
+            line_id = 0
+        try:
+            qty = _parse_qty(raw.get("qty") or raw.get("quantity") or 0)
+        except ValidationError:
+            qty = Decimal("0")
+        serials = _normalize_serial_list(
+            raw.get("serials") or raw.get("serial_numbers") or []
+        )
+        if serials and qty <= 0:
+            qty = _qty(len(serials))
+        elif serials and qty != len(serials):
+            errors.append("Serial-tracked returns need one serial per unit.")
+            continue
+        if line_id <= 0 or qty <= 0:
+            errors.append("Each return line needs a valid item and quantity.")
+            continue
+        line = lines_by_id.get(line_id)
+        if line is None:
+            errors.append(f"Receipt line #{line_id} was not found.")
+            continue
+        remaining = line.remaining_quantity
+        if qty > remaining:
+            errors.append(
+                f"“{line.item_name}”: only {_qty_label(remaining)} unit(s) left to return."
+            )
+            continue
+
+        remaining_serials = line.remaining_serial_numbers
+        if remaining_serials:
+            if not serials:
+                errors.append(f"“{line.item_name}” requires serial numbers to return.")
+                continue
+            if len(serials) != qty:
+                errors.append(
+                    f"“{line.item_name}”: return quantity must match serial count."
+                )
+                continue
+            missing = [s for s in serials if s not in remaining_serials]
+            if missing:
+                errors.append(
+                    f"“{line.item_name}”: serial not on this receipt "
+                    f"({', '.join(missing[:5])}{'…' if len(missing) > 5 else ''})."
+                )
+                continue
+        elif serials:
+            serials = []
+
+        serial_objects = {}
+        if serials:
+            if not line.item_id:
+                errors.append(
+                    f"“{line.item_name}”: cannot verify serial numbers for this line."
+                )
+                continue
+            found = {
+                row.serial_number: row
+                for row in ItemSerial.objects.select_for_update().filter(
+                    item_id=line.item_id,
+                    serial_number__in=serials,
+                )
+            }
+            not_in_system = [s for s in serials if s not in found]
+            if not_in_system:
+                errors.append(
+                    f"“{line.item_name}”: serial not in the system "
+                    f"({', '.join(not_in_system[:5])}"
+                    f"{'…' if len(not_in_system) > 5 else ''})."
+                )
+                continue
+            not_in_stock = [
+                s
+                for s in serials
+                if not found[s].is_available or found[s].shop_id != shop.pk
+            ]
+            if not_in_stock:
+                errors.append(
+                    f"“{line.item_name}”: serial is no longer in this shop's stock "
+                    f"({', '.join(not_in_stock[:5])}"
+                    f"{'…' if len(not_in_stock) > 5 else ''})."
+                )
+                continue
+            serial_objects = found
+
+        if line.item_id:
+            item_ids.add(line.item_id)
+        prepared.append(
+            {
+                "line": line,
+                "qty": qty,
+                "serial_numbers": serials,
+                "serial_objects": serial_objects,
+            }
+        )
+
+    if errors:
+        raise ValidationError(errors)
+    if not prepared:
+        raise ValidationError("Select at least one valid item to return.")
+
+    items_by_id = Item.objects.select_for_update().filter(pk__in=item_ids).in_bulk()
+    stock_by_item = {
+        row.item_id: row
+        for row in ShopStock.objects.select_for_update().filter(
+            shop=shop, item_id__in=item_ids
+        )
+    }
+
+    now = timezone.now()
+    stocks_to_update = []
+    items_to_update = []
+    serials_to_update = []
+    lines_to_update = []
+    stock_updates = []
+    movement_lines = []
+
+    for row in prepared:
+        line = row["line"]
+        qty = row["qty"]
+        serials = row["serial_numbers"]
+        line.returned_quantity = _qty(line.returned_quantity) + qty
+        if serials:
+            existing_returned = [
+                str(s).strip()
+                for s in (line.returned_serial_numbers or [])
+                if str(s).strip()
+            ]
+            line.returned_serial_numbers = existing_returned + serials
+        remaining_after = line.remaining_quantity
+        line.line_total = (
+            Decimal(line.unit_price or 0) * remaining_after
+        ).quantize(Decimal("0.01"))
+        _append_receipt_return_batch(
+            line,
+            qty=qty,
+            serials=serials,
+            at=now,
+            by_id=authorising.pk if authorising else None,
+            reason=reason,
+        )
+        lines_to_update.append(line)
+
+        item = items_by_id.get(line.item_id) if line.item_id else None
+        if item is None:
+            continue
+        stock = stock_by_item.get(item.pk)
+        if stock is None:
+            raise ValidationError(
+                f"“{line.item_name}” has no stock record at {shop.name}."
+            )
+        if stock.quantity < qty:
+            raise ValidationError(
+                f"Insufficient stock for “{line.item_name}” "
+                f"(available {_qty_label(stock.quantity)}, returning {_qty_label(qty)})."
+            )
+        unit_cost = Decimal(line.unit_cost or stock.average_cost or 0)
+        stock.quantity = _qty(stock.quantity) - qty
+        stock.updated_at = now
+        item.stock = max(_qty(0), _qty(item.stock) - qty)
+        item.updated_at = now
+        stocks_to_update.append(stock)
+        items_to_update.append(item)
+        stock_updates.append({"id": item.pk, "quantity": _qty_number(stock.quantity)})
+        movement_lines.append(
+            {
+                "item": item,
+                "qty": qty,
+                "unit_cost": unit_cost,
+                "serial_numbers": serials,
+            }
+        )
+
+        if serials:
+            found = row.get("serial_objects") or {}
+            for serial_no in serials:
+                obj = found.get(serial_no)
+                if obj is None:
+                    raise ValidationError(
+                        f"“{line.item_name}”: serial not in the system ({serial_no})."
+                    )
+                obj.is_available = False
+                obj.updated_at = now
+                serials_to_update.append(obj)
+
+    ShopReceiptLine.objects.bulk_update(
+        lines_to_update,
+        [
+            "returned_quantity",
+            "returned_serial_numbers",
+            "return_batches",
+            "line_total",
+        ],
+    )
+    if stocks_to_update:
+        ShopStock.objects.bulk_update(stocks_to_update, ["quantity", "updated_at"])
+    if items_to_update:
+        Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
+    if serials_to_update:
+        ItemSerial.objects.bulk_update(
+            serials_to_update, ["is_available", "updated_at"]
+        )
+
+    _create_trade_in_return_stock_movement(
+        shop=shop,
+        receipt=receipt,
+        actor=authorising,
+        occurred_at=now,
+        lines=movement_lines,
+        reason=reason,
+    )
+
+    all_lines = list(ShopReceiptLine.objects.filter(receipt=receipt).order_by("id"))
+    remaining_subtotal = sum(
+        (
+            (Decimal(line.unit_price or 0) * line.remaining_quantity).quantize(
+                Decimal("0.01")
+            )
+            for line in all_lines
+        ),
+        Decimal("0.00"),
+    )
+    tax_percent = Decimal(receipt.tax_percent or 0)
+    if remaining_subtotal <= 0:
+        tax_amount = Decimal("0.00")
+        total = Decimal("0.00")
+        status = ShopReceiptStatus.CANCELLED
+    else:
+        tax_amount = (remaining_subtotal * tax_percent / Decimal("100")).quantize(
+            Decimal("0.01")
+        )
+        total = (remaining_subtotal + tax_amount).quantize(Decimal("0.01"))
+        any_returned = any(_qty(line.returned_quantity) > 0 for line in all_lines)
+        if any_returned:
+            status = ShopReceiptStatus.PARTIAL_RETURN
+        elif receipt.status == ShopReceiptStatus.CONFIRMED:
+            status = ShopReceiptStatus.CONFIRMED
+        else:
+            status = ShopReceiptStatus.ACTIVE
+
+    receipt.subtotal = remaining_subtotal
+    receipt.tax_amount = tax_amount
+    receipt.total = total
+    receipt.status = status
+    receipt.last_returned_at = now
+    receipt.last_returned_by = authorising
+    return_update_fields = [
+        "subtotal",
+        "tax_amount",
+        "total",
+        "status",
+        "last_returned_at",
+        "last_returned_by",
+    ]
+    paid = Decimal(receipt.amount_paid or 0)
+    if paid > total:
+        receipt.amount_paid = total
+        return_update_fields.append("amount_paid")
+    receipt.save(update_fields=return_update_fields)
+
+    returned_units = _qty_label(
+        sum((row["qty"] for row in prepared), Decimal("0"))
+    )
+    if status == ShopReceiptStatus.CANCELLED:
+        summary = (
+            f"Trade in {receipt.receipt_number} fully returned "
+            f"({returned_units} unit(s) removed from stock)."
+        )
+    else:
+        summary = (
+            f"Returned {returned_units} unit(s) on {receipt.receipt_number}. "
+            f"Remaining total KSh {total}."
+        )
+
+    detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+    return {
+        **detail,
+        "ok": True,
+        "message": summary,
+        "authorised_by": authorising.user.get_full_name()
+        or authorising.user.username,
+        "stock_updates": stock_updates,
+        "status": status,
+        "status_label": receipt.get_status_display(),
+        "total": str(total),
+    }
+
+
 @transaction.atomic
 def return_shop_receipt_items(
     *, shop: Shop, receipt_id: int, payload: dict, actor=None

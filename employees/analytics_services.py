@@ -10948,7 +10948,7 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
         and balance > 0
     )
     can_return = (
-        receipt.kind == ShopReceiptKind.TRADE_OUT
+        receipt.kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}
         and receipt.status != ShopReceiptStatus.CANCELLED
         and any(float(row["remaining"] or 0) > 0 for row in lines)
     )

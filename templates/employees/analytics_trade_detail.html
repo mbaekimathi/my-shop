@@ -252,9 +252,15 @@
             <div class="td-serial-list" data-trade-return-serial-list></div>
           </div>
           <p class="td-preview">
+            {% if is_trade_in %}
+            Removes the item from shop stock and lowers the trade-in balance.
+            {% else %}
             Restocks shop stock and updates stock movement / stock report.
+            {% endif %}
           </p>
-          <button type="submit" class="td-submit">Return &amp; restock</button>
+          <button type="submit" class="td-submit">
+            {% if is_trade_in %}Return item{% else %}Return &amp; restock{% endif %}
+          </button>
         </form>
         {% endif %}
 

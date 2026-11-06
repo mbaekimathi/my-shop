@@ -391,19 +391,20 @@ def _clamp_trade_applied_to_total(receipt) -> list[str]:
 @transaction.atomic
 def record_trade_return(receipt, *, lines, actor=None) -> dict:
     """
-    Return traded-out item(s) to shop stock.
+    Return items on a trade receipt.
 
-    Restocks inventory, writes a CUSTOMER_RETURN stock movement (stock report /
-    stock movement), updates the trade totals, and logs the event on the trade.
+    Trade-out / settled trade-out: restock the shop and log a customer return.
+    Trade-in: remove the goods from shop stock and lower the amount owed.
     """
-    from shops.services import return_shop_receipt_items
+    from shops.services import return_shop_receipt_items, return_trade_in_receipt_items
 
-    is_open_trade = receipt.kind == ShopReceiptKind.TRADE_OUT
+    is_trade_out = receipt.kind == ShopReceiptKind.TRADE_OUT
+    is_trade_in = receipt.kind == ShopReceiptKind.TRADE_IN
     is_settled_trade = (
         receipt.kind == ShopReceiptKind.SALE
         and bool(getattr(receipt, "settled_from_trade", False))
     )
-    if not is_open_trade and not is_settled_trade:
+    if not is_trade_out and not is_trade_in and not is_settled_trade:
         raise ValidationError("Only trade receipts can be returned from Tradings.")
     if receipt.status == ShopReceiptStatus.CANCELLED:
         raise ValidationError("This trade was already fully returned.")
@@ -411,12 +412,24 @@ def record_trade_return(receipt, *, lines, actor=None) -> dict:
     if not isinstance(lines, list) or not lines:
         raise ValidationError("Select at least one item to return.")
 
-    result = return_shop_receipt_items(
-        shop=receipt.shop,
-        receipt_id=receipt.pk,
-        payload={"lines": lines, "reason": "Trade return"},
-        actor=actor,
-    )
+    payload = {
+        "lines": lines,
+        "reason": "Trade in return" if is_trade_in else "Trade return",
+    }
+    if is_trade_in:
+        result = return_trade_in_receipt_items(
+            shop=receipt.shop,
+            receipt_id=receipt.pk,
+            payload=payload,
+            actor=actor,
+        )
+    else:
+        result = return_shop_receipt_items(
+            shop=receipt.shop,
+            receipt_id=receipt.pk,
+            payload=payload,
+            actor=actor,
+        )
     receipt.refresh_from_db()
 
     from shops.services import _qty, _qty_label, _qty_number
@@ -460,7 +473,7 @@ def record_trade_return(receipt, *, lines, actor=None) -> dict:
 
     converted = False
     confirmed = False
-    if receipt.kind == ShopReceiptKind.TRADE_OUT:
+    if receipt.kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}:
         update_fields.extend(_clamp_trade_applied_to_total(receipt))
         action = finalize_trade_if_cleared(receipt)
         converted = action == "converted_sale"
@@ -484,7 +497,7 @@ def record_trade_return(receipt, *, lines, actor=None) -> dict:
 
     balance = (
         trade_balance_due(receipt)
-        if receipt.kind == ShopReceiptKind.TRADE_OUT
+        if receipt.kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}
         else Decimal("0.00")
     )
     return {
