@@ -3037,29 +3037,30 @@
   }
 
   .ax--list-table[data-ax-section="sales"] .ax-table--shops {
-    width: 100%;
-    min-width: 0;
-    table-layout: fixed;
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
+    table-layout: auto;
   }
 
   .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--item,
   .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--primary {
-    width: 14%;
-    min-width: 7rem;
-    max-width: none;
+    width: 11rem;
+    min-width: 10rem;
+    max-width: 14rem;
   }
 
   .ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--pair,
   .ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--pair {
-    width: 13%;
-    min-width: 0;
+    width: 8.75rem;
+    min-width: 8.25rem;
     max-width: none;
   }
 
   .ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--money,
   .ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--money {
-    width: 10%;
-    min-width: 0;
+    width: 7.25rem;
+    min-width: 6.75rem;
     max-width: none;
   }
 }
@@ -3263,7 +3264,7 @@
   }
 }
 
-/* Sales — compact shop summary; fits the workspace on every screen. */
+/* Sales — shop summary matrix; columns keep readable width and scroll sideways. */
 .ax--list-table[data-ax-section="sales"] {
   width: 100%;
   min-width: 0;
@@ -3450,19 +3451,34 @@
   }
 }
 
+/* Sales matrix — keep readable column widths and scroll sideways when needed. */
+.ax--list-table[data-ax-section="sales"] .ax-table-wrap--list,
+.ax--list-table[data-ax-section="sales"] .ax-table-wrap--scroll {
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  scrollbar-width: thin;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-scroll-hint {
+  display: block;
+}
+
 .ax--list-table[data-ax-section="sales"] .ax-table--shops {
-  width: 100%;
-  min-width: 0;
-  table-layout: fixed;
+  width: max-content;
+  min-width: 58rem;
+  max-width: none;
+  table-layout: auto;
   border-collapse: separate;
   border-spacing: 0;
 }
 
 .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--item,
 .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--primary {
-  width: 14%;
-  min-width: 7rem;
-  max-width: none;
+  width: 10rem;
+  min-width: 9rem;
+  max-width: 14rem;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3471,9 +3487,9 @@
 
 .ax--list-table[data-ax-section="sales"] .ax-table--shops th,
 .ax--list-table[data-ax-section="sales"] .ax-table--shops td {
-  padding: 0.5rem 0.4rem;
+  padding: 0.5rem 0.55rem;
   vertical-align: middle;
-  overflow: hidden;
+  white-space: nowrap;
 }
 
 .ax--list-table[data-ax-section="sales"] .ax-table--shops thead th {
@@ -3487,18 +3503,26 @@
 
 .ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--money,
 .ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--money {
-  width: 10%;
-  min-width: 0;
+  width: 7rem;
+  min-width: 6.5rem;
   max-width: none;
   text-align: right;
 }
 
 .ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--pair,
 .ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--pair {
-  width: 13%;
-  min-width: 0;
+  width: 8.5rem;
+  min-width: 8rem;
   max-width: none;
   text-align: center;
+}
+
+.ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--band-result,
+.ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--band-result {
+  width: 7.5rem;
+  min-width: 7rem;
+  max-width: none;
+  text-align: right;
 }
 
 .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th-pair,
@@ -3506,12 +3530,13 @@
 .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair,
 .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair--stack {
   display: grid;
-  grid-template-columns: 2.75rem minmax(0, 1fr);
-  column-gap: 0.35rem;
+  grid-template-columns: 2.75rem minmax(4.5rem, 1fr);
+  column-gap: 0.4rem;
   align-items: center;
-  width: 100%;
-  max-width: 100%;
-  margin: 0;
+  width: max-content;
+  min-width: 7.5rem;
+  max-width: none;
+  margin: 0 auto;
   box-sizing: border-box;
 }
 
@@ -3526,8 +3551,8 @@
 
 .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th-pair-cols {
   display: grid;
-  grid-template-columns: 2.75rem minmax(0, 1fr);
-  column-gap: 0.35rem;
+  grid-template-columns: 2.75rem minmax(4.5rem, 1fr);
+  column-gap: 0.4rem;
   grid-column: 1 / -1;
 }
 
@@ -3545,7 +3570,7 @@
 .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair-amt {
   order: unset;
   min-width: 0;
-  max-width: 100%;
+  max-width: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3566,7 +3591,8 @@
 }
 
 .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-pair-amt {
-  width: 100%;
+  width: auto;
+  min-width: 4.5rem;
   padding: 0;
   border-radius: 0;
   background: transparent;
@@ -3576,11 +3602,12 @@
 }
 
 .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-money {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: inline-block;
+  width: auto;
+  min-width: 5.5rem;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
   white-space: nowrap;
   text-align: right;
   font-size: 0.78rem;
@@ -3682,26 +3709,29 @@
   border-right: 1px solid var(--line);
 }
 
-@media (min-width: 900px) {
-  .ax--list-table[data-ax-section="sales"] .ax-scroll-hint {
-    display: none;
-  }
-
-  .ax--list-table[data-ax-section="sales"] .ax-table-wrap--list,
-  .ax--list-table[data-ax-section="sales"] .ax-table-wrap--scroll {
-    overflow-x: visible;
-    max-width: 100%;
-  }
-}
-
 @media (max-width: 899px) {
-  .ax--list-table[data-ax-section="sales"] .ax-scroll-hint {
-    display: block;
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops {
+    min-width: 52rem;
+    font-size: 0.74rem;
   }
 
-  .ax--list-table[data-ax-section="sales"] .ax-table-wrap--list,
-  .ax--list-table[data-ax-section="sales"] .ax-table-wrap--scroll {
-    overflow-x: auto;
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-th--item,
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops .ax-cell--primary {
+    width: 7.5rem;
+    min-width: 7.5rem;
+    max-width: 10rem;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--money,
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--money,
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--band-result,
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--band-result {
+    min-width: 6.25rem;
+  }
+
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops th.ax-th--pair,
+  .ax--list-table[data-ax-section="sales"] .ax-table--shops td.ax-cell--pair {
+    min-width: 7.5rem;
   }
 }
 
@@ -6102,12 +6132,7 @@
   font-weight: 700;
 }
 
-/* Confirm receipts — compact columns, card stack on small screens. */
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-top-main {
-  align-items: flex-start;
-}
-
-/* Receipts list — filter toolbar matches confirm-receipts; card-stack on phone. */
+/* Receipts list — filter toolbar; card-stack on phone. */
 [data-ax-section="receipts-list"] .ax-top-main {
   align-items: flex-start;
 }
@@ -6156,194 +6181,481 @@
   }
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-filters {
-  flex: 1 1 18rem;
-  margin-left: 0;
-  justify-content: flex-start;
+/* Confirm receipts — modern responsive workspace. */
+.ax--confirm[data-ax-section="confirm-receipts"] {
+  gap: 0.75rem;
+  width: min(100%, 52rem);
   max-width: 100%;
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-grid--tables {
+.ax--confirm .ax-confirm-top {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem 1.1rem;
+  border-radius: 16px;
+  background:
+    radial-gradient(
+      120% 140% at 0% 0%,
+      color-mix(in srgb, var(--teal) 14%, transparent),
+      transparent 55%
+    ),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--surface) 92%, var(--teal)),
+      var(--surface)
+    );
+}
+
+.ax--confirm .ax-confirm-top-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+}
+
+.ax--confirm .ax-confirm-top .ax-title {
+  gap: 0.45rem 0.65rem;
+}
+
+.ax--confirm .ax-confirm-top .ax-title h2 {
+  margin: 0;
+  font-size: clamp(1.15rem, 2.2vw, 1.45rem);
+  letter-spacing: -0.03em;
+}
+
+.ax--confirm .ax-confirm-lead {
+  margin: 0;
+  max-width: 42rem;
+  color: var(--mist-dim);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.ax--confirm .ax-confirm-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.5rem;
+  margin: 0;
   width: 100%;
+  max-width: none;
+  align-items: stretch;
+}
+
+.ax--confirm .ax-confirm-filters input,
+.ax--confirm .ax-confirm-filters select,
+.ax--confirm .ax-confirm-filters .ax-apply {
+  width: 100%;
+  min-width: 0 !important;
+  max-width: none !important;
+  flex: none !important;
+  min-height: 2.35rem;
+}
+
+.ax--confirm .ax-confirm-filters input[type="search"] {
+  grid-column: 1 / -1;
+}
+
+.ax--confirm .ax-confirm-filters .ax-apply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ax--confirm .ax-confirm-footnote {
+  margin: 0;
+  padding: 0 0.15rem;
+  color: var(--mist-dim);
+  font-size: 0.78rem;
+}
+
+.ax--confirm.ax--list-table .ax-confirm-card,
+.ax--confirm .ax-confirm-card {
+  display: grid;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 28px color-mix(in srgb, var(--text-strong) 4%, transparent);
+}
+
+.ax--confirm .ax-confirm-card-title h3::before {
+  display: none;
+}
+
+.ax--confirm .ax-confirm-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.95rem 1rem 0.85rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  background: color-mix(in srgb, var(--teal) 4%, var(--surface));
+}
+
+.ax--confirm .ax-confirm-card-title h3 {
+  display: block;
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: none;
+  color: var(--text-strong);
+}
+
+.ax--confirm .ax-confirm-card-hint {
+  margin: 0.2rem 0 0;
+  color: var(--mist-dim);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.ax--confirm .ax-confirm-live-search {
+  flex: 1 1 14rem;
+  max-width: 22rem;
+  margin: 0;
+}
+
+.ax--confirm .ax-confirm-live-search input {
+  width: 100%;
+  min-height: 2.35rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--input-bg, var(--surface));
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.86rem;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
+}
+
+.ax--confirm .ax-confirm-live-search input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-color: var(--accent);
+}
+
+.ax--confirm .ax-confirm-select-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  backdrop-filter: blur(8px);
+}
+
+.ax--confirm .ax-confirm-select-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.ax--confirm .ax-confirm-list-wrap {
   min-width: 0;
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-}
-
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table {
+.ax--confirm .ax-table--confirm-compact {
   width: 100% !important;
-  max-width: 100% !important;
-  min-width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
   table-layout: fixed;
+  border: 0;
+  border-radius: 0;
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th,
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td {
+.ax--confirm .ax-table--confirm-compact th,
+.ax--confirm .ax-table--confirm-compact td {
+  padding: 0.72rem 0.85rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  vertical-align: middle;
+  border-right: 0;
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(1),
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(1) {
-  width: 16%;
+.ax--confirm .ax-table--confirm-compact thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(2),
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(2) {
-  width: 16%;
+.ax--confirm .ax-table--confirm-compact th.ax-col-select,
+.ax--confirm .ax-table--confirm-compact td.ax-col-select {
+  width: 2.75rem;
+  min-width: 2.75rem;
+  max-width: 2.75rem;
+  padding-inline: 0.55rem;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: center;
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(3),
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(3) {
-  width: 12%;
+.ax--confirm .ax-table--confirm-compact th:nth-child(2),
+.ax--confirm .ax-table--confirm-compact td:nth-child(2) {
+  width: 36%;
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(4),
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(4) {
-  width: 32%;
+.ax--confirm .ax-table--confirm-compact th:nth-child(3),
+.ax--confirm .ax-table--confirm-compact td:nth-child(3) {
+  width: 26%;
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table th:nth-child(5),
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table td:nth-child(5) {
-  width: 24%;
+.ax--confirm .ax-table--confirm-compact th:nth-child(4),
+.ax--confirm .ax-table--confirm-compact td:nth-child(4) {
+  width: 38%;
 }
 
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th:first-child,
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td:first-child,
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th.ax-th--item,
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td.ax-cell--primary,
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table th:first-child,
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table td:first-child,
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table th.ax-th--item,
-.ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table td.ax-cell--primary {
+.ax--confirm .ax-table--confirm-compact .ax-cell--primary,
+.ax--confirm .ax-table--confirm-compact th.ax-th--item {
   position: static;
   left: auto;
-  z-index: auto;
-  width: 16%;
+  box-shadow: none;
+  width: auto;
   min-width: 0;
   max-width: none;
-  box-shadow: none;
+  font-weight: 700;
+  color: var(--teal);
+}
+
+.ax--confirm .ax-confirm-when {
+  color: var(--mist-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ax--confirm .ax-receipt-row {
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.ax--confirm .ax-receipt-row:hover td {
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
+.ax--confirm .ax-receipt-row.is-selected td,
+.ax--confirm .ax-receipt-row.is-selected:hover td {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.ax--confirm .ax-receipt-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -2px;
+}
+
+.ax--confirm .ax-confirm-empty {
+  margin: 0;
+  padding: 2.2rem 1.1rem;
+  text-align: center;
+  color: var(--mist-dim);
+  font-size: 0.88rem;
+}
+
+.ax--confirm .ax-confirm-empty.is-error {
+  color: color-mix(in srgb, #b42318 75%, var(--text-strong));
+}
+
+@media (min-width: 900px) {
+  .ax--confirm .ax-confirm-filters {
+    grid-template-columns: minmax(12rem, 1.6fr) repeat(4, minmax(7.5rem, 1fr)) auto;
+  }
+
+  .ax--confirm .ax-confirm-filters input[type="search"] {
+    grid-column: auto;
+  }
+
+  .ax--confirm .ax-confirm-filters .ax-apply {
+    width: auto;
+    min-width: 5.5rem;
+  }
 }
 
 @media (max-width: 899px) {
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-top-main {
-    display: grid;
-    gap: 0.65rem;
-  }
-
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters {
-    flex: 1 1 auto;
+  .ax--confirm[data-ax-section="confirm-receipts"] {
     width: 100%;
   }
 
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters input[type="search"],
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters select,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters input[type="date"],
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters input[type="month"],
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters input[type="number"] {
-    flex: 1 1 8.5rem;
-    min-width: 0;
+  .ax--confirm .ax-confirm-top {
+    padding: 0.9rem;
+    border-radius: 14px;
   }
 
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-filters .ax-apply {
+  .ax--confirm .ax-confirm-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax--confirm .ax-confirm-filters .ax-apply {
+    grid-column: 1 / -1;
+  }
+
+  .ax--confirm .ax-confirm-card-head {
+    padding: 0.85rem 0.9rem;
+  }
+
+  .ax--confirm .ax-confirm-live-search {
     flex: 1 1 100%;
-  }
-
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list {
-    overflow-x: visible;
-  }
-
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table th:first-child,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table td:first-child,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table th.ax-th--item,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--scroll .ax-table td.ax-cell--primary,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th:first-child,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td:first-child,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th.ax-th--item,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td.ax-cell--primary {
-    position: static;
-    left: auto;
-    z-index: auto;
-    width: auto;
-    min-width: 0;
     max-width: none;
-    box-shadow: none;
   }
 
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table {
+  .ax--confirm .ax-confirm-select-bar {
+    position: sticky;
+    bottom: 0;
+    top: auto;
+    order: 3;
+    margin-top: auto;
+    border-top: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+    border-bottom: 0;
+    box-shadow: 0 -8px 24px color-mix(in srgb, var(--text-strong) 8%, transparent);
+  }
+
+  .ax--confirm.ax--list-table .ax-confirm-card,
+  .ax--confirm .ax-confirm-card {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+  }
+
+  .ax--confirm .ax-confirm-select-actions {
     width: 100%;
-    min-width: 0;
-    max-width: 100%;
+  }
+
+  .ax--confirm .ax-confirm-select-actions .ax-apply,
+  .ax--confirm .ax-confirm-select-actions .btn {
+    flex: 1 1 calc(50% - 0.25rem);
+    justify-content: center;
+    min-height: 2.4rem;
+  }
+
+  .ax--confirm .ax-table--confirm-compact {
+    width: 100%;
     table-layout: auto;
   }
 
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table th,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: unset;
-  }
-
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table thead {
+  .ax--confirm .ax-table--confirm-compact thead {
     display: none;
   }
 
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table tbody tr {
+  .ax--confirm .ax-table--confirm-compact tbody {
     display: grid;
-    gap: 0.4rem;
+    gap: 0.55rem;
+    padding: 0.75rem;
+  }
+
+  .ax--confirm .ax-table--confirm-compact tbody tr {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      "select receipt status"
+      "select when when";
+    gap: 0.2rem 0.7rem;
+    align-items: center;
     padding: 0.85rem 0.9rem;
-    border-bottom: 1px solid var(--line);
+    border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 96%, var(--mist));
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
   }
 
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table tbody tr:last-child {
-    border-bottom: 0;
+  .ax--confirm .ax-table--confirm-compact tbody tr.is-selected {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
   }
 
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table th,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.75rem;
+  .ax--confirm .ax-table--confirm-compact th,
+  .ax--confirm .ax-table--confirm-compact td {
+    display: block;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
     padding: 0;
     border: 0;
-    border-bottom: 0;
+    overflow: visible;
+    text-overflow: unset;
     white-space: normal;
-    min-width: 0;
   }
 
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td::before {
-    content: attr(data-label);
-    display: inline;
-    flex-shrink: 0;
-    font-weight: 600;
-    font-size: 0.72rem;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    color: var(--mist-dim);
-    padding-top: 0.15rem;
-  }
-
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td.ax-cell--primary,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td[data-label="Receipt"] {
-    display: block;
-    padding-bottom: 0.25rem;
-  }
-
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td.ax-cell--primary::before,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table td[data-label="Receipt"]::before {
+  .ax--confirm .ax-table--confirm-compact td::before {
     display: none;
   }
 
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table tbody tr:nth-child(even) td,
-  .ax--list-table[data-ax-section="confirm-receipts"] .ax-table tbody tr:hover td {
+  .ax--confirm .ax-table--confirm-compact td.ax-col-select {
+    grid-area: select;
+    align-self: center;
+  }
+
+  .ax--confirm .ax-table--confirm-compact td.ax-cell--primary {
+    grid-area: receipt;
+    font-size: 0.95rem;
+    line-height: 1.25;
+  }
+
+  .ax--confirm .ax-table--confirm-compact td[data-label="Status"] {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .ax--confirm .ax-table--confirm-compact td.ax-confirm-when,
+  .ax--confirm .ax-table--confirm-compact td[data-label="When"] {
+    grid-area: when;
+    color: var(--mist-dim);
+    font-size: 0.78rem;
+  }
+
+  .ax--confirm .ax-table--confirm-compact tbody tr:nth-child(even) td,
+  .ax--confirm .ax-table--confirm-compact tbody tr:hover td {
     background: transparent;
+  }
+
+  .ax--confirm .ax-select-row input,
+  .ax--confirm .ax-select-all input {
+    width: 1.15rem;
+    height: 1.15rem;
+  }
+}
+
+@media (max-width: 559px) {
+  .ax--confirm .ax-confirm-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .ax--confirm .ax-confirm-top-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--confirm .ax-top-actions .ax-apply {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .ax--confirm .ax-confirm-select-actions .ax-apply,
+  .ax--confirm .ax-confirm-select-actions .btn {
+    flex: 1 1 100%;
+  }
+
+  .ax--confirm .ax-table--confirm-compact tbody tr {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "select receipt"
+      "select status"
+      "select when";
+  }
+
+  .ax--confirm .ax-table--confirm-compact td[data-label="Status"] {
+    justify-self: start;
   }
 }
 
@@ -6640,7 +6952,13 @@
   min-width: 0;
 }
 
-.ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table,
+.ax--list-table.ax--ledger.ax--confirm[data-ax-section="confirm-receipts"] .ax-table--confirm-compact {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
 .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) {
   width: 100% !important;
   max-width: 100% !important;
@@ -6833,7 +7151,13 @@
     min-width: 0;
   }
 
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table,
+  .ax--list-table.ax--ledger.ax--confirm[data-ax-section="confirm-receipts"] .ax-table--confirm-compact {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    table-layout: auto;
+  }
+
   .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) {
     width: 100% !important;
     max-width: 100% !important;
@@ -6841,10 +7165,6 @@
     table-layout: fixed;
   }
 
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th:first-child,
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td:first-child,
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table th.ax-th--item,
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table-wrap--list .ax-table td.ax-cell--primary,
   .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) th:first-child,
   .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) td:first-child,
   .ax--list-table.ax--ledger[data-ax-section="return-receipts"] .ax-table-wrap--list .ax-table:not(.ax-table--shops) th.ax-th--item,
@@ -6859,31 +7179,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(1),
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(1) {
-    width: 16% !important;
-  }
-
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(2),
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(2) {
-    width: 16% !important;
-  }
-
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(3),
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(3) {
-    width: 12% !important;
-  }
-
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(4),
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(4) {
-    width: 32% !important;
-  }
-
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table th:nth-child(5),
-  .ax--list-table.ax--ledger[data-ax-section="confirm-receipts"] .ax-table td:nth-child(5) {
-    width: 24% !important;
   }
 
   .ax--ledger:not(.ax--list-table) .ax-table--shops th.ax-th--pair,

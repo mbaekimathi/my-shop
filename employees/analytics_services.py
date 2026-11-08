@@ -2947,8 +2947,8 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
 
 
 CONFIRM_RECEIPT_STATUS_FILTERS = (
-    ("", "All statuses"),
     ("pending", "Pending"),
+    ("", "All statuses"),
     ("partial_return", "Partial return"),
     ("cancelled", "Cancelled"),
     ("confirmed", "Confirmed"),
@@ -2961,8 +2961,30 @@ CONFIRM_RECEIPT_KIND_FILTERS = (
     ("all", "All types"),
 )
 
+CONFIRM_RECEIPT_DEFAULT_LIMIT = 150
+CONFIRM_RECEIPT_STATUS_RANK = {
+    ShopReceiptStatus.ACTIVE: 0,
+    "pending": 0,
+    ShopReceiptStatus.PARTIAL_RETURN: 1,
+    "partial_return": 1,
+    ShopReceiptStatus.CANCELLED: 2,
+    "cancelled": 2,
+    ShopReceiptStatus.CONFIRMED: 3,
+    "confirmed": 3,
+}
 
-def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limit=500):
+
+def _confirm_receipt_status_key(raw: str | None) -> str:
+    """Default to pending so the page only loads actionable receipts."""
+    if raw is None:
+        return "pending"
+    key = str(raw).strip().lower()
+    if key in {"", "all", "any"}:
+        return ""
+    return key
+
+
+def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limit=150):
     status_map = {
         "pending": ShopReceiptStatus.ACTIVE,
         "active": ShopReceiptStatus.ACTIVE,
@@ -2973,9 +2995,23 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
         "cancelled": ShopReceiptStatus.CANCELLED,
         "cancel": ShopReceiptStatus.CANCELLED,
     }
+    if not shop_ids:
+        return []
+
     qs = (
         ShopReceipt.objects.filter(shop_id__in=shop_ids, kind=ShopReceiptKind.SALE)
-        .select_related("shop", "created_by", "created_by__user")
+        .select_related("shop")
+        .only(
+            "id",
+            "shop_id",
+            "receipt_number",
+            "client_name",
+            "client_phone",
+            "status",
+            "created_at",
+            "shop__id",
+            "shop__name",
+        )
     )
     if start is not None:
         qs = qs.filter(created_at__gte=start)
@@ -2990,70 +3026,88 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
             | Q(client_phone__icontains=search)
             | Q(shop__name__icontains=search)
         )
-    qs = qs.annotate(
-        status_rank=Case(
-            When(status=ShopReceiptStatus.ACTIVE, then=Value(0)),
-            When(status=ShopReceiptStatus.PARTIAL_RETURN, then=Value(1)),
-            When(status=ShopReceiptStatus.CANCELLED, then=Value(2)),
-            When(status=ShopReceiptStatus.CONFIRMED, then=Value(3)),
-            default=Value(9),
-            output_field=IntegerField(),
-        )
-    ).order_by("status_rank", "-created_at", "-id")[:limit]
+
+    # Single-status lists skip the expensive CASE ranking.
+    if status_key in status_map:
+        qs = qs.order_by("-created_at", "-id")[:limit]
+    else:
+        qs = qs.annotate(
+            status_rank=Case(
+                When(status=ShopReceiptStatus.ACTIVE, then=Value(0)),
+                When(status=ShopReceiptStatus.PARTIAL_RETURN, then=Value(1)),
+                When(status=ShopReceiptStatus.CANCELLED, then=Value(2)),
+                When(status=ShopReceiptStatus.CONFIRMED, then=Value(3)),
+                default=Value(9),
+                output_field=IntegerField(),
+            )
+        ).order_by("status_rank", "-created_at", "-id")[:limit]
 
     rows = []
     for row in qs:
         is_pending = row.status == ShopReceiptStatus.ACTIVE
+        status_label = row.get_status_display()
+        shop_name = row.shop.name if row.shop else "—"
+        client = row.client_name or "Walk-in"
+        client_phone = row.client_phone or ""
         rows.append(
             {
                 "receipt_id": row.pk,
                 "shop_id": row.shop_id,
                 "source": "pos",
                 "number": row.receipt_number,
-                "shop": row.shop.name if row.shop else "—",
-                "client": row.client_name or "Walk-in",
-                "client_phone": row.client_phone or "",
-                "total": _money_ksh(row.total),
+                "shop": shop_name,
+                "client": client,
+                "client_phone": client_phone,
                 "status": row.status,
-                "status_label": row.get_status_display(),
+                "status_label": status_label,
                 "kind": "sale",
                 "kind_label": "Sale",
-                "payment_label": row.get_payment_method_display(),
                 "when": timezone.localtime(row.created_at).strftime("%d %b %Y · %H:%M"),
                 "when_dt": row.created_at,
-                "cashier": _cashier_label(row.created_by) or "—",
                 "can_confirm": is_pending,
                 "can_cancel": is_pending,
-                "status_rank": 0
-                if row.status == ShopReceiptStatus.ACTIVE
-                else 1
-                if row.status == ShopReceiptStatus.PARTIAL_RETURN
-                else 2
-                if row.status == ShopReceiptStatus.CANCELLED
-                else 3,
+                "status_rank": CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9),
+                "search_text": " ".join(
+                    [
+                        row.receipt_number or "",
+                        client,
+                        client_phone,
+                        shop_name,
+                        status_label,
+                        "Sale",
+                    ]
+                ),
             }
         )
     return rows
 
 
 def _confirm_receipt_transfer_rows(
-    *, shop_ids, start, end, status_key, search, kind_key, limit=500
+    *, shop_ids, start, end, status_key, search, kind_key, limit=150
 ):
     """Inter-shop transfer delivery notes and goods-received slips."""
     from shops.services import DOC_NUMBER_PREFIX, format_simple_doc_number
 
+    if not shop_ids:
+        return []
+
     qs = (
         StockMovement.objects.filter(movement_type=StockMovementType.REQUEST)
         .filter(Q(shop_id__in=shop_ids) | Q(requested_from_shop_id__in=shop_ids))
-        .select_related(
-            "shop",
-            "requested_from_shop",
-            "created_by",
-            "created_by__user",
-            "responded_by",
-            "responded_by__user",
+        .select_related("shop", "requested_from_shop")
+        .only(
+            "id",
+            "shop_id",
+            "requested_from_shop_id",
+            "request_status",
+            "created_at",
+            "responded_at",
+            "notes",
+            "shop__id",
+            "shop__name",
+            "requested_from_shop__id",
+            "requested_from_shop__name",
         )
-        .prefetch_related("lines__item")
     )
     if kind_key == "delivery":
         qs = qs.filter(request_status=StockRequestStatus.PENDING)
@@ -3081,7 +3135,6 @@ def _confirm_receipt_transfer_rows(
     search_l = (search or "").strip().lower()
     rows = []
     for movement in qs:
-        is_pending = movement.request_status == StockRequestStatus.PENDING
         is_fulfilled = movement.request_status == StockRequestStatus.FULFILLED
         is_declined = movement.request_status == StockRequestStatus.DECLINED
         from_shop = movement.shop
@@ -3101,9 +3154,6 @@ def _confirm_receipt_transfer_rows(
             status = "confirmed"
             status_label = "Received"
             status_rank = 3
-            cashier = _cashier_label(movement.responded_by) or _cashier_label(
-                movement.created_by
-            )
             source = "goods_received"
         else:
             kind = "delivery"
@@ -3122,7 +3172,6 @@ def _confirm_receipt_transfer_rows(
                 status = "pending"
                 status_label = "In transit"
                 status_rank = 0
-            cashier = _cashier_label(movement.created_by)
             source = "delivery"
 
         if kind_key in ("delivery", "goods_received") and kind != kind_key:
@@ -3135,22 +3184,14 @@ def _confirm_receipt_transfer_rows(
                 to_name,
                 route,
                 shop_name,
-                cashier or "",
                 kind_label,
                 status_label,
                 (movement.notes or ""),
-                (getattr(movement, "rider_name", None) or ""),
             ]
         ).lower()
         if search_l and search_l not in haystack:
             continue
 
-        units = _qty_number(
-            sum(
-                (Decimal(line.quantity or 0) for line in movement.lines.all()),
-                Decimal("0"),
-            )
-        )
         rows.append(
             {
                 "receipt_id": movement.pk,
@@ -3160,18 +3201,16 @@ def _confirm_receipt_transfer_rows(
                 "shop": shop_name,
                 "client": route,
                 "client_phone": "",
-                "total": f"{units} unit{'' if units == 1 else 's'}",
                 "status": status,
                 "status_label": status_label,
                 "kind": kind,
                 "kind_label": kind_label,
-                "payment_label": "Transfer",
                 "when": timezone.localtime(when_dt).strftime("%d %b %Y · %H:%M"),
                 "when_dt": when_dt,
-                "cashier": cashier or "—",
                 "can_confirm": False,
                 "can_cancel": False,
                 "status_rank": status_rank,
+                "search_text": haystack,
             }
         )
         if len(rows) >= limit:
@@ -3179,22 +3218,40 @@ def _confirm_receipt_transfer_rows(
     return rows
 
 
-def build_confirm_receipts_page(*, profile, request) -> dict:
-    """List sales and inter-shop transfer delivery receipts for review."""
-    from django.urls import reverse
+def _confirm_receipts_count_label(kind_key: str) -> str:
+    if kind_key == "sale":
+        return "sales receipt"
+    if kind_key == "delivery":
+        return "delivery note"
+    if kind_key == "goods_received":
+        return "goods received slip"
+    return "receipt"
 
-    from employees.access import role_url_segment
 
-    filters = _filters_context(profile, request, allow_all_time=True, default_all_time=True)
-    shop_ids = filters["active_shop_ids"]
-    start, end = filters["start"], filters["end"]
+def _confirm_receipts_query_context(*, profile, request) -> dict:
+    filters = _filters_context(
+        profile, request, allow_all_time=True, default_all_time=False
+    )
     search = (request.GET.get("q") or "").strip()
-    status_key = (request.GET.get("status") or "").strip().lower()
+    status_raw = request.GET.get("status")
+    status_key = _confirm_receipt_status_key(status_raw)
     kind_key = (request.GET.get("kind") or "sale").strip().lower()
     if kind_key not in {value for value, _label in CONFIRM_RECEIPT_KIND_FILTERS}:
         kind_key = "sale"
+    return {
+        **filters,
+        "search": search,
+        "status_filter": status_key,
+        "status_options": CONFIRM_RECEIPT_STATUS_FILTERS,
+        "kind_filter": kind_key,
+        "kind_options": CONFIRM_RECEIPT_KIND_FILTERS,
+        "count_label": _confirm_receipts_count_label(kind_key),
+    }
 
+
+def _confirm_receipts_collect_rows(*, shop_ids, start, end, status_key, search, kind_key):
     rows = []
+    limit = CONFIRM_RECEIPT_DEFAULT_LIMIT
     if kind_key in ("sale", "all"):
         rows.extend(
             _confirm_receipt_sale_rows(
@@ -3203,6 +3260,7 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
                 end=end,
                 status_key=status_key,
                 search=search,
+                limit=limit,
             )
         )
     if kind_key in ("delivery", "goods_received", "all"):
@@ -3214,6 +3272,7 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
                 status_key=status_key,
                 search=search,
                 kind_key=kind_key if kind_key != "all" else "all",
+                limit=limit,
             )
         )
 
@@ -3224,7 +3283,80 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
             -int(row.get("receipt_id") or 0),
         )
     )
-    rows = rows[:500]
+    return rows[:limit]
+
+
+def serialize_confirm_receipt_rows(rows) -> list[dict]:
+    """JSON-safe row payload for async list rendering."""
+    payload = []
+    for row in rows:
+        payload.append(
+            {
+                "receipt_id": int(row.get("receipt_id") or 0),
+                "shop_id": int(row.get("shop_id") or 0),
+                "source": row.get("source") or "pos",
+                "number": row.get("number") or "",
+                "status": row.get("status") or "",
+                "status_label": row.get("status_label") or "",
+                "when": row.get("when") or "",
+                "can_confirm": bool(row.get("can_confirm")),
+                "can_cancel": bool(row.get("can_cancel")),
+                "search_text": row.get("search_text")
+                or " ".join(
+                    [
+                        str(row.get("number") or ""),
+                        str(row.get("client") or ""),
+                        str(row.get("client_phone") or ""),
+                        str(row.get("shop") or ""),
+                        str(row.get("status_label") or ""),
+                        str(row.get("kind_label") or ""),
+                    ]
+                ),
+            }
+        )
+    return payload
+
+
+def build_confirm_receipts_rows(*, profile, request) -> dict:
+    """Lean row payload for the confirm-receipts async list."""
+    context = _confirm_receipts_query_context(profile=profile, request=request)
+    rows = _confirm_receipts_collect_rows(
+        shop_ids=context["active_shop_ids"],
+        start=context["start"],
+        end=context["end"],
+        status_key=context["status_filter"],
+        search=context["search"],
+        kind_key=context["kind_filter"],
+    )
+    return {
+        "ok": True,
+        "rows": serialize_confirm_receipt_rows(rows),
+        "total_count": len(rows),
+        "count_label": context["count_label"],
+        "status_filter": context["status_filter"],
+        "kind_filter": context["kind_filter"],
+        "search": context["search"],
+        "report_period_label": context.get("report_period_label") or "All time",
+    }
+
+
+def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) -> dict:
+    """Confirm-receipts page shell (optionally with rows for tests / fallback)."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    context = _confirm_receipts_query_context(profile=profile, request=request)
+    rows = []
+    if include_rows:
+        rows = _confirm_receipts_collect_rows(
+            shop_ids=context["active_shop_ids"],
+            start=context["start"],
+            end=context["end"],
+            status_key=context["status_filter"],
+            search=context["search"],
+            kind_key=context["kind_filter"],
+        )
 
     segment = role_url_segment(profile.role)
     detail_template = reverse(
@@ -3251,35 +3383,27 @@ def build_confirm_receipts_page(*, profile, request) -> dict:
             "receipt_id": 0,
         },
     )
-
-    if kind_key == "sale":
-        count_label = "sales receipt"
-    elif kind_key == "delivery":
-        count_label = "delivery note"
-    elif kind_key == "goods_received":
-        count_label = "goods received slip"
-    else:
-        count_label = "receipt"
+    rows_url = reverse(
+        "employees:analytics_confirm_receipts_rows",
+        kwargs={"role_segment": segment},
+    )
 
     return {
-        **filters,
-        "search": search,
-        "status_filter": status_key,
-        "status_options": CONFIRM_RECEIPT_STATUS_FILTERS,
-        "kind_filter": kind_key,
-        "kind_options": CONFIRM_RECEIPT_KIND_FILTERS,
+        **context,
         "rows": rows,
         "total_count": len(rows),
-        "count_label": count_label,
+        "async_rows": not include_rows,
         "page": {
             "headline": "Confirm receipts",
             "lead": (
-                "Sales receipts open for confirm/cancel. Delivery notes and goods "
-                "received slips from stock transfers are listed for review."
+                "Live-search a receipt number, mark it, then search the next. "
+                "Confirm or cancel selected sales receipts together. Delivery "
+                "notes and goods received slips are listed for review only."
             ),
             "detail_url_template": detail_template,
             "confirm_url_template": confirm_template,
             "cancel_url_template": cancel_template,
+            "rows_url": rows_url,
         },
     }
 

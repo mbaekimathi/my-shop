@@ -396,6 +396,11 @@ urlpatterns = [
         name="analytics_confirm_receipts",
     ),
     path(
+        "<role_segment:role_segment>/analytics/api/confirm-receipts/rows/",
+        analytics_views.analytics_confirm_receipts_rows,
+        name="analytics_confirm_receipts_rows",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/return-receipts/",
         analytics_views.analytics_return_receipts,
         name="analytics_return_receipts",

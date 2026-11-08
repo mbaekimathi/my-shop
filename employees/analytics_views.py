@@ -24,6 +24,7 @@ from .analytics_services import (
     build_client_tradings_page,
     build_client_transactions,
     build_confirm_receipts_page,
+    build_confirm_receipts_rows,
     build_credit_clients_page,
     build_credit_report_page,
     build_item_report_page,
@@ -621,7 +622,10 @@ def analytics_confirm_receipts(request, role_segment):
     if denied is not None:
         return denied
 
-    context = build_confirm_receipts_page(profile=profile, request=request)
+    # Shell first: receipt rows load via the async JSON endpoint.
+    context = build_confirm_receipts_page(
+        profile=profile, request=request, include_rows=False
+    )
     from .workspace import analytics_section_url
 
     back_href = analytics_section_url(profile.role, "receipts")
@@ -649,6 +653,26 @@ def analytics_confirm_receipts(request, role_segment):
             **context,
         },
     )
+
+
+@active_employee_required
+@require_GET
+def analytics_confirm_receipts_rows(request, role_segment):
+    """Async lean receipt rows for the confirm-receipts page."""
+    profile, err = _analytics_role_or_error(request, role_segment, as_json=True)
+    if err is not None:
+        return err
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(
+        request, profile, "analytics", "confirm-receipts", as_json=True
+    )
+    if denied is not None:
+        return denied
+
+    payload = build_confirm_receipts_rows(profile=profile, request=request)
+    return JsonResponse(payload)
 
 
 @active_employee_required
