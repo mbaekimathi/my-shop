@@ -269,8 +269,8 @@
   .receipt-ticket-logo {
     display: block;
     width: auto;
-    max-width: 42%;
-    max-height: 14mm;
+    max-width: ${style.paperMm === "58" ? "36%" : "42%"};
+    max-height: ${style.paperMm === "58" ? "10mm" : "14mm"};
     margin: 0 auto 0.35em;
     object-fit: contain;
   }
@@ -283,24 +283,27 @@
   }
   .receipt-ticket-brand h4 {
     margin: 0;
-    font-size: 1.15em;
+    font-size: ${style.paperMm === "58" ? "1.05em" : "1.15em"};
     font-weight: 900 !important;
     letter-spacing: 0.02em;
   }
   .receipt-ticket-brand p {
     margin: 0.1em 0 0;
-    font-size: 0.92em;
+    font-size: ${style.paperMm === "58" ? "0.84em" : "0.92em"};
     font-weight: 700 !important;
   }
   .receipt-ticket-branch {
     font-size: 0.88em;
     font-weight: 800 !important;
   }
+  .receipt-title-compact,
+  .receipt-label-compact { display: none; }
+  .receipt-ticket-unit { display: none; }
   .receipt-ticket-doc-title {
-    margin: 0.55em 0 0.35em;
-    padding: 0.28em 0;
+    margin: ${style.paperMm === "58" ? "0.35em 0 0.2em" : "0.55em 0 0.35em"};
+    padding: ${style.paperMm === "58" ? "0.18em 0" : "0.28em 0"};
     text-align: center;
-    font-size: 0.92em;
+    font-size: ${style.paperMm === "58" ? "0.84em" : "0.92em"};
     font-weight: 900 !important;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -308,11 +311,11 @@
     border-bottom: 1.5px solid #000;
   }
   .receipt-ticket-copy-banner {
-    margin: 0.1em 0 0.35em;
-    padding: 0.28em 0.35em;
+    margin: ${style.paperMm === "58" ? "0.05em 0 0.2em" : "0.1em 0 0.35em"};
+    padding: ${style.paperMm === "58" ? "0.16em 0.2em" : "0.28em 0.35em"};
     border: 1.5px solid #000;
     text-align: center;
-    font-size: 0.9em;
+    font-size: ${style.paperMm === "58" ? "0.8em" : "0.9em"};
     font-weight: 900 !important;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -325,9 +328,27 @@
   .receipt-ticket-doc-meta > div,
   .receipt-ticket-refs > div {
     display: grid;
-    grid-template-columns: ${style.paperMm === "58" ? "4.2em" : "5em"} 1fr;
+    grid-template-columns: ${style.paperMm === "58" ? "3.4em" : "5em"} 1fr;
     gap: 0.3em;
     align-items: baseline;
+  }
+  ${
+    style.paperMm === "58"
+      ? `
+  .receipt-title-full,
+  .receipt-label-full { display: none !important; }
+  .receipt-title-compact,
+  .receipt-label-compact { display: inline !important; }
+  .receipt-ticket-unit { display: block !important; margin-top: 0.04em; font-style: normal; font-size: 0.78em; font-weight: 700 !important; }
+  .receipt-ticket-refs-label,
+  .receipt-ticket-ref--type,
+  .receipt-ticket-auth,
+  .receipt-ticket-width-tag { display: none !important; }
+  .receipt-ticket-rule { margin: 0.32em 0; }
+  .receipt-ticket-parties { gap: 0.35em; }
+  .receipt-ticket-lines { gap: 0.28em; }
+  `
+      : ""
   }
   .receipt-ticket-doc-meta span,
   .receipt-ticket-refs span,
@@ -368,12 +389,22 @@
     display: grid;
     grid-template-columns: ${
       style.paperMm === "58"
-        ? "minmax(0, 1fr) 3.4em 1.5em 3em"
+        ? "minmax(0, 1fr) 3.2em"
         : "minmax(0, 1fr) 4em 1.9em 3.6em"
     };
     gap: 0.25em;
     align-items: baseline;
     font-weight: 800 !important;
+  }
+  ${
+    style.paperMm === "58"
+      ? `
+  .receipt-ticket-line:not(.receipt-ticket-line--qty) > .receipt-ticket-price,
+  .receipt-ticket-line:not(.receipt-ticket-line--qty) > .receipt-ticket-qty {
+    display: none !important;
+  }
+  `
+      : ""
   }
   .receipt-ticket-line--qty {
     grid-template-columns: minmax(0, 1fr) ${
@@ -530,13 +561,44 @@
     ticket: ticket && typeof ticket === "object" ? ticket : null,
   });
 
-  const renderTicketHtml = (ticket, qr = null) => {
+  const compactDocTitle = (ticket) => {
+    const type = String(ticket?.doc_type || "").toLowerCase();
+    if (type === "credit") return "CREDIT";
+    if (type === "quotation") return "QUOTE";
+    if (type === "trade_out") return "TRADE OUT";
+    if (type === "trade_in") return "TRADE IN";
+    return "RECEIPT";
+  };
+
+  const copyDocumentTitle = (ticket) => {
+    const existing = String(ticket?.document_title || "").trim();
+    const role = String(ticket?.copy_role || "").toLowerCase();
+    const roleWord =
+      role === "customer"
+        ? "CUSTOMER"
+        : role === "staff"
+          ? "STAFF"
+          : role === "cashier"
+            ? "CASHIER"
+            : "";
+    if (existing && roleWord && existing.toUpperCase().includes(roleWord)) {
+      return existing.toUpperCase();
+    }
+    const base = compactDocTitle(ticket);
+    return roleWord ? `${roleWord} ${base}` : existing.toUpperCase() || base;
+  };
+
+  const renderTicketHtml = (ticket, qr = null, paperMm = "80") => {
     const t = ticket && typeof ticket === "object" ? ticket : null;
     if (!t || !t.shop_name) return "";
+    const compact = paperMm === "58";
+    const includeQr = t.include_qr !== false;
 
-    const metaRow = (label, value) =>
+    const metaRow = (label, value, extraClass = "") =>
       value
-        ? `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`
+        ? `<div${extraClass ? ` class="${extraClass}"` : ""}><span>${escapeHtml(
+            label
+          )}</span><strong>${escapeHtml(value)}</strong></div>`
         : "";
 
     const qtyOnly = Boolean(t.qty_only);
@@ -565,13 +627,17 @@
   <span>${escapeHtml(line.qty ?? "")}</span>
 </div>`;
             }
+            const unitHtml = `<em class="receipt-ticket-unit">${escapeHtml(
+              line.qty ?? ""
+            )} × ${escapeHtml(line.price || "0")}</em>`;
             return `<div class="receipt-ticket-line">
   <span class="receipt-ticket-item">
     <strong>${escapeHtml(line.name || "Item")}</strong>
+    ${unitHtml}
     ${detailHtml}${serials}${extraHtml}
   </span>
   <span class="receipt-ticket-price">@ ${escapeHtml(line.price || "0")}</span>
-  <span>${escapeHtml(line.qty ?? "")}</span>
+  <span class="receipt-ticket-qty">${escapeHtml(line.qty ?? "")}</span>
   <span>${escapeHtml(line.total || "0")}</span>
 </div>`;
           })
@@ -579,17 +645,6 @@
 
     const paymentDetails = t.payment_details || {};
     const paymentLines = paymentDetails.lines || [];
-    const paymentBlock = paymentLines.length
-      ? `<div class="receipt-ticket-payment">
-  <div class="receipt-ticket-rule" aria-hidden="true"></div>
-  <p class="receipt-ticket-payment-title">M-Pesa ${escapeHtml(
-    paymentDetails.label || ""
-  )}</p>
-  <div class="receipt-ticket-payment-lines">
-    ${paymentLines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
-  </div>
-</div>`
-      : "";
 
     const qrReady = Boolean(includeQr && qr?.ready && qr?.image_data_url);
     const qrBlock = qrReady
@@ -612,10 +667,6 @@
         )}</strong></div>`
       : "";
 
-    const paidBlock = t.payment
-      ? `<div><span>Paid</span><strong>${escapeHtml(t.payment)}</strong></div>`
-      : "";
-
     const totalsBlock = qtyOnly
       ? `<div class="receipt-ticket-grand">
       <span>Units</span><strong>${escapeHtml(
@@ -623,18 +674,17 @@
           (t.lines || []).reduce((sum, line) => sum + Number(line.qty || 0), 0)
       )}</strong>
     </div>`
-      : `${taxBlock}
-    <div class="receipt-ticket-grand">
-      <span>Total</span><strong>KSh ${escapeHtml(t.total || "0")}</strong>
-    </div>
-    ${paidBlock}`;
+      : "";
 
     const linesHead = qtyOnly
       ? `<div class="receipt-ticket-line receipt-ticket-line--head receipt-ticket-line--qty">
       <span>Item</span><span>Qty</span>
     </div>`
       : `<div class="receipt-ticket-line receipt-ticket-line--head">
-      <span>Item</span><span>Price</span><span>Qty</span><span>Total</span>
+      <span>Item</span>
+      <span class="receipt-ticket-price">Price</span>
+      <span class="receipt-ticket-qty">Qty</span>
+      <span>Total</span>
     </div>`;
 
     const mark = (t.mark || "").trim();
@@ -644,16 +694,21 @@
         ? `<p class="receipt-ticket-mark">${escapeHtml(mark)}</p>`
         : "";
 
-    const documentTitle =
-      t.document_title || t.kind || "Sales invoice / receipt";
-    const copyLabel = (t.copy_label || "").trim();
-    const copyBanner = copyLabel
-      ? `<p class="receipt-ticket-copy-banner">${escapeHtml(copyLabel)}</p>`
-      : "";
-    const docNumberLabel = t.doc_number_label || "Invoice No.";
-    const authorisedLabel = t.authorised_label || "Cashier";
+    const combinedTitle = copyDocumentTitle(t);
+    const documentTitle = combinedTitle || t.document_title || "Receipt";
+    const compactTitle = combinedTitle || compactDocTitle(t);
+    const docNumberLabel = t.doc_number_label || "No.";
+    const authorisedLabel = t.authorised_label || "Served by";
     const partyLabel = t.party_label || "Customer";
-    const includeQr = t.include_qr !== false;
+
+    const partyPhoneFull = String(t.party_phone_full || t.party_phone || "");
+    const partyPhoneDisplay = String(t.party_phone || "");
+    const partyPhoneHtml = partyPhoneDisplay
+      ? `<em data-receipt-client-phone data-full-phone="${escapeHtml(partyPhoneFull)}">
+  <span class="receipt-phone-screen">${escapeHtml(partyPhoneDisplay)}</span>
+  <span class="receipt-phone-print">${escapeHtml(partyPhoneDisplay)}</span>
+</em>`
+      : "";
 
     const partyBlock =
       t.route_from || t.route_to
@@ -665,16 +720,10 @@
         : `<div class="receipt-ticket-party">
   <span class="receipt-ticket-party-label">${escapeHtml(partyLabel)}</span>
   <strong>${escapeHtml(t.client || "—")}</strong>
-  ${
-    t.party_phone
-      ? `<em>${escapeHtml(t.party_phone)}</em>`
-      : ""
-  }
+  ${partyPhoneHtml}
 </div>`;
 
     const refsBlock = `<div class="receipt-ticket-refs">
-  <span class="receipt-ticket-party-label">Reference</span>
-  ${metaRow("Type", t.kind)}
   ${metaRow("Branch", t.receiving_branch)}
   ${metaRow("Category", t.expense_category)}
   ${metaRow("Status", t.status)}
@@ -682,16 +731,51 @@
   ${metaRow(authorisedLabel, t.cashier)}
 </div>`;
 
-    const authBlock = t.cashier
-      ? `<div class="receipt-ticket-auth">
-  <span>${escapeHtml(authorisedLabel)}</span>
-  <strong>${escapeHtml(t.cashier)}</strong>
-</div>`
-      : "";
-
     const docTypeClass = t.doc_type
       ? ` receipt-ticket-inner--${escapeHtml(t.doc_type)}`
       : "";
+
+    const numberMeta = t.receipt_number
+      ? `<div><span>${escapeHtml(docNumberLabel)}</span><strong data-receipt-ticket-number>${escapeHtml(
+          t.receipt_number
+        )}</strong></div>`
+      : "";
+
+    const shopPhoneHtml = t.shop_phone
+      ? `<p data-receipt-ticket-phone>${escapeHtml(t.shop_phone)}</p>`
+      : `<p data-receipt-ticket-phone hidden></p>`;
+
+    const paidRow = t.payment
+      ? `<div data-receipt-paid-row>
+  <span>Paid</span>
+  <strong data-receipt-paid-value>${escapeHtml(t.payment)}</strong>
+</div>`
+      : `<div data-receipt-paid-row hidden>
+  <span>Paid</span>
+  <strong data-receipt-paid-value></strong>
+</div>`;
+
+    const totalsWithPaid = qtyOnly
+      ? totalsBlock
+      : `${taxBlock}
+    <div class="receipt-ticket-grand">
+      <span>Total</span><strong>KSh ${escapeHtml(t.total || "0")}</strong>
+    </div>
+    ${paidRow}`;
+
+    const paymentDetailsBlock = `<div class="receipt-ticket-payment" data-receipt-payment-block${
+      paymentLines.length ? "" : " hidden"
+    }>
+  <div class="receipt-ticket-rule" aria-hidden="true"></div>
+  <p class="receipt-ticket-payment-title" data-receipt-payment-title>${
+    paymentLines.length
+      ? `M-Pesa ${escapeHtml(paymentDetails.label || "")}`
+      : ""
+  }</p>
+  <div class="receipt-ticket-payment-lines" data-receipt-payment-lines>
+    ${paymentLines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
+  </div>
+</div>`;
 
     return `<div class="receipt-ticket-inner${docTypeClass}">
   <div class="receipt-ticket-brand">
@@ -699,17 +783,19 @@
     ${markHtml}
     <h4>${escapeHtml(shopName)}</h4>
     ${t.shop_location ? `<p>${escapeHtml(t.shop_location)}</p>` : ""}
-    ${t.shop_phone ? `<p>${escapeHtml(t.shop_phone)}</p>` : ""}
+    ${shopPhoneHtml}
     ${
       t.shop_branch
         ? `<p class="receipt-ticket-branch">${escapeHtml(t.shop_branch)}</p>`
         : ""
     }
   </div>
-  <p class="receipt-ticket-doc-title">${escapeHtml(documentTitle)}</p>
-  ${copyBanner}
+  <p class="receipt-ticket-doc-title">
+    <span class="receipt-title-full">${escapeHtml(documentTitle)}</span>
+    <span class="receipt-title-compact">${escapeHtml(compactTitle)}</span>
+  </p>
   <div class="receipt-ticket-doc-meta">
-    ${metaRow(docNumberLabel, t.receipt_number)}
+    ${numberMeta}
     ${metaRow("Date", t.date)}
   </div>
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
@@ -724,24 +810,19 @@
   </div>
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
   <div class="receipt-ticket-totals">
-    ${totalsBlock}
+    ${totalsWithPaid}
   </div>
-  ${paymentBlock}
-  ${authBlock}
+  ${paymentDetailsBlock}
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
   <p class="receipt-ticket-footer">${escapeHtml(
     t.footer || "Thank you for shopping with us"
   )}</p>
-  ${
-    t.return_notice
-      ? `<p class="receipt-ticket-footer receipt-ticket-return-notice">${escapeHtml(t.return_notice)}</p>`
-      : ""
-  }
-  ${
-    t.maintainer
-      ? `<p class="receipt-ticket-footer receipt-ticket-maintainer">${escapeHtml(t.maintainer)}</p>`
-      : ""
-  }
+  <p class="receipt-ticket-footer receipt-ticket-return-notice" data-receipt-return-notice${
+    t.return_notice ? "" : " hidden"
+  }>${escapeHtml(t.return_notice || "Goods once bought cannot be returned")}</p>
+  <p class="receipt-ticket-footer receipt-ticket-maintainer" data-receipt-maintainer${
+    t.maintainer ? "" : " hidden"
+  }>${escapeHtml(t.maintainer || "")}</p>
   ${qrBlock}
 </div>`;
   };
@@ -753,7 +834,7 @@
         text = prepared.text;
         ticket = prepared.ticket;
         const style = getReceiptPrintStyle(styleOverride);
-        const ticketHtml = renderTicketHtml(ticket, qr);
+        const ticketHtml = renderTicketHtml(ticket, qr, style.paperMm);
         let bodyHtml = ticketHtml;
         if (!bodyHtml) {
           const qrReady = Boolean(qr?.ready && qr?.image_data_url);

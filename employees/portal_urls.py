@@ -34,6 +34,11 @@ urlpatterns = [
         name="my_shop_settings",
     ),
     path(
+        "my-shop/<int:shop_id>/settings/theme/",
+        shop_views.my_shop_settings_theme,
+        name="my_shop_settings_theme",
+    ),
+    path(
         "my-shop/<int:shop_id>/settings/pos/",
         shop_views.my_shop_settings_pos,
         name="my_shop_settings_pos",

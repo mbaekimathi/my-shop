@@ -12,12 +12,25 @@ from .workspace import ROLE_PAGE_META, workspace_back_url
 
 def _company_brand_context():
     try:
-        from shops.services import get_company_display_name
+        from shops.services import get_company_display_name, get_company_theme
 
         name = get_company_display_name()
+        theme = get_company_theme()
     except Exception:
         name = "MY-SHOP"
-    return {"company_name": name}
+        theme = "harbor"
+    return {"company_name": name, "company_theme": theme}
+
+
+def _with_active_theme(context, request, *, shop=None):
+    """Overlay the effective brand theme (shop override when on shop floor)."""
+    try:
+        from shops.services import resolve_theme_for_request
+
+        context["company_theme"] = resolve_theme_for_request(request, shop=shop)
+    except Exception:
+        pass
+    return context
 
 
 def _portal_workspace_context(portal_shop):
@@ -107,7 +120,7 @@ def employee_workspace(request):
         and str(portal_shop.pk) == request_shop_id
     ):
         context.update(_portal_workspace_context(portal_shop))
-        return context
+        return _with_active_theme(context, request, shop=portal_shop)
 
     user = getattr(request, "user", None)
     if user and user.is_authenticated:
@@ -121,10 +134,17 @@ def employee_workspace(request):
             profile = get_profile_for_request(request)
             if profile is not None and profile.is_active_employee:
                 context.update(_employee_workspace_context(request, profile, role))
-                return context
+                shop = None
+                if (
+                    portal_shop is not None
+                    and request_shop_id
+                    and str(portal_shop.pk) == request_shop_id
+                ):
+                    shop = portal_shop
+                return _with_active_theme(context, request, shop=shop)
 
     if portal_shop is None:
-        return context
+        return _with_active_theme(context, request)
 
     context.update(_portal_workspace_context(portal_shop))
-    return context
+    return _with_active_theme(context, request, shop=portal_shop)

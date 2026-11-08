@@ -2209,8 +2209,17 @@
 
 .receipt-ticket--58 {
   width: 58mm;
-  padding: 3.2mm 2.6mm 4mm;
+  padding: 2.4mm 1.8mm 3mm;
   font-size: var(--receipt-font-size, 9.2px);
+}
+
+.receipt-title-compact,
+.receipt-label-compact {
+  display: none;
+}
+
+.receipt-ticket-unit {
+  display: none;
 }
 
 .receipt-ticket-inner {
@@ -2317,7 +2326,75 @@
 
 .receipt-ticket--58 .receipt-ticket-doc-meta > div,
 .receipt-ticket--58 .receipt-ticket-refs > div {
-  grid-template-columns: 4.2em minmax(0, 1fr);
+  grid-template-columns: 3.4em minmax(0, 1fr);
+  gap: 0.2em;
+}
+
+.receipt-ticket--58 .receipt-ticket-logo {
+  max-width: 36%;
+  max-height: 10mm;
+  margin-bottom: 0.2em;
+}
+
+.receipt-ticket--58 .receipt-ticket-brand h4 {
+  font-size: 1.02em;
+}
+
+.receipt-ticket--58 .receipt-ticket-brand p {
+  font-size: 0.82em;
+  margin-top: 0.06rem;
+}
+
+.receipt-ticket--58 .receipt-title-full,
+.receipt-ticket--58 .receipt-label-full {
+  display: none;
+}
+
+.receipt-ticket--58 .receipt-title-compact,
+.receipt-ticket--58 .receipt-label-compact {
+  display: inline;
+}
+
+.receipt-ticket--58 .receipt-ticket-doc-title {
+  margin: 0.35em 0 0.2em;
+  padding: 0.18em 0.1em;
+  font-size: 0.8em;
+  letter-spacing: 0.06em;
+}
+
+.receipt-ticket--58 .receipt-ticket-copy-banner {
+  margin: 0.05em 0 0.2em;
+  padding: 0.16em 0.2em;
+  font-size: 0.78em;
+  letter-spacing: 0.05em;
+}
+
+.receipt-ticket--58 .receipt-ticket-rule {
+  margin: 0.32em 0;
+}
+
+.receipt-ticket--58 .receipt-ticket-parties {
+  gap: 0.35em;
+}
+
+.receipt-ticket--58 .receipt-ticket-refs-label,
+.receipt-ticket--58 .receipt-ticket-ref--type,
+.receipt-ticket--58 .receipt-ticket-auth,
+.receipt-ticket--58 .receipt-ticket-width-tag {
+  display: none !important;
+}
+
+.receipt-ticket--58 .receipt-ticket-unit {
+  display: block;
+  margin-top: 0.04em;
+  font-style: normal;
+  font-size: 0.78em;
+  font-weight: 650;
+  color: #6b7280;
+}
+
+.receipt-ticket--58 .receipt-ticket-lines {
+  gap: 0.28em;
 }
 
 .receipt-ticket-doc-meta span,
@@ -2387,8 +2464,14 @@
   font-weight: 650;
 }
 
-.receipt-ticket--58 .receipt-ticket-line {
-  grid-template-columns: minmax(0, 1fr) 3.3em 1.5em 3em;
+.receipt-ticket--58 .receipt-ticket-line:not(.receipt-ticket-line--qty) {
+  grid-template-columns: minmax(0, 1fr) 3.2em;
+  gap: 0.2em;
+}
+
+.receipt-ticket--58 .receipt-ticket-line:not(.receipt-ticket-line--qty) > .receipt-ticket-price,
+.receipt-ticket--58 .receipt-ticket-line:not(.receipt-ticket-line--qty) > .receipt-ticket-qty {
+  display: none;
 }
 
 .receipt-ticket-line--qty {
@@ -2543,9 +2626,33 @@
   border-radius: 4px;
 }
 
+.receipt-ticket--58 .receipt-ticket-qr {
+  margin-top: 0.3rem;
+  gap: 0.15rem;
+}
+
 .receipt-ticket--58 .receipt-ticket-qr img {
-  width: 3.6rem;
-  height: 3.6rem;
+  width: 3rem;
+  height: 3rem;
+}
+
+.receipt-ticket--58 .receipt-ticket-footer {
+  font-size: 0.8em;
+}
+
+.receipt-ticket--58 .receipt-ticket-return-notice,
+.receipt-ticket--58 .receipt-ticket-maintainer {
+  margin-top: 0.22em;
+  font-size: 0.72em;
+}
+
+.receipt-ticket--58 .receipt-ticket-payment-title {
+  font-size: 0.82em;
+}
+
+.receipt-ticket--58 .receipt-ticket-grand {
+  padding: 0.22em 0.25em;
+  font-size: 1em;
 }
 
 .receipt-ticket-qr p {
@@ -2574,6 +2681,15 @@
   letter-spacing: 0;
   font-family: inherit;
   font-weight: 600;
+}
+
+.receipt-format-field--phone input {
+  width: min(14rem, 48vw);
+  min-width: 11rem;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-family: inherit;
+  font-weight: 650;
 }
 
 .receipt-ticket-width-tag {
@@ -2717,5 +2833,187 @@
 
 /* .staff-table mobile card stack now handled by the shared rule in the
    unified component section (max-width: 639px). */
+
+/* ---------- Company theme picker ---------- */
+.company-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16.5rem, 1fr));
+  gap: 0.85rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.company-theme-card {
+  position: relative;
+  display: grid;
+  gap: 0.85rem;
+  width: 100%;
+  padding: 0.95rem 1rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--accent) 8%, var(--surface)), var(--surface) 55%);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.2s var(--ease),
+    box-shadow 0.2s var(--ease),
+    transform 0.2s var(--ease),
+    background-color 0.2s var(--ease);
+}
+
+.company-theme-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.company-theme-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.company-theme-card.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
+    var(--shadow-md);
+}
+
+.company-theme-card.is-saving {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.company-theme-card--company {
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--teal) 10%, var(--surface)), var(--surface) 58%);
+}
+
+.item-panel--shop-theme {
+  margin-bottom: 1.1rem;
+}
+
+.company-theme-swatches {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.company-theme-swatch {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 42, 46, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.company-theme-card-copy strong {
+  display: block;
+  color: var(--text-strong);
+  font-size: 0.98rem;
+  font-weight: 750;
+}
+
+.company-theme-card-copy p {
+  margin: 0.28rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.company-theme-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.company-theme-preview {
+  display: grid;
+  grid-template-columns: 0.7rem 1fr;
+  gap: 0.45rem;
+  min-height: 3.4rem;
+  padding: 0.45rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-muted) 80%, transparent);
+  border: 1px solid var(--line);
+}
+
+.company-theme-preview-rail {
+  border-radius: 6px;
+  background: var(--brand, #0f3a3f);
+}
+
+.company-theme-preview-body {
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+}
+
+.company-theme-preview-bar {
+  height: 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 28%, transparent);
+}
+
+.company-theme-preview-bar--accent {
+  width: 42%;
+  background: var(--accent);
+}
+
+.company-theme-preview-bar--teal {
+  width: 64%;
+  background: color-mix(in srgb, var(--teal) 70%, transparent);
+}
+
+.company-theme-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 1.5rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-deep);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.company-theme-card:not(.is-selected) .company-theme-status {
+  visibility: hidden;
+}
+
+.company-theme-active {
+  margin: 0.35rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.company-theme-active strong {
+  color: var(--text-strong);
+}
+
+/* Per-card live swatch/preview colors (preview uses inline CSS vars). */
+.company-theme-card[data-theme-slug] {
+  --preview-brand: var(--brand);
+  --preview-accent: var(--accent);
+  --preview-teal: var(--teal);
+}
+
+.company-theme-card .company-theme-preview-rail {
+  background: var(--preview-brand);
+}
+
+.company-theme-card .company-theme-preview-bar--accent {
+  background: var(--preview-accent);
+}
+
+.company-theme-card .company-theme-preview-bar--teal {
+  background: color-mix(in srgb, var(--preview-teal) 75%, transparent);
+}
 
 /* split from main.css lines 4456-5269 */

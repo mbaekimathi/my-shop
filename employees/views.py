@@ -33,8 +33,10 @@ from shops.services import (
     get_company_display_name,
     client_phone_for_receipt,
     get_company_profile,
+    get_company_theme,
     get_main_website_shop,
     get_company_working_hours_settings,
+    set_company_theme,
     update_main_website_settings,
     get_daraja_settings,
     get_developer_payment_settings,
@@ -1190,6 +1192,9 @@ def employee_settings_section(request, role_segment, section):
     if settings_section["slug"] == "company-profile":
         return _company_profile_settings(request, context)
 
+    if settings_section["slug"] == "company-theme":
+        return _company_theme_settings(request, context)
+
     if settings_section["slug"] == "company-payments":
         return _payments_settings_hub(request, context)
 
@@ -2145,6 +2150,54 @@ def _company_profile_settings(request, context):
     return render(request, "employees/settings_company_profile.html", context)
 
 
+def _company_theme_settings(request, context):
+    from shops.themes import COMPANY_THEME_BY_SLUG, company_theme_options
+
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or "application/json" in (request.headers.get("Accept") or "")
+    )
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        if action != "set_company_theme":
+            message = "Unknown action."
+            if wants_json:
+                return JsonResponse({"ok": False, "error": message}, status=400)
+            messages.error(request, message)
+            return redirect(request.path)
+        try:
+            theme = set_company_theme(theme=request.POST.get("theme") or "")
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            if wants_json:
+                return JsonResponse({"ok": False, "error": message}, status=400)
+            messages.error(request, message)
+            return redirect(request.path)
+        theme_meta = COMPANY_THEME_BY_SLUG.get(theme) or {}
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "theme": theme,
+                    "label": theme_meta.get("label") or theme,
+                    "summary": theme_meta.get("summary") or "",
+                }
+            )
+        messages.success(request, "Company theme updated.")
+        return redirect(request.path)
+
+    active = get_company_theme()
+    themes = company_theme_options(selected=active)
+    context.update(
+        {
+            "company_themes": themes,
+            "active_theme": COMPANY_THEME_BY_SLUG.get(active) or themes[0],
+        }
+    )
+    return render(request, "employees/settings_company_theme.html", context)
+
+
 def _working_hours_form_context(settings_row, post=None):
     from shops.models import WORKING_DAY_FIELDS
     from shops.services import active_shop_count, list_working_hours_shop_rows
@@ -2678,6 +2731,9 @@ def _company_pos_settings(
                 ("website", "Company website"),
                 ("receipt_details", "Receipt details"),
             ),
+            "show_return_notice_on_receipt": bool(
+                getattr(pos, "show_return_notice_on_receipt", True)
+            ),
             "show_maintainer_on_receipt": bool(
                 getattr(pos, "show_maintainer_on_receipt", False)
             ),
@@ -2691,10 +2747,10 @@ def _company_pos_settings(
                 "receipt_number": preview_receipt_number(kind="sale", settings_row=pos),
                 "kind": "Sale",
                 "doc_type": "sale",
-                "document_title": "Sales invoice / receipt",
-                "doc_number_label": "Invoice No.",
+                "document_title": "Receipt",
+                "doc_number_label": "No.",
                 "party_label": "Customer",
-                "authorised_label": "Cashier",
+                "authorised_label": "Served by",
                 "date": "07 Aug 2026 · 09:15",
                 "client": "JANE WAMBUI",
                 "party_phone_full": "+254 712 555 010",
@@ -2709,7 +2765,7 @@ def _company_pos_settings(
                 "show_client_phone": bool(
                     getattr(pos, "show_client_phone_on_receipt", True)
                 ),
-                "cashier": "Staff 104822",
+                "cashier": "Jane Wambui",
                 "status": "",
                 "lines": (
                     {
@@ -2750,7 +2806,11 @@ def _company_pos_settings(
                     else {"type": "", "label": "", "lines": []}
                 ),
                 "footer": "Thank you for shopping with us",
-                "return_notice": "Goods once bought cannot be returned",
+                "return_notice": (
+                    "Goods once bought cannot be returned"
+                    if getattr(pos, "show_return_notice_on_receipt", True)
+                    else ""
+                ),
                 "maintainer": receipt_maintainer_line(pos),
             },
         }
@@ -2791,12 +2851,12 @@ def _company_pos_settings(
         "kind": context["receipt_preview"]["kind"],
         "doc_type": context["receipt_preview"].get("doc_type") or "sale",
         "document_title": context["receipt_preview"].get("document_title")
-        or "Sales invoice / receipt",
+        or "Receipt",
         "doc_number_label": context["receipt_preview"].get("doc_number_label")
-        or "Invoice No.",
+        or "No.",
         "party_label": context["receipt_preview"].get("party_label") or "Customer",
         "authorised_label": context["receipt_preview"].get("authorised_label")
-        or "Cashier",
+        or "Served by",
         "date": context["receipt_preview"]["date"],
         "client": context["receipt_preview"]["client"],
         "party_phone": context["receipt_preview"].get("party_phone_full")

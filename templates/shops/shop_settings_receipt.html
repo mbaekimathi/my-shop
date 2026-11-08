@@ -55,13 +55,13 @@
               {% endif %}
             </p>
           </div>
-          <label class="receipt-format-field receipt-format-field--wide">
+          <label class="receipt-format-field receipt-format-field--phone">
             <input
-              type="text"
+              type="tel"
               inputmode="tel"
               maxlength="40"
               autocomplete="tel"
-              placeholder="{{ company_phone_number|default:'07XX XXX XXX' }}"
+              placeholder="{{ company_phone_number|default:'0712 345 678' }}"
               value="{{ receipt_phone_number }}"
               data-receipt-phone
               data-company-phone="{{ company_phone_number }}"
@@ -502,6 +502,36 @@
       </div>
     </section>
 
+    <section class="pos-settings-group receipt-return-notice-group">
+      <div class="pos-settings-group-head">
+        <h3>Return policy</h3>
+        <p>Shown at the bottom of sale and credit receipts.</p>
+      </div>
+      <ul class="pos-settings-list">
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>Show "Goods once bought cannot be returned"</strong>
+            <p>Prints under the thank-you line on sale and credit receipts.</p>
+          </div>
+          <label class="perm-switch">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if show_return_notice_on_receipt %}checked{% endif %}
+              data-pos-toggle
+              data-field="show_return_notice_on_receipt"
+              aria-label="Show return policy on receipt"
+              {% if using_company_defaults %}disabled{% endif %}
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if show_return_notice_on_receipt %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+      </ul>
+    </section>
+
     <section class="pos-settings-group receipt-maintainer-group">
       <div class="pos-settings-group-head">
         <h3>System maintenance</h3>
@@ -610,7 +640,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=20261108-copies"></script>
-<script defer src="{% static 'js/receipt-settings.js' %}?v=13"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261108-copy-title"></script>
+<script defer src="{% static 'js/receipt-settings.js' %}?v=18"></script>
 <script defer src="{% static 'js/shop-settings.js' %}?v=1"></script>
 {% endblock %}

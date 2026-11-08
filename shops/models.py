@@ -25,6 +25,12 @@ class Shop(models.Model):
         default="",
         help_text="Phone printed on this shop's receipts. Blank uses the company phone.",
     )
+    theme = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        help_text="Shop brand palette. Blank uses the company theme.",
+    )
     login_code = models.CharField(max_length=6, unique=True, db_index=True)
     password_hash = models.CharField(max_length=128)
     image = models.ImageField(upload_to=shop_image_path, blank=True, null=True)
@@ -361,6 +367,12 @@ class CompanyProfile(models.Model):
     email = models.EmailField(blank=True, default="")
     location = models.CharField(max_length=255, blank=True, default="")
     logo = models.ImageField(upload_to=company_logo_path, blank=True, null=True)
+    theme = models.CharField(
+        max_length=32,
+        blank=True,
+        default="harbor",
+        help_text="Company brand palette applied across MY-SHOP (independent of light/dark).",
+    )
     main_website_shop = models.ForeignKey(
         "shops.Shop",
         on_delete=models.SET_NULL,
@@ -506,6 +518,10 @@ class CompanyPosSettings(models.Model):
         default="website",
     )
     receipt_qr_website = models.CharField(max_length=255, blank=True, default="")
+    show_return_notice_on_receipt = models.BooleanField(
+        default=True,
+        help_text="When on, sale and credit receipts print 'Goods once bought cannot be returned'.",
+    )
     show_maintainer_on_receipt = models.BooleanField(
         default=False,
         help_text="When on, receipts print a 'System maintained by' line with the maintainer phone.",
@@ -796,6 +812,10 @@ class ShopPosSettings(models.Model):
         default="website",
     )
     receipt_qr_website = models.CharField(max_length=255, blank=True, default="")
+    show_return_notice_on_receipt = models.BooleanField(
+        default=True,
+        help_text="When on, sale and credit receipts print 'Goods once bought cannot be returned'.",
+    )
     show_maintainer_on_receipt = models.BooleanField(
         default=False,
         help_text="When on, receipts print a 'System maintained by' line with the maintainer phone.",

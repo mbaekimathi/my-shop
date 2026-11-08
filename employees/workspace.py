@@ -655,7 +655,13 @@ def sidebar_for_my_shop(
     print_channels = list(print_channels or [])
     omit_dashboard_link = False
     settings_actives = frozenset(
-        {"settings", "settings_pos", "settings_receipt", "settings_messages"}
+        {
+            "settings",
+            "settings_theme",
+            "settings_pos",
+            "settings_receipt",
+            "settings_messages",
+        }
     )
     if portal and shop is not None:
         dashboard_url = reverse(
@@ -781,6 +787,16 @@ def sidebar_for_my_shop(
                         "employees:my_shop_settings", kwargs={"shop_id": shop.pk}
                     ),
                     active=active == "settings",
+                )
+            )
+            primary.append(
+                _link(
+                    "Shop themes",
+                    "palette",
+                    href=reverse(
+                        "employees:my_shop_settings_theme", kwargs={"shop_id": shop.pk}
+                    ),
+                    active=active == "settings_theme",
                 )
             )
             primary.append(
@@ -1993,7 +2009,7 @@ SETTINGS_SECTIONS = (
         "slug": "company-theme",
         "label": "Company theme",
         "icon": "palette",
-        "summary": "Colors, logos, and visual appearance across MY-SHOP.",
+        "summary": "Choose the brand palette MY-SHOP uses company-wide.",
     },
     {
         "slug": "company-pos",

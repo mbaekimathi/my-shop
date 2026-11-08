@@ -89,10 +89,9 @@
 
   function messageRow(row) {
     const status = row.display_status || row.status || "";
-    const error =
-      row.error && (status === "failed" || row.status === "failed")
-        ? `<em class="wa-person__error">${escapeHtml(row.error)}</em>`
-        : "";
+    const bodyText = String(row.body_preview || row.body || "").trim();
+    const reasonText = String(row.reason || row.error || "").trim();
+    const summary = reasonText || "Message hidden — click View to read.";
     return `<tr class="wa-act-row" data-message-id="${row.id}">
       <td data-label="To">
         <a class="wa-act-toggle" href="${escapeHtml(detailHref(row))}">
@@ -101,17 +100,28 @@
         </a>
       </td>
       <td data-label="Message">
-        <a class="wa-act-toggle" href="${escapeHtml(detailHref(row))}">
-          <strong>${escapeHtml(row.kind_label || "Message")}</strong>
-          <span>${escapeHtml(row.body_preview || row.body || "Message")}</span>
-        </a>
+        <div class="wa-act-msg">
+          <div class="wa-act-msg__copy">
+            <strong>${escapeHtml(row.kind_label || "Message")}</strong>
+            <span class="wa-act-msg__summary" data-wa-msg-summary>${escapeHtml(summary)}</span>
+            <span class="wa-act-msg__body" data-wa-msg-body hidden>${escapeHtml(
+              bodyText || "No message text was saved."
+            )}</span>
+          </div>
+          <button
+            type="button"
+            class="wa-act-view"
+            data-wa-view-msg
+            aria-expanded="false"
+            ${bodyText ? "" : "disabled"}
+          >View</button>
+        </div>
       </td>
       <td data-label="Shop">${escapeHtml(row.shop_label || "All shops")}</td>
       <td data-label="Status">
         <span class="wa-auto__send-status" data-status="${escapeHtml(status)}">${escapeHtml(
           row.status_label || status
         )}</span>
-        ${error}
       </td>
       <td data-label="When">${escapeHtml(row.when_label || row.created_label || "")}</td>
     </tr>`;
@@ -297,6 +307,26 @@
       renderFeed(lastPayload || {});
     });
   });
+
+  if (feedEl) {
+    feedEl.addEventListener("click", (event) => {
+      const viewBtn = event.target.closest("[data-wa-view-msg]");
+      if (!viewBtn || !feedEl.contains(viewBtn)) return;
+      event.preventDefault();
+      const row = viewBtn.closest(".wa-act-row");
+      if (!row) return;
+      const summaryEl = row.querySelector("[data-wa-msg-summary]");
+      const bodyEl = row.querySelector("[data-wa-msg-body]");
+      if (!summaryEl || !bodyEl) return;
+      const open = viewBtn.getAttribute("aria-expanded") === "true";
+      const nextOpen = !open;
+      viewBtn.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+      viewBtn.textContent = nextOpen ? "Hide" : "View";
+      summaryEl.hidden = nextOpen;
+      bodyEl.hidden = !nextOpen;
+      row.classList.toggle("is-open", nextOpen);
+    });
+  }
 
   const initialNode = document.getElementById("wa-activities-data");
   try {

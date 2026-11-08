@@ -24,6 +24,7 @@
     "print_staff_receipt",
     "print_cashier_receipt",
   ];
+  const RETURN_NOTICE_TEXT = "Goods once bought cannot be returned";
 
   async function postSettings(body) {
     const response = await fetch(window.location.pathname, {
@@ -42,6 +43,27 @@
       throw new Error(data.error || "Could not save setting.");
     }
     return data;
+  }
+
+  function maskClientPhoneDigits(phone, visibleDigits = 7) {
+    const chars = [...String(phone || "")];
+    let digits = 0;
+    for (let i = 0; i < chars.length; i += 1) {
+      if (/\d/.test(chars[i])) {
+        digits += 1;
+        if (digits > visibleDigits) chars[i] = "*";
+      }
+    }
+    return chars.join("");
+  }
+
+  function readReceiptSample() {
+    const sampleEl = document.getElementById("receipt-sample-data");
+    try {
+      return sampleEl ? JSON.parse(sampleEl.textContent || "{}") : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   function syncCopyPreviews() {
@@ -65,6 +87,87 @@
     }
   }
 
+  function paintLiveCopyPreviews() {
+    const render = window.RichcomPrinter?.renderTicketHtml;
+    const sample = readReceiptSample();
+    if (typeof render !== "function" || !sample?.ticket) return false;
+
+    const width =
+      root.querySelector("[data-receipt-paper]:checked")?.value ||
+      sample.paper_width ||
+      "80";
+    const showClientPhone =
+      root.querySelector(
+        '[data-pos-toggle][data-field="show_client_phone_on_receipt"]'
+      )?.checked !== false;
+    const returnNoticeOn = Boolean(
+      root.querySelector(
+        '[data-pos-toggle][data-field="show_return_notice_on_receipt"]'
+      )?.checked
+    );
+    const maintainerOn = Boolean(
+      root.querySelector(
+        '[data-pos-toggle][data-field="show_maintainer_on_receipt"]'
+      )?.checked
+    );
+    const maintainerPhone = String(
+      root.querySelector("[data-maintainer-phone]")?.value || ""
+    ).trim();
+    const maintainer =
+      maintainerOn && maintainerPhone
+        ? `System maintained by ${maintainerPhone}`
+        : "";
+    const paymentOn = Boolean(
+      root.querySelector(
+        '[data-pos-toggle][data-field="enable_receipt_payment_methods"]'
+      )?.checked ?? true
+    );
+    const livePayment = paymentOn
+      ? typeof buildPaymentPreview === "function"
+        ? buildPaymentPreview()
+        : sample.ticket.payment_details || { label: "", lines: [] }
+      : { label: "", lines: [] };
+
+    (sample.copies || []).forEach((copy) => {
+      const node = root.querySelector(
+        `[data-receipt-copy-ticket="${copy.role}"]`
+      );
+      if (!node) return;
+      const ticket = {
+        ...(copy.ticket || sample.ticket),
+      };
+      const fullPhone = String(
+        ticket.party_phone_full || ticket.party_phone || ""
+      );
+      ticket.party_phone_full = fullPhone;
+      ticket.party_phone = showClientPhone
+        ? fullPhone
+        : maskClientPhoneDigits(fullPhone);
+      ticket.return_notice = returnNoticeOn ? RETURN_NOTICE_TEXT : "";
+      ticket.maintainer = maintainer;
+      if (!paymentOn) {
+        ticket.payment = "";
+        ticket.payment_details = { label: "", lines: [] };
+      } else {
+        ticket.payment = ticket.payment || "Cash";
+        ticket.payment_details =
+          copy.role === "staff"
+            ? { label: "", lines: [] }
+            : livePayment?.lines?.length
+              ? livePayment
+              : ticket.payment_details || { label: "", lines: [] };
+      }
+      const qr =
+        ticket.include_qr === false
+          ? { ready: false }
+          : copy.qr || sample.qr || {};
+      const html = render(ticket, qr, width);
+      if (!html) return;
+      node.innerHTML = `${html}<p class="receipt-ticket-width-tag" aria-hidden="true">${width} mm thermal</p>`;
+    });
+    return true;
+  }
+
   function syncSelection(width) {
     root.querySelectorAll(".receipt-paper-option").forEach((option) => {
       const input = option.querySelector("[data-receipt-paper]");
@@ -82,6 +185,7 @@
     if (paperStat) {
       paperStat.textContent = `${width} mm`;
     }
+    paintLiveCopyPreviews();
     syncCopyPreviews();
   }
 
@@ -246,9 +350,13 @@
   const fieldAccount = root.querySelector('[data-mpesa-field="account_number"]');
   const fieldTill = root.querySelector('[data-mpesa-field="till_number"]');
   const fieldPhones = [...root.querySelectorAll('[data-mpesa-field="phone_number"]')];
-  const paymentBlocks = root.querySelectorAll("[data-receipt-payment-block]");
-  const paymentTitles = root.querySelectorAll("[data-receipt-payment-title]");
-  const paymentLines = root.querySelectorAll("[data-receipt-payment-lines]");
+  function paymentPreviewNodes() {
+    return {
+      blocks: root.querySelectorAll("[data-receipt-payment-block]"),
+      titles: root.querySelectorAll("[data-receipt-payment-title]"),
+      lines: root.querySelectorAll("[data-receipt-payment-lines]"),
+    };
+  }
 
   function selectedMpesaType() {
     return root.querySelector("[data-mpesa-type]:checked")?.value || "";
@@ -337,7 +445,8 @@
       details = { label: "", lines: [] };
     }
     const hasLines = Boolean(details?.lines?.length);
-    paymentBlocks.forEach((block) => {
+    const { blocks, titles, lines } = paymentPreviewNodes();
+    blocks.forEach((block) => {
       // Staff copies omit M-Pesa collection instructions.
       if (copyRoleFor(block) === "staff") {
         block.hidden = true;
@@ -345,14 +454,14 @@
       }
       block.hidden = !hasLines;
     });
-    paymentTitles.forEach((title) => {
+    titles.forEach((title) => {
       if (copyRoleFor(title) === "staff") {
         title.textContent = "";
         return;
       }
       title.textContent = hasLines ? `M-Pesa ${details.label}` : "";
     });
-    paymentLines.forEach((wrap) => {
+    lines.forEach((wrap) => {
       wrap.innerHTML = "";
       if (copyRoleFor(wrap) === "staff") return;
       (details?.lines || []).forEach((line) => {
@@ -694,13 +803,7 @@
 
   const printSampleBtn = root.querySelector("[data-receipt-print-sample]");
   printSampleBtn?.addEventListener("click", async () => {
-    const sampleEl = document.getElementById("receipt-sample-data");
-    let sample = null;
-    try {
-      sample = sampleEl ? JSON.parse(sampleEl.textContent || "{}") : null;
-    } catch (_) {
-      sample = null;
-    }
+    const sample = readReceiptSample();
     if (!sample?.ticket) {
       window.alert("Sample receipt data is missing. Refresh the page.");
       return;
@@ -713,6 +816,11 @@
       sample.ticket.party_phone_full || sample.ticket.party_phone || ""
     );
     const displayPhone = showClientPhone ? fullPhone : maskClientPhoneDigits(fullPhone);
+    const returnNoticeOn = Boolean(
+      root.querySelector(
+        '[data-pos-toggle][data-field="show_return_notice_on_receipt"]'
+      )?.checked
+    );
     const maintainerOn = Boolean(
       root.querySelector(
         '[data-pos-toggle][data-field="show_maintainer_on_receipt"]'
@@ -769,6 +877,7 @@
           ...(copy.ticket || sample.ticket),
           party_phone: displayPhone,
           party_phone_print: displayPhone,
+          return_notice: returnNoticeOn ? RETURN_NOTICE_TEXT : "",
           maintainer,
         };
         const qr = copy.qr || sample.qr || {};
@@ -795,23 +904,12 @@
     }
   });
 
-  function maskClientPhoneDigits(phone, visibleDigits = 7) {
-    const chars = [...String(phone || "")];
-    let digits = 0;
-    for (let i = 0; i < chars.length; i += 1) {
-      if (/\d/.test(chars[i])) {
-        digits += 1;
-        if (digits > visibleDigits) chars[i] = "*";
-      }
-    }
-    return chars.join("");
-  }
-
   const clientPhoneToggle = root.querySelector(
     '[data-pos-toggle][data-field="show_client_phone_on_receipt"]'
   );
   if (clientPhoneToggle) {
     const syncClientPhonePreview = () => {
+      if (paintLiveCopyPreviews()) return;
       const show = clientPhoneToggle.checked;
       root.querySelectorAll("[data-receipt-client-phone]").forEach((el) => {
         const full = el.getAttribute("data-full-phone") || "";
@@ -834,9 +932,11 @@
   if (paymentMethodToggle) {
     paymentMethodToggle.addEventListener("change", () => {
       window.setTimeout(() => {
+        paintLiveCopyPreviews();
         renderPaymentPreview(buildPaymentPreview());
       }, 0);
     });
+    paintLiveCopyPreviews();
     renderPaymentPreview(buildPaymentPreview());
   }
 
@@ -905,6 +1005,27 @@
     receiptPhoneInput.addEventListener("blur", saveReceiptPhone);
   }
 
+  const returnNoticeToggle = root.querySelector(
+    '[data-pos-toggle][data-field="show_return_notice_on_receipt"]'
+  );
+
+  function syncReturnNoticePreview() {
+    if (paintLiveCopyPreviews()) return;
+    const show = Boolean(returnNoticeToggle?.checked);
+    root.querySelectorAll("[data-receipt-return-notice]").forEach((el) => {
+      if (!(el.textContent || "").trim()) {
+        el.textContent = RETURN_NOTICE_TEXT;
+      }
+      el.hidden = !show;
+    });
+  }
+
+  if (returnNoticeToggle) {
+    returnNoticeToggle.addEventListener("change", () => {
+      window.setTimeout(syncReturnNoticePreview, 0);
+    });
+  }
+
   const maintainerPhoneInput = root.querySelector("[data-maintainer-phone]");
   const maintainerPhoneRow = root.querySelector("[data-maintainer-phone-row]");
   const maintainerToggle = root.querySelector(
@@ -916,6 +1037,7 @@
     const phone = String(maintainerPhoneInput?.value || "").trim();
     const text = show && phone ? `System maintained by ${phone}` : "";
     if (maintainerPhoneRow) maintainerPhoneRow.hidden = !show;
+    if (paintLiveCopyPreviews()) return;
     root.querySelectorAll("[data-receipt-maintainer]").forEach((el) => {
       el.textContent = text;
       el.hidden = !text;
@@ -965,5 +1087,6 @@
     maintainerPhoneInput.addEventListener("blur", saveMaintainerPhone);
   }
 
+  syncReturnNoticePreview();
   syncMaintainerPreview();
 })();

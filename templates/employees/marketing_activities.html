@@ -15,8 +15,9 @@
     <p class="workspace-hero-copy">
       Every queued and sent message per channel — WhatsApp, SMS, and Message —
       including the sale, credit, and quotation auto messages once they are
-      activated. Open a message for the full text and each recipient's status.
-      If something failed, fix the channel in
+      activated. Rows show why a send is waiting or failed; use View for the
+      client text, or open a row for the full send. If something failed, fix
+      the channel in
       <a href="{{ settings_url }}">messaging settings</a>, then retry.
     </p>
   </div>
@@ -50,7 +51,7 @@
       <div class="item-panel-head-top">
         <div>
           <h2>Message activity</h2>
-          <p>All messages per channel, newest first — broadcasts plus the sale, credit, and quotation auto messages. Open a row for the full send.</p>
+          <p>All messages per channel, newest first — broadcasts plus the sale, credit, and quotation auto messages. Waiting and failed rows show the reason; View reveals the client text.</p>
         </div>
         <p class="item-count" data-wa-feed-count></p>
       </div>
@@ -115,5 +116,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/whatsapp-activities.js' %}?v=4"></script>
+<script defer src="{% static 'js/whatsapp-activities.js' %}?v=5"></script>
 {% endblock %}

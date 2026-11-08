@@ -1,0 +1,153 @@
+/* Company brand themes — override accent/teal/brand on top of light/dark. */
+
+/* Dark mode atmospheres should track the active brand tokens. */
+html[data-theme="dark"] {
+  --accent-glow: 0 8px 22px rgba(var(--accent-rgb), 0.16);
+  --accent-glow-strong: 0 12px 28px rgba(var(--accent-rgb), 0.24);
+  --focus-ring: 0 0 0 3px rgba(var(--accent-rgb), 0.4);
+  --capabilities-bg:
+    radial-gradient(ellipse at top left, rgba(var(--teal-rgb), 0.06), transparent 42%),
+    #0e2226;
+  --dashboard-bg:
+    radial-gradient(ellipse at top right, rgba(var(--teal-rgb), 0.05), transparent 38%),
+    var(--bg);
+  --body-atmosphere:
+    radial-gradient(ellipse at 12% 0%, rgba(var(--teal-rgb), 0.05), transparent 42%);
+  --workspace-main-bg:
+    radial-gradient(ellipse at top right, rgba(var(--teal-rgb), 0.05), transparent 38%),
+    var(--bg);
+}
+
+/* ---------- Harbor (default / current) ---------- */
+html[data-company-theme="harbor"],
+html:not([data-company-theme]) {
+  --brand: #0f3a3f;
+  --accent: #f2b045;
+  --accent-ink: #1a1203;
+  --accent-deep: #d9922a;
+  --accent-rgb: 242, 176, 69;
+  --teal: #0f8f82;
+  --teal-rgb: 15, 143, 130;
+  --link: #0c6e64;
+}
+
+html[data-theme="dark"][data-company-theme="harbor"],
+html[data-theme="dark"]:not([data-company-theme]) {
+  --accent: #f2b045;
+  --accent-ink: #1a1203;
+  --accent-deep: #f7c26a;
+  --accent-rgb: 242, 176, 69;
+  --teal: #3ecfbf;
+  --teal-rgb: 62, 207, 191;
+  --link: var(--teal);
+}
+
+/* ---------- Navy Bridge ---------- */
+html[data-company-theme="navy"] {
+  --brand: #0b1f3a;
+  --accent: #2563eb;
+  --accent-ink: #f8fafc;
+  --accent-deep: #1d4ed8;
+  --accent-rgb: 37, 99, 235;
+  --teal: #0e7490;
+  --teal-rgb: 14, 116, 144;
+  --link: #1d4ed8;
+}
+
+html[data-theme="dark"][data-company-theme="navy"] {
+  --accent: #60a5fa;
+  --accent-ink: #0b1f3a;
+  --accent-deep: #93c5fd;
+  --accent-rgb: 96, 165, 250;
+  --teal: #22d3ee;
+  --teal-rgb: 34, 211, 238;
+  --link: var(--teal);
+}
+
+/* ---------- Forest Ledger ---------- */
+html[data-company-theme="forest"] {
+  --brand: #14352a;
+  --accent: #c4a35a;
+  --accent-ink: #1a1408;
+  --accent-deep: #a6853f;
+  --accent-rgb: 196, 163, 90;
+  --teal: #1f7a5c;
+  --teal-rgb: 31, 122, 92;
+  --link: #166534;
+}
+
+html[data-theme="dark"][data-company-theme="forest"] {
+  --accent: #d4b56a;
+  --accent-ink: #1a1408;
+  --accent-deep: #e6c97f;
+  --accent-rgb: 212, 181, 106;
+  --teal: #34d399;
+  --teal-rgb: 52, 211, 153;
+  --link: var(--teal);
+}
+
+/* ---------- Graphite Sky ---------- */
+html[data-company-theme="graphite"] {
+  --brand: #111827;
+  --accent: #0284c7;
+  --accent-ink: #f0f9ff;
+  --accent-deep: #0369a1;
+  --accent-rgb: 2, 132, 199;
+  --teal: #0f766e;
+  --teal-rgb: 15, 118, 110;
+  --link: #0369a1;
+}
+
+html[data-theme="dark"][data-company-theme="graphite"] {
+  --accent: #38bdf8;
+  --accent-ink: #082f49;
+  --accent-deep: #7dd3fc;
+  --accent-rgb: 56, 189, 248;
+  --teal: #2dd4bf;
+  --teal-rgb: 45, 212, 191;
+  --link: var(--teal);
+}
+
+/* ---------- Ember Trade ---------- */
+html[data-company-theme="ember"] {
+  --brand: #2a1f18;
+  --accent: #c26d3a;
+  --accent-ink: #fff7ed;
+  --accent-deep: #a8552a;
+  --accent-rgb: 194, 109, 58;
+  --teal: #0f766e;
+  --teal-rgb: 15, 118, 110;
+  --link: #9a3412;
+}
+
+html[data-theme="dark"][data-company-theme="ember"] {
+  --accent: #e08a55;
+  --accent-ink: #2a1f18;
+  --accent-deep: #f0a574;
+  --accent-rgb: 224, 138, 85;
+  --teal: #2dd4bf;
+  --teal-rgb: 45, 212, 191;
+  --link: var(--accent);
+}
+
+/* ---------- Arctic Line ---------- */
+html[data-company-theme="arctic"] {
+  --brand: #0f172a;
+  --accent: #0891b2;
+  --accent-ink: #ecfeff;
+  --accent-deep: #0e7490;
+  --accent-rgb: 8, 145, 178;
+  --teal: #0e7490;
+  --teal-rgb: 14, 116, 144;
+  --link: #0e7490;
+}
+
+html[data-theme="dark"][data-company-theme="arctic"] {
+  --accent: #22d3ee;
+  --accent-ink: #083344;
+  --accent-deep: #67e8f9;
+  --accent-rgb: 34, 211, 238;
+  --teal: #67e8f9;
+  --teal-rgb: 103, 232, 249;
+  --link: var(--teal);
+}

@@ -24,6 +24,7 @@ class ShopAdmin(admin.ModelAdmin):
     list_display = (
         "name",
         "location",
+        "theme",
         "email",
         "phone_number",
         "login_code",
@@ -31,7 +32,7 @@ class ShopAdmin(admin.ModelAdmin):
         "is_hidden",
         "created_at",
     )
-    list_filter = ("is_suspended", "is_hidden", "created_at")
+    list_filter = ("is_suspended", "is_hidden", "theme", "created_at")
     search_fields = ("name", "location", "email", "phone_number", "login_code")
     readonly_fields = ("password_hash",)
 
@@ -40,6 +41,7 @@ class ShopAdmin(admin.ModelAdmin):
 class CompanyProfileAdmin(admin.ModelAdmin):
     list_display = (
         "name",
+        "theme",
         "phone_number",
         "email",
         "location",
@@ -47,6 +49,7 @@ class CompanyProfileAdmin(admin.ModelAdmin):
         "main_website_domain",
         "updated_at",
     )
+    list_filter = ("theme",)
     search_fields = ("name", "email", "phone_number", "location", "main_website_domain")
     autocomplete_fields = ("main_website_shop",)
     readonly_fields = ("updated_at",)
@@ -79,6 +82,7 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "print_cashier_receipt",
         "enable_receipt_payment_methods",
         "show_client_phone_on_receipt",
+        "show_return_notice_on_receipt",
         "receipt_paper_width",
         "receipt_format_sale",
         "receipt_format_credit",

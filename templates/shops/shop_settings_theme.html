@@ -1,0 +1,97 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section
+  class="item-panel item-panel--dense item-panel--shop-theme"
+  data-animate="rise"
+  data-shop-theme-settings
+  data-company-theme-slug="{{ company_theme_slug }}"
+>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">{{ shop.name }} · Theme</p>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }} Choose a brand palette for this shop only. Company default keeps this shop aligned with company theme settings.</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong data-shop-theme-mode>{% if using_company_theme %}Company{% else %}Custom{% endif %}</strong>
+          <span>mode</span>
+        </p>
+        <p class="stock-stat">
+          <strong data-shop-theme-active-label>{{ active_theme.label }}</strong>
+          <span>active</span>
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <div class="pos-settings-groups">
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Shop brand themes</h3>
+        <p>Selection saves automatically and applies on this shop’s pages only.</p>
+      </div>
+
+      <p class="company-theme-active" data-shop-theme-hint>
+        {% if using_company_theme %}
+        Using company default — <strong data-shop-theme-active-name>{{ active_theme.label }}</strong>
+        {% else %}
+        Using shop theme — <strong data-shop-theme-active-name>{{ active_theme.label }}</strong>
+        {% endif %}
+      </p>
+
+      <ul class="company-theme-grid" data-shop-theme-grid>
+        {% for theme in shop_themes %}
+        <li>
+          <button
+            type="button"
+            class="company-theme-card{% if theme.selected %} is-selected{% endif %}{% if theme.is_company_default %} company-theme-card--company{% endif %}"
+            data-shop-theme-option
+            data-theme-slug="{{ theme.slug }}"
+            data-theme-value="{{ theme.value }}"
+            data-theme-effective="{{ theme.effective_slug }}"
+            data-theme-label="{{ theme.label }}"
+            data-theme-summary="{{ theme.summary }}"
+            data-theme-company="{% if theme.is_company_default %}1{% else %}0{% endif %}"
+            style="--preview-brand: {{ theme.swatches.0 }}; --preview-teal: {{ theme.swatches.1 }}; --preview-accent: {{ theme.swatches.2 }};"
+            aria-pressed="{% if theme.selected %}true{% else %}false{% endif %}"
+          >
+            <div class="company-theme-swatches" aria-hidden="true">
+              {% for swatch in theme.swatches %}
+              <span class="company-theme-swatch" style="background: {{ swatch }};"></span>
+              {% endfor %}
+            </div>
+            <div class="company-theme-card-copy">
+              <strong>{{ theme.label }}</strong>
+              <p>{{ theme.summary }}</p>
+            </div>
+            <div class="company-theme-card-meta">
+              <div class="company-theme-preview" aria-hidden="true">
+                <span class="company-theme-preview-rail"></span>
+                <span class="company-theme-preview-body">
+                  <span class="company-theme-preview-bar company-theme-preview-bar--accent"></span>
+                  <span class="company-theme-preview-bar company-theme-preview-bar--teal"></span>
+                  <span class="company-theme-preview-bar"></span>
+                </span>
+              </div>
+              <span class="company-theme-status">Active</span>
+            </div>
+          </button>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/shop-theme.js' %}?v=2"></script>
+{% endblock %}

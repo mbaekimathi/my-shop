@@ -99,7 +99,9 @@ from .services import (
     get_company_pos_settings,
     get_company_profile,
     get_company_stock_settings,
+    get_company_theme,
     get_company_working_hours_settings,
+    get_theme_for_shop,
     get_communications_settings,
     get_daraja_settings,
     get_effective_pos_settings,
@@ -133,6 +135,7 @@ from .services import (
     set_shop_receipt_phone,
     set_shop_receipt_qr_settings,
     set_shop_tax_percent,
+    set_shop_theme,
     shop_day_balance_channels,
     toggle_shop_hidden,
     toggle_shop_suspended,
@@ -4057,6 +4060,9 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
         ),
         "receipt_phone_number": (getattr(shop, "receipt_phone_number", None) or ""),
         "company_phone_number": (company.phone_number or "").strip(),
+        "show_return_notice_on_receipt": bool(
+            getattr(pos, "show_return_notice_on_receipt", True)
+        ),
         "show_maintainer_on_receipt": bool(
             getattr(pos, "show_maintainer_on_receipt", False)
         ),
@@ -4070,10 +4076,10 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
             "receipt_number": preview_receipt_number(kind="sale", settings_row=pos),
             "kind": "Sale",
             "doc_type": "sale",
-            "document_title": "Sales invoice / receipt",
-            "doc_number_label": "Invoice No.",
+            "document_title": "Receipt",
+            "doc_number_label": "No.",
             "party_label": "Customer",
-            "authorised_label": "Cashier",
+            "authorised_label": "Served by",
             "date": "07 Aug 2026 · 09:15",
             "client": "JANE WAMBUI",
             "party_phone_full": "+254 712 555 010",
@@ -4088,7 +4094,7 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
             "show_client_phone": bool(
                 getattr(pos, "show_client_phone_on_receipt", True)
             ),
-            "cashier": "Staff 104822",
+            "cashier": "Jane Wambui",
             "status": "",
             "lines": (
                 {
@@ -4129,7 +4135,11 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
                 else {"type": "", "label": "", "lines": []}
             ),
             "footer": "Thank you for shopping with us",
-            "return_notice": "Goods once bought cannot be returned",
+            "return_notice": (
+                "Goods once bought cannot be returned"
+                if getattr(pos, "show_return_notice_on_receipt", True)
+                else ""
+            ),
             "maintainer": receipt_maintainer_line(pos),
         },
     }
@@ -4138,7 +4148,7 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
 @shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_settings(request, shop_id):
-    """Shop settings hub: POS and receipt overrides for this shop."""
+    """Shop settings hub: theme, POS, and receipt overrides for this shop."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return denied
@@ -4150,6 +4160,7 @@ def my_shop_settings(request, shop_id):
 
     shops = _shops_for_floor(profile, shop)
     shop_row = get_shop_pos_settings(shop)
+    shop_theme_value = (getattr(shop, "theme", None) or "").strip()
     return render(
         request,
         "shops/shop_settings.html",
@@ -4161,14 +4172,18 @@ def my_shop_settings(request, shop_id):
                 "title": f"Shop settings — {shop.name}",
                 "headline": "Shop settings",
                 "summary": (
-                    f"Override company POS and receipt defaults for {shop.name}, "
+                    f"Override company theme, POS, and receipt defaults for {shop.name}, "
                     "or leave them unset to use the company defaults."
                 ),
                 "icon": "settings",
             },
+            "shop_theme_override": bool(shop_theme_value),
             "shop_pos_override": shop_row.override_pos,
             "shop_receipt_override": shop_row.override_receipt,
             "shop_messages_override": shop_row.override_messages,
+            "shop_settings_theme_url": reverse(
+                "employees:my_shop_settings_theme", kwargs={"shop_id": shop.pk}
+            ),
             "shop_settings_pos_url": reverse(
                 "employees:my_shop_settings_pos", kwargs={"shop_id": shop.pk}
             ),
@@ -4178,6 +4193,71 @@ def my_shop_settings(request, shop_id):
             "shop_settings_messages_url": reverse(
                 "employees:my_shop_settings_messages", kwargs={"shop_id": shop.pk}
             ),
+        },
+    )
+
+
+@shop_floor_required
+@require_http_methods(["GET", "POST"])
+def my_shop_settings_theme(request, shop_id):
+    """Per-shop brand theme (blank uses the company theme)."""
+    from .themes import COMPANY_THEME_BY_SLUG, shop_theme_options
+
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "shop_settings", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    wants_json = _shop_settings_wants_json(request)
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        if action != "set_shop_theme":
+            return _shop_settings_error(request, "Unknown action.")
+        try:
+            result = set_shop_theme(
+                shop=shop,
+                theme=request.POST.get("theme") or "",
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        if wants_json:
+            return JsonResponse({"ok": True, **result})
+        messages.success(request, "Shop theme updated.")
+        return redirect(request.path)
+
+    shops = _shops_for_floor(profile, shop)
+    company_theme = get_company_theme()
+    shop_theme_value = (getattr(shop, "theme", None) or "").strip()
+    themes = shop_theme_options(
+        selected=shop_theme_value,
+        company_theme=company_theme,
+    )
+    effective = get_theme_for_shop(shop)
+    active_theme = COMPANY_THEME_BY_SLUG.get(effective) or themes[0]
+    return render(
+        request,
+        "shops/shop_settings_theme.html",
+        {
+            **_shop_floor_chrome(
+                shop, profile, shops, active="settings_theme", request=request
+            ),
+            "meta": {
+                "title": f"Shop themes — {shop.name}",
+                "headline": "Shop themes",
+                "summary": f"Brand palette for {shop.name}",
+                "icon": "palette",
+            },
+            "shop_themes": themes,
+            "shop_theme_value": shop_theme_value,
+            "using_company_theme": not bool(shop_theme_value),
+            "company_theme_slug": company_theme,
+            "active_theme": active_theme,
+            "effective_theme_slug": effective,
         },
     )
 
@@ -4292,12 +4372,12 @@ def my_shop_settings_receipt(request, shop_id):
         "kind": context["receipt_preview"]["kind"],
         "doc_type": context["receipt_preview"].get("doc_type") or "sale",
         "document_title": context["receipt_preview"].get("document_title")
-        or "Sales invoice / receipt",
+        or "Receipt",
         "doc_number_label": context["receipt_preview"].get("doc_number_label")
-        or "Invoice No.",
+        or "No.",
         "party_label": context["receipt_preview"].get("party_label") or "Customer",
         "authorised_label": context["receipt_preview"].get("authorised_label")
-        or "Cashier",
+        or "Served by",
         "date": context["receipt_preview"]["date"],
         "client": context["receipt_preview"]["client"],
         "party_phone": context["receipt_preview"].get("party_phone_full")

@@ -13,6 +13,17 @@
 </section>
 
 <div class="workspace-grid workspace-grid--modules" data-animate="rise" data-delay="1">
+  <a class="workspace-card workspace-module-link" href="{{ shop_settings_theme_url }}">
+    <i data-lucide="palette" aria-hidden="true"></i>
+    <h3>Shop themes</h3>
+    <p>
+      {% if shop_theme_override %}
+      Custom brand theme for this shop.
+      {% else %}
+      Using company theme. Open to customize.
+      {% endif %}
+    </p>
+  </a>
   <a class="workspace-card workspace-module-link" href="{{ shop_settings_pos_url }}">
     <i data-lucide="monitor-smartphone" aria-hidden="true"></i>
     <h3>Shop POS</h3>

@@ -13,14 +13,14 @@
     {% if p.shop_branch %}<p class="receipt-ticket-branch">{{ p.shop_branch }}</p>{% endif %}
   </div>
 
-  <p class="receipt-ticket-doc-title">{{ p.document_title|default:"Sales invoice / receipt" }}</p>
-  {% if p.copy_label %}
-  <p class="receipt-ticket-copy-banner" data-receipt-copy-banner>{{ p.copy_label }}</p>
-  {% endif %}
+  <p class="receipt-ticket-doc-title">
+    <span class="receipt-title-full">{{ p.document_title|default:"Receipt" }}</span>
+    <span class="receipt-title-compact">{{ p.document_title|default:"Receipt"|upper }}</span>
+  </p>
 
   <div class="receipt-ticket-doc-meta">
     <div>
-      <span>{{ p.doc_number_label|default:"Invoice No." }}</span>
+      <span>{{ p.doc_number_label|default:"No." }}</span>
       <strong data-receipt-ticket-number>{{ p.receipt_number }}</strong>
     </div>
     <div>
@@ -50,8 +50,6 @@
       {% endif %}
     </div>
     <div class="receipt-ticket-refs">
-      <span class="receipt-ticket-party-label">Reference</span>
-      <div><span>Type</span><strong>{{ p.kind }}</strong></div>
       {% if p.receiving_branch %}
       <div><span>Branch</span><strong>{{ p.receiving_branch }}</strong></div>
       {% endif %}
@@ -65,7 +63,7 @@
       <div><span>Pay by</span><strong>{{ p.credit_due_date }}</strong></div>
       {% endif %}
       {% if p.cashier %}
-      <div><span>{{ p.authorised_label|default:"Cashier" }}</span><strong>{{ p.cashier }}</strong></div>
+      <div><span>{{ p.authorised_label|default:"Served by" }}</span><strong>{{ p.cashier }}</strong></div>
       {% endif %}
     </div>
   </div>
@@ -78,8 +76,8 @@
       {% if p.qty_only %}
       <span>Qty</span>
       {% else %}
-      <span>Price</span>
-      <span>Qty</span>
+      <span class="receipt-ticket-price">Price</span>
+      <span class="receipt-ticket-qty">Qty</span>
       <span>Total</span>
       {% endif %}
     </div>
@@ -90,6 +88,9 @@
     <div class="receipt-ticket-line{% if p.qty_only %} receipt-ticket-line--qty{% endif %}">
       <span class="receipt-ticket-item">
         <strong>{{ line.name }}</strong>
+        {% if not p.qty_only %}
+        <em class="receipt-ticket-unit">{{ line.qty }} × {{ line.price }}</em>
+        {% endif %}
         {% if line.detail %}<em class="receipt-ticket-detail">{{ line.detail }}</em>{% endif %}
         {% for serial in line.serials %}
         <em class="receipt-ticket-serial">SN {{ serial }}</em>
@@ -102,7 +103,7 @@
       <span>{{ line.qty }}</span>
       {% else %}
       <span class="receipt-ticket-price">@ {{ line.price }}</span>
-      <span>{{ line.qty }}</span>
+      <span class="receipt-ticket-qty">{{ line.qty }}</span>
       <span>{{ line.total }}</span>
       {% endif %}
     </div>
@@ -159,19 +160,14 @@
     </div>
   </div>
 
-  {% if p.cashier %}
-  <div class="receipt-ticket-auth">
-    <span>{{ p.authorised_label|default:"Cashier" }}</span>
-    <strong>{{ p.cashier }}</strong>
-  </div>
-  {% endif %}
-
   <div class="receipt-ticket-rule" aria-hidden="true"></div>
 
   <p class="receipt-ticket-footer">{{ p.footer }}</p>
-  {% if p.return_notice %}
-  <p class="receipt-ticket-footer receipt-ticket-return-notice">{{ p.return_notice }}</p>
-  {% endif %}
+  <p
+    class="receipt-ticket-footer receipt-ticket-return-notice"
+    data-receipt-return-notice
+    {% if not p.return_notice %}hidden{% endif %}
+  >{{ p.return_notice|default:"Goods once bought cannot be returned" }}</p>
   <p class="receipt-ticket-footer receipt-ticket-maintainer" data-receipt-maintainer{% if not p.maintainer %} hidden{% endif %}>{{ p.maintainer }}</p>
 
   <div class="receipt-ticket-qr" data-receipt-qr-block{% if not p.qr.ready or p.include_qr == False %} hidden{% endif %}>
@@ -183,6 +179,6 @@
     <p data-receipt-qr-label>{% if p.qr.label and p.include_qr != False %}{{ p.qr.label }}{% endif %}</p>
   </div>
 
-  <p class="receipt-ticket-width-tag">{{ size }} mm thermal</p>
+  <p class="receipt-ticket-width-tag" aria-hidden="true">{{ size }} mm thermal</p>
 </div>
 {% endwith %}

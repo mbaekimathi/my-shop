@@ -47,6 +47,8 @@ MIN_PASSWORD_LENGTH = 6
 DEFAULT_COMPANY_NAME = "MY-SHOP"
 COMPANY_DISPLAY_NAME_CACHE_KEY = "shops:company-display-name"
 COMPANY_DISPLAY_NAME_CACHE_TIMEOUT = 60 * 5
+COMPANY_THEME_CACHE_KEY = "shops:company-theme"
+COMPANY_THEME_CACHE_TIMEOUT = 60 * 5
 _SHOP_LOGIN_DUMMY_HASH = None
 
 
@@ -83,6 +85,7 @@ POS_SETTING_FIELDS = {
     "print_cashier_receipt",
     "enable_receipt_payment_methods",
     "show_client_phone_on_receipt",
+    "show_return_notice_on_receipt",
     "show_maintainer_on_receipt",
 }
 
@@ -118,6 +121,7 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "print_cashier_receipt",
         "enable_receipt_payment_methods",
         "show_client_phone_on_receipt",
+        "show_return_notice_on_receipt",
         "receipt_paper_width",
         "receipt_format_sale",
         "receipt_format_credit",
@@ -144,7 +148,7 @@ RECEIPT_PRINT_COPY_ROLES = (
         "role": "customer",
         "field": "print_customer_receipt",
         "label": "Customer",
-        "banner": "CUSTOMER COPY",
+        "banner": "CUSTOMER RECEIPT",
         "default": True,
         "footer": "",
         "include_payment_details": True,
@@ -154,7 +158,7 @@ RECEIPT_PRINT_COPY_ROLES = (
         "role": "staff",
         "field": "print_staff_receipt",
         "label": "Staff",
-        "banner": "STAFF COPY",
+        "banner": "STAFF RECEIPT",
         "default": False,
         "footer": "Staff copy · Shop floor record",
         "include_payment_details": False,
@@ -164,7 +168,7 @@ RECEIPT_PRINT_COPY_ROLES = (
         "role": "cashier",
         "field": "print_cashier_receipt",
         "label": "Cashier",
-        "banner": "CASHIER COPY",
+        "banner": "CASHIER RECEIPT",
         "default": False,
         "footer": "Cashier copy · Till record",
         "include_payment_details": True,
@@ -574,6 +578,11 @@ def set_shop_receipt_phone(*, shop: Shop, phone_number: str = "") -> Shop:
     raw = (phone_number or "").strip()
     if raw and not PHONE_RE.match(raw):
         raise ValidationError("Enter a valid shop phone number.")
+    # Prefer a full Kenyan display form when the number is recognizable.
+    if raw:
+        formatted = format_kenya_phone(raw)
+        if formatted and PHONE_RE.match(formatted):
+            raw = formatted
     shop.receipt_phone_number = raw
     shop.save(update_fields=["receipt_phone_number", "updated_at"])
     return shop
@@ -2395,6 +2404,87 @@ def update_main_website_settings(*, shop_id=None, domain: str = "") -> CompanyPr
     return profile
 
 
+def get_company_theme() -> str:
+    """Return the active company brand theme slug (cached)."""
+    from .themes import DEFAULT_COMPANY_THEME, normalize_company_theme
+
+    cached = cache.get(COMPANY_THEME_CACHE_KEY)
+    if cached is not None:
+        return normalize_company_theme(cached)
+    try:
+        raw = getattr(get_company_profile(), "theme", "") or ""
+    except DatabaseError:
+        return DEFAULT_COMPANY_THEME
+    theme = normalize_company_theme(raw)
+    cache.set(COMPANY_THEME_CACHE_KEY, theme, COMPANY_THEME_CACHE_TIMEOUT)
+    return theme
+
+
+def set_company_theme(*, theme: str) -> str:
+    """Persist and return the selected company brand theme."""
+    from .themes import COMPANY_THEME_SLUGS
+
+    slug = (theme or "").strip().lower()
+    if slug not in COMPANY_THEME_SLUGS:
+        raise ValidationError("Choose a valid company theme.")
+    profile = get_company_profile()
+    profile.theme = slug
+    profile.save(update_fields=["theme", "updated_at"])
+    cache.set(COMPANY_THEME_CACHE_KEY, slug, COMPANY_THEME_CACHE_TIMEOUT)
+    return slug
+
+
+def get_theme_for_shop(shop: Shop | None = None) -> str:
+    """Effective brand theme for a shop (shop override, else company)."""
+    from .themes import COMPANY_THEME_SLUGS, normalize_company_theme
+
+    if shop is not None:
+        raw = (getattr(shop, "theme", None) or "").strip().lower()
+        if raw in COMPANY_THEME_SLUGS:
+            return raw
+    return normalize_company_theme(get_company_theme())
+
+
+def set_shop_theme(*, shop: Shop, theme: str = "") -> dict:
+    """Set per-shop theme. Blank / 'company' clears the override."""
+    from .themes import COMPANY_THEME_BY_SLUG, COMPANY_THEME_SLUGS
+
+    raw = (theme or "").strip().lower()
+    if raw in ("", "company", "default", "company-default"):
+        slug = ""
+    elif raw in COMPANY_THEME_SLUGS:
+        slug = raw
+    else:
+        raise ValidationError("Choose a valid shop theme.")
+
+    shop.theme = slug
+    shop.save(update_fields=["theme", "updated_at"])
+    effective = get_theme_for_shop(shop)
+    meta = COMPANY_THEME_BY_SLUG.get(effective) or {}
+    return {
+        "shop_theme": slug,
+        "using_company_theme": not bool(slug),
+        "theme": effective,
+        "label": meta.get("label") or effective,
+        "summary": meta.get("summary") or "",
+    }
+
+
+def resolve_theme_for_request(request, *, shop: Shop | None = None) -> str:
+    """Resolve brand theme for the current request (shop floor → shop theme)."""
+    target = shop
+    if target is None:
+        match = getattr(request, "resolver_match", None)
+        kwargs = getattr(match, "kwargs", None) or {}
+        shop_id = kwargs.get("shop_id")
+        if shop_id not in (None, ""):
+            try:
+                target = Shop.objects.only("theme").filter(pk=int(shop_id)).first()
+            except (TypeError, ValueError):
+                target = None
+    return get_theme_for_shop(target)
+
+
 def get_company_display_name() -> str:
     """Company profile name for branding, with MY-SHOP as fallback."""
     cached_name = cache.get(COMPANY_DISPLAY_NAME_CACHE_KEY)
@@ -3369,6 +3459,20 @@ def enabled_receipt_print_roles(settings_row=None) -> list[str]:
     return [c["role"] for c in receipt_print_copies(settings_row) if c["enabled"]]
 
 
+def _copy_document_title(role: str, ticket: dict | None = None) -> str:
+    """Single title line, e.g. STAFF RECEIPT / CUSTOMER CREDIT."""
+    role_key = str(role or "").strip().lower()
+    role_word = {
+        "customer": "CUSTOMER",
+        "staff": "STAFF",
+        "cashier": "CASHIER",
+    }.get(role_key, "")
+    base = _compact_document_title(ticket or {})
+    if role_word:
+        return f"{role_word} {base}"
+    return base
+
+
 def apply_receipt_copy(
     ticket: dict | None,
     role: str,
@@ -3380,7 +3484,10 @@ def apply_receipt_copy(
     meta = receipt_print_copy_meta(role) or RECEIPT_PRINT_COPY_ROLES[0]
     out = dict(base)
     out["copy_role"] = meta["role"]
-    out["copy_label"] = meta["banner"]
+    # Fold copy type into the document title so we never print both
+    # "RECEIPT" and "CUSTOMER COPY".
+    out["document_title"] = _copy_document_title(meta["role"], out)
+    out["copy_label"] = ""
     if meta["footer"]:
         out["footer"] = meta["footer"]
     if not meta["include_payment_details"]:
@@ -3408,6 +3515,11 @@ def build_receipt_print_copies(
     row = settings_row or get_company_pos_settings()
     maintainer = receipt_maintainer_line(row)
     kind_key = (kind or "").strip().lower()
+    paper = (
+        row.receipt_paper_width
+        if getattr(row, "receipt_paper_width", None) in RECEIPT_PAPER_WIDTHS
+        else "80"
+    )
     if kind_key not in ("sale", "credit"):
         base = dict(ticket or {})
         base["maintainer"] = maintainer
@@ -3417,7 +3529,7 @@ def build_receipt_print_copies(
                 "label": "Receipt",
                 "banner": "",
                 "ticket": base,
-                "text": _render_receipt_text(base),
+                "text": _render_receipt_text(base, paper_width=paper),
                 "qr": qr or {},
             }
         ]
@@ -3435,7 +3547,7 @@ def build_receipt_print_copies(
                 "label": meta["label"],
                 "banner": meta["banner"],
                 "ticket": copy_ticket,
-                "text": _render_receipt_text(copy_ticket),
+                "text": _render_receipt_text(copy_ticket, paper_width=paper),
                 "qr": copy_qr or {},
             }
         )
@@ -3506,6 +3618,9 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
             else "website"
         ),
         "receipt_qr_website": row.receipt_qr_website or "",
+        "show_return_notice_on_receipt": bool(
+            getattr(row, "show_return_notice_on_receipt", True)
+        ),
         "show_maintainer_on_receipt": bool(
             getattr(row, "show_maintainer_on_receipt", False)
         ),
@@ -4020,6 +4135,38 @@ def receipt_maintainer_line(settings_row: CompanyPosSettings | None = None) -> s
     return f"System maintained by {phone}"
 
 
+def receipt_return_notice_line(
+    settings_row: CompanyPosSettings | None = None,
+    *,
+    notice: str = "",
+) -> str:
+    """Return-policy line for sale/credit receipts, or "" when the toggle is off."""
+    row = settings_row or get_company_pos_settings()
+    if not getattr(row, "show_return_notice_on_receipt", True):
+        return ""
+    return (notice or "").strip()
+
+
+def employee_display_name(profile) -> str:
+    """Human name for receipt 'Served by' (full name first, never Staff + id)."""
+    if not profile:
+        return ""
+    user = getattr(profile, "user", None)
+    if user is not None:
+        full = (user.get_full_name() or "").strip()
+        if full:
+            return full
+        first = (getattr(user, "first_name", "") or "").strip()
+        last = (getattr(user, "last_name", "") or "").strip()
+        combined = f"{first} {last}".strip()
+        if combined:
+            return combined
+        username = (getattr(user, "username", "") or "").strip()
+        if username and not username.isdigit():
+            return username
+    return (getattr(profile, "employee_id", "") or "").strip()
+
+
 def _receipt_center_wrap(text: str, width: int) -> list[str]:
     """Center a sentence, wrapping onto extra lines when the paper is narrow."""
     words = str(text or "").split()
@@ -4053,10 +4200,10 @@ def _sales_ticket_document_meta(receipt) -> dict:
     if kind == ShopReceiptKind.CREDIT:
         return {
             "doc_type": "credit",
-            "document_title": "Credit invoice / receipt",
-            "doc_number_label": "Invoice No.",
+            "document_title": "Credit receipt",
+            "doc_number_label": "No.",
             "party_label": "Customer",
-            "authorised_label": "Cashier",
+            "authorised_label": "Served by",
             "footer": "Thank you for your business",
             "return_notice": RECEIPT_NO_RETURN_NOTICE,
         }
@@ -4064,7 +4211,7 @@ def _sales_ticket_document_meta(receipt) -> dict:
         return {
             "doc_type": "quotation",
             "document_title": "Quotation",
-            "doc_number_label": "Quote No.",
+            "doc_number_label": "No.",
             "party_label": "Customer",
             "authorised_label": "Prepared by",
             "footer": "This quotation is not a tax invoice",
@@ -4073,26 +4220,26 @@ def _sales_ticket_document_meta(receipt) -> dict:
         return {
             "doc_type": "trade_out",
             "document_title": "Trade out note",
-            "doc_number_label": "Trade No.",
+            "doc_number_label": "No.",
             "party_label": "Client",
-            "authorised_label": "Cashier",
+            "authorised_label": "Served by",
             "footer": "Items released on trade — settle by payment or exchange",
         }
     if kind == ShopReceiptKind.TRADE_IN:
         return {
             "doc_type": "trade_in",
             "document_title": "Trade in note",
-            "doc_number_label": "Trade No.",
+            "doc_number_label": "No.",
             "party_label": "Client",
-            "authorised_label": "Cashier",
+            "authorised_label": "Served by",
             "footer": "Items received on trade — settle the amount owed later",
         }
     return {
         "doc_type": "sale",
-        "document_title": "Sales invoice / receipt",
-        "doc_number_label": "Invoice No.",
+        "document_title": "Receipt",
+        "doc_number_label": "No.",
         "party_label": "Customer",
-        "authorised_label": "Cashier",
+        "authorised_label": "Served by",
         "footer": "Thank you for shopping with us",
         "return_notice": RECEIPT_NO_RETURN_NOTICE,
     }
@@ -4121,13 +4268,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
 
     cashier = ""
     if receipt.created_by_id and receipt.created_by:
-        user = receipt.created_by.user
-        cashier = (
-            user.get_full_name()
-            or getattr(receipt.created_by, "employee_id", "")
-            or user.username
-            or ""
-        )
+        cashier = employee_display_name(receipt.created_by)
 
     created = timezone.localtime(receipt.created_at)
     date_label = created.strftime("%d %b %Y · %H:%M")
@@ -4246,9 +4387,24 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
             "lines": list(payment_details.get("lines") or []),
         },
         "footer": doc_meta["footer"],
-        "return_notice": doc_meta.get("return_notice") or "",
+        "return_notice": receipt_return_notice_line(
+            pos, notice=doc_meta.get("return_notice") or ""
+        ),
         "maintainer": receipt_maintainer_line(pos),
     }
+
+
+def _compact_document_title(ticket: dict) -> str:
+    doc_type = str(ticket.get("doc_type") or "").strip().lower()
+    if doc_type == "credit":
+        return "CREDIT"
+    if doc_type == "quotation":
+        return "QUOTE"
+    if doc_type == "trade_out":
+        return "TRADE OUT"
+    if doc_type == "trade_in":
+        return "TRADE IN"
+    return "RECEIPT"
 
 
 def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str:
@@ -4258,6 +4414,7 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
         width = 32 if paper_width == "58" else 42
     else:
         width = _receipt_char_width(pos)
+    compact = width <= 32
     rule = "-" * width
     mark = (ticket.get("mark") or DEFAULT_COMPANY_NAME).strip()
     shop_name = (ticket.get("shop_name") or "").strip()
@@ -4273,19 +4430,21 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
         rows.append(_receipt_center(ticket["shop_branch"], width))
 
     document_title = (ticket.get("document_title") or "").strip()
+    if not document_title:
+        document_title = _compact_document_title(ticket)
+    elif compact:
+        document_title = document_title.upper()
     if document_title:
         rows.extend([rule, _receipt_center(document_title, width)])
-    copy_label = (ticket.get("copy_label") or "").strip()
-    if copy_label:
-        rows.extend([rule, _receipt_center(copy_label, width)])
 
-    doc_number_label = (ticket.get("doc_number_label") or "Doc No.").strip() or "Doc No."
-    authorised_label = (ticket.get("authorised_label") or "Cashier").strip() or "Cashier"
+    doc_number_label = (ticket.get("doc_number_label") or "No.").strip() or "No."
+    authorised_label = (
+        ticket.get("authorised_label") or "Served by"
+    ).strip() or "Served by"
     rows.extend(
         [
             rule,
             _receipt_pad_line(doc_number_label, ticket.get("receipt_number") or "", width),
-            _receipt_pad_line("Type", ticket.get("kind") or "", width),
             _receipt_pad_line("Date", ticket.get("date") or "", width),
         ]
     )
@@ -4325,13 +4484,17 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
     qty_only = bool(ticket.get("qty_only"))
 
     # Column widths tuned to mirror the HTML preview grid.
-    if width <= 32:
-        price_w, qty_w, total_w = 7, 3, 6
+    # 58 mm uses Item + Total, with qty × price under the name.
+    if compact:
+        total_w = 8
+        price_w = qty_w = 0
     else:
         price_w, qty_w, total_w = 8, 3, 7
-    right_w = price_w + 1 + qty_w + 1 + total_w
+    right_w = total_w if compact else price_w + 1 + qty_w + 1 + total_w
     if qty_only:
         rows.extend([rule, _receipt_pad_line("Item", "Qty", width)])
+    elif compact:
+        rows.extend([rule, _receipt_pad_line("Item", "Total", width)])
     else:
         rows.extend(
             [
@@ -4359,15 +4522,25 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
                 else:
                     rows.append(_receipt_pad_line(name, qty_label, width))
             else:
-                price_col = f"@{line.get('price') or '0'}"
                 total_label = str(line.get("total") or "0")
-                right = f"{price_col:<{price_w}} {qty_label:<{qty_w}} {total_label:>{total_w}}"
+                if compact:
+                    right = f"{total_label:>{total_w}}"
+                else:
+                    price_col = f"@{line.get('price') or '0'}"
+                    right = (
+                        f"{price_col:<{price_w}} {qty_label:<{qty_w}} "
+                        f"{total_label:>{total_w}}"
+                    )
                 left_max = max(6, width - right_w - 1)
                 if len(name) > left_max:
                     rows.append(name[:width])
                     rows.append(_receipt_pad_line("", right, width))
                 else:
                     rows.append(_receipt_pad_line(name, right, width))
+                if compact:
+                    rows.append(
+                        f"  {qty_label} x {line.get('price') or '0'}"[:width]
+                    )
             if detail:
                 rows.append(f"  {detail[: max(8, width - 2)]}")
             for serial in line.get("serials") or []:
@@ -4502,15 +4675,9 @@ def build_stock_in_supplier_receipt(movement, *, shop: Shop, authorised_by=None)
             payment_status, payment_status.replace("_", " ").title()
         )
 
-    cashier = ""
-    profile = authorised_by or getattr(movement, "created_by", None)
-    if profile is not None and getattr(profile, "user", None) is not None:
-        cashier = (
-            profile.user.get_full_name()
-            or getattr(profile, "employee_id", "")
-            or profile.user.username
-            or ""
-        )
+    cashier = employee_display_name(
+        authorised_by or getattr(movement, "created_by", None)
+    )
 
     ticket_lines = []
     total = Decimal("0")
@@ -4600,7 +4767,6 @@ def build_stock_request_delivery_note(
     rider = (getattr(movement, "rider_name", None) or "").strip()
     is_dispatch = (variant or "").strip().lower() == "dispatch"
 
-    cashier = ""
     profile = authorised_by
     if profile is None:
         profile = (
@@ -4608,13 +4774,7 @@ def build_stock_request_delivery_note(
             if is_dispatch
             else getattr(movement, "responded_by", None)
         )
-    if profile is not None and getattr(profile, "user", None) is not None:
-        cashier = (
-            profile.user.get_full_name()
-            or getattr(profile, "employee_id", "")
-            or profile.user.username
-            or ""
-        )
+    cashier = employee_display_name(profile)
 
     ticket_lines = []
     total_units = Decimal("0")
@@ -6708,15 +6868,9 @@ def _shop_receipt_date_bounds(
 
 def _receipt_list_item(receipt) -> dict:
     created = timezone.localtime(receipt.created_at)
-    cashier = ""
-    if receipt.created_by_id and receipt.created_by:
-        user = receipt.created_by.user
-        cashier = (
-            user.get_full_name()
-            or getattr(receipt.created_by, "employee_id", "")
-            or user.username
-            or ""
-        )
+    cashier = employee_display_name(
+        receipt.created_by if receipt.created_by_id else None
+    )
     return {
         "id": receipt.pk,
         "source": "pos",
@@ -6769,16 +6923,9 @@ def _stock_receipt_list_item(movement) -> dict:
         qty = _qty(line.quantity)
         unit = Decimal(line.buying_price or 0)
         total += (unit * qty).quantize(Decimal("0.01"))
-    cashier = ""
-    if movement.created_by_id and movement.created_by:
-        user = getattr(movement.created_by, "user", None)
-        if user is not None:
-            cashier = (
-                user.get_full_name()
-                or getattr(movement.created_by, "employee_id", "")
-                or user.username
-                or ""
-            )
+    cashier = employee_display_name(
+        movement.created_by if movement.created_by_id else None
+    )
     pay_status = (
         getattr(first, "payment_status", None) or movement.payment_status or ""
     ).strip()
@@ -6813,16 +6960,9 @@ def _expense_receipt_list_item(expense) -> dict:
     dial = (expense.supplier_phone_country_code or "").strip()
     phone = (expense.supplier_phone_number or "").strip()
     supplier_phone = f"{dial} {phone}".strip()
-    cashier = ""
-    if expense.created_by_id and expense.created_by:
-        user = getattr(expense.created_by, "user", None)
-        if user is not None:
-            cashier = (
-                user.get_full_name()
-                or getattr(expense.created_by, "employee_id", "")
-                or user.username
-                or ""
-            )
+    cashier = employee_display_name(
+        expense.created_by if expense.created_by_id else None
+    )
     return {
         "id": expense.pk,
         "source": "expense",
@@ -7302,14 +7442,9 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
             )
         except Expense.DoesNotExist as exc:
             raise ValidationError("Expense receipt not found for this shop.") from exc
-        cashier = ""
-        if expense.created_by_id and expense.created_by and expense.created_by.user:
-            cashier = (
-                expense.created_by.user.get_full_name()
-                or expense.created_by.employee_id
-                or expense.created_by.user.username
-                or ""
-            )
+        cashier = employee_display_name(
+            expense.created_by if expense.created_by_id else None
+        )
         print_payload = build_expense_supplier_receipt(
             expense, shop=shop, authorised_by=cashier, expenses=[expense]
         )
@@ -7401,14 +7536,7 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
                     "serials": [str(s) for s in serials],
                 }
             )
-        cashier = ""
-        if actor is not None and getattr(actor, "user", None) is not None:
-            cashier = (
-                actor.user.get_full_name()
-                or getattr(actor, "employee_id", "")
-                or actor.user.username
-                or ""
-            )
+        cashier = employee_display_name(actor)
         return _supplier_detail_from_print(
             print_payload=print_payload,
             source=source_out,

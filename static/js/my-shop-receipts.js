@@ -472,7 +472,11 @@
     const ticket = printPayload.ticket;
     const ticketHtml =
       ticket && window.RichcomPrinter?.renderTicketHtml
-        ? window.RichcomPrinter.renderTicketHtml(ticket, printPayload.qr)
+        ? window.RichcomPrinter.renderTicketHtml(
+            ticket,
+            printPayload.qr,
+            paperWidth === "58" ? "58" : "80"
+          )
         : "";
     const ticketPreview = ticketHtml
       ? `<div class="shop-receipt-ticket-preview">

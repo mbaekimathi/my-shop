@@ -1066,9 +1066,11 @@ class WhatsAppCataloguePageTests(TestCase):
         self.assertEqual(labels, ["Dashboard", "Communication settings", "Message drafts", "Share items", "Contacts", "Inbox", "Activities"])
         self.assertTrue(response.context["page_sidebar"]["primary"][6].get("active"))
         self.assertContains(response, "Message activity")
+        self.assertContains(response, "Waiting and failed rows show the reason")
         self.assertContains(response, "Nothing on this channel yet. Queued and sent messages will show up here.")
         self.assertContains(response, 'href="/it-support/whatsapp/catalogue/"')
         self.assertContains(response, 'href="/it-support/whatsapp/contacts/"')
+        self.assertContains(response, "whatsapp-activities.js")
         self.assertIn("pending", response.context["activities"])
         self.assertIn("history", response.context["activities"])
         channels = response.context["activities"]["channels"]
@@ -1861,6 +1863,42 @@ class WhatsAppSendLogTests(TestCase):
                 delivered_at=self.sent.delivered_at,
             ),
             "viewed",
+        )
+
+    def test_activity_reason_explains_waiting_and_failed(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from communications.campaigns import _message_activity_reason
+        from communications.constants import CAMPAIGN_DRAFT, CAMPAIGN_QUEUED
+
+        self.assertEqual(
+            _message_activity_reason(
+                display_status="queued",
+                error="",
+                campaign_status=CAMPAIGN_QUEUED,
+                filters={},
+            ),
+            "Waiting in queue",
+        )
+        due = timezone.now() + timedelta(hours=2)
+        self.assertTrue(
+            _message_activity_reason(
+                display_status="queued",
+                error="",
+                campaign_status=CAMPAIGN_DRAFT,
+                filters={"send_after": due.isoformat()},
+            ).startswith("Scheduled — sends ")
+        )
+        self.assertEqual(
+            _message_activity_reason(
+                display_status="failed",
+                error="Twilio rejected the Auth Token.",
+                campaign_status=CAMPAIGN_QUEUED,
+                filters={},
+            ),
+            "Twilio rejected the Auth Token.",
         )
 
     def test_activity_detail_shows_message_recipients_and_status(self):
@@ -2728,6 +2766,7 @@ class TriggeredMessageTests(TestCase):
         row = sms_feed[0]
         self.assertIn("SMS for Kim.", row["body"])
         self.assertEqual(row["display_status"], "queued")
+        self.assertEqual(row["reason"], "Waiting in queue")
         self.assertEqual(row["client_name"], "KIM OTIENO")
         self.assertTrue(row["is_triggered"])
         self.assertIn("Sale", row["kind_label"])

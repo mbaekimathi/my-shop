@@ -895,6 +895,41 @@ def _message_when_label(display_status: str, row: dict[str, Any]) -> str:
     return row.get("created_label") or ""
 
 
+def _message_activity_reason(
+    *,
+    display_status: str,
+    error: str,
+    campaign_status: str,
+    filters: dict | None,
+) -> str:
+    """Why this message is waiting / failed — shown instead of the body preview."""
+    key = (display_status or "").strip().lower()
+    detail = (error or "").strip()
+    if key == "failed":
+        return detail or "Send failed"
+    if key == "cancelled":
+        return detail or "Cancelled"
+    if key in {"queued", "pending"}:
+        data = filters if isinstance(filters, dict) else {}
+        send_after = _parse_send_after(str(data.get("send_after") or ""))
+        now = timezone.now()
+        is_scheduled = campaign_status == CAMPAIGN_DRAFT or (
+            send_after is not None and send_after > now
+        )
+        if is_scheduled and send_after:
+            return f"Scheduled — sends {_format_when(send_after)}"
+        if campaign_status == CAMPAIGN_SENDING:
+            return "Sending now"
+        return "Waiting in queue"
+    if key == "viewed":
+        return "Viewed by customer"
+    if key == "delivered":
+        return "Delivered to customer"
+    if key == "sent":
+        return "Sent to customer"
+    return detail
+
+
 def _progress_label(
     *,
     pending_count: int,
@@ -1227,6 +1262,12 @@ def channel_activities_payload(
                     "status": message.status or "",
                     "display_status": display,
                     "status_label": outbound_status_label(display),
+                    "reason": _message_activity_reason(
+                        display_status=display,
+                        error=(message.error or "").strip(),
+                        campaign_status=campaign.status or "",
+                        filters=filters,
+                    ),
                     "when_label": _message_when_label(display, labels),
                     "created_label": labels["created_label"],
                     "error": (message.error or "").strip(),

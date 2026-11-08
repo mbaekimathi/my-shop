@@ -2709,14 +2709,9 @@ def get_analytics_receipt_kind(kind: str) -> dict:
 
 
 def _cashier_label(profile) -> str:
-    if not profile or not getattr(profile, "user", None):
-        return ""
-    return (
-        profile.user.get_full_name()
-        or profile.employee_id
-        or profile.user.username
-        or ""
-    )
+    from shops.services import employee_display_name
+
+    return employee_display_name(profile)
 
 
 def _stock_in_line_amount_expr():
