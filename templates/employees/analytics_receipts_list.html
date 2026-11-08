@@ -33,6 +33,7 @@
           <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
           {% endfor %}
         </select>
+        {% include "employees/partials/analytics_receipt_status_field.html" %}
         {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=False %}
         <button type="submit" class="ax-apply">Apply</button>
       </form>
@@ -105,6 +106,22 @@
     };
     rangeSelect?.addEventListener("change", syncRange);
     syncRange();
+
+    const scope = form.querySelector("[data-ax-receipt-scope]");
+    if (scope) {
+      const syncScope = () => {
+        scope.querySelectorAll(".ax-receipt-scope-option").forEach((option) => {
+          const input = option.querySelector('input[type="radio"]');
+          option.classList.toggle("is-active", Boolean(input?.checked));
+        });
+      };
+      scope.addEventListener("change", () => {
+        syncScope();
+        if (typeof form.requestSubmit === "function") form.requestSubmit();
+        else form.submit();
+      });
+      syncScope();
+    }
 
     const kindSwitch = form.querySelector("[data-receipt-kind-switch]");
     kindSwitch?.addEventListener("change", () => {

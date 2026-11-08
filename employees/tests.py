@@ -37,7 +37,7 @@ class SupplierSidebarTests(TestCase):
         self.assertEqual(sidebar["primary"][0]["href"], sidebar["dashboard_url"])
 
 
-class AnalyticsSidebarTests(SimpleTestCase):
+class AnalyticsSidebarTests(TestCase):
     def test_overview_sidebar_lists_section_hub_links(self):
         sidebar = sidebar_for_analytics(EmployeeRole.IT_SUPPORT, active_view="overview")
         labels = [item["label"] for item in sidebar["primary"]]
@@ -46,6 +46,7 @@ class AnalyticsSidebarTests(SimpleTestCase):
         self.assertTrue(sidebar["primary"][1]["active"])
         self.assertIn("Revenue", labels)
         self.assertIn("Receipts", labels)
+        self.assertIn("Analytics settings", labels)
         self.assertNotIn("Clients", labels)
         self.assertNotIn("Suppliers", labels)
 
@@ -54,7 +55,9 @@ class AnalyticsSidebarTests(SimpleTestCase):
             EmployeeRole.IT_SUPPORT, active_view="revenue"
         )
         labels = [item["label"] for item in sidebar["primary"]]
-        self.assertEqual(labels, ["Dashboard", "Overview", "Revenue"])
+        self.assertEqual(
+            labels, ["Dashboard", "Overview", "Revenue", "Analytics settings"]
+        )
         self.assertTrue(sidebar["primary"][2]["active"])
         self.assertFalse(sidebar["primary"][1]["active"])
 
@@ -67,6 +70,107 @@ class AnalyticsSidebarTests(SimpleTestCase):
             labels, ["Dashboard", "Overview", "Receipts", "Confirm receipts"]
         )
         self.assertTrue(sidebar["primary"][3]["active"])
+
+    def test_analytics_settings_sidebar_is_focused(self):
+        sidebar = sidebar_for_analytics_section(
+            EmployeeRole.IT_SUPPORT, active_view="settings"
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertEqual(labels, ["Dashboard", "Overview", "Analytics settings"])
+        self.assertTrue(sidebar["primary"][2]["active"])
+
+
+class AnalyticsReceiptStatusSettingsTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="870099",
+            password="analytics-pass",
+            email="ax-settings@test.local",
+            is_active=True,
+        )
+        self.staff = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="870099",
+            role=EmployeeRole.IT_SUPPORT,
+            status=EmployeeStatus.ACTIVE,
+        )
+
+    def test_settings_page_saves_default_and_filters_override(self):
+        from employees.analytics_services import (
+            resolve_analytics_receipt_status,
+            _receipts_qs,
+        )
+        from shops.models import AnalyticsReceiptDataSource
+        from shops.services import (
+            get_analytics_receipt_data_source_default,
+            set_analytics_receipt_data_source,
+        )
+
+        self.assertEqual(
+            get_analytics_receipt_data_source_default(),
+            AnalyticsReceiptDataSource.PENDING,
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/it-support/analytics/settings/",
+            {"receipt_data_source": "confirmed"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            get_analytics_receipt_data_source_default(),
+            AnalyticsReceiptDataSource.CONFIRMED,
+        )
+        self.assertEqual(resolve_analytics_receipt_status(None), "confirmed")
+        self.assertEqual(resolve_analytics_receipt_status("pending"), "pending")
+
+        shop = Shop.objects.create(
+            name="AX STATUS SHOP",
+            location="NAIROBI",
+            email="ax-status@test.local",
+            phone_number="0700004099",
+            login_code="850199",
+            password_hash="x",
+            created_by=self.staff,
+        )
+        pending = ShopReceipt.objects.create(
+            shop=shop,
+            receipt_number="AX-PENDING-1",
+            kind=ShopReceiptKind.SALE,
+            status=ShopReceiptStatus.ACTIVE,
+            total=10,
+            amount_paid=10,
+            created_by=self.staff,
+        )
+        confirmed = ShopReceipt.objects.create(
+            shop=shop,
+            receipt_number="AX-CONFIRMED-1",
+            kind=ShopReceiptKind.SALE,
+            status=ShopReceiptStatus.CONFIRMED,
+            total=20,
+            amount_paid=20,
+            created_by=self.staff,
+        )
+        pending_ids = set(
+            _receipts_qs(
+                shop_ids=[shop.pk],
+                start=None,
+                end=None,
+                kinds=[ShopReceiptKind.SALE],
+                receipt_status="pending",
+            ).values_list("pk", flat=True)
+        )
+        confirmed_ids = set(
+            _receipts_qs(
+                shop_ids=[shop.pk],
+                start=None,
+                end=None,
+                kinds=[ShopReceiptKind.SALE],
+                receipt_status="confirmed",
+            ).values_list("pk", flat=True)
+        )
+        self.assertEqual(pending_ids, {pending.pk})
+        self.assertEqual(confirmed_ids, {confirmed.pk})
+        set_analytics_receipt_data_source(source="pending")
 
 
 class ConfirmSalesReceiptTests(TestCase):

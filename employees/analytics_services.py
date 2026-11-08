@@ -1640,7 +1640,51 @@ def _parse_shop_ids(raw_values, shops_by_id):
     return ids
 
 
-def _receipts_qs(*, shop_ids, start, end, kinds=None, exclude_cancelled=True):
+ANALYTICS_RECEIPT_STATUS_PENDING = "pending"
+ANALYTICS_RECEIPT_STATUS_CONFIRMED = "confirmed"
+ANALYTICS_RECEIPT_STATUS_OPTIONS = (
+    (ANALYTICS_RECEIPT_STATUS_PENDING, "Pending receipts"),
+    (ANALYTICS_RECEIPT_STATUS_CONFIRMED, "Confirmed receipts"),
+)
+
+
+def _analytics_receipt_statuses(status_key: str | None) -> tuple[str, ...] | None:
+    key = (status_key or "").strip().lower()
+    if key in ("pending", "active"):
+        return (ShopReceiptStatus.ACTIVE,)
+    if key == "confirmed":
+        return (ShopReceiptStatus.CONFIRMED, ShopReceiptStatus.PARTIAL_RETURN)
+    return None
+
+
+def resolve_analytics_receipt_status(raw: str | None = None) -> str:
+    """Resolve pending/confirmed for analytics pages (GET override or company default)."""
+    key = (raw or "").strip().lower()
+    if key in ("pending", "active"):
+        return ANALYTICS_RECEIPT_STATUS_PENDING
+    if key == "confirmed":
+        return ANALYTICS_RECEIPT_STATUS_CONFIRMED
+    from shops.services import get_analytics_receipt_data_source_default
+
+    return get_analytics_receipt_data_source_default()
+
+
+def _apply_analytics_receipt_status(qs, status_key: str | None, *, field: str = "status"):
+    statuses = _analytics_receipt_statuses(status_key)
+    if statuses is None:
+        return qs
+    return qs.filter(**{f"{field}__in": statuses})
+
+
+def _receipts_qs(
+    *,
+    shop_ids,
+    start,
+    end,
+    kinds=None,
+    exclude_cancelled=True,
+    receipt_status=None,
+):
     qs = ShopReceipt.objects.filter(shop_id__in=shop_ids)
     if start is not None:
         qs = qs.filter(created_at__gte=start)
@@ -1648,7 +1692,9 @@ def _receipts_qs(*, shop_ids, start, end, kinds=None, exclude_cancelled=True):
         qs = qs.filter(created_at__lt=end)
     if kinds:
         qs = qs.filter(kind__in=kinds)
-    if exclude_cancelled:
+    if receipt_status:
+        qs = _apply_analytics_receipt_status(qs, receipt_status)
+    elif exclude_cancelled:
         qs = qs.exclude(status=ShopReceiptStatus.CANCELLED)
     return qs
 
@@ -2111,11 +2157,17 @@ SHRINKAGE_REASONS = frozenset(
 )
 
 
-def _trading_line_qs(*, shop_ids, start, end, kinds):
+def _trading_line_qs(*, shop_ids, start, end, kinds, receipt_status=None):
     qs = ShopReceiptLine.objects.filter(
         receipt__shop_id__in=shop_ids,
         receipt__kind__in=kinds,
-    ).exclude(receipt__status=ShopReceiptStatus.CANCELLED)
+    )
+    if receipt_status:
+        qs = _apply_analytics_receipt_status(
+            qs, receipt_status, field="receipt__status"
+        )
+    else:
+        qs = qs.exclude(receipt__status=ShopReceiptStatus.CANCELLED)
     if start is not None:
         qs = qs.filter(receipt__created_at__gte=start)
     if end is not None:
@@ -2124,12 +2176,16 @@ def _trading_line_qs(*, shop_ids, start, end, kinds):
 
 
 def _trading_by_shop_for_period(
-    *, shop_ids, start, end, kinds=None
+    *, shop_ids, start, end, kinds=None, receipt_status=None
 ) -> dict[int, dict]:
     """Net selling value and COGS by shop for receipts created in [start, end)."""
     kinds = list(kinds or [ShopReceiptKind.SALE, ShopReceiptKind.CREDIT])
     trading_line_qs = _trading_line_qs(
-        shop_ids=shop_ids, start=start, end=end, kinds=kinds
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=kinds,
+        receipt_status=receipt_status,
     )
     empty = {
         "lines": 0,
@@ -2217,11 +2273,15 @@ def _trading_by_shop_for_period(
 
 
 def _cogs_by_shop_for_period(
-    *, shop_ids, start, end, kinds=None
+    *, shop_ids, start, end, kinds=None, receipt_status=None
 ) -> dict[int, tuple[int, Decimal]]:
     """COGS from stamped sale/credit line costs (with last-buy fallback)."""
     trading = _trading_by_shop_for_period(
-        shop_ids=shop_ids, start=start, end=end, kinds=kinds
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=kinds,
+        receipt_status=receipt_status,
     )
     return {
         shop_id: (int(row["lines"] or 0), Decimal(row["cogs"] or 0))
@@ -2385,6 +2445,7 @@ def _filters_context(
     selected_shop_ids = _parse_shop_ids(request.GET.getlist("shop_id"), shops_by_id)
     active_shop_ids = selected_shop_ids or [shop.pk for shop in filter_shops]
     range_type = date_filter.get("range_type") or date_filter.get("report_range") or "day"
+    receipt_status = resolve_analytics_receipt_status(request.GET.get("receipt_status"))
     return {
         **date_filter,
         "filter_shops": filter_shops,
@@ -2392,6 +2453,11 @@ def _filters_context(
         "active_shop_ids": active_shop_ids,
         "credits_shop_scoped": shop_scope == "allocated",
         "credits_require_shop_pick": False,
+        "receipt_status": receipt_status,
+        "receipt_status_options": ANALYTICS_RECEIPT_STATUS_OPTIONS,
+        "receipt_status_label": dict(ANALYTICS_RECEIPT_STATUS_OPTIONS).get(
+            receipt_status, "Pending receipts"
+        ),
         "report_range_label": {
             "all": "All time",
             "day": "Day",
@@ -2904,6 +2970,8 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
         .select_related("shop", "created_by", "created_by__user")
         .order_by("-created_at", "-id")
     )
+    if slug not in {"cancelled", "partial-returns"}:
+        qs = _apply_analytics_receipt_status(qs, filters.get("receipt_status"))
     if search:
         qs = qs.filter(
             Q(receipt_number__icontains=search)
@@ -5978,20 +6046,34 @@ def _common_receipt_sets(filters):
     shop_ids = filters["active_shop_ids"]
     start, end = filters["start"], filters["end"]
     prev_start, prev_end = filters["prev_start"], filters["prev_end"]
+    receipt_status = filters.get("receipt_status")
     sales = _receipts_qs(
-        shop_ids=shop_ids, start=start, end=end, kinds=[ShopReceiptKind.SALE]
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=[ShopReceiptKind.SALE],
+        receipt_status=receipt_status,
     )
     prev_sales = _receipts_qs(
         shop_ids=shop_ids,
         start=prev_start,
         end=prev_end,
         kinds=[ShopReceiptKind.SALE],
+        receipt_status=receipt_status,
     )
     credits = _receipts_qs(
-        shop_ids=shop_ids, start=start, end=end, kinds=[ShopReceiptKind.CREDIT]
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=[ShopReceiptKind.CREDIT],
+        receipt_status=receipt_status,
     )
     quotes = _receipts_qs(
-        shop_ids=shop_ids, start=start, end=end, kinds=[ShopReceiptKind.QUOTATION]
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=[ShopReceiptKind.QUOTATION],
+        receipt_status=receipt_status,
     )
     expenses = _within_created_range(
         Expense.objects.filter(shop_id__in=shop_ids),
@@ -6199,12 +6281,16 @@ def _day_balance_data(filters) -> dict:
         max_closed = max(
             (session.closed_at or now) for session in activity_sessions
         )
-        for row in ShopReceipt.objects.filter(
+        day_sales_qs = ShopReceipt.objects.filter(
             shop_id__in=shop_ids,
             kind=ShopReceiptKind.SALE,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
-        ).values(
+        )
+        day_sales_qs = _apply_analytics_receipt_status(
+            day_sales_qs, filters.get("receipt_status")
+        )
+        for row in day_sales_qs.values(
             "shop_id",
             "created_at",
             "cash_amount",
@@ -6590,7 +6676,12 @@ def _build_overview(filters):
         row["shop_id"]: int(row["docs"] or 0)
         for row in credits.values("shop_id").annotate(docs=Count("id"))
     }
-    trading = _trading_by_shop_for_period(shop_ids=shop_ids, start=start, end=end)
+    trading = _trading_by_shop_for_period(
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        receipt_status=filters.get("receipt_status"),
+    )
     opex_by_shop, drawings_by_shop = _opex_and_drawings_by_shop(expenses)
     shrinkage_by_shop = _shrinkage_by_shop_for_period(
         shop_ids=shop_ids, start=start, end=end
@@ -7128,12 +7219,16 @@ def _iter_bucket_labels(start, end, bucket_kind: str) -> list[str]:
 
 
 def _trading_by_bucket_for_period(
-    *, shop_ids, start, end, bucket_kind: str, kinds=None
+    *, shop_ids, start, end, bucket_kind: str, kinds=None, receipt_status=None
 ) -> dict[str, dict]:
     """Net selling value and COGS keyed by time-bucket label."""
     kinds = list(kinds or [ShopReceiptKind.SALE, ShopReceiptKind.CREDIT])
     trading_line_qs = _trading_line_qs(
-        shop_ids=shop_ids, start=start, end=end, kinds=kinds
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=kinds,
+        receipt_status=receipt_status,
     )
     empty = {
         "lines": 0,
@@ -7285,7 +7380,11 @@ def _revenue_breakdown_table(
         return None
 
     trading = _trading_by_bucket_for_period(
-        shop_ids=shop_ids, start=start, end=end, bucket_kind=bucket_kind
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        bucket_kind=bucket_kind,
+        receipt_status=filters.get("receipt_status"),
     )
     period_expenses = _within_created_range(
         Expense.objects.filter(shop_id__in=shop_ids),
@@ -7425,7 +7524,12 @@ def _build_revenue(filters):
         row["shop_id"]: int(row["docs"] or 0)
         for row in credits.values("shop_id").annotate(docs=Count("id"))
     }
-    trading = _trading_by_shop_for_period(shop_ids=shop_ids, start=start, end=end)
+    trading = _trading_by_shop_for_period(
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        receipt_status=filters.get("receipt_status"),
+    )
 
     # Operating expenses for this period (owner drawings stay out of P&L).
     period_expenses = _within_created_range(
@@ -8505,6 +8609,7 @@ def _sales_breakdown_table(
         end=end,
         bucket_kind=bucket_kind,
         kinds=[ShopReceiptKind.SALE],
+        receipt_status=filters.get("receipt_status"),
     )
 
     paid_total_by_bucket: dict[str, tuple[int, Decimal]] = {}
@@ -8751,6 +8856,7 @@ def _build_sales(filters):
         start=start,
         end=end,
         kinds=[ShopReceiptKind.SALE],
+        receipt_status=filters.get("receipt_status"),
     )
     stock_by_shop: dict[int, Decimal] = {}
     selling_by_shop: dict[int, Decimal] = {}
@@ -9064,6 +9170,7 @@ def _build_items(filters):
         start=start,
         end=end,
         kinds=[ShopReceiptKind.SALE, ShopReceiptKind.CREDIT],
+        receipt_status=filters.get("receipt_status"),
     )
     sold_lines = (
         ShopReceiptLine.objects.filter(receipt__in=trading)
@@ -9429,6 +9536,7 @@ def _build_item_report(filters):
         start=start,
         end=end,
         kinds=[ShopReceiptKind.SALE, ShopReceiptKind.CREDIT],
+        receipt_status=filters.get("receipt_status"),
     )
     lines = ShopReceiptLine.objects.filter(receipt__in=trading).values(
         "item_id",
@@ -10294,8 +10402,8 @@ def _build_quotations(filters):
     }
 
 
-def _trade_receipts_qs(shop_ids, start, end):
-    return (
+def _trade_receipts_qs(shop_ids, start, end, *, receipt_status=None):
+    qs = (
         _within_created_range(
             ShopReceipt.objects.filter(
                 Q(shop_id__in=shop_ids) | Q(source_shop_id__in=shop_ids)
@@ -10309,6 +10417,7 @@ def _trade_receipts_qs(shop_ids, start, end):
             | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
         )
     )
+    return _apply_analytics_receipt_status(qs, receipt_status)
 
 
 def _trade_receipt_columns():
@@ -10539,7 +10648,9 @@ def _build_tradings(filters):
     role = filters["role"]
     query = filters.get("query") or ""
 
-    qs = _trade_receipts_qs(shop_ids, start, end).select_related("client")
+    qs = _trade_receipts_qs(
+        shop_ids, start, end, receipt_status=filters.get("receipt_status")
+    ).select_related("client")
     qs = qs.prefetch_related("lines")
 
     accounts = {}
@@ -10924,7 +11035,12 @@ def build_client_tradings_page(*, profile, request, client_id: int) -> dict:
     query = request.GET.urlencode()
     role = profile.role
     qs = (
-        _trade_receipts_qs(filters["active_shop_ids"], filters["start"], filters["end"])
+        _trade_receipts_qs(
+            filters["active_shop_ids"],
+            filters["start"],
+            filters["end"],
+            receipt_status=filters.get("receipt_status"),
+        )
         .filter(client_id=client.pk)
         .select_related("shop", "client", "source_shop")
         .prefetch_related("lines")
@@ -11203,6 +11319,7 @@ def _build_credit_report(filters):
         start=start,
         end=end,
         kinds=[ShopReceiptKind.CREDIT],
+        receipt_status=filters.get("receipt_status"),
     )
     stock_by_shop: dict[int, Decimal] = {}
     selling_by_shop: dict[int, Decimal] = {}
@@ -11660,7 +11777,11 @@ def _credit_items_pairs(filters) -> dict:
     start, end = filters["start"], filters["end"]
 
     receipts = _receipts_qs(
-        shop_ids=shop_ids, start=start, end=end, kinds=[ShopReceiptKind.CREDIT]
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=[ShopReceiptKind.CREDIT],
+        receipt_status=filters.get("receipt_status"),
     )
     receipt_meta: dict[int, dict] = {}
     for row in receipts.values("id", "shop_id", "total", "amount_paid"):
@@ -12355,12 +12476,15 @@ def _build_clients(filters):
         Value(0, output_field=DecimalField(max_digits=12, decimal_places=2)),
     )
 
-    all_receipts = (
-        ShopReceipt.objects.filter(shop_id__in=shop_ids)
-        .filter(_client_activity_receipts_q(receipt_kind))
-        .exclude(status=ShopReceiptStatus.CANCELLED)
-        .exclude(client_id=None)
-    )
+    all_receipts = ShopReceipt.objects.filter(shop_id__in=shop_ids).filter(
+        _client_activity_receipts_q(receipt_kind)
+    ).exclude(client_id=None)
+    if filters.get("receipt_status"):
+        all_receipts = _apply_analytics_receipt_status(
+            all_receipts, filters.get("receipt_status")
+        )
+    else:
+        all_receipts = all_receipts.exclude(status=ShopReceiptStatus.CANCELLED)
     receipts = (
         _within_created_range(all_receipts, start, end) if period_scoped else all_receipts
     )
@@ -12708,6 +12832,7 @@ def _build_employees(filters):
         start=filters["start"],
         end=filters["end"],
         kinds=[ShopReceiptKind.SALE],
+        receipt_status=filters.get("receipt_status"),
     )
 
     # staff_key -> {label, by_shop: {shop_id: (count, total)}, totals}

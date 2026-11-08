@@ -51,6 +51,7 @@ PERMISSION_MODULES = (
             {"slug": "confirm-receipts", "label": "Confirm receipts"},
             {"slug": "return-receipts", "label": "Return receipt"},
             {"slug": "account_pay", "label": "Pay accounts"},
+            {"slug": "settings", "label": "Analytics settings"},
         ),
     },
     {

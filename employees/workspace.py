@@ -1442,6 +1442,13 @@ def analytics_item_report_url(role):
     )
 
 
+def analytics_settings_url(role):
+    return reverse(
+        "employees:analytics_settings",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+
+
 def sidebar_for_analytics(role, *, active_view="overview", profile=None):
     """Sidebar for the Analytics overview hub only — not shared with section pages."""
     from .analytics_services import ANALYTICS_DASHBOARD_SECTION_SLUGS, ANALYTICS_SECTIONS
@@ -1493,6 +1500,15 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
             )
         )
     primary.extend(section_links)
+    if profile is None or employee_may(profile, "analytics", "settings"):
+        primary.append(
+            _link(
+                "Analytics settings",
+                "settings",
+                href=analytics_settings_url(role),
+                active=active_view == "settings",
+            )
+        )
     return resolve_sidebar_hrefs(
         {
             "page": "analytics",
@@ -1524,6 +1540,7 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
     special_labels = {
         "confirm-receipts": ("Confirm receipts", "badge-check"),
         "return-receipts": ("Return receipt", "undo-2"),
+        "settings": ("Analytics settings", "settings"),
     }
 
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
@@ -1533,24 +1550,35 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
         )
 
     if active_view in special_labels:
-        if profile is None or employee_may(profile, "analytics", "receipts"):
-            primary.append(
-                _link(
-                    "Receipts",
-                    "receipt",
-                    href=analytics_section_url(role, "receipts"),
-                    active=False,
+        if active_view == "settings":
+            if profile is None or employee_may(profile, "analytics", "settings"):
+                primary.append(
+                    _link(
+                        "Analytics settings",
+                        "settings",
+                        href=analytics_settings_url(role),
+                        active=True,
+                    )
                 )
-            )
-        label, icon = special_labels[active_view]
-        perm = active_view
-        if profile is None or employee_may(profile, "analytics", perm):
-            href = (
-                analytics_confirm_receipts_url(role)
-                if active_view == "confirm-receipts"
-                else analytics_return_receipts_url(role)
-            )
-            primary.append(_link(label, icon, href=href, active=True))
+        else:
+            if profile is None or employee_may(profile, "analytics", "receipts"):
+                primary.append(
+                    _link(
+                        "Receipts",
+                        "receipt",
+                        href=analytics_section_url(role, "receipts"),
+                        active=False,
+                    )
+                )
+            label, icon = special_labels[active_view]
+            perm = active_view
+            if profile is None or employee_may(profile, "analytics", perm):
+                href = (
+                    analytics_confirm_receipts_url(role)
+                    if active_view == "confirm-receipts"
+                    else analytics_return_receipts_url(role)
+                )
+                primary.append(_link(label, icon, href=href, active=True))
     else:
         section_slug = "items" if active_view == "item-report" else section_slug
         section = ANALYTICS_SECTION_BY_SLUG.get(section_slug)
@@ -1574,6 +1602,15 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
                         active=active_view == "item-report",
                     )
                 )
+        if profile is None or employee_may(profile, "analytics", "settings"):
+            primary.append(
+                _link(
+                    "Analytics settings",
+                    "settings",
+                    href=analytics_settings_url(role),
+                    active=False,
+                )
+            )
 
     return resolve_sidebar_hrefs(
         {

@@ -252,6 +252,119 @@ def analytics_dashboard(request, profile, meta, module, page_sidebar=None):
 
 
 @active_employee_required
+def analytics_settings(request, role_segment):
+    """Company default for analytics receipt data (pending vs confirmed)."""
+    from django.contrib import messages
+
+    from shops.models import AnalyticsReceiptDataSource
+    from shops.services import (
+        get_analytics_receipt_data_source_default,
+        set_analytics_receipt_data_source,
+    )
+
+    from .module_permissions import employee_may, require_module_permission
+    from .workspace import analytics_settings_url, analytics_url
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect("employees:analytics_settings", role_segment=expected)
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    denied = require_module_permission(request, profile, "analytics", "settings")
+    if denied is not None:
+        return denied
+
+    can_edit = employee_may(profile, "analytics", "settings")
+    if request.method == "POST":
+        if not can_edit:
+            messages.error(request, "You cannot change analytics settings.")
+            return redirect(analytics_settings_url(profile.role))
+        try:
+            set_analytics_receipt_data_source(
+                source=(request.POST.get("receipt_data_source") or "").strip()
+            )
+        except ValidationError as exc:
+            message = (
+                exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+            )
+            messages.error(request, message)
+            return redirect(analytics_settings_url(profile.role))
+        messages.success(
+            request,
+            "Analytics default updated. New analytics loads use this receipt set.",
+        )
+        return redirect(analytics_settings_url(profile.role))
+
+    current = get_analytics_receipt_data_source_default()
+    option_meta = {
+        AnalyticsReceiptDataSource.PENDING: {
+            "value": AnalyticsReceiptDataSource.PENDING,
+            "label": "Pending receipts",
+            "icon": "clock-3",
+            "eyebrow": "Awaiting confirmation",
+            "summary": "Include sales still waiting to be confirmed on the floor.",
+            "points": (
+                "Matches live POS tickets before confirmation",
+                "Best while receipts are still being reviewed",
+            ),
+        },
+        AnalyticsReceiptDataSource.CONFIRMED: {
+            "value": AnalyticsReceiptDataSource.CONFIRMED,
+            "label": "Confirmed receipts",
+            "icon": "badge-check",
+            "eyebrow": "Finalized sales",
+            "summary": "Include only receipts that have been confirmed (and partial returns).",
+            "points": (
+                "Cleaner totals for closed, approved sales",
+                "Best for management and period close reports",
+            ),
+        },
+    }
+    receipt_options = [
+        option_meta[AnalyticsReceiptDataSource.PENDING],
+        option_meta[AnalyticsReceiptDataSource.CONFIRMED],
+    ]
+    current_option = option_meta.get(current) or option_meta[AnalyticsReceiptDataSource.PENDING]
+    meta = {
+        "title": "Analytics settings",
+        "headline": "Analytics settings",
+        "summary": "Choose which receipts analytics loads by default.",
+        "icon": "settings",
+    }
+    return render(
+        request,
+        "employees/analytics_settings.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "can_edit_analytics_settings": can_edit,
+            "receipt_data_source": current,
+            "receipt_data_source_options": AnalyticsReceiptDataSource.choices,
+            "receipt_options": receipt_options,
+            "current_receipt_option": current_option,
+            "analytics_home_url": analytics_url(profile.role),
+            "page_sidebar": sidebar_for_analytics_section(
+                profile.role, active_view="settings", profile=profile
+            ),
+        },
+    )
+
+
+@active_employee_required
 @require_GET
 def analytics_section(request, role_segment, section):
     """Dedicated analytics page for one domain (/…/analytics/<section>/)."""

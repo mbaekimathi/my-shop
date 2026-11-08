@@ -12,6 +12,8 @@ from django.utils import timezone
 from employees.countries import COUNTRY_DIAL_CODES
 
 from .models import (
+    AnalyticsReceiptDataSource,
+    CompanyAnalyticsSettings,
     CompanyCommunicationsSettings,
     CompanyDarajaSettings,
     StkProvider,
@@ -605,10 +607,49 @@ STOCK_SETTING_FIELDS = frozenset(
         "require_note_on_request",
     }
 )
+ANALYTICS_SETTINGS_CACHE_KEY = "company_analytics_settings:v1"
+ANALYTICS_RECEIPT_DATA_SOURCES = frozenset(
+    {
+        AnalyticsReceiptDataSource.PENDING,
+        AnalyticsReceiptDataSource.CONFIRMED,
+    }
+)
 
 
 def _invalidate_stock_settings_cache() -> None:
     cache.delete(STOCK_SETTINGS_CACHE_KEY)
+
+
+def _invalidate_analytics_settings_cache() -> None:
+    cache.delete(ANALYTICS_SETTINGS_CACHE_KEY)
+
+
+def get_company_analytics_settings() -> CompanyAnalyticsSettings:
+    cached = cache.get(ANALYTICS_SETTINGS_CACHE_KEY)
+    if isinstance(cached, CompanyAnalyticsSettings):
+        return cached
+    settings_row, _ = CompanyAnalyticsSettings.objects.get_or_create(pk=1)
+    cache.set(ANALYTICS_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
+    return settings_row
+
+
+def get_analytics_receipt_data_source_default() -> str:
+    row = get_company_analytics_settings()
+    value = (row.receipt_data_source or "").strip().lower()
+    if value in ANALYTICS_RECEIPT_DATA_SOURCES:
+        return value
+    return AnalyticsReceiptDataSource.PENDING
+
+
+def set_analytics_receipt_data_source(*, source: str) -> CompanyAnalyticsSettings:
+    value = (source or "").strip().lower()
+    if value not in ANALYTICS_RECEIPT_DATA_SOURCES:
+        raise ValidationError("Choose pending or confirmed receipts.")
+    settings_row = get_company_analytics_settings()
+    settings_row.receipt_data_source = value
+    settings_row.save(update_fields=["receipt_data_source", "updated_at"])
+    _invalidate_analytics_settings_cache()
+    return get_company_analytics_settings()
 
 
 def get_company_stock_settings() -> CompanyStockSettings:

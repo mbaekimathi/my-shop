@@ -436,6 +436,11 @@ urlpatterns = [
         name="analytics_item_report",
     ),
     path(
+        "<role_segment:role_segment>/analytics/settings/",
+        analytics_views.analytics_settings,
+        name="analytics_settings",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/<slug:section>/",
         analytics_views.analytics_section,
         name="analytics_section",

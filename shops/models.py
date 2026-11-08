@@ -794,6 +794,33 @@ class StockNumberVisibility(models.TextChoices):
     ITEMS = "items", "Hide selected items"
 
 
+class AnalyticsReceiptDataSource(models.TextChoices):
+    PENDING = "pending", "Pending receipts"
+    CONFIRMED = "confirmed", "Confirmed receipts"
+
+
+class CompanyAnalyticsSettings(models.Model):
+    """Company-wide analytics defaults (singleton row)."""
+
+    receipt_data_source = models.CharField(
+        max_length=16,
+        choices=AnalyticsReceiptDataSource.choices,
+        default=AnalyticsReceiptDataSource.PENDING,
+        help_text=(
+            "Default receipt set for analytics pages. "
+            "Users can still switch per view on the analytics page."
+        ),
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company analytics settings"
+        verbose_name_plural = "Company analytics settings"
+
+    def __str__(self):
+        return "Company analytics settings"
+
+
 class CompanyStockSettings(models.Model):
 
     """Company-wide compulsory fields for stock in/out/request (singleton row)."""

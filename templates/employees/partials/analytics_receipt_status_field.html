@@ -1,0 +1,16 @@
+<div class="ax-receipt-scope" role="group" aria-label="Receipt data" data-ax-receipt-scope>
+  {% for value, label in receipt_status_options %}
+  <label class="ax-receipt-scope-option{% if receipt_status == value %} is-active{% endif %}">
+    <input
+      type="radio"
+      name="receipt_status"
+      value="{{ value }}"
+      {% if receipt_status == value %}checked{% endif %}
+    >
+    <span class="ax-receipt-scope-ui">
+      <i data-lucide="{% if value == 'confirmed' %}badge-check{% else %}clock-3{% endif %}" aria-hidden="true"></i>
+      <span>{% if value == 'confirmed' %}Confirmed{% else %}Pending{% endif %}</span>
+    </span>
+  </label>
+  {% endfor %}
+</div>

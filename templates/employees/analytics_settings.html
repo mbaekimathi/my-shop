@@ -1,0 +1,146 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="ax ax--settings" data-animate="rise" data-analytics-settings>
+  <header class="ax-top ax-settings-hero">
+    <div class="ax-top-main">
+      <div class="ax-title">
+        <p class="ax-settings-kicker">Analytics · Settings</p>
+        <h2>{{ meta.headline }}</h2>
+        <span class="ax-period">Default load · {{ current_receipt_option.label }}</span>
+      </div>
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ analytics_home_url }}">
+          <i data-lucide="layout-grid" aria-hidden="true"></i>
+          <span>Open analytics</span>
+        </a>
+      </div>
+    </div>
+    <p class="ax-lead">
+      Set which receipt set analytics should open with. Anyone can still switch
+      pending vs confirmed on each analytics page without changing this default.
+    </p>
+  </header>
+
+  {% if not can_edit_analytics_settings %}
+  <p class="ax-settings-readonly">
+    <i data-lucide="lock" aria-hidden="true"></i>
+    <span>View only — you cannot change analytics settings.</span>
+  </p>
+  {% endif %}
+
+  <form method="post" class="ax-settings-form">
+    {% csrf_token %}
+
+    <section class="ax-settings-panel">
+      <div class="ax-settings-panel-head">
+        <div>
+          <h3>Default receipt data</h3>
+          <p>Used whenever analytics opens without an on-page selection.</p>
+        </div>
+        <span class="ax-settings-live" data-ax-settings-live>
+          <i data-lucide="{{ current_receipt_option.icon }}" aria-hidden="true"></i>
+          <span>{{ current_receipt_option.label }}</span>
+        </span>
+      </div>
+
+      <fieldset class="ax-settings-choices">
+        <legend class="ax-settings-legend">Load analytics for</legend>
+        {% for option in receipt_options %}
+        <label
+          class="ax-settings-choice{% if receipt_data_source == option.value %} is-selected{% endif %}"
+          data-ax-settings-choice
+          data-choice-value="{{ option.value }}"
+          data-choice-label="{{ option.label }}"
+          data-choice-icon="{{ option.icon }}"
+        >
+          <input
+            type="radio"
+            name="receipt_data_source"
+            value="{{ option.value }}"
+            {% if receipt_data_source == option.value %}checked{% endif %}
+            {% if not can_edit_analytics_settings %}disabled{% endif %}
+          >
+          <span class="ax-settings-choice-icon" aria-hidden="true">
+            <i data-lucide="{{ option.icon }}"></i>
+          </span>
+          <span class="ax-settings-choice-body">
+            <span class="ax-settings-choice-eyebrow">{{ option.eyebrow }}</span>
+            <strong>{{ option.label }}</strong>
+            <span class="ax-settings-choice-summary">{{ option.summary }}</span>
+            <ul class="ax-settings-choice-points">
+              {% for point in option.points %}
+              <li>{{ point }}</li>
+              {% endfor %}
+            </ul>
+          </span>
+          <span class="ax-settings-choice-check" aria-hidden="true">
+            <i data-lucide="check"></i>
+          </span>
+        </label>
+        {% endfor %}
+      </fieldset>
+
+      {% if can_edit_analytics_settings %}
+      <div class="ax-settings-actions">
+        <p class="ax-settings-hint">
+          <i data-lucide="info" aria-hidden="true"></i>
+          <span>Saving only changes the default. Existing filter selections on open pages stay until you Apply again.</span>
+        </p>
+        <button type="submit" class="ax-apply">Save default</button>
+      </div>
+      {% endif %}
+    </section>
+  </form>
+
+  <aside class="ax-settings-note">
+    <div class="ax-settings-note-icon" aria-hidden="true">
+      <i data-lucide="sliders-horizontal"></i>
+    </div>
+    <div>
+      <strong>Switch on any analytics page</strong>
+      <p>
+        Use the Pending / Confirmed control in the analytics filters to change the
+        current view without editing this default.
+      </p>
+    </div>
+  </aside>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const root = document.querySelector("[data-analytics-settings]");
+    if (!root) return;
+    const live = root.querySelector("[data-ax-settings-live]");
+    const choices = [...root.querySelectorAll("[data-ax-settings-choice]")];
+    const sync = () => {
+      choices.forEach((choice) => {
+        const input = choice.querySelector('input[type="radio"]');
+        const selected = Boolean(input?.checked);
+        choice.classList.toggle("is-selected", selected);
+        if (selected && live) {
+          const label = choice.getAttribute("data-choice-label") || "";
+          const iconName = choice.getAttribute("data-choice-icon") || "settings";
+          live.innerHTML =
+            '<i data-lucide="' +
+            iconName +
+            '" aria-hidden="true"></i><span>' +
+            label +
+            "</span>";
+          if (window.lucide?.createIcons) window.lucide.createIcons({ nodes: [live] });
+        }
+      });
+    };
+    choices.forEach((choice) => {
+      choice.addEventListener("change", sync);
+    });
+    sync();
+  })();
+</script>
+{% endblock %}
