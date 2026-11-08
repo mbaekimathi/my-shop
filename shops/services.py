@@ -78,6 +78,9 @@ POS_SETTING_FIELDS = {
     "enable_print_bluetooth",
     "enable_print_usb",
     "enable_print_wifi",
+    "print_customer_receipt",
+    "print_staff_receipt",
+    "print_cashier_receipt",
     "enable_receipt_payment_methods",
     "show_client_phone_on_receipt",
     "show_maintainer_on_receipt",
@@ -110,6 +113,9 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "enable_print_bluetooth",
         "enable_print_usb",
         "enable_print_wifi",
+        "print_customer_receipt",
+        "print_staff_receipt",
+        "print_cashier_receipt",
         "enable_receipt_payment_methods",
         "show_client_phone_on_receipt",
         "receipt_paper_width",
@@ -131,6 +137,39 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "show_maintainer_on_receipt",
         "maintainer_phone",
     }
+)
+
+RECEIPT_PRINT_COPY_ROLES = (
+    {
+        "role": "customer",
+        "field": "print_customer_receipt",
+        "label": "Customer",
+        "banner": "CUSTOMER COPY",
+        "default": True,
+        "footer": "",
+        "include_payment_details": True,
+        "include_qr": True,
+    },
+    {
+        "role": "staff",
+        "field": "print_staff_receipt",
+        "label": "Staff",
+        "banner": "STAFF COPY",
+        "default": False,
+        "footer": "Staff copy · Shop floor record",
+        "include_payment_details": False,
+        "include_qr": False,
+    },
+    {
+        "role": "cashier",
+        "field": "print_cashier_receipt",
+        "label": "Cashier",
+        "banner": "CASHIER COPY",
+        "default": False,
+        "footer": "Cashier copy · Till record",
+        "include_payment_details": True,
+        "include_qr": True,
+    },
 )
 SHOP_POS_COPY_FIELDS = tuple(SHOP_POS_FIELD_NAMES | SHOP_RECEIPT_FIELD_NAMES)
 
@@ -3297,6 +3336,112 @@ def filter_submodules_for_company_pos(
     ]
 
 
+def receipt_print_copy_meta(role: str) -> dict | None:
+    key = (role or "").strip().lower()
+    for row in RECEIPT_PRINT_COPY_ROLES:
+        if row["role"] == key:
+            return row
+    return None
+
+
+def receipt_print_copies(settings_row=None) -> list[dict]:
+    """Customer / staff / cashier copy toggles for sale & credit printing."""
+    row = settings_row or get_company_pos_settings()
+    copies = []
+    for meta in RECEIPT_PRINT_COPY_ROLES:
+        enabled = bool(getattr(row, meta["field"], meta["default"]))
+        copies.append(
+            {
+                "role": meta["role"],
+                "field": meta["field"],
+                "label": meta["label"],
+                "banner": meta["banner"],
+                "enabled": enabled,
+                "include_payment_details": meta["include_payment_details"],
+                "include_qr": meta["include_qr"],
+                "footer": meta["footer"],
+            }
+        )
+    return copies
+
+
+def enabled_receipt_print_roles(settings_row=None) -> list[str]:
+    return [c["role"] for c in receipt_print_copies(settings_row) if c["enabled"]]
+
+
+def apply_receipt_copy(
+    ticket: dict | None,
+    role: str,
+    *,
+    settings_row=None,
+) -> dict:
+    """Return a ticket adjusted for a customer / staff / cashier print copy."""
+    base = dict(ticket or {})
+    meta = receipt_print_copy_meta(role) or RECEIPT_PRINT_COPY_ROLES[0]
+    out = dict(base)
+    out["copy_role"] = meta["role"]
+    out["copy_label"] = meta["banner"]
+    if meta["footer"]:
+        out["footer"] = meta["footer"]
+    if not meta["include_payment_details"]:
+        out["payment_details"] = {"label": "", "lines": []}
+    out["include_qr"] = bool(meta["include_qr"])
+    # Always refresh from live settings so every copy keeps the maintainer line
+    # when "Show System maintained by on receipt" is enabled.
+    out["maintainer"] = receipt_maintainer_line(settings_row)
+    return out
+
+
+def build_receipt_print_copies(
+    ticket: dict | None,
+    *,
+    settings_row=None,
+    qr: dict | None = None,
+    kind: str | None = None,
+) -> list[dict]:
+    """
+    Build the list of receipt copies to print for a checkout.
+
+    Sale and credit use the configured toggles. If none are on but compulsory
+    printing is enabled, a customer copy is used. Other kinds print one copy.
+    """
+    row = settings_row or get_company_pos_settings()
+    maintainer = receipt_maintainer_line(row)
+    kind_key = (kind or "").strip().lower()
+    if kind_key not in ("sale", "credit"):
+        base = dict(ticket or {})
+        base["maintainer"] = maintainer
+        return [
+            {
+                "role": "customer",
+                "label": "Receipt",
+                "banner": "",
+                "ticket": base,
+                "text": _render_receipt_text(base),
+                "qr": qr or {},
+            }
+        ]
+    roles = enabled_receipt_print_roles(row)
+    if not roles and bool(getattr(row, "compulsory_print_on_sale", False)):
+        roles = ["customer"]
+    copies = []
+    for role in roles:
+        copy_ticket = apply_receipt_copy(ticket, role, settings_row=row)
+        meta = receipt_print_copy_meta(role) or RECEIPT_PRINT_COPY_ROLES[0]
+        copy_qr = qr if meta["include_qr"] else None
+        copies.append(
+            {
+                "role": role,
+                "label": meta["label"],
+                "banner": meta["banner"],
+                "ticket": copy_ticket,
+                "text": _render_receipt_text(copy_ticket),
+                "qr": copy_qr or {},
+            }
+        )
+    return copies
+
+
 def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict:
     row = settings_row or get_company_pos_settings()
     tax_percent = (
@@ -3327,6 +3472,10 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_print_bluetooth": row.enable_print_bluetooth,
         "enable_print_usb": row.enable_print_usb,
         "enable_print_wifi": row.enable_print_wifi,
+        "print_customer_receipt": bool(getattr(row, "print_customer_receipt", True)),
+        "print_staff_receipt": bool(getattr(row, "print_staff_receipt", False)),
+        "print_cashier_receipt": bool(getattr(row, "print_cashier_receipt", False)),
+        "print_copies": enabled_receipt_print_roles(row),
         "enable_receipt_payment_methods": bool(
             getattr(row, "enable_receipt_payment_methods", True)
         ),
@@ -4126,6 +4275,9 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
     document_title = (ticket.get("document_title") or "").strip()
     if document_title:
         rows.extend([rule, _receipt_center(document_title, width)])
+    copy_label = (ticket.get("copy_label") or "").strip()
+    if copy_label:
+        rows.extend([rule, _receipt_center(copy_label, width)])
 
     doc_number_label = (ticket.get("doc_number_label") or "Doc No.").strip() or "Doc No."
     authorised_label = (ticket.get("authorised_label") or "Cashier").strip() or "Cashier"
@@ -5342,6 +5494,9 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     ticket = _build_receipt_ticket_data(receipt, line_rows)
     message = _render_receipt_text(ticket)
     qr = receipt_qr_for_receipt(receipt, pos_settings)
+    print_copies = build_receipt_print_copies(
+        ticket, settings_row=pos_settings, qr=qr, kind=kind
+    )
     whatsapp_url = ""
     if share_whatsapp:
         whatsapp_url = _whatsapp_url(phone=client_phone, text=message)
@@ -5373,6 +5528,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         "whatsapp_url": whatsapp_url,
         "message": message,
         "receipt_ticket": ticket,
+        "print_copies": print_copies,
         "print_via": print_via,
         "print_required": bool(
             kind == ShopReceiptKind.SALE and pos_settings.compulsory_print_on_sale

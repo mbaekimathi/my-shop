@@ -4200,11 +4200,24 @@
             window.open(data.whatsapp_url, "_blank", "noopener");
           }
           const channel = resolvePrintChannel(data.print_via || printVia || "");
+          const copies =
+            Array.isArray(data.print_copies) && data.print_copies.length
+              ? data.print_copies
+              : data.receipt_text
+                ? [
+                    {
+                      text: data.receipt_text,
+                      ticket: data.receipt_ticket || null,
+                      qr: data.receipt_qr,
+                      label: "Receipt",
+                    },
+                  ]
+                : [];
           const shouldPrint =
             !queued &&
             hasEnabledPrintChannels() &&
             Boolean(channel) &&
-            Boolean(data.receipt_text) &&
+            copies.length > 0 &&
             (Boolean(data.print_required) ||
               kind === "sale" ||
               kind === "credit" ||
@@ -4212,16 +4225,19 @@
               kind === "trade_out" ||
               kind === "trade_in");
           if (shouldPrint) {
-            await printReceiptText(
-              data.receipt_text,
-              channel,
-              data.receipt_qr,
-              {
-                ...(data.receipt_font || {}),
-                paper_width: data.receipt_paper_width || "",
-              },
-              data.receipt_ticket || null
-            );
+            const fontStyle = {
+              ...(data.receipt_font || {}),
+              paper_width: data.receipt_paper_width || "",
+            };
+            for (const copy of copies) {
+              await printReceiptText(
+                copy.text || data.receipt_text,
+                channel,
+                copy.qr || data.receipt_qr,
+                fontStyle,
+                copy.ticket || data.receipt_ticket || null
+              );
+            }
           }
         };
 

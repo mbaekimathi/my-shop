@@ -112,9 +112,11 @@ from .services import (
     open_shop_day,
     pos_settings_as_dict,
     preview_receipt_number,
+    apply_receipt_copy,
     receipt_font_style,
     receipt_maintainer_line,
     receipt_phone_for_shop,
+    receipt_print_copies,
     receipt_qr_for_settings,
     register_owner_drawing,
     register_shop_expense,
@@ -3024,6 +3026,7 @@ def my_shop_checkout(request, shop_id):
         "print_required": bool(result.get("print_required")),
         "receipt_text": result.get("message") or "",
         "receipt_ticket": result.get("receipt_ticket") or {},
+        "print_copies": result.get("print_copies") or [],
         "receipt_qr": result.get("receipt_qr") or {},
         "receipt_font": result.get("receipt_font") or {},
         "receipt_paper_width": result.get("receipt_paper_width") or "80",
@@ -3640,6 +3643,15 @@ SHOP_RECEIPT_SETTING_GROUPS = (
             ("enable_print_wifi", "Print via Wi‑Fi"),
             ("enable_receipt_payment_methods", "Show payment methods on receipt"),
             ("show_client_phone_on_receipt", "Show client phone number"),
+        ),
+    },
+    {
+        "title": "Receipts to print",
+        "summary": "Choose which copies print on each sale or credit sale.",
+        "toggles": (
+            ("print_customer_receipt", "Customer receipt"),
+            ("print_staff_receipt", "Staff receipt"),
+            ("print_cashier_receipt", "Cashier receipt"),
         ),
     },
 )
@@ -4269,56 +4281,108 @@ def my_shop_settings_receipt(request, shop_id):
         )
     from shops.services import get_company_display_name
 
+    base_sample_ticket = {
+        "mark": get_company_display_name(),
+        "shop_name": context["receipt_preview"]["shop_name"],
+        "shop_location": context["receipt_preview"]["shop_location"],
+        "shop_phone": context["receipt_preview"]["shop_phone"],
+        "shop_branch": context["receipt_preview"].get("shop_branch") or "",
+        "logo_url": logo_url,
+        "receipt_number": context["receipt_preview"]["receipt_number"],
+        "kind": context["receipt_preview"]["kind"],
+        "doc_type": context["receipt_preview"].get("doc_type") or "sale",
+        "document_title": context["receipt_preview"].get("document_title")
+        or "Sales invoice / receipt",
+        "doc_number_label": context["receipt_preview"].get("doc_number_label")
+        or "Invoice No.",
+        "party_label": context["receipt_preview"].get("party_label") or "Customer",
+        "authorised_label": context["receipt_preview"].get("authorised_label")
+        or "Cashier",
+        "date": context["receipt_preview"]["date"],
+        "client": context["receipt_preview"]["client"],
+        "party_phone": context["receipt_preview"].get("party_phone_full")
+        or context["receipt_preview"].get("party_phone")
+        or "",
+        "party_phone_full": context["receipt_preview"].get("party_phone_full")
+        or context["receipt_preview"].get("party_phone")
+        or "",
+        "party_phone_print": context["receipt_preview"].get("party_phone_full")
+        or context["receipt_preview"].get("party_phone")
+        or "",
+        "show_client_phone": bool(
+            context["receipt_preview"].get("show_client_phone", True)
+        ),
+        "cashier": context["receipt_preview"]["cashier"],
+        "status": context["receipt_preview"].get("status") or "",
+        "lines": preview_lines,
+        "cancelled": False,
+        "subtotal": context["receipt_preview"]["subtotal"],
+        "tax_percent": context["receipt_preview"]["tax_percent"],
+        "tax_amount": context["receipt_preview"]["tax_amount"],
+        "show_tax": context["receipt_preview"]["show_tax"],
+        "total": context["receipt_preview"]["total"],
+        "payment": context["receipt_preview"]["payment"],
+        "payment_details": context["receipt_preview"]["payment_details"],
+        "footer": context["receipt_preview"]["footer"],
+        "return_notice": context["receipt_preview"].get("return_notice") or "",
+        "maintainer": context["receipt_preview"].get("maintainer") or "",
+        "qr": qr,
+    }
+    copy_previews = []
+    for copy in receipt_print_copies(context["pos_settings"]):
+        preview = apply_receipt_copy(
+            base_sample_ticket,
+            copy["role"],
+            settings_row=context["pos_settings"],
+        )
+        if not copy["include_qr"]:
+            preview["qr"] = {
+                "ready": False,
+                "image_data_url": "",
+                "label": "",
+                "payload": "",
+            }
+        else:
+            preview["qr"] = qr
+        copy_previews.append(
+            {
+                "role": copy["role"],
+                "field": copy["field"],
+                "label": copy["label"],
+                "banner": copy["banner"],
+                "enabled": copy["enabled"],
+                "preview": preview,
+            }
+        )
+    context["receipt_copy_previews"] = copy_previews
+    context["receipt_copies_enabled_count"] = sum(
+        1 for copy in copy_previews if copy["enabled"]
+    )
+    font = receipt_font_style(context["pos_settings"])
     context["receipt_sample"] = {
-        "ticket": {
-            "mark": get_company_display_name(),
-            "shop_name": context["receipt_preview"]["shop_name"],
-            "shop_location": context["receipt_preview"]["shop_location"],
-            "shop_phone": context["receipt_preview"]["shop_phone"],
-            "shop_branch": context["receipt_preview"].get("shop_branch") or "",
-            "logo_url": logo_url,
-            "receipt_number": context["receipt_preview"]["receipt_number"],
-            "kind": context["receipt_preview"]["kind"],
-            "doc_type": context["receipt_preview"].get("doc_type") or "sale",
-            "document_title": context["receipt_preview"].get("document_title")
-            or "Sales invoice / receipt",
-            "doc_number_label": context["receipt_preview"].get("doc_number_label")
-            or "Invoice No.",
-            "party_label": context["receipt_preview"].get("party_label") or "Customer",
-            "authorised_label": context["receipt_preview"].get("authorised_label")
-            or "Cashier",
-            "date": context["receipt_preview"]["date"],
-            "client": context["receipt_preview"]["client"],
-            "party_phone": context["receipt_preview"].get("party_phone_full")
-            or context["receipt_preview"].get("party_phone")
-            or "",
-            "party_phone_full": context["receipt_preview"].get("party_phone_full")
-            or context["receipt_preview"].get("party_phone")
-            or "",
-            "party_phone_print": context["receipt_preview"].get("party_phone_full")
-            or context["receipt_preview"].get("party_phone")
-            or "",
-            "show_client_phone": bool(
-                context["receipt_preview"].get("show_client_phone", True)
-            ),
-            "cashier": context["receipt_preview"]["cashier"],
-            "status": context["receipt_preview"].get("status") or "",
-            "lines": preview_lines,
-            "cancelled": False,
-            "subtotal": context["receipt_preview"]["subtotal"],
-            "tax_percent": context["receipt_preview"]["tax_percent"],
-            "tax_amount": context["receipt_preview"]["tax_amount"],
-            "show_tax": context["receipt_preview"]["show_tax"],
-            "total": context["receipt_preview"]["total"],
-            "payment": context["receipt_preview"]["payment"],
-            "payment_details": context["receipt_preview"]["payment_details"],
-            "footer": context["receipt_preview"]["footer"],
-            "return_notice": context["receipt_preview"].get("return_notice") or "",
-            "maintainer": context["receipt_preview"].get("maintainer") or "",
-            "qr": qr,
+        "ticket": base_sample_ticket,
+        "copies": [
+            {
+                "role": copy["role"],
+                "label": copy["label"],
+                "banner": copy["banner"],
+                "enabled": copy["enabled"],
+                "ticket": copy["preview"],
+                "qr": copy["preview"].get("qr") or {},
+            }
+            for copy in copy_previews
+        ],
+        "qr": qr,
+        "paper_width": context["receipt_paper_width"],
+        "font": {
+            "size": font["size"],
+            "weight": font["weight"],
+            "size_px_80": font["size_px_80"],
+            "size_px_58": font["size_px_58"],
+            "weight_css": font["weight_css"],
         },
         "receipt_paper_width": context["receipt_paper_width"],
-        "receipt_font": receipt_font_style(context["pos_settings"]),
+        "receipt_font": font,
     }
     return render(request, "shops/shop_settings_receipt.html", context)
 

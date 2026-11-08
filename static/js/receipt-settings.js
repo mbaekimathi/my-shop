@@ -17,8 +17,13 @@
 
   const activeLabel = root.querySelector("[data-receipt-active-label]");
   const paperStat = root.querySelector("[data-receipt-paper-stat]");
-  const badge80 = root.querySelector("[data-receipt-badge-80]");
-  const badge58 = root.querySelector("[data-receipt-badge-58]");
+  const copyCountEl = root.querySelector("[data-receipt-copy-count]");
+  const copyEmptyEl = root.querySelector("[data-receipt-copy-empty]");
+  const COPY_FIELDS = [
+    "print_customer_receipt",
+    "print_staff_receipt",
+    "print_cashier_receipt",
+  ];
 
   async function postSettings(body) {
     const response = await fetch(window.location.pathname, {
@@ -39,23 +44,45 @@
     return data;
   }
 
-  function syncSelection(width) {
-    root.querySelectorAll("[data-receipt-preview]").forEach((card) => {
-      const selected = card.getAttribute("data-receipt-preview") === width;
-      card.classList.toggle("is-selected", selected);
+  function syncCopyPreviews() {
+    let visible = 0;
+    root.querySelectorAll("[data-receipt-copy-card]").forEach((card) => {
+      const field = card.getAttribute("data-receipt-copy-field");
+      const input = field
+        ? root.querySelector(`[data-pos-toggle][data-field="${field}"]`)
+        : null;
+      const on = input ? input.checked : !card.hidden;
+      card.hidden = !on;
+      if (on) visible += 1;
     });
+    if (copyEmptyEl) copyEmptyEl.hidden = visible > 0;
+    if (copyCountEl) copyCountEl.textContent = String(visible);
+    const width =
+      root.querySelector("[data-receipt-paper]:checked")?.value || "80";
+    if (activeLabel) {
+      const noun = visible === 1 ? "copy" : "copies";
+      activeLabel.innerHTML = `Active: ${width} mm · <span data-receipt-copy-count>${visible}</span> ${noun}`;
+    }
+  }
+
+  function syncSelection(width) {
     root.querySelectorAll(".receipt-paper-option").forEach((option) => {
       const input = option.querySelector("[data-receipt-paper]");
       option.classList.toggle("is-active", Boolean(input?.checked));
     });
-    if (activeLabel) {
-      activeLabel.textContent = `Active: ${width} mm`;
-    }
+    const sizePx =
+      width === "58"
+        ? root.dataset.receiptFontPx58 || ""
+        : root.dataset.receiptFontPx80 || "";
+    root.querySelectorAll("[data-receipt-ticket]").forEach((ticket) => {
+      ticket.classList.toggle("receipt-ticket--80", width === "80");
+      ticket.classList.toggle("receipt-ticket--58", width === "58");
+      if (sizePx) ticket.style.setProperty("--receipt-font-size", sizePx);
+    });
     if (paperStat) {
       paperStat.textContent = `${width} mm`;
     }
-    if (badge80) badge80.textContent = width === "80" ? "Selected" : "Preview";
-    if (badge58) badge58.textContent = width === "58" ? "Selected" : "Preview";
+    syncCopyPreviews();
   }
 
   function localPreview(prefix) {
@@ -280,6 +307,14 @@
     return toggle ? toggle.checked : true;
   }
 
+  function copyRoleFor(el) {
+    return (
+      el?.closest?.("[data-receipt-copy-ticket]")?.getAttribute(
+        "data-receipt-copy-ticket"
+      ) || ""
+    );
+  }
+
   function syncPaidRowPreview(enabled) {
     const show = Boolean(enabled);
     root.querySelectorAll("[data-receipt-paid-row]").forEach((row) => {
@@ -303,13 +338,23 @@
     }
     const hasLines = Boolean(details?.lines?.length);
     paymentBlocks.forEach((block) => {
+      // Staff copies omit M-Pesa collection instructions.
+      if (copyRoleFor(block) === "staff") {
+        block.hidden = true;
+        return;
+      }
       block.hidden = !hasLines;
     });
     paymentTitles.forEach((title) => {
+      if (copyRoleFor(title) === "staff") {
+        title.textContent = "";
+        return;
+      }
       title.textContent = hasLines ? `M-Pesa ${details.label}` : "";
     });
     paymentLines.forEach((wrap) => {
       wrap.innerHTML = "";
+      if (copyRoleFor(wrap) === "staff") return;
       (details?.lines || []).forEach((line) => {
         const p = document.createElement("p");
         p.textContent = line;
@@ -399,16 +444,26 @@
 
   const fontSizeSelect = root.querySelector("[data-receipt-font-size]");
   const fontWeightSelect = root.querySelector("[data-receipt-font-weight]");
-  const tickets = root.querySelectorAll("[data-receipt-ticket]");
+  const tickets = () => root.querySelectorAll("[data-receipt-ticket]");
 
   function applyFontStyle({ sizePx80, sizePx58, weightCss }) {
-    tickets.forEach((ticket) => {
-      const width = ticket.getAttribute("data-receipt-ticket");
+    if (sizePx80) root.dataset.receiptFontPx80 = sizePx80;
+    if (sizePx58) root.dataset.receiptFontPx58 = sizePx58;
+    const width =
+      root.querySelector("[data-receipt-paper]:checked")?.value || "80";
+    tickets().forEach((ticket) => {
       const size = width === "58" ? sizePx58 : sizePx80;
       if (size) ticket.style.setProperty("--receipt-font-size", size);
       if (weightCss) ticket.style.setProperty("--receipt-font-weight", weightCss);
     });
   }
+
+  COPY_FIELDS.forEach((field) => {
+    const input = root.querySelector(`[data-pos-toggle][data-field="${field}"]`);
+    input?.addEventListener("change", () => {
+      window.setTimeout(syncCopyPreviews, 0);
+    });
+  });
 
   if (fontSizeSelect && fontWeightSelect) {
     let fontTimer = 0;
@@ -473,9 +528,18 @@
   function renderQrPreview(qr) {
     const ready = Boolean(qr?.ready && qr?.image_data_url);
     qrBlocks.forEach((block) => {
+      if (copyRoleFor(block) === "staff") {
+        block.hidden = true;
+        return;
+      }
       block.hidden = !ready;
     });
     qrImages.forEach((img) => {
+      if (copyRoleFor(img) === "staff") {
+        img.removeAttribute("src");
+        img.hidden = true;
+        return;
+      }
       if (ready) {
         img.src = qr.image_data_url;
         img.hidden = false;
@@ -485,6 +549,10 @@
       }
     });
     qrLabels.forEach((label) => {
+      if (copyRoleFor(label) === "staff") {
+        label.textContent = "";
+        return;
+      }
       label.textContent = ready ? qr.label || "" : "";
     });
   }
@@ -653,15 +721,10 @@
     const maintainerPhone = String(
       root.querySelector("[data-maintainer-phone]")?.value || ""
     ).trim();
-    const ticket = {
-      ...sample.ticket,
-      party_phone: displayPhone,
-      party_phone_print: displayPhone,
-      maintainer:
-        maintainerOn && maintainerPhone
-          ? `System maintained by ${maintainerPhone}`
-          : "",
-    };
+    const maintainer =
+      maintainerOn && maintainerPhone
+        ? `System maintained by ${maintainerPhone}`
+        : "";
     const paperWidth =
       root.querySelector("[data-receipt-paper]:checked")?.value ||
       sample.paper_width ||
@@ -670,24 +733,60 @@
       ...(sample.font || {}),
       paper_width: paperWidth,
     };
-    const qr = sample.qr || {};
+    const enabledRoles = new Set(
+      COPY_FIELDS.filter((field) =>
+        Boolean(
+          root.querySelector(`[data-pos-toggle][data-field="${field}"]`)?.checked
+        )
+      ).map((field) => field.replace("print_", "").replace("_receipt", ""))
+    );
+    const sampleCopies = (sample.copies || []).filter((copy) =>
+      enabledRoles.has(copy.role)
+    );
+    const copies =
+      sampleCopies.length > 0
+        ? sampleCopies
+        : [
+            {
+              role: "customer",
+              label: "Customer",
+              ticket: sample.ticket,
+              qr: sample.qr || {},
+            },
+          ];
+    if (!copies.length) {
+      window.alert("Turn on at least one receipt copy before printing a sample.");
+      return;
+    }
     printSampleBtn.disabled = true;
     try {
-      if (typeof window.RichcomPrinter?.browserPrint === "function") {
+      if (typeof window.RichcomPrinter?.browserPrint !== "function") {
+        window.alert("Print helper is not loaded. Refresh the page.");
+        return;
+      }
+      for (const copy of copies) {
+        const ticket = {
+          ...(copy.ticket || sample.ticket),
+          party_phone: displayPhone,
+          party_phone_print: displayPhone,
+          maintainer,
+        };
+        const qr = copy.qr || sample.qr || {};
+        const includeQr = ticket.include_qr !== false;
         await window.RichcomPrinter.browserPrint(
           "",
-          {
-            payload: qr.payload || qr.url || "",
-            label: qr.label || "",
-            ready: Boolean(qr.ready),
-            image_data_url: qr.image_data_url || "",
-          },
-          "Sample",
+          includeQr
+            ? {
+                payload: qr.payload || qr.url || "",
+                label: qr.label || "",
+                ready: Boolean(qr.ready),
+                image_data_url: qr.image_data_url || "",
+              }
+            : { ready: false },
+          copy.label || "Sample",
           font,
           ticket
         );
-      } else {
-        window.alert("Print helper is not loaded. Refresh the page.");
       }
     } catch (error) {
       window.alert(error?.message || "Could not open the print dialog.");

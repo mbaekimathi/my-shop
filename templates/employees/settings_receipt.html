@@ -511,12 +511,14 @@
     <div class="receipt-design-head">
       <div>
         <p class="stock-kicker">Preview</p>
-        <h3>Print preview</h3>
-        <p>Sale receipt on 80 mm and 58 mm paper.</p>
+        <h3>Copies that will print</h3>
+        <p>Sale and credit sale print each enabled copy on the selected paper size.</p>
       </div>
       <div class="receipt-design-actions">
         <p class="receipt-design-hint" data-receipt-active-label>
-          Active: {% if receipt_paper_width == "58" %}58 mm{% else %}80 mm{% endif %}
+          Active: {% if receipt_paper_width == "58" %}58{% else %}80{% endif %} mm ·
+          <span data-receipt-copy-count>{{ receipt_copies_enabled_count }}</span>
+          {% if receipt_copies_enabled_count == 1 %}copy{% else %}copies{% endif %}
         </p>
         <button type="button" class="btn btn--ghost" data-receipt-print-sample>
           Print sample
@@ -526,42 +528,36 @@
 
     {{ receipt_sample|json_script:"receipt-sample-data" }}
 
-    <div class="receipt-design-stage">
+    <div class="receipt-design-stage receipt-design-stage--copies" data-receipt-copy-stage>
+      {% for copy in receipt_copy_previews %}
       <article
-        class="receipt-preview-card{% if receipt_paper_width == '80' %} is-selected{% endif %}"
-        data-receipt-preview="80"
+        class="receipt-preview-card is-selected"
+        data-receipt-copy-card="{{ copy.role }}"
+        data-receipt-copy-field="{{ copy.field }}"
+        {% if not copy.enabled %}hidden{% endif %}
       >
         <header class="receipt-preview-card-head">
-          <span>80 mm</span>
-          <strong data-receipt-badge-80>{% if receipt_paper_width == "80" %}Selected{% else %}Preview{% endif %}</strong>
+          <span>{{ copy.label }}</span>
+          <strong>{{ copy.banner }}</strong>
         </header>
         <div
-          class="receipt-ticket receipt-ticket--80"
-          aria-label="80 millimetre receipt preview"
-          data-receipt-ticket="80"
-          style="--receipt-font-size: {{ receipt_font_size_px_80 }}; --receipt-font-weight: {{ receipt_font_weight_css }};"
+          class="receipt-ticket receipt-ticket--{% if receipt_paper_width == '58' %}58{% else %}80{% endif %}"
+          aria-label="{{ copy.label }} receipt preview"
+          data-receipt-ticket
+          data-receipt-copy-ticket="{{ copy.role }}"
+          style="--receipt-font-size: {% if receipt_paper_width == '58' %}{{ receipt_font_size_px_58 }}{% else %}{{ receipt_font_size_px_80 }}{% endif %}; --receipt-font-weight: {{ receipt_font_weight_css }};"
         >
-          {% include "employees/partials/receipt_ticket.html" with size="80" %}
+          {% include "employees/partials/receipt_ticket.html" with size=receipt_paper_width receipt_preview=copy.preview %}
         </div>
       </article>
-
-      <article
-        class="receipt-preview-card{% if receipt_paper_width == '58' %} is-selected{% endif %}"
-        data-receipt-preview="58"
+      {% endfor %}
+      <p
+        class="receipt-design-empty"
+        data-receipt-copy-empty
+        {% if receipt_copies_enabled_count %}hidden{% endif %}
       >
-        <header class="receipt-preview-card-head">
-          <span>58 mm</span>
-          <strong data-receipt-badge-58>{% if receipt_paper_width == "58" %}Selected{% else %}Preview{% endif %}</strong>
-        </header>
-        <div
-          class="receipt-ticket receipt-ticket--58"
-          aria-label="58 millimetre receipt preview"
-          data-receipt-ticket="58"
-          style="--receipt-font-size: {{ receipt_font_size_px_58 }}; --receipt-font-weight: {{ receipt_font_weight_css }};"
-        >
-          {% include "employees/partials/receipt_ticket.html" with size="58" %}
-        </div>
-      </article>
+        Turn on at least one receipt copy above to preview what prints on sale.
+      </p>
     </div>
   </section>
 </section>
@@ -570,6 +566,6 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=20261029-assets"></script>
-<script defer src="{% static 'js/receipt-settings.js' %}?v=11"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261108-copies"></script>
+<script defer src="{% static 'js/receipt-settings.js' %}?v=13"></script>
 {% endblock %}

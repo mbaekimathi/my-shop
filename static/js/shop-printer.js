@@ -307,6 +307,16 @@
     border-top: 1.5px solid #000;
     border-bottom: 1.5px solid #000;
   }
+  .receipt-ticket-copy-banner {
+    margin: 0.1em 0 0.35em;
+    padding: 0.28em 0.35em;
+    border: 1.5px solid #000;
+    text-align: center;
+    font-size: 0.9em;
+    font-weight: 900 !important;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
   .receipt-ticket-doc-meta {
     display: grid;
     gap: 0.22em;
@@ -581,7 +591,7 @@
 </div>`
       : "";
 
-    const qrReady = Boolean(qr?.ready && qr?.image_data_url);
+    const qrReady = Boolean(includeQr && qr?.ready && qr?.image_data_url);
     const qrBlock = qrReady
       ? `<div class="receipt-ticket-qr">
   <img src="${String(qr.image_data_url).replace(/"/g, "&quot;")}" alt="QR">
@@ -636,9 +646,14 @@
 
     const documentTitle =
       t.document_title || t.kind || "Sales invoice / receipt";
+    const copyLabel = (t.copy_label || "").trim();
+    const copyBanner = copyLabel
+      ? `<p class="receipt-ticket-copy-banner">${escapeHtml(copyLabel)}</p>`
+      : "";
     const docNumberLabel = t.doc_number_label || "Invoice No.";
     const authorisedLabel = t.authorised_label || "Cashier";
     const partyLabel = t.party_label || "Customer";
+    const includeQr = t.include_qr !== false;
 
     const partyBlock =
       t.route_from || t.route_to
@@ -692,6 +707,7 @@
     }
   </div>
   <p class="receipt-ticket-doc-title">${escapeHtml(documentTitle)}</p>
+  ${copyBanner}
   <div class="receipt-ticket-doc-meta">
     ${metaRow(docNumberLabel, t.receipt_number)}
     ${metaRow("Date", t.date)}

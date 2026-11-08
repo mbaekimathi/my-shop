@@ -428,6 +428,18 @@ class CompanyPosSettings(models.Model):
     enable_print_bluetooth = models.BooleanField(default=True)
     enable_print_usb = models.BooleanField(default=True)
     enable_print_wifi = models.BooleanField(default=True)
+    print_customer_receipt = models.BooleanField(
+        default=True,
+        help_text="Print a customer copy on sale and credit sale checkout.",
+    )
+    print_staff_receipt = models.BooleanField(
+        default=False,
+        help_text="Print a staff copy on sale and credit sale checkout.",
+    )
+    print_cashier_receipt = models.BooleanField(
+        default=False,
+        help_text="Print a cashier copy on sale and credit sale checkout.",
+    )
     enable_receipt_payment_methods = models.BooleanField(
         default=True,
         help_text="Show how the customer paid and M-Pesa collection details on receipts.",
@@ -706,6 +718,18 @@ class ShopPosSettings(models.Model):
     enable_print_bluetooth = models.BooleanField(default=True)
     enable_print_usb = models.BooleanField(default=True)
     enable_print_wifi = models.BooleanField(default=True)
+    print_customer_receipt = models.BooleanField(
+        default=True,
+        help_text="Print a customer copy on sale and credit sale checkout.",
+    )
+    print_staff_receipt = models.BooleanField(
+        default=False,
+        help_text="Print a staff copy on sale and credit sale checkout.",
+    )
+    print_cashier_receipt = models.BooleanField(
+        default=False,
+        help_text="Print a cashier copy on sale and credit sale checkout.",
+    )
     enable_receipt_payment_methods = models.BooleanField(
         default=True,
         help_text="Show how the customer paid and M-Pesa collection details on receipts.",
