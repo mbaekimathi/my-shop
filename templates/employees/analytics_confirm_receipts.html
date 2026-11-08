@@ -31,13 +31,6 @@
     </div>
     {% if page.lead %}<p class="ax-lead ax-confirm-lead">{{ page.lead }}</p>{% endif %}
     <form class="ax-filters ax-confirm-filters" method="get" data-analytics-filters>
-      <input
-        type="search"
-        name="q"
-        value="{{ search }}"
-        placeholder="Filter by receipt, client, phone, shop…"
-        aria-label="Search"
-      >
       <select name="shop_id" aria-label="Shop">
         <option value=""{% if not selected_shop_ids %} selected{% endif %}>All shops</option>
         {% for shop in filter_shops %}
@@ -47,11 +40,6 @@
       <select name="kind" aria-label="Type">
         {% for value, label in kind_options %}
         <option value="{{ value }}"{% if kind_filter == value %} selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-      <select name="status" aria-label="Status">
-        {% for value, label in status_options %}
-        <option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
       {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
@@ -64,7 +52,7 @@
     Loading receipts…
     {% else %}
     Showing {{ total_count }} {{ count_label }}{{ total_count|pluralize }}
-    · pending first, then partial return, cancelled, confirmed
+    · pending first, then cancelled, then confirmed
     {% endif %}
   </p>
 
@@ -72,7 +60,7 @@
     <header class="ax-confirm-card-head">
       <div class="ax-confirm-card-title">
         <h3>Receipts</h3>
-        <p class="ax-confirm-card-hint">Mark receipts, then confirm or cancel together</p>
+        <p class="ax-confirm-card-hint">Live search, mark one, then search the next — selected stay on top</p>
       </div>
       <label class="ax-table-search ax-confirm-live-search">
         <span class="visually-hidden">Live search receipt number</span>
@@ -113,7 +101,7 @@
             </th>
             <th class="ax-th--item">Receipt</th>
             <th>Status</th>
-            <th>When</th>
+            <th>Date &amp; time</th>
           </tr>
         </thead>
         <tbody data-ax-confirm-rows>
@@ -201,7 +189,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=7"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=9"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");

@@ -144,23 +144,35 @@
     }
   };
 
-  const clearLiveSearch = ({ focus = true } = {}) => {
-    if (!liveSearch) return;
-    if (!liveSearch.value) {
-      if (focus) liveSearch.focus();
-      return;
-    }
-    liveSearch.value = "";
+  const isRowSelected = (row) => Boolean(rowCheckbox(row)?.checked);
+
+  const pinSelectedRows = () => {
+    if (!tbody) return;
+    const rows = allRows();
+    const selected = rows.filter(isRowSelected);
+    const rest = rows.filter((row) => !isRowSelected(row));
+    [...selected, ...rest].forEach((row) => tbody.appendChild(row));
+  };
+
+  const resetLiveSearchForNext = ({ focus = true } = {}) => {
+    if (liveSearch) liveSearch.value = "";
+    pinSelectedRows();
     filterRows();
-    if (focus) liveSearch.focus();
+    if (focus && liveSearch) liveSearch.focus();
+  };
+
+  const clearLiveSearch = ({ focus = true } = {}) => {
+    resetLiveSearchForNext({ focus });
   };
 
   const filterRows = () => {
     const query = (liveSearch?.value || "").trim().toLowerCase();
     const tokens = query.split(/\s+/).filter(Boolean);
     let visible = 0;
+    let matchVisible = 0;
     const rows = allRows();
     rows.forEach((row) => {
+      const selected = isRowSelected(row);
       const haystack = (
         row.getAttribute("data-search-text") ||
         row.textContent ||
@@ -168,12 +180,20 @@
       ).toLowerCase();
       const match =
         !tokens.length || tokens.every((token) => haystack.includes(token));
-      row.hidden = !match;
-      if (match) visible += 1;
+      // Keep already-selected receipts visible while searching for the next one.
+      const show = selected || match;
+      row.hidden = !show;
+      if (show) visible += 1;
+      if (match && !selected) matchVisible += 1;
     });
     const hasRows = rows.length > 0;
-    if (noResults) noResults.hidden = !hasRows || visible > 0 || !query;
-    if (table) table.hidden = !hasRows || (visible === 0 && Boolean(query));
+    if (noResults) {
+      noResults.hidden =
+        !hasRows || !query || matchVisible > 0 || selectedRows().length > 0;
+    }
+    if (table) {
+      table.hidden = !hasRows || (visible === 0 && Boolean(query));
+    }
     if (emptyEl) emptyEl.hidden = hasRows || Boolean(query);
     syncSelectionBar();
   };
@@ -208,8 +228,11 @@
     if (!input || input.disabled) return false;
     input.checked = true;
     syncSelectionBar();
-    if (clearSearch && liveSearch?.value.trim()) {
-      clearLiveSearch({ focus: true });
+    if (clearSearch) {
+      resetLiveSearchForNext({ focus: true });
+    } else {
+      pinSelectedRows();
+      syncSelectionBar();
     }
     return true;
   };
@@ -255,7 +278,7 @@
     footnote.textContent = `Showing ${pluralize(
       total,
       countLabel
-    )} · pending first, then partial return, cancelled, confirmed`;
+    )} · pending first, then cancelled, then confirmed`;
   };
 
   const renderRows = (rows) => {
@@ -277,8 +300,6 @@
     const params = new URLSearchParams(
       filtersForm ? new FormData(filtersForm) : window.location.search
     );
-    // Keep status default aligned with server (pending) when omitted.
-    if (!params.has("status")) params.set("status", "pending");
     if (!params.has("kind")) params.set("kind", "sale");
     const qs = params.toString();
     return qs ? `${rowsUrl}?${qs}` : rowsUrl;
@@ -638,16 +659,24 @@
         if (input) input.checked = checked;
       });
       syncSelectionBar();
-      if (checked && liveSearch?.value.trim()) {
-        clearLiveSearch({ focus: true });
+      if (checked) {
+        resetLiveSearchForNext({ focus: true });
+      } else {
+        pinSelectedRows();
+        filterRows();
       }
       return;
     }
 
     if (target.matches("[data-ax-confirm-select-row]")) {
       syncSelectionBar();
-      if (target.checked && liveSearch?.value.trim()) {
-        clearLiveSearch({ focus: true });
+      if (target.checked) {
+        // After marking one match, restore the full list so the next
+        // live search can find another receipt quickly.
+        resetLiveSearchForNext({ focus: true });
+      } else {
+        pinSelectedRows();
+        filterRows();
       }
     }
   });
@@ -668,6 +697,8 @@
   clearSelectedBtn?.addEventListener("click", () => {
     if (busy) return;
     clearSelection();
+    pinSelectedRows();
+    filterRows();
   });
 
   confirmSelectedBtn?.addEventListener("click", () => {

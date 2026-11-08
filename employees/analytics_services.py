@@ -3014,14 +3014,6 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
     }
 
 
-CONFIRM_RECEIPT_STATUS_FILTERS = (
-    ("pending", "Pending"),
-    ("", "All statuses"),
-    ("partial_return", "Partial return"),
-    ("cancelled", "Cancelled"),
-    ("confirmed", "Confirmed"),
-)
-
 CONFIRM_RECEIPT_KIND_FILTERS = (
     ("sale", "Sales"),
     ("delivery", "Delivery notes"),
@@ -3030,26 +3022,22 @@ CONFIRM_RECEIPT_KIND_FILTERS = (
 )
 
 CONFIRM_RECEIPT_DEFAULT_LIMIT = 150
+# Always show every status: pending → cancelled → confirmed.
 CONFIRM_RECEIPT_STATUS_RANK = {
     ShopReceiptStatus.ACTIVE: 0,
     "pending": 0,
-    ShopReceiptStatus.PARTIAL_RETURN: 1,
-    "partial_return": 1,
-    ShopReceiptStatus.CANCELLED: 2,
-    "cancelled": 2,
-    ShopReceiptStatus.CONFIRMED: 3,
-    "confirmed": 3,
+    ShopReceiptStatus.PARTIAL_RETURN: 0,
+    "partial_return": 0,
+    ShopReceiptStatus.CANCELLED: 1,
+    "cancelled": 1,
+    ShopReceiptStatus.CONFIRMED: 2,
+    "confirmed": 2,
 }
 
 
 def _confirm_receipt_status_key(raw: str | None) -> str:
-    """Default to pending so the page only loads actionable receipts."""
-    if raw is None:
-        return "pending"
-    key = str(raw).strip().lower()
-    if key in {"", "all", "any"}:
-        return ""
-    return key
+    """Confirm-receipts always lists every status (filter UI removed)."""
+    return ""
 
 
 def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limit=150):
@@ -3102,9 +3090,9 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
         qs = qs.annotate(
             status_rank=Case(
                 When(status=ShopReceiptStatus.ACTIVE, then=Value(0)),
-                When(status=ShopReceiptStatus.PARTIAL_RETURN, then=Value(1)),
-                When(status=ShopReceiptStatus.CANCELLED, then=Value(2)),
-                When(status=ShopReceiptStatus.CONFIRMED, then=Value(3)),
+                When(status=ShopReceiptStatus.PARTIAL_RETURN, then=Value(0)),
+                When(status=ShopReceiptStatus.CANCELLED, then=Value(1)),
+                When(status=ShopReceiptStatus.CONFIRMED, then=Value(2)),
                 default=Value(9),
                 output_field=IntegerField(),
             )
@@ -3221,7 +3209,7 @@ def _confirm_receipt_transfer_rows(
             when_dt = movement.responded_at or movement.created_at
             status = "confirmed"
             status_label = "Received"
-            status_rank = 3
+            status_rank = 2
             source = "goods_received"
         else:
             kind = "delivery"
@@ -3235,7 +3223,7 @@ def _confirm_receipt_transfer_rows(
             if is_declined:
                 status = "cancelled"
                 status_label = "Declined"
-                status_rank = 2
+                status_rank = 1
             else:
                 status = "pending"
                 status_label = "In transit"
@@ -3300,17 +3288,15 @@ def _confirm_receipts_query_context(*, profile, request) -> dict:
     filters = _filters_context(
         profile, request, allow_all_time=True, default_all_time=False
     )
-    search = (request.GET.get("q") or "").strip()
-    status_raw = request.GET.get("status")
-    status_key = _confirm_receipt_status_key(status_raw)
+    # Receipt lookup is client-side live search only — do not server-filter by q.
+    status_key = _confirm_receipt_status_key(request.GET.get("status"))
     kind_key = (request.GET.get("kind") or "sale").strip().lower()
     if kind_key not in {value for value, _label in CONFIRM_RECEIPT_KIND_FILTERS}:
         kind_key = "sale"
     return {
         **filters,
-        "search": search,
+        "search": "",
         "status_filter": status_key,
-        "status_options": CONFIRM_RECEIPT_STATUS_FILTERS,
         "kind_filter": kind_key,
         "kind_options": CONFIRM_RECEIPT_KIND_FILTERS,
         "count_label": _confirm_receipts_count_label(kind_key),
@@ -13826,8 +13812,7 @@ def _build_receipts(filters):
                 value="Open",
                 hint="Confirm or cancel pending sales receipts",
                 body=(
-                    "Sales only — pending first, then partial returns, cancelled, "
-                    "and confirmed."
+                    "Sales only — pending first, then cancelled, then confirmed."
                 ),
             ),
             _overview_section(

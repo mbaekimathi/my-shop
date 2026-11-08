@@ -3176,8 +3176,14 @@
     font-size: 0.74rem;
   }
 
-  .ax--list-table .ax-table:not(.ax-table--shops):not(.ax-table--pl) {
+  .ax--list-table .ax-table:not(.ax-table--shops):not(.ax-table--pl):not(.ax-table--confirm-compact) {
     min-width: 32rem;
+    font-size: 0.74rem;
+  }
+
+  .ax--list-table .ax-table--confirm-compact {
+    min-width: 0;
+    width: 100%;
     font-size: 0.74rem;
   }
 
@@ -6182,10 +6188,19 @@
 }
 
 /* Confirm receipts — modern responsive workspace. */
+.workspace-main:has(.ax--confirm[data-ax-section="confirm-receipts"]) {
+  width: min(52rem, calc(100% - 2rem));
+  max-width: 100%;
+  min-width: 0;
+}
+
 .ax--confirm[data-ax-section="confirm-receipts"] {
   gap: 0.75rem;
-  width: min(100%, 52rem);
+  box-sizing: border-box;
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
+  overflow-x: clip;
 }
 
 .ax--confirm .ax-confirm-top {
@@ -6216,12 +6231,16 @@
 
 .ax--confirm .ax-confirm-top .ax-title {
   gap: 0.45rem 0.65rem;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .ax--confirm .ax-confirm-top .ax-title h2 {
   margin: 0;
   font-size: clamp(1.15rem, 2.2vw, 1.45rem);
   letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ax--confirm .ax-confirm-lead {
@@ -6234,26 +6253,24 @@
 
 .ax--confirm .ax-confirm-filters {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(9.5rem, 100%), 1fr));
   gap: 0.5rem;
   margin: 0;
   width: 100%;
-  max-width: none;
+  max-width: 100%;
+  min-width: 0;
   align-items: stretch;
 }
 
 .ax--confirm .ax-confirm-filters input,
 .ax--confirm .ax-confirm-filters select,
 .ax--confirm .ax-confirm-filters .ax-apply {
+  box-sizing: border-box;
   width: 100%;
   min-width: 0 !important;
-  max-width: none !important;
+  max-width: 100% !important;
   flex: none !important;
   min-height: 2.35rem;
-}
-
-.ax--confirm .ax-confirm-filters input[type="search"] {
-  grid-column: 1 / -1;
 }
 
 .ax--confirm .ax-confirm-filters .ax-apply {
@@ -6274,6 +6291,8 @@
   display: grid;
   gap: 0;
   padding: 0;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -6296,6 +6315,12 @@
   padding: 0.95rem 1rem 0.85rem;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
   background: color-mix(in srgb, var(--teal) 4%, var(--surface));
+  min-width: 0;
+}
+
+.ax--confirm .ax-confirm-card-title {
+  min-width: 0;
+  flex: 1 1 12rem;
 }
 
 .ax--confirm .ax-confirm-card-title h3 {
@@ -6313,16 +6338,21 @@
   color: var(--mist-dim);
   font-size: 0.75rem;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .ax--confirm .ax-confirm-live-search {
-  flex: 1 1 14rem;
-  max-width: 22rem;
+  flex: 1 1 12rem;
+  max-width: min(22rem, 100%);
+  min-width: 0;
   margin: 0;
 }
 
 .ax--confirm .ax-confirm-live-search input {
+  box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 2.35rem;
   padding: 0.4rem 0.8rem;
   border: 1px solid var(--line);
@@ -6470,11 +6500,7 @@
 
 @media (min-width: 900px) {
   .ax--confirm .ax-confirm-filters {
-    grid-template-columns: minmax(12rem, 1.6fr) repeat(4, minmax(7.5rem, 1fr)) auto;
-  }
-
-  .ax--confirm .ax-confirm-filters input[type="search"] {
-    grid-column: auto;
+    grid-template-columns: repeat(4, minmax(7.5rem, 1fr)) auto;
   }
 
   .ax--confirm .ax-confirm-filters .ax-apply {
@@ -6484,30 +6510,103 @@
 }
 
 @media (max-width: 899px) {
+  .workspace-main:has(.ax--confirm[data-ax-section="confirm-receipts"]) {
+    width: calc(100% - 1.2rem);
+    max-width: 100%;
+  }
+
   .ax--confirm[data-ax-section="confirm-receipts"] {
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    gap: 0.4rem;
   }
 
   .ax--confirm .ax-confirm-top {
-    padding: 0.9rem;
-    border-radius: 14px;
+    gap: 0.45rem;
+    padding: 0.55rem 0.65rem;
+    border-radius: 12px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .ax--confirm .ax-confirm-top-bar {
+    gap: 0.35rem 0.6rem;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .ax--confirm .ax-confirm-top .ax-title {
+    gap: 0.2rem 0.45rem;
+    width: 100%;
+  }
+
+  .ax--confirm .ax-confirm-top .ax-title h2 {
+    font-size: 1.05rem;
+    line-height: 1.2;
+  }
+
+  .ax--confirm .ax-confirm-top .ax-period {
+    max-width: 100%;
+    font-size: 0.72rem;
+  }
+
+  .ax--confirm .ax-confirm-lead {
+    display: none;
   }
 
   .ax--confirm .ax-confirm-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+    max-width: 100%;
+  }
+
+  .ax--confirm .ax-confirm-filters input,
+  .ax--confirm .ax-confirm-filters select,
+  .ax--confirm .ax-confirm-filters .ax-apply {
+    min-height: 2rem;
+    font-size: 0.8rem;
   }
 
   .ax--confirm .ax-confirm-filters .ax-apply {
     grid-column: 1 / -1;
+    min-height: 2.05rem;
+  }
+
+  .ax--confirm .ax-confirm-footnote {
+    display: none;
   }
 
   .ax--confirm .ax-confirm-card-head {
-    padding: 0.85rem 0.9rem;
+    align-items: center;
+    gap: 0.35rem 0.55rem;
+    padding: 0.45rem 0.55rem;
+    min-width: 0;
+  }
+
+  .ax--confirm .ax-confirm-card-title {
+    flex: 1 1 auto;
+  }
+
+  .ax--confirm .ax-confirm-card-title h3 {
+    font-size: 0.8rem;
+  }
+
+  .ax--confirm .ax-confirm-card-hint {
+    display: none;
   }
 
   .ax--confirm .ax-confirm-live-search {
     flex: 1 1 100%;
-    max-width: none;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .ax--confirm .ax-confirm-live-search input {
+    min-height: 2rem;
+    padding: 0.28rem 0.55rem;
+    border-radius: 8px;
+    font-size: 16px; /* keep iOS from zooming on focus */
   }
 
   .ax--confirm .ax-confirm-select-bar {
@@ -6516,9 +6615,15 @@
     top: auto;
     order: 3;
     margin-top: auto;
+    gap: 0.35rem;
+    padding: 0.45rem 0.55rem;
     border-top: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
     border-bottom: 0;
-    box-shadow: 0 -8px 24px color-mix(in srgb, var(--text-strong) 8%, transparent);
+    box-shadow: 0 -6px 18px color-mix(in srgb, var(--text-strong) 8%, transparent);
+  }
+
+  .ax--confirm .ax-confirm-select-bar .ax-ledger-select-count {
+    font-size: 0.75rem;
   }
 
   .ax--confirm.ax--list-table .ax-confirm-card,
@@ -6526,123 +6631,168 @@
     display: flex;
     flex-direction: column;
     padding: 0;
+    border-radius: 12px;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
   }
 
   .ax--confirm .ax-confirm-select-actions {
     width: 100%;
+    gap: 0.3rem;
   }
 
   .ax--confirm .ax-confirm-select-actions .ax-apply,
   .ax--confirm .ax-confirm-select-actions .btn {
-    flex: 1 1 calc(50% - 0.25rem);
+    flex: 1 1 calc(50% - 0.2rem);
     justify-content: center;
-    min-height: 2.4rem;
+    min-height: 2.05rem;
+    padding-block: 0.35rem;
+    font-size: 0.78rem;
   }
 
-  .ax--confirm .ax-table--confirm-compact {
-    width: 100%;
-    table-layout: auto;
+  .ax--confirm .ax-confirm-list-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ax--confirm .ax-confirm-empty {
+    padding: 1.25rem 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .ax--confirm .ax-table--confirm-compact,
+  .ax--list-table.ax--ledger.ax--confirm[data-ax-section="confirm-receipts"] .ax-table--confirm-compact {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    table-layout: fixed;
+    font-size: 0.7rem;
   }
 
   .ax--confirm .ax-table--confirm-compact thead {
-    display: none;
+    display: table-header-group;
   }
 
   .ax--confirm .ax-table--confirm-compact tbody {
-    display: block;
+    display: table-row-group;
     padding: 0;
   }
 
   .ax--confirm .ax-table--confirm-compact tbody tr {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    grid-template-areas:
-      "select receipt status"
-      "select when when";
-    gap: 0.15rem 0.65rem;
-    align-items: center;
-    padding: 0.75rem 0.9rem;
+    display: table-row;
+    padding: 0;
     border: 0;
-    border-bottom: 1px solid var(--line);
     border-radius: 0;
     background: transparent;
     box-shadow: none;
   }
 
-  .ax--confirm .ax-table--confirm-compact tbody tr:last-child {
-    border-bottom: 0;
-  }
-
-  .ax--confirm .ax-table--confirm-compact tbody tr.is-selected {
-    border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
-    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-  }
-
-  .ax--confirm .ax-table--confirm-compact tbody tr:hover {
-    background: color-mix(in srgb, var(--teal) 6%, var(--surface));
-  }
-
-  .ax--confirm .ax-table--confirm-compact tbody tr.is-selected:hover {
-    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  }
-
   .ax--confirm .ax-table--confirm-compact th,
-  .ax--confirm .ax-table--confirm-compact td {
-    display: block;
-    width: auto !important;
-    min-width: 0 !important;
-    max-width: none !important;
-    padding: 0;
-    border: 0;
-    overflow: visible;
-    text-overflow: unset;
-    white-space: normal;
+  .ax--confirm .ax-table--confirm-compact td,
+  .ax--list-table.ax--confirm .ax-table--confirm-compact th,
+  .ax--list-table.ax--confirm .ax-table--confirm-compact td {
+    display: table-cell;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    padding: 0.32rem 0.35rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
   }
 
   .ax--confirm .ax-table--confirm-compact td::before {
+    content: none;
     display: none;
   }
 
+  .ax--confirm .ax-table--confirm-compact thead th {
+    padding: 0.28rem 0.35rem;
+    font-size: 0.56rem;
+  }
+
+  .ax--confirm .ax-table--confirm-compact th.ax-col-select,
   .ax--confirm .ax-table--confirm-compact td.ax-col-select {
-    grid-area: select;
-    align-self: center;
+    width: 2.35rem;
+    min-width: 2.35rem;
+    max-width: 2.35rem;
+    padding-inline: 0.2rem;
   }
 
-  .ax--confirm .ax-table--confirm-compact td.ax-cell--primary {
-    grid-area: receipt;
-    font-size: 0.92rem;
-    line-height: 1.25;
+  .ax--confirm .ax-table--confirm-compact th:nth-child(2),
+  .ax--confirm .ax-table--confirm-compact td:nth-child(2) {
+    width: 34%;
   }
 
-  .ax--confirm .ax-table--confirm-compact td[data-label="Status"] {
-    grid-area: status;
-    justify-self: end;
+  .ax--confirm .ax-table--confirm-compact th:nth-child(3),
+  .ax--confirm .ax-table--confirm-compact td:nth-child(3) {
+    width: 24%;
+  }
+
+  .ax--confirm .ax-table--confirm-compact th:nth-child(4),
+  .ax--confirm .ax-table--confirm-compact td:nth-child(4) {
+    width: 42%;
+  }
+
+  .ax--confirm .ax-table--confirm-compact td.ax-cell--primary,
+  .ax--list-table.ax--confirm .ax-table--confirm-compact td.ax-cell--primary,
+  .ax--list-table.ax--confirm .ax-table--confirm-compact th.ax-th--item {
+    position: static;
+    left: auto;
+    z-index: auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    box-shadow: none;
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .ax--confirm .ax-table--confirm-compact .shop-receipt-status {
+    max-width: 100%;
+    padding: 0.04rem 0.24rem;
+    font-size: 0.58rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .ax--confirm .ax-table--confirm-compact td.ax-confirm-when,
   .ax--confirm .ax-table--confirm-compact td[data-label="When"] {
-    grid-area: when;
     color: var(--mist-dim);
-    font-size: 0.78rem;
+    font-size: 0.64rem;
   }
 
-  .ax--confirm .ax-table--confirm-compact tbody tr:nth-child(even) td,
-  .ax--confirm .ax-table--confirm-compact tbody tr:hover td,
-  .ax--confirm .ax-table--confirm-compact tbody tr.is-selected td,
-  .ax--confirm .ax-table--confirm-compact tbody tr.is-selected:hover td {
-    background: transparent;
+  .ax--confirm .ax-select-row,
+  .ax--confirm .ax-select-all {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    min-height: 2rem;
   }
 
   .ax--confirm .ax-select-row input,
   .ax--confirm .ax-select-all input {
-    width: 1.15rem;
-    height: 1.15rem;
+    width: 1.1rem;
+    height: 1.1rem;
   }
 }
 
 @media (max-width: 559px) {
+  .workspace-main:has(.ax--confirm[data-ax-section="confirm-receipts"]) {
+    width: calc(100% - 0.9rem);
+  }
+
+  .ax--confirm .ax-confirm-top {
+    padding: 0.5rem 0.55rem;
+  }
+
   .ax--confirm .ax-confirm-filters {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ax--confirm .ax-confirm-top-bar {
@@ -6650,26 +6800,54 @@
     align-items: stretch;
   }
 
+  .ax--confirm .ax-top-actions {
+    width: 100%;
+  }
+
   .ax--confirm .ax-top-actions .ax-apply {
     width: 100%;
     justify-content: center;
+    min-height: 1.9rem;
+    padding-inline: 0.65rem;
+    font-size: 0.75rem;
+  }
+
+  .ax--confirm .ax-confirm-card-title h3 {
+    display: none;
+  }
+
+  .ax--confirm .ax-confirm-live-search {
+    flex: 1 1 100%;
   }
 
   .ax--confirm .ax-confirm-select-actions .ax-apply,
   .ax--confirm .ax-confirm-select-actions .btn {
-    flex: 1 1 100%;
+    flex: 1 1 calc(33.33% - 0.25rem);
+    min-height: 2rem;
+    font-size: 0.72rem;
   }
 
-  .ax--confirm .ax-table--confirm-compact tbody tr {
-    grid-template-columns: auto 1fr;
-    grid-template-areas:
-      "select receipt"
-      "select status"
-      "select when";
+  .ax--confirm .ax-table--confirm-compact th,
+  .ax--confirm .ax-table--confirm-compact td {
+    padding: 0.28rem 0.3rem;
   }
 
-  .ax--confirm .ax-table--confirm-compact td[data-label="Status"] {
-    justify-self: start;
+  .ax--confirm .ax-table--confirm-compact th.ax-col-select,
+  .ax--confirm .ax-table--confirm-compact td.ax-col-select {
+    width: 2.25rem;
+    min-width: 2.25rem;
+    max-width: 2.25rem;
+    padding-inline: 0.15rem;
+  }
+
+  .ax--confirm .ax-table--confirm-compact th:nth-child(4),
+  .ax--confirm .ax-table--confirm-compact td:nth-child(4) {
+    width: 34%;
+  }
+
+  .ax--confirm .ax-table--confirm-compact th:nth-child(2),
+  .ax--confirm .ax-table--confirm-compact td:nth-child(2) {
+    width: 38%;
   }
 }
 

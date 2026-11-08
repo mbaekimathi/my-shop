@@ -253,7 +253,7 @@ class ConfirmSalesReceiptTests(TestCase):
         kinds = {row["kind"] for row in context["rows"]}
         self.assertEqual(kinds, {"sale"})
         self.assertEqual(context["kind_filter"], "sale")
-        self.assertEqual(context["status_filter"], "pending")
+        self.assertEqual(context["status_filter"], "")
         self.assertIn("kind_options", context)
         self.assertTrue(context["page"].get("rows_url"))
 
