@@ -74,21 +74,6 @@
       </label>
     </header>
 
-    <div class="ax-confirm-select-bar" data-ax-confirm-select-bar hidden>
-      <span class="ax-ledger-select-count" data-ax-confirm-select-count>0 selected</span>
-      <div class="ax-confirm-select-actions">
-        <button type="button" class="ax-apply ax-apply--ghost" data-ax-confirm-clear-selected disabled>
-          Clear
-        </button>
-        <button type="button" class="btn btn--ghost" data-ax-confirm-cancel-selected disabled>
-          Cancel selected
-        </button>
-        <button type="button" class="ax-apply" data-ax-confirm-confirm-selected disabled>
-          Confirm selected
-        </button>
-      </div>
-    </div>
-
     <div class="ax-confirm-list-wrap">
       <table class="ax-table ax-table--list ax-table--confirm-compact" data-ax-confirm-table{% if async_rows or not rows %} hidden{% endif %}>
         <thead>
@@ -153,6 +138,49 @@
 
 {% block workspace_overlays %}
 {{ block.super }}
+<div class="ax-confirm-cart" data-ax-confirm-select-bar hidden>
+  <div
+    id="ax-confirm-cart-panel"
+    class="ax-confirm-cart-panel"
+    data-ax-confirm-cart-panel
+    hidden
+  >
+    <div class="ax-confirm-cart-panel-head">
+      <span class="ax-ledger-select-count" data-ax-confirm-select-count>0 selected</span>
+      <button
+        type="button"
+        class="ax-confirm-cart-close"
+        data-ax-confirm-cart-close
+        aria-label="Close selected receipts"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="ax-confirm-select-actions">
+      <button type="button" class="ax-apply ax-apply--ghost" data-ax-confirm-clear-selected disabled>
+        Clear
+      </button>
+      <button type="button" class="btn btn--ghost" data-ax-confirm-cancel-selected disabled>
+        Cancel selected
+      </button>
+      <button type="button" class="ax-apply" data-ax-confirm-confirm-selected disabled>
+        Confirm selected
+      </button>
+    </div>
+  </div>
+  <button
+    type="button"
+    class="ax-confirm-cart-toggle"
+    data-ax-confirm-cart-toggle
+    aria-expanded="false"
+    aria-controls="ax-confirm-cart-panel"
+    aria-label="Selected receipts"
+    title="Drag to move · tap to open"
+  >
+    <i data-lucide="list-checks" aria-hidden="true"></i>
+    <span class="ax-confirm-cart-badge" data-ax-confirm-select-badge hidden>0</span>
+  </button>
+</div>
 <div class="workspace-modal shop-receipt-modal" data-confirm-receipt-modal hidden>
   <div class="workspace-modal-backdrop" data-confirm-receipt-modal-close></div>
   <div
@@ -189,7 +217,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=9"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=13"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");

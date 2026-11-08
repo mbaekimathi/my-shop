@@ -6288,12 +6288,13 @@
 
 .ax--confirm.ax--list-table .ax-confirm-card,
 .ax--confirm .ax-confirm-card {
+  position: relative;
   display: grid;
   gap: 0;
   padding: 0;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--surface);
@@ -6369,27 +6370,172 @@
   border-color: var(--accent);
 }
 
-.ax--confirm .ax-confirm-select-bar {
-  position: sticky;
-  top: 0;
-  z-index: 3;
+.ax-confirm-cart {
+  --ax-confirm-cart-x: auto;
+  --ax-confirm-cart-y: auto;
+  position: fixed;
+  left: var(--ax-confirm-cart-x);
+  top: var(--ax-confirm-cart-y);
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.55rem;
+  margin: 0;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.ax-confirm-cart.is-anchored {
+  right: auto;
+  bottom: auto;
+}
+
+.ax-confirm-cart.is-left {
+  align-items: flex-start;
+}
+
+.ax-confirm-cart.is-dragging {
+  z-index: 60;
+}
+
+.ax-confirm-cart[hidden] {
+  display: none !important;
+}
+
+.ax-confirm-cart-toggle,
+.ax-confirm-cart-panel,
+.ax-confirm-cart-close {
+  pointer-events: auto;
+}
+
+.ax-confirm-cart-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.15rem;
+  height: 3.15rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #111;
+  box-shadow:
+    0 10px 28px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 2px 0 color-mix(in srgb, var(--text-strong) 8%, transparent);
+  cursor: grab;
+  touch-action: none;
+}
+
+.ax-confirm-cart.is-dragging .ax-confirm-cart-toggle {
+  cursor: grabbing;
+  transform: scale(1.06);
+  box-shadow:
+    0 16px 34px color-mix(in srgb, var(--accent) 42%, transparent),
+    0 2px 0 color-mix(in srgb, var(--text-strong) 8%, transparent);
+}
+
+.ax-confirm-cart-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 3px;
+}
+
+.ax-confirm-cart-toggle.is-open {
+  background: color-mix(in srgb, var(--accent) 82%, #111);
+  color: #fff;
+}
+
+.ax-confirm-cart-toggle i {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.ax-confirm-cart-badge {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.15rem;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--text-strong);
+  color: var(--surface);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.3rem;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.ax-confirm-cart-panel {
+  width: min(18.5rem, calc(100vw - 2rem));
+  padding: 0.7rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--accent));
+  box-shadow: 0 16px 36px color-mix(in srgb, var(--text-strong) 16%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.ax-confirm-cart-panel[hidden] {
+  display: none !important;
+}
+
+.ax-confirm-cart-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.ax-confirm-cart-panel-head .ax-ledger-select-count {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.ax-confirm-cart-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mist-dim);
+  cursor: pointer;
+}
+
+.ax-confirm-cart-close:hover {
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+  color: var(--text-strong);
+}
+
+.ax-confirm-cart-close i {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.ax-confirm-cart .ax-confirm-select-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.65rem;
-  margin: 0;
-  padding: 0.7rem 1rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  backdrop-filter: blur(8px);
+  gap: 0.4rem;
 }
 
-.ax--confirm .ax-confirm-select-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.45rem;
+.ax-confirm-cart .ax-confirm-select-actions .ax-apply,
+.ax-confirm-cart .ax-confirm-select-actions .btn {
+  flex: 1 1 calc(50% - 0.2rem);
+  justify-content: center;
+  min-height: 2.2rem;
+}
+
+.ax-confirm-cart .ax-confirm-select-actions [data-ax-confirm-confirm-selected] {
+  flex: 1 1 100%;
 }
 
 .ax--confirm .ax-confirm-list-wrap {
@@ -6609,23 +6755,6 @@
     font-size: 16px; /* keep iOS from zooming on focus */
   }
 
-  .ax--confirm .ax-confirm-select-bar {
-    position: sticky;
-    bottom: 0;
-    top: auto;
-    order: 3;
-    margin-top: auto;
-    gap: 0.35rem;
-    padding: 0.45rem 0.55rem;
-    border-top: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
-    border-bottom: 0;
-    box-shadow: 0 -6px 18px color-mix(in srgb, var(--text-strong) 8%, transparent);
-  }
-
-  .ax--confirm .ax-confirm-select-bar .ax-ledger-select-count {
-    font-size: 0.75rem;
-  }
-
   .ax--confirm.ax--list-table .ax-confirm-card,
   .ax--confirm .ax-confirm-card {
     display: flex;
@@ -6634,16 +6763,31 @@
     border-radius: 12px;
     min-width: 0;
     max-width: 100%;
-    overflow: hidden;
+    overflow: visible;
   }
 
-  .ax--confirm .ax-confirm-select-actions {
+  .ax-confirm-cart:not(.is-anchored) {
+    right: max(0.75rem, env(safe-area-inset-right));
+    bottom: max(0.85rem, env(safe-area-inset-bottom));
+  }
+
+  .ax-confirm-cart-toggle {
+    width: 3.35rem;
+    height: 3.35rem;
+  }
+
+  .ax-confirm-cart-panel {
+    width: min(17.5rem, calc(100vw - 1.5rem));
+    padding: 0.6rem 0.65rem;
+  }
+
+  .ax-confirm-cart .ax-confirm-select-actions {
     width: 100%;
     gap: 0.3rem;
   }
 
-  .ax--confirm .ax-confirm-select-actions .ax-apply,
-  .ax--confirm .ax-confirm-select-actions .btn {
+  .ax-confirm-cart .ax-confirm-select-actions .ax-apply,
+  .ax-confirm-cart .ax-confirm-select-actions .btn {
     flex: 1 1 calc(50% - 0.2rem);
     justify-content: center;
     min-height: 2.05rem;
@@ -6820,8 +6964,8 @@
     flex: 1 1 100%;
   }
 
-  .ax--confirm .ax-confirm-select-actions .ax-apply,
-  .ax--confirm .ax-confirm-select-actions .btn {
+  .ax-confirm-cart .ax-confirm-select-actions .ax-apply,
+  .ax-confirm-cart .ax-confirm-select-actions .btn {
     flex: 1 1 calc(33.33% - 0.25rem);
     min-height: 2rem;
     font-size: 0.72rem;

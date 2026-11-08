@@ -10,12 +10,21 @@
 
   const card = root.querySelector("[data-ax-confirm-card]");
   const liveSearch = card?.querySelector("[data-ax-confirm-live-search]");
-  const selectBar = card?.querySelector("[data-ax-confirm-select-bar]");
-  const selectCount = card?.querySelector("[data-ax-confirm-select-count]");
+  // Keep the cart outside transformed workspace ancestors so fixed = viewport.
+  const selectBar = document.querySelector("[data-ax-confirm-select-bar]");
+  const selectCount = selectBar?.querySelector("[data-ax-confirm-select-count]");
+  const selectBadge = selectBar?.querySelector("[data-ax-confirm-select-badge]");
+  const cartToggle = selectBar?.querySelector("[data-ax-confirm-cart-toggle]");
+  const cartPanel = selectBar?.querySelector("[data-ax-confirm-cart-panel]");
+  const cartClose = selectBar?.querySelector("[data-ax-confirm-cart-close]");
   const selectAll = card?.querySelector("[data-ax-confirm-select-all]");
-  const clearSelectedBtn = card?.querySelector("[data-ax-confirm-clear-selected]");
-  const confirmSelectedBtn = card?.querySelector("[data-ax-confirm-confirm-selected]");
-  const cancelSelectedBtn = card?.querySelector("[data-ax-confirm-cancel-selected]");
+  const clearSelectedBtn = selectBar?.querySelector("[data-ax-confirm-clear-selected]");
+  const confirmSelectedBtn = selectBar?.querySelector(
+    "[data-ax-confirm-confirm-selected]"
+  );
+  const cancelSelectedBtn = selectBar?.querySelector(
+    "[data-ax-confirm-cancel-selected]"
+  );
   const table = card?.querySelector("[data-ax-confirm-table]");
   const tbody = card?.querySelector("[data-ax-confirm-rows]");
   const loadingEl = card?.querySelector("[data-ax-confirm-loading]");
@@ -40,6 +49,15 @@
   let busy = false;
   let searchTimer = 0;
   let countLabel = "receipt";
+  const CART_POS_KEY = "ax-confirm-cart-pos";
+  const CART_DRAG_THRESHOLD = 8;
+  let cartDrag = null;
+  let cartMoved = false;
+
+  // Mount on body so position:fixed tracks the viewport, not the receipt list.
+  if (selectBar && selectBar.parentElement !== document.body) {
+    document.body.appendChild(selectBar);
+  }
 
   const getCsrf = () =>
     root.querySelector("[name=csrfmiddlewaretoken]")?.value ||
@@ -111,6 +129,79 @@
     if (table) table.hidden = loading || error || empty;
   };
 
+  const setCartOpen = (open) => {
+    const isOpen = Boolean(open) && selectedRows().length > 0;
+    if (selectBar) selectBar.classList.toggle("is-open", isOpen);
+    if (cartPanel) cartPanel.hidden = !isOpen;
+    if (cartToggle) {
+      cartToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      cartToggle.classList.toggle("is-open", isOpen);
+    }
+  };
+
+  const clampCartPosition = (left, top) => {
+    if (!selectBar) return { left, top };
+    const margin = 8;
+    const width = selectBar.offsetWidth || 56;
+    const height = selectBar.offsetHeight || 56;
+    const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+    const maxTop = Math.max(margin, window.innerHeight - height - margin);
+    return {
+      left: Math.min(Math.max(margin, left), maxLeft),
+      top: Math.min(Math.max(margin, top), maxTop),
+    };
+  };
+
+  const applyCartPosition = (left, top, { persist = false } = {}) => {
+    if (!selectBar) return;
+    const next = clampCartPosition(left, top);
+    selectBar.style.setProperty("--ax-confirm-cart-x", `${next.left}px`);
+    selectBar.style.setProperty("--ax-confirm-cart-y", `${next.top}px`);
+    selectBar.classList.add("is-anchored");
+    selectBar.classList.toggle(
+      "is-left",
+      next.left + selectBar.offsetWidth / 2 < window.innerWidth / 2
+    );
+    if (persist) {
+      try {
+        window.localStorage.setItem(
+          CART_POS_KEY,
+          JSON.stringify({ left: next.left, top: next.top })
+        );
+      } catch (_err) {
+        /* ignore quota / private mode */
+      }
+    }
+  };
+
+  const restoreCartPosition = () => {
+    if (!selectBar) return;
+    try {
+      const raw = window.localStorage.getItem(CART_POS_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (
+        typeof saved?.left !== "number" ||
+        typeof saved?.top !== "number" ||
+        !Number.isFinite(saved.left) ||
+        !Number.isFinite(saved.top)
+      ) {
+        return;
+      }
+      applyCartPosition(saved.left, saved.top);
+    } catch (_err) {
+      /* ignore bad storage */
+    }
+  };
+
+  const keepCartInViewport = () => {
+    if (!selectBar || selectBar.hidden || !selectBar.classList.contains("is-anchored")) {
+      return;
+    }
+    const rect = selectBar.getBoundingClientRect();
+    applyCartPosition(rect.left, rect.top, { persist: true });
+  };
+
   const syncSelectionBar = () => {
     const selected = selectedRows();
     const count = selected.length;
@@ -121,11 +212,29 @@
       (row) => row.getAttribute("data-can-cancel") === "1"
     );
 
+    const wasHidden = Boolean(selectBar?.hidden);
     if (selectBar) selectBar.hidden = count === 0;
     if (selectCount) selectCount.textContent = `${count} selected`;
+    if (selectBadge) {
+      selectBadge.textContent = String(count);
+      selectBadge.hidden = count === 0;
+    }
+    if (cartToggle) {
+      cartToggle.setAttribute(
+        "aria-label",
+        count ? `${count} selected receipts` : "Selected receipts"
+      );
+    }
     if (clearSelectedBtn) clearSelectedBtn.disabled = busy || count === 0;
     if (confirmSelectedBtn) confirmSelectedBtn.disabled = busy || !canConfirm;
     if (cancelSelectedBtn) cancelSelectedBtn.disabled = busy || !canCancel;
+
+    if (count === 0) {
+      setCartOpen(false);
+    } else if (wasHidden) {
+      restoreCartPosition();
+      refreshIcons();
+    }
 
     allRows().forEach((row) => {
       row.classList.toggle("is-selected", Boolean(rowCheckbox(row)?.checked));
@@ -694,6 +803,78 @@
     selectRow(match, { clearSearch: true });
   });
 
+  const onCartPointerDown = (event) => {
+    if (!selectBar || !cartToggle || event.button != null && event.button !== 0) {
+      return;
+    }
+    if (event.target.closest("[data-ax-confirm-cart-panel]")) return;
+    const rect = selectBar.getBoundingClientRect();
+    cartMoved = false;
+    cartDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originLeft: rect.left,
+      originTop: rect.top,
+    };
+    try {
+      cartToggle.setPointerCapture(event.pointerId);
+    } catch (_err) {
+      /* older browsers */
+    }
+  };
+
+  const onCartPointerMove = (event) => {
+    if (!cartDrag || event.pointerId !== cartDrag.pointerId || !selectBar) return;
+    const dx = event.clientX - cartDrag.startX;
+    const dy = event.clientY - cartDrag.startY;
+    if (!cartMoved && Math.hypot(dx, dy) < CART_DRAG_THRESHOLD) return;
+    cartMoved = true;
+    selectBar.classList.add("is-dragging");
+    setCartOpen(false);
+    applyCartPosition(cartDrag.originLeft + dx, cartDrag.originTop + dy);
+    event.preventDefault();
+  };
+
+  const onCartPointerUp = (event) => {
+    if (!cartDrag || event.pointerId !== cartDrag.pointerId) return;
+    const wasDrag = cartMoved;
+    cartDrag = null;
+    if (selectBar) selectBar.classList.remove("is-dragging");
+    try {
+      cartToggle?.releasePointerCapture(event.pointerId);
+    } catch (_err) {
+      /* ignore */
+    }
+    if (wasDrag) {
+      const rect = selectBar?.getBoundingClientRect();
+      if (rect) applyCartPosition(rect.left, rect.top, { persist: true });
+      return;
+    }
+    if (!selectedRows().length) return;
+    const open = cartToggle?.getAttribute("aria-expanded") !== "true";
+    setCartOpen(open);
+    refreshIcons();
+  };
+
+  cartToggle?.addEventListener("pointerdown", onCartPointerDown);
+  cartToggle?.addEventListener("pointermove", onCartPointerMove);
+  cartToggle?.addEventListener("pointerup", onCartPointerUp);
+  cartToggle?.addEventListener("pointercancel", onCartPointerUp);
+  cartToggle?.addEventListener("click", (event) => {
+    // pointerup already handles open/close; block native click after drag.
+    if (cartMoved) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
+
+  window.addEventListener("resize", keepCartInViewport);
+
+  cartClose?.addEventListener("click", () => {
+    setCartOpen(false);
+  });
+
   clearSelectedBtn?.addEventListener("click", () => {
     if (busy) return;
     clearSelection();
@@ -732,8 +913,13 @@
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && modal && !modal.hidden) {
+    if (event.key !== "Escape") return;
+    if (modal && !modal.hidden) {
       closeModal();
+      return;
+    }
+    if (selectBar && !selectBar.hidden && selectBar.classList.contains("is-open")) {
+      setCartOpen(false);
     }
   });
 
