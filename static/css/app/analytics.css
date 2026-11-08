@@ -6549,9 +6549,8 @@
   }
 
   .ax--confirm .ax-table--confirm-compact tbody {
-    display: grid;
-    gap: 0.55rem;
-    padding: 0.75rem;
+    display: block;
+    padding: 0;
   }
 
   .ax--confirm .ax-table--confirm-compact tbody tr {
@@ -6560,18 +6559,31 @@
     grid-template-areas:
       "select receipt status"
       "select when when";
-    gap: 0.2rem 0.7rem;
+    gap: 0.15rem 0.65rem;
     align-items: center;
-    padding: 0.85rem 0.9rem;
-    border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--surface) 96%, var(--mist));
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
+    padding: 0.75rem 0.9rem;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .ax--confirm .ax-table--confirm-compact tbody tr:last-child {
+    border-bottom: 0;
   }
 
   .ax--confirm .ax-table--confirm-compact tbody tr.is-selected {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
     background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  }
+
+  .ax--confirm .ax-table--confirm-compact tbody tr:hover {
+    background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  }
+
+  .ax--confirm .ax-table--confirm-compact tbody tr.is-selected:hover {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
   }
 
   .ax--confirm .ax-table--confirm-compact th,
@@ -6598,7 +6610,7 @@
 
   .ax--confirm .ax-table--confirm-compact td.ax-cell--primary {
     grid-area: receipt;
-    font-size: 0.95rem;
+    font-size: 0.92rem;
     line-height: 1.25;
   }
 
@@ -6615,7 +6627,9 @@
   }
 
   .ax--confirm .ax-table--confirm-compact tbody tr:nth-child(even) td,
-  .ax--confirm .ax-table--confirm-compact tbody tr:hover td {
+  .ax--confirm .ax-table--confirm-compact tbody tr:hover td,
+  .ax--confirm .ax-table--confirm-compact tbody tr.is-selected td,
+  .ax--confirm .ax-table--confirm-compact tbody tr.is-selected:hover td {
     background: transparent;
   }
 
@@ -6659,7 +6673,7 @@
   }
 }
 
-/* Return receipts — same compact list + mobile cards as confirm receipts. */
+/* Return receipts — same compact list layout as confirm receipts. */
 .ax--list-table[data-ax-section="return-receipts"] .ax-top-main {
   align-items: flex-start;
 }
