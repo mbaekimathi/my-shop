@@ -454,7 +454,7 @@ class CompanyPosSettings(models.Model):
     )
     enable_receipt_payment_methods = models.BooleanField(
         default=True,
-        help_text="Show how the customer paid and M-Pesa collection details on receipts.",
+        help_text="Show activated payment methods and M-Pesa collection details on receipts.",
     )
     show_client_phone_on_receipt = models.BooleanField(
         default=True,
@@ -520,7 +520,13 @@ class CompanyPosSettings(models.Model):
     receipt_qr_website = models.CharField(max_length=255, blank=True, default="")
     show_return_notice_on_receipt = models.BooleanField(
         default=True,
-        help_text="When on, sale and credit receipts print 'Goods once bought cannot be returned'.",
+        help_text="When on, sale and credit receipts print the return-policy line.",
+    )
+    return_notice_text = models.CharField(
+        max_length=200,
+        blank=True,
+        default="Goods once bought cannot be returned",
+        help_text="Return-policy line printed on sale and credit receipts when enabled.",
     )
     show_maintainer_on_receipt = models.BooleanField(
         default=False,
@@ -748,7 +754,7 @@ class ShopPosSettings(models.Model):
     )
     enable_receipt_payment_methods = models.BooleanField(
         default=True,
-        help_text="Show how the customer paid and M-Pesa collection details on receipts.",
+        help_text="Show activated payment methods and M-Pesa collection details on receipts.",
     )
     show_client_phone_on_receipt = models.BooleanField(
         default=True,
@@ -814,7 +820,13 @@ class ShopPosSettings(models.Model):
     receipt_qr_website = models.CharField(max_length=255, blank=True, default="")
     show_return_notice_on_receipt = models.BooleanField(
         default=True,
-        help_text="When on, sale and credit receipts print 'Goods once bought cannot be returned'.",
+        help_text="When on, sale and credit receipts print the return-policy line.",
+    )
+    return_notice_text = models.CharField(
+        max_length=200,
+        blank=True,
+        default="Goods once bought cannot be returned",
+        help_text="Return-policy line printed on sale and credit receipts when enabled.",
     )
     show_maintainer_on_receipt = models.BooleanField(
         default=False,

@@ -55,9 +55,12 @@ from shops.services import (
     stk_shop_activation_status,
     update_nexus_stk_settings,
     apply_receipt_copy,
+    receipt_accepted_payment_methods_label,
     receipt_maintainer_line,
     receipt_print_copies,
+    receipt_return_notice_line,
     set_maintainer_phone,
+    set_return_notice_text,
     set_mpesa_payment_details,
     set_receipt_font_style,
     set_receipt_number_formats,
@@ -2331,7 +2334,7 @@ RECEIPT_SETTING_GROUPS = (
             ("enable_print_bluetooth", "Print via Bluetooth"),
             ("enable_print_usb", "Print via USB"),
             ("enable_print_wifi", "Print via Wi‑Fi"),
-            ("enable_receipt_payment_methods", "Show payment methods on receipt"),
+            ("enable_receipt_payment_methods", "Show activated payment methods on receipt"),
             ("show_client_phone_on_receipt", "Show client phone number"),
         ),
     },
@@ -2611,6 +2614,27 @@ def _company_pos_settings(
                 )
             messages.success(request, "Maintainer phone updated.")
             return redirect(request.path)
+        if action == "set_return_notice_text":
+            try:
+                row = set_return_notice_text(
+                    text=request.POST.get("return_notice_text") or ""
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "return_notice_text": row.return_notice_text or "",
+                        "return_notice": receipt_return_notice_line(row),
+                    }
+                )
+            messages.success(request, "Return policy text updated.")
+            return redirect(request.path)
         if wants_json:
             return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
         messages.error(request, "Unknown action.")
@@ -2734,6 +2758,10 @@ def _company_pos_settings(
             "show_return_notice_on_receipt": bool(
                 getattr(pos, "show_return_notice_on_receipt", True)
             ),
+            "return_notice_text": (
+                (getattr(pos, "return_notice_text", "") or "").strip()
+                or "Goods once bought cannot be returned"
+            ),
             "show_maintainer_on_receipt": bool(
                 getattr(pos, "show_maintainer_on_receipt", False)
             ),
@@ -2799,18 +2827,14 @@ def _company_pos_settings(
                 "tax_amount": _money(preview_tax),
                 "show_tax": bool(pos.enable_tax and preview_tax_percent > 0),
                 "total": _money(preview_total),
-                "payment": "Cash" if pos.enable_receipt_payment_methods else "",
+                "payment": receipt_accepted_payment_methods_label(pos),
                 "payment_details": (
                     pos.mpesa_payment_details()
                     if pos.enable_receipt_payment_methods
                     else {"type": "", "label": "", "lines": []}
                 ),
                 "footer": "Thank you for shopping with us",
-                "return_notice": (
-                    "Goods once bought cannot be returned"
-                    if getattr(pos, "show_return_notice_on_receipt", True)
-                    else ""
-                ),
+                "return_notice": receipt_return_notice_line(pos),
                 "maintainer": receipt_maintainer_line(pos),
             },
         }

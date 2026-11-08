@@ -468,7 +468,7 @@
       <ul class="pos-settings-list">
         <li class="pos-settings-row">
           <div class="pos-settings-copy">
-            <strong>Show "Goods once bought cannot be returned"</strong>
+            <strong>Show return policy on receipt</strong>
             <p>Prints under the thank-you line on sale and credit receipts.</p>
           </div>
           <label class="perm-switch">
@@ -484,6 +484,23 @@
             <span class="perm-switch-state">
               {% if show_return_notice_on_receipt %}On{% else %}Off{% endif %}
             </span>
+          </label>
+        </li>
+        <li class="pos-settings-row pos-settings-row--format" data-return-notice-text-row{% if not show_return_notice_on_receipt %} hidden{% endif %}>
+          <div class="pos-settings-copy">
+            <strong>Return policy text</strong>
+            <p>Edit what prints on the receipt.</p>
+          </div>
+          <label class="receipt-format-field receipt-format-field--wide">
+            <input
+              type="text"
+              maxlength="200"
+              autocomplete="off"
+              placeholder="Goods once bought cannot be returned"
+              value="{{ return_notice_text }}"
+              data-return-notice-text
+              aria-label="Return policy text on receipt"
+            >
           </label>
         </li>
       </ul>
@@ -595,6 +612,6 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=20261108-copy-title"></script>
-<script defer src="{% static 'js/receipt-settings.js' %}?v=18"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261108-pay-by"></script>
+<script defer src="{% static 'js/receipt-settings.js' %}?v=21"></script>
 {% endblock %}

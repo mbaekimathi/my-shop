@@ -183,7 +183,27 @@
     return out;
   };
 
-  const encodeEscPos = async (text, qr = null, styleOverride = null) => {
+  const splitMaintainerFromText = (text, ticket = null) => {
+    const maintainer = String(ticket?.maintainer || "").trim();
+    let body = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (!maintainer) {
+      return { body, maintainer: "" };
+    }
+    const lines = body.split("\n");
+    const kept = [];
+    let found = false;
+    for (const line of lines) {
+      if (!found && line.trim() === maintainer) {
+        found = true;
+        continue;
+      }
+      kept.push(line);
+    }
+    body = kept.join("\n").replace(/\n{3,}/g, "\n\n").replace(/\s+$/g, "");
+    return { body, maintainer: found || ticket?.maintainer ? maintainer : "" };
+  };
+
+  const encodeEscPos = async (text, qr = null, styleOverride = null, ticket = null) => {
     const style = getReceiptPrintStyle(styleOverride);
     const chunks = [];
     chunks.push(new Uint8Array([0x1b, 0x40])); // init
@@ -193,8 +213,21 @@
     chunks.push(new Uint8Array([0x1b, 0x45, 0x01]));
     chunks.push(new Uint8Array([0x1b, 0x47, 0x01]));
     chunks.push(new Uint8Array([0x1b, 0x61, 0x00])); // left
-    const body = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    chunks.push(textEncoder.encode(`${body}\n`));
+    const { body, maintainer } = splitMaintainerFromText(text, ticket);
+    // Step Total/Units up one size from the configured font so it reads at a glance.
+    const baseMag = style.escPosMagnification;
+    const grandMag = baseMag === 0x00 ? 0x01 : 0x11;
+    const bodyLines = String(body || "").split("\n");
+    for (const line of bodyLines) {
+      const isGrand = /^\s*(TOTAL|UNITS)\b/i.test(line);
+      if (isGrand && grandMag !== baseMag) {
+        chunks.push(new Uint8Array([0x1d, 0x21, grandMag]));
+        chunks.push(textEncoder.encode(`${line}\n`));
+        chunks.push(new Uint8Array([0x1d, 0x21, baseMag]));
+      } else {
+        chunks.push(textEncoder.encode(`${line}\n`));
+      }
+    }
     // Reset size/bold before QR
     chunks.push(new Uint8Array([0x1d, 0x21, 0x00]));
     chunks.push(new Uint8Array([0x1b, 0x45, 0x00]));
@@ -215,6 +248,14 @@
       chunks.push(new Uint8Array([0x1b, 0x61, 0x00]));
     } else if (qr?.label) {
       chunks.push(textEncoder.encode(`\n${String(qr.label)}\n`));
+    }
+    // Maintainer is the last printed detail, after the QR.
+    if (maintainer) {
+      chunks.push(new Uint8Array([0x1b, 0x61, 0x01])); // center
+      chunks.push(new Uint8Array([0x1b, 0x45, 0x01]));
+      chunks.push(textEncoder.encode(`\n${maintainer}\n`));
+      chunks.push(new Uint8Array([0x1b, 0x45, 0x00]));
+      chunks.push(new Uint8Array([0x1b, 0x61, 0x00]));
     }
     chunks.push(new Uint8Array([0x0a, 0x0a, 0x0a, 0x0a]));
     // Partial cut — full cut can hang some cheap USB bridges waiting for status.
@@ -298,7 +339,7 @@
   }
   .receipt-title-compact,
   .receipt-label-compact { display: none; }
-  .receipt-ticket-unit { display: none; }
+  .receipt-ticket-unit { display: none !important; }
   .receipt-ticket-doc-title {
     margin: ${style.paperMm === "58" ? "0.35em 0 0.2em" : "0.55em 0 0.35em"};
     padding: ${style.paperMm === "58" ? "0.18em 0" : "0.28em 0"};
@@ -339,7 +380,6 @@
   .receipt-label-full { display: none !important; }
   .receipt-title-compact,
   .receipt-label-compact { display: inline !important; }
-  .receipt-ticket-unit { display: block !important; margin-top: 0.04em; font-style: normal; font-size: 0.78em; font-weight: 700 !important; }
   .receipt-ticket-refs-label,
   .receipt-ticket-ref--type,
   .receipt-ticket-auth,
@@ -389,22 +429,12 @@
     display: grid;
     grid-template-columns: ${
       style.paperMm === "58"
-        ? "minmax(0, 1fr) 3.2em"
-        : "minmax(0, 1fr) 4em 1.9em 3.6em"
+        ? "minmax(0, 1fr) 2em 3.2em"
+        : "minmax(0, 1fr) 2.2em 3.6em"
     };
     gap: 0.25em;
     align-items: baseline;
     font-weight: 800 !important;
-  }
-  ${
-    style.paperMm === "58"
-      ? `
-  .receipt-ticket-line:not(.receipt-ticket-line--qty) > .receipt-ticket-price,
-  .receipt-ticket-line:not(.receipt-ticket-line--qty) > .receipt-ticket-qty {
-    display: none !important;
-  }
-  `
-      : ""
   }
   .receipt-ticket-line--qty {
     grid-template-columns: minmax(0, 1fr) ${
@@ -412,12 +442,12 @@
     };
   }
   .receipt-ticket-line > span:nth-child(2),
-  .receipt-ticket-line > span:nth-child(3),
-  .receipt-ticket-line > span:nth-child(4) {
+  .receipt-ticket-line > span:nth-child(3) {
     text-align: right;
     font-variant-numeric: tabular-nums;
     font-weight: 800 !important;
   }
+  .receipt-ticket-qty { white-space: nowrap; }
   .receipt-ticket-line--head {
     font-size: 0.78em;
     font-weight: 900 !important;
@@ -446,11 +476,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .receipt-ticket-price {
-    white-space: nowrap;
-    font-size: 0.95em;
-    font-weight: 800 !important;
-  }
   .receipt-ticket-cancelled {
     margin: 0.3em 0;
     text-align: center;
@@ -473,14 +498,21 @@
     font-weight: 800 !important;
   }
   .receipt-ticket-grand {
-    margin-top: 0.12em;
-    padding: 0.3em 0.15em;
+    margin-top: 0.2em;
+    padding: 0.38em 0.15em;
     border-top: 2px solid #000 !important;
     border-bottom: 2px solid #000 !important;
+    font-size: ${style.paperMm === "58" ? "1.28em" : "1.38em"};
+    line-height: 1.2;
+    font-weight: 900 !important;
+    letter-spacing: 0.01em;
+  }
+  .receipt-ticket-grand span { font-weight: 900 !important; }
+  .receipt-ticket-grand strong {
     font-size: 1.08em;
     font-weight: 900 !important;
+    font-variant-numeric: tabular-nums;
   }
-  .receipt-ticket-grand strong { font-weight: 900 !important; }
   .receipt-ticket-auth {
     display: flex;
     justify-content: space-between;
@@ -624,19 +656,14 @@
     <strong>${escapeHtml(line.name || "Item")}</strong>
     ${detailHtml}${serials}${extraHtml}
   </span>
-  <span>${escapeHtml(line.qty ?? "")}</span>
+  <span class="receipt-ticket-qty">${escapeHtml(line.qty ?? "")}</span>
 </div>`;
             }
-            const unitHtml = `<em class="receipt-ticket-unit">${escapeHtml(
-              line.qty ?? ""
-            )} × ${escapeHtml(line.price || "0")}</em>`;
             return `<div class="receipt-ticket-line">
   <span class="receipt-ticket-item">
     <strong>${escapeHtml(line.name || "Item")}</strong>
-    ${unitHtml}
     ${detailHtml}${serials}${extraHtml}
   </span>
-  <span class="receipt-ticket-price">@ ${escapeHtml(line.price || "0")}</span>
   <span class="receipt-ticket-qty">${escapeHtml(line.qty ?? "")}</span>
   <span>${escapeHtml(line.total || "0")}</span>
 </div>`;
@@ -647,12 +674,17 @@
     const paymentLines = paymentDetails.lines || [];
 
     const qrReady = Boolean(includeQr && qr?.ready && qr?.image_data_url);
-    const qrBlock = qrReady
-      ? `<div class="receipt-ticket-qr">
-  <img src="${String(qr.image_data_url).replace(/"/g, "&quot;")}" alt="QR">
-  <p>${escapeHtml(qr.label || "Scan QR")}</p>
-</div>`
+    const qrImageSrc = qrReady
+      ? String(qr.image_data_url).replace(/"/g, "&quot;")
       : "";
+    const qrBlock = `<div class="receipt-ticket-qr" data-receipt-qr-block${
+      qrReady ? "" : " hidden"
+    }>
+  <img src="${qrImageSrc}" alt="Receipt QR code" data-receipt-qr-image${
+      qrReady ? "" : " hidden"
+    }>
+  <p data-receipt-qr-label>${qrReady ? escapeHtml(qr.label || "Scan QR") : ""}</p>
+</div>`;
 
     const logo = t.logo_url
       ? `<img class="receipt-ticket-logo" src="${escapeHtml(t.logo_url)}" alt="">`
@@ -678,11 +710,10 @@
 
     const linesHead = qtyOnly
       ? `<div class="receipt-ticket-line receipt-ticket-line--head receipt-ticket-line--qty">
-      <span>Item</span><span>Qty</span>
+      <span>Item</span><span class="receipt-ticket-qty">Qty</span>
     </div>`
       : `<div class="receipt-ticket-line receipt-ticket-line--head">
       <span>Item</span>
-      <span class="receipt-ticket-price">Price</span>
       <span class="receipt-ticket-qty">Qty</span>
       <span>Total</span>
     </div>`;
@@ -747,11 +778,11 @@
 
     const paidRow = t.payment
       ? `<div data-receipt-paid-row>
-  <span>Paid</span>
+  <span>Pay by</span>
   <strong data-receipt-paid-value>${escapeHtml(t.payment)}</strong>
 </div>`
       : `<div data-receipt-paid-row hidden>
-  <span>Paid</span>
+  <span>Pay by</span>
   <strong data-receipt-paid-value></strong>
 </div>`;
 
@@ -820,10 +851,10 @@
   <p class="receipt-ticket-footer receipt-ticket-return-notice" data-receipt-return-notice${
     t.return_notice ? "" : " hidden"
   }>${escapeHtml(t.return_notice || "Goods once bought cannot be returned")}</p>
+  ${qrBlock}
   <p class="receipt-ticket-footer receipt-ticket-maintainer" data-receipt-maintainer${
     t.maintainer ? "" : " hidden"
   }>${escapeHtml(t.maintainer || "")}</p>
-  ${qrBlock}
 </div>`;
   };
 
@@ -837,6 +868,7 @@
         const ticketHtml = renderTicketHtml(ticket, qr, style.paperMm);
         let bodyHtml = ticketHtml;
         if (!bodyHtml) {
+          const { body, maintainer } = splitMaintainerFromText(text, ticket);
           const qrReady = Boolean(qr?.ready && qr?.image_data_url);
           const qrHtml = qrReady
             ? `<div class="qr"><img src="${String(qr.image_data_url).replace(
@@ -846,7 +878,12 @@
             : qr?.payload
               ? `<p class="qr-text">QR: ${escapeHtml(qr.payload)}</p>`
               : "";
-          bodyHtml = `<pre>${escapeHtml(text || "")}</pre>${qrHtml}`;
+          const maintainerHtml = maintainer
+            ? `<p class="receipt-ticket-footer receipt-ticket-maintainer">${escapeHtml(
+                maintainer
+              )}</p>`
+            : "";
+          bodyHtml = `<pre>${escapeHtml(body || "")}</pre>${qrHtml}${maintainerHtml}`;
         }
         const frame = document.createElement("iframe");
         frame.setAttribute("aria-hidden", "true");
@@ -2053,7 +2090,12 @@ ${bodyHtml}
         return true;
       }
       const prepared = maskReceiptForPrint(text, ticket);
-      const bytes = await encodeEscPos(prepared.text, qr, styleOverride);
+      const bytes = await encodeEscPos(
+        prepared.text,
+        qr,
+        styleOverride,
+        prepared.ticket || ticket
+      );
       await withTimeout(
         driver.print(bytes),
         20000,

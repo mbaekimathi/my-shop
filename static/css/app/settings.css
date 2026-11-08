@@ -2219,7 +2219,7 @@
 }
 
 .receipt-ticket-unit {
-  display: none;
+  display: none !important;
 }
 
 .receipt-ticket-inner {
@@ -2384,15 +2384,6 @@
   display: none !important;
 }
 
-.receipt-ticket--58 .receipt-ticket-unit {
-  display: block;
-  margin-top: 0.04em;
-  font-style: normal;
-  font-size: 0.78em;
-  font-weight: 650;
-  color: #6b7280;
-}
-
 .receipt-ticket--58 .receipt-ticket-lines {
   gap: 0.28em;
 }
@@ -2457,7 +2448,7 @@
 
 .receipt-ticket-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 4em 1.9em 3.5em;
+  grid-template-columns: minmax(0, 1fr) 2.2em 3.6em;
   gap: 0.28em;
   align-items: baseline;
   color: #111827;
@@ -2465,13 +2456,8 @@
 }
 
 .receipt-ticket--58 .receipt-ticket-line:not(.receipt-ticket-line--qty) {
-  grid-template-columns: minmax(0, 1fr) 3.2em;
+  grid-template-columns: minmax(0, 1fr) 2em 3.2em;
   gap: 0.2em;
-}
-
-.receipt-ticket--58 .receipt-ticket-line:not(.receipt-ticket-line--qty) > .receipt-ticket-price,
-.receipt-ticket--58 .receipt-ticket-line:not(.receipt-ticket-line--qty) > .receipt-ticket-qty {
-  display: none;
 }
 
 .receipt-ticket-line--qty {
@@ -2483,19 +2469,15 @@
 }
 
 .receipt-ticket-line > span:nth-child(2),
-.receipt-ticket-line > span:nth-child(3),
-.receipt-ticket-line > span:nth-child(4) {
+.receipt-ticket-line > span:nth-child(3) {
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: #1f2937;
   font-weight: 650;
 }
 
-.receipt-ticket-price {
+.receipt-ticket-qty {
   white-space: nowrap;
-  color: #374151;
-  font-size: 0.95em;
-  font-weight: 650;
 }
 
 .receipt-ticket-line--head {
@@ -2560,14 +2542,26 @@
 }
 
 .receipt-ticket-grand {
-  margin-top: 0.12em;
-  padding: 0.35em 0.4em;
+  margin-top: 0.2em;
+  padding: 0.42em 0.45em;
   border-radius: 6px;
   background: rgba(var(--accent-rgb), 0.14);
   border-top: 0;
-  font-size: 1.06em;
+  font-size: 1.38em;
+  line-height: 1.2;
   color: #0f172a;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+
+.receipt-ticket-grand span {
   font-weight: 800;
+}
+
+.receipt-ticket-grand strong {
+  font-size: 1.08em;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
 }
 
 .receipt-ticket-auth {
@@ -2651,8 +2645,13 @@
 }
 
 .receipt-ticket--58 .receipt-ticket-grand {
-  padding: 0.22em 0.25em;
-  font-size: 1em;
+  margin-top: 0.16em;
+  padding: 0.32em 0.28em;
+  font-size: 1.28em;
+}
+
+.receipt-ticket--58 .receipt-ticket-grand strong {
+  font-size: 1.06em;
 }
 
 .receipt-ticket-qr p {
@@ -2731,11 +2730,17 @@
   .receipt-ticket-doc-title,
   .receipt-ticket-item strong,
   .receipt-ticket-grand,
+  .receipt-ticket-grand strong,
   .receipt-ticket-doc-meta strong,
   .receipt-ticket-refs strong,
   .receipt-ticket-party strong {
     color: #000 !important;
     font-weight: 800 !important;
+  }
+
+  .receipt-ticket-grand,
+  .receipt-ticket-grand strong {
+    font-weight: 900 !important;
   }
 
   .receipt-ticket-width-tag {

@@ -73,13 +73,8 @@
   <div class="receipt-ticket-lines">
     <div class="receipt-ticket-line receipt-ticket-line--head{% if p.qty_only %} receipt-ticket-line--qty{% endif %}">
       <span>Item</span>
-      {% if p.qty_only %}
-      <span>Qty</span>
-      {% else %}
-      <span class="receipt-ticket-price">Price</span>
       <span class="receipt-ticket-qty">Qty</span>
-      <span>Total</span>
-      {% endif %}
+      {% if not p.qty_only %}<span>Total</span>{% endif %}
     </div>
     {% if p.cancelled %}
     <p class="receipt-ticket-cancelled">*** CANCELLED / RETURNED ***</p>
@@ -88,9 +83,6 @@
     <div class="receipt-ticket-line{% if p.qty_only %} receipt-ticket-line--qty{% endif %}">
       <span class="receipt-ticket-item">
         <strong>{{ line.name }}</strong>
-        {% if not p.qty_only %}
-        <em class="receipt-ticket-unit">{{ line.qty }} × {{ line.price }}</em>
-        {% endif %}
         {% if line.detail %}<em class="receipt-ticket-detail">{{ line.detail }}</em>{% endif %}
         {% for serial in line.serials %}
         <em class="receipt-ticket-serial">SN {{ serial }}</em>
@@ -99,13 +91,8 @@
         <em class="receipt-ticket-serial">+{{ line.serials_extra }} more serials</em>
         {% endif %}
       </span>
-      {% if p.qty_only %}
-      <span>{{ line.qty }}</span>
-      {% else %}
-      <span class="receipt-ticket-price">@ {{ line.price }}</span>
       <span class="receipt-ticket-qty">{{ line.qty }}</span>
-      <span>{{ line.total }}</span>
-      {% endif %}
+      {% if not p.qty_only %}<span>{{ line.total }}</span>{% endif %}
     </div>
     {% endfor %}
     {% endif %}
@@ -136,12 +123,12 @@
     </div>
     {% if p.payment %}
     <div data-receipt-paid-row>
-      <span>Paid</span>
+      <span>Pay by</span>
       <strong data-receipt-paid-value>{{ p.payment }}</strong>
     </div>
     {% else %}
     <div data-receipt-paid-row hidden>
-      <span>Paid</span>
+      <span>Pay by</span>
       <strong data-receipt-paid-value></strong>
     </div>
     {% endif %}
@@ -168,7 +155,6 @@
     data-receipt-return-notice
     {% if not p.return_notice %}hidden{% endif %}
   >{{ p.return_notice|default:"Goods once bought cannot be returned" }}</p>
-  <p class="receipt-ticket-footer receipt-ticket-maintainer" data-receipt-maintainer{% if not p.maintainer %} hidden{% endif %}>{{ p.maintainer }}</p>
 
   <div class="receipt-ticket-qr" data-receipt-qr-block{% if not p.qr.ready or p.include_qr == False %} hidden{% endif %}>
     {% if p.qr.image_data_url and p.include_qr != False %}
@@ -178,6 +164,8 @@
     {% endif %}
     <p data-receipt-qr-label>{% if p.qr.label and p.include_qr != False %}{{ p.qr.label }}{% endif %}</p>
   </div>
+
+  <p class="receipt-ticket-footer receipt-ticket-maintainer" data-receipt-maintainer{% if not p.maintainer %} hidden{% endif %}>{{ p.maintainer }}</p>
 
   <p class="receipt-ticket-width-tag" aria-hidden="true">{{ size }} mm thermal</p>
 </div>

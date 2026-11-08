@@ -42,6 +42,7 @@ from .models import (
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 PHONE_RE = re.compile(r"^[\d+\-\s()]{7,40}$")
+RECEIPT_NO_RETURN_NOTICE = "Goods once bought cannot be returned"
 LOGIN_CODE_RE = re.compile(r"^\d{6}$")
 MIN_PASSWORD_LENGTH = 6
 DEFAULT_COMPANY_NAME = "MY-SHOP"
@@ -122,6 +123,7 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "enable_receipt_payment_methods",
         "show_client_phone_on_receipt",
         "show_return_notice_on_receipt",
+        "return_notice_text",
         "receipt_paper_width",
         "receipt_format_sale",
         "receipt_format_credit",
@@ -624,6 +626,20 @@ def set_shop_receipt_qr_settings(
         ]
     )
     _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
+def set_shop_return_notice_text(*, shop: Shop, text: str = "") -> ShopPosSettings:
+    raw = (text or "").strip()[:200]
+    if not raw:
+        raise ValidationError("Enter the return-policy text to print on receipts.")
+    row = get_shop_pos_settings(shop)
+    if not row.override_receipt:
+        raise ValidationError(
+            "Turn on custom shop receipt settings before changing the return policy text."
+        )
+    row.return_notice_text = raw
+    row.save(update_fields=["return_notice_text", "updated_at"])
     return row
 
 
@@ -2897,6 +2913,17 @@ def set_maintainer_phone(*, phone_number: str = "") -> CompanyPosSettings:
     return settings_row
 
 
+def set_return_notice_text(*, text: str = "") -> CompanyPosSettings:
+    raw = (text or "").strip()[:200]
+    if not raw:
+        raise ValidationError("Enter the return-policy text to print on receipts.")
+    settings_row = get_company_pos_settings()
+    settings_row.return_notice_text = raw
+    settings_row.save(update_fields=["return_notice_text", "updated_at"])
+    _invalidate_pos_settings_cache()
+    return settings_row
+
+
 def receipt_details_qr_payload(
     *,
     receipt_number: str,
@@ -3621,6 +3648,10 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "show_return_notice_on_receipt": bool(
             getattr(row, "show_return_notice_on_receipt", True)
         ),
+        "return_notice_text": (
+            (getattr(row, "return_notice_text", "") or "").strip()
+            or RECEIPT_NO_RETURN_NOTICE
+        ),
         "show_maintainer_on_receipt": bool(
             getattr(row, "show_maintainer_on_receipt", False)
         ),
@@ -4121,9 +4152,6 @@ def _receipt_center(text: str, width: int) -> str:
     return f"{' ' * (pad // 2)}{value}"
 
 
-RECEIPT_NO_RETURN_NOTICE = "Goods once bought cannot be returned"
-
-
 def receipt_maintainer_line(settings_row: CompanyPosSettings | None = None) -> str:
     """'System maintained by <phone>' footer line, or "" when off/unset."""
     row = settings_row or get_company_pos_settings()
@@ -4135,6 +4163,21 @@ def receipt_maintainer_line(settings_row: CompanyPosSettings | None = None) -> s
     return f"System maintained by {phone}"
 
 
+def receipt_accepted_payment_methods_label(
+    settings_row: CompanyPosSettings | None = None,
+) -> str:
+    """Activated checkout methods for receipts, e.g. 'Cash · M-Pesa'."""
+    row = settings_row or get_company_pos_settings()
+    if not getattr(row, "enable_receipt_payment_methods", True):
+        return ""
+    names: list[str] = []
+    if getattr(row, "enable_cash", False) or getattr(row, "enable_cash_mpesa", False):
+        names.append("Cash")
+    if getattr(row, "enable_mpesa", False) or getattr(row, "enable_cash_mpesa", False):
+        names.append("M-Pesa")
+    return " · ".join(names)
+
+
 def receipt_return_notice_line(
     settings_row: CompanyPosSettings | None = None,
     *,
@@ -4144,7 +4187,8 @@ def receipt_return_notice_line(
     row = settings_row or get_company_pos_settings()
     if not getattr(row, "show_return_notice_on_receipt", True):
         return ""
-    return (notice or "").strip()
+    text = (notice or getattr(row, "return_notice_text", "") or "").strip()
+    return text or RECEIPT_NO_RETURN_NOTICE
 
 
 def employee_display_name(profile) -> str:
@@ -4205,7 +4249,7 @@ def _sales_ticket_document_meta(receipt) -> dict:
             "party_label": "Customer",
             "authorised_label": "Served by",
             "footer": "Thank you for your business",
-            "return_notice": RECEIPT_NO_RETURN_NOTICE,
+            "include_return_notice": True,
         }
     if kind == ShopReceiptKind.QUOTATION:
         return {
@@ -4241,7 +4285,7 @@ def _sales_ticket_document_meta(receipt) -> dict:
         "party_label": "Customer",
         "authorised_label": "Served by",
         "footer": "Thank you for shopping with us",
-        "return_notice": RECEIPT_NO_RETURN_NOTICE,
+        "include_return_notice": True,
     }
 
 
@@ -4308,24 +4352,13 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
             }
         )
 
-    payment = ""
     show_payment_methods = bool(
         getattr(pos, "enable_receipt_payment_methods", True)
     )
-    if (
-        show_payment_methods
-        and receipt.kind == ShopReceiptKind.SALE
-        and receipt.total > 0
-    ):
-        if receipt.payment_method == ShopPaymentMethod.BOTH:
-            payment = (
-                f"Cash {_receipt_money(receipt.cash_amount)}"
-                f" + M-Pesa {_receipt_money(receipt.mpesa_amount)}"
-            )
-        elif receipt.payment_method == ShopPaymentMethod.MPESA:
-            payment = f"M-Pesa {_receipt_money(receipt.mpesa_amount)}"
-        elif receipt.payment_method == ShopPaymentMethod.CASH:
-            payment = f"Cash {_receipt_money(receipt.cash_amount)}"
+    # Show activated methods customers can use — not how this sale was paid.
+    payment = (
+        receipt_accepted_payment_methods_label(pos) if show_payment_methods else ""
+    )
 
     credit_due_label = ""
     if receipt.kind == ShopReceiptKind.CREDIT and receipt.credit_due_date:
@@ -4387,8 +4420,10 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
             "lines": list(payment_details.get("lines") or []),
         },
         "footer": doc_meta["footer"],
-        "return_notice": receipt_return_notice_line(
-            pos, notice=doc_meta.get("return_notice") or ""
+        "return_notice": (
+            receipt_return_notice_line(pos)
+            if doc_meta.get("include_return_notice")
+            else ""
         ),
         "maintainer": receipt_maintainer_line(pos),
     }
@@ -4483,25 +4518,18 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
 
     qty_only = bool(ticket.get("qty_only"))
 
-    # Column widths tuned to mirror the HTML preview grid.
-    # 58 mm uses Item + Total, with qty × price under the name.
-    if compact:
-        total_w = 8
-        price_w = qty_w = 0
-    else:
-        price_w, qty_w, total_w = 8, 3, 7
-    right_w = total_w if compact else price_w + 1 + qty_w + 1 + total_w
+    # Column widths tuned to mirror the HTML preview grid: Item | Qty | Total.
+    qty_w, total_w = (3, 0) if qty_only else (3, 8 if compact else 7)
+    right_w = qty_w if qty_only else qty_w + 1 + total_w
     if qty_only:
         rows.extend([rule, _receipt_pad_line("Item", "Qty", width)])
-    elif compact:
-        rows.extend([rule, _receipt_pad_line("Item", "Total", width)])
     else:
         rows.extend(
             [
                 rule,
                 _receipt_pad_line(
                     "Item",
-                    f"{'Price':<{price_w}} {'Qty':<{qty_w}} {'Total':>{total_w}}",
+                    f"{'Qty':<{qty_w}} {'Total':>{total_w}}",
                     width,
                 ),
             ]
@@ -4523,24 +4551,13 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
                     rows.append(_receipt_pad_line(name, qty_label, width))
             else:
                 total_label = str(line.get("total") or "0")
-                if compact:
-                    right = f"{total_label:>{total_w}}"
-                else:
-                    price_col = f"@{line.get('price') or '0'}"
-                    right = (
-                        f"{price_col:<{price_w}} {qty_label:<{qty_w}} "
-                        f"{total_label:>{total_w}}"
-                    )
+                right = f"{qty_label:<{qty_w}} {total_label:>{total_w}}"
                 left_max = max(6, width - right_w - 1)
                 if len(name) > left_max:
                     rows.append(name[:width])
                     rows.append(_receipt_pad_line("", right, width))
                 else:
                     rows.append(_receipt_pad_line(name, right, width))
-                if compact:
-                    rows.append(
-                        f"  {qty_label} x {line.get('price') or '0'}"[:width]
-                    )
             if detail:
                 rows.append(f"  {detail[: max(8, width - 2)]}")
             for serial in line.get("serials") or []:
@@ -4576,7 +4593,7 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
             _receipt_pad_line("TOTAL", f"KSh {ticket.get('total') or '0'}", width)
         )
         if ticket.get("payment"):
-            rows.append(_receipt_pad_line("Paid", ticket["payment"], width))
+            rows.append(_receipt_pad_line("Pay by", ticket["payment"], width))
 
     payment_details = ticket.get("payment_details") or {}
     if payment_details.get("lines"):

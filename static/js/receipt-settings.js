@@ -24,7 +24,36 @@
     "print_staff_receipt",
     "print_cashier_receipt",
   ];
-  const RETURN_NOTICE_TEXT = "Goods once bought cannot be returned";
+  const DEFAULT_RETURN_NOTICE = "Goods once bought cannot be returned";
+  const PREVIEW_TOGGLE_FIELDS = new Set([
+    "show_client_phone_on_receipt",
+    "show_return_notice_on_receipt",
+    "show_maintainer_on_receipt",
+    "enable_receipt_payment_methods",
+    "print_customer_receipt",
+    "print_staff_receipt",
+    "print_cashier_receipt",
+  ]);
+
+  function readReturnNoticeText() {
+    const input = root.querySelector("[data-return-notice-text]");
+    const value = String(input?.value || "").trim();
+    return value || DEFAULT_RETURN_NOTICE;
+  }
+
+  // Live QR payload for the preview — kept in sync when QR settings save,
+  // because re-rendering tickets replaces the DOM nodes renderQrPreview used to target.
+  let liveQrState = (() => {
+    const sample = (() => {
+      try {
+        const el = document.getElementById("receipt-sample-data");
+        return el ? JSON.parse(el.textContent || "{}") : null;
+      } catch (_) {
+        return null;
+      }
+    })();
+    return sample?.qr && typeof sample.qr === "object" ? { ...sample.qr } : {};
+  })();
 
   async function postSettings(body) {
     const response = await fetch(window.location.pathname, {
@@ -122,6 +151,14 @@
         '[data-pos-toggle][data-field="enable_receipt_payment_methods"]'
       )?.checked ?? true
     );
+    const qrToggle = root.querySelector("[data-receipt-qr-enabled]");
+    const qrEnabled = qrToggle ? Boolean(qrToggle.checked) : true;
+    const activeQr =
+      liveQrState && typeof liveQrState === "object" && liveQrState.ready
+        ? liveQrState
+        : sample.qr && sample.qr.ready
+          ? sample.qr
+          : liveQrState || sample.qr || {};
     const livePayment = paymentOn
       ? typeof buildPaymentPreview === "function"
         ? buildPaymentPreview()
@@ -143,13 +180,16 @@
       ticket.party_phone = showClientPhone
         ? fullPhone
         : maskClientPhoneDigits(fullPhone);
-      ticket.return_notice = returnNoticeOn ? RETURN_NOTICE_TEXT : "";
+      ticket.return_notice = returnNoticeOn ? readReturnNoticeText() : "";
       ticket.maintainer = maintainer;
       if (!paymentOn) {
         ticket.payment = "";
         ticket.payment_details = { label: "", lines: [] };
       } else {
-        ticket.payment = ticket.payment || "Cash";
+        ticket.payment =
+          ticket.payment ||
+          sample.ticket?.payment ||
+          activatedPaymentMethodsLabel();
         ticket.payment_details =
           copy.role === "staff"
             ? { label: "", lines: [] }
@@ -157,13 +197,28 @@
               ? livePayment
               : ticket.payment_details || { label: "", lines: [] };
       }
-      const qr =
-        ticket.include_qr === false
-          ? { ready: false }
-          : copy.qr || sample.qr || {};
+      const allowQr = ticket.include_qr !== false && qrEnabled;
+      const qr = allowQr
+        ? {
+            ready: Boolean(activeQr?.ready && activeQr?.image_data_url),
+            image_data_url: activeQr?.image_data_url || "",
+            label: activeQr?.label || "",
+            payload: activeQr?.payload || activeQr?.url || "",
+          }
+        : { ready: false, image_data_url: "", label: "", payload: "" };
       const html = render(ticket, qr, width);
       if (!html) return;
       node.innerHTML = `${html}<p class="receipt-ticket-width-tag" aria-hidden="true">${width} mm thermal</p>`;
+      // Preserve selected paper + font CSS vars on the ticket shell.
+      node.classList.toggle("receipt-ticket--80", width === "80");
+      node.classList.toggle("receipt-ticket--58", width === "58");
+      const sizePx =
+        width === "58"
+          ? root.dataset.receiptFontPx58 || ""
+          : root.dataset.receiptFontPx80 || "";
+      if (sizePx) node.style.setProperty("--receipt-font-size", sizePx);
+      const weightCss = root.dataset.receiptFontWeight || "";
+      if (weightCss) node.style.setProperty("--receipt-font-weight", weightCss);
     });
     return true;
   }
@@ -423,15 +478,24 @@
     );
   }
 
+  function activatedPaymentMethodsLabel() {
+    // Prefer the sample ticket value from the server (reflects POS toggles).
+    const sample = readReceiptSample();
+    const fromSample = String(sample?.ticket?.payment || "").trim();
+    if (fromSample) return fromSample;
+    return "Cash · M-Pesa";
+  }
+
   function syncPaidRowPreview(enabled) {
     const show = Boolean(enabled);
+    const label = activatedPaymentMethodsLabel();
     root.querySelectorAll("[data-receipt-paid-row]").forEach((row) => {
       const valueEl = row.querySelector("[data-receipt-paid-value]");
+      const labelEl = row.querySelector("span");
+      if (labelEl) labelEl.textContent = "Pay by";
       if (show) {
-        if (valueEl && !(valueEl.textContent || "").trim()) {
-          valueEl.textContent = "Cash";
-        }
-        row.hidden = false;
+        if (valueEl) valueEl.textContent = label;
+        row.hidden = !label;
       } else {
         row.hidden = true;
       }
@@ -558,6 +622,7 @@
   function applyFontStyle({ sizePx80, sizePx58, weightCss }) {
     if (sizePx80) root.dataset.receiptFontPx80 = sizePx80;
     if (sizePx58) root.dataset.receiptFontPx58 = sizePx58;
+    if (weightCss) root.dataset.receiptFontWeight = weightCss;
     const width =
       root.querySelector("[data-receipt-paper]:checked")?.value || "80";
     tickets().forEach((ticket) => {
@@ -570,8 +635,23 @@
   COPY_FIELDS.forEach((field) => {
     const input = root.querySelector(`[data-pos-toggle][data-field="${field}"]`);
     input?.addEventListener("change", () => {
-      window.setTimeout(syncCopyPreviews, 0);
+      window.setTimeout(() => {
+        syncCopyPreviews();
+        paintLiveCopyPreviews();
+      }, 0);
     });
+  });
+
+  // Keep the ticket preview aligned with any receipt toggle that affects printed details.
+  root.addEventListener("change", (event) => {
+    const input = event.target?.closest?.("[data-pos-toggle][data-field]");
+    if (!input || !root.contains(input)) return;
+    const field = input.getAttribute("data-field") || "";
+    if (!PREVIEW_TOGGLE_FIELDS.has(field)) return;
+    window.setTimeout(() => {
+      paintLiveCopyPreviews();
+      syncCopyPreviews();
+    }, 0);
   });
 
   if (fontSizeSelect && fontWeightSelect) {
@@ -614,9 +694,6 @@
   const qrWebsiteRow = root.querySelector("[data-receipt-qr-website-row]");
   const qrWebsiteInput = root.querySelector("[data-receipt-qr-website]");
   const qrContentInputs = [...root.querySelectorAll("[data-receipt-qr-content]")];
-  const qrBlocks = root.querySelectorAll("[data-receipt-qr-block]");
-  const qrImages = root.querySelectorAll("[data-receipt-qr-image]");
-  const qrLabels = root.querySelectorAll("[data-receipt-qr-label]");
 
   function selectedQrContent() {
     return root.querySelector("[data-receipt-qr-content]:checked")?.value || "website";
@@ -635,34 +712,63 @@
   }
 
   function renderQrPreview(qr) {
-    const ready = Boolean(qr?.ready && qr?.image_data_url);
-    qrBlocks.forEach((block) => {
+    if (qr && typeof qr === "object") {
+      const image = qr.image_data_url || "";
+      if (image) {
+        liveQrState = {
+          ready: true,
+          image_data_url: image,
+          label: qr.label || liveQrState.label || "",
+          payload: qr.payload || qr.url || liveQrState.payload || "",
+        };
+      } else if (qr.ready === false) {
+        // Keep the last usable image so turning QR back on still previews
+        // immediately; paintLiveCopyPreviews respects the QR toggle for visibility.
+        liveQrState = {
+          ...liveQrState,
+          ready: Boolean(liveQrState.image_data_url),
+        };
+      } else {
+        liveQrState = {
+          ready: Boolean(qr.ready && image),
+          image_data_url: image,
+          label: qr.label || "",
+          payload: qr.payload || qr.url || "",
+        };
+      }
+    }
+    // Prefer a full ticket re-paint so every copy picks up QR + other toggles.
+    if (paintLiveCopyPreviews()) return;
+    const showQr = Boolean(
+      (qrEnabledInput ? qrEnabledInput.checked : true) && liveQrState.ready
+    );
+    root.querySelectorAll("[data-receipt-qr-block]").forEach((block) => {
       if (copyRoleFor(block) === "staff") {
         block.hidden = true;
         return;
       }
-      block.hidden = !ready;
+      block.hidden = !showQr;
     });
-    qrImages.forEach((img) => {
+    root.querySelectorAll("[data-receipt-qr-image]").forEach((img) => {
       if (copyRoleFor(img) === "staff") {
         img.removeAttribute("src");
         img.hidden = true;
         return;
       }
-      if (ready) {
-        img.src = qr.image_data_url;
+      if (showQr) {
+        img.src = liveQrState.image_data_url;
         img.hidden = false;
       } else {
         img.removeAttribute("src");
         img.hidden = true;
       }
     });
-    qrLabels.forEach((label) => {
+    root.querySelectorAll("[data-receipt-qr-label]").forEach((label) => {
       if (copyRoleFor(label) === "staff") {
         label.textContent = "";
         return;
       }
-      label.textContent = ready ? qr.label || "" : "";
+      label.textContent = showQr ? liveQrState.label || "" : "";
     });
   }
 
@@ -741,6 +847,8 @@
 
     qrEnabledInput.addEventListener("change", () => {
       syncQrUi();
+      // Instantly hide/show QR in the preview while the save request runs.
+      paintLiveCopyPreviews();
       if (websiteUrlRequired()) {
         qrWebsiteInput?.classList.add("is-error");
         qrWebsiteInput?.focus();
@@ -877,19 +985,25 @@
           ...(copy.ticket || sample.ticket),
           party_phone: displayPhone,
           party_phone_print: displayPhone,
-          return_notice: returnNoticeOn ? RETURN_NOTICE_TEXT : "",
+          return_notice: returnNoticeOn ? readReturnNoticeText() : "",
           maintainer,
         };
-        const qr = copy.qr || sample.qr || {};
-        const includeQr = ticket.include_qr !== false;
+        const qrToggleOn = root.querySelector("[data-receipt-qr-enabled]")
+          ? Boolean(root.querySelector("[data-receipt-qr-enabled]").checked)
+          : true;
+        const qrSource =
+          liveQrState?.ready && liveQrState?.image_data_url
+            ? liveQrState
+            : copy.qr || sample.qr || {};
+        const includeQr = ticket.include_qr !== false && qrToggleOn;
         await window.RichcomPrinter.browserPrint(
           "",
           includeQr
             ? {
-                payload: qr.payload || qr.url || "",
-                label: qr.label || "",
-                ready: Boolean(qr.ready),
-                image_data_url: qr.image_data_url || "",
+                payload: qrSource.payload || qrSource.url || "",
+                label: qrSource.label || "",
+                ready: Boolean(qrSource.ready && qrSource.image_data_url),
+                image_data_url: qrSource.image_data_url || "",
               }
             : { ready: false },
           copy.label || "Sample",
@@ -1008,14 +1122,16 @@
   const returnNoticeToggle = root.querySelector(
     '[data-pos-toggle][data-field="show_return_notice_on_receipt"]'
   );
+  const returnNoticeTextInput = root.querySelector("[data-return-notice-text]");
+  const returnNoticeTextRow = root.querySelector("[data-return-notice-text-row]");
 
   function syncReturnNoticePreview() {
-    if (paintLiveCopyPreviews()) return;
     const show = Boolean(returnNoticeToggle?.checked);
+    const text = readReturnNoticeText();
+    if (returnNoticeTextRow) returnNoticeTextRow.hidden = !show;
+    if (paintLiveCopyPreviews()) return;
     root.querySelectorAll("[data-receipt-return-notice]").forEach((el) => {
-      if (!(el.textContent || "").trim()) {
-        el.textContent = RETURN_NOTICE_TEXT;
-      }
+      el.textContent = text;
       el.hidden = !show;
     });
   }
@@ -1024,6 +1140,51 @@
     returnNoticeToggle.addEventListener("change", () => {
       window.setTimeout(syncReturnNoticePreview, 0);
     });
+  }
+
+  if (returnNoticeTextInput) {
+    let returnNoticeTimer = 0;
+    let savedReturnNoticeText = returnNoticeTextInput.value || "";
+
+    const saveReturnNoticeText = async () => {
+      const next = (returnNoticeTextInput.value || "").trim();
+      if (!next) {
+        returnNoticeTextInput.classList.add("is-error");
+        returnNoticeTextInput.value = savedReturnNoticeText || DEFAULT_RETURN_NOTICE;
+        return;
+      }
+      if (next === savedReturnNoticeText) {
+        syncReturnNoticePreview();
+        return;
+      }
+      returnNoticeTextInput.classList.add("is-saving");
+      try {
+        const data = await postSettings(
+          new URLSearchParams({
+            action: "set_return_notice_text",
+            return_notice_text: next,
+          })
+        );
+        savedReturnNoticeText = data.return_notice_text || next;
+        returnNoticeTextInput.value = savedReturnNoticeText;
+        returnNoticeTextInput.classList.remove("is-error");
+      } catch (error) {
+        returnNoticeTextInput.classList.add("is-error");
+        returnNoticeTextInput.value = savedReturnNoticeText || DEFAULT_RETURN_NOTICE;
+        window.alert(error.message || "Could not save return policy text.");
+      } finally {
+        returnNoticeTextInput.classList.remove("is-saving");
+        syncReturnNoticePreview();
+      }
+    };
+
+    returnNoticeTextInput.addEventListener("input", () => {
+      syncReturnNoticePreview();
+      window.clearTimeout(returnNoticeTimer);
+      returnNoticeTimer = window.setTimeout(saveReturnNoticeText, 700);
+    });
+    returnNoticeTextInput.addEventListener("change", saveReturnNoticeText);
+    returnNoticeTextInput.addEventListener("blur", saveReturnNoticeText);
   }
 
   const maintainerPhoneInput = root.querySelector("[data-maintainer-phone]");
