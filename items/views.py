@@ -6553,6 +6553,147 @@ def stock_low_stock_settings(request, profile, meta, module):
     )
 
 
+def stock_take_page(request, profile, meta, module):
+    """Create stock takes and compare shop counts against system qty."""
+    from datetime import datetime
+
+    from django.utils.dateparse import parse_datetime
+    from employees.module_permissions import employee_may
+    from employees.workspace import sidebar_for_stock_management, stock_management_url
+    from shops.services import category_form_token
+
+    from items.models import StockTake, StockTakeStatus
+    from items.stock_take import (
+        build_stock_take_comparison,
+        close_stock_take,
+        create_stock_take,
+    )
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="stock-take",
+        profile=profile,
+    )
+    can_edit = employee_may(profile, "stock-management", "stock-take")
+    list_url = stock_management_url(profile.role, "stock-take")
+
+    def _detail_url(take_id):
+        return f"{list_url}&take_id={int(take_id)}"
+
+    if request.method == "POST":
+        if not can_edit:
+            messages.error(request, "You cannot manage stock takes.")
+            return redirect(list_url)
+
+        action = (request.POST.get("action") or "").strip()
+        if action == "create_stock_take":
+            raw_deadline = (request.POST.get("deadline") or "").strip()
+            deadline = parse_datetime(raw_deadline.replace("T", " ", 1))
+            if deadline is None and raw_deadline:
+                try:
+                    deadline = datetime.strptime(raw_deadline, "%Y-%m-%dT%H:%M")
+                except ValueError:
+                    deadline = None
+            try:
+                take = create_stock_take(
+                    profile=profile,
+                    scope_mode=request.POST.get("scope_mode"),
+                    categories=request.POST.getlist("categories"),
+                    item_ids=request.POST.getlist("item_ids"),
+                    shop_ids=request.POST.getlist("shop_ids"),
+                    deadline=deadline,
+                    note=request.POST.get("note") or "",
+                )
+            except ValidationError as exc:
+                message = (
+                    exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+                )
+                messages.error(request, message)
+                return redirect(list_url)
+            messages.success(
+                request,
+                "Stock take opened. Selected stock numbers are hidden until it is closed.",
+            )
+            return redirect(_detail_url(take.pk))
+
+        if action == "close_stock_take":
+            try:
+                take_id = int(request.POST.get("take_id") or 0)
+            except (TypeError, ValueError):
+                take_id = 0
+            take = StockTake.objects.filter(pk=take_id).first()
+            if not take:
+                messages.error(request, "Stock take not found.")
+                return redirect(list_url)
+            close_stock_take(take=take, profile=profile)
+            messages.success(request, "Stock take closed. Stock numbers are visible again.")
+            return redirect(_detail_url(take.pk))
+
+        messages.error(request, "Unknown action.")
+        return redirect(list_url)
+
+    try:
+        take_id = int(request.GET.get("take_id") or 0)
+    except (TypeError, ValueError):
+        take_id = 0
+
+    selected_take = None
+    comparison = None
+    if take_id:
+        selected_take = (
+            StockTake.objects.filter(pk=take_id)
+            .select_related("created_by", "created_by__user", "closed_by", "closed_by__user")
+            .first()
+        )
+        if selected_take:
+            comparison = build_stock_take_comparison(selected_take)
+
+    takes = list(
+        StockTake.objects.select_related("created_by", "created_by__user").prefetch_related(
+            "assignments"
+        )[:40]
+    )
+    for take in takes:
+        assignments = list(take.assignments.all())
+        take.shop_count = len(assignments)
+        take.submitted_count = sum(1 for row in assignments if row.status == "submitted")
+        take.detail_url = _detail_url(take.pk)
+
+    shops = actionable_shops_for_profile(profile)
+    categories = [
+        {"value": category_form_token(name), "label": name or "Uncategorised"}
+        for name in Item.objects.filter(is_suspended=False)
+        .order_by("category")
+        .values_list("category", flat=True)
+        .distinct()
+    ]
+    items = list(
+        Item.objects.filter(is_suspended=False)
+        .order_by("category", "name")
+        .values("id", "name", "category")
+    )
+
+    return render(
+        request,
+        "items/stock_take.html",
+        {
+            "page_meta": meta,
+            "page_module": module,
+            "page_sidebar": page_sidebar,
+            "stock_mode": "stock-take",
+            "can_edit_stock_take": can_edit,
+            "stock_take_list_url": list_url,
+            "stock_takes": takes,
+            "selected_take": selected_take,
+            "stock_take_comparison": comparison,
+            "stock_take_shops": shops,
+            "stock_take_categories": categories,
+            "stock_take_items": items,
+            "StockTakeStatus": StockTakeStatus,
+        },
+    )
+
+
 def stock_settings(request, profile, meta, module):
     """Configure which stock in/out/request fields are compulsory."""
     from employees.module_permissions import employee_may
@@ -6578,6 +6719,19 @@ def stock_settings(request, profile, meta, module):
         or (request.POST.get("ajax") or "") == "1"
     )
 
+    def _settings_tab(raw):
+        return "numbers" if (raw or "").strip().lower() == "numbers" else "inputs"
+
+    def _settings_url(tab="inputs"):
+        base = stock_management_url(profile.role, "settings")
+        if tab == "numbers":
+            return f"{base}&tab=numbers"
+        return base
+
+    settings_tab = _settings_tab(
+        request.POST.get("tab") if request.method == "POST" else request.GET.get("tab")
+    )
+
     if request.method == "POST":
         if not can_edit:
             if wants_json:
@@ -6586,7 +6740,7 @@ def stock_settings(request, profile, meta, module):
                     status=403,
                 )
             messages.error(request, "You cannot change stock settings.")
-            return redirect(stock_management_url(profile.role, "settings"))
+            return redirect(_settings_url(settings_tab))
 
         action = (request.POST.get("action") or "").strip()
         if action == "toggle_stock_setting":
@@ -6607,7 +6761,7 @@ def stock_settings(request, profile, meta, module):
                 if wants_json:
                     return JsonResponse({"ok": False, "error": message}, status=400)
                 messages.error(request, message)
-                return redirect(stock_management_url(profile.role, "settings"))
+                return redirect(_settings_url("inputs"))
             if wants_json:
                 return JsonResponse(
                     {
@@ -6618,7 +6772,7 @@ def stock_settings(request, profile, meta, module):
                     }
                 )
             messages.success(request, "Stock setting updated.")
-            return redirect(stock_management_url(profile.role, "settings"))
+            return redirect(_settings_url("inputs"))
 
         if action == "save_stock_visibility":
             try:
@@ -6634,7 +6788,7 @@ def stock_settings(request, profile, meta, module):
                 if wants_json:
                     return JsonResponse({"ok": False, "error": message}, status=400)
                 messages.error(request, message)
-                return redirect(stock_management_url(profile.role, "settings"))
+                return redirect(_settings_url("numbers"))
             if wants_json:
                 state = stock_hide_state()
                 return JsonResponse(
@@ -6647,12 +6801,12 @@ def stock_settings(request, profile, meta, module):
                     }
                 )
             messages.success(request, "Stock number visibility updated.")
-            return redirect(stock_management_url(profile.role, "settings"))
+            return redirect(_settings_url("numbers"))
 
         if wants_json:
             return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
         messages.error(request, "Unknown action.")
-        return redirect(stock_management_url(profile.role, "settings"))
+        return redirect(_settings_url(settings_tab))
 
     settings_row = get_company_stock_settings()
     setting_groups = (
@@ -6749,6 +6903,12 @@ def stock_settings(request, profile, meta, module):
     )
     toggle_count = sum(len(group["toggles"]) for group in setting_groups)
     hide_state = stock_hide_state(settings_row)
+    hide_mode_labels = {
+        "show": "Shown",
+        "all": "All hidden",
+        "category": "By category",
+        "items": "By item",
+    }
     visibility_categories = [
         {"value": category_form_token(name), "label": name or "Uncategorised"}
         for name in Item.objects.filter(is_suspended=False)
@@ -6770,6 +6930,9 @@ def stock_settings(request, profile, meta, module):
             "page_module": module,
             "page_sidebar": page_sidebar,
             "stock_mode": "settings",
+            "stock_settings_tab": settings_tab,
+            "stock_settings_inputs_url": _settings_url("inputs"),
+            "stock_settings_numbers_url": _settings_url("numbers"),
             "can_edit_stock_settings": can_edit,
             "stock_setting_groups": setting_groups,
             "stock_settings_enabled_count": enabled_count,
@@ -6777,6 +6940,9 @@ def stock_settings(request, profile, meta, module):
             "stock_requirements_json": json.dumps(settings_row.as_requirements_dict()),
             "low_stock_settings_url": stock_management_url(profile.role, "low-stock"),
             "hide_stock_mode": hide_state["mode"],
+            "hide_stock_mode_label": hide_mode_labels.get(
+                hide_state["mode"], "Shown"
+            ),
             "hide_stock_categories": [
                 category_form_token(name) for name in hide_state["categories"]
             ],
@@ -7068,6 +7234,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         "return-clients",
         "settings",
         "low-stock",
+        "stock-take",
         "request-audits",
         "activity-audits",
     ):
@@ -7081,7 +7248,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         return denied
 
     # Stock In / Out / Request / Report / Movements / Serials: shop/store manager and IT.
-    if mode not in ("view", "settings", "low-stock") and profile.role not in FULL_STOCK_WORKFLOW_ROLES:
+    if mode not in ("view", "settings", "low-stock", "stock-take") and profile.role not in FULL_STOCK_WORKFLOW_ROLES:
         return _stock_redirect(request.path, "view")
 
     if mode == "settings":
@@ -7089,6 +7256,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if mode == "low-stock":
         return stock_low_stock_settings(request, profile, meta, module)
+
+    if mode == "stock-take":
+        return stock_take_page(request, profile, meta, module)
 
     if mode == "activity-audits":
         return stock_activity_audits(request, profile, meta, module)
@@ -7608,10 +7778,14 @@ def stock_management(request, profile, meta, module, page_sidebar):
     selected_shop_ids_csv = ",".join(str(sid) for sid in selected_shop_ids)
 
     from shops.services import get_company_stock_settings, stock_hide_state
+    from items.stock_take import open_stock_take_hide_sets
 
     stock_settings_row = get_company_stock_settings()
     stock_requirements_json = _json.dumps(stock_settings_row.as_requirements_dict())
-    hide_stock_numbers = stock_hide_state(stock_settings_row)["active"]
+    hide_stock_numbers = (
+        stock_hide_state(stock_settings_row)["active"]
+        or open_stock_take_hide_sets()["active"]
+    )
 
     if shop_filter_active:
         if len(selected_shops) == 1:

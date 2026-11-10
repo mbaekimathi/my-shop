@@ -5,17 +5,93 @@
   const visibilityForm = root.querySelector("[data-stock-visibility-form]");
   if (visibilityForm) {
     const panels = visibilityForm.querySelectorAll("[data-hide-panel]");
-    const syncPanels = () => {
+    const modeInputs = visibilityForm.querySelectorAll(
+      "input[name=hide_stock_mode]"
+    );
+    const categoryChecks = visibilityForm.querySelectorAll(
+      "input[name=hide_stock_categories]"
+    );
+    const itemChecks = visibilityForm.querySelectorAll(
+      "input[name=hide_stock_item_ids]"
+    );
+
+    const syncPanelCount = (panel, checkedCount) => {
+      if (!panel) return;
+      const head = panel.querySelector(".stock-visibility-panel-head");
+      if (!head) return;
+      let countEl = head.querySelector("[data-hide-selected-count]");
+      if (checkedCount > 0) {
+        if (!countEl) {
+          countEl = document.createElement("p");
+          countEl.className = "stock-visibility-panel-count";
+          countEl.setAttribute("data-hide-selected-count", "");
+          head.appendChild(countEl);
+        }
+        countEl.textContent = `${checkedCount} selected`;
+      } else if (countEl) {
+        countEl.remove();
+      }
+    };
+
+    const clearChecks = (inputs) => {
+      inputs.forEach((input) => {
+        input.checked = false;
+      });
+    };
+
+    const syncPanels = ({ clearUnused = false } = {}) => {
       const mode =
         visibilityForm.querySelector("input[name=hide_stock_mode]:checked")
           ?.value || "show";
+
+      // One mode at a time: drop picks that do not belong to the active mode.
+      if (clearUnused) {
+        if (mode === "show" || mode === "all") {
+          clearChecks(categoryChecks);
+          clearChecks(itemChecks);
+        } else if (mode === "category") {
+          clearChecks(itemChecks);
+        } else if (mode === "items") {
+          clearChecks(categoryChecks);
+        }
+      }
+
       panels.forEach((panel) => {
-        panel.hidden = panel.getAttribute("data-hide-panel") !== mode;
+        const key = panel.getAttribute("data-hide-panel");
+        panel.hidden = key !== mode;
+        if (key === "category") {
+          syncPanelCount(
+            panel,
+            visibilityForm.querySelectorAll(
+              "input[name=hide_stock_categories]:checked"
+            ).length
+          );
+        }
+        if (key === "items") {
+          syncPanelCount(
+            panel,
+            visibilityForm.querySelectorAll(
+              "input[name=hide_stock_item_ids]:checked"
+            ).length
+          );
+        }
+      });
+
+      modeInputs.forEach((input) => {
+        input.closest(".stock-visibility-mode")?.classList.toggle(
+          "is-selected",
+          input.checked
+        );
       });
     };
-    visibilityForm
-      .querySelectorAll("input[name=hide_stock_mode]")
-      .forEach((input) => input.addEventListener("change", syncPanels));
+
+    modeInputs.forEach((input) =>
+      input.addEventListener("change", () => syncPanels({ clearUnused: true }))
+    );
+    [...categoryChecks, ...itemChecks].forEach((input) => {
+      input.addEventListener("change", () => syncPanels());
+    });
+
     const search = visibilityForm.querySelector("[data-hide-item-search]");
     search?.addEventListener("input", () => {
       const query = search.value.trim().toLowerCase();

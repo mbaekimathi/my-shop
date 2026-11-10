@@ -407,6 +407,7 @@ class PermissionCatalogTests(SimpleTestCase):
             "report",
             "settings",
             "low-stock",
+            "stock-take",
             "print",
         ):
             self.assertIn(mode, slugs)

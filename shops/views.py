@@ -1805,8 +1805,107 @@ def my_shop_workspace(request, shop_id):
                 "employees:expense_supplier_search"
             ),
             "recent_expenses": [],
+            **_stock_take_workspace_context(shop),
         },
     )
+
+
+def _stock_take_workspace_context(shop):
+    from items.stock_take import (
+        pending_stock_take_for_shop,
+        stock_take_assignment_payload,
+    )
+
+    assignment = pending_stock_take_for_shop(shop)
+    if not assignment:
+        return {
+            "pending_stock_take": None,
+            "pending_stock_take_payload": None,
+            "stock_take_submit_url": "",
+        }
+    return {
+        "pending_stock_take": assignment,
+        "pending_stock_take_payload": stock_take_assignment_payload(assignment),
+        "stock_take_submit_url": reverse(
+            "employees:my_shop_stock_take_submit", kwargs={"shop_id": shop.pk}
+        ),
+    }
+
+
+@shop_floor_required
+@require_POST
+def my_shop_stock_take_submit(request, shop_id):
+    """Shop floor submits counted quantities for an open stock take."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(
+        request, profile, "workspace", as_json=True, portal_ok=True
+    )
+    if denied:
+        return denied
+
+    from items.models import StockTakeAssignment, StockTakeAssignmentStatus, StockTakeStatus
+    from items.stock_take import submit_stock_take_counts, submit_stock_take_one
+
+    try:
+        assignment_id = int(request.POST.get("assignment_id") or 0)
+    except (TypeError, ValueError):
+        assignment_id = 0
+    assignment = (
+        StockTakeAssignment.objects.filter(
+            pk=assignment_id,
+            shop=shop,
+            status=StockTakeAssignmentStatus.PENDING,
+            stock_take__status=StockTakeStatus.OPEN,
+        )
+        .select_related("stock_take")
+        .first()
+    )
+    if not assignment:
+        return JsonResponse(
+            {"ok": False, "error": "No open stock take for this shop."},
+            status=404,
+        )
+
+    label = ""
+    if profile is not None:
+        user = getattr(profile, "user", None)
+        label = (
+            (getattr(user, "get_full_name", lambda: "")() or "")
+            or getattr(user, "username", "")
+            or getattr(profile, "employee_id", "")
+            or "Employee"
+        )
+    else:
+        label = shop.name
+
+    mode = (request.POST.get("submit_mode") or "all").strip().lower()
+    try:
+        if mode == "one":
+            payload = submit_stock_take_one(
+                assignment=assignment,
+                count_id=request.POST.get("count_id"),
+                qty=request.POST.get("qty"),
+                submitted_by_label=label,
+            )
+            return JsonResponse({"ok": True, **payload})
+
+        counts = {}
+        for key, value in request.POST.items():
+            if not key.startswith("count_"):
+                continue
+            counts[key.replace("count_", "", 1)] = value
+        result = submit_stock_take_counts(
+            assignment=assignment,
+            counts=counts,
+            submitted_by_label=label,
+        )
+    except ValidationError as exc:
+        message = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+        return JsonResponse({"ok": False, "error": message}, status=400)
+
+    return JsonResponse({"ok": True, "result": result})
 
 
 @shop_floor_required

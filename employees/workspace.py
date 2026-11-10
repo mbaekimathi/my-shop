@@ -1222,6 +1222,15 @@ def sidebar_for_stock_management(
                         active=active_mode == "low-stock",
                     ),
                 ),
+                (
+                    "stock-take",
+                    _link(
+                        "Stock Take",
+                        "clipboard-check",
+                        href=stock_management_url(role, "stock-take"),
+                        active=active_mode == "stock-take",
+                    ),
+                ),
                 ]
                 primary.extend(link for mode, link in candidates if _allowed(mode))
                 if _allowed("view"):
@@ -1278,6 +1287,15 @@ def sidebar_for_stock_management(
                     "bell-ring",
                     href=stock_management_url(role, "low-stock"),
                     active=active_mode == "low-stock",
+                )
+            )
+        if _allowed("stock-take"):
+            primary.append(
+                _link(
+                    "Stock Take",
+                    "clipboard-check",
+                    href=stock_management_url(role, "stock-take"),
+                    active=active_mode == "stock-take",
                 )
             )
         if _allowed("print"):

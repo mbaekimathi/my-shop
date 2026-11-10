@@ -776,23 +776,12 @@
       ? `<p data-receipt-ticket-phone>${escapeHtml(t.shop_phone)}</p>`
       : `<p data-receipt-ticket-phone hidden></p>`;
 
-    const paidRow = t.payment
-      ? `<div data-receipt-paid-row>
-  <span>Pay by</span>
-  <strong data-receipt-paid-value>${escapeHtml(t.payment)}</strong>
-</div>`
-      : `<div data-receipt-paid-row hidden>
-  <span>Pay by</span>
-  <strong data-receipt-paid-value></strong>
-</div>`;
-
     const totalsWithPaid = qtyOnly
       ? totalsBlock
       : `${taxBlock}
     <div class="receipt-ticket-grand">
       <span>Total</span><strong>KSh ${escapeHtml(t.total || "0")}</strong>
-    </div>
-    ${paidRow}`;
+    </div>`;
 
     const paymentDetailsBlock = `<div class="receipt-ticket-payment" data-receipt-payment-block${
       paymentLines.length ? "" : " hidden"

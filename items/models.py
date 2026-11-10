@@ -549,3 +549,126 @@ class Supplier(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.phone_country_code} {self.phone_number})"
+
+
+class StockTakeScope(models.TextChoices):
+    CATEGORY = "category", "By category"
+    ITEMS = "items", "By item"
+
+
+class StockTakeStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    CLOSED = "closed", "Closed"
+
+
+class StockTakeAssignmentStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    SUBMITTED = "submitted", "Submitted"
+
+
+class StockTake(models.Model):
+    """Company-led stock count request sent to one or more shops."""
+
+    scope_mode = models.CharField(
+        max_length=16,
+        choices=StockTakeScope.choices,
+        default=StockTakeScope.CATEGORY,
+        db_index=True,
+    )
+    categories = models.JSONField(default=list, blank=True)
+    item_ids = models.JSONField(default=list, blank=True)
+    deadline = models.DateTimeField(db_index=True)
+    status = models.CharField(
+        max_length=16,
+        choices=StockTakeStatus.choices,
+        default=StockTakeStatus.OPEN,
+        db_index=True,
+    )
+    note = models.CharField(max_length=240, blank=True, default="")
+    created_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="stock_takes_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="stock_takes_closed",
+    )
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"Stock take #{self.pk} ({self.status})"
+
+
+class StockTakeAssignment(models.Model):
+    stock_take = models.ForeignKey(
+        StockTake,
+        on_delete=models.CASCADE,
+        related_name="assignments",
+    )
+    shop = models.ForeignKey(
+        "shops.Shop",
+        on_delete=models.CASCADE,
+        related_name="stock_take_assignments",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=StockTakeAssignmentStatus.choices,
+        default=StockTakeAssignmentStatus.PENDING,
+        db_index=True,
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    submitted_by_label = models.CharField(max_length=160, blank=True, default="")
+
+    class Meta:
+        ordering = ["shop__name", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["stock_take", "shop"],
+                name="uniq_stock_take_shop",
+            )
+        ]
+
+    def __str__(self):
+        return f"Stock take #{self.stock_take_id} → {self.shop}"
+
+
+class StockTakeCount(models.Model):
+    assignment = models.ForeignKey(
+        StockTakeAssignment,
+        on_delete=models.CASCADE,
+        related_name="counts",
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="stock_take_counts",
+    )
+    system_qty = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    counted_qty = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ["item__category", "item__name", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["assignment", "item"],
+                name="uniq_stock_take_assignment_item",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.item_id} @ assignment {self.assignment_id}"

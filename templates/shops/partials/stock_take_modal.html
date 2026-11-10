@@ -1,0 +1,230 @@
+{% if pending_stock_take and pending_stock_take_payload %}
+{{ pending_stock_take_payload|json_script:"stock-take-payload" }}
+<div
+  class="workspace-modal stock-take-modal"
+  data-stock-take-modal
+  data-stock-take-submit-url="{{ stock_take_submit_url }}"
+  data-assignment-id="{{ pending_stock_take_payload.assignment_id }}"
+  data-deadline="{{ pending_stock_take_payload.deadline }}"
+  hidden
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="stock-take-modal-title"
+>
+  <div class="workspace-modal-backdrop" data-stock-take-dismiss></div>
+  <div class="workspace-modal-dialog stock-take-modal-dialog">
+    <div class="workspace-modal-head stock-take-modal-head" data-stock-take-entry-head>
+      <div>
+        <p class="stock-take-modal-kicker">{{ shop.name }} · Stock take</p>
+        <h2 id="stock-take-modal-title">Count your stock</h2>
+        <p class="stock-take-modal-lead">
+          Enter the quantity on hand.
+          Deadline {{ pending_stock_take_payload.deadline_label }}.
+        </p>
+        <p
+          class="stock-take-modal-countdown{% if pending_stock_take_payload.overdue %} is-overdue{% endif %}"
+          data-stock-take-countdown
+          aria-live="polite"
+        >
+          {% if pending_stock_take_payload.overdue %}
+          Deadline passed
+          {% else %}
+          Time left —
+          {% endif %}
+        </p>
+        {% if pending_stock_take_payload.note %}
+        <p class="stock-take-modal-note">{{ pending_stock_take_payload.note }}</p>
+        {% endif %}
+      </div>
+      <button
+        type="button"
+        class="btn btn--ghost btn--sm"
+        data-stock-take-dismiss
+        aria-label="Remind me later"
+        title="Remind me later"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="stock-take-mode-switch" data-stock-take-entry role="tablist" aria-label="Counting mode">
+      <button
+        type="button"
+        class="stock-take-mode-option is-active"
+        data-stock-take-mode="one"
+        aria-selected="true"
+      >
+        One by one
+      </button>
+      <button
+        type="button"
+        class="stock-take-mode-option"
+        data-stock-take-mode="all"
+        aria-selected="false"
+      >
+        All at once
+      </button>
+    </div>
+
+    <div class="stock-take-one" data-stock-take-one data-stock-take-entry>
+      <div class="stock-take-one-progress">
+        <div class="stock-take-one-progress-bar">
+          <span data-stock-take-one-bar style="width: 0%"></span>
+        </div>
+        <p class="stock-take-one-progress-label" data-stock-take-one-progress>Item 1 of 1</p>
+      </div>
+
+      <div class="stock-take-one-card" data-stock-take-one-card>
+        <p class="stock-take-one-category" data-stock-take-one-category></p>
+        <h3 data-stock-take-one-name></h3>
+        <label class="stock-take-one-field">
+          <span class="visually-hidden">Quantity</span>
+          <input
+            type="number"
+            min="0"
+            step="0.001"
+            inputmode="decimal"
+            placeholder="Qty on hand"
+            autocomplete="off"
+            data-stock-take-one-qty
+          >
+        </label>
+        <button type="button" class="btn btn--primary stock-take-one-submit" data-stock-take-one-submit>
+          Check this item
+        </button>
+      </div>
+
+      <div class="stock-take-one-flash" data-stock-take-one-flash hidden>
+        <div class="stock-take-one-flash-icon" data-stock-take-one-flash-icon></div>
+        <div>
+          <strong data-stock-take-one-flash-title></strong>
+          <em data-stock-take-one-flash-detail></em>
+        </div>
+        <button type="button" class="btn btn--primary" data-stock-take-one-next hidden>
+          Next item
+        </button>
+      </div>
+    </div>
+
+    <form class="stock-take-modal-form" data-stock-take-submit-form data-stock-take-all data-stock-take-entry hidden>
+      {% csrf_token %}
+      <input type="hidden" name="assignment_id" value="{{ pending_stock_take_payload.assignment_id }}">
+      <input type="hidden" name="submit_mode" value="all">
+      <div class="stock-take-modal-list">
+        {% for line in pending_stock_take_payload.lines %}
+        <label class="stock-take-modal-row{% if line.answered %} is-answered{% endif %}">
+          <span class="stock-take-modal-item">
+            <strong>{{ line.name }}</strong>
+            {% if line.category %}<em>{{ line.category }}</em>{% endif %}
+          </span>
+          <input
+            type="number"
+            name="count_{{ line.count_id }}"
+            min="0"
+            step="0.001"
+            inputmode="decimal"
+            required
+            placeholder="Qty"
+            autocomplete="off"
+            value="{{ line.counted_qty }}"
+            {% if line.answered %}data-answered="1"{% endif %}
+          >
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit" class="btn btn--primary" data-stock-take-submit>
+        Submit all
+      </button>
+    </form>
+
+    <p class="stock-take-modal-error" data-stock-take-error hidden></p>
+
+    <div class="workspace-modal-actions stock-take-modal-actions" data-stock-take-entry data-stock-take-snooze-row>
+      <div class="stock-take-snooze" data-stock-take-snooze>
+        <span class="stock-take-snooze-label">Remind me in</span>
+        <input
+          type="number"
+          class="stock-take-snooze-amount"
+          data-stock-take-snooze-amount
+          min="1"
+          max="999"
+          step="1"
+          value="3"
+          inputmode="numeric"
+          aria-label="Reminder amount"
+        >
+        <select
+          class="stock-take-snooze-unit"
+          data-stock-take-snooze-unit
+          aria-label="Reminder unit"
+        >
+          <option value="hours" selected>hours</option>
+          <option value="minutes">minutes</option>
+        </select>
+        <button type="button" class="btn btn--ghost" data-stock-take-dismiss>
+          Remind me
+        </button>
+      </div>
+    </div>
+
+    <div class="stock-take-result" data-stock-take-result hidden>
+      <div class="stock-take-result-burst" aria-hidden="true"></div>
+      <div class="stock-take-result-hero" data-stock-take-result-hero>
+        <div class="stock-take-score-ring" data-stock-take-score-ring style="--score: 0">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="stock-take-score-track" cx="60" cy="60" r="52"></circle>
+            <circle class="stock-take-score-value" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="stock-take-score-copy">
+            <strong data-stock-take-score-marks>0</strong>
+            <span data-stock-take-score-max>/ 0</span>
+          </div>
+        </div>
+        <div class="stock-take-result-copy">
+          <p class="stock-take-result-kicker" data-stock-take-grade-label>Marks</p>
+          <h3 data-stock-take-headline>Results</h3>
+          <p class="stock-take-result-summary" data-stock-take-summary></p>
+        </div>
+      </div>
+
+      <div class="stock-take-result-stats" data-stock-take-stats>
+        <div class="stock-take-stat stock-take-stat--ok">
+          <span class="stock-take-stat-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"/></svg>
+          </span>
+          <div>
+            <strong data-stock-take-stat-correct>0</strong>
+            <em>Correct</em>
+          </div>
+        </div>
+        <div class="stock-take-stat stock-take-stat--bad">
+          <span class="stock-take-stat-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </span>
+          <div>
+            <strong data-stock-take-stat-wrong>0</strong>
+            <em>Wrong</em>
+          </div>
+        </div>
+        <div class="stock-take-stat stock-take-stat--score">
+          <span class="stock-take-stat-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m12 3 2.4 7.2H22l-6 4.8 2.4 7.2L12 17.4 5.6 22.2 8 15 2 10.2h7.6L12 3z"/></svg>
+          </span>
+          <div>
+            <strong data-stock-take-stat-percent>0%</strong>
+            <em>Score</em>
+          </div>
+        </div>
+      </div>
+
+      <ul class="stock-take-result-list" data-stock-take-result-list></ul>
+
+      <div class="workspace-modal-actions stock-take-modal-actions">
+        <button type="button" class="btn btn--primary" data-stock-take-done>
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}

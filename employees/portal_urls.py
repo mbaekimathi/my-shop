@@ -208,6 +208,11 @@ urlpatterns = [
         shop_views.my_shop_stock_request_results_ack_all,
         name="my_shop_stock_request_results_ack_all",
     ),
+    path(
+        "my-shop/<int:shop_id>/stock-take/submit/",
+        shop_views.my_shop_stock_take_submit,
+        name="my_shop_stock_take_submit",
+    ),
     path("employee/", views.role_employee, name="role_employee"),
     path(
         "<role_segment:role_segment>/employees/<str:employee_id>/access/",

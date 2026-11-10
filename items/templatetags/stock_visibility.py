@@ -20,6 +20,13 @@ def stock_level_total(value):
     """Hide a summed on-hand figure whenever any hide rule is active."""
     if stock_hide_state()["active"]:
         return HIDDEN_STOCK_LABEL
+    try:
+        from items.stock_take import open_stock_take_hide_sets
+
+        if open_stock_take_hide_sets()["active"]:
+            return HIDDEN_STOCK_LABEL
+    except Exception:
+        pass
     if value is None or value == "":
         return 0
     return value

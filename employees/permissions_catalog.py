@@ -24,6 +24,7 @@ PERMISSION_MODULES = (
             {"slug": "report", "label": "Stock Report"},
             {"slug": "settings", "label": "Stock Settings"},
             {"slug": "low-stock", "label": "Low Stock Alerts"},
+            {"slug": "stock-take", "label": "Stock Take"},
             {"slug": "print", "label": "Print stock"},
         ),
     },

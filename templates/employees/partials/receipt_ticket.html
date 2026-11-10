@@ -121,17 +121,6 @@
       <span>Total</span>
       <strong>KSh {{ p.total }}</strong>
     </div>
-    {% if p.payment %}
-    <div data-receipt-paid-row>
-      <span>Pay by</span>
-      <strong data-receipt-paid-value>{{ p.payment }}</strong>
-    </div>
-    {% else %}
-    <div data-receipt-paid-row hidden>
-      <span>Pay by</span>
-      <strong data-receipt-paid-value></strong>
-    </div>
-    {% endif %}
     {% endif %}
   </div>
 

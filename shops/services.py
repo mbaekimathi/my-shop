@@ -798,13 +798,18 @@ def item_stock_is_hidden(item_id, category="", state=None) -> bool:
     if mode == "all":
         return True
     if mode == "category":
-        return str(category or "").strip() in state["category_set"]
-    if mode == "items":
+        if str(category or "").strip() in state["category_set"]:
+            return True
+    elif mode == "items":
         try:
-            return int(item_id) in state["item_id_set"]
+            if int(item_id) in state["item_id_set"]:
+                return True
         except (TypeError, ValueError):
-            return False
-    return False
+            pass
+    # Open stock takes also mask on-hand numbers for covered items.
+    from items.stock_take import stock_take_hides_item
+
+    return stock_take_hides_item(item_id, category)
 
 
 def save_stock_visibility(*, mode: str, categories, item_ids) -> CompanyStockSettings:
@@ -836,7 +841,8 @@ def save_stock_visibility(*, mode: str, categories, item_ids) -> CompanyStockSet
         cleaned_categories = [name for name in cleaned_categories if name in known]
         if not cleaned_categories:
             raise ValidationError("Select at least one category to hide.")
-    if mode == "items":
+        cleaned_ids = []
+    elif mode == "items":
         found = set(
             Item.objects.filter(pk__in=cleaned_ids, is_suspended=False).values_list(
                 "pk", flat=True
@@ -845,13 +851,16 @@ def save_stock_visibility(*, mode: str, categories, item_ids) -> CompanyStockSet
         cleaned_ids = [item_id for item_id in cleaned_ids if item_id in found]
         if not cleaned_ids:
             raise ValidationError("Select at least one item to hide.")
+        cleaned_categories = []
+    else:
+        # show / all — clear any leftover category or item picks
+        cleaned_categories = []
+        cleaned_ids = []
 
     row = get_company_stock_settings()
     row.hide_stock_mode = mode
-    if mode == "category":
-        row.hide_stock_categories = cleaned_categories
-    if mode == "items":
-        row.hide_stock_item_ids = cleaned_ids
+    row.hide_stock_categories = cleaned_categories
+    row.hide_stock_item_ids = cleaned_ids
     row.save(
         update_fields=[
             "hide_stock_mode",
@@ -4592,8 +4601,6 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
         rows.append(
             _receipt_pad_line("TOTAL", f"KSh {ticket.get('total') or '0'}", width)
         )
-        if ticket.get("payment"):
-            rows.append(_receipt_pad_line("Pay by", ticket["payment"], width))
 
     payment_details = ticket.get("payment_details") or {}
     if payment_details.get("lines"):
