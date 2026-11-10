@@ -8263,6 +8263,133 @@
   opacity: 0.72;
 }
 
+.stock-count-boards {
+  display: grid;
+  gap: 1rem;
+}
+
+.stock-count-board {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(16, 40, 44, 0.03), 0 14px 28px rgba(8, 28, 34, 0.04);
+}
+
+.stock-count-board-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding: 0.95rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 70%, var(--surface));
+}
+
+.stock-count-board-head h3 {
+  margin: 0.2rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 1.05rem;
+  color: var(--text-strong);
+}
+
+.stock-count-board-note {
+  margin: 0.35rem 0 0;
+  font-size: 0.84rem;
+  color: var(--mist-dim);
+}
+
+.stock-count-shop-grid {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+}
+
+.stock-count-shop-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-muted) 45%, var(--surface));
+}
+
+.stock-count-shop-card.is-current {
+  border-color: color-mix(in srgb, var(--accent-deep) 40%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-deep) 18%, transparent);
+}
+
+.stock-count-shop-card.is-done {
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 8%, #fff);
+  border-color: color-mix(in srgb, var(--ok, #2f7d4a) 28%, var(--line));
+}
+
+.stock-count-shop-card.is-pending {
+  background: color-mix(in srgb, var(--accent-deep) 6%, #fff);
+}
+
+.stock-count-shop-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+
+.stock-count-shop-card-top strong {
+  color: var(--text-strong);
+  font-size: 0.9rem;
+}
+
+.stock-count-shop-card-top em {
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+}
+
+.stock-count-shop-score {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.stock-count-shop-score strong {
+  font-size: 1.15rem;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-count-shop-score span {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--mist);
+}
+
+.stock-count-shop-score.is-waiting strong {
+  font-size: 0.95rem;
+  color: var(--mist);
+}
+
+.stock-count-shop-meta {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--mist-dim);
+}
+
+@media (max-width: 720px) {
+  .stock-count-board-head {
+    flex-direction: column;
+  }
+}
+
 .stock-take-snooze {
   display: inline-flex;
   align-items: center;

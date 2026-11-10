@@ -528,7 +528,8 @@
   syncCountdown();
   countdownTimer = window.setInterval(syncCountdown, 1000);
 
-  if (shouldShowNow()) {
+  const forceOpen = modal.getAttribute("data-stock-take-force-open") === "1";
+  if (forceOpen || shouldShowNow()) {
     openModal();
   } else {
     modal.hidden = true;

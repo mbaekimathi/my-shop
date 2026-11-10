@@ -1,0 +1,109 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="item-panel item-panel--dense stock-count-panel" data-animate="rise">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">{{ shop.name }} · Stock count</p>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }}</p>
+      </div>
+      <div class="stock-settings-head-actions">
+        {% if pending_stock_take_count %}
+        <a class="btn btn--primary" href="?open=1">
+          <i data-lucide="clipboard-check" aria-hidden="true"></i>
+          Open count popup
+          <span class="workspace-nav-badge">{{ pending_stock_take_count }}</span>
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  {% if pending_stock_take_count %}
+  <div class="stock-requests-banner">
+    <i data-lucide="clipboard-check" aria-hidden="true"></i>
+    <p>
+      This shop has {{ pending_stock_take_count }} unsubmitted stock count{{ pending_stock_take_count|pluralize }}.
+      <a class="stock-requests-banner-link" href="?open=1">Open the count popup</a>
+    </p>
+  </div>
+  {% endif %}
+
+  {% if stock_take_boards %}
+  <div class="stock-count-boards">
+    {% for board in stock_take_boards %}
+    <article class="stock-count-board">
+      <header class="stock-count-board-head">
+        <div>
+          <p class="stock-settings-section-label">
+            Stock take #{{ board.take.pk }}
+            · {{ board.take.get_scope_mode_display }}
+            {% if board.overdue %}· Overdue{% endif %}
+          </p>
+          <h3>
+            Deadline {{ board.take.deadline|date:"d M Y H:i" }}
+            <span class="stock-take-status stock-take-status--{{ board.take.status }}">
+              {{ board.take.get_status_display }}
+            </span>
+          </h3>
+          {% if board.take.note %}
+          <p class="stock-count-board-note">{{ board.take.note }}</p>
+          {% endif %}
+        </div>
+        <div class="stock-stats">
+          <p class="stock-stat">
+            <strong>{{ board.submitted_count }}</strong>
+            <span>submitted</span>
+          </p>
+          <p class="stock-stat">
+            <strong>{{ board.pending_count }}</strong>
+            <span>waiting</span>
+          </p>
+        </div>
+      </header>
+
+      <div class="stock-count-shop-grid">
+        {% for row in board.shops %}
+        <div class="stock-count-shop-card{% if row.is_current %} is-current{% endif %}{% if row.submitted %} is-done{% else %} is-pending{% endif %}">
+          <div class="stock-count-shop-card-top">
+            <strong>{{ row.shop.name }}</strong>
+            {% if row.is_current %}<em>This shop</em>{% endif %}
+          </div>
+          {% if row.submitted %}
+          <p class="stock-count-shop-score">
+            <strong>{{ row.marks }}/{{ row.max_marks }}</strong>
+            <span>{{ row.percent }}%</span>
+          </p>
+          <p class="stock-count-shop-meta">
+            Submitted {% if row.submitted_at %}{{ row.submitted_at|date:"d M H:i" }}{% else %}—{% endif %}
+          </p>
+          {% else %}
+          <p class="stock-count-shop-score is-waiting">
+            <strong>Waiting</strong>
+            <span>{{ row.answered_count }}/{{ row.total_count }} answered</span>
+          </p>
+          <p class="stock-count-shop-meta">Not submitted yet</p>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="stock-settings-footnote">No stock takes yet. Create one from Stock Management → Stock Take.</p>
+  {% endif %}
+</section>
+
+{% include "shops/partials/stock_take_modal.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/shop-stock-take.js' %}?v=6"></script>
+{% endblock %}

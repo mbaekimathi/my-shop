@@ -6,6 +6,7 @@
   data-stock-take-submit-url="{{ stock_take_submit_url }}"
   data-assignment-id="{{ pending_stock_take_payload.assignment_id }}"
   data-deadline="{{ pending_stock_take_payload.deadline }}"
+  {% if stock_take_force_open %}data-stock-take-force-open="1"{% endif %}
   hidden
   role="dialog"
   aria-modal="true"

@@ -663,7 +663,7 @@ def _low_stock_alert_force_key(shop):
 
 def _shop_floor_chrome(
     shop, profile, shops, *, active, print_channels=None, request=None,
-    pending_request_count=None, pos=None,
+    pending_request_count=None, pending_stock_take_count=None, pos=None,
 ):
     portal = profile is None
     stock_request_status_url = ""
@@ -678,6 +678,10 @@ def _shop_floor_chrome(
                 .order_by()
                 .count()
             )
+        if pending_stock_take_count is None:
+            from items.stock_take import pending_stock_take_count_for_shop
+
+            pending_stock_take_count = pending_stock_take_count_for_shop(shop)
         # Icon badges = incoming only (this shop must confirm receipt).
         stock_request_status_url = reverse(
             "employees:my_shop_stock_request_status", kwargs={"shop_id": shop.pk}
@@ -687,6 +691,7 @@ def _shop_floor_chrome(
         )
     else:
         pending_request_count = pending_request_count or 0
+        pending_stock_take_count = pending_stock_take_count or 0
         stock_transfers_url = ""
     day_state = (
         shop_day_floor_state(shop=shop, pos=pos) if shop is not None else {}
@@ -717,6 +722,7 @@ def _shop_floor_chrome(
             portal=portal,
             profile=profile,
             pending_request_count=pending_request_count,
+            pending_stock_take_count=pending_stock_take_count,
             trade_in_enabled=bool(getattr(pos, "enable_trade_in", False)),
             trade_out_enabled=bool(getattr(pos, "enable_trade_out", False)),
         ),
@@ -726,6 +732,7 @@ def _shop_floor_chrome(
         "stock_request_status_url": stock_request_status_url,
         "stock_transfers_url": stock_transfers_url,
         "sidebar_pending_request_count": pending_request_count,
+        "sidebar_pending_stock_take_count": pending_stock_take_count,
         "low_stock_alerts": low_stock_alerts,
         "low_stock_alert_count": len(low_stock_alerts),
         "low_stock_alert_force": low_stock_alert_force,
@@ -1632,6 +1639,7 @@ def my_shop_workspace(request, shop_id):
         cache.set(ITEM_ACTIVE_COUNT_CACHE_KEY, item_count, ITEM_ACTIVE_COUNT_CACHE_TTL)
     pending_requests = _pending_stock_requests_for_shop(shop)
     request_decisions = _stock_request_decisions_for_shop(shop)
+    stock_take_context = _stock_take_workspace_context(shop)
     pos_settings = get_effective_pos_settings(shop)
     pos_flags = pos_settings_as_dict(pos_settings)
     from communications.automations import credit_whatsapp_required
@@ -1688,6 +1696,9 @@ def my_shop_workspace(request, shop_id):
                 print_channels=enabled_print_channels,
                 request=request,
                 pending_request_count=len(pending_requests),
+                pending_stock_take_count=stock_take_context.get(
+                    "pending_stock_take_count"
+                ),
                 pos=pos_settings,
             ),
             "meta": meta,
@@ -1805,23 +1816,27 @@ def my_shop_workspace(request, shop_id):
                 "employees:expense_supplier_search"
             ),
             "recent_expenses": [],
-            **_stock_take_workspace_context(shop),
+            **stock_take_context,
         },
     )
 
 
-def _stock_take_workspace_context(shop):
+def _stock_take_workspace_context(shop, *, force_open=False):
     from items.stock_take import (
+        pending_stock_take_count_for_shop,
         pending_stock_take_for_shop,
         stock_take_assignment_payload,
     )
 
     assignment = pending_stock_take_for_shop(shop)
+    pending_count = pending_stock_take_count_for_shop(shop)
     if not assignment:
         return {
             "pending_stock_take": None,
             "pending_stock_take_payload": None,
             "stock_take_submit_url": "",
+            "pending_stock_take_count": pending_count,
+            "stock_take_force_open": False,
         }
     return {
         "pending_stock_take": assignment,
@@ -1829,7 +1844,53 @@ def _stock_take_workspace_context(shop):
         "stock_take_submit_url": reverse(
             "employees:my_shop_stock_take_submit", kwargs={"shop_id": shop.pk}
         ),
+        "pending_stock_take_count": pending_count,
+        "stock_take_force_open": bool(force_open),
     }
+
+
+@shop_floor_required
+@require_http_methods(["GET"])
+def my_shop_stock_count(request, shop_id):
+    """Stock count performance board for all shops, with popup for this shop."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "stock_count", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    from items.stock_take import (
+        build_stock_take_performance,
+        pending_stock_take_count_for_shop,
+    )
+
+    shops = _shops_for_floor(profile, shop)
+    pending_count = pending_stock_take_count_for_shop(shop)
+    force_open = (request.GET.get("open") or "").strip() in ("1", "true", "yes")
+    take_context = _stock_take_workspace_context(shop, force_open=force_open)
+    boards = build_stock_take_performance(current_shop=shop)
+
+    return _render_my_shop_tool_page(
+        request,
+        shop=shop,
+        profile=profile,
+        shops=shops,
+        active="stock_count",
+        title="Stock count",
+        headline="Stock count performance",
+        summary="See every shop’s progress and scores. Open the popup to submit this shop’s count.",
+        icon="clipboard-check",
+        template_name="shops/my_shop_stock_count.html",
+        pending_stock_take_count=pending_count,
+        extra_context={
+            **take_context,
+            "stock_take_boards": boards,
+            "pending_stock_take_count": pending_count,
+        },
+    )
 
 
 @shop_floor_required
@@ -1943,6 +2004,7 @@ def _render_my_shop_tool_page(
     template_name,
     extra_context=None,
     pending_request_count=None,
+    pending_stock_take_count=None,
 ):
     meta = {
         "title": title,
@@ -1958,6 +2020,7 @@ def _render_my_shop_tool_page(
             active=active,
             request=request,
             pending_request_count=pending_request_count,
+            pending_stock_take_count=pending_stock_take_count,
         ),
         "meta": meta,
     }

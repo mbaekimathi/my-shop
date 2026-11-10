@@ -241,6 +241,88 @@ def pending_stock_take_for_shop(shop) -> StockTakeAssignment | None:
     )
 
 
+def pending_stock_take_count_for_shop(shop) -> int:
+    """How many open stock takes this shop still needs to submit."""
+    return (
+        StockTakeAssignment.objects.filter(
+            shop=shop,
+            status=StockTakeAssignmentStatus.PENDING,
+            stock_take__status=StockTakeStatus.OPEN,
+        )
+        .order_by()
+        .count()
+    )
+
+
+def build_stock_take_performance(*, current_shop=None, limit=20) -> list[dict]:
+    """Recent stock takes with every shop's submission status and marks."""
+    takes = list(
+        StockTake.objects.prefetch_related(
+            "assignments__shop",
+            "assignments__counts",
+        ).order_by("-created_at", "-id")[:limit]
+    )
+    boards = []
+    for take in takes:
+        assignments = sorted(
+            take.assignments.all(),
+            key=lambda row: ((row.shop.name or "").lower(), row.pk),
+        )
+        shop_rows = []
+        submitted = 0
+        for assignment in assignments:
+            counts = list(assignment.counts.all())
+            total = len(counts)
+            answered = sum(1 for row in counts if row.counted_qty is not None)
+            correct = sum(
+                1
+                for row in counts
+                if row.counted_qty is not None
+                and _quantize(row.counted_qty) == _quantize(row.system_qty)
+            )
+            is_submitted = (
+                assignment.status == StockTakeAssignmentStatus.SUBMITTED
+            )
+            if is_submitted:
+                submitted += 1
+            percent = (
+                int(round((100 * correct / total), 0))
+                if is_submitted and total
+                else None
+            )
+            shop_rows.append(
+                {
+                    "assignment": assignment,
+                    "shop": assignment.shop,
+                    "is_current": bool(
+                        current_shop and assignment.shop_id == current_shop.pk
+                    ),
+                    "submitted": is_submitted,
+                    "answered_count": answered,
+                    "total_count": total,
+                    "marks": correct if is_submitted else None,
+                    "max_marks": total,
+                    "percent": percent,
+                    "submitted_at": assignment.submitted_at,
+                }
+            )
+        boards.append(
+            {
+                "take": take,
+                "shops": shop_rows,
+                "shop_count": len(shop_rows),
+                "submitted_count": submitted,
+                "pending_count": len(shop_rows) - submitted,
+                "overdue": bool(
+                    take.status == StockTakeStatus.OPEN
+                    and take.deadline
+                    and take.deadline < timezone.now()
+                ),
+            }
+        )
+    return boards
+
+
 def _qty_label(value: Decimal) -> str:
     text = format(value.normalize(), "f")
     if "." in text:

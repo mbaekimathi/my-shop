@@ -425,6 +425,7 @@ class PermissionCatalogTests(SimpleTestCase):
             "credit",
             "quotation",
             "buy_stock",
+            "stock_count",
             "stock_requests",
             "respond_stock_request",
             "register_expense",
