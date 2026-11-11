@@ -210,7 +210,7 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 # Employee sessions sign out after this many seconds without user interaction
 # (tracked client-side; background polling does not extend the window).
 EMPLOYEE_IDLE_TIMEOUT_SECONDS = int(
-    os.getenv("EMPLOYEE_IDLE_TIMEOUT_SECONDS", str(15 * 60))
+    os.getenv("EMPLOYEE_IDLE_TIMEOUT_SECONDS", str(60 * 60 * 2))
 )
 
 # Prefer Argon2 for new hashes; keep PBKDF2 so existing passwords still verify

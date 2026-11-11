@@ -36,9 +36,12 @@ class RotatedSessionMiddleware(SessionMiddleware):
             if not target or target in seen:
                 break
             seen.add(request.session.session_key)
-            migrated = self.SessionStore(session_key=target)
-            if not migrated.load():
+            # Prefer exists() over load() truthiness — an empty {} session is
+            # valid but falsy in Python and would abort the hop incorrectly.
+            if not self.SessionStore().exists(target):
                 break
+            migrated = self.SessionStore(session_key=target)
+            migrated.load()
             request.session = migrated
             request._followed_session_pointer = True
 

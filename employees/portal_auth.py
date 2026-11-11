@@ -53,6 +53,7 @@ def clear_employee_auth(request):
         migrate_shop_session_stamp,
         restore_shop_portal_session,
         snapshot_shop_portal_session,
+        write_rotation_pointer,
     )
 
     from .access import SESSION_PROFILE_KEY, REQUEST_META_ATTR, REQUEST_PROFILE_ATTR
@@ -87,6 +88,11 @@ def clear_employee_auth(request):
     restore_shop_portal_session(request, shop_snap)
     # logout() flushed the session id — the shop stamp follows the new key.
     migrate_shop_session_stamp(request, old_key)
+    # Bridge immediately so sibling tabs with the old cookie do not see an
+    # empty session before RotatedSessionMiddleware runs on the response.
+    write_rotation_pointer(
+        request.session.__class__, old_key, request.session.session_key
+    )
 
 
 def end_shop_portal_session(request):
@@ -150,15 +156,19 @@ def _migrate_employee_session_stamp(request, old_key):
 
 def begin_employee_session(request, user, profile):
     """Employee sign-in; leaves any shop portal session intact."""
+    import time
+
     from django.contrib.auth import login
 
     from shops.session import (
         migrate_shop_session_stamp,
         restore_shop_portal_session,
         snapshot_shop_portal_session,
+        write_rotation_pointer,
     )
 
     from .access import store_profile_session
+    from .middleware import IDLE_SESSION_KEY
     from .models import EmployeeProfile
 
     # login() flushes the session when it belonged to a different user;
@@ -171,6 +181,11 @@ def begin_employee_session(request, user, profile):
     # login() rotated/flushed the session id — the shop's most-recent-session
     # stamp follows the new key for a coexisting shop portal session.
     migrate_shop_session_stamp(request, old_key)
+    write_rotation_pointer(
+        request.session.__class__, old_key, request.session.session_key
+    )
     EmployeeProfile.objects.filter(pk=profile.pk).update(
         active_session_key=request.session.session_key or ""
     )
+    # Seed the idle clock so the first post-login poll cannot race an unset stamp.
+    request.session[IDLE_SESSION_KEY] = int(time.time())

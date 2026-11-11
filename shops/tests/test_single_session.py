@@ -16,6 +16,8 @@ from shops.session import SESSION_SHOP_PORTAL_SHOP_KEY
 
 @override_settings(
     ALLOWED_HOSTS=["testserver", "localhost"],
+    # Keep idle tests on a short window; production default is 2 hours.
+    EMPLOYEE_IDLE_TIMEOUT_SECONDS=15 * 60,
     RATE_LIMITS={
         "login": {"max": 10_000, "window": 60},
         "check_employee_id": {"max": 10_000, "window": 60},

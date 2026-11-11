@@ -64,7 +64,7 @@ class EmployeeIdleTimeoutMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
         self.timeout = int(
-            getattr(settings, "EMPLOYEE_IDLE_TIMEOUT_SECONDS", 15 * 60)
+            getattr(settings, "EMPLOYEE_IDLE_TIMEOUT_SECONDS", 60 * 60 * 2)
         )
 
     def __call__(self, request):

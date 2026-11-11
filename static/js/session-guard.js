@@ -12,6 +12,9 @@
 
 let redirecting = false;
 let tabLockState = null;
+// One bad ping can be a rotation race; require consecutive misses before bounce.
+let consecutiveAuthFailures = 0;
+const AUTH_FAILURE_THRESHOLD = 2;
 
 const ACTIVITY_HEADER = "X-MyShop-Activity";
 const ACTIVITY_EVENTS = [
@@ -123,7 +126,12 @@ function authStillValid(data) {
 
 function onPingDetail(data) {
   if (!authRoot() || !data || data.ok === false) return;
-  if (authStillValid(data)) return;
+  if (authStillValid(data)) {
+    consecutiveAuthFailures = 0;
+    return;
+  }
+  consecutiveAuthFailures += 1;
+  if (consecutiveAuthFailures < AUTH_FAILURE_THRESHOLD) return;
   const expected = expectedAuthMode();
   let loginUrl = data.login_url || fallbackLoginUrl();
   if (expected === "shop") loginUrl = "/employees/shops/login/";
