@@ -6785,6 +6785,7 @@ def online_stock_take_page(request, profile, meta, module):
     from employees.workspace import sidebar_for_stock_management, stock_management_url
     from items.online_stock_take import (
         build_online_stock_take_catalog,
+        build_online_stock_take_sync,
         save_online_stock_take_line,
     )
 
@@ -6830,6 +6831,19 @@ def online_stock_take_page(request, profile, meta, module):
             return JsonResponse({"ok": False, "error": message}, status=400)
         return JsonResponse({"ok": True, "line": line})
 
+    # Cross-device live sync poll (JSON).
+    if (
+        request.headers.get("x-requested-with") == "XMLHttpRequest"
+        and request.GET.get("sync") == "1"
+    ):
+        if not selected_shop:
+            return JsonResponse(
+                {"ok": False, "error": "Select a shop for this online stock take."},
+                status=400,
+            )
+        sync = build_online_stock_take_sync(shop=selected_shop)
+        return JsonResponse({"ok": True, **sync})
+
     catalog = (
         build_online_stock_take_catalog(shop=selected_shop)
         if selected_shop
@@ -6842,6 +6856,11 @@ def online_stock_take_page(request, profile, meta, module):
             "excess_count": 0,
             "short_count": 0,
         }
+    )
+    sync_meta = (
+        build_online_stock_take_sync(shop=selected_shop)
+        if selected_shop
+        else {"revision": "0:"}
     )
 
     return render(
@@ -6856,6 +6875,7 @@ def online_stock_take_page(request, profile, meta, module):
             "online_shops": shops,
             "selected_shop": selected_shop,
             "online_catalog": catalog,
+            "online_sync_revision": sync_meta.get("revision") or "0:",
         },
     )
 

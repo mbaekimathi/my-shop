@@ -1,6 +1,6 @@
 /**
  * Online stock take — live variance + autosave (separate from Stock count).
- * Floating cart shows filled counts; click toggles the counted-items list.
+ * Floating cart shows filled counts; polls other devices' updates live.
  */
 (function () {
   "use strict";
@@ -13,6 +13,7 @@
   const list = root.querySelector("[data-online-take-list]");
   const searchInput = root.querySelector("[data-online-take-search]");
   const statusEl = root.querySelector("[data-online-take-save-status]");
+  const liveStatusEl = root.querySelector("[data-online-take-live-status]");
   const filledEl = root.querySelector("[data-online-take-filled]");
   const matchEl = root.querySelector("[data-online-take-match]");
   const excessEl = root.querySelector("[data-online-take-excess]");
@@ -20,10 +21,16 @@
   const shopId = root.getAttribute("data-selected-shop-id") || "";
   const csrfInput = root.querySelector("input[name=csrfmiddlewaretoken]");
   const SAVE_DELAY_MS = 450;
+  const POLL_MS = 3000;
   const pendingTimers = new Map();
   const lastSaved = new Map();
   /** Most-recently counted item ids first (for cart ordering). */
   const recentFilledIds = [];
+  let syncRevision = root.getAttribute("data-online-sync-revision") || "0:";
+  let pollTimer = null;
+  let pollInFlight = false;
+  let savingCount = 0;
+  let returnSearchAfterQty = false;
 
   // Keep the cart outside transformed workspace ancestors so fixed = viewport.
   let cart = document.querySelector("[data-online-take-cart]");
@@ -58,6 +65,118 @@
     if (!statusEl) return;
     statusEl.textContent = message || "";
     statusEl.classList.toggle("is-error", Boolean(error));
+  };
+
+  const setLiveStatus = (message, { state = "live" } = {}) => {
+    if (!liveStatusEl) return;
+    liveStatusEl.innerHTML = `<span class="online-take-live-dot" aria-hidden="true"></span> ${escapeHtml(
+      message
+    )}`;
+    liveStatusEl.classList.toggle("is-live", state === "live");
+    liveStatusEl.classList.toggle("is-syncing", state === "syncing");
+    liveStatusEl.classList.toggle("is-error", state === "error");
+  };
+
+  const findRow = (itemId) => {
+    if (!list || itemId == null || itemId === "") return null;
+    return list.querySelector(
+      `[data-online-take-row][data-item-id="${CSS.escape(String(itemId))}"]`
+    );
+  };
+
+  const isRowDirty = (row) => {
+    const itemId = row?.getAttribute("data-item-id") || "";
+    const input = row?.querySelector("[data-online-take-qty]");
+    if (!input || !itemId) return false;
+    if (pendingTimers.has(itemId)) return true;
+    if (document.activeElement === input) return true;
+    return input.value.trim() !== String(lastSaved.get(itemId) ?? "");
+  };
+
+  const flashRemoteRow = (row) => {
+    if (!row) return;
+    row.classList.add("is-remote-flash");
+    window.setTimeout(() => row.classList.remove("is-remote-flash"), 1200);
+  };
+
+  const applyRemoteLine = (line) => {
+    const itemId = String(line?.item_id ?? "");
+    const row = findRow(itemId);
+    if (!row || isRowDirty(row)) return false;
+    const input = row.querySelector("[data-online-take-qty]");
+    if (!input) return false;
+
+    const nextQty = String(line.physical_qty ?? "").trim();
+    const nextBy = String(line.updated_by_label || "").trim();
+    const prevQty = String(lastSaved.get(itemId) ?? "");
+    const prevBy =
+      row.querySelector("[data-online-take-by]")?.textContent?.trim() || "";
+    const same =
+      prevQty === nextQty &&
+      (prevBy === nextBy || (!nextBy && (prevBy === "—" || !prevBy)));
+
+    if (line.system_qty != null) {
+      row.setAttribute("data-system-qty", String(line.system_qty));
+      const systemEl = row.querySelector("[data-online-take-system]");
+      if (systemEl) systemEl.textContent = String(line.system_qty);
+    }
+    if (line.category) {
+      row.setAttribute("data-category-name", line.category);
+    }
+
+    if (!same) {
+      input.value = nextQty;
+      lastSaved.set(itemId, nextQty);
+      syncRow(row);
+      applyCountedBy(row, nextQty ? nextBy : "");
+      touchFilledOrder(itemId, nextQty !== "");
+      flashRemoteRow(row);
+      return true;
+    }
+
+    syncRow(row);
+    return false;
+  };
+
+  const clearRemoteLine = (itemId) => {
+    const row = findRow(itemId);
+    if (!row || isRowDirty(row)) return false;
+    const input = row.querySelector("[data-online-take-qty]");
+    if (!input) return false;
+    const prevQty = String(lastSaved.get(itemId) ?? "");
+    if (!prevQty && !input.value.trim()) return false;
+    input.value = "";
+    lastSaved.set(itemId, "");
+    syncRow(row);
+    applyCountedBy(row, "");
+    touchFilledOrder(itemId, false);
+    flashRemoteRow(row);
+    return true;
+  };
+
+  const applySyncPayload = (data, { fromPoll = false } = {}) => {
+    if (!data?.ok || !list) return;
+    const revision = String(data.revision || "");
+    if (revision && revision === syncRevision && fromPoll) return;
+
+    const lines = Array.isArray(data.lines) ? data.lines : null;
+    let changed = false;
+
+    if (lines) {
+      const remoteIds = new Set(
+        lines.map((line) => String(line.item_id)).filter(Boolean)
+      );
+      lines.forEach((line) => {
+        if (applyRemoteLine(line)) changed = true;
+      });
+      lastSaved.forEach((qty, itemId) => {
+        if (!qty || remoteIds.has(String(itemId))) return;
+        if (clearRemoteLine(itemId)) changed = true;
+      });
+    }
+
+    if (revision) syncRevision = revision;
+    if (changed) syncSummary();
   };
 
   const piecesWord = (absDiff) => (absDiff === 1 ? "piece" : "pieces");
@@ -292,6 +411,7 @@
     }
 
     setStatus("Saving…");
+    savingCount += 1;
     row.classList.add("is-saving");
     const body = new URLSearchParams({
       mode: "online-stock-take",
@@ -330,12 +450,74 @@
         qty !== "" ? data.line?.updated_by_label || "" : ""
       );
       touchFilledOrder(itemId, qty !== "");
+      if (data.line?.revision) syncRevision = String(data.line.revision);
       syncSummary();
       setStatus(`Saved ${data.line?.saved_at || ""}`.trim());
     } catch (error) {
       setStatus(error?.message || "Could not save this count.", { error: true });
     } finally {
+      savingCount = Math.max(0, savingCount - 1);
       row.classList.remove("is-saving");
+    }
+  };
+
+  const stopPolling = () => {
+    if (pollTimer) {
+      window.clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const pollRemoteCounts = async () => {
+    if (!baseUrl || !shopId || document.hidden || pollInFlight) return;
+    pollInFlight = true;
+    if (savingCount === 0) setLiveStatus("Syncing", { state: "syncing" });
+    try {
+      const url = new URL(baseUrl, window.location.origin);
+      url.searchParams.set("shop_id", shopId);
+      url.searchParams.set("sync", "1");
+      const response = await fetch(url.toString(), {
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        credentials: "same-origin",
+      });
+      if (response.status === 401 || response.status === 403) {
+        stopPolling();
+        setLiveStatus("Offline", { state: "error" });
+        try {
+          const data = await response.clone().json();
+          if (
+            data?.login_url &&
+            (data.error === "session_expired" ||
+              data.error === "auth_required" ||
+              String(data.error || "")
+                .toLowerCase()
+                .includes("session"))
+          ) {
+            window.location.replace(data.login_url);
+          }
+        } catch (_err) {
+          /* ignore non-json */
+        }
+        return;
+      }
+      if (!response.ok) {
+        setLiveStatus("Retrying", { state: "error" });
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!data?.ok) {
+        setLiveStatus("Retrying", { state: "error" });
+        return;
+      }
+      applySyncPayload(data, { fromPoll: true });
+      if (savingCount === 0) setLiveStatus("Live", { state: "live" });
+    } catch (_err) {
+      setLiveStatus("Retrying", { state: "error" });
+    } finally {
+      pollInFlight = false;
     }
   };
 
@@ -355,18 +537,9 @@
 
   const jumpToRow = (itemId) => {
     if (!itemId || !list) return;
-    const row = list.querySelector(
-      `[data-online-take-row][data-item-id="${CSS.escape(String(itemId))}"]`
-    );
+    const row = findRow(itemId);
     if (!row) return;
-    row.hidden = false;
-    const section = row.closest("[data-online-take-category]");
-    if (section) section.hidden = false;
-    row.scrollIntoView({ behavior: "smooth", block: "center" });
-    row.classList.add("is-cart-focus");
-    window.setTimeout(() => row.classList.remove("is-cart-focus"), 1400);
-    const input = row.querySelector("[data-online-take-qty]");
-    input?.focus({ preventScroll: true });
+    revealRowInFullList(row, { keepFocus: true });
   };
 
   shopSelect?.addEventListener("change", () => {
@@ -381,8 +554,10 @@
     window.location.assign(url.toString());
   });
 
-  searchInput?.addEventListener("input", () => {
-    const q = (searchInput.value || "").trim().toLowerCase();
+  const applySearchFilter = (rawQuery) => {
+    const q = String(rawQuery || "")
+      .trim()
+      .toLowerCase();
     list?.querySelectorAll("[data-online-take-category]").forEach((section) => {
       let visible = 0;
       section.querySelectorAll("[data-online-take-row]").forEach((row) => {
@@ -393,6 +568,41 @@
       });
       section.hidden = Boolean(q) && visible === 0;
     });
+    return q;
+  };
+
+  const revealRowInFullList = (row, { keepFocus = true } = {}) => {
+    if (!row) return;
+    const input = row.querySelector("[data-online-take-qty]");
+    const hadSearch = Boolean((searchInput?.value || "").trim());
+    if (hadSearch && searchInput) {
+      searchInput.value = "";
+      applySearchFilter("");
+      returnSearchAfterQty = true;
+    }
+    row.hidden = false;
+    const section = row.closest("[data-online-take-category]");
+    if (section) section.hidden = false;
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    row.classList.add("is-cart-focus");
+    window.setTimeout(() => row.classList.remove("is-cart-focus"), 1400);
+    if (keepFocus && input) {
+      input.focus({ preventScroll: true });
+    }
+  };
+
+  searchInput?.addEventListener("input", () => {
+    applySearchFilter(searchInput.value);
+  });
+
+  // Selecting a filtered qty field clears search and jumps to the item in-list.
+  list?.addEventListener("focusin", (event) => {
+    const input = event.target.closest("[data-online-take-qty]");
+    if (!input) return;
+    if (!(searchInput?.value || "").trim()) return;
+    const row = input.closest("[data-online-take-row]");
+    if (!row) return;
+    revealRowInFullList(row, { keepFocus: true });
   });
 
   list?.addEventListener("input", (event) => {
@@ -400,6 +610,10 @@
     if (!input) return;
     const row = input.closest("[data-online-take-row]");
     if (!row) return;
+    // Cover tap/type paths that skip focusin quirks on some mobile browsers.
+    if ((searchInput?.value || "").trim()) {
+      revealRowInFullList(row, { keepFocus: true });
+    }
     syncRow(row);
     touchFilledOrder(
       row.getAttribute("data-item-id"),
@@ -420,6 +634,20 @@
       pendingTimers.delete(itemId);
     }
     saveRow(row);
+  });
+
+  list?.addEventListener("focusout", (event) => {
+    const input = event.target.closest("[data-online-take-qty]");
+    if (!input || !returnSearchAfterQty || !searchInput) return;
+    const next = event.relatedTarget;
+    if (next && list.contains(next) && next.matches?.("[data-online-take-qty]")) {
+      return;
+    }
+    returnSearchAfterQty = false;
+    window.setTimeout(() => {
+      searchInput.focus({ preventScroll: true });
+      searchInput.select?.();
+    }, 0);
   });
 
   cartToggle?.addEventListener("click", () => {
@@ -462,6 +690,15 @@
     }
   }
   syncSummary();
+
+  if (shopId && baseUrl) {
+    pollTimer = window.setInterval(pollRemoteCounts, POLL_MS);
+    window.setTimeout(pollRemoteCounts, 1200);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) pollRemoteCounts();
+    });
+    window.addEventListener("beforeunload", stopPolling);
+  }
 
   if (typeof window.lucide?.createIcons === "function") {
     window.lucide.createIcons();

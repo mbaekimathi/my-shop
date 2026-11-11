@@ -9387,6 +9387,63 @@
   padding-left: 2.2rem;
 }
 
+.online-take-status-stack {
+  display: grid;
+  gap: 0.2rem;
+  justify-items: end;
+  text-align: right;
+}
+
+.online-take-live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.online-take-live-status.is-live {
+  color: var(--ok, #2f7d4a);
+}
+
+.online-take-live-status.is-syncing {
+  color: var(--accent, #1f6f78);
+}
+
+.online-take-live-status.is-error {
+  color: var(--danger);
+}
+
+.online-take-live-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent);
+  animation: online-take-live-pulse 1.8s ease-out infinite;
+}
+
+.online-take-live-status.is-error .online-take-live-dot,
+.online-take-live-status:not(.is-live):not(.is-syncing) .online-take-live-dot {
+  animation: none;
+}
+
+@keyframes online-take-live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 0.45rem transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 .online-take-save-status {
   margin: 0;
   font-size: 0.82rem;
@@ -9396,6 +9453,11 @@
 
 .online-take-save-status.is-error {
   color: var(--danger);
+}
+
+.online-take-row.is-remote-flash {
+  background: color-mix(in srgb, var(--accent, #1f6f78) 12%, transparent);
+  transition: background 0.9s ease;
 }
 
 .online-take-summary {

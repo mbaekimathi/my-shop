@@ -172,6 +172,75 @@ def build_online_stock_take_catalog(*, shop) -> dict:
     }
 
 
+def build_online_stock_take_sync(*, shop) -> dict:
+    """Lightweight payload of current filled counts for cross-device live sync."""
+    if shop is None:
+        return {
+            "shop_id": None,
+            "revision": "0:",
+            "lines": [],
+            "filled_count": 0,
+        }
+
+    entries = list(
+        OnlineStockTakeEntry.objects.filter(shop=shop)
+        .exclude(physical_qty__isnull=True)
+        .only("item_id", "physical_qty", "updated_at", "updated_by_label")
+        .order_by("-updated_at", "item_id")
+    )
+    item_ids = [row.item_id for row in entries]
+    stock_map = {
+        row.item_id: _quantize(row.quantity)
+        for row in ShopStock.objects.filter(shop=shop, item_id__in=item_ids).only(
+            "item_id", "quantity"
+        )
+    }
+    item_meta = {
+        row.pk: row
+        for row in Item.objects.filter(pk__in=item_ids).only("id", "name", "category")
+    }
+
+    lines = []
+    max_ts = None
+    for entry in entries:
+        item = item_meta.get(entry.item_id)
+        if item is None:
+            continue
+        system = stock_map.get(entry.item_id, _ZERO)
+        physical = _quantize(entry.physical_qty)
+        variance = variance_payload(system=system, physical=physical)
+        updated_at = entry.updated_at
+        if updated_at is not None and (max_ts is None or updated_at > max_ts):
+            max_ts = updated_at
+        lines.append(
+            {
+                "item_id": entry.item_id,
+                "name": item.name,
+                "category": (item.category or "").strip() or "Uncategorised",
+                "system_qty": _qty_label(system),
+                "physical_qty": _qty_label(physical),
+                "updated_by_label": (entry.updated_by_label or "").strip(),
+                "updated_at": (
+                    timezone.localtime(updated_at).isoformat()
+                    if updated_at is not None
+                    else ""
+                ),
+                **variance,
+            }
+        )
+
+    revision = (
+        f"{len(lines)}:"
+        f"{timezone.localtime(max_ts).isoformat() if max_ts is not None else ''}"
+    )
+    return {
+        "shop_id": shop.pk,
+        "revision": revision,
+        "lines": lines,
+        "filled_count": len(lines),
+    }
+
+
 def _parse_physical_qty(raw, *, item_name: str) -> Decimal | None:
     if raw in (None, ""):
         return None
@@ -218,8 +287,9 @@ def save_online_stock_take_line(
 
     if physical is None:
         OnlineStockTakeEntry.objects.filter(shop=shop, item=item).delete()
+        updated_at = None
     else:
-        OnlineStockTakeEntry.objects.update_or_create(
+        entry, _created = OnlineStockTakeEntry.objects.update_or_create(
             shop=shop,
             item=item,
             defaults={
@@ -228,8 +298,10 @@ def save_online_stock_take_line(
                 "updated_by_label": label,
             },
         )
+        updated_at = entry.updated_at
 
     variance = variance_payload(system=system, physical=physical)
+    sync = build_online_stock_take_sync(shop=shop)
     return {
         "item_id": item.pk,
         "name": item.name,
@@ -237,6 +309,10 @@ def save_online_stock_take_line(
         "system_qty": _qty_label(system),
         "physical_qty": _qty_label(physical) if physical is not None else "",
         "updated_by_label": label if physical is not None else "",
+        "updated_at": (
+            timezone.localtime(updated_at).isoformat() if updated_at is not None else ""
+        ),
         "saved_at": timezone.localtime().strftime("%H:%M:%S"),
+        "revision": sync["revision"],
         **variance,
     }

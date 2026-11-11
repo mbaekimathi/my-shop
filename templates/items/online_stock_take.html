@@ -11,6 +11,7 @@
   data-online-stock-take
   data-online-stock-take-url="{{ online_stock_take_url }}"
   {% if selected_shop %}data-selected-shop-id="{{ selected_shop.pk }}"{% endif %}
+  {% if selected_shop %}data-online-sync-revision="{{ online_sync_revision }}"{% endif %}
 >
   <header class="stock-panel-head stock-settings-head">
     <div class="stock-panel-head-top">
@@ -29,7 +30,13 @@
         </p>
       </div>
       {% if selected_shop %}
-      <p class="online-take-save-status" data-online-take-save-status aria-live="polite">Ready</p>
+      <div class="online-take-status-stack">
+        <p class="online-take-live-status is-live" data-online-take-live-status aria-live="polite">
+          <span class="online-take-live-dot" aria-hidden="true"></span>
+          Live
+        </p>
+        <p class="online-take-save-status" data-online-take-save-status aria-live="polite">Ready</p>
+      </div>
       {% endif %}
     </div>
   </header>
@@ -196,5 +203,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/online-stock-take.js' %}?v=5"></script>
+<script defer src="{% static 'js/online-stock-take.js' %}?v=7"></script>
 {% endblock %}
