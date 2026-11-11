@@ -6751,6 +6751,7 @@ def online_stock_take_page(request, profile, meta, module):
         build_online_stock_take_catalog(shop=selected_shop)
         if selected_shop
         else {
+            "updated_lines": [],
             "groups": [],
             "item_count": 0,
             "filled_count": 0,

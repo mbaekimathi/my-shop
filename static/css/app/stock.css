@@ -9566,3 +9566,20 @@
   .online-take-qty { grid-area: qty; }
   .online-take-variance { grid-area: variance; }
 }
+
+.online-take-category--updated {
+  border-color: color-mix(in srgb, var(--accent, #1f6f78) 35%, var(--line));
+  box-shadow: 0 8px 20px rgba(8, 28, 34, 0.05);
+}
+
+.online-take-category--updated .online-take-category-head {
+  background: color-mix(in srgb, var(--accent, #1f6f78) 10%, var(--surface));
+}
+
+.online-take-item em {
+  display: block;
+  margin-top: 0.12rem;
+  font-style: normal;
+  font-size: 0.76rem;
+  color: var(--mist-dim);
+}

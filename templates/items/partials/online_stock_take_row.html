@@ -1,0 +1,39 @@
+<li
+  class="online-take-row{% if line.physical_qty %} is-filled{% endif %}{% if line.variance_kind %} is-{{ line.variance_kind }}{% endif %}"
+  data-online-take-row
+  data-item-id="{{ line.item_id }}"
+  data-system-qty="{{ line.system_qty }}"
+  data-category-name="{{ line.category }}"
+  data-search="{{ line.name|lower }} {{ line.category|lower }}"
+>
+  <span class="online-take-item">
+    <strong>{{ line.name }}</strong>
+    {% if line.category %}<em>{{ line.category }}</em>{% endif %}
+  </span>
+  <span class="online-take-system" data-online-take-system>{{ line.system_qty }}</span>
+  <span class="online-take-qty">
+    <input
+      type="number"
+      inputmode="decimal"
+      step="any"
+      min="0"
+      placeholder="Count"
+      value="{{ line.physical_qty }}"
+      data-online-take-qty
+      aria-label="Physical count for {{ line.name }}"
+    >
+  </span>
+  <span
+    class="online-take-variance{% if line.variance_kind %} is-{{ line.variance_kind }}{% else %} is-empty{% endif %}"
+    data-online-take-variance
+  >
+    {% if line.variance_label %}
+    <strong>{{ line.variance_label }}</strong>
+    {% if line.variance_kind != 'match' %}
+    <span>({{ line.variance }})</span>
+    {% endif %}
+    {% else %}
+    —
+    {% endif %}
+  </span>
+</li>

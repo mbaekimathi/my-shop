@@ -25,7 +25,7 @@
         </h2>
         <p>
           Enter the physical count beside current stock. Variance updates live and each
-          input auto-saves.
+          input auto-saves. Updated items stay at the top.
         </p>
       </div>
       {% if selected_shop %}
@@ -88,13 +88,42 @@
   {% csrf_token %}
 
   <div class="online-take-categories" data-online-take-list>
+    <section
+      class="online-take-category online-take-category--updated"
+      data-online-take-category
+      data-online-take-updated
+      data-category="updated"
+      {% if not online_catalog.updated_lines %}hidden{% endif %}
+    >
+      <header class="online-take-category-head">
+        <h3>Updated</h3>
+        <span><span data-online-take-updated-count>{{ online_catalog.updated_lines|length }}</span> item{{ online_catalog.updated_lines|length|pluralize }}</span>
+      </header>
+      <ul class="online-take-list" role="list" data-online-take-updated-list>
+        <li class="online-take-list-head" aria-hidden="true">
+          <span>Item</span>
+          <span>Current stock</span>
+          <span>Physical count</span>
+          <span>Variance</span>
+        </li>
+        {% for line in online_catalog.updated_lines %}
+        {% include "items/partials/online_stock_take_row.html" with line=line %}
+        {% endfor %}
+      </ul>
+    </section>
+
     {% for group in online_catalog.groups %}
-    <section class="online-take-category" data-online-take-category data-category="{{ group.category|lower }}">
+    <section
+      class="online-take-category"
+      data-online-take-category
+      data-category="{{ group.category|lower }}"
+      data-category-name="{{ group.category }}"
+    >
       <header class="online-take-category-head">
         <h3>{{ group.category }}</h3>
-        <span>{{ group.count }} item{{ group.count|pluralize }}</span>
+        <span><span data-online-take-category-count>{{ group.count }}</span> item{{ group.count|pluralize }}</span>
       </header>
-      <ul class="online-take-list" role="list">
+      <ul class="online-take-list" role="list" data-online-take-category-list>
         <li class="online-take-list-head" aria-hidden="true">
           <span>Item</span>
           <span>Current stock</span>
@@ -102,48 +131,14 @@
           <span>Variance</span>
         </li>
         {% for line in group.lines %}
-        <li
-          class="online-take-row{% if line.physical_qty %} is-filled{% endif %}{% if line.variance_kind %} is-{{ line.variance_kind }}{% endif %}"
-          data-online-take-row
-          data-item-id="{{ line.item_id }}"
-          data-system-qty="{{ line.system_qty }}"
-          data-search="{{ line.name|lower }} {{ line.category|lower }}"
-        >
-          <span class="online-take-item">
-            <strong>{{ line.name }}</strong>
-          </span>
-          <span class="online-take-system" data-online-take-system>{{ line.system_qty }}</span>
-          <span class="online-take-qty">
-            <input
-              type="number"
-              inputmode="decimal"
-              step="any"
-              min="0"
-              placeholder="Count"
-              value="{{ line.physical_qty }}"
-              data-online-take-qty
-              aria-label="Physical count for {{ line.name }}"
-            >
-          </span>
-          <span
-            class="online-take-variance{% if line.variance_kind %} is-{{ line.variance_kind }}{% else %} is-empty{% endif %}"
-            data-online-take-variance
-          >
-            {% if line.variance_label %}
-            <strong>{{ line.variance_label }}</strong>
-            {% if line.variance_kind != 'match' %}
-            <span>({{ line.variance }})</span>
-            {% endif %}
-            {% else %}
-            —
-            {% endif %}
-          </span>
-        </li>
+        {% include "items/partials/online_stock_take_row.html" with line=line %}
         {% endfor %}
       </ul>
     </section>
     {% empty %}
+    {% if not online_catalog.updated_lines %}
     <p class="stock-settings-footnote">No active items to count.</p>
+    {% endif %}
     {% endfor %}
   </div>
   {% endif %}
@@ -152,5 +147,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/online-stock-take.js' %}?v=2"></script>
+<script defer src="{% static 'js/online-stock-take.js' %}?v=3"></script>
 {% endblock %}

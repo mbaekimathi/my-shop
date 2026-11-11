@@ -70,9 +70,14 @@ def variance_payload(*, system: Decimal, physical: Decimal | None) -> dict:
 
 
 def build_online_stock_take_catalog(*, shop) -> dict:
-    """All active items for one shop, grouped by category, with live variance."""
+    """All active items for one shop, grouped by category, with live variance.
+
+    Updated (counted) items are returned first as ``updated_lines`` so they pin
+    to the top of the page; remaining uncounted items stay under categories.
+    """
     if shop is None:
         return {
+            "updated_lines": [],
             "groups": [],
             "item_count": 0,
             "filled_count": 0,
@@ -98,6 +103,7 @@ def build_online_stock_take_catalog(*, shop) -> dict:
     }
 
     groups: OrderedDict[str, list] = OrderedDict()
+    updated_lines = []
     filled = 0
     match_count = 0
     excess_count = 0
@@ -113,6 +119,17 @@ def build_online_stock_take_catalog(*, shop) -> dict:
             else None
         )
         variance = variance_payload(system=system, physical=physical)
+        line = {
+            "item_id": item.pk,
+            "name": item.name,
+            "category": category,
+            "system_qty": _qty_label(system),
+            "physical_qty": (
+                _qty_label(physical) if physical is not None else ""
+            ),
+            "updated_at": entry.updated_at if entry is not None else None,
+            **variance,
+        }
         if physical is not None:
             filled += 1
             if variance["variance_kind"] == "match":
@@ -121,20 +138,20 @@ def build_online_stock_take_catalog(*, shop) -> dict:
                 excess_count += 1
             elif variance["variance_kind"] == "short":
                 short_count += 1
-        groups.setdefault(category, []).append(
-            {
-                "item_id": item.pk,
-                "name": item.name,
-                "category": category,
-                "system_qty": _qty_label(system),
-                "physical_qty": (
-                    _qty_label(physical) if physical is not None else ""
-                ),
-                **variance,
-            }
+            updated_lines.append(line)
+        else:
+            groups.setdefault(category, []).append(line)
+
+    updated_lines.sort(
+        key=lambda row: (
+            -(row["updated_at"].timestamp() if row["updated_at"] else 0),
+            (row["name"] or "").lower(),
+            row["item_id"],
         )
+    )
 
     return {
+        "updated_lines": updated_lines,
         "groups": [
             {
                 "category": category,

@@ -1,5 +1,6 @@
 /**
  * Online stock take — live variance + autosave (separate from Stock count).
+ * Updated/counted rows pin to the top Updated section.
  */
 (function () {
   "use strict";
@@ -16,6 +17,9 @@
   const matchEl = root.querySelector("[data-online-take-match]");
   const excessEl = root.querySelector("[data-online-take-excess]");
   const shortEl = root.querySelector("[data-online-take-short]");
+  const updatedSection = root.querySelector("[data-online-take-updated]");
+  const updatedList = root.querySelector("[data-online-take-updated-list]");
+  const updatedCountEl = root.querySelector("[data-online-take-updated-count]");
   const shopId = root.getAttribute("data-selected-shop-id") || "";
   const csrfInput = root.querySelector("input[name=csrfmiddlewaretoken]");
   const SAVE_DELAY_MS = 450;
@@ -126,6 +130,94 @@
     if (matchEl) matchEl.textContent = String(match);
     if (excessEl) excessEl.textContent = String(excess);
     if (shortEl) shortEl.textContent = String(short);
+    if (updatedCountEl) {
+      const updatedRows = updatedList?.querySelectorAll("[data-online-take-row]") || [];
+      updatedCountEl.textContent = String(updatedRows.length);
+    }
+  };
+
+  const refreshCategoryVisibility = (section) => {
+    if (!section || section.hasAttribute("data-online-take-updated")) return;
+    const rows = section.querySelectorAll("[data-online-take-row]");
+    const countEl = section.querySelector("[data-online-take-category-count]");
+    if (countEl) countEl.textContent = String(rows.length);
+    section.hidden = rows.length === 0;
+  };
+
+  const findCategorySection = (categoryName) => {
+    const needle = (categoryName || "Uncategorised").trim().toLowerCase();
+    return (
+      [...(list?.querySelectorAll("[data-online-take-category]:not([data-online-take-updated])") || [])].find(
+        (section) =>
+          (section.getAttribute("data-category") || "") === needle ||
+          (section.getAttribute("data-category-name") || "").toLowerCase() === needle
+      ) || null
+    );
+  };
+
+  const ensureCategorySection = (categoryName) => {
+    let section = findCategorySection(categoryName);
+    if (section) return section;
+    if (!list) return null;
+    const name = (categoryName || "Uncategorised").trim() || "Uncategorised";
+    section = document.createElement("section");
+    section.className = "online-take-category";
+    section.setAttribute("data-online-take-category", "");
+    section.setAttribute("data-category", name.toLowerCase());
+    section.setAttribute("data-category-name", name);
+    section.innerHTML = `
+      <header class="online-take-category-head">
+        <h3></h3>
+        <span><span data-online-take-category-count>0</span> items</span>
+      </header>
+      <ul class="online-take-list" role="list" data-online-take-category-list>
+        <li class="online-take-list-head" aria-hidden="true">
+          <span>Item</span>
+          <span>Current stock</span>
+          <span>Physical count</span>
+          <span>Variance</span>
+        </li>
+      </ul>
+    `;
+    section.querySelector("h3").textContent = name;
+    list.appendChild(section);
+    return section;
+  };
+
+  const moveToUpdated = (row) => {
+    if (!updatedSection || !updatedList) return;
+    const head = updatedList.querySelector(".online-take-list-head");
+    if (head?.nextSibling) {
+      updatedList.insertBefore(row, head.nextSibling);
+    } else {
+      updatedList.appendChild(row);
+    }
+    updatedSection.hidden = false;
+    const source = row.closest("[data-online-take-category]:not([data-online-take-updated])");
+    if (source) refreshCategoryVisibility(source);
+  };
+
+  const moveToCategory = (row) => {
+    const categoryName = row.getAttribute("data-category-name") || "Uncategorised";
+    const section = ensureCategorySection(categoryName);
+    if (!section) return;
+    const targetList = section.querySelector("[data-online-take-category-list]");
+    if (!targetList) return;
+    targetList.appendChild(row);
+    section.hidden = false;
+    refreshCategoryVisibility(section);
+    if (updatedSection && updatedList) {
+      const remaining = updatedList.querySelectorAll("[data-online-take-row]");
+      updatedSection.hidden = remaining.length === 0;
+    }
+  };
+
+  const placeRowAfterSave = (row, qty) => {
+    if (qty !== "") {
+      moveToUpdated(row);
+    } else {
+      moveToCategory(row);
+    }
   };
 
   const saveRow = async (row) => {
@@ -133,7 +225,11 @@
     const itemId = row.getAttribute("data-item-id");
     if (!input || !itemId || !baseUrl || !shopId) return;
     const qty = input.value.trim();
-    if (lastSaved.get(itemId) === qty) return;
+    if (lastSaved.get(itemId) === qty) {
+      placeRowAfterSave(row, qty);
+      syncSummary();
+      return;
+    }
 
     setStatus("Saving…");
     row.classList.add("is-saving");
@@ -165,7 +261,11 @@
         const systemEl = row.querySelector("[data-online-take-system]");
         if (systemEl) systemEl.textContent = String(data.line.system_qty);
       }
+      if (data.line?.category) {
+        row.setAttribute("data-category-name", data.line.category);
+      }
       syncRow(row);
+      placeRowAfterSave(row, qty);
       syncSummary();
       setStatus(`Saved ${data.line?.saved_at || ""}`.trim());
     } catch (error) {
@@ -211,7 +311,13 @@
         row.hidden = !show;
         if (show) visible += 1;
       });
-      section.hidden = Boolean(q) && visible === 0;
+      if (section.hasAttribute("data-online-take-updated")) {
+        section.hidden =
+          (updatedList?.querySelectorAll("[data-online-take-row]").length || 0) === 0 ||
+          (Boolean(q) && visible === 0);
+      } else {
+        section.hidden = Boolean(q) && visible === 0;
+      }
     });
   });
 
