@@ -1,4 +1,4 @@
-"""Online stock take: live physical counts vs current shop stock (not Stock Take)."""
+"""Online stock take: live physical counts vs frozen book qty (not Stock Take)."""
 
 from __future__ import annotations
 
@@ -69,8 +69,17 @@ def variance_payload(*, system: Decimal, physical: Decimal | None) -> dict:
     }
 
 
+def _baseline_system(*, entry, live_system: Decimal) -> Decimal:
+    """Book qty used for variance: frozen at count time, else live fallback."""
+    if entry is None or entry.physical_qty is None:
+        return live_system
+    if entry.system_qty_at_count is None:
+        return live_system
+    return _quantize(entry.system_qty_at_count)
+
+
 def build_online_stock_take_catalog(*, shop) -> dict:
-    """All active items for one shop, grouped by category, with live variance.
+    """All active items for one shop, grouped by category, with frozen variance.
 
     Counted items stay in their category groups. ``filled_lines`` powers the
     floating cart summary (most recently updated first).
@@ -98,7 +107,11 @@ def build_online_stock_take_catalog(*, shop) -> dict:
     entry_map = {
         row.item_id: row
         for row in OnlineStockTakeEntry.objects.filter(shop=shop).only(
-            "item_id", "physical_qty", "updated_at", "updated_by_label"
+            "item_id",
+            "physical_qty",
+            "system_qty_at_count",
+            "updated_at",
+            "updated_by_label",
         )
     }
 
@@ -111,19 +124,21 @@ def build_online_stock_take_catalog(*, shop) -> dict:
 
     for item in items:
         category = (item.category or "").strip() or "Uncategorised"
-        system = stock_map.get(item.pk, _ZERO)
+        live_system = stock_map.get(item.pk, _ZERO)
         entry = entry_map.get(item.pk)
         physical = (
             _quantize(entry.physical_qty)
             if entry is not None and entry.physical_qty is not None
             else None
         )
+        system = _baseline_system(entry=entry, live_system=live_system)
         variance = variance_payload(system=system, physical=physical)
         line = {
             "item_id": item.pk,
             "name": item.name,
             "category": category,
             "system_qty": _qty_label(system),
+            "live_system_qty": _qty_label(live_system),
             "physical_qty": (
                 _qty_label(physical) if physical is not None else ""
             ),
@@ -185,7 +200,13 @@ def build_online_stock_take_sync(*, shop) -> dict:
     entries = list(
         OnlineStockTakeEntry.objects.filter(shop=shop)
         .exclude(physical_qty__isnull=True)
-        .only("item_id", "physical_qty", "updated_at", "updated_by_label")
+        .only(
+            "item_id",
+            "physical_qty",
+            "system_qty_at_count",
+            "updated_at",
+            "updated_by_label",
+        )
         .order_by("-updated_at", "item_id")
     )
     item_ids = [row.item_id for row in entries]
@@ -206,8 +227,9 @@ def build_online_stock_take_sync(*, shop) -> dict:
         item = item_meta.get(entry.item_id)
         if item is None:
             continue
-        system = stock_map.get(entry.item_id, _ZERO)
+        live_system = stock_map.get(entry.item_id, _ZERO)
         physical = _quantize(entry.physical_qty)
+        system = _baseline_system(entry=entry, live_system=live_system)
         variance = variance_payload(system=system, physical=physical)
         updated_at = entry.updated_at
         if updated_at is not None and (max_ts is None or updated_at > max_ts):
@@ -218,6 +240,7 @@ def build_online_stock_take_sync(*, shop) -> dict:
                 "name": item.name,
                 "category": (item.category or "").strip() or "Uncategorised",
                 "system_qty": _qty_label(system),
+                "live_system_qty": _qty_label(live_system),
                 "physical_qty": _qty_label(physical),
                 "updated_by_label": (entry.updated_by_label or "").strip(),
                 "updated_at": (
@@ -262,7 +285,7 @@ def save_online_stock_take_line(
     profile=None,
     updated_by_label: str = "",
 ) -> dict:
-    """Autosave one physical count against live system qty."""
+    """Autosave one physical count against book qty frozen at save time."""
     try:
         item_pk = int(item_id)
     except (TypeError, ValueError) as exc:
@@ -277,7 +300,7 @@ def save_online_stock_take_line(
         raise ValidationError("That item was not found.")
 
     physical = _parse_physical_qty(qty, item_name=item.name)
-    system = _quantize(
+    live_system = _quantize(
         ShopStock.objects.filter(shop=shop, item=item)
         .values_list("quantity", flat=True)
         .first()
@@ -288,17 +311,21 @@ def save_online_stock_take_line(
     if physical is None:
         OnlineStockTakeEntry.objects.filter(shop=shop, item=item).delete()
         updated_at = None
+        system = live_system
     else:
+        # Refresh freeze on every save so a recount baselines against now.
         entry, _created = OnlineStockTakeEntry.objects.update_or_create(
             shop=shop,
             item=item,
             defaults={
                 "physical_qty": physical,
+                "system_qty_at_count": live_system,
                 "updated_by": profile,
                 "updated_by_label": label,
             },
         )
         updated_at = entry.updated_at
+        system = live_system
 
     variance = variance_payload(system=system, physical=physical)
     sync = build_online_stock_take_sync(shop=shop)
@@ -307,6 +334,7 @@ def save_online_stock_take_line(
         "name": item.name,
         "category": (item.category or "").strip() or "Uncategorised",
         "system_qty": _qty_label(system),
+        "live_system_qty": _qty_label(live_system),
         "physical_qty": _qty_label(physical) if physical is not None else "",
         "updated_by_label": label if physical is not None else "",
         "updated_at": (

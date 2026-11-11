@@ -693,6 +693,14 @@ class OnlineStockTakeEntry(models.Model):
         null=True,
         blank=True,
     )
+    # Book qty frozen when physical_qty was last saved. Variance uses this
+    # snapshot so later sales/receipts do not move the variance.
+    system_qty_at_count = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+    )
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
     updated_by = models.ForeignKey(
         "employees.EmployeeProfile",

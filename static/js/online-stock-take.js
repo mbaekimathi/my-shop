@@ -1,5 +1,5 @@
 /**
- * Online stock take — live variance + autosave (separate from Stock count).
+ * Online stock take — variance vs book qty frozen at count time + autosave.
  * Floating cart shows filled counts; polls other devices' updates live.
  */
 (function () {
@@ -99,6 +99,24 @@
     window.setTimeout(() => row.classList.remove("is-remote-flash"), 1200);
   };
 
+  const applySystemQty = (row, systemQty, liveSystemQty) => {
+    if (!row) return;
+    if (liveSystemQty != null && liveSystemQty !== "") {
+      row.setAttribute("data-live-system-qty", String(liveSystemQty));
+    }
+    if (systemQty != null && systemQty !== "") {
+      row.setAttribute("data-system-qty", String(systemQty));
+      const systemEl = row.querySelector("[data-online-take-system]");
+      if (systemEl) systemEl.textContent = String(systemQty);
+    }
+  };
+
+  const restoreLiveSystemQty = (row) => {
+    const live = row?.getAttribute("data-live-system-qty");
+    if (live == null || live === "") return;
+    applySystemQty(row, live, live);
+  };
+
   const applyRemoteLine = (line) => {
     const itemId = String(line?.item_id ?? "");
     const row = findRow(itemId);
@@ -115,11 +133,7 @@
       prevQty === nextQty &&
       (prevBy === nextBy || (!nextBy && (prevBy === "—" || !prevBy)));
 
-    if (line.system_qty != null) {
-      row.setAttribute("data-system-qty", String(line.system_qty));
-      const systemEl = row.querySelector("[data-online-take-system]");
-      if (systemEl) systemEl.textContent = String(line.system_qty);
-    }
+    applySystemQty(row, line.system_qty, line.live_system_qty);
     if (line.category) {
       row.setAttribute("data-category-name", line.category);
     }
@@ -147,6 +161,7 @@
     if (!prevQty && !input.value.trim()) return false;
     input.value = "";
     lastSaved.set(itemId, "");
+    restoreLiveSystemQty(row);
     syncRow(row);
     applyCountedBy(row, "");
     touchFilledOrder(itemId, false);
@@ -436,10 +451,20 @@
         throw new Error(data.error || "Could not save this count.");
       }
       lastSaved.set(itemId, qty);
-      if (data.line?.system_qty != null) {
-        row.setAttribute("data-system-qty", String(data.line.system_qty));
-        const systemEl = row.querySelector("[data-online-take-system]");
-        if (systemEl) systemEl.textContent = String(data.line.system_qty);
+      if (qty === "") {
+        applySystemQty(
+          row,
+          data.line?.system_qty ?? data.line?.live_system_qty,
+          data.line?.live_system_qty
+        );
+        if (
+          data.line?.system_qty == null &&
+          data.line?.live_system_qty == null
+        ) {
+          restoreLiveSystemQty(row);
+        }
+      } else {
+        applySystemQty(row, data.line?.system_qty, data.line?.live_system_qty);
       }
       if (data.line?.category) {
         row.setAttribute("data-category-name", data.line.category);
