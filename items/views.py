@@ -6698,16 +6698,11 @@ def stock_take_page(request, profile, meta, module):
 
 
 def online_stock_take_page(request, profile, meta, module):
-    """Mobile-friendly online stock take: pick a shop, count, see excess/short."""
-    from employees.module_permissions import employee_may
+    """Live physical count vs current stock — separate from company Stock Take."""
     from employees.workspace import sidebar_for_stock_management, stock_management_url
-    from items.models import StockTakeAssignment, StockTakeAssignmentStatus, StockTakeStatus
-    from items.stock_take import (
-        build_shop_stock_count_results,
-        online_stock_take_assignment_payload,
-        pending_stock_take_for_shop,
-        submit_stock_take_counts,
-        submit_stock_take_one,
+    from items.online_stock_take import (
+        build_online_stock_take_catalog,
+        save_online_stock_take_line,
     )
 
     page_sidebar = sidebar_for_stock_management(
@@ -6716,7 +6711,6 @@ def online_stock_take_page(request, profile, meta, module):
         profile=profile,
     )
     list_url = stock_management_url(profile.role, "online-stock-take")
-    create_url = stock_management_url(profile.role, "stock-take")
     shops = actionable_shops_for_profile(profile)
 
     try:
@@ -6728,29 +6722,9 @@ def online_stock_take_page(request, profile, meta, module):
     if request.method == "POST":
         if not selected_shop:
             return JsonResponse(
-                {"ok": False, "error": "Select a shop for this stock count."},
+                {"ok": False, "error": "Select a shop for this online stock take."},
                 status=400,
             )
-        try:
-            assignment_id = int(request.POST.get("assignment_id") or 0)
-        except (TypeError, ValueError):
-            assignment_id = 0
-        assignment = (
-            StockTakeAssignment.objects.filter(
-                pk=assignment_id,
-                shop=selected_shop,
-                status=StockTakeAssignmentStatus.PENDING,
-                stock_take__status=StockTakeStatus.OPEN,
-            )
-            .select_related("stock_take")
-            .first()
-        )
-        if not assignment:
-            return JsonResponse(
-                {"ok": False, "error": "No open stock take for this shop."},
-                status=404,
-            )
-
         user = getattr(profile, "user", None)
         label = (
             (getattr(user, "get_full_name", lambda: "")() or "")
@@ -6758,42 +6732,33 @@ def online_stock_take_page(request, profile, meta, module):
             or getattr(profile, "employee_id", "")
             or "Employee"
         )
-        mode = (request.POST.get("submit_mode") or "all").strip().lower()
         try:
-            if mode == "one":
-                payload = submit_stock_take_one(
-                    assignment=assignment,
-                    count_id=request.POST.get("count_id"),
-                    qty=request.POST.get("qty"),
-                    submitted_by_label=label,
-                )
-                return JsonResponse({"ok": True, **payload})
-
-            counts = {}
-            for key, value in request.POST.items():
-                if not key.startswith("count_"):
-                    continue
-                counts[key.replace("count_", "", 1)] = value
-            result = submit_stock_take_counts(
-                assignment=assignment,
-                counts=counts,
-                submitted_by_label=label,
+            line = save_online_stock_take_line(
+                shop=selected_shop,
+                item_id=request.POST.get("item_id"),
+                qty=request.POST.get("qty"),
+                profile=profile,
+                updated_by_label=label,
             )
         except ValidationError as exc:
             message = (
                 exc.messages[0] if getattr(exc, "messages", None) else str(exc)
             )
             return JsonResponse({"ok": False, "error": message}, status=400)
-        return JsonResponse({"ok": True, "result": result})
+        return JsonResponse({"ok": True, "line": line})
 
-    pending = pending_stock_take_for_shop(selected_shop) if selected_shop else None
-    pending_payload = (
-        online_stock_take_assignment_payload(pending) if pending else None
+    catalog = (
+        build_online_stock_take_catalog(shop=selected_shop)
+        if selected_shop
+        else {
+            "groups": [],
+            "item_count": 0,
+            "filled_count": 0,
+            "match_count": 0,
+            "excess_count": 0,
+            "short_count": 0,
+        }
     )
-    results = (
-        build_shop_stock_count_results(shop=selected_shop) if selected_shop else []
-    )
-    can_create = employee_may(profile, "stock-management", "stock-take")
 
     return render(
         request,
@@ -6804,13 +6769,9 @@ def online_stock_take_page(request, profile, meta, module):
             "page_sidebar": page_sidebar,
             "stock_mode": "online-stock-take",
             "online_stock_take_url": list_url,
-            "stock_take_create_url": create_url,
             "online_shops": shops,
             "selected_shop": selected_shop,
-            "pending_stock_take": pending,
-            "pending_stock_take_payload": pending_payload,
-            "stock_count_results": results,
-            "can_create_stock_take": can_create,
+            "online_catalog": catalog,
         },
     )
 

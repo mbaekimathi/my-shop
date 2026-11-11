@@ -9322,3 +9322,247 @@
     -webkit-overflow-scrolling: touch;
   }
 }
+
+/* Online stock take — category list (not cards), live variance + autosave */
+.stock-panel--online-take {
+  gap: 0.9rem;
+}
+
+.online-take-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: end;
+}
+
+.online-take-shop-pick,
+.online-take-search {
+  display: grid;
+  gap: 0.28rem;
+  min-width: min(18rem, 100%);
+}
+
+.online-take-shop-pick span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--mist-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.online-take-shop-pick select,
+.online-take-search input {
+  width: 100%;
+  min-height: 2.55rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.45rem 0.7rem;
+  font: inherit;
+}
+
+.online-take-search {
+  position: relative;
+  flex: 1 1 16rem;
+}
+
+.online-take-search i {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  width: 1rem;
+  height: 1rem;
+  transform: translateY(-50%);
+  color: var(--mist);
+  pointer-events: none;
+}
+
+.online-take-search input {
+  padding-left: 2.2rem;
+}
+
+.online-take-save-status {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--mist-dim);
+}
+
+.online-take-save-status.is-error {
+  color: var(--danger);
+}
+
+.online-take-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1.1rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-muted) 45%, var(--surface));
+}
+
+.online-take-categories {
+  display: grid;
+  gap: 1rem;
+}
+
+.online-take-category {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.online-take-category-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 35%, var(--surface));
+}
+
+.online-take-category-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.online-take-category-head span {
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.online-take-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.online-take-list-head,
+.online-take-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1.6fr) 6.5rem 7.5rem minmax(8rem, 1fr);
+  gap: 0.55rem 0.75rem;
+  align-items: center;
+  padding: 0.55rem 0.9rem;
+}
+
+.online-take-list-head {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 22%, transparent);
+}
+
+.online-take-row {
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+}
+
+.online-take-row:last-child {
+  border-bottom: 0;
+}
+
+.online-take-row.is-saving {
+  opacity: 0.72;
+}
+
+.online-take-row.is-match {
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 6%, transparent);
+}
+
+.online-take-row.is-excess {
+  background: color-mix(in srgb, #d4a017 7%, transparent);
+}
+
+.online-take-row.is-short {
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+
+.online-take-item strong {
+  display: block;
+  font-size: 0.92rem;
+  color: var(--text-strong);
+}
+
+.online-take-system {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: right;
+}
+
+.online-take-qty input {
+  width: 100%;
+  min-height: 2.35rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  padding: 0.35rem 0.55rem;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.online-take-qty input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent, #1f6f78) 45%, transparent);
+  outline-offset: 1px;
+}
+
+.online-take-variance {
+  font-size: 0.84rem;
+  line-height: 1.25;
+}
+
+.online-take-variance.is-empty {
+  color: var(--mist);
+}
+
+.online-take-variance.is-match {
+  color: var(--ok, #2f7d4a);
+}
+
+.online-take-variance.is-excess {
+  color: #9a6b12;
+}
+
+.online-take-variance.is-short {
+  color: var(--danger);
+}
+
+.online-take-variance strong {
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .online-take-list-head {
+    display: none;
+  }
+
+  .online-take-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "item item"
+      "system qty"
+      "variance variance";
+    padding: 0.75rem 0.85rem;
+  }
+
+  .online-take-item { grid-area: item; }
+  .online-take-system {
+    grid-area: system;
+    text-align: left;
+  }
+  .online-take-system::before {
+    content: "Current ";
+    font-weight: 600;
+    color: var(--mist-dim);
+  }
+  .online-take-qty { grid-area: qty; }
+  .online-take-variance { grid-area: variance; }
+}

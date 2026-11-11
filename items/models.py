@@ -672,3 +672,45 @@ class StockTakeCount(models.Model):
 
     def __str__(self):
         return f"{self.item_id} @ assignment {self.assignment_id}"
+
+
+class OnlineStockTakeEntry(models.Model):
+    """HQ live physical count draft for one shop item (separate from Stock Take)."""
+
+    shop = models.ForeignKey(
+        "shops.Shop",
+        on_delete=models.CASCADE,
+        related_name="online_stock_take_entries",
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="online_stock_take_entries",
+    )
+    physical_qty = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+    )
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+    updated_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="online_stock_take_entries",
+    )
+    updated_by_label = models.CharField(max_length=160, blank=True, default="")
+
+    class Meta:
+        ordering = ["item__category", "item__name", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["shop", "item"],
+                name="uniq_online_stock_take_shop_item",
+            )
+        ]
+
+    def __str__(self):
+        return f"Online count {self.item_id} @ shop {self.shop_id}"
