@@ -1,11 +1,24 @@
 {
   "name": "MY-SHOP",
   "short_name": "MY-SHOP",
-  "description": "Shop floor, stock, and employee portal",
-  "start_url": "/",
+  "description": "Employee portal — sign in and run your shop from your phone",
+  "id": "/employees/login/",
+  "start_url": "/employees/login/?source=pwa",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#061214",
-  "theme_color": "#10282c",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#061216",
+  "theme_color": "#0f8f82",
+  "lang": "en",
+  "categories": ["business", "productivity"],
+  "prefer_related_applications": false,
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "/manifest.webmanifest"
+    }
+  ],
   "icons": [
     {
       "src": "/static/icons/myshop-192.png",
@@ -18,6 +31,12 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "/static/icons/myshop-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

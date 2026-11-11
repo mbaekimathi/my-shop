@@ -754,12 +754,20 @@
   ${partyPhoneHtml}
 </div>`;
 
+    const deliveryRefs =
+      t.has_delivery || t.delivery_location
+        ? `${metaRow("Rider", t.delivery_rider)}${metaRow(
+            "Delivery",
+            t.delivery_location
+          )}`
+        : "";
     const refsBlock = `<div class="receipt-ticket-refs">
   ${metaRow("Branch", t.receiving_branch)}
   ${metaRow("Category", t.expense_category)}
   ${metaRow("Status", t.status)}
   ${metaRow("Pay by", t.credit_due_date)}
   ${metaRow(authorisedLabel, t.cashier)}
+  ${deliveryRefs}
 </div>`;
 
     const docTypeClass = t.doc_type

@@ -1,0 +1,406 @@
+{% if delivery_section == "active" %}
+  {% if active_deliveries %}
+  <ul class="rider-list">
+    {% for job in active_deliveries %}
+    <li class="rider-card rider-card--active" data-rider-job data-delivery-id="{{ job.pk }}">
+      <div class="rider-card-head">
+        <div class="rider-card-id">
+          <strong>{{ job.receipt.receipt_number }}</strong>
+          <p class="rider-card-shop">
+            {{ job.shop.name }}
+            · {{ job.receipt.get_kind_display }}
+          </p>
+        </div>
+        <span class="rider-pill rider-pill--accepted">
+          <i data-lucide="bike" aria-hidden="true"></i>
+          En route
+        </span>
+      </div>
+      <dl class="rider-meta">
+        <div>
+          <dt>Client</dt>
+          <dd>{{ job.client_name|default:"—" }}</dd>
+        </div>
+        <div>
+          <dt>Phone</dt>
+          <dd>
+            {% if job.client_phone %}
+            <a href="tel:{{ job.client_phone }}">{{ job.client_phone }}</a>
+            {% else %}
+            —
+            {% endif %}
+          </dd>
+        </div>
+        <div>
+          <dt>Location</dt>
+          <dd>
+            {% if job.maps_url %}
+            <a href="{{ job.maps_url }}" target="_blank" rel="noopener noreferrer">
+              {{ job.location_text }}
+            </a>
+            {% else %}
+            {{ job.location_text }}
+            {% endif %}
+          </dd>
+        </div>
+        <div>
+          <dt>Total</dt>
+          <dd>KSh {{ job.receipt.total }}</dd>
+        </div>
+        {% if job.distance_km or job.eta_minutes %}
+        <div>
+          <dt>Route</dt>
+          <dd>
+            {% if job.distance_km %}{{ job.distance_km }} km{% endif %}
+            {% if job.distance_km and job.eta_minutes %} · {% endif %}
+            {% if job.eta_minutes %}~{{ job.eta_minutes }} min{% endif %}
+          </dd>
+        </div>
+        {% endif %}
+        {% if job.expected_at %}
+        <div>
+          <dt>Due by</dt>
+          <dd>{{ job.expected_at|date:"H:i" }}</dd>
+        </div>
+        {% endif %}
+      </dl>
+      {% if job.has_coordinates %}
+      <p class="rider-coords">
+        Pin · {{ job.latitude }}, {{ job.longitude }}
+      </p>
+      {% endif %}
+
+      <form
+        method="post"
+        action="{% url 'employees:rider_delivery_complete' job.pk %}"
+        class="rider-complete-form"
+        data-rider-complete
+        data-kind="{{ job.receipt.kind }}"
+      >
+        {% csrf_token %}
+        {% if job.receipt.kind == "sale" %}
+        <label class="rider-field">
+          <span>Received by</span>
+          <input
+            type="text"
+            name="receiver_name"
+            value="{{ job.client_name }}"
+            required
+            autocomplete="name"
+            placeholder="Person who received the goods"
+          >
+        </label>
+        <p class="rider-note">Defaults to the client name — edit if someone else received it.</p>
+        {% elif job.receipt.kind == "credit" %}
+        <div
+          class="rider-pay-flow"
+          data-rider-pay-flow
+          data-stk-available="{% if stk_ready %}1{% else %}0{% endif %}"
+        >
+          <p class="rider-pay-heading">How was payment handled?</p>
+          <div class="rider-pay-modes" role="radiogroup" aria-label="Payment method">
+            <button
+              type="button"
+              class="rider-pay-mode is-active"
+              data-pay-mode="unpaid"
+              aria-pressed="true"
+            >
+              <span class="rider-pay-mode-icon" aria-hidden="true"><i data-lucide="package-open"></i></span>
+              <span class="rider-pay-mode-copy">
+                <strong>Unpaid</strong>
+                <small>Deliver now, collect later</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              class="rider-pay-mode"
+              data-pay-mode="manual"
+              aria-pressed="false"
+            >
+              <span class="rider-pay-mode-icon" aria-hidden="true"><i data-lucide="keyboard"></i></span>
+              <span class="rider-pay-mode-copy">
+                <strong>Manual clear</strong>
+                <small>Enter M-Pesa / cash ref</small>
+              </span>
+            </button>
+            {% if stk_ready %}
+            <button
+              type="button"
+              class="rider-pay-mode"
+              data-pay-mode="stk"
+              aria-pressed="false"
+            >
+              <span class="rider-pay-mode-icon" aria-hidden="true"><i data-lucide="smartphone"></i></span>
+              <span class="rider-pay-mode-copy">
+                <strong>Prompt client</strong>
+                <small>Send M-Pesa STK</small>
+              </span>
+            </button>
+            {% endif %}
+          </div>
+
+          <div class="rider-pay-panel is-active" data-pay-panel="unpaid">
+            <p class="rider-note">
+              Marks this run as <strong>delivered (not paid)</strong>. The credit sale stays open.
+            </p>
+          </div>
+
+          <div class="rider-pay-panel" data-pay-panel="manual" hidden>
+            <div class="rider-complete-grid">
+              <label class="rider-field">
+                <span>Payment reference</span>
+                <input
+                  type="text"
+                  name="payment_reference"
+                  value=""
+                  autocomplete="off"
+                  placeholder="M-Pesa code / receipt no."
+                  data-payment-reference
+                >
+              </label>
+              <label class="rider-field">
+                <span>Payment date &amp; time</span>
+                <input
+                  type="datetime-local"
+                  name="payment_at"
+                  data-payment-at
+                >
+              </label>
+              <label class="rider-field rider-field--full">
+                <span>Amount collected</span>
+                <input
+                  type="number"
+                  name="payment_amount"
+                  min="0"
+                  step="0.01"
+                  inputmode="decimal"
+                  value="{{ job.receipt.total }}"
+                  data-payment-amount
+                >
+              </label>
+            </div>
+            <p class="rider-note">
+              Reference required for <strong>delivered (paid)</strong>. Does not convert the credit sale.
+            </p>
+          </div>
+
+          {% if stk_ready %}
+          <div class="rider-pay-panel" data-pay-panel="stk" hidden data-rider-stk>
+            <div class="rider-complete-grid">
+              <label class="rider-field">
+                <span>Phone</span>
+                <input
+                  type="tel"
+                  name="stk_phone"
+                  value="{{ job.client_phone }}"
+                  autocomplete="tel"
+                  data-stk-phone
+                >
+              </label>
+              <label class="rider-field">
+                <span>Amount</span>
+                <input
+                  type="number"
+                  name="stk_amount"
+                  min="1"
+                  step="0.01"
+                  inputmode="decimal"
+                  value="{{ job.receipt.total }}"
+                  data-stk-amount
+                >
+              </label>
+            </div>
+            <button
+              type="button"
+              class="btn btn--ghost btn--block rider-stk-send"
+              data-stk-send
+              data-stk-url="{% url 'employees:rider_delivery_stk_initiate' job.pk %}"
+            >
+              Send STK prompt
+            </button>
+            <p class="rider-note" data-stk-status hidden></p>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <div class="rider-card-actions">
+          <button type="submit" class="btn btn--primary btn--block" data-complete-submit>
+            {% if job.receipt.kind == "credit" %}
+            Mark delivered · unpaid
+            {% else %}
+            Mark delivered
+            {% endif %}
+          </button>
+          {% if job.maps_url %}
+          <a class="btn btn--ghost btn--block" href="{{ job.maps_url }}" target="_blank" rel="noopener noreferrer">
+            Open map
+          </a>
+          {% endif %}
+        </div>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="rider-empty">
+    <span class="rider-empty-icon" aria-hidden="true"><i data-lucide="route"></i></span>
+    <p><strong>No active runs.</strong> Accept an open request to start a delivery.</p>
+    <a class="btn btn--ghost" href="{% url 'employees:rider_open_deliveries' %}">Browse open deliveries</a>
+  </div>
+  {% endif %}
+
+{% elif delivery_section == "open" %}
+  {% if open_deliveries %}
+  <ul class="rider-list">
+    {% for job in open_deliveries %}
+    <li class="rider-card">
+      <div class="rider-card-head">
+        <div class="rider-card-id">
+          <strong>{{ job.receipt.receipt_number }}</strong>
+          <p class="rider-card-shop">{{ job.shop.name }} · {{ job.receipt.get_kind_display }}</p>
+        </div>
+        <span class="rider-pill rider-pill--open">
+          <i data-lucide="package" aria-hidden="true"></i>
+          Open
+        </span>
+      </div>
+      <dl class="rider-meta">
+        <div>
+          <dt>Location</dt>
+          <dd>{{ job.location_text }}</dd>
+        </div>
+        <div>
+          <dt>Total</dt>
+          <dd>KSh {{ job.receipt.total }}</dd>
+        </div>
+        <div>
+          <dt>Shop</dt>
+          <dd>{{ job.shop.name }}</dd>
+        </div>
+        <div>
+          <dt>Posted</dt>
+          <dd>{{ job.created_at|date:"d M Y H:i" }}</dd>
+        </div>
+        {% if job.distance_km or job.eta_minutes %}
+        <div>
+          <dt>Route</dt>
+          <dd>
+            {% if job.distance_km %}{{ job.distance_km }} km{% endif %}
+            {% if job.distance_km and job.eta_minutes %} · {% endif %}
+            {% if job.eta_minutes %}~{{ job.eta_minutes }} min{% endif %}
+          </dd>
+        </div>
+        {% endif %}
+      </dl>
+      <p class="rider-note">Accept to unlock client name and phone.</p>
+      <div class="rider-card-actions">
+        <form method="post" action="{% url 'employees:rider_delivery_accept' job.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--primary btn--block">Accept delivery</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="rider-empty">
+    <span class="rider-empty-icon" aria-hidden="true"><i data-lucide="package-open"></i></span>
+    <p><strong>Queue is clear.</strong> New delivery requests will show up here.</p>
+  </div>
+  {% endif %}
+
+{% elif delivery_section == "completed" %}
+  {% if completed_deliveries %}
+  <div class="rider-done-table-wrap">
+    <table class="rider-done-table">
+      <thead>
+        <tr>
+          <th scope="col">Receipt</th>
+          <th scope="col">Client / drop-off</th>
+          <th scope="col">Route</th>
+          <th scope="col">Expected</th>
+          <th scope="col">Taken</th>
+          <th scope="col">Variance</th>
+          <th scope="col">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in completed_deliveries %}
+        <tr>
+          <td data-label="Receipt">
+            <strong>{{ job.receipt.receipt_number }}</strong>
+            <small>{{ job.shop.name }} · {{ job.receipt.get_kind_display }}</small>
+            {% if job.completed_at %}
+            <small>{{ job.completed_at|date:"d M Y H:i" }}</small>
+            {% endif %}
+          </td>
+          <td data-label="Client / drop-off">
+            <strong>
+              {% if job.receiver_name %}
+              {{ job.receiver_name }}
+              {% else %}
+              {{ job.client_name|default:"Client" }}
+              {% endif %}
+            </strong>
+            <small>{{ job.location_text }}</small>
+            {% if job.payment_reference %}
+            <small>Ref {{ job.payment_reference }}</small>
+            {% endif %}
+          </td>
+          <td data-label="Route">
+            {% if job.distance_km or job.eta_minutes %}
+              {% if job.distance_km %}{{ job.distance_km }} km{% endif %}
+              {% if job.distance_km and job.eta_minutes %}<br>{% endif %}
+              {% if job.eta_minutes %}Plan {{ job.eta_minutes }} min{% endif %}
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td data-label="Expected">
+            {% if job.expected_minutes is not None %}
+            {{ job.expected_minutes }} min
+            {% if job.expected_at %}
+            <small>by {{ job.expected_at|date:"H:i" }}</small>
+            {% endif %}
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td data-label="Taken">
+            {% if job.actual_minutes is not None %}
+            {{ job.actual_minutes }} min
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td data-label="Variance">
+            {% if job.timing_variance_label %}
+            <span class="rider-variance rider-variance--{{ job.timing_variance_tone }}">
+              {{ job.timing_variance_label }}
+            </span>
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td data-label="Status">
+            {% if job.status == "delivered_paid" %}
+            <span class="rider-pill rider-pill--done">Delivered · paid</span>
+            {% else %}
+            <span class="rider-pill rider-pill--done">
+              Delivered{% if job.receipt.kind == "credit" %} · unpaid{% endif %}
+            </span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="rider-empty">
+    <span class="rider-empty-icon" aria-hidden="true"><i data-lucide="check-circle-2"></i></span>
+    <p><strong>No completed deliveries yet.</strong> Finished jobs will appear here.</p>
+  </div>
+  {% endif %}
+{% endif %}

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import api_views, views
+from . import api_views, views, web_push_views
 from items.views import (
     serial_in_stock_check_api,
     serial_search_api,
@@ -24,6 +24,21 @@ urlpatterns = [
     path("api/ping/", api_views.ping_api, name="ping"),
     path("api/sync/", api_views.sync_api, name="sync"),
     path("api/sync/register/", api_views.sync_register_api, name="sync_register"),
+    path(
+        "api/web-push/vapid-public-key/",
+        web_push_views.web_push_vapid_public_key,
+        name="web_push_vapid_public_key",
+    ),
+    path(
+        "api/web-push/subscribe/",
+        web_push_views.web_push_subscribe,
+        name="web_push_subscribe",
+    ),
+    path(
+        "api/web-push/unsubscribe/",
+        web_push_views.web_push_unsubscribe,
+        name="web_push_unsubscribe",
+    ),
     path("api/suppliers/", supplier_search_api, name="supplier_search"),
     path(
         "api/expense-suppliers/",

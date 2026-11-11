@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/messages.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/app/messages.css' %}?v=20261111-delivery">
 {% endblock %}
 
 {% block workspace_content %}
@@ -33,9 +33,12 @@
   <p class="daraja-help">
     Messages marked <strong>Active</strong> only send while automations are on and a
     channel is configured. Check
-    <a href="{% url 'employees:role_settings_section' role_segment=role_segment section='whatsapp' %}">WhatsApp settings</a>
-    or
-    <a href="{% url 'employees:role_settings_section' role_segment=role_segment section='sms' %}">SMS settings</a>.
+    <a href="{% url 'employees:role_settings_section' role_segment=role_segment section='whatsapp' %}">WhatsApp settings</a>,
+    <a href="{% url 'employees:role_settings_section' role_segment=role_segment section='sms' %}">SMS settings</a>,
+    or Message / email under Communications. The <strong>Credit sale</strong> draft
+    includes each customer’s private credit account link. Sale notices, plus
+    <strong>Delivery on the way</strong> when a rider accepts and
+    <strong>Delivery completed</strong> when they mark delivered, use the same channels.
   </p>
   {% endif %}
 
@@ -104,5 +107,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/message-drafts.js' %}?v=1"></script>
+<script src="{% static 'js/message-drafts.js' %}?v=20261111-followup"></script>
 {% endblock %}

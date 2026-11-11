@@ -19,6 +19,7 @@ ROLE_HOME_URL_NAMES = {
     EmployeeRole.STORE_MANAGER: "employees:role_store_manager",
     EmployeeRole.SHOP_CASHIER: "employees:role_shop_cashier",
     EmployeeRole.IT_SUPPORT: "employees:role_it_support",
+    EmployeeRole.RIDER: "employees:role_rider",
 }
 
 ROLE_URL_SEGMENTS = {
@@ -29,6 +30,7 @@ ROLE_URL_SEGMENTS = {
     EmployeeRole.STORE_MANAGER: "store-manager",
     EmployeeRole.SHOP_CASHIER: "shop-cashier",
     EmployeeRole.IT_SUPPORT: "it-support",
+    EmployeeRole.RIDER: "rider",
 }
 
 ROLE_FROM_URL_SEGMENT = {segment: role for role, segment in ROLE_URL_SEGMENTS.items()}

@@ -1,0 +1,259 @@
+/* Mobile app install prompt — hidden when already installed (standalone). */
+
+.pwa-install {
+  position: fixed;
+  inset: auto 1rem 1rem;
+  z-index: 70;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.85rem;
+  align-items: center;
+  max-width: 26rem;
+  margin-inline: auto;
+  padding: 0.85rem 0.95rem;
+  border-radius: 1.15rem;
+  border: 1px solid color-mix(in srgb, var(--teal, #0f8f82) 28%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, #0f8f82 18%, var(--surface, #fff)) 0%,
+      color-mix(in srgb, #f2b045 12%, var(--surface, #fff)) 100%
+    );
+  box-shadow:
+    0 18px 40px rgba(6, 18, 22, 0.22),
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  backdrop-filter: blur(12px);
+  opacity: 0;
+  transform: translateY(18px) scale(0.98);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
+}
+
+.pwa-install.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.pwa-install[hidden] {
+  display: none !important;
+}
+
+.pwa-install__icon {
+  width: 3.1rem;
+  height: 3.1rem;
+  border-radius: 0.85rem;
+  overflow: hidden;
+  box-shadow: 0 8px 18px rgba(6, 18, 22, 0.28);
+  flex-shrink: 0;
+}
+
+.pwa-install__icon img,
+.pwa-install__icon object {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pwa-install__copy {
+  min-width: 0;
+}
+
+.pwa-install__copy strong {
+  display: block;
+  font-size: 0.95rem;
+  letter-spacing: -0.02em;
+  color: var(--text-strong, #102226);
+}
+
+.pwa-install__copy span {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--text, #3a5054);
+}
+
+.pwa-install__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+
+.pwa-install__btn {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.55rem 0.9rem;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  color: #1a1203;
+  background: linear-gradient(135deg, #f7c26a, #f2b045);
+  box-shadow: 0 8px 16px rgba(242, 176, 69, 0.28);
+  white-space: nowrap;
+}
+
+.pwa-install__btn:hover {
+  filter: brightness(1.04);
+}
+
+.pwa-install__btn:focus-visible {
+  outline: 2px solid var(--teal, #0f8f82);
+  outline-offset: 2px;
+}
+
+.pwa-install__dismiss {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted, #6a7c80);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  padding: 0.15rem;
+}
+
+.pwa-install__dismiss:hover {
+  color: var(--text-strong, #102226);
+}
+
+.pwa-install__ios {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--teal, #0f8f82) 10%, transparent);
+  color: var(--text, #3a5054);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.pwa-install__ios[hidden] {
+  display: none !important;
+}
+
+.pwa-install__ios.is-pulse {
+  animation: pwa-hint-pulse 0.85s ease;
+}
+
+.pwa-install__ios kbd {
+  display: inline-block;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, #061216 8%, transparent);
+  font: inherit;
+  font-weight: 700;
+}
+
+@keyframes pwa-hint-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.02);
+  }
+}
+
+/* Compact CTA used in headers / hero actions */
+.pwa-install-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.55rem 0.95rem 0.55rem 0.45rem;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.88rem;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  color: #f6fafa;
+  background: linear-gradient(135deg, #0f8f82, #1a7d84 55%, #f2b045);
+  box-shadow: 0 10px 22px rgba(15, 143, 130, 0.28);
+}
+
+.pwa-install-cta[hidden] {
+  display: none !important;
+}
+
+.pwa-install-cta__mark {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 0.45rem;
+  overflow: hidden;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+
+.pwa-install-cta__mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pwa-install-cta:hover {
+  filter: brightness(1.05);
+}
+
+.auth-toolbar .pwa-install-cta {
+  margin-inline-start: auto;
+  padding: 0.4rem 0.75rem 0.4rem 0.35rem;
+  font-size: 0.78rem;
+}
+
+.auth-toolbar .pwa-install-cta__mark {
+  width: 1.45rem;
+  height: 1.45rem;
+}
+
+.storefront__hero-actions .pwa-install-cta {
+  align-self: center;
+}
+
+@media (max-width: 520px) {
+  .pwa-install {
+    inset: auto 0.75rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "icon copy"
+      "actions actions";
+  }
+
+  .pwa-install__icon {
+    grid-area: icon;
+  }
+
+  .pwa-install__copy {
+    grid-area: copy;
+  }
+
+  .pwa-install__actions {
+    grid-area: actions;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+}
+
+html[data-theme="dark"] .pwa-install {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, #0f8f82 28%, #0a1517) 0%,
+      color-mix(in srgb, #f2b045 14%, #0a1517) 100%
+    );
+  border-color: color-mix(in srgb, #3ecfbf 28%, transparent);
+}
+
+html[data-theme="dark"] .pwa-install__copy strong {
+  color: #f3f7f7;
+}
+
+html[data-theme="dark"] .pwa-install__copy span,
+html[data-theme="dark"] .pwa-install__ios {
+  color: #c5d3d4;
+}

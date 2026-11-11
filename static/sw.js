@@ -1,5 +1,5 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v33";
+const CACHE_VERSION = "myshop-v35";
 
 // Precache only the shared shell. Page-specific bundles (my-shop, catalogs,
 // printer) are cached on first use via networkFirst to keep install light.
@@ -146,6 +146,75 @@ self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
+});
+
+self.addEventListener("push", (event) => {
+  let payload = {
+    title: "MY-SHOP",
+    body: "You have a new update",
+    url: "/",
+    tag: "myshop",
+    icon: "/static/icons/myshop-192.png",
+    badge: "/static/icons/myshop-192.png",
+  };
+  try {
+    if (event.data) {
+      const parsed = event.data.json();
+      if (parsed && typeof parsed === "object") {
+        payload = { ...payload, ...parsed };
+      }
+    }
+  } catch (_err) {
+    try {
+      const text = event.data?.text?.() || "";
+      if (text) payload.body = text;
+    } catch (_err2) {
+      /* keep defaults */
+    }
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title || "MY-SHOP", {
+      body: payload.body || "",
+      icon: payload.icon || "/static/icons/myshop-192.png",
+      badge: payload.badge || "/static/icons/myshop-192.png",
+      tag: payload.tag || "myshop",
+      renotify: true,
+      data: { url: payload.url || "/" },
+      vibrate: [120, 60, 120],
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = event.notification?.data?.url || "/";
+  const absolute = new URL(target, self.location.origin).href;
+
+  event.waitUntil(
+    (async () => {
+      const clientsList = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      for (const client of clientsList) {
+        if ("focus" in client) {
+          try {
+            await client.focus();
+            if ("navigate" in client) {
+              await client.navigate(absolute);
+            }
+            return;
+          } catch (_err) {
+            /* try next */
+          }
+        }
+      }
+      if (self.clients.openWindow) {
+        await self.clients.openWindow(absolute);
+      }
+    })()
+  );
 });
 
 self.addEventListener("fetch", (event) => {

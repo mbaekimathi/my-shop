@@ -3,6 +3,11 @@
 
 {% block body_class %}page-workspace{% endblock %}
 
+{# Already signed in — never prompt to download the app here. #}
+{% block pwa_install %}
+{% include "partials/web_push_prompt.html" %}
+{% endblock %}
+
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/app/settings.css' %}?v=20261108-total-emphasis">
 <link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261108-mobile-fit">
@@ -15,6 +20,7 @@
 <link rel="stylesheet" href="{% static 'css/app/comms.css' %}?v=20261108-act-view">
 <link rel="stylesheet" href="{% static 'css/app/components.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261019-split">
+<link rel="stylesheet" href="{% static 'css/web-push.css' %}?v=20261111-webpush">
 {% endblock %}
 
 {% block body %}
@@ -26,6 +32,13 @@
   data-login-url="{% if workspace.is_shop_portal %}{% url 'employees:shop_login' %}{% else %}{% url 'employees:login' %}{% endif %}"
   data-alt-login-url="{% if workspace.is_shop_portal %}{% url 'employees:login' %}?switch=1{% else %}{% url 'employees:shop_login' %}?switch=1{% endif %}"
   data-dashboard-url="{{ page_sidebar.dashboard_url }}"
+  data-web-push-vapid-url="{% url 'employees:web_push_vapid_public_key' %}"
+  data-web-push-subscribe-url="{% url 'employees:web_push_subscribe' %}"
+  {% if workspace.role == "rider" %}
+  data-rider-alerts
+  data-status-url="{% url 'employees:rider_delivery_status' %}"
+  data-home-url="{% url 'employees:role_rider' %}"
+  {% endif %}
 >
   <div class="workspace-overlay" data-workspace-overlay hidden></div>
 
@@ -113,6 +126,10 @@
 <script defer src="{% static 'js/shop-switch.js' %}?v=1"></script>
 {% endif %}
 <script defer src="{% static 'js/unauthorized-popup.js' %}?v=1"></script>
+{% if workspace.role == "rider" %}
+<script defer src="{% static 'js/rider-delivery-alerts.js' %}?v=20261111-rider-sound"></script>
+{% endif %}
+<script defer src="{% static 'js/web-push.js' %}?v=20261111-webpush"></script>
 <script type="module" src="{% static 'js/session-guard.js' %}?v=6"></script>
 <script>
   (() => {

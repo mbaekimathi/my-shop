@@ -13,6 +13,7 @@ from .models import (
     ExpenseSupplier,
     Shop,
     ShopDaySession,
+    ShopDelivery,
     ShopPosSettings,
     ShopWorkingHoursSettings,
     ShopReceipt,
@@ -24,6 +25,8 @@ class ShopAdmin(admin.ModelAdmin):
     list_display = (
         "name",
         "location",
+        "latitude",
+        "longitude",
         "theme",
         "email",
         "phone_number",
@@ -257,6 +260,30 @@ class ShopReceiptAdmin(admin.ModelAdmin):
     list_filter = ("kind", "status", "payment_method", "created_at")
     search_fields = ("receipt_number", "client_name", "client_phone")
     inlines = [ShopReceiptLineInline]
+
+
+@admin.register(ShopDelivery)
+class ShopDeliveryAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "shop",
+        "receipt",
+        "status",
+        "location_text",
+        "accepted_by",
+        "accepted_at",
+        "completed_at",
+        "created_at",
+    )
+    list_filter = ("status", "shop", "created_at")
+    search_fields = (
+        "location_text",
+        "receipt__receipt_number",
+        "receipt__client_name",
+        "receipt__client_phone",
+    )
+    filter_horizontal = ("assigned_riders",)
+    readonly_fields = ("created_at", "updated_at", "accepted_at", "completed_at")
 
 
 @admin.register(ExpenseSupplier)

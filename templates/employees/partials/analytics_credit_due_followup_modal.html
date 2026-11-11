@@ -1,0 +1,66 @@
+{% if page.credit_due_today and page.credit_due_today.rows %}
+{{ page.credit_due_today|json_script:"credit-due-today-payload" }}
+<div
+  class="workspace-modal ax-credit-due-modal"
+  data-ax-credit-due-modal
+  data-due-date="{{ page.credit_due_today.date }}"
+  hidden
+>
+  <div class="workspace-modal-backdrop" data-ax-credit-due-close></div>
+  <div
+    class="workspace-modal-dialog ax-credit-due-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-credit-due-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <p class="ax-credit-due-kicker">Credits follow-up</p>
+        <h2 id="ax-credit-due-title">Follow-ups due today</h2>
+        <p class="ax-receipt-modal-meta">
+          {{ page.credit_due_today.date_label }}
+          · {{ page.credit_due_today.count }} credit{{ page.credit_due_today.count|pluralize }}
+        </p>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-ax-credit-due-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="ax-credit-due-body">
+      <p class="ax-credit-due-lead">
+        Follow up with these clients — their follow-up date is today.
+      </p>
+      <ul class="ax-credit-due-list" data-ax-credit-due-list>
+        {% for row in page.credit_due_today.rows %}
+        <li class="ax-credit-due-row">
+          <div class="ax-credit-due-row-main">
+            <strong>{{ row.client_name }}</strong>
+            <span>
+              {{ row.open_count }} open credit{{ row.open_count|pluralize }}
+              · {{ row.shop }}
+              {% if row.phone %}· {{ row.phone }}{% endif %}
+            </span>
+          </div>
+          <div class="ax-credit-due-row-side">
+            <em>{{ row.due }}</em>
+            {% if row.href %}
+            <a class="ax-apply ax-apply--ghost" href="{{ row.href }}">Open</a>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <div class="workspace-modal-actions ax-credit-due-actions">
+      <button type="button" class="btn btn--ghost" data-ax-credit-due-dismiss>
+        Dismiss for today
+      </button>
+      <button type="button" class="btn btn--primary" data-ax-credit-due-close>
+        Got it
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}

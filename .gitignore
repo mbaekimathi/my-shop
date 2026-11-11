@@ -1,4 +1,5 @@
 .env
+.vapid_keys.json
 .secret_key
 .production
 .venv/

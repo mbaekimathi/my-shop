@@ -17,6 +17,19 @@ def company_logo_path(instance, filename):
 class Shop(models.Model):
     name = models.CharField(max_length=200, db_index=True)
     location = models.CharField(max_length=255)
+    latitude = models.DecimalField(
+        max_digits=10,
+        decimal_places=7,
+        null=True,
+        blank=True,
+    )
+    longitude = models.DecimalField(
+        max_digits=10,
+        decimal_places=7,
+        null=True,
+        blank=True,
+    )
+    maps_url = models.URLField(max_length=500, blank=True, default="")
     email = models.EmailField()
     phone_number = models.CharField(max_length=40)
     receipt_phone_number = models.CharField(
@@ -62,6 +75,9 @@ class Shop(models.Model):
     def __str__(self):
         return f"{self.name} ({self.location})"
 
+    def has_coordinates(self):
+        return self.latitude is not None and self.longitude is not None
+
 
 class ShopReceiptKind(models.TextChoices):
     SALE = "sale", "Sale"
@@ -97,6 +113,17 @@ class Client(models.Model):
     full_name = models.CharField(max_length=200)
     phone_number = models.CharField(max_length=40)
     phone_normalized = models.CharField(max_length=40, unique=True, db_index=True)
+    email = models.EmailField(blank=True, default="")
+    credit_follow_up_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Follow-up date for this client's open credit account.",
+    )
+    credit_follow_up_reminder_sent_on = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Local date the morning-of-follow-up client reminder was sent.",
+    )
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
         on_delete=models.SET_NULL,
@@ -235,6 +262,198 @@ class ShopReceipt(models.Model):
 
     def __str__(self):
         return f"{self.receipt_number} ({self.get_kind_display()})"
+
+
+class ShopDeliveryStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    ACCEPTED = "accepted", "Accepted"
+    DELIVERED = "delivered", "Delivered"
+    DELIVERED_PAID = "delivered_paid", "Delivered (paid)"
+    # Legacy rows created before delivered / delivered_paid.
+    COMPLETED = "completed", "Completed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+# Terminal delivery outcomes shown on the rider completed board.
+SHOP_DELIVERY_DONE_STATUSES = frozenset(
+    {
+        ShopDeliveryStatus.DELIVERED,
+        ShopDeliveryStatus.DELIVERED_PAID,
+        ShopDeliveryStatus.COMPLETED,
+    }
+)
+
+
+class ShopDelivery(models.Model):
+    """Customer delivery job created from MY-SHOP checkout."""
+
+    receipt = models.OneToOneField(
+        ShopReceipt,
+        on_delete=models.CASCADE,
+        related_name="delivery",
+    )
+    shop = models.ForeignKey(
+        Shop,
+        on_delete=models.PROTECT,
+        related_name="deliveries",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=ShopDeliveryStatus.choices,
+        default=ShopDeliveryStatus.OPEN,
+        db_index=True,
+    )
+    location_text = models.CharField(max_length=500)
+    latitude = models.DecimalField(
+        max_digits=10,
+        decimal_places=7,
+        null=True,
+        blank=True,
+    )
+    longitude = models.DecimalField(
+        max_digits=10,
+        decimal_places=7,
+        null=True,
+        blank=True,
+    )
+    maps_url = models.URLField(max_length=500, blank=True, default="")
+    distance_km = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Estimated road distance from the shop to the drop-off.",
+    )
+    eta_minutes = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Estimated travel minutes from the shop to the drop-off.",
+    )
+    expected_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Target complete time once a rider accepts (accepted_at + eta).",
+    )
+    assigned_riders = models.ManyToManyField(
+        "employees.EmployeeProfile",
+        blank=True,
+        related_name="assigned_deliveries",
+        help_text="Optional. Empty = any rider may accept.",
+    )
+    accepted_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="accepted_deliveries",
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    receiver_name = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        help_text="Who received the goods at drop-off (sales).",
+    )
+    payment_reference = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="M-Pesa or other payment reference collected on credit deliveries.",
+    )
+    payment_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the customer paid the rider (credit deliveries).",
+    )
+    payment_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    created_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.PROTECT,
+        related_name="deliveries_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["status", "created_at"],
+                name="shopdeliv_status_created_idx",
+            ),
+            models.Index(
+                fields=["shop", "status"],
+                name="shopdeliv_shop_status_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Delivery {self.pk} · {self.receipt.receipt_number}"
+
+    @property
+    def client_name(self):
+        return (self.receipt.client_name or "").strip()
+
+    @property
+    def client_phone(self):
+        return (self.receipt.client_phone or "").strip()
+
+    def has_coordinates(self):
+        return self.latitude is not None and self.longitude is not None
+
+    @property
+    def actual_minutes(self):
+        """Minutes from accept to complete, or None if either stamp is missing."""
+        if not self.accepted_at or not self.completed_at:
+            return None
+        seconds = (self.completed_at - self.accepted_at).total_seconds()
+        if seconds < 0:
+            return None
+        return int(round(seconds / 60.0))
+
+    @property
+    def expected_minutes(self):
+        """Planned travel minutes used for variance (eta_minutes)."""
+        if self.eta_minutes is None:
+            return None
+        return int(self.eta_minutes)
+
+    @property
+    def timing_variance_minutes(self):
+        """Actual − expected minutes. Negative = early, positive = late."""
+        actual = self.actual_minutes
+        expected = self.expected_minutes
+        if actual is None or expected is None:
+            return None
+        return int(actual) - int(expected)
+
+    @property
+    def timing_variance_label(self):
+        variance = self.timing_variance_minutes
+        if variance is None:
+            return ""
+        if variance == 0:
+            return "On time"
+        if variance < 0:
+            return f"{abs(variance)} min early"
+        return f"{variance} min late"
+
+    @property
+    def timing_variance_tone(self):
+        variance = self.timing_variance_minutes
+        if variance is None:
+            return ""
+        if variance <= 0:
+            return "early"
+        if variance <= 5:
+            return "near"
+        return "late"
 
 
 class ShopReceiptLine(models.Model):
@@ -1261,6 +1480,8 @@ class CompanyCommunicationsSettings(models.Model):
     auto_quotation = models.BooleanField(default=False)
     auto_payment_reminder = models.BooleanField(default=False)
     auto_credit_due = models.BooleanField(default=False)
+    auto_delivery_on_way = models.BooleanField(default=True)
+    auto_delivery_complete = models.BooleanField(default=True)
     auto_shop_website = models.BooleanField(default=False)
     auto_stock_supplier = models.BooleanField(default=False)
     auto_expense_supplier = models.BooleanField(default=False)
@@ -1523,6 +1744,8 @@ class ClientCreditAccountEventKind(models.TextChoices):
     PAYMENT_MPESA = "payment_mpesa", "M-Pesa payment"
     DUE_DATE_SET = "due_date_set", "Payment due date set"
     DUE_DATE_CHANGED = "due_date_changed", "Payment due date changed"
+    FOLLOW_UP_SET = "follow_up_set", "Follow-up date set"
+    FOLLOW_UP_CHANGED = "follow_up_changed", "Follow-up date changed"
     ITEMS_RETURNED = "items_returned", "Items returned"
     CREDIT_CANCELLED = "credit_cancelled", "Credit note cancelled"
 

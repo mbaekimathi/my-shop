@@ -1,0 +1,82 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/rider.css' %}?v=20261111-rider-home">
+{% endblock %}
+
+{% block workspace_content %}
+<section class="rider-board" data-animate="rise">
+  <header class="rider-hero">
+    <div class="rider-hero-top">
+      <div class="rider-hero-copy">
+        <p class="rider-kicker">
+          <span class="rider-kicker-dot" aria-hidden="true"></span>
+          {{ role_label|default:workspace.role_label }} · live board
+        </p>
+        <h2 class="rider-title">
+          <span class="rider-title-icon" aria-hidden="true">
+            <i data-lucide="{{ meta.icon|default:'bike' }}"></i>
+          </span>
+          Welcome back, {{ user.first_name|default:user.get_full_name|default:user.username }}
+        </h2>
+        <p class="rider-sub">
+          Accept open jobs below. Use Active and Completed for runs already on your plate.
+        </p>
+      </div>
+      <span class="rider-route-badge">
+        <i data-lucide="map-pinned" aria-hidden="true"></i>
+        Delivery route ready
+      </span>
+    </div>
+
+    <div class="rider-stats" role="group" aria-label="Delivery summary">
+      <div class="rider-stat rider-stat--open">
+        <p class="rider-stat-label">Open</p>
+        <p class="rider-stat-value">{{ open_count }}</p>
+      </div>
+      <a class="rider-stat rider-stat--active" href="{% url 'employees:rider_active_deliveries' %}">
+        <p class="rider-stat-label">Active</p>
+        <p class="rider-stat-value">{{ active_count }}</p>
+      </a>
+      <a class="rider-stat rider-stat--done" href="{% url 'employees:rider_completed_deliveries' %}">
+        <p class="rider-stat-label">Done</p>
+        <p class="rider-stat-value">{{ completed_count }}</p>
+      </a>
+    </div>
+  </header>
+
+  <nav class="rider-hub rider-hub--mobile" aria-label="Other delivery pages">
+    <a class="rider-hub-card rider-hub-card--compact rider-hub-card--active" href="{% url 'employees:rider_active_deliveries' %}">
+      <span class="rider-hub-icon" aria-hidden="true"><i data-lucide="navigation"></i></span>
+      <span class="rider-hub-copy">
+        <strong>My active</strong>
+        <small>En-route jobs</small>
+      </span>
+      <span class="rider-hub-count">{{ active_count }}</span>
+    </a>
+    <a class="rider-hub-card rider-hub-card--compact rider-hub-card--done" href="{% url 'employees:rider_completed_deliveries' %}">
+      <span class="rider-hub-icon" aria-hidden="true"><i data-lucide="check-circle-2"></i></span>
+      <span class="rider-hub-copy">
+        <strong>Completed</strong>
+        <small>Finished jobs</small>
+      </span>
+      <span class="rider-hub-count">{{ completed_count }}</span>
+    </a>
+  </nav>
+
+  <section class="rider-panel rider-panel--open" aria-labelledby="rider-open-title">
+    <div class="rider-panel-head">
+      <h3 id="rider-open-title" class="rider-panel-title">
+        <i data-lucide="inbox" aria-hidden="true"></i>
+        Open deliveries
+      </h3>
+      <span class="rider-count" aria-label="{{ open_count }} open">{{ open_count }}</span>
+    </div>
+    {% include "employees/partials/rider_delivery_cards.html" with delivery_section="open" %}
+  </section>
+</section>
+{% endblock %}

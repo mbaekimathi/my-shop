@@ -46,6 +46,12 @@ ROLE_PAGE_META = {
         "summary": "Your IT support workspace.",
         "icon": "monitor-cog",
     },
+    EmployeeRole.RIDER: {
+        "title": "Rider",
+        "headline": "Rider workspace",
+        "summary": "Accept open deliveries and complete jobs assigned to you.",
+        "icon": "bike",
+    },
 }
 
 
@@ -97,7 +103,9 @@ def get_dashboard_modules(role):
 
     segment = role_url_segment(role)
     modules = DASHBOARD_MODULES
-    if role == EmployeeRole.STORE_MANAGER:
+    if role == EmployeeRole.RIDER:
+        modules = []
+    elif role == EmployeeRole.STORE_MANAGER:
         modules = [
             module
             for module in DASHBOARD_MODULES
@@ -141,6 +149,7 @@ WORKSPACE_DASHBOARD_VIEWS = frozenset(
         "employees:role_store_manager",
         "employees:role_shop_cashier",
         "employees:role_it_support",
+        "employees:role_rider",
     }
 )
 
@@ -216,6 +225,9 @@ def _workspace_parent_url(request, role):
         "employees:role_settings",
         "employees:workspace_module",
         "employees:marketing_links",
+        "employees:rider_open_deliveries",
+        "employees:rider_active_deliveries",
+        "employees:rider_completed_deliveries",
     }:
         return dashboard
 
@@ -593,10 +605,59 @@ def _module_sidebar_links(role, *, active_slug=None, profile=None, skip_slugs=()
     return links
 
 
+def sidebar_for_rider(profile=None, *, active="open"):
+    """Sidebar for rider hub and delivery list pages.
+
+    Open deliveries live on the rider home (``/rider/``). Active and completed
+    stay as separate pages. Desktop keeps these in the sticky sidebar; mobile
+    uses compact on-page cards instead.
+    """
+    dashboard_url = reverse("employees:role_rider")
+    on_open_home = active in {"open", "dashboard"}
+    primary = [
+        _link(
+            "Open deliveries",
+            "inbox",
+            url_name="employees:role_rider",
+            active=on_open_home,
+        ),
+        _link(
+            "My active deliveries",
+            "navigation",
+            url_name="employees:rider_active_deliveries",
+            active=active == "active",
+        ),
+        _link(
+            "Completed deliveries",
+            "check-circle-2",
+            url_name="employees:rider_completed_deliveries",
+            active=active == "completed",
+        ),
+    ]
+    return resolve_sidebar_hrefs(
+        {
+            "page": "rider_dashboard",
+            "dashboard_url": dashboard_url,
+            "omit_dashboard_link": True,
+            "primary": primary,
+            "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
 def sidebar_for_role_dashboard(
     role, profile=None, *, active_slug=None, omit_dashboard_link=True
 ):
     """Sidebar links for role home / dashboard pages."""
+    if role == EmployeeRole.RIDER:
+        active = (active_slug or "dashboard").strip() or "dashboard"
+        return sidebar_for_rider(profile=profile, active=active)
+
     dashboard_url = reverse(role_home_url_name(role))
     comms_roles = (EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN)
     skip_slugs = ("whatsapp",) if role in comms_roles else ()
@@ -1784,6 +1845,10 @@ def sidebar_for_credits(role, *, profile=None, active="credits"):
         "employees:analytics_credit_clients",
         kwargs={"role_segment": role_url_segment(role)},
     )
+    follow_ups_href = reverse(
+        "employees:analytics_credit_follow_ups",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
     report_href = reverse(
         "employees:analytics_credit_report",
         kwargs={"role_segment": role_url_segment(role)},
@@ -1791,6 +1856,14 @@ def sidebar_for_credits(role, *, profile=None, active="credits"):
     audits_href = reverse(
         "employees:analytics_credit_audits",
         kwargs={"role_segment": role_url_segment(role)},
+    )
+    footer_tail = []
+    if active != "credits":
+        footer_tail.append(
+            _link("Back to credits", "arrow-left", href=credits_href)
+        )
+    footer_tail.append(
+        _link("Sign out", "log-out", url_name="employees:logout", danger=True)
     )
     return resolve_sidebar_hrefs(
         {
@@ -1811,6 +1884,12 @@ def sidebar_for_credits(role, *, profile=None, active="credits"):
                     active=active == "clients",
                 ),
                 _link(
+                    "Credit follow-up",
+                    "calendar-clock",
+                    href=follow_ups_href,
+                    active=active == "follow-up",
+                ),
+                _link(
                     "Credit reports",
                     "file-text",
                     href=report_href,
@@ -1825,9 +1904,7 @@ def sidebar_for_credits(role, *, profile=None, active="credits"):
             ],
             "footer": _footer_site_links(
                 profile=profile,
-                tail=[
-                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
-                ],
+                tail=footer_tail,
             ),
         }
     )

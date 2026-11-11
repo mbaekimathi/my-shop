@@ -23,6 +23,7 @@ class EmployeeRole(models.TextChoices):
     STORE_MANAGER = "store_manager", "Store Manager"
     SHOP_CASHIER = "shop_cashier", "Shop Cashier"
     IT_SUPPORT = "it_support", "IT Support"
+    RIDER = "rider", "Rider"
 
 
 # Roles that work inside a delegated shop.
@@ -125,6 +126,59 @@ class EmployeeProfile(models.Model):
     @property
     def status_label(self):
         return self.get_status_display()
+
+
+class WebPushSubscription(models.Model):
+    """Browser / installed-app push endpoint for device notifications."""
+
+    endpoint = models.TextField()
+    endpoint_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    p256dh = models.CharField(max_length=255)
+    auth = models.CharField(max_length=255)
+    employee = models.ForeignKey(
+        EmployeeProfile,
+        on_delete=models.CASCADE,
+        related_name="push_subscriptions",
+        null=True,
+        blank=True,
+    )
+    shop = models.ForeignKey(
+        "shops.Shop",
+        on_delete=models.CASCADE,
+        related_name="push_subscriptions",
+        null=True,
+        blank=True,
+    )
+    user_agent = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [
+            models.Index(fields=["employee"], name="webpush_employee_idx"),
+            models.Index(fields=["shop"], name="webpush_shop_idx"),
+        ]
+
+    def __str__(self):
+        who = (
+            f"employee:{self.employee_id}"
+            if self.employee_id
+            else f"shop:{self.shop_id}"
+            if self.shop_id
+            else "anon"
+        )
+        return f"WebPushSubscription({who})"
+
+    @staticmethod
+    def hash_endpoint(endpoint: str) -> str:
+        import hashlib
+
+        return hashlib.sha256((endpoint or "").encode("utf-8")).hexdigest()
+
+    def save(self, *args, **kwargs):
+        self.endpoint_hash = self.hash_endpoint(self.endpoint)
+        return super().save(*args, **kwargs)
 
 
 class EmployeeModulePermission(models.Model):

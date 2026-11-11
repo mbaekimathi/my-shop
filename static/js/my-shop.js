@@ -2563,6 +2563,57 @@
     const clientSuggest = checkoutForm?.querySelector("[data-cart-client-suggest]");
     const creditDueWrap = checkoutForm?.querySelector("[data-cart-credit-due-wrap]");
     const creditDueInput = checkoutForm?.querySelector("[data-cart-credit-due]");
+    const deliveryWrap = checkoutForm?.querySelector("[data-cart-delivery-wrap]");
+    const deliveryToggle = checkoutForm?.querySelector("[data-cart-delivery]");
+    const deliveryFields = checkoutForm?.querySelector("[data-cart-delivery-fields]");
+    const deliveryInput = checkoutForm?.querySelector("[data-cart-delivery-location]");
+    const deliverySuggestions = checkoutForm?.querySelector(
+      "[data-cart-delivery-suggestions]"
+    );
+    const deliverySelected = checkoutForm?.querySelector(
+      "[data-cart-delivery-selected]"
+    );
+    const deliveryLatInput = checkoutForm?.querySelector("[data-cart-delivery-lat]");
+    const deliveryLngInput = checkoutForm?.querySelector("[data-cart-delivery-lng]");
+    const deliveryMapsUrlInput = checkoutForm?.querySelector(
+      "[data-cart-delivery-maps-url]"
+    );
+    const deliveryDistanceInput = checkoutForm?.querySelector(
+      "[data-cart-delivery-distance]"
+    );
+    const deliveryEtaInput = checkoutForm?.querySelector(
+      "[data-cart-delivery-eta]"
+    );
+    const deliveryRouteEl = checkoutForm?.querySelector(
+      "[data-cart-delivery-route]"
+    );
+    const deliveryRiderSelect = checkoutForm?.querySelector(
+      "[data-cart-delivery-rider]"
+    );
+    const shopOriginLat = Number(deliveryWrap?.getAttribute("data-shop-lat") || "");
+    const shopOriginLng = Number(deliveryWrap?.getAttribute("data-shop-lng") || "");
+    const shopHasOrigin =
+      Number.isFinite(shopOriginLat) && Number.isFinite(shopOriginLng);
+    const deliveryPlace = {
+      address: "",
+      mapsUrl: "",
+      lat: null,
+      lng: null,
+      distanceKm: null,
+      etaMinutes: null,
+    };
+    let deliveryDistanceService = null;
+    let deliveryRouteToken = 0;
+    let pendingClientDelivery = null;
+    let deliveryAutofilled = false;
+    const clientDeliveryHooks = {
+      onResolved: (_client) => {},
+    };
+    let deliveryPlacesReady = false;
+    let deliveryAutocomplete = null;
+    let deliveryPlacesService = null;
+    let deliverySuggestionTimer = null;
+    let deliveryActiveSuggestion = -1;
     const checkoutUrl = cartRoot.getAttribute("data-checkout-url") || "";
     const stkInitiateUrl = cartRoot.getAttribute("data-stk-initiate-url") || "";
     const stkStatusTemplate =
@@ -3295,7 +3346,7 @@
     // Client autofill: typing a full phone looks up the name, typing a name
     // shows matching clients and fills the phone on selection.
     const createClientAutofill = (
-      { nameInput, phoneInput, suggestEl, onHint } = {}
+      { nameInput, phoneInput, suggestEl, onHint, onClientResolved } = {}
     ) => {
       let lookupTimer = null;
       let lookupSeq = 0;
@@ -3358,6 +3409,7 @@
         }
         hideSuggest();
         setHint("Registered client selected.", { ok: true });
+        onClientResolved?.(client);
       };
 
       const renderSuggest = (results) => {
@@ -3479,6 +3531,7 @@
             nameAutofilled = false;
           }
           setHint("");
+          onClientResolved?.(null);
           return;
         }
         if (!clientLookupUrl) return;
@@ -3507,12 +3560,14 @@
             }
             hideSuggest();
             setHint("Registered client found.", { ok: true });
+            onClientResolved?.(data);
           } else {
             if (nameAutofilled && nameInput) {
               nameInput.value = "";
               nameAutofilled = false;
             }
             setHint("New client — will be saved on complete.");
+            onClientResolved?.(null);
           }
         } catch (_) {
           if (seq !== lookupSeq) return;
@@ -3590,6 +3645,7 @@
         clientHint.textContent = message;
         clientHint.classList.toggle("is-ok", ok && Boolean(message));
       },
+      onClientResolved: (client) => clientDeliveryHooks.onResolved(client),
     });
     const normalizeClientPhoneField = cartClient.normalizePhoneField;
 
@@ -3704,6 +3760,418 @@
       }, 80);
     };
 
+    const hideDeliverySuggestions = () => {
+      if (!deliverySuggestions) return;
+      deliverySuggestions.hidden = true;
+      deliverySuggestions.textContent = "";
+      deliveryActiveSuggestion = -1;
+    };
+
+    const formatEtaLabel = (minutes) => {
+      const mins = Math.max(0, Number(minutes) || 0);
+      if (mins < 60) return `${mins} min`;
+      const hours = Math.floor(mins / 60);
+      const rem = mins % 60;
+      return rem ? `${hours} h ${rem} min` : `${hours} h`;
+    };
+
+    const haversineKm = (lat1, lng1, lat2, lng2) => {
+      const toRad = (deg) => (deg * Math.PI) / 180;
+      const r = 6371;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return 2 * r * Math.asin(Math.sqrt(a));
+    };
+
+    const estimateEtaMinutes = (km) => {
+      if (!(km > 0)) return 0;
+      return Math.max(5, Math.round((km / 22) * 60) + 3);
+    };
+
+    const renderDeliveryRoute = () => {
+      if (!deliveryRouteEl) return;
+      if (deliveryPlace.distanceKm == null || deliveryPlace.etaMinutes == null) {
+        deliveryRouteEl.hidden = true;
+        deliveryRouteEl.textContent = "";
+        return;
+      }
+      deliveryRouteEl.hidden = false;
+      deliveryRouteEl.textContent = `From shop · ${Number(
+        deliveryPlace.distanceKm
+      ).toFixed(1)} km · about ${formatEtaLabel(deliveryPlace.etaMinutes)}`;
+    };
+
+    const writeDeliveryRouteFields = () => {
+      if (deliveryDistanceInput) {
+        deliveryDistanceInput.value =
+          deliveryPlace.distanceKm == null ? "" : String(deliveryPlace.distanceKm);
+      }
+      if (deliveryEtaInput) {
+        deliveryEtaInput.value =
+          deliveryPlace.etaMinutes == null ? "" : String(deliveryPlace.etaMinutes);
+      }
+      renderDeliveryRoute();
+    };
+
+    const clearDeliveryRoute = () => {
+      deliveryPlace.distanceKm = null;
+      deliveryPlace.etaMinutes = null;
+      writeDeliveryRouteFields();
+    };
+
+    const applyRouteEstimate = ({ distanceKm, etaMinutes }) => {
+      const km = Number(distanceKm);
+      const mins = Number(etaMinutes);
+      deliveryPlace.distanceKm =
+        Number.isFinite(km) && km >= 0 ? Number(km.toFixed(2)) : null;
+      deliveryPlace.etaMinutes =
+        Number.isFinite(mins) && mins >= 0 ? Math.round(mins) : null;
+      writeDeliveryRouteFields();
+    };
+
+    const refreshDeliveryRouteEstimate = () => {
+      const token = ++deliveryRouteToken;
+      clearDeliveryRoute();
+      if (
+        !shopHasOrigin ||
+        deliveryPlace.lat == null ||
+        deliveryPlace.lng == null
+      ) {
+        if (deliveryRouteEl && deliveryPlace.address && !shopHasOrigin) {
+          deliveryRouteEl.hidden = false;
+          deliveryRouteEl.textContent =
+            "Shop pin missing — cannot estimate distance or travel time.";
+        }
+        return;
+      }
+
+      const applyFallback = () => {
+        if (token !== deliveryRouteToken) return;
+        const km = haversineKm(
+          shopOriginLat,
+          shopOriginLng,
+          deliveryPlace.lat,
+          deliveryPlace.lng
+        );
+        applyRouteEstimate({
+          distanceKm: km,
+          etaMinutes: estimateEtaMinutes(km),
+        });
+      };
+
+      if (window.google?.maps?.DistanceMatrixService) {
+        deliveryDistanceService =
+          deliveryDistanceService ||
+          new window.google.maps.DistanceMatrixService();
+        if (deliveryRouteEl) {
+          deliveryRouteEl.hidden = false;
+          deliveryRouteEl.textContent = "Calculating distance and time from shop…";
+        }
+        deliveryDistanceService.getDistanceMatrix(
+          {
+            origins: [{ lat: shopOriginLat, lng: shopOriginLng }],
+            destinations: [{ lat: deliveryPlace.lat, lng: deliveryPlace.lng }],
+            travelMode: window.google.maps.TravelMode.DRIVING,
+            unitSystem: window.google.maps.UnitSystem.METRIC,
+          },
+          (response, status) => {
+            if (token !== deliveryRouteToken) return;
+            const row = response?.rows?.[0]?.elements?.[0];
+            if (
+              status === "OK" &&
+              row?.status === "OK" &&
+              row.distance?.value != null &&
+              row.duration?.value != null
+            ) {
+              applyRouteEstimate({
+                distanceKm: row.distance.value / 1000,
+                etaMinutes: Math.max(1, Math.round(row.duration.value / 60)),
+              });
+              return;
+            }
+            applyFallback();
+          }
+        );
+        return;
+      }
+      applyFallback();
+    };
+
+    const setDeliveryCoords = ({ address = "", mapsUrl = "", lat = null, lng = null } = {}) => {
+      deliveryPlace.address = String(address || "").trim();
+      deliveryPlace.mapsUrl = String(mapsUrl || "").trim();
+      deliveryPlace.lat = lat == null || lat === "" ? null : Number(lat);
+      deliveryPlace.lng = lng == null || lng === "" ? null : Number(lng);
+      if (
+        Number.isNaN(deliveryPlace.lat) ||
+        Number.isNaN(deliveryPlace.lng)
+      ) {
+        deliveryPlace.lat = null;
+        deliveryPlace.lng = null;
+      }
+      if (deliveryLatInput) {
+        deliveryLatInput.value =
+          deliveryPlace.lat == null ? "" : String(deliveryPlace.lat);
+      }
+      if (deliveryLngInput) {
+        deliveryLngInput.value =
+          deliveryPlace.lng == null ? "" : String(deliveryPlace.lng);
+      }
+      if (deliveryMapsUrlInput) {
+        deliveryMapsUrlInput.value = deliveryPlace.mapsUrl;
+      }
+      if (deliverySelected) {
+        if (deliveryPlace.address) {
+          deliverySelected.hidden = false;
+          deliverySelected.classList.remove("is-error");
+          const coordNote =
+            deliveryPlace.lat != null && deliveryPlace.lng != null
+              ? ` · ${deliveryPlace.lat.toFixed(5)}, ${deliveryPlace.lng.toFixed(5)}`
+              : "";
+          deliverySelected.textContent = `Selected: ${deliveryPlace.address}${coordNote}`;
+        } else {
+          deliverySelected.hidden = true;
+          deliverySelected.textContent = "";
+          deliverySelected.classList.remove("is-error");
+        }
+      }
+      if (deliveryPlace.lat != null && deliveryPlace.lng != null) {
+        refreshDeliveryRouteEstimate();
+      } else {
+        clearDeliveryRoute();
+      }
+    };
+
+    const clearDeliveryPlace = ({ keepPending = false } = {}) => {
+      setDeliveryCoords({});
+      if (deliveryInput) deliveryInput.value = "";
+      deliveryAutofilled = false;
+      if (!keepPending) pendingClientDelivery = null;
+      if (deliveryRiderSelect && !deliveryRiderSelect.disabled) {
+        deliveryRiderSelect.value = "";
+      }
+      hideDeliverySuggestions();
+    };
+
+    const fillDeliveryFromClientHistory = ({ force = false } = {}) => {
+      const last = pendingClientDelivery;
+      if (!last?.location_text) return false;
+      if (!deliveryToggle?.checked) return false;
+      const current = (deliveryInput?.value || "").trim();
+      if (current && !deliveryAutofilled && !force) return false;
+      if (deliveryInput) deliveryInput.value = last.location_text;
+      setDeliveryCoords({
+        address: last.location_text,
+        mapsUrl:
+          last.maps_url ||
+          (last.lat != null && last.lng != null
+            ? `https://www.google.com/maps/search/?api=1&query=${last.lat},${last.lng}`
+            : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(last.location_text)}`),
+        lat: last.lat,
+        lng: last.lng,
+      });
+      deliveryAutofilled = true;
+      if (deliverySelected) {
+        deliverySelected.hidden = false;
+        deliverySelected.classList.remove("is-error");
+        deliverySelected.textContent = `Previous location: ${last.location_text} (edit if different)`;
+      }
+      return true;
+    };
+
+    clientDeliveryHooks.onResolved = (client) => {
+      const last = client?.last_delivery || null;
+      pendingClientDelivery =
+        last && last.location_text
+          ? {
+              location_text: String(last.location_text || "").trim(),
+              lat: last.lat == null || last.lat === "" ? null : last.lat,
+              lng: last.lng == null || last.lng === "" ? null : last.lng,
+              maps_url: String(last.maps_url || "").trim(),
+            }
+          : null;
+      if (!pendingClientDelivery) {
+        if (deliveryAutofilled) {
+          clearDeliveryPlace({ keepPending: true });
+        }
+        return;
+      }
+      fillDeliveryFromClientHistory({ force: deliveryAutofilled || !deliveryPlace.address });
+    };
+
+    const refreshDeliveryUi = () => {
+      const kind = selectedKind();
+      const deliveryAllowed = kind === "sale" || kind === "credit";
+      if (deliveryWrap) deliveryWrap.hidden = !deliveryAllowed;
+      if (!deliveryAllowed && deliveryToggle) {
+        deliveryToggle.checked = false;
+      }
+      const wanted = Boolean(deliveryAllowed && deliveryToggle?.checked);
+      if (deliveryFields) deliveryFields.hidden = !wanted;
+      if (!wanted) {
+        clearDeliveryPlace({ keepPending: true });
+      } else {
+        fillDeliveryFromClientHistory();
+        if (deliveryPlace.address && deliverySelected) {
+          deliverySelected.hidden = false;
+        }
+      }
+    };
+
+    const initDeliveryPlaces = () => {
+      if (
+        !deliveryInput ||
+        deliveryInput.dataset.mapsEnabled !== "1" ||
+        !window.google?.maps?.places
+      ) {
+        return;
+      }
+      deliveryPlacesReady = true;
+      deliveryAutocomplete =
+        deliveryAutocomplete ||
+        new window.google.maps.places.AutocompleteService();
+      if (!deliveryPlacesService) {
+        const holder = document.createElement("div");
+        holder.hidden = true;
+        document.body.append(holder);
+        deliveryPlacesService = new window.google.maps.places.PlacesService(
+          holder
+        );
+      }
+    };
+
+    const selectDeliverySuggestion = (prediction) => {
+      const address = prediction?.description || "";
+      if (!address) return;
+      if (deliveryInput) deliveryInput.value = address;
+      deliveryAutofilled = false;
+      hideDeliverySuggestions();
+
+      const applyPlace = (place) => {
+        let lat = null;
+        let lng = null;
+        let mapsUrl = place?.url || "";
+        if (place?.geometry?.location) {
+          lat = place.geometry.location.lat();
+          lng = place.geometry.location.lng();
+          if (!mapsUrl) {
+            mapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+          }
+        } else if (!mapsUrl) {
+          mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+        }
+        const formatted = place?.formatted_address || address;
+        if (deliveryInput) deliveryInput.value = formatted;
+        deliveryAutofilled = false;
+        setDeliveryCoords({ address: formatted, mapsUrl, lat, lng });
+      };
+
+      if (deliveryPlacesService && prediction?.place_id) {
+        deliveryPlacesService.getDetails(
+          {
+            placeId: prediction.place_id,
+            fields: ["formatted_address", "geometry", "url", "name"],
+          },
+          (place, status) => {
+            if (
+              status === window.google.maps.places.PlacesServiceStatus.OK &&
+              place
+            ) {
+              applyPlace(place);
+              return;
+            }
+            applyPlace(null);
+          }
+        );
+        return;
+      }
+      applyPlace(null);
+    };
+
+    const renderDeliverySuggestions = (predictions) => {
+      if (!deliverySuggestions) return;
+      deliverySuggestions.textContent = "";
+      if (!predictions.length) {
+        hideDeliverySuggestions();
+        return;
+      }
+      predictions.forEach((prediction, index) => {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "shop-cart-delivery-suggestion";
+        button.setAttribute("role", "option");
+        button.dataset.index = String(index);
+        const main = document.createElement("strong");
+        main.textContent =
+          prediction.structured_formatting?.main_text || prediction.description;
+        const secondary = document.createElement("small");
+        secondary.textContent =
+          prediction.structured_formatting?.secondary_text ||
+          "Google Maps result";
+        button.append(main, secondary);
+        button.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          selectDeliverySuggestion(prediction);
+        });
+        item.append(button);
+        deliverySuggestions.append(item);
+      });
+      deliverySuggestions.hidden = false;
+      deliveryActiveSuggestion = -1;
+    };
+
+    const fetchDeliverySuggestions = (query) => {
+      if (
+        !deliveryPlacesReady ||
+        !deliveryAutocomplete ||
+        !deliveryToggle?.checked
+      ) {
+        hideDeliverySuggestions();
+        return;
+      }
+      const input = String(query || "").trim();
+      if (input.length < 2) {
+        hideDeliverySuggestions();
+        return;
+      }
+      deliveryAutocomplete.getPlacePredictions(
+        {
+          input,
+          componentRestrictions: { country: "ke" },
+        },
+        (predictions, status) => {
+          if (status !== window.google.maps.places.PlacesServiceStatus.OK) {
+            if (
+              status ===
+              window.google.maps.places.PlacesServiceStatus.ZERO_RESULTS
+            ) {
+              deliveryAutocomplete.getPlacePredictions(
+                { input },
+                (fallback, fallbackStatus) => {
+                  if (
+                    fallbackStatus !==
+                    window.google.maps.places.PlacesServiceStatus.OK
+                  ) {
+                    hideDeliverySuggestions();
+                    return;
+                  }
+                  renderDeliverySuggestions((fallback || []).slice(0, 6));
+                }
+              );
+              return;
+            }
+            hideDeliverySuggestions();
+            return;
+          }
+          renderDeliverySuggestions((predictions || []).slice(0, 6));
+        }
+      );
+    };
+
     const syncCheckoutMode = () => {
       const kind = selectedKind();
       const isSale = kind === "sale";
@@ -3734,6 +4202,7 @@
         }
         syncSplitAmounts(splitLastEdited);
       }
+      refreshDeliveryUi();
       syncClientRequirements();
       syncStkPanel();
     };
@@ -3874,6 +4343,8 @@
       if (cashInput) cashInput.value = "";
       if (mpesaInput) mpesaInput.value = "";
       if (creditDueInput) creditDueInput.value = "";
+      if (deliveryToggle) deliveryToggle.checked = false;
+      clearDeliveryPlace();
       if (selectedKind() === "credit" || defaultKind === "credit") {
         ensureCreditDueDefault();
       }
@@ -3984,12 +4455,66 @@
             }
           }
         }
+        const deliveryWanted = Boolean(
+          deliveryToggle?.checked &&
+            (kind === "sale" || kind === "credit")
+        );
+        if (deliveryWanted) {
+          const phone = normalizeClientPhoneField({ force: true });
+          const name = (clientNameInput?.value || "").trim();
+          if (!name) {
+            setCartStatus(
+              "Enter the client full name for delivery.",
+              { error: true }
+            );
+            focusCartClientFields();
+            return;
+          }
+          if (!phone) {
+            setCartStatus(
+              "Enter the client phone number for delivery.",
+              { error: true }
+            );
+            focusCartClientFields();
+            return;
+          }
+          const location =
+            deliveryPlace.address ||
+            (deliveryInput?.value || "").trim();
+          if (!location) {
+            setCartStatus("Enter or select a delivery location.", {
+              error: true,
+            });
+            if (deliverySelected) {
+              deliverySelected.hidden = false;
+              deliverySelected.classList.add("is-error");
+              deliverySelected.textContent =
+                "Please enter a delivery location first.";
+            }
+            deliveryInput?.focus();
+            return;
+          }
+          if (
+            deliveryInput?.dataset.mapsEnabled === "1" &&
+            (deliveryPlace.lat == null || deliveryPlace.lng == null)
+          ) {
+            setCartStatus(
+              "Pick a Google Maps suggestion so latitude and longitude are saved.",
+              { error: true }
+            );
+            deliveryInput?.focus();
+            return;
+          }
+        }
         const checkoutClientId = newCheckoutClientId();
         const payload = {
           kind,
           client_id: checkoutClientId,
           client_name:
-            clientDataEnabled || kind === "trade_out" || kind === "trade_in"
+            clientDataEnabled ||
+            kind === "trade_out" ||
+            kind === "trade_in" ||
+            deliveryWanted
               ? (
                   checkoutForm.querySelector("[data-cart-client-name]")?.value || ""
                 )
@@ -3997,7 +4522,10 @@
                   .toUpperCase()
               : "",
           client_phone:
-            clientDataEnabled || kind === "trade_out" || kind === "trade_in"
+            clientDataEnabled ||
+            kind === "trade_out" ||
+            kind === "trade_in" ||
+            deliveryWanted
               ? normalizeClientPhoneField({ force: true })
               : "",
           login_code: (cartLoginCode?.value || "").trim(),
@@ -4005,6 +4533,7 @@
             clientDataEnabled &&
               checkoutForm.querySelector("[data-cart-whatsapp]")?.checked
           ),
+          delivery: deliveryWanted,
           lines: [...cart.values()].map((line) => ({
             id: line.id,
             qty: line.qty,
@@ -4015,6 +4544,26 @@
             serials: Array.isArray(line.serials) ? line.serials : [],
           })),
         };
+        if (deliveryWanted) {
+          payload.delivery_location =
+            deliveryPlace.address ||
+            (deliveryInput?.value || "").trim();
+          payload.delivery_lat = deliveryPlace.lat;
+          payload.delivery_lng = deliveryPlace.lng;
+          payload.delivery_maps_url =
+            deliveryPlace.mapsUrl ||
+            deliveryMapsUrlInput?.value ||
+            "";
+          if (deliveryPlace.distanceKm != null) {
+            payload.delivery_distance_km = deliveryPlace.distanceKm;
+          }
+          if (deliveryPlace.etaMinutes != null) {
+            payload.delivery_eta_minutes = deliveryPlace.etaMinutes;
+          }
+          const selectedRiderId = Number(deliveryRiderSelect?.value || 0);
+          payload.delivery_rider_ids =
+            selectedRiderId > 0 ? [selectedRiderId] : [];
+        }
 
         if (kind === "sale") {
           if (!paymentsEnabled || !hasEnabledPayments()) {
@@ -6056,15 +6605,87 @@
 
     checkoutForm?.addEventListener("change", (event) => {
       if (
-        event.target.matches?.("[data-cart-kind], [data-cart-pay], [data-cart-whatsapp]")
+        event.target.matches?.(
+          "[data-cart-kind], [data-cart-pay], [data-cart-whatsapp], [data-cart-delivery]"
+        )
       ) {
         if (event.target.matches?.("[data-cart-pay], [data-cart-kind]")) {
           clearStkConfirmation();
         }
         syncCheckoutMode();
         if (event.target.matches?.("[data-cart-kind]")) renderCart();
+        if (event.target.matches?.("[data-cart-delivery]") && deliveryToggle?.checked) {
+          initDeliveryPlaces();
+          window.setTimeout(() => deliveryInput?.focus(), 40);
+        }
       }
     });
+
+    deliveryInput?.addEventListener("input", () => {
+      if (!deliveryToggle?.checked) return;
+      deliveryAutofilled = false;
+      const typed = deliveryInput.value.trim();
+      if (!typed) {
+        setDeliveryCoords({});
+        hideDeliverySuggestions();
+        return;
+      }
+      setDeliveryCoords({
+        address: typed,
+        mapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(typed)}`,
+        lat: null,
+        lng: null,
+      });
+      window.clearTimeout(deliverySuggestionTimer);
+      deliverySuggestionTimer = window.setTimeout(() => {
+        fetchDeliverySuggestions(typed);
+      }, 180);
+    });
+
+    deliveryInput?.addEventListener("keydown", (event) => {
+      if (!deliverySuggestions || deliverySuggestions.hidden) return;
+      const options = Array.from(
+        deliverySuggestions.querySelectorAll(".shop-cart-delivery-suggestion")
+      );
+      if (!options.length) return;
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        deliveryActiveSuggestion =
+          (deliveryActiveSuggestion + 1) % options.length;
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        deliveryActiveSuggestion =
+          (deliveryActiveSuggestion - 1 + options.length) % options.length;
+      } else if (event.key === "Enter" && deliveryActiveSuggestion >= 0) {
+        event.preventDefault();
+        options[deliveryActiveSuggestion].dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true })
+        );
+        return;
+      } else if (event.key === "Escape") {
+        hideDeliverySuggestions();
+        return;
+      } else {
+        return;
+      }
+      options.forEach((option, index) => {
+        option.classList.toggle(
+          "is-active",
+          index === deliveryActiveSuggestion
+        );
+      });
+    });
+
+    deliveryInput?.addEventListener("blur", () => {
+      window.setTimeout(hideDeliverySuggestions, 150);
+    });
+
+    document.addEventListener("shop-floor-maps-ready", () => {
+      if (deliveryToggle?.checked) initDeliveryPlaces();
+    });
+    if (window.google?.maps?.places) {
+      initDeliveryPlaces();
+    }
 
     cashInput?.addEventListener("input", () => {
       if (splitSyncing) return;

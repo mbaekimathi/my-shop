@@ -33,6 +33,8 @@ from .models import (
     ExpensePaymentStatus,
     ExpenseSupplier,
     Shop,
+    ShopDelivery,
+    ShopDeliveryStatus,
     ShopPaymentMethod,
     ShopReceiptKind,
     ShopReceiptStatus,
@@ -240,6 +242,8 @@ COMMUNICATIONS_TOGGLE_FIELDS = {
     "auto_quotation",
     "auto_payment_reminder",
     "auto_credit_due",
+    "auto_delivery_on_way",
+    "auto_delivery_complete",
     "auto_shop_website",
     "auto_stock_supplier",
     "auto_expense_supplier",
@@ -1326,6 +1330,8 @@ def communications_settings_as_dict(
         "auto_quotation": bool(row.auto_quotation),
         "auto_payment_reminder": bool(row.auto_payment_reminder),
         "auto_credit_due": bool(row.auto_credit_due),
+        "auto_delivery_on_way": bool(row.auto_delivery_on_way),
+        "auto_delivery_complete": bool(row.auto_delivery_complete),
         "auto_shop_website": bool(row.auto_shop_website),
         "auto_stock_supplier": bool(row.auto_stock_supplier),
         "auto_expense_supplier": bool(row.auto_expense_supplier),
@@ -3671,6 +3677,52 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "print_channels": row.enabled_print_channels(),
     }
 
+def _parse_shop_location_coords(data) -> dict:
+    """Optional lat/lng/maps_url from register/edit shop forms."""
+    from urllib.parse import quote
+
+    lat = data.get("latitude")
+    lng = data.get("longitude")
+    if lat in ("", None):
+        lat = None
+    if lng in ("", None):
+        lng = None
+    try:
+        latitude = Decimal(str(lat)) if lat is not None else None
+        longitude = Decimal(str(lng)) if lng is not None else None
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValidationError("Shop map coordinates are invalid.") from exc
+
+    if (latitude is None) != (longitude is None):
+        raise ValidationError("Shop location needs both latitude and longitude.")
+
+    if latitude is not None and not (Decimal("-90") <= latitude <= Decimal("90")):
+        raise ValidationError("Shop latitude must be between -90 and 90.")
+    if longitude is not None and not (
+        Decimal("-180") <= longitude <= Decimal("180")
+    ):
+        raise ValidationError("Shop longitude must be between -180 and 180.")
+
+    maps_url = (data.get("maps_url") or "").strip()
+    location = (data.get("location") or "").strip()
+    if not maps_url and latitude is not None and longitude is not None:
+        maps_url = (
+            "https://www.google.com/maps/search/?api=1"
+            f"&query={latitude},{longitude}"
+        )
+    elif not maps_url and location:
+        maps_url = (
+            "https://www.google.com/maps/search/?api=1"
+            f"&query={quote(location)}"
+        )
+
+    return {
+        "latitude": latitude,
+        "longitude": longitude,
+        "maps_url": (maps_url or "")[:500],
+    }
+
+
 def validate_shop_payload(data, files, *, existing_shop=None) -> dict:
     name = (data.get("name") or "").strip()
     location = (data.get("location") or "").strip()
@@ -3694,6 +3746,12 @@ def validate_shop_payload(data, files, *, existing_shop=None) -> dict:
         errors.append("Branch location is required.")
     else:
         cleaned["location"] = location.upper()
+        try:
+            cleaned.update(_parse_shop_location_coords(data))
+        except ValidationError as exc:
+            errors.extend(
+                exc.messages if hasattr(exc, "messages") else [str(exc)]
+            )
 
     if not email:
         errors.append("Branch email is required.")
@@ -3771,6 +3829,9 @@ def create_shop(profile, data, files) -> Shop:
     shop = Shop.objects.create(
         name=cleaned["name"],
         location=cleaned["location"],
+        latitude=cleaned.get("latitude"),
+        longitude=cleaned.get("longitude"),
+        maps_url=cleaned.get("maps_url") or "",
         email=cleaned["email"],
         phone_number=cleaned["phone_number"],
         login_code=cleaned["login_code"],
@@ -3794,6 +3855,9 @@ def update_shop(shop: Shop, data, files) -> Shop:
     cleaned = validate_shop_payload(data, files, existing_shop=shop)
     shop.name = cleaned["name"]
     shop.location = cleaned["location"]
+    shop.latitude = cleaned.get("latitude")
+    shop.longitude = cleaned.get("longitude")
+    shop.maps_url = cleaned.get("maps_url") or ""
     shop.email = cleaned["email"]
     shop.phone_number = cleaned["phone_number"]
     shop.login_code = cleaned["login_code"]
@@ -4075,6 +4139,114 @@ def search_clients_by_name(query: str, *, limit: int = 8):
     )
 
 
+def _delivery_location_payload(delivery: ShopDelivery | None) -> dict | None:
+    if delivery is None:
+        return None
+    return {
+        "location_text": delivery.location_text,
+        "lat": (
+            str(delivery.latitude) if delivery.latitude is not None else None
+        ),
+        "lng": (
+            str(delivery.longitude) if delivery.longitude is not None else None
+        ),
+        "maps_url": delivery.maps_url or "",
+    }
+
+
+def last_delivery_for_client(client) -> dict | None:
+    """Most recent delivery location for a registered client (editable default)."""
+    from django.db.models import Q
+
+    if client is None:
+        return None
+    phone = format_kenya_phone(
+        getattr(client, "phone_number", "")
+        or getattr(client, "phone_normalized", "")
+        or ""
+    )
+    filters = Q(receipt__client_id=client.pk)
+    if phone:
+        filters |= Q(receipt__client_phone=phone)
+    raw_phone = (getattr(client, "phone_number", "") or "").strip()
+    if raw_phone and raw_phone != phone:
+        filters |= Q(receipt__client_phone=raw_phone)
+    delivery = (
+        ShopDelivery.objects.filter(filters)
+        .order_by("-created_at")
+        .first()
+    )
+    return _delivery_location_payload(delivery)
+
+
+def last_deliveries_for_clients(clients) -> dict[int, dict]:
+    """Map client pk → latest delivery location payload."""
+    from django.db.models import Q
+
+    rows = list(clients or [])
+    if not rows:
+        return {}
+    client_ids = [client.pk for client in rows]
+    phones = set()
+    for client in rows:
+        phone = format_kenya_phone(
+            client.phone_number or client.phone_normalized or ""
+        )
+        if phone:
+            phones.add(phone)
+        raw = (client.phone_number or "").strip()
+        if raw:
+            phones.add(raw)
+
+    deliveries = (
+        ShopDelivery.objects.filter(
+            Q(receipt__client_id__in=client_ids)
+            | Q(receipt__client_phone__in=phones)
+        )
+        .select_related("receipt")
+        .order_by("-created_at")
+    )
+    by_client_id = {}
+    by_phone = {}
+    for delivery in deliveries:
+        payload = _delivery_location_payload(delivery)
+        client_id = delivery.receipt.client_id
+        if client_id and client_id not in by_client_id:
+            by_client_id[client_id] = payload
+        phone = (delivery.receipt.client_phone or "").strip()
+        if phone and phone not in by_phone:
+            by_phone[phone] = payload
+
+    result = {}
+    for client in rows:
+        payload = by_client_id.get(client.pk)
+        if payload is None:
+            phone = format_kenya_phone(
+                client.phone_number or client.phone_normalized or ""
+            )
+            payload = by_phone.get(phone) or by_phone.get(
+                (client.phone_number or "").strip()
+            )
+        if payload is not None:
+            result[client.pk] = payload
+    return result
+
+
+def serialize_client_lookup(client, *, last_delivery=None) -> dict:
+    """JSON payload for MY-SHOP client autofill."""
+    payload = {
+        "id": client.pk,
+        "full_name": (client.full_name or "").upper(),
+        "phone_number": format_kenya_phone(
+            client.phone_number or client.phone_normalized
+        ),
+        "last_delivery": last_delivery
+        if last_delivery is not None
+        else last_delivery_for_client(client),
+    }
+    return payload
+
+
 def upsert_client(*, full_name: str, phone: str, profile=None):
     """Create or update a client from checkout details."""
     from django.db import IntegrityError
@@ -4298,6 +4470,36 @@ def _sales_ticket_document_meta(receipt) -> dict:
     }
 
 
+def _delivery_ticket_fields(receipt) -> dict:
+    """Rider + location lines for customer receipts that include delivery."""
+    delivery = getattr(receipt, "delivery", None)
+    if delivery is None:
+        try:
+            delivery = ShopDelivery.objects.select_related(
+                "accepted_by__user"
+            ).prefetch_related("assigned_riders__user").get(receipt_id=receipt.pk)
+        except ShopDelivery.DoesNotExist:
+            return {
+                "has_delivery": False,
+                "delivery_rider": "",
+                "delivery_location": "",
+            }
+
+    rider_name = ""
+    if delivery.accepted_by_id and delivery.accepted_by:
+        rider_name = employee_display_name(delivery.accepted_by)
+    else:
+        assigned = list(delivery.assigned_riders.all()[:1])
+        if assigned:
+            rider_name = employee_display_name(assigned[0])
+
+    return {
+        "has_delivery": True,
+        "delivery_rider": rider_name,
+        "delivery_location": (delivery.location_text or "").strip(),
+    }
+
+
 def _build_receipt_ticket_data(receipt, lines) -> dict:
     """
     Structured receipt payload matching the Receipt settings HTML preview.
@@ -4322,6 +4524,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
     cashier = ""
     if receipt.created_by_id and receipt.created_by:
         cashier = employee_display_name(receipt.created_by)
+    delivery_fields = _delivery_ticket_fields(receipt)
 
     created = timezone.localtime(receipt.created_at)
     date_label = created.strftime("%d %b %Y · %H:%M")
@@ -4412,6 +4615,9 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         "client": receipt.client_name or "—",
         "party_phone": party_phone,
         "cashier": cashier,
+        "has_delivery": delivery_fields["has_delivery"],
+        "delivery_rider": delivery_fields["delivery_rider"],
+        "delivery_location": delivery_fields["delivery_location"],
         "status": status_label,
         "lines": ticket_lines,
         "cancelled": bool(
@@ -4524,6 +4730,17 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
         rows.append(_receipt_pad_line("Pay by", ticket["credit_due_date"], width))
     if ticket.get("cashier"):
         rows.append(_receipt_pad_line(authorised_label, ticket["cashier"], width))
+    if ticket.get("has_delivery") or ticket.get("delivery_location"):
+        if ticket.get("delivery_rider"):
+            rows.append(
+                _receipt_pad_line("Rider", ticket["delivery_rider"], width)
+            )
+        if ticket.get("delivery_location"):
+            rows.append(
+                _receipt_pad_line(
+                    "Delivery", ticket["delivery_location"], width
+                )
+            )
 
     qty_only = bool(ticket.get("qty_only"))
 
@@ -5045,6 +5262,525 @@ def store_idempotent_shop_checkout(client_id: str, result: dict) -> None:
     )
 
 
+def list_active_riders():
+    """Active employees with the Rider role, for POS delivery assignment."""
+    from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+
+    return list(
+        EmployeeProfile.objects.filter(
+            role=EmployeeRole.RIDER,
+            status=EmployeeStatus.ACTIVE,
+        )
+        .select_related("user")
+        .order_by("employee_id")
+    )
+
+
+def active_riders_payload():
+    """JSON-serialisable rider options for the MY-SHOP cart."""
+    rows = []
+    for profile in list_active_riders():
+        name = (
+            profile.user.get_full_name()
+            or profile.user.first_name
+            or profile.user.username
+        )
+        rows.append(
+            {
+                "id": profile.pk,
+                "employee_id": profile.employee_id,
+                "name": name,
+                "label": name,
+            }
+        )
+    return rows
+
+
+def _haversine_km(lat1, lon1, lat2, lon2) -> Decimal:
+    """Great-circle distance in kilometres between two WGS84 points."""
+    from math import asin, cos, radians, sin, sqrt
+
+    r_km = 6371.0
+    phi1, phi2 = radians(float(lat1)), radians(float(lat2))
+    d_phi = radians(float(lat2) - float(lat1))
+    d_lambda = radians(float(lon2) - float(lon1))
+    a = (
+        sin(d_phi / 2) ** 2
+        + cos(phi1) * cos(phi2) * sin(d_lambda / 2) ** 2
+    )
+    return Decimal(str(round(2 * r_km * asin(sqrt(a)), 2)))
+
+
+def _estimate_eta_minutes(distance_km) -> int:
+    """Urban bike/moto estimate: ~22 km/h plus a short prep buffer."""
+    try:
+        km = Decimal(str(distance_km or 0))
+    except (InvalidOperation, TypeError, ValueError):
+        return 0
+    if km <= 0:
+        return 0
+    travel = (km / Decimal("22")) * Decimal("60")
+    return max(5, int(travel.quantize(Decimal("1"))) + 3)
+
+
+def _route_estimate_from_shop(shop, *, latitude, longitude) -> dict:
+    """Fill distance/eta from shop pin when the client did not send them."""
+    if (
+        latitude is None
+        or longitude is None
+        or not getattr(shop, "has_coordinates", lambda: False)()
+    ):
+        return {"distance_km": None, "eta_minutes": None}
+    distance_km = _haversine_km(shop.latitude, shop.longitude, latitude, longitude)
+    return {
+        "distance_km": distance_km,
+        "eta_minutes": _estimate_eta_minutes(distance_km),
+    }
+
+
+def _parse_delivery_payload(payload: dict, *, shop=None) -> dict:
+    location = (payload.get("delivery_location") or payload.get("location_text") or "").strip()
+    if not location:
+        raise ValidationError("Enter or select a delivery location.")
+
+    lat = payload.get("delivery_lat")
+    lng = payload.get("delivery_lng")
+    if lat in ("", None):
+        lat = None
+    if lng in ("", None):
+        lng = None
+    try:
+        latitude = Decimal(str(lat)) if lat is not None else None
+        longitude = Decimal(str(lng)) if lng is not None else None
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValidationError("Delivery map coordinates are invalid.")
+
+    if (latitude is None) != (longitude is None):
+        raise ValidationError("Delivery needs both latitude and longitude.")
+
+    maps_url = (payload.get("delivery_maps_url") or "").strip()
+    if not maps_url and latitude is not None and longitude is not None:
+        maps_url = (
+            "https://www.google.com/maps/search/?api=1"
+            f"&query={latitude},{longitude}"
+        )
+    elif not maps_url:
+        from urllib.parse import quote
+
+        maps_url = (
+            "https://www.google.com/maps/search/?api=1"
+            f"&query={quote(location)}"
+        )
+
+    distance_km = None
+    eta_minutes = None
+    raw_distance = payload.get("delivery_distance_km")
+    raw_eta = payload.get("delivery_eta_minutes")
+    if raw_distance not in ("", None):
+        try:
+            distance_km = Decimal(str(raw_distance)).quantize(Decimal("0.01"))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValidationError("Delivery distance is invalid.")
+        if distance_km < 0:
+            raise ValidationError("Delivery distance cannot be negative.")
+    if raw_eta not in ("", None):
+        try:
+            eta_minutes = int(raw_eta)
+        except (TypeError, ValueError):
+            raise ValidationError("Delivery ETA is invalid.")
+        if eta_minutes < 0:
+            raise ValidationError("Delivery ETA cannot be negative.")
+    if distance_km is None or eta_minutes is None:
+        fallback = _route_estimate_from_shop(
+            shop, latitude=latitude, longitude=longitude
+        )
+        if distance_km is None:
+            distance_km = fallback["distance_km"]
+        if eta_minutes is None:
+            eta_minutes = fallback["eta_minutes"]
+
+    rider_ids = payload.get("delivery_rider_ids") or payload.get("rider_ids") or []
+    if isinstance(rider_ids, str):
+        rider_ids = [part for part in rider_ids.split(",") if part.strip()]
+    if not isinstance(rider_ids, (list, tuple)):
+        raise ValidationError("Rider selection is invalid.")
+
+    parsed_ids = []
+    for raw in rider_ids:
+        try:
+            rid = int(raw)
+        except (TypeError, ValueError):
+            raise ValidationError("Rider selection is invalid.")
+        if rid > 0:
+            parsed_ids.append(rid)
+
+    riders = []
+    if parsed_ids:
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+
+        riders = list(
+            EmployeeProfile.objects.filter(
+                pk__in=parsed_ids,
+                role=EmployeeRole.RIDER,
+                status=EmployeeStatus.ACTIVE,
+            )
+        )
+        if len(riders) != len(set(parsed_ids)):
+            raise ValidationError("One or more selected riders are unavailable.")
+
+    return {
+        "location_text": location[:500],
+        "latitude": latitude,
+        "longitude": longitude,
+        "maps_url": maps_url[:500],
+        "distance_km": distance_km,
+        "eta_minutes": eta_minutes,
+        "riders": riders,
+    }
+
+
+def _create_shop_delivery(*, receipt, shop, actor, delivery_payload: dict):
+    delivery = ShopDelivery.objects.create(
+        receipt=receipt,
+        shop=shop,
+        status=ShopDeliveryStatus.OPEN,
+        location_text=delivery_payload["location_text"],
+        latitude=delivery_payload["latitude"],
+        longitude=delivery_payload["longitude"],
+        maps_url=delivery_payload["maps_url"],
+        distance_km=delivery_payload.get("distance_km"),
+        eta_minutes=delivery_payload.get("eta_minutes"),
+        created_by=actor,
+    )
+    riders = delivery_payload.get("riders") or []
+    if riders:
+        delivery.assigned_riders.set(riders)
+
+    delivery_id = delivery.pk
+
+    def _push_delivery():
+        try:
+            from employees.web_push import notify_new_delivery
+
+            fresh = (
+                ShopDelivery.objects.select_related("receipt", "shop")
+                .prefetch_related("assigned_riders")
+                .filter(pk=delivery_id)
+                .first()
+            )
+            if fresh is not None:
+                notify_new_delivery(fresh)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "Web Push delivery alert failed for delivery %s", delivery_id
+            )
+
+    transaction.on_commit(_push_delivery)
+    return delivery
+
+
+def delivery_available_to_rider(delivery: ShopDelivery, rider) -> bool:
+    """True when an open delivery is on this rider's board."""
+    if delivery.status != ShopDeliveryStatus.OPEN:
+        return False
+    assigned = list(delivery.assigned_riders.all())
+    if not assigned:
+        return True
+    return any(int(row.pk) == int(rider.pk) for row in assigned)
+
+
+def open_deliveries_for_rider(rider):
+    """Open jobs this rider may still accept."""
+    qs = (
+        ShopDelivery.objects.filter(status=ShopDeliveryStatus.OPEN)
+        .select_related(
+            "receipt",
+            "shop",
+            "created_by__user",
+        )
+        .prefetch_related("assigned_riders")
+        .order_by("-created_at")
+    )
+    return [row for row in qs if delivery_available_to_rider(row, rider)]
+
+
+def rider_delivery_alert_payload(rider) -> dict:
+    """Compact open-board snapshot for rider device polling / sound alerts."""
+    rows = []
+    for delivery in open_deliveries_for_rider(rider):
+        assigned_ids = {int(r.pk) for r in delivery.assigned_riders.all()}
+        rows.append(
+            {
+                "id": int(delivery.pk),
+                "assigned": bool(assigned_ids) and int(rider.pk) in assigned_ids,
+                "shop": delivery.shop.name,
+                "receipt_number": delivery.receipt.receipt_number,
+                "location_text": delivery.location_text,
+                "created_at": delivery.created_at.isoformat()
+                if delivery.created_at
+                else "",
+            }
+        )
+    return {
+        "ok": True,
+        "open": rows,
+        "open_count": len(rows),
+    }
+
+
+def rider_owned_deliveries(rider, *, statuses=None):
+    """Deliveries this rider has accepted (optionally filtered by status)."""
+    qs = ShopDelivery.objects.filter(accepted_by=rider).select_related(
+        "receipt",
+        "shop",
+        "accepted_by__user",
+    )
+    if statuses is not None:
+        qs = qs.filter(status__in=statuses)
+    return list(qs.order_by("-accepted_at", "-created_at"))
+
+
+def accept_shop_delivery(*, delivery_id: int, rider) -> ShopDelivery:
+    """First rider to accept claims the job; others no longer see it."""
+    with transaction.atomic():
+        delivery = (
+            ShopDelivery.objects.select_for_update()
+            .select_related("receipt", "shop")
+            .prefetch_related("assigned_riders")
+            .filter(pk=delivery_id)
+            .first()
+        )
+        if delivery is None:
+            raise ValidationError("Delivery request was not found.")
+        if delivery.status != ShopDeliveryStatus.OPEN:
+            raise ValidationError("That delivery was already accepted.")
+        if not delivery_available_to_rider(delivery, rider):
+            raise ValidationError("You are not assigned to this delivery.")
+        delivery.status = ShopDeliveryStatus.ACCEPTED
+        delivery.accepted_by = rider
+        delivery.accepted_at = timezone.now()
+        if delivery.eta_minutes:
+            from datetime import timedelta
+
+            delivery.expected_at = delivery.accepted_at + timedelta(
+                minutes=int(delivery.eta_minutes)
+            )
+        else:
+            delivery.expected_at = None
+        delivery.save(
+            update_fields=[
+                "status",
+                "accepted_by",
+                "accepted_at",
+                "expected_at",
+                "updated_at",
+            ]
+        )
+    try:
+        from communications.automations import (
+            maybe_send_delivery_on_way,
+            maybe_send_delivery_triggered_messages,
+        )
+
+        maybe_send_delivery_on_way(delivery)
+        maybe_send_delivery_triggered_messages(delivery)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "Delivery on-way customer notice failed for delivery %s",
+            getattr(delivery, "pk", None),
+        )
+    return delivery
+
+
+def _parse_delivery_payment_at(raw):
+    """Parse HTML datetime-local / ISO values into an aware datetime."""
+    from datetime import datetime
+
+    text = (raw or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    if "T" not in normalized and " " in normalized:
+        normalized = normalized.replace(" ", "T", 1)
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValidationError("Enter a valid payment date and time.") from exc
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+def complete_shop_delivery(
+    *,
+    delivery_id: int,
+    rider,
+    receiver_name: str = "",
+    payment_reference: str = "",
+    payment_at=None,
+    payment_amount=None,
+) -> ShopDelivery:
+    """Mark an accepted delivery as delivered (does not change receipt kind/status).
+
+    Sales require a receiver name (defaults to the client name when blank).
+    Credits become ``delivered_paid`` when a payment reference is provided,
+    otherwise ``delivered`` (not paid).
+    """
+    from decimal import Decimal, InvalidOperation
+
+    from shops.models import ShopReceiptKind
+
+    with transaction.atomic():
+        delivery = (
+            ShopDelivery.objects.select_for_update()
+            .select_related("receipt", "shop", "receipt__client")
+            .filter(pk=delivery_id)
+            .first()
+        )
+        if delivery is None:
+            raise ValidationError("Delivery request was not found.")
+        if delivery.accepted_by_id != rider.pk:
+            raise ValidationError("Only the accepting rider can complete this delivery.")
+        if delivery.status != ShopDeliveryStatus.ACCEPTED:
+            raise ValidationError("Only accepted deliveries can be marked done.")
+
+        receipt = delivery.receipt
+        kind = receipt.kind
+        receiver = (receiver_name or "").strip()
+        if not receiver and kind == ShopReceiptKind.SALE:
+            receiver = (receipt.client_name or "").strip()
+        if kind == ShopReceiptKind.SALE and not receiver:
+            raise ValidationError("Enter the name of the person who received the goods.")
+
+        reference = (payment_reference or "").strip()[:64]
+        paid_at = payment_at
+        if isinstance(paid_at, str):
+            paid_at = _parse_delivery_payment_at(paid_at)
+        amount = None
+        if payment_amount not in (None, ""):
+            try:
+                amount = Decimal(str(payment_amount)).quantize(Decimal("0.01"))
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                raise ValidationError("Enter a valid payment amount.") from exc
+            if amount < 0:
+                raise ValidationError("Payment amount cannot be negative.")
+
+        if kind == ShopReceiptKind.CREDIT:
+            if reference:
+                status = ShopDeliveryStatus.DELIVERED_PAID
+                if paid_at is None:
+                    paid_at = timezone.now()
+                if amount is None:
+                    due = Decimal(receipt.total or 0) - Decimal(receipt.amount_paid or 0)
+                    amount = due if due > 0 else Decimal(receipt.total or 0)
+            else:
+                status = ShopDeliveryStatus.DELIVERED
+                # Unpaid drop-off — clear any accidental payment fields.
+                reference = ""
+                paid_at = None
+                amount = None
+        else:
+            # Sales are already paid at checkout; capture who received them.
+            status = ShopDeliveryStatus.DELIVERED
+            reference = ""
+            paid_at = None
+            amount = None
+
+        delivery.status = status
+        delivery.completed_at = timezone.now()
+        delivery.receiver_name = receiver[:200]
+        delivery.payment_reference = reference
+        delivery.payment_at = paid_at
+        delivery.payment_amount = amount
+        delivery.save(
+            update_fields=[
+                "status",
+                "completed_at",
+                "receiver_name",
+                "payment_reference",
+                "payment_at",
+                "payment_amount",
+                "updated_at",
+            ]
+        )
+    try:
+        from communications.automations import (
+            maybe_send_delivery_complete,
+            maybe_send_delivery_complete_triggered_messages,
+        )
+
+        maybe_send_delivery_complete(delivery)
+        maybe_send_delivery_complete_triggered_messages(delivery)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "Delivery complete customer notice failed for delivery %s",
+            getattr(delivery, "pk", None),
+        )
+    return delivery
+
+
+def initiate_rider_delivery_stk(
+    *,
+    delivery_id: int,
+    rider,
+    phone: str = "",
+    amount=None,
+    request=None,
+):
+    """STK prompt for collecting credit payment on delivery (does not settle the receipt)."""
+    from decimal import Decimal
+
+    from shops.daraja_stk import initiate_stk_push, stk_ready
+    from shops.models import ShopReceiptKind
+
+    if not stk_ready():
+        raise ValidationError("STK Push is not available right now.")
+
+    delivery = (
+        ShopDelivery.objects.select_related("receipt", "shop", "receipt__client")
+        .filter(pk=delivery_id)
+        .first()
+    )
+    if delivery is None:
+        raise ValidationError("Delivery request was not found.")
+    if delivery.accepted_by_id != rider.pk:
+        raise ValidationError("Only the accepting rider can prompt payment.")
+    if delivery.status != ShopDeliveryStatus.ACCEPTED:
+        raise ValidationError("Only active deliveries can collect payment.")
+    receipt = delivery.receipt
+    if receipt.kind != ShopReceiptKind.CREDIT:
+        raise ValidationError("STK collection is only for credit deliveries.")
+
+    due = Decimal(receipt.total or 0) - Decimal(receipt.amount_paid or 0)
+    if due <= 0:
+        due = Decimal(receipt.total or 0)
+    pay_phone = (phone or "").strip() or (receipt.client_phone or "").strip()
+    if not pay_phone and receipt.client_id:
+        pay_phone = (getattr(receipt.client, "phone_number", "") or "").strip()
+    if not pay_phone:
+        raise ValidationError("Enter the customer M-Pesa phone number.")
+
+    return initiate_stk_push(
+        purpose="credit",
+        amount=amount if amount not in (None, "") else due,
+        phone=pay_phone,
+        account_reference=f"DLV{delivery.pk}"[:12],
+        description=f"Delivery {receipt.receipt_number}"[:40],
+        shop=delivery.shop,
+        profile=rider,
+        account_kind="delivery",
+        account_id=delivery.pk,
+        receipt=receipt,
+        request=request,
+    )
+
+
 def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) -> dict:
     """
     Complete a MY-SHOP cart checkout.
@@ -5106,10 +5842,19 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     require_client_name = collect_client_data and bool(
         getattr(pos_settings, "require_client_name", False)
     )
-    if not collect_client_data and kind not in {
-        ShopReceiptKind.TRADE_OUT,
-        ShopReceiptKind.TRADE_IN,
-    }:
+    delivery_wanted = bool(payload.get("delivery"))
+    if delivery_wanted and kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
+        raise ValidationError("Delivery is only available for sales and credits.")
+
+    if (
+        not collect_client_data
+        and not delivery_wanted
+        and kind
+        not in {
+            ShopReceiptKind.TRADE_OUT,
+            ShopReceiptKind.TRADE_IN,
+        }
+    ):
         client_name = ""
         client_phone_raw = ""
         client_phone = ""
@@ -5123,6 +5868,14 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         )
     if share_whatsapp and not client_phone_raw:
         raise ValidationError("Client phone is required to share on WhatsApp.")
+
+    delivery_payload = None
+    if delivery_wanted:
+        if not client_name:
+            raise ValidationError("Client full name is required for delivery.")
+        if not client_phone_raw:
+            raise ValidationError("Client phone is required for delivery.")
+        delivery_payload = _parse_delivery_payload(payload, shop=shop)
 
     raw_lines = payload.get("lines") or []
     if not isinstance(raw_lines, list) or not raw_lines:
@@ -5522,6 +6275,14 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             credit_due_date=credit_due_date,
             created_by=authorising,
         )
+
+        if delivery_payload is not None:
+            _create_shop_delivery(
+                receipt=receipt,
+                shop=shop,
+                actor=authorising,
+                delivery_payload=delivery_payload,
+            )
 
         if kind == ShopReceiptKind.SALE:
             stk_id = (payload.get("stk_payment_id") or "").strip()

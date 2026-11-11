@@ -1,0 +1,382 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="deliv" data-analytics data-ax-section="deliveries" data-animate="rise">
+  <header class="deliv-head">
+    <div class="deliv-title">
+      <h2>{{ page.headline }}</h2>
+      <span class="deliv-period">{% if page.period_label %}{{ page.period_label }}{% else %}{{ report_period_label }}{% endif %}</span>
+    </div>
+    <form class="deliv-filters" method="get" data-analytics-filters>
+      <select name="shop_id" aria-label="Shop">
+        <option value=""{% if not selected_shop_ids %} selected{% endif %}>All shops</option>
+        {% for shop in filter_shops %}
+        <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+        {% endfor %}
+      </select>
+      {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=include_all_time %}
+      <button type="submit" class="deliv-apply">Apply</button>
+    </form>
+  </header>
+
+  {% if page.lead %}<p class="deliv-lead">{{ page.lead }}</p>{% endif %}
+
+  <div class="deliv-stats" aria-label="Delivery totals">
+    <article class="deliv-stat">
+      <span>Open</span>
+      <strong>{{ page.open_count }}</strong>
+    </article>
+    <article class="deliv-stat">
+      <span>In progress</span>
+      <strong>{{ page.accepted_count }}</strong>
+    </article>
+    <article class="deliv-stat">
+      <span>Done</span>
+      <strong>{{ page.completed_count }}</strong>
+    </article>
+    <article class="deliv-stat">
+      <span>Receipt value</span>
+      <strong>KSh {{ page.total_value }}</strong>
+    </article>
+  </div>
+
+  <div class="deliv-layout">
+    <section class="deliv-map-panel" aria-label="Delivery map">
+      <h3 class="deliv-section-title">Delivery locations</h3>
+      <div
+        id="deliv-map"
+        class="deliv-map"
+        data-deliv-map
+        {% if google_maps_api_key %}data-maps-enabled="1"{% endif %}
+      ></div>
+      {% if not google_maps_api_key %}
+      <p class="deliv-map-fallback">
+        Set <code>GOOGLE_MAPS_API_KEY</code> to show the interactive map.
+        {% if page.map_points %}
+        {{ page.map_points|length }} located delivery{{ page.map_points|length|pluralize }} still listed below.
+        {% endif %}
+      </p>
+      {% elif not page.map_points %}
+      <p class="deliv-map-fallback">No delivery locations with coordinates in this period.</p>
+      {% endif %}
+    </section>
+
+    <section class="deliv-riders" aria-label="Riders">
+      <h3 class="deliv-section-title">Riders</h3>
+      {% if page.riders %}
+      <ul class="deliv-rider-list">
+        {% for rider in page.riders %}
+        <li class="deliv-rider">
+          <div>
+            <strong>{{ rider.name }}</strong>
+            <span>{{ rider.employee_id }}</span>
+          </div>
+          <div class="deliv-rider-counts">
+            <em>{{ rider.completed }}</em>
+            <span>deliveries done</span>
+            {% if rider.accepted %}
+            <small>{{ rider.accepted }} in progress</small>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="deliv-empty">No riders have accepted deliveries in this period.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="deliv-recent" aria-label="Recent deliveries">
+    <h3 class="deliv-section-title">Recent deliveries</h3>
+    {% if page.recent_rows %}
+    <div class="deliv-table-wrap">
+      <table class="deliv-table">
+        <thead>
+          <tr>
+            <th>Receipt</th>
+            <th>Client</th>
+            <th>Location</th>
+            <th>Rider</th>
+            <th>Status</th>
+            <th>Shop</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in page.recent_rows %}
+          <tr>
+            <td>{{ row.receipt }}</td>
+            <td>
+              <strong>{{ row.client }}</strong>
+              <small>{{ row.phone }}</small>
+            </td>
+            <td>
+              {% if row.maps_url %}
+              <a href="{{ row.maps_url }}" target="_blank" rel="noopener noreferrer">{{ row.location }}</a>
+              {% else %}
+              {{ row.location }}
+              {% endif %}
+            </td>
+            <td>{{ row.rider }}</td>
+            <td><span class="deliv-status is-{{ row.status_key }}">{{ row.status }}</span></td>
+            <td>{{ row.shop }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="deliv-empty">No delivery jobs in this period.</p>
+    {% endif %}
+  </section>
+</section>
+{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<style>
+  .deliv { display: grid; gap: 1rem; }
+  .deliv-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.85rem 1rem;
+    align-items: end;
+  }
+  .deliv-title h2 { margin: 0; font-size: 1.35rem; }
+  .deliv-period { color: var(--mist-dim); font-size: 0.84rem; }
+  .deliv-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
+  }
+  .deliv-filters select,
+  .deliv-filters input {
+    min-height: 2.2rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--panel);
+    color: inherit;
+    padding: 0.35rem 0.55rem;
+  }
+  .deliv-apply {
+    min-height: 2.2rem;
+    border: 0;
+    border-radius: 0.5rem;
+    padding: 0 0.85rem;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .deliv-lead { margin: 0; color: var(--mist-dim); }
+  .deliv-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+  .deliv-stat {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid var(--line);
+    border-radius: 0.75rem;
+    background: var(--panel);
+  }
+  .deliv-stat span { font-size: 0.74rem; color: var(--mist-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .deliv-stat strong { font-size: 1.15rem; color: var(--text-strong); }
+  .deliv-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(16rem, 0.9fr);
+    gap: 0.85rem;
+  }
+  .deliv-map-panel,
+  .deliv-riders,
+  .deliv-recent {
+    display: grid;
+    gap: 0.65rem;
+    padding: 0.85rem;
+    border: 1px solid var(--line);
+    border-radius: 0.85rem;
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
+  }
+  .deliv-section-title { margin: 0; font-size: 0.98rem; }
+  .deliv-map {
+    min-height: 22rem;
+    border-radius: 0.7rem;
+    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--mist) 10%, var(--panel));
+    overflow: hidden;
+  }
+  /* core.css sets img { max-width:100%; display:block } which collapses Map pins */
+  .deliv-map img,
+  .deliv-map .gm-style img,
+  .deliv-map .gm-style svg {
+    max-width: none !important;
+    max-height: none !important;
+    display: inline !important;
+  }
+  .deliv-map-fallback,
+  .deliv-empty {
+    margin: 0;
+    color: var(--mist-dim);
+    font-size: 0.84rem;
+  }
+  .deliv-rider-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+  .deliv-rider {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.7rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--panel);
+  }
+  .deliv-rider strong { display: block; color: var(--text-strong); }
+  .deliv-rider span { color: var(--mist-dim); font-size: 0.76rem; }
+  .deliv-rider-counts { text-align: right; }
+  .deliv-rider-counts em {
+    font-style: normal;
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: var(--text-strong);
+  }
+  .deliv-rider-counts span,
+  .deliv-rider-counts small {
+    display: block;
+    color: var(--mist-dim);
+    font-size: 0.72rem;
+  }
+  .deliv-table-wrap { overflow: auto; }
+  .deliv-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+  }
+  .deliv-table th,
+  .deliv-table td {
+    padding: 0.55rem 0.45rem;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+  }
+  .deliv-table th {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--mist-dim);
+  }
+  .deliv-table small { display: block; color: var(--mist-dim); }
+  .deliv-status {
+    display: inline-block;
+    padding: 0.15rem 0.4rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--mist) 16%, transparent);
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+  .deliv-status.is-completed,
+  .deliv-status.is-delivered,
+  .deliv-status.is-delivered_paid {
+    background: color-mix(in srgb, var(--ok, #1a7f4b) 18%, transparent);
+  }
+  .deliv-status.is-accepted {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  @media (max-width: 960px) {
+    .deliv-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .deliv-layout { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+{{ page.map_points_json|json_script:"deliv-map-points" }}
+<script>
+  window.__delivMapPoints = JSON.parse(
+    document.getElementById("deliv-map-points").textContent
+  );
+</script>
+{% if google_maps_api_key %}
+<script>
+  window.__delivMapsReady = async function () {
+    const el = document.querySelector("[data-deliv-map]");
+    if (!el || !window.google?.maps) return;
+    const points = Array.isArray(window.__delivMapPoints)
+      ? window.__delivMapPoints
+      : [];
+    const center = points.length
+      ? { lat: Number(points[0].lat), lng: Number(points[0].lng) }
+      : { lat: -1.286389, lng: 36.817223 };
+
+    let AdvancedMarkerElement = null;
+    try {
+      const markerLib = await google.maps.importLibrary("marker");
+      AdvancedMarkerElement = markerLib.AdvancedMarkerElement;
+    } catch (_) {
+      AdvancedMarkerElement = null;
+    }
+
+    const map = new google.maps.Map(el, {
+      zoom: points.length > 1 ? 11 : 13,
+      center,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: true,
+      ...(AdvancedMarkerElement ? { mapId: "DEMO_MAP_ID" } : {}),
+    });
+    const bounds = new google.maps.LatLngBounds();
+    const info = new google.maps.InfoWindow();
+    const openInfo = (anchor, point) => {
+      const lines = [
+        `<strong>${point.label || "Delivery"}</strong>`,
+        point.client || "",
+        point.phone || "",
+        point.location || "",
+        point.shop ? `Shop: ${point.shop}` : "",
+        point.rider ? `Rider: ${point.rider}` : "",
+        point.status || "",
+      ].filter(Boolean);
+      info.setContent(`<div style="max-width:220px">${lines.join("<br>")}</div>`);
+      info.open({ map, anchor });
+    };
+
+    points.forEach((point) => {
+      const lat = Number(point.lat);
+      const lng = Number(point.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const position = { lat, lng };
+      bounds.extend(position);
+      if (AdvancedMarkerElement) {
+        const marker = new AdvancedMarkerElement({
+          map,
+          position,
+          title: point.label || "Delivery",
+          gmpClickable: true,
+        });
+        marker.addListener("click", () => openInfo(marker, point));
+      } else {
+        const marker = new google.maps.Marker({
+          map,
+          position,
+          title: point.label || "Delivery",
+        });
+        marker.addListener("click", () => openInfo(marker, point));
+      }
+    });
+    if (points.length > 1) map.fitBounds(bounds, 48);
+    else if (points.length === 1) map.setCenter(bounds.getCenter());
+  };
+</script>
+<script
+  async
+  defer
+  src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=marker&callback=__delivMapsReady&v=weekly"
+></script>
+{% endif %}
+{% endblock %}

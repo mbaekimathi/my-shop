@@ -292,3 +292,7 @@
 .msg-saved-list form {
   margin: 0;
 }
+
+.msg-delivery-starter {
+  margin-bottom: var(--space-5);
+}

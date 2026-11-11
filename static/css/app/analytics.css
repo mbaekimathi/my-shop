@@ -4431,6 +4431,40 @@
   font-weight: 700;
 }
 
+.ax-pay-by-link {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ax-pay-by-link em {
+  font-style: normal;
+  font-size: 0.82em;
+  font-weight: 650;
+  color: var(--teal, #0f766e);
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.ax-pay-by-link:hover em,
+.ax-pay-by-link:focus-visible em {
+  color: var(--text-strong, #111827);
+}
+
+.ax-pay-by-link.is-overdue .ax-pay-by {
+  color: var(--warn);
+  font-weight: 700;
+}
+
 /* Client credit audit trail. */
 .ax--list-table[data-ax-section="client-credit-audit"] {
   width: 100%;
@@ -8532,5 +8566,103 @@
   .ax-receipt-scope-ui {
     width: 100%;
     justify-content: center;
+  }
+}
+
+.ax-credit-due-dialog {
+  width: min(560px, calc(100vw - 2rem));
+  max-height: min(86vh, 720px);
+  display: flex;
+  flex-direction: column;
+}
+
+.ax-credit-due-kicker {
+  margin: 0 0 0.2rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #6b7280);
+}
+
+.ax-credit-due-body {
+  padding: 0 1.25rem 1rem;
+  overflow: auto;
+}
+
+.ax-credit-due-lead {
+  margin: 0 0 0.85rem;
+  color: var(--text-muted, #6b7280);
+  font-size: 0.92rem;
+}
+
+.ax-credit-due-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.ax-credit-due-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border, rgba(15, 23, 42, 0.1));
+  border-radius: 10px;
+  background: var(--surface, #fff);
+}
+
+.ax-credit-due-row-main {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.ax-credit-due-row-main strong {
+  font-size: 0.95rem;
+  color: var(--text-strong, #111827);
+}
+
+.ax-credit-due-row-main span {
+  font-size: 0.8rem;
+  color: var(--text-muted, #6b7280);
+  overflow-wrap: anywhere;
+}
+
+.ax-credit-due-row-side {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: end;
+  flex: 0 0 auto;
+}
+
+.ax-credit-due-row-side em {
+  font-style: normal;
+  font-weight: 650;
+  font-size: 0.92rem;
+  color: var(--text-strong, #111827);
+}
+
+.ax-credit-due-actions {
+  padding: 0.85rem 1.25rem 1.15rem;
+  border-top: 1px solid var(--border, rgba(15, 23, 42, 0.08));
+}
+
+body.ax-credit-due-open {
+  overflow: hidden;
+}
+
+@media (max-width: 640px) {
+  .ax-credit-due-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax-credit-due-row-side {
+    justify-items: stretch;
+    grid-template-columns: 1fr auto;
+    align-items: center;
   }
 }

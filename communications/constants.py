@@ -142,20 +142,127 @@ MESSAGE_STATUS_CHOICES = (
 # are event names, not receipt kinds.
 TRIGGER_SALE = "sale"
 TRIGGER_CREDIT = "credit"
+TRIGGER_CREDIT_FOLLOW_UP = "credit_follow_up"
+TRIGGER_CREDIT_FOLLOW_UP_TODAY = "credit_follow_up_today"
 TRIGGER_QUOTATION = "quotation"
 TRIGGER_TRADE_OUT = "trade_out"
 TRIGGER_TRADE_IN = "trade_in"
 TRIGGER_SUPPLY = "supply"
 TRIGGER_SUPPLIER_PAYMENT = "supplier_payment"
+TRIGGER_DELIVERY_ON_WAY = "delivery_on_way"
+TRIGGER_DELIVERY_COMPLETE = "delivery_complete"
 
 TRIGGER_MESSAGE_CHOICES = (
     (TRIGGER_SALE, "Sale"),
     (TRIGGER_CREDIT, "Credit sale"),
+    (TRIGGER_CREDIT_FOLLOW_UP, "Credit follow-up"),
+    (TRIGGER_CREDIT_FOLLOW_UP_TODAY, "Credit follow-up today"),
     (TRIGGER_QUOTATION, "Quotation"),
     (TRIGGER_TRADE_OUT, "Trade out"),
     (TRIGGER_TRADE_IN, "Trade in"),
     (TRIGGER_SUPPLY, "Supply received"),
     (TRIGGER_SUPPLIER_PAYMENT, "Supplier paid"),
+    (TRIGGER_DELIVERY_ON_WAY, "Delivery on the way"),
+    (TRIGGER_DELIVERY_COMPLETE, "Delivery completed"),
+)
+
+# Grouped for the message-drafts composer select.
+TRIGGER_MESSAGE_GROUPS = (
+    (
+        "Sales & documents",
+        (
+            (TRIGGER_SALE, "Sale"),
+            (TRIGGER_CREDIT, "Credit sale"),
+            (TRIGGER_CREDIT_FOLLOW_UP, "Credit follow-up"),
+            (TRIGGER_CREDIT_FOLLOW_UP_TODAY, "Credit follow-up today"),
+            (TRIGGER_QUOTATION, "Quotation"),
+            (TRIGGER_TRADE_OUT, "Trade out"),
+            (TRIGGER_TRADE_IN, "Trade in"),
+        ),
+    ),
+    (
+        "Delivery",
+        (
+            (TRIGGER_DELIVERY_ON_WAY, "Delivery on the way"),
+            (TRIGGER_DELIVERY_COMPLETE, "Delivery completed"),
+        ),
+    ),
+    (
+        "Suppliers",
+        (
+            (TRIGGER_SUPPLY, "Supply received"),
+            (TRIGGER_SUPPLIER_PAYMENT, "Supplier paid"),
+        ),
+    ),
+)
+
+DEFAULT_DELIVERY_DRAFTS = (
+    (
+        TRIGGER_DELIVERY_ON_WAY,
+        (
+            "Hi {first_name}, good news — your delivery from {shop_name} is on "
+            "the way! Drop-off: {location}. Rider: {rider_name}. "
+            "Receipt {receipt_number}."
+        ),
+        "",
+    ),
+    (
+        TRIGGER_DELIVERY_COMPLETE,
+        (
+            "Hi {first_name}, your delivery from {shop_name} is complete! "
+            "Drop-off: {location}. Received by: {receiver_name}. "
+            "Receipt {receipt_number}. Thank you!"
+        ),
+        "",
+    ),
+)
+
+# (trigger, body, link) — company defaults seeded on the message-drafts page.
+DEFAULT_CREDIT_DRAFTS = (
+    (
+        TRIGGER_CREDIT,
+        (
+            "Hi {first_name},\n"
+            "\n"
+            "Credit sale at {shop_name}.\n"
+            "\n"
+            "Amount due: {balance}\n"
+            "Pay by: {due_date}\n"
+            "\n"
+            "Receipt {receipt_number}.\n"
+            "\n"
+            "You can view your credit account and pay with M-Pesa using this link:"
+        ),
+        "{account_link}",
+    ),
+    (
+        TRIGGER_CREDIT_FOLLOW_UP,
+        (
+            "Hi {first_name},\n"
+            "\n"
+            "A payment follow-up was scheduled for your credit account.\n"
+            "\n"
+            "Amount due: {balance}\n"
+            "Follow-up date: {follow_up_date}\n"
+            "\n"
+            "You can view your credit account and pay with M-Pesa using this link:"
+        ),
+        "{account_link}",
+    ),
+    (
+        TRIGGER_CREDIT_FOLLOW_UP_TODAY,
+        (
+            "Hi {first_name},\n"
+            "\n"
+            "Friendly reminder — we are following up on your credit account today.\n"
+            "\n"
+            "Amount due: {balance}\n"
+            "Follow-up date: {follow_up_date}\n"
+            "\n"
+            "You can view your credit account and pay with M-Pesa using this link:"
+        ),
+        "{account_link}",
+    ),
 )
 
 TRIGGER_MESSAGE_PLACEHOLDERS = (
@@ -166,21 +273,30 @@ TRIGGER_MESSAGE_PLACEHOLDERS = (
     ("{balance}", "Balance due"),
     ("{receipt_number}", "Receipt number"),
     ("{due_date}", "Credit due date"),
+    ("{follow_up_date}", "Credit follow-up date"),
+    ("{previous_follow_up}", "Previous follow-up date"),
     ("{account_link}", "Credit account link"),
     ("{trade_link}", "Trade account link"),
     ("{receipt_link}", "Receipt link"),
     ("{quotation_link}", "Quotation link"),
+    ("{location}", "Delivery location"),
+    ("{rider_name}", "Rider name"),
+    ("{receiver_name}", "Who received the goods"),
 )
 
 # Delivery channel for a triggered message draft.
 TRIGGER_CHANNEL_WHATSAPP = CHANNEL_WHATSAPP
 TRIGGER_CHANNEL_SMS = CHANNEL_SMS
+TRIGGER_CHANNEL_MESSAGE = CHANNEL_MESSAGE
 TRIGGER_CHANNEL_BOTH = "both"
+TRIGGER_CHANNEL_ALL = "all"
 
 TRIGGER_CHANNEL_CHOICES = (
     (TRIGGER_CHANNEL_WHATSAPP, "WhatsApp"),
     (TRIGGER_CHANNEL_SMS, "SMS"),
+    (TRIGGER_CHANNEL_MESSAGE, "Email / Message"),
     (TRIGGER_CHANNEL_BOTH, "WhatsApp + SMS"),
+    (TRIGGER_CHANNEL_ALL, "WhatsApp + SMS + Email"),
 )
 
 TRIGGER_CHANNEL_VALUES = {value for value, _ in TRIGGER_CHANNEL_CHOICES}

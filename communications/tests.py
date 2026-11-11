@@ -806,6 +806,65 @@ class WhatsAppAutomationsPageTests(TestCase):
         )
         self.assertTrue(response.context["page_sidebar"]["primary"][2].get("active"))
 
+    def test_message_drafts_page_seeds_credit_draft_with_account_link(self):
+        from communications.constants import (
+            TRIGGER_CREDIT,
+            TRIGGER_CREDIT_FOLLOW_UP,
+            TRIGGER_CREDIT_FOLLOW_UP_TODAY,
+        )
+        from communications.models import TriggeredMessage
+
+        self.assertFalse(
+            TriggeredMessage.objects.filter(
+                shop__isnull=True, trigger=TRIGGER_CREDIT
+            ).exists()
+        )
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/settings/message-drafts/")
+        self.assertEqual(response.status_code, 200)
+        draft = TriggeredMessage.objects.get(
+            shop__isnull=True, trigger=TRIGGER_CREDIT
+        )
+        self.assertEqual(draft.link, "{account_link}")
+        self.assertIn("Credit sale", draft.body)
+        self.assertIn("{balance}", draft.body)
+        self.assertIn("{due_date}", draft.body)
+        drafts = response.context["drafts"]
+        credit = next(row for row in drafts if row["trigger"] == TRIGGER_CREDIT)
+        self.assertEqual(credit["link"], "{account_link}")
+        self.assertTrue(credit["link_is_account"])
+        self.assertIn("credit account link", credit["link_label"].lower())
+        follow_up = TriggeredMessage.objects.get(
+            shop__isnull=True, trigger=TRIGGER_CREDIT_FOLLOW_UP
+        )
+        self.assertEqual(follow_up.link, "{account_link}")
+        self.assertIn("{follow_up_date}", follow_up.body)
+        follow_today = TriggeredMessage.objects.get(
+            shop__isnull=True, trigger=TRIGGER_CREDIT_FOLLOW_UP_TODAY
+        )
+        self.assertEqual(follow_today.link, "{account_link}")
+        self.assertIn("following up", follow_today.body.lower())
+        # Idempotent — reload does not create a second credit draft.
+        self.client.get("/it-support/settings/message-drafts/")
+        self.assertEqual(
+            TriggeredMessage.objects.filter(
+                shop__isnull=True, trigger=TRIGGER_CREDIT
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            TriggeredMessage.objects.filter(
+                shop__isnull=True, trigger=TRIGGER_CREDIT_FOLLOW_UP
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            TriggeredMessage.objects.filter(
+                shop__isnull=True, trigger=TRIGGER_CREDIT_FOLLOW_UP_TODAY
+            ).count(),
+            1,
+        )
+
     def test_communications_hub_links_to_twilio_and_whatsapp(self):
         self.client.force_login(self.user)
         response = self.client.get("/it-support/settings/communication-settings/")
@@ -2257,6 +2316,278 @@ class CreditSaleNotificationTests(TestCase):
         set_communications_setting(field="auto_payment_reminder", enabled=False)
         self.assertFalse(credit_whatsapp_required())
 
+    def test_sale_notice_uses_friendly_body_and_sms(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_receipt_share
+        from shops.models import ShopReceiptKind
+        from shops.services import set_communications_setting
+
+        self.receipt.kind = ShopReceiptKind.SALE
+        self.receipt.save(update_fields=["kind"])
+        set_communications_setting(field="auto_sale_receipt", enabled=True)
+        set_communications_setting(field="auto_payment_reminder", enabled=False)
+
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.twilio.send_whatsapp_message") as send_wa,
+            patch("communications.sms.send_sms") as send_sms,
+        ):
+            send_wa.return_value = {"ok": True, "messageId": "SMSALE1"}
+            send_sms.return_value = {"ok": True}
+            # SMS not enabled yet — WhatsApp only.
+            maybe_send_receipt_share(self.receipt)
+
+        send_wa.assert_called_once()
+        self.assertIn("Sale at CREDIT WA SHOP.", send_wa.call_args.kwargs["text"])
+        send_sms.assert_not_called()
+
+        from shops.models import SmsProvider
+        from shops.services import update_sms_settings
+
+        update_sms_settings(
+            provider=SmsProvider.BLESSED_TEXTS,
+            api_key="sms-key",
+            sender_id="23107",
+        )
+        set_communications_setting(field="enable_sms", enabled=True)
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.twilio.send_whatsapp_message") as send_wa,
+            patch("communications.sms.send_sms") as send_sms,
+        ):
+            send_wa.return_value = {"ok": True, "messageId": "SMSALE2"}
+            send_sms.return_value = {"ok": True}
+            maybe_send_receipt_share(self.receipt)
+
+        send_wa.assert_called_once()
+        send_sms.assert_called_once()
+        self.assertIn("Sale at CREDIT WA SHOP.", send_sms.call_args.kwargs["message"])
+
+
+@override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")
+class CreditDueDateReminderTests(TestCase):
+    def setUp(self):
+        from datetime import date
+        from decimal import Decimal
+
+        from django.contrib.auth.models import User
+
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+        from shops.models import (
+            Client,
+            Shop,
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptStatus,
+        )
+        from shops.services import set_communications_setting, update_twilio_settings
+
+        self.user = User.objects.create_user(
+            username="860041",
+            password="wa-due",
+            email="wa-due@test.local",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="860041",
+            phone_country_code="+254",
+            phone_number="700000981",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="DUE DATE SHOP",
+            location="NAIROBI",
+            email="due-wa@test.local",
+            phone_number="0700000981",
+            login_code="860141",
+            password_hash="x",
+            created_by=self.it,
+        )
+        self.customer = Client.objects.create(
+            full_name="ANN WAMBUI",
+            phone_number="+254711223344",
+            phone_normalized="254711223344",
+            created_by=self.it,
+        )
+        self.today = date(2026, 11, 11)
+        self.customer.credit_follow_up_date = self.today
+        self.customer.save(update_fields=["credit_follow_up_date"])
+        self.receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="CR-DUE-1",
+            kind=ShopReceiptKind.CREDIT,
+            total=Decimal("500.00"),
+            amount_paid=Decimal("0.00"),
+            created_by=self.it,
+            client=self.customer,
+            client_name="ANN WAMBUI",
+            client_phone="+254711223344",
+            credit_due_date=date(2026, 12, 1),
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        update_twilio_settings(
+            account_sid="ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            auth_token="secret-token",
+            from_number="+14155552671",
+            whatsapp_from="whatsapp:+14155238886",
+        )
+        set_communications_setting(field="enable_automations", enabled=True)
+        set_communications_setting(field="auto_credit_due", enabled=True)
+
+    def tearDown(self):
+        from shops.services import _invalidate_communications_settings_cache
+
+        _invalidate_communications_settings_cache()
+        super().tearDown()
+
+    def test_follow_up_updated_notice_text(self):
+        from datetime import date
+        from decimal import Decimal
+
+        from communications.automations import build_credit_follow_up_updated_notification
+
+        self.customer.credit_follow_up_date = date(2026, 12, 15)
+        body = build_credit_follow_up_updated_notification(
+            self.customer, old_date=self.today, balance=Decimal("500")
+        )
+        self.assertIn("Hi Ann,", body)
+        self.assertIn("follow-up was scheduled", body)
+        self.assertIn("Previous follow-up: 11 Nov 2026", body)
+        self.assertIn("Follow-up date: 15 Dec 2026", body)
+        self.assertIn("Amount due: KSh 500", body)
+
+    def test_follow_up_today_notice_text(self):
+        from decimal import Decimal
+
+        from communications.automations import build_credit_follow_up_today_notification
+
+        body = build_credit_follow_up_today_notification(
+            self.customer, balance=Decimal("500")
+        )
+        self.assertIn("Hi Ann,", body)
+        self.assertIn("following up", body)
+        self.assertIn("Amount due: KSh 500", body)
+        self.assertIn("Follow-up date: 11 Nov 2026", body)
+
+    def test_update_follow_up_sends_notice(self):
+        from decimal import Decimal
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_credit_follow_up_updated
+
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.twilio.send_whatsapp_message") as send,
+        ):
+            send.return_value = {"ok": True, "messageId": "SMDUE1"}
+            maybe_send_credit_follow_up_updated(
+                self.customer, old_date=self.today, balance=Decimal("500")
+            )
+
+        send.assert_called_once()
+        self.assertIn("follow-up", send.call_args.kwargs["text"].lower())
+
+    def test_update_follow_up_uses_saved_draft(self):
+        from decimal import Decimal
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_credit_follow_up_updated
+        from communications.constants import (
+            MESSAGE_STATUS_ACTIVE,
+            TRIGGER_CHANNEL_WHATSAPP,
+            TRIGGER_CREDIT_FOLLOW_UP,
+        )
+        from communications.models import TriggeredMessage
+        from shops.services import set_communications_setting
+
+        set_communications_setting(field="enable_whatsapp", enabled=True)
+        TriggeredMessage.objects.create(
+            shop=None,
+            trigger=TRIGGER_CREDIT_FOLLOW_UP,
+            delay_minutes=0,
+            body="Draft follow-up for {first_name}: {balance} by {follow_up_date}.",
+            link="{account_link}",
+            channel=TRIGGER_CHANNEL_WHATSAPP,
+            status=MESSAGE_STATUS_ACTIVE,
+        )
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
+            patch("communications.twilio.send_whatsapp_message") as send,
+        ):
+            send.return_value = {"ok": True, "messageId": "SMDRAFT1"}
+            result = maybe_send_credit_follow_up_updated(
+                self.customer, old_date=self.today, balance=Decimal("500")
+            )
+
+        self.assertTrue(result["sent"])
+        dispatch.assert_called_once()
+        from communications.models import OutboundMessage
+
+        outbound = OutboundMessage.objects.latest("id")
+        self.assertIn("Draft follow-up for Ann", outbound.body)
+        self.assertIn("KSh 500", outbound.body)
+        send.assert_not_called()
+
+    def test_update_follow_up_skipped_when_toggle_off(self):
+        from decimal import Decimal
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_credit_follow_up_updated
+        from shops.services import set_communications_setting
+
+        set_communications_setting(field="auto_credit_due", enabled=False)
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.twilio.send_whatsapp_message") as send,
+        ):
+            maybe_send_credit_follow_up_updated(
+                self.customer, old_date=self.today, balance=Decimal("500")
+            )
+        send.assert_not_called()
+
+    def test_follow_up_today_processor_sends_once_and_stamps(self):
+        from unittest.mock import patch
+
+        from communications.automations import send_credit_due_today_reminders
+
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.twilio.send_whatsapp_message") as send,
+        ):
+            send.return_value = {"ok": True, "messageId": "SMDUE2"}
+            first = send_credit_due_today_reminders(today=self.today)
+            second = send_credit_due_today_reminders(today=self.today)
+
+        self.assertEqual(first["sent"], 1)
+        self.assertEqual(second["sent"], 0)
+        send.assert_called_once()
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.credit_follow_up_reminder_sent_on, self.today)
+        self.assertIn("following up", send.call_args.kwargs["text"])
+
+    def test_follow_up_today_skips_paid_accounts(self):
+        from decimal import Decimal
+        from unittest.mock import patch
+
+        from communications.automations import send_credit_due_today_reminders
+
+        self.receipt.amount_paid = Decimal("500.00")
+        self.receipt.save(update_fields=["amount_paid"])
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.twilio.send_whatsapp_message") as send,
+        ):
+            result = send_credit_due_today_reminders(today=self.today)
+
+        self.assertEqual(result["sent"], 0)
+        send.assert_not_called()
+        self.customer.refresh_from_db()
+        self.assertIsNone(self.customer.credit_follow_up_reminder_sent_on)
+
 
 class TriggeredMessageTests(TestCase):
     def setUp(self):
@@ -2416,6 +2747,17 @@ class TriggeredMessageTests(TestCase):
         self.assertTrue(url.startswith("https://pay.myshop.test/receipt/"))
         token = url.rstrip("/").rsplit("/", 1)[-1]
         self.assertEqual(unsign_receipt_doc_token(token), self.receipt.pk)
+
+    @override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")
+    def test_receipt_link_not_duplicated_when_also_in_body(self):
+        from communications.automations import render_trigger_message
+
+        body = render_trigger_message(
+            "Hi {first_name}, open {receipt_link}",
+            self.receipt,
+            link="{receipt_link}",
+        )
+        self.assertEqual(body.count("https://pay.myshop.test/receipt/"), 1)
 
     @override_settings(DARAJA_CALLBACK_BASE_URL="https://pay.myshop.test")
     def test_quotation_link_resolves_only_for_quotations(self):
@@ -2644,7 +2986,7 @@ class TriggeredMessageTests(TestCase):
 
         set_communications_setting(field="auto_sale_receipt", enabled=True)
         self._draft(channel="whatsapp")
-        with patch("communications.automations._queue_send") as queue_send:
+        with patch("communications.automations._queue_customer_notice") as queue_send:
             maybe_send_receipt_share(self.receipt, message="receipt text")
 
         queue_send.assert_not_called()
@@ -2656,10 +2998,12 @@ class TriggeredMessageTests(TestCase):
         from shops.services import set_communications_setting
 
         set_communications_setting(field="auto_sale_receipt", enabled=True)
-        with patch("communications.automations._queue_send") as queue_send:
+        with patch("communications.automations._queue_customer_notice") as queue_send:
             maybe_send_receipt_share(self.receipt, message="receipt text")
 
         queue_send.assert_called_once()
+        kwargs = queue_send.call_args.kwargs
+        self.assertIn("Sale at", kwargs["body"])
 
     def _enable_sms(self):
         from shops.models import SmsProvider

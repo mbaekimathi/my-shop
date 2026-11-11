@@ -42,6 +42,7 @@ PERMISSION_MODULES = (
             {"slug": "items", "label": "Items"},
             {"slug": "stock", "label": "Stock"},
             {"slug": "supply", "label": "Supply analytics"},
+            {"slug": "deliveries", "label": "Deliveries"},
             {"slug": "quotations", "label": "Quotations"},
             {"slug": "tradings", "label": "Tradings"},
             {"slug": "clients", "label": "Clients"},

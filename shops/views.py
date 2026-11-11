@@ -74,6 +74,7 @@ from .daraja_stk import (
 from .services import (
     _qty_label,
     _qty_number,
+    active_riders_payload,
     authenticate_shop_login,
     authenticate_shop_selection,
     build_expense_supplier_receipt,
@@ -161,6 +162,9 @@ from .session import (
 EMPTY_FORM = {
     "name": "",
     "location": "",
+    "latitude": "",
+    "longitude": "",
+    "maps_url": "",
     "email": "",
     "phone_number": "",
     "login_code": "",
@@ -171,6 +175,9 @@ def _form_data_from_post(post) -> dict:
     return {
         "name": post.get("name", "").strip().upper(),
         "location": post.get("location", "").strip().upper(),
+        "latitude": (post.get("latitude") or "").strip(),
+        "longitude": (post.get("longitude") or "").strip(),
+        "maps_url": (post.get("maps_url") or "").strip(),
         "email": post.get("email", "").strip().lower(),
         "phone_number": post.get("phone_number", "").strip().upper(),
         "login_code": post.get("login_code", "").strip(),
@@ -313,6 +320,7 @@ def shop_management(request, profile, meta, module, page_sidebar):
             "open_edit_modal": open_edit_modal,
             "edit_shop": edit_shop,
             "module_permissions": caps,
+            "google_maps_api_key": getattr(settings, "GOOGLE_MAPS_API_KEY", "") or "",
         },
     )
 
@@ -1687,6 +1695,7 @@ def my_shop_workspace(request, shop_id):
         "summary": shop.location,
         "icon": "store",
     }
+    delivery_riders = active_riders_payload()
     return render(
         request,
         "shops/my_shop_workspace.html",
@@ -1774,6 +1783,8 @@ def my_shop_workspace(request, shop_id):
             "default_payment": default_payment,
             "default_print_via": default_print_via,
             "credit_whatsapp": credit_whatsapp,
+            "google_maps_api_key": getattr(settings, "GOOGLE_MAPS_API_KEY", "") or "",
+            "delivery_riders": delivery_riders,
             "profile_allocated_to_shop": profile_allocated_to_shop(profile, shop),
             "buy_stock_modal": True,
             "buy_stock_next": reverse(
@@ -3566,6 +3577,12 @@ def my_shop_client_lookup(request, shop_id):
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
 
+    from .services import (
+        last_deliveries_for_clients,
+        last_delivery_for_client,
+        serialize_client_lookup,
+    )
+
     phone = (request.GET.get("phone") or "").strip()
     name_query = (request.GET.get("name") or request.GET.get("q") or "").strip()
 
@@ -3573,25 +3590,18 @@ def my_shop_client_lookup(request, shop_id):
         client = find_client_by_phone(phone)
         if client is None:
             return JsonResponse({"ok": True, "found": False, "results": []})
-        payload = {
-            "id": client.pk,
-            "full_name": (client.full_name or "").upper(),
-            "phone_number": format_kenya_phone(
-                client.phone_number or client.phone_normalized
-            ),
-        }
+        payload = serialize_client_lookup(
+            client, last_delivery=last_delivery_for_client(client)
+        )
         return JsonResponse({"ok": True, "found": True, "results": [payload], **payload})
 
     if name_query:
         clients = search_clients_by_name(name_query)
+        last_by_id = last_deliveries_for_clients(clients)
         results = [
-            {
-                "id": client.pk,
-                "full_name": (client.full_name or "").upper(),
-                "phone_number": format_kenya_phone(
-                    client.phone_number or client.phone_normalized
-                ),
-            }
+            serialize_client_lookup(
+                client, last_delivery=last_by_id.get(client.pk)
+            )
             for client in clients
         ]
         return JsonResponse(
@@ -4691,6 +4701,7 @@ def my_shop_settings_messages(request, shop_id):
         TRIGGER_CHANNEL_CHOICES,
         TRIGGER_DELAY_UNITS,
         TRIGGER_MESSAGE_CHOICES,
+        TRIGGER_MESSAGE_GROUPS,
         TRIGGER_MESSAGE_PLACEHOLDERS,
     )
     from communications.models import TriggeredMessage
@@ -4769,6 +4780,7 @@ def my_shop_settings_messages(request, shop_id):
         ],
         "editing": triggered_message_as_dict(editing) if editing else None,
         "trigger_choices": TRIGGER_MESSAGE_CHOICES,
+        "trigger_groups": TRIGGER_MESSAGE_GROUPS,
         "status_choices": MESSAGE_STATUS_CHOICES,
         "channel_choices": TRIGGER_CHANNEL_CHOICES,
         "delay_units": TRIGGER_DELAY_UNITS,

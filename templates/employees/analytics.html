@@ -707,12 +707,16 @@
   </div>
 </div>
 {% endif %}
+{% include "employees/partials/analytics_credit_due_followup_modal.html" %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
 {% if page.receipt_modal %}
 <script defer src="{% static 'js/analytics-receipts-return.js' %}?v=20261024-decimal-inputs"></script>
+{% endif %}
+{% if page.credit_due_today and page.credit_due_today.rows %}
+<script defer src="{% static 'js/analytics-credit-due-followup.js' %}?v=1"></script>
 {% endif %}
 <script>
   (() => {

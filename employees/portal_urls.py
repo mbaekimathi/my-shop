@@ -244,6 +244,47 @@ urlpatterns = [
     path("store-manager/", views.role_store_manager, name="role_store_manager"),
     path("shop-cashier/", views.role_shop_cashier, name="role_shop_cashier"),
     path("it-support/", views.role_it_support, name="role_it_support"),
+    path("rider/", views.role_rider, name="role_rider"),
+    path(
+        "rider/open/",
+        views.rider_open_deliveries,
+        name="rider_open_deliveries",
+    ),
+    path(
+        "rider/active/",
+        views.rider_active_deliveries,
+        name="rider_active_deliveries",
+    ),
+    path(
+        "rider/completed/",
+        views.rider_completed_deliveries,
+        name="rider_completed_deliveries",
+    ),
+    path(
+        "rider/deliveries/status/",
+        views.rider_delivery_status_api,
+        name="rider_delivery_status",
+    ),
+    path(
+        "rider/deliveries/<int:delivery_id>/accept/",
+        views.rider_delivery_accept,
+        name="rider_delivery_accept",
+    ),
+    path(
+        "rider/deliveries/<int:delivery_id>/complete/",
+        views.rider_delivery_complete,
+        name="rider_delivery_complete",
+    ),
+    path(
+        "rider/deliveries/<int:delivery_id>/stk/",
+        views.rider_delivery_stk_initiate,
+        name="rider_delivery_stk_initiate",
+    ),
+    path(
+        "rider/deliveries/<int:delivery_id>/stk/<str:payment_id>/",
+        views.rider_delivery_stk_status,
+        name="rider_delivery_stk_status",
+    ),
     path("it-support/marketing/", views.marketing_links, name="marketing_links"),
     path(
         "<role_segment:role_segment>/hr-management/approvals/<int:page>/",
@@ -346,9 +387,9 @@ urlpatterns = [
         name="analytics_account_pay_stk_status",
     ),
     path(
-        "<role_segment:role_segment>/analytics/credit-receipt/<int:receipt_id>/due-date/",
-        analytics_views.analytics_credit_receipt_update,
-        name="analytics_credit_receipt_update",
+        "<role_segment:role_segment>/analytics/credits/clients/<int:client_id>/follow-up/",
+        analytics_views.analytics_client_credit_follow_up,
+        name="analytics_client_credit_follow_up",
     ),
     path(
         "<role_segment:role_segment>/analytics/credits/report/",
@@ -359,6 +400,11 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/credits/audits/",
         analytics_views.analytics_credit_audits,
         name="analytics_credit_audits",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/credits/follow-ups/",
+        analytics_views.analytics_credit_follow_ups,
+        name="analytics_credit_follow_ups",
     ),
     path(
         "<role_segment:role_segment>/analytics/suppliers/<slug:kind>/<int:supplier_id>/",

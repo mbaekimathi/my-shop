@@ -65,6 +65,14 @@
       {% if p.cashier %}
       <div><span>{{ p.authorised_label|default:"Served by" }}</span><strong>{{ p.cashier }}</strong></div>
       {% endif %}
+      {% if p.has_delivery or p.delivery_location %}
+      {% if p.delivery_rider %}
+      <div><span>Rider</span><strong>{{ p.delivery_rider }}</strong></div>
+      {% endif %}
+      {% if p.delivery_location %}
+      <div><span>Delivery</span><strong>{{ p.delivery_location }}</strong></div>
+      {% endif %}
+      {% endif %}
     </div>
   </div>
 

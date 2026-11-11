@@ -1,5 +1,6 @@
 """Analytics workspace module views."""
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
@@ -35,7 +36,7 @@ from .analytics_services import (
     client_transactions_pdf_response,
     get_analytics_receipt_kind,
     get_analytics_section,
-    update_credit_receipt_due_date,
+    update_client_credit_follow_up_date,
 )
 from shops.credit_audit import client_credit_audit_url
 from .workspace import (
@@ -116,15 +117,16 @@ def _stk_urls_for(profile):
     }
 
 
-def _credit_receipt_update_url_template(profile):
+def _client_credit_follow_up_url(profile, client_id: int) -> str:
     from django.urls import reverse
 
-    segment = role_url_segment(profile.role)
-    template = reverse(
-        "employees:analytics_credit_receipt_update",
-        kwargs={"role_segment": segment, "receipt_id": 0},
+    return reverse(
+        "employees:analytics_client_credit_follow_up",
+        kwargs={
+            "role_segment": role_url_segment(profile.role),
+            "client_id": int(client_id),
+        },
     )
-    return template.replace("/0/", "/__ID__/")
 
 
 def _render_analytics(
@@ -193,6 +195,8 @@ def _render_analytics(
         (
             "employees/analytics_supply.html"
             if section["slug"] == "supply"
+            else "employees/analytics_deliveries.html"
+            if section["slug"] == "deliveries"
             else "employees/analytics_overview.html"
             if section["slug"] == "overview"
             else "employees/analytics.html"
@@ -203,6 +207,7 @@ def _render_analytics(
             "module": module,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
+            "google_maps_api_key": getattr(settings, "GOOGLE_MAPS_API_KEY", "") or "",
             "credit_report_href": credit_report_href,
             "credit_clients_href": credit_clients_href,
             "credit_audits_href": (
@@ -513,13 +518,10 @@ def analytics_credit_report(request, role_segment):
             page=context.get("page") or {}, filters=context
         )
 
-    back_href = analytics_section_url(profile.role, "credits")
     query = request.GET.urlencode()
-    if query:
-        back_href = f"{back_href}?{query}"
     page = dict(context.get("page") or {})
-    page["back_href"] = back_href
-    page["back_label"] = "Back to credits"
+    page.pop("back_href", None)
+    page.pop("back_label", None)
     context["page"] = page
 
     clients_href = reverse(
@@ -592,13 +594,9 @@ def analytics_credit_clients(request, role_segment):
 
     context = build_credit_clients_page(profile=profile, request=request)
     segment = role_url_segment(profile.role)
-    query = request.GET.urlencode()
-    back_href = analytics_section_url(profile.role, "credits")
-    if query:
-        back_href = f"{back_href}?{query}"
     page = dict(context.get("page") or {})
-    page["back_href"] = back_href
-    page["back_label"] = "Back to credits"
+    page.pop("back_href", None)
+    page.pop("back_label", None)
     context["page"] = page
 
     report_href = reverse(
@@ -1025,7 +1023,7 @@ def analytics_client_credit(request, role_segment, client_id):
             "client_phone": account["client"].phone_number,
             **share_context,
             **_stk_urls_for(profile),
-            "receipt_update_url_template": _credit_receipt_update_url_template(profile),
+            "follow_up_url": _client_credit_follow_up_url(profile, client_id),
             "client_credit_payments_url": (
                 client_credit_account_url(
                     profile.role,
@@ -1494,8 +1492,61 @@ def analytics_credit_audits(request, role_segment):
             "page_sidebar": sidebar_for_credits(
                 profile.role, profile=profile, active="audits"
             ),
-            "back_href": analytics_section_url(profile.role, "credits"),
             **trail,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_credit_follow_ups(request, role_segment):
+    """Credit clients with a follow-up set or cleared credit in the period."""
+    from .module_permissions import require_module_permission
+    from shops.credit_audit import build_credit_follow_ups_page
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_credit_follow_ups", role_segment=expected
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    denied = require_module_permission(request, profile, "analytics", "credits")
+    if denied is not None:
+        return denied
+
+    page = build_credit_follow_ups_page(profile=profile, request=request)
+    return render(
+        request,
+        "employees/analytics_credit_follow_ups.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Credit follow-up · Credits",
+                "headline": "Credit follow-up",
+                "summary": (
+                    "Follow-ups set and credits cleared for clients in your shops."
+                ),
+                "icon": "calendar-clock",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_credits(
+                profile.role, profile=profile, active="follow-up"
+            ),
+            **page,
         },
     )
 
@@ -1825,8 +1876,8 @@ def analytics_account_pay_stk_status(request, role_segment, payment_id):
 
 @active_employee_required
 @require_POST
-def analytics_credit_receipt_update(request, role_segment, receipt_id):
-    """Update payment due date on one credit receipt."""
+def analytics_client_credit_follow_up(request, role_segment, client_id):
+    """Set the follow-up date for a client's whole credit account."""
     from .module_permissions import require_module_permission
 
     profile = get_profile_for_request(request)
@@ -1849,10 +1900,10 @@ def analytics_credit_receipt_update(request, role_segment, receipt_id):
             return denied
 
     try:
-        result = update_credit_receipt_due_date(
+        result = update_client_credit_follow_up_date(
             profile=profile,
-            receipt_id=receipt_id,
-            credit_due_date=request.POST.get("credit_due_date"),
+            client_id=client_id,
+            credit_follow_up_date=request.POST.get("credit_follow_up_date") or "",
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)

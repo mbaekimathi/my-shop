@@ -6,8 +6,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="{{ company_name|default:'MY-SHOP' }} — employee registration, login, and role-based access.">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#f6f8f8">
+  <meta name="theme-color" content="#0f8f82">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="{{ company_name|default:'MY-SHOP' }}">
   <link rel="manifest" href="{% url 'core:web_manifest' %}">
+  <link rel="apple-touch-icon" href="{% static 'icons/myshop-apple-180.png' %}">
+  <link rel="icon" type="image/png" sizes="192x192" href="{% static 'icons/myshop-192.png' %}">
+  <link rel="icon" type="image/png" sizes="512x512" href="{% static 'icons/myshop-512.png' %}">
   <title>{% block title %}{{ company_name|default:"MY-SHOP" }}{% endblock %}</title>
   <script>
     (function () {
@@ -24,6 +31,7 @@
   <link rel="preload" href="{% static 'fonts/manrope-latin.woff2' %}" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{% static 'css/core.css' %}?v=20261019-assets">
   <link rel="stylesheet" href="{% static 'css/company-themes.css' %}?v=20261108-themes">
+  <link rel="stylesheet" href="{% static 'css/pwa-install.css' %}?v=20261111-pwa">
   <script src="{% static 'vendor/lucide.min.js' %}" defer></script>
   {% block extra_css %}{% endblock %}
   {% block extra_head %}{% endblock %}
@@ -31,8 +39,12 @@
 <body class="{% block body_class %}{% endblock %}" data-sync-url="{% url 'employees:sync' %}" data-sync-register-url="{% url 'employees:sync_register' %}">
   {% include "partials/offline_bar.html" %}
   {% block body %}{% endblock %}
+  {% block pwa_install %}
+  {% include "partials/pwa_install.html" %}
+  {% endblock %}
   <script defer src="{% static 'js/notify-sound.js' %}?v=1"></script>
   <script defer src="{% static 'js/main.js' %}?v=20261019-assets"></script>
+  <script defer src="{% static 'js/pwa-install.js' %}?v=20261111-pwa"></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>

@@ -3,6 +3,7 @@
 Semantics match the permissions UI:
 - Missing row ⇒ allowed (default allow) for most roles
 - Store Manager missing row ⇒ store-ops allow-list only (default deny elsewhere)
+- Rider missing row ⇒ deny all modules (empty dashboard for now)
 - Explicit allowed=True / allowed=False always wins over role defaults
 - Super Admin always allowed (cannot be locked out of the system)
 - HR staff always keep access to hr-management/permissions so they can recover
@@ -88,7 +89,11 @@ STORE_MANAGER_DASHBOARD_MODULES = frozenset(
 
 def role_default_permission(profile, module_slug: str, submodule_slug: str) -> bool:
     """Default allow/deny when no EmployeeModulePermission row exists."""
-    if getattr(profile, "role", None) == EmployeeRole.STORE_MANAGER:
+    role = getattr(profile, "role", None)
+    if role == EmployeeRole.RIDER:
+        # Rider dashboard is empty for now — no modules by default.
+        return False
+    if role == EmployeeRole.STORE_MANAGER:
         return (module_slug, submodule_slug) in STORE_MANAGER_ALLOWED_KEYS
     return True
 

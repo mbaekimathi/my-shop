@@ -7,6 +7,7 @@ from .models import (
     EmployeeProfile,
     EmployeeRole,
     EmployeeStatus,
+    WebPushSubscription,
 )
 
 
@@ -75,6 +76,7 @@ class EmployeeProfileAdmin(admin.ModelAdmin):
         "set_role_store_manager",
         "set_role_company_manager",
         "set_role_it_support",
+        "set_role_rider",
         "set_role_super_admin",
     ]
     fieldsets = (
@@ -174,10 +176,34 @@ class EmployeeProfileAdmin(admin.ModelAdmin):
         updated = queryset.update(role=EmployeeRole.IT_SUPPORT)
         self.message_user(request, f"{updated} employee(s) set to IT Support.")
 
+    @admin.action(description="Set role → Rider")
+    def set_role_rider(self, request, queryset):
+        updated = queryset.update(role=EmployeeRole.RIDER)
+        self.message_user(request, f"{updated} employee(s) set to Rider.")
+
     @admin.action(description="Set role → Super Admin")
     def set_role_super_admin(self, request, queryset):
         updated = queryset.update(role=EmployeeRole.SUPER_ADMIN)
         self.message_user(request, f"{updated} employee(s) set to Super Admin.")
+
+
+@admin.register(WebPushSubscription)
+class WebPushSubscriptionAdmin(admin.ModelAdmin):
+    list_display = ("id", "employee", "shop", "endpoint_short", "updated_at")
+    list_filter = ("shop",)
+    search_fields = (
+        "endpoint",
+        "employee__employee_id",
+        "employee__user__username",
+        "shop__name",
+    )
+    readonly_fields = ("created_at", "updated_at", "endpoint", "p256dh", "auth")
+    autocomplete_fields = ("employee", "shop")
+
+    @admin.display(description="Endpoint")
+    def endpoint_short(self, obj):
+        text = obj.endpoint or ""
+        return text[:64] + ("…" if len(text) > 64 else "")
 
 
 @admin.register(EmployeeModulePermission)

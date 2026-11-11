@@ -747,6 +747,54 @@ class ClientCreditAccountTableTests(TestCase):
                 return cells
         return None
 
+    def test_update_account_follow_up_date_notifies_client(self):
+        from datetime import date
+        from unittest.mock import patch
+
+        from employees.analytics_services import update_client_credit_follow_up_date
+        from shops.models import ClientCreditAccountEvent, ClientCreditAccountEventKind
+
+        receipt = self._make_receipt(
+            self.client,
+            total=100,
+            amount_paid=0,
+            credit_due_date=date(2026, 11, 1),
+        )
+        self.client.credit_follow_up_date = date(2026, 11, 5)
+        self.client.credit_follow_up_reminder_sent_on = date(2026, 11, 5)
+        self.client.save(
+            update_fields=[
+                "credit_follow_up_date",
+                "credit_follow_up_reminder_sent_on",
+            ]
+        )
+        with patch(
+            "communications.automations.maybe_send_credit_follow_up_updated"
+        ) as notify:
+            notify.return_value = {"sent": True, "reason": ""}
+            result = update_client_credit_follow_up_date(
+                profile=self.cashier,
+                client_id=self.client.pk,
+                credit_follow_up_date="2026-12-15",
+            )
+        self.client.refresh_from_db()
+        receipt.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result.get("notified"))
+        self.assertEqual(receipt.credit_due_date.isoformat(), "2026-11-01")
+        self.assertEqual(self.client.credit_follow_up_date.isoformat(), "2026-12-15")
+        self.assertIsNone(self.client.credit_follow_up_reminder_sent_on)
+        notify.assert_called_once()
+        self.assertEqual(
+            notify.call_args.kwargs.get("old_date"), date(2026, 11, 5)
+        )
+        self.assertTrue(
+            ClientCreditAccountEvent.objects.filter(
+                client=self.client,
+                kind=ClientCreditAccountEventKind.FOLLOW_UP_CHANGED,
+            ).exists()
+        )
+
     def test_fully_paid_credit_is_converted_to_sale(self):
         from employees.analytics_services import apply_credit_receipt_payment
 
@@ -1276,6 +1324,60 @@ class CreditsShopScopeTests(TestCase):
         self.assertIn("Credit reports", html)
         self.assertIn("Credit items by shop", html)
 
+    def test_credits_page_due_today_followup_payload(self):
+        from datetime import date
+        from decimal import Decimal
+        from unittest.mock import patch
+
+        from django.utils import timezone
+
+        customer = Client.objects.create(
+            full_name="DUE TODAY CLIENT",
+            phone_number="0700000949",
+            phone_normalized="254700000949",
+            created_by=self.it,
+        )
+        today = date(2026, 11, 11)
+        customer.credit_follow_up_date = today
+        customer.save(update_fields=["credit_follow_up_date"])
+        ShopReceipt.objects.create(
+            shop=self.shop_a,
+            receipt_number="CR-TODAY-1",
+            kind=ShopReceiptKind.CREDIT,
+            total=Decimal("300.00"),
+            amount_paid=Decimal("0.00"),
+            created_by=self.it,
+            client=customer,
+            client_name=customer.full_name,
+            client_phone=customer.phone_number,
+            credit_due_date=date(2026, 12, 1),
+            status=ShopReceiptStatus.ACTIVE,
+        )
+        self.client.force_login(self.user)
+        with patch.object(timezone, "localdate", return_value=today):
+            response = self.client.get("/it-support/analytics/credits/?range=all")
+        self.assertEqual(response.status_code, 200)
+        followup = response.context["page"].get("credit_due_today") or {}
+        self.assertEqual(followup.get("date"), today.isoformat())
+        self.assertEqual(followup.get("count"), 1)
+        self.assertEqual(len(followup.get("rows") or []), 1)
+        row = followup["rows"][0]
+        self.assertEqual(row["client_name"], "DUE TODAY CLIENT")
+        self.assertEqual(row["open_count"], 1)
+        self.assertIn("/analytics/credits/clients/", row["href"])
+        html = response.content.decode()
+        self.assertIn("Follow-ups due today", html)
+        self.assertIn("data-ax-credit-due-modal", html)
+
+    def test_credits_page_due_today_followup_empty_when_none(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/analytics/credits/?range=all")
+        self.assertEqual(response.status_code, 200)
+        followup = response.context["page"].get("credit_due_today") or {}
+        self.assertEqual(followup.get("count"), 0)
+        self.assertEqual(followup.get("rows") or [], [])
+        self.assertNotIn("data-ax-credit-due-modal", response.content.decode())
+
     def test_credits_report_page_shows_shop_and_item_tables(self):
         self.client.force_login(self.user)
         response = self.client.get(
@@ -1736,6 +1838,131 @@ class CreditAuditsEventFilterTests(TestCase):
         self.assertEqual(response.context["rows"][0]["kind"], "payment_cash")
 
 
+class CreditFollowUpsPageTests(TestCase):
+    def setUp(self):
+        from datetime import date
+
+        self.user = User.objects.create_user(
+            username="840031",
+            password="follow-pass",
+            email="it-follow@test.local",
+            first_name="IT",
+            last_name="FOLLOW",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840031",
+            phone_country_code="+254",
+            phone_number="700000971",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="FOLLOW SHOP",
+            location="NAIROBI",
+            email="follow-shop@test.local",
+            phone_number="0700000971",
+            login_code="840131",
+            password_hash="x",
+            created_by=self.it,
+        )
+        self.client_row = Client.objects.create(
+            full_name="FOLLOW CLIENT",
+            phone_number="0700004011",
+            phone_normalized="254700004011",
+            created_by=self.it,
+            credit_follow_up_date=date(2026, 12, 15),
+        )
+        self.receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="CR-FOLLOW-1",
+            kind=ShopReceiptKind.CREDIT,
+            total=200,
+            amount_paid=0,
+            created_by=self.it,
+            client=self.client_row,
+            client_name=self.client_row.full_name,
+            client_phone=self.client_row.phone_number,
+            status=ShopReceiptStatus.ACTIVE,
+        )
+
+    def test_sidebar_and_page_list_follow_up_and_cleared(self):
+        from datetime import date
+
+        from shops.credit_audit import (
+            build_credit_follow_ups_page,
+            log_credit_follow_up_change,
+            log_credit_payment,
+        )
+        from shops.models import ClientCreditAccountEventKind
+
+        log_credit_follow_up_change(
+            client_id=self.client_row.pk,
+            old_date=None,
+            new_date=date(2026, 12, 15),
+            actor=self.it,
+            shop=self.shop,
+        )
+        self.receipt.amount_paid = self.receipt.total
+        self.receipt.save(update_fields=["amount_paid"])
+        log_credit_payment(
+            client_id=self.client_row.pk,
+            receipt=self.receipt,
+            amount=self.receipt.total,
+            payment_method="cash",
+            actor=self.it,
+        )
+
+        from django.test import RequestFactory
+
+        request = RequestFactory().get(
+            "/it-support/analytics/credits/follow-ups/",
+            {"range": "year", "year": "2026"},
+        )
+        page = build_credit_follow_ups_page(profile=self.it, request=request)
+        self.assertEqual(page["client_count"], 1)
+        self.assertEqual(page["follow_up_count"], 1)
+        self.assertEqual(page["cleared_count"], 1)
+        row = page["rows"][0]
+        self.assertEqual(row["client"], "FOLLOW CLIENT")
+        labels = [item["label"] for item in row["outcomes"]]
+        self.assertIn("Follow-up set", labels)
+        self.assertIn("Credit cleared", labels)
+
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/analytics/credits/")
+        self.assertEqual(response.status_code, 200)
+        labels = [
+            item["label"]
+            for item in response.context["page_sidebar"]["primary"]
+        ]
+        self.assertIn("Credit follow-up", labels)
+
+        response = self.client.get(
+            "/it-support/analytics/credits/follow-ups/",
+            {"range": "year", "year": "2026"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["headline"], "Credit follow-up")
+        self.assertEqual(response.context["client_count"], 1)
+        html = response.content.decode()
+        self.assertIn('name="outcome"', html)
+        self.assertIn(">Follow-up set</option>", html)
+        self.assertIn(">Credit cleared</option>", html)
+        self.assertIn('name="range"', html)
+        self.assertIn("FOLLOW CLIENT", html)
+
+        filtered = self.client.get(
+            "/it-support/analytics/credits/follow-ups/",
+            {"range": "year", "year": "2026", "outcome": "cleared"},
+        )
+        self.assertEqual(filtered.status_code, 200)
+        self.assertEqual(filtered.context["outcome_filter"], "cleared")
+        self.assertEqual(filtered.context["client_count"], 1)
+        self.assertTrue(filtered.context["rows"][0]["cleared"])
+
+
 class MarketingLinksPageTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
@@ -2149,3 +2376,78 @@ class StoreManagerRoleTests(TestCase):
         self.assertNotEqual(EmployeeRole.SHOP_MANAGER, EmployeeRole.STORE_MANAGER)
         self.assertEqual(EmployeeRole.SHOP_MANAGER.label, "Shop Manager")
         self.assertEqual(EmployeeRole.STORE_MANAGER.label, "Store Manager")
+
+
+@override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
+class RiderRoleTests(TestCase):
+    """Rider has an empty dashboard and no modules by default."""
+
+    def setUp(self):
+        from employees.module_permissions import employee_may
+        from employees.workspace import get_dashboard_modules, sidebar_for_role_dashboard
+
+        self.employee_may = employee_may
+        self.get_dashboard_modules = get_dashboard_modules
+        self.sidebar_for_role_dashboard = sidebar_for_role_dashboard
+
+        self.password = "rider-pass"
+        self.user = User.objects.create_user(
+            username="840041",
+            password=self.password,
+            email="rider@test.local",
+            first_name="RIDE",
+            last_name="R",
+            is_active=True,
+        )
+        self.rider = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840041",
+            phone_country_code="+254",
+            phone_number="700000941",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.RIDER,
+        )
+
+    def test_role_label_and_delivery_nav(self):
+        self.assertEqual(self.rider.get_role_display(), "Rider")
+        self.assertEqual(self.get_dashboard_modules(EmployeeRole.RIDER), [])
+
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.RIDER, profile=self.rider
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertEqual(
+            labels,
+            ["Open deliveries", "My active deliveries", "Completed deliveries"],
+        )
+        self.assertEqual(sidebar["primary"][0]["href"], "/rider/")
+
+        self.client.login(username="840041", password=self.password)
+        home = self.client.get("/rider/")
+        self.assertEqual(home.status_code, 200)
+        self.assertContains(home, "Open deliveries")
+        self.assertContains(home, "My active")
+        self.assertContains(home, "Completed")
+
+        open_page = self.client.get("/rider/open/")
+        self.assertEqual(open_page.status_code, 302)
+        self.assertIn("/rider/", open_page.url)
+
+        active_page = self.client.get("/rider/active/")
+        done_page = self.client.get("/rider/completed/")
+        self.assertEqual(active_page.status_code, 200)
+        self.assertEqual(done_page.status_code, 200)
+
+        via_dashboard = self.client.get("/employees/dashboard/")
+        self.assertEqual(via_dashboard.status_code, 302)
+        self.assertIn("/rider/", via_dashboard.url)
+
+    def test_modules_are_blocked_by_default(self):
+        self.assertFalse(self.employee_may(self.rider, "stock-management", "view"))
+        self.assertFalse(self.employee_may(self.rider, "my-shop", "workspace"))
+        self.assertFalse(self.employee_may(self.rider, "settings", "home"))
+
+        self.client.login(username="840041", password=self.password)
+        stock = self.client.get("/rider/stock-management/")
+        self.assertEqual(stock.status_code, 302)
+        self.assertIn("/rider/", stock.url)

@@ -106,6 +106,12 @@ ANALYTICS_SECTIONS = (
         "summary": "Buy items suppliers — deliveries, spend, and price history per item.",
     },
     {
+        "slug": "deliveries",
+        "label": "Deliveries",
+        "icon": "bike",
+        "summary": "Customer deliveries on the map — rider activity and completed jobs.",
+    },
+    {
         "slug": "quotations",
         "label": "Quotations",
         "icon": "file-text",
@@ -871,59 +877,115 @@ def _credit_receipt_for_profile(profile, receipt_id: int):
     )
 
 
-def update_credit_receipt_due_date(*, profile, receipt_id: int, credit_due_date: str) -> dict:
-    """Update the expected payment date on one credit receipt."""
+def update_client_credit_follow_up_date(
+    *, profile, client_id: int, credit_follow_up_date: str
+) -> dict:
+    """Set the follow-up date for a client's whole credit account."""
     from datetime import date
 
     from django.core.exceptions import ValidationError
     from django.db import transaction
+    from django.utils import timezone
 
-    raw = (credit_due_date or "").strip()
+    raw = (credit_follow_up_date or "").strip()
     if not raw:
-        raise ValidationError("Payment due date is required.")
+        raise ValidationError("Follow-up date is required.")
     try:
-        due_date = date.fromisoformat(raw)
+        follow_up = date.fromisoformat(raw)
     except ValueError:
-        raise ValidationError("Enter a valid payment due date.")
+        raise ValidationError("Enter a valid follow-up date.")
+
+    shop_ids = {shop.pk for shop in actionable_shops_for_profile(profile)}
+    if not shop_ids:
+        raise ValidationError("No shops available.")
 
     with transaction.atomic():
-        receipt = _credit_receipt_for_profile(profile, receipt_id)
-        if receipt is None:
-            raise ValidationError("Credit receipt not found.")
-        due = _due_amount(receipt.total, receipt.amount_paid)
-        from django.utils import timezone
+        client = Client.objects.filter(pk=client_id).first()
+        if client is None:
+            raise ValidationError("Client not found.")
+        open_credits = list(
+            ShopReceipt.objects.filter(
+                client_id=client.pk,
+                kind=ShopReceiptKind.CREDIT,
+                shop_id__in=shop_ids,
+            )
+            .exclude(status=ShopReceiptStatus.CANCELLED)
+            .select_related("shop")
+        )
+        balance = _zero()
+        first_shop = None
+        for receipt in open_credits:
+            due = _due_amount(receipt.total, receipt.amount_paid)
+            if due <= 0:
+                continue
+            balance += due
+            if first_shop is None:
+                first_shop = receipt.shop
+        if balance <= 0:
+            raise ValidationError("This client has no open credit to follow up.")
 
         today = timezone.localdate()
-        old_due_date = receipt.credit_due_date
-        if old_due_date == due_date:
-            pay_by = due_date.strftime("%d %b %Y")
+        old_follow_up = client.credit_follow_up_date
+        if old_follow_up == follow_up:
+            label = follow_up.strftime("%d %b %Y")
             return {
                 "ok": True,
-                "receipt_id": receipt.pk,
-                "pay_by": pay_by,
-                "pay_by_raw": due_date.isoformat(),
-                "pay_by_overdue": due > 0 and due_date < today,
-                "message": f"Payment due date is already {pay_by}.",
+                "client_id": client.pk,
+                "follow_up": label,
+                "follow_up_raw": follow_up.isoformat(),
+                "follow_up_overdue": balance > 0 and follow_up < today,
+                "balance": _money_ksh(balance),
+                "notified": False,
+                "notify_reason": "",
+                "message": f"Follow-up date is already {label}.",
             }
-        receipt.credit_due_date = due_date
-        receipt.save(update_fields=["credit_due_date"])
-        from shops.credit_audit import log_credit_due_date_change
 
-        log_credit_due_date_change(
-            receipt=receipt,
-            old_date=old_due_date,
-            new_date=due_date,
-            actor=profile,
+        client.credit_follow_up_date = follow_up
+        client.credit_follow_up_reminder_sent_on = None
+        client.save(
+            update_fields=[
+                "credit_follow_up_date",
+                "credit_follow_up_reminder_sent_on",
+                "updated_at",
+            ]
         )
-        pay_by = due_date.strftime("%d %b %Y")
-        return {
-            "ok": True,
-            "receipt_id": receipt.pk,
-            "pay_by": pay_by,
-            "pay_by_raw": due_date.isoformat(),
-            "pay_by_overdue": due > 0 and due_date < today,
-            "message": f"Payment due date updated to {pay_by}.",
-        }
+        from shops.credit_audit import log_credit_follow_up_change
+
+        log_credit_follow_up_change(
+            client_id=client.pk,
+            old_date=old_follow_up,
+            new_date=follow_up,
+            actor=profile,
+            shop=first_shop,
+        )
+
+    # Notify after the account date is saved (outside the atomic block).
+    from communications.automations import maybe_send_credit_follow_up_updated
+
+    label = follow_up.strftime("%d %b %Y")
+    notify = maybe_send_credit_follow_up_updated(
+        client,
+        old_date=old_follow_up,
+        balance=balance,
+        request=None,
+    )
+    notified = bool(notify.get("sent"))
+    notify_reason = notify.get("reason") or ""
+    if notified:
+        message = f"Account follow-up set to {label}. Client notice queued."
+    else:
+        message = f"Account follow-up set to {label}. Notice not sent — {notify_reason}"
+    return {
+        "ok": True,
+        "client_id": client.pk,
+        "follow_up": label,
+        "follow_up_raw": follow_up.isoformat(),
+        "follow_up_overdue": balance > 0 and follow_up < today,
+        "balance": _money_ksh(balance),
+        "notified": notified,
+        "notify_reason": notify_reason,
+        "message": message,
+    }
 
 
 def apply_credit_receipt_payment(
@@ -2481,6 +2543,7 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         "suppliers",
         "expenses",
         "supply",
+        "deliveries",
         "credits",
         "tradings",
         "clients",
@@ -2508,6 +2571,7 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         "items": _build_items,
         "stock": _build_stock,
         "supply": _build_supply,
+        "deliveries": _build_deliveries,
         "quotations": _build_quotations,
         "tradings": _build_tradings,
         "credits": _build_credits,
@@ -3633,12 +3697,22 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
     empty_scope = (
         f"at {scope_hint}" if shop_filter["selected_shop_ids"] else "in your shops"
     )
+    follow_up = ""
+    follow_up_raw = ""
+    follow_up_overdue = False
+    if client.credit_follow_up_date:
+        follow_up = client.credit_follow_up_date.strftime("%d %b %Y")
+        follow_up_raw = client.credit_follow_up_date.isoformat()
+        follow_up_overdue = balance > 0 and client.credit_follow_up_date < today
     return {
         "client": client,
         "balance": _money_ksh(balance),
         "balance_raw": str(balance),
         "credit_count": open_count,
         "receipt_count": len(rows),
+        "follow_up": follow_up,
+        "follow_up_raw": follow_up_raw,
+        "follow_up_overdue": follow_up_overdue,
         "summary_board": _client_account_summary_board(
             balance=balance,
             open_count=open_count,
@@ -10093,6 +10167,191 @@ def _supply_summary_board(
     }
 
 
+def _build_deliveries(filters):
+    """Customer delivery jobs — map markers and rider completion counts."""
+    from decimal import Decimal
+
+    from shops.models import ShopDelivery, ShopDeliveryStatus
+
+    shop_ids = filters["active_shop_ids"]
+    start, end = filters["start"], filters["end"]
+    qs = _within_created_range(
+        ShopDelivery.objects.filter(shop_id__in=shop_ids),
+        start,
+        end,
+        lookup="created_at",
+    ).select_related(
+        "receipt",
+        "shop",
+        "accepted_by__user",
+    )
+
+    # Plot every active/finished job with a pin — open ones still need riders.
+    map_statuses = (
+        ShopDeliveryStatus.OPEN,
+        ShopDeliveryStatus.ACCEPTED,
+        ShopDeliveryStatus.DELIVERED,
+        ShopDeliveryStatus.DELIVERED_PAID,
+        ShopDeliveryStatus.COMPLETED,
+    )
+    map_jobs = [
+        row
+        for row in qs.filter(status__in=map_statuses)
+        if row.latitude is not None and row.longitude is not None
+    ]
+    map_points = [
+        {
+            "id": row.pk,
+            "lat": float(row.latitude),
+            "lng": float(row.longitude),
+            "label": row.receipt.receipt_number,
+            "client": row.client_name or "Client",
+            "phone": row.client_phone or "",
+            "location": row.location_text,
+            "shop": row.shop.name,
+            "status": row.get_status_display(),
+            "rider": (
+                (
+                    row.accepted_by.user.get_full_name()
+                    or row.accepted_by.user.username
+                )
+                if row.accepted_by_id
+                else ""
+            ),
+            "maps_url": row.maps_url or "",
+        }
+        for row in map_jobs
+    ]
+
+    rider_rows = list(
+        qs.filter(accepted_by__isnull=False)
+        .values(
+            "accepted_by_id",
+            "accepted_by__employee_id",
+            "accepted_by__user__first_name",
+            "accepted_by__user__last_name",
+            "accepted_by__user__username",
+        )
+        .annotate(
+            total=Count("id"),
+            completed=Count(
+                "id",
+                filter=Q(
+                    status__in=(
+                        ShopDeliveryStatus.DELIVERED,
+                        ShopDeliveryStatus.DELIVERED_PAID,
+                        ShopDeliveryStatus.COMPLETED,
+                    )
+                ),
+            ),
+            accepted=Count(
+                "id",
+                filter=Q(status=ShopDeliveryStatus.ACCEPTED),
+            ),
+        )
+        .order_by("-completed", "-total", "accepted_by__employee_id")
+    )
+    riders = []
+    for row in rider_rows:
+        first = (row.get("accepted_by__user__first_name") or "").strip()
+        last = (row.get("accepted_by__user__last_name") or "").strip()
+        username = (row.get("accepted_by__user__username") or "").strip()
+        name = f"{first} {last}".strip() or username or "Rider"
+        riders.append(
+            {
+                "id": row["accepted_by_id"],
+                "employee_id": row.get("accepted_by__employee_id") or "",
+                "name": name,
+                "total": int(row["total"] or 0),
+                "completed": int(row["completed"] or 0),
+                "accepted": int(row["accepted"] or 0),
+            }
+        )
+
+    open_count = qs.filter(status=ShopDeliveryStatus.OPEN).count()
+    accepted_count = qs.filter(status=ShopDeliveryStatus.ACCEPTED).count()
+    completed_count = qs.filter(
+        status__in=(
+            ShopDeliveryStatus.DELIVERED,
+            ShopDeliveryStatus.DELIVERED_PAID,
+            ShopDeliveryStatus.COMPLETED,
+        )
+    ).count()
+    total_value = qs.aggregate(total=Sum("receipt__total"))["total"] or Decimal("0")
+
+    recent = list(
+        qs.select_related("receipt", "shop", "accepted_by__user").order_by(
+            "-created_at"
+        )[:40]
+    )
+    recent_rows = []
+    for row in recent:
+        rider_name = ""
+        if row.accepted_by_id:
+            rider_name = (
+                row.accepted_by.user.get_full_name()
+                or row.accepted_by.user.username
+            )
+        recent_rows.append(
+            {
+                "id": row.pk,
+                "receipt": row.receipt.receipt_number,
+                "shop": row.shop.name,
+                "client": row.client_name or "—",
+                "phone": row.client_phone or "—",
+                "location": row.location_text,
+                "status": row.get_status_display(),
+                "status_key": row.status,
+                "rider": rider_name or "—",
+                "created_at": row.created_at,
+                "maps_url": row.maps_url or "",
+                "has_coords": row.has_coordinates(),
+            }
+        )
+
+    import json
+
+    return {
+        "headline": "Deliveries",
+        "lead": (
+            "Map of delivery locations plus riders and how many jobs each completed."
+        ),
+        "period_label": filters.get("period_label") or "",
+        "hide_date_filters": False,
+        "open_count": open_count,
+        "accepted_count": accepted_count,
+        "completed_count": completed_count,
+        "total_count": open_count + accepted_count + completed_count,
+        "total_value": total_value,
+        "map_points": map_points,
+        "map_points_json": json.dumps(map_points),
+        "riders": riders,
+        "recent_rows": recent_rows,
+        "tables": [
+            {
+                "title": "Riders",
+                "columns": [
+                    {"key": "name", "label": "Rider"},
+                    {"key": "employee_id", "label": "ID"},
+                    {"key": "completed", "label": "Deliveries done"},
+                    {"key": "accepted", "label": "In progress"},
+                    {"key": "total", "label": "Total accepted"},
+                ],
+                "rows": [
+                    {
+                        "name": r["name"],
+                        "employee_id": r["employee_id"],
+                        "completed": r["completed"],
+                        "accepted": r["accepted"],
+                        "total": r["total"],
+                    }
+                    for r in riders
+                ],
+            }
+        ],
+    }
+
+
 def _build_supply(filters):
     """Supplier performance for stock received through the My Shop Buy items flow."""
     from django.urls import reverse
@@ -12129,6 +12388,73 @@ def _credit_items_detail_table(filters):
     )
 
 
+def _credit_due_today_followups(filters) -> dict:
+    """Credit accounts with follow-up date today for the Credits page popup."""
+    shop_ids = list(filters.get("active_shop_ids") or [])
+    role = filters.get("role")
+    today = timezone.localdate()
+    if not shop_ids or not role:
+        return {
+            "date": today.isoformat(),
+            "date_label": today.strftime("%d %b %Y"),
+            "count": 0,
+            "rows": [],
+        }
+
+    clients = (
+        Client.objects.filter(credit_follow_up_date=today)
+        .order_by("full_name", "id")
+    )
+    rows = []
+    for client in clients:
+        open_qs = (
+            ShopReceipt.objects.filter(
+                client_id=client.pk,
+                kind=ShopReceiptKind.CREDIT,
+                shop_id__in=shop_ids,
+            )
+            .exclude(status=ShopReceiptStatus.CANCELLED)
+            .select_related("shop")
+        )
+        balance = _zero()
+        open_count = 0
+        shops = set()
+        for receipt in open_qs:
+            due = _due_amount(receipt.total, receipt.amount_paid)
+            if due <= 0:
+                continue
+            balance += due
+            open_count += 1
+            if receipt.shop_id:
+                shops.add((getattr(receipt.shop, "name", "") or "").strip() or "—")
+        if balance <= 0:
+            continue
+        href = client_credit_account_url(
+            role,
+            client.pk,
+            query="from=credit-clients",
+            from_credits=True,
+        )
+        rows.append(
+            {
+                "client_id": client.pk,
+                "client_name": (client.full_name or "").strip() or "Customer",
+                "phone": (client.phone_number or "").strip(),
+                "shop": ", ".join(sorted(shops)) if shops else "—",
+                "open_count": open_count,
+                "due": _money_ksh(balance),
+                "due_raw": str(balance),
+                "href": href,
+            }
+        )
+    return {
+        "date": today.isoformat(),
+        "date_label": today.strftime("%d %b %Y"),
+        "count": len(rows),
+        "rows": rows,
+    }
+
+
 def _build_credits(filters):
     """Credits landing — items matrix: credit and % paid back per item x shop."""
     pairs_data = _credit_items_pairs(filters)
@@ -12344,6 +12670,7 @@ def _build_credits(filters):
     )
 
     period_label = filters.get("report_period_label") or "selected period"
+    due_today = _credit_due_today_followups(filters)
     return {
         "headline": "Credits",
         "lead": (
@@ -12366,6 +12693,7 @@ def _build_credits(filters):
             shop_count=len(shops),
         ),
         "insights": [],
+        "credit_due_today": due_today,
         "tables": [
             _table(
                 "Credit items by shop",

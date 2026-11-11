@@ -194,7 +194,7 @@ class TriggeredMessage(models.Model):
         related_name="triggered_messages",
     )
     trigger = models.CharField(
-        max_length=20,
+        max_length=32,
         choices=TRIGGER_MESSAGE_CHOICES,
         db_index=True,
     )

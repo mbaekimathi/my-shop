@@ -15,11 +15,17 @@ from shops.models import ShopReceiptKind
 from shops.services import _qty_label, get_communications_settings
 
 from .constants import (
+    CHANNEL_MESSAGE,
     CHANNEL_SMS,
     CHANNEL_WHATSAPP,
     MESSAGE_STATUS_ACTIVE,
+    TRIGGER_CHANNEL_ALL,
     TRIGGER_CHANNEL_BOTH,
     TRIGGER_CHANNEL_VALUES,
+    TRIGGER_CREDIT_FOLLOW_UP,
+    TRIGGER_CREDIT_FOLLOW_UP_TODAY,
+    TRIGGER_DELIVERY_COMPLETE,
+    TRIGGER_DELIVERY_ON_WAY,
     TRIGGER_LABEL_PREFIX,
     TRIGGER_SUPPLIER_PAYMENT,
     TRIGGER_SUPPLY,
@@ -43,12 +49,7 @@ def _first_name(receipt) -> str:
     return raw.split()[0].title()
 
 
-def build_credit_sale_notification(receipt, *, request=None) -> str:
-    """Customer-facing WhatsApp notice after a credit sale from the shop cart."""
-    shop_name = ""
-    if getattr(receipt, "shop_id", None) and getattr(receipt, "shop", None):
-        shop_name = (receipt.shop.name or "").strip()
-    shop_name = shop_name or "our shop"
+def _receipt_item_rows(receipt, *, empty_label: str = "- Items") -> str:
     all_lines = list(receipt.lines.all())
     shown = all_lines[:12]
     item_rows = []
@@ -59,7 +60,20 @@ def build_credit_sale_notification(receipt, *, request=None) -> str:
     extra = len(all_lines) - len(shown)
     if extra > 0:
         item_rows.append(f"- and {extra} more item(s)")
-    items_block = "\n".join(item_rows) if item_rows else "- Items on credit"
+    return "\n".join(item_rows) if item_rows else empty_label
+
+
+def _receipt_shop_name(receipt) -> str:
+    shop_name = ""
+    if getattr(receipt, "shop_id", None) and getattr(receipt, "shop", None):
+        shop_name = (receipt.shop.name or "").strip()
+    return shop_name or "our shop"
+
+
+def build_credit_sale_notification(receipt, *, request=None) -> str:
+    """Customer-facing notice after a credit sale from the shop cart."""
+    shop_name = _receipt_shop_name(receipt)
+    items_block = _receipt_item_rows(receipt, empty_label="- Items on credit")
     due = ""
     if receipt.credit_due_date:
         due = receipt.credit_due_date.strftime("%d %b %Y")
@@ -90,6 +104,555 @@ def build_credit_sale_notification(receipt, *, request=None) -> str:
     return "\n".join(parts).strip()
 
 
+def _receipt_balance_due(receipt) -> Decimal:
+    due = (
+        Decimal(getattr(receipt, "total", 0) or 0)
+        - Decimal(getattr(receipt, "amount_paid", 0) or 0)
+        - Decimal(getattr(receipt, "trade_exchange_value", 0) or 0)
+    )
+    if due < 0:
+        return Decimal("0")
+    return due
+
+
+def _append_credit_pay_link(parts: list[str], receipt, *, request=None) -> None:
+    pay_url = _credit_account_pay_url(receipt, request=request)
+    if not pay_url:
+        return
+    parts.extend(
+        [
+            "",
+            "You can view your credit account and pay with M-Pesa using this link:",
+            pay_url,
+        ]
+    )
+
+
+def _client_first_name(client) -> str:
+    raw = (getattr(client, "full_name", "") or "").strip()
+    if not raw:
+        return "Customer"
+    return raw.split()[0].title()
+
+
+def _client_credit_account_url(client, *, request=None) -> str:
+    client_id = getattr(client, "pk", None)
+    if not client_id:
+        return ""
+    try:
+        from shops.credit_note import client_credit_note_url
+
+        url = (client_credit_note_url(int(client_id), request=request) or "").strip()
+    except Exception:
+        logger.exception("Credit account URL failed for client %s", client_id)
+        return ""
+    if not url.lower().startswith(("http://", "https://")):
+        return ""
+    return url
+
+
+def _append_client_credit_pay_link(parts: list[str], client, *, request=None) -> None:
+    pay_url = _client_credit_account_url(client, request=request)
+    if not pay_url:
+        return
+    parts.extend(
+        [
+            "",
+            "You can view your credit account and pay with M-Pesa using this link:",
+            pay_url,
+        ]
+    )
+
+
+def build_credit_follow_up_updated_notification(
+    client, *, old_date=None, balance=None, request=None
+) -> str:
+    """Customer notice when an account follow-up date is set/changed."""
+    new_label = ""
+    if client.credit_follow_up_date:
+        new_label = client.credit_follow_up_date.strftime("%d %b %Y")
+    old_label = old_date.strftime("%d %b %Y") if old_date else ""
+    parts = [
+        f"Hi {_client_first_name(client)},",
+        "",
+        "A payment follow-up was scheduled for your credit account.",
+        "",
+        f"Amount due: {_kes(balance)}",
+    ]
+    if old_label and new_label and old_label != new_label:
+        parts.append(f"Previous follow-up: {old_label}")
+    if new_label:
+        parts.append(f"Follow-up date: {new_label}")
+    _append_client_credit_pay_link(parts, client, request=request)
+    parts.extend(["", "Thank you."])
+    return "\n".join(parts).strip()
+
+
+def build_credit_follow_up_today_notification(
+    client, *, balance=None, request=None
+) -> str:
+    """Customer notice on the morning of their account follow-up date."""
+    follow_label = ""
+    if client.credit_follow_up_date:
+        follow_label = client.credit_follow_up_date.strftime("%d %b %Y")
+    parts = [
+        f"Hi {_client_first_name(client)},",
+        "",
+        "Friendly reminder — we are following up on your credit account today.",
+        "",
+        f"Amount due: {_kes(balance)}",
+    ]
+    if follow_label:
+        parts.append(f"Follow-up date: {follow_label}")
+    _append_client_credit_pay_link(parts, client, request=request)
+    parts.extend(["", "Thank you."])
+    return "\n".join(parts).strip()
+
+
+# Backward-compatible aliases used by older tests/call sites.
+build_credit_due_date_updated_notification = build_credit_follow_up_updated_notification
+build_credit_due_today_notification = build_credit_follow_up_today_notification
+
+
+def _client_open_credit_shop(client):
+    """Shop from an open credit receipt — used for custom message draft scope."""
+    from shops.models import ShopReceipt, ShopReceiptKind, ShopReceiptStatus
+
+    receipt = (
+        ShopReceipt.objects.filter(
+            client_id=getattr(client, "pk", None),
+            kind=ShopReceiptKind.CREDIT,
+        )
+        .exclude(status=ShopReceiptStatus.CANCELLED)
+        .select_related("shop")
+        .order_by("-created_at")
+        .first()
+    )
+    return getattr(receipt, "shop", None) if receipt is not None else None
+
+
+def render_credit_account_trigger_message(
+    template: str,
+    client,
+    *,
+    balance=None,
+    old_date=None,
+    link: str = "",
+    request=None,
+    shop=None,
+) -> str:
+    """Expand {placeholders} for account-level credit follow-up drafts."""
+    full_name = (getattr(client, "full_name", "") or "").strip()
+    first = _client_first_name(client)
+    shop_name = (getattr(shop, "name", "") or "").strip() or "our shop"
+    follow = getattr(client, "credit_follow_up_date", None)
+    follow_label = follow.strftime("%d %b %Y") if follow else ""
+    previous_label = old_date.strftime("%d %b %Y") if old_date else ""
+    replacements = {
+        "{first_name}": first,
+        "{full_name}": full_name or "Customer",
+        "{shop_name}": shop_name,
+        "{total}": _kes(balance),
+        "{balance}": _kes(balance),
+        "{receipt_number}": "",
+        "{due_date}": follow_label,
+        "{follow_up_date}": follow_label,
+        "{previous_follow_up}": previous_label,
+        "{account_link}": "",
+        "{trade_link}": "",
+        "{receipt_link}": "",
+        "{quotation_link}": "",
+        "{location}": "",
+        "{rider_name}": "",
+        "{receiver_name}": "",
+    }
+    body = template or ""
+    url = (link or "").strip()
+    if "{account_link}" in body or "{account_link}" in url:
+        replacements["{account_link}"] = _client_credit_account_url(
+            client, request=request
+        )
+    for key, value in replacements.items():
+        body = body.replace(key, value)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    for key, value in replacements.items():
+        url = url.replace(key, value)
+    url = url.strip()
+    if url and url not in body:
+        body = f"{body}\n\n{url}" if body else url
+    return body
+
+
+def _queue_client_triggered_messages(
+    client,
+    *,
+    trigger: str,
+    balance=None,
+    old_date=None,
+    request=None,
+    shop=None,
+) -> list[int]:
+    """Create triggered campaigns for a client-scoped credit event."""
+    from .models import TriggeredMessage
+
+    try:
+        row = get_communications_settings()
+        shop_obj = shop if shop is not None else _client_open_credit_shop(client)
+        drafts = list(
+            TriggeredMessage.objects.filter(
+                trigger=trigger,
+                status=MESSAGE_STATUS_ACTIVE,
+                **_triggered_message_scope(shop_obj),
+            )
+        )
+        if not drafts:
+            return []
+        phone = (getattr(client, "phone_number", "") or "").strip()
+        email = (getattr(client, "email", "") or "").strip()
+        if not phone and not email:
+            return []
+        due_now = []
+        for draft in drafts:
+            channels = [
+                channel
+                for channel in _trigger_channels(draft)
+                if _triggered_channel_ready(row, channel)
+            ]
+            if CHANNEL_MESSAGE in channels and not email:
+                channels = [c for c in channels if c != CHANNEL_MESSAGE]
+            if CHANNEL_WHATSAPP in channels or CHANNEL_SMS in channels:
+                if not phone:
+                    channels = [
+                        c
+                        for c in channels
+                        if c not in {CHANNEL_WHATSAPP, CHANNEL_SMS}
+                    ]
+            if not channels:
+                continue
+            body = render_credit_account_trigger_message(
+                draft.body,
+                client,
+                balance=balance,
+                old_date=old_date,
+                link=draft.link,
+                request=request,
+                shop=shop_obj,
+            )
+            if not body:
+                continue
+            campaign_id = _queue_triggered_send(
+                phone=phone or email,
+                body=body,
+                receipt=None,
+                delay_minutes=draft.delay_minutes,
+                label=f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}",
+                channels=channels,
+                party_name=getattr(client, "full_name", "") or "",
+                shop=shop_obj,
+                email=email,
+                client=client,
+            )
+            if campaign_id:
+                due_now.append(campaign_id)
+        return due_now
+    except Exception:
+        logger.exception(
+            "Triggered messages failed for client %s trigger %s",
+            getattr(client, "pk", "?"),
+            trigger,
+        )
+        return []
+    finally:
+        _close_thread_connections()
+
+
+def maybe_send_credit_follow_up_updated(
+    client, *, old_date=None, balance=None, request=None
+) -> dict:
+    """Notify the client that their account follow-up date was set/changed."""
+    row = get_communications_settings()
+    if not row.enable_automations:
+        return {"sent": False, "reason": "Automations are off."}
+    if not row.auto_credit_due:
+        return {
+            "sent": False,
+            "reason": "Turn on Credit due dates under Communications automations.",
+        }
+    if not _ready_customer_channels(row):
+        return {
+            "sent": False,
+            "reason": "No ready send channel (WhatsApp, SMS, or email).",
+        }
+    phone = (getattr(client, "phone_number", "") or "").strip()
+    email = (getattr(client, "email", "") or "").strip()
+    if not phone and not email:
+        logger.warning(
+            "Credit follow-up update notice skipped for client %s: missing contact.",
+            getattr(client, "pk", None),
+        )
+        return {
+            "sent": False,
+            "reason": "Client has no phone or email on file.",
+        }
+
+    shop = _client_open_credit_shop(client)
+    if _deliverable_triggered_draft_exists_for_trigger(
+        TRIGGER_CREDIT_FOLLOW_UP, shop, row
+    ):
+        campaign_ids = _queue_client_triggered_messages(
+            client,
+            trigger=TRIGGER_CREDIT_FOLLOW_UP,
+            balance=balance,
+            old_date=old_date,
+            request=request,
+            shop=shop,
+        )
+        if campaign_ids:
+            thread = threading.Thread(
+                target=_dispatch_queued_triggered,
+                args=(campaign_ids,),
+                daemon=True,
+                name=f"comms-credit-follow-up-updated-{getattr(client, 'pk', 'new')}",
+            )
+            thread.start()
+            return {"sent": True, "reason": ""}
+        return {
+            "sent": False,
+            "reason": "Credit follow-up draft could not be queued.",
+        }
+
+    body = build_credit_follow_up_updated_notification(
+        client, old_date=old_date, balance=balance, request=request
+    )
+    if not body:
+        return {"sent": False, "reason": "Could not build follow-up notice."}
+    _queue_customer_notice(
+        phone=phone,
+        email=email,
+        body=body,
+        subject="Credit follow-up scheduled",
+        name=f"comms-credit-follow-up-updated-{getattr(client, 'pk', 'new')}",
+    )
+    return {"sent": True, "reason": ""}
+
+
+maybe_send_credit_due_date_updated = maybe_send_credit_follow_up_updated
+
+
+def send_credit_due_today_reminders(*, today=None) -> dict:
+    """Send morning-of-follow-up notices for clients with open credit accounts."""
+    from shops.models import Client, ShopReceipt, ShopReceiptKind, ShopReceiptStatus
+
+    row = get_communications_settings()
+    if not row.enable_automations or not row.auto_credit_due:
+        return {"ok": True, "sent": 0, "skipped": 0, "reason": "disabled"}
+
+    day = today or timezone.localdate()
+    clients = (
+        Client.objects.filter(credit_follow_up_date=day)
+        .exclude(credit_follow_up_reminder_sent_on=day)
+        .order_by("id")
+    )
+
+    sent = 0
+    skipped = 0
+    for client in clients.iterator(chunk_size=50):
+        balance = Decimal("0")
+        for receipt in ShopReceipt.objects.filter(
+            client_id=client.pk,
+            kind=ShopReceiptKind.CREDIT,
+        ).exclude(status=ShopReceiptStatus.CANCELLED):
+            due = _receipt_balance_due(receipt)
+            if due > 0:
+                balance += due
+        if balance <= 0:
+            skipped += 1
+            continue
+        phone = (client.phone_number or "").strip()
+        email = (client.email or "").strip()
+        if not phone and not email:
+            skipped += 1
+            logger.warning(
+                "Credit follow-up-today notice skipped for client %s: missing contact.",
+                client.pk,
+            )
+            continue
+
+        shop = _client_open_credit_shop(client)
+        queued = False
+        if _deliverable_triggered_draft_exists_for_trigger(
+            TRIGGER_CREDIT_FOLLOW_UP_TODAY, shop, row
+        ):
+            campaign_ids = _queue_client_triggered_messages(
+                client,
+                trigger=TRIGGER_CREDIT_FOLLOW_UP_TODAY,
+                balance=balance,
+                request=None,
+                shop=shop,
+            )
+            if campaign_ids:
+                thread = threading.Thread(
+                    target=_dispatch_queued_triggered,
+                    args=(campaign_ids,),
+                    daemon=True,
+                    name=f"comms-credit-follow-up-today-{client.pk}",
+                )
+                thread.start()
+                queued = True
+            else:
+                skipped += 1
+                continue
+        else:
+            body = build_credit_follow_up_today_notification(
+                client, balance=balance
+            )
+            if not body:
+                skipped += 1
+                continue
+            _queue_customer_notice(
+                phone=phone,
+                email=email,
+                body=body,
+                subject="Credit follow-up today",
+                name=f"comms-credit-follow-up-today-{client.pk}",
+            )
+            queued = True
+
+        if queued:
+            client.credit_follow_up_reminder_sent_on = day
+            client.save(
+                update_fields=["credit_follow_up_reminder_sent_on", "updated_at"]
+            )
+            sent += 1
+    return {"ok": True, "sent": sent, "skipped": skipped, "day": day.isoformat()}
+
+
+def build_sale_notification(receipt, *, request=None) -> str:
+    """Customer-facing notice after a cash/M-Pesa sale — same style as credit."""
+    shop_name = _receipt_shop_name(receipt)
+    items_block = _receipt_item_rows(receipt, empty_label="- Items purchased")
+    parts = [
+        f"Hi {_first_name(receipt)},",
+        "",
+        f"Sale at {shop_name}.",
+        "",
+        items_block,
+        "",
+        f"Total paid: {_kes(receipt.total)}",
+    ]
+    receipt_no = (receipt.receipt_number or "").strip()
+    if receipt_no:
+        parts.extend(["", f"Receipt {receipt_no}"])
+    receipt_url = _receipt_doc_url(receipt, quotation=False, request=request)
+    if receipt_url:
+        parts.extend(["", "View your receipt:", receipt_url])
+    parts.extend(["", "Thank you."])
+    return "\n".join(parts).strip()
+
+
+def _delivery_rider_name(delivery) -> str:
+    rider = getattr(delivery, "accepted_by", None)
+    if rider is None:
+        return ""
+    user = getattr(rider, "user", None)
+    return (
+        (user.get_full_name() if user is not None else "") or ""
+    ).strip() or (getattr(user, "username", "") or "").strip()
+
+
+def build_delivery_on_way_notification(delivery, *, request=None) -> str:
+    """Customer notice when a rider accepts and is on the way."""
+    receipt = getattr(delivery, "receipt", None)
+    shop_name = _receipt_shop_name(receipt) if receipt is not None else "our shop"
+    first = _first_name(receipt) if receipt is not None else "Customer"
+    location = (getattr(delivery, "location_text", "") or "").strip() or "your location"
+    rider_name = _delivery_rider_name(delivery)
+    parts = [
+        f"Hi {first},",
+        "",
+        f"Good news — your delivery from {shop_name} is on the way.",
+        "",
+        f"Drop-off: {location}",
+    ]
+    if rider_name:
+        parts.append(f"Rider: {rider_name}")
+    if receipt is not None:
+        receipt_no = (receipt.receipt_number or "").strip()
+        if receipt_no:
+            parts.extend(["", f"Receipt {receipt_no}"])
+    parts.extend(["", "Thank you."])
+    return "\n".join(parts).strip()
+
+
+def _is_unpaid_credit_delivery(delivery) -> bool:
+    from shops.models import ShopDeliveryStatus, ShopReceiptKind
+
+    receipt = getattr(delivery, "receipt", None)
+    if receipt is None:
+        return False
+    return (
+        receipt.kind == ShopReceiptKind.CREDIT
+        and getattr(delivery, "status", "") == ShopDeliveryStatus.DELIVERED
+    )
+
+
+def _append_credit_note_link(body: str, delivery, *, request=None) -> str:
+    """Add the credit-note pay link for unpaid credit drop-offs (one link only)."""
+    if not _is_unpaid_credit_delivery(delivery):
+        return (body or "").strip()
+    receipt = getattr(delivery, "receipt", None)
+    pay_url = _credit_account_pay_url(receipt, request=request)
+    text = (body or "").strip()
+    if not pay_url or pay_url in text:
+        return text
+    return (
+        f"{text}\n\n"
+        "Payment still outstanding. Check your balance and pay anytime here:\n"
+        f"{pay_url}"
+    ).strip()
+
+
+def build_delivery_complete_notification(delivery, *, request=None) -> str:
+    """Customer notice when a rider marks the delivery as delivered."""
+    from shops.models import ShopDeliveryStatus, ShopReceiptKind
+
+    receipt = getattr(delivery, "receipt", None)
+    shop_name = _receipt_shop_name(receipt) if receipt is not None else "our shop"
+    first = _first_name(receipt) if receipt is not None else "Customer"
+    location = (getattr(delivery, "location_text", "") or "").strip() or "your location"
+    receiver = (getattr(delivery, "receiver_name", "") or "").strip()
+    rider_name = _delivery_rider_name(delivery)
+    parts = [
+        f"Hi {first},",
+        "",
+        f"Your delivery from {shop_name} has been completed.",
+        "",
+        f"Drop-off: {location}",
+    ]
+    if receiver:
+        parts.append(f"Received by: {receiver}")
+    if rider_name:
+        parts.append(f"Rider: {rider_name}")
+    if (
+        receipt is not None
+        and receipt.kind == ShopReceiptKind.CREDIT
+        and getattr(delivery, "status", "") == ShopDeliveryStatus.DELIVERED_PAID
+    ):
+        ref = (getattr(delivery, "payment_reference", "") or "").strip()
+        if ref:
+            parts.extend(["", f"Payment reference: {ref}"])
+        else:
+            parts.extend(["", "Payment collected on delivery."])
+    elif _is_unpaid_credit_delivery(delivery):
+        parts.extend(["", "Goods delivered — payment still outstanding."])
+    if receipt is not None:
+        receipt_no = (receipt.receipt_number or "").strip()
+        if receipt_no:
+            parts.extend(["", f"Receipt {receipt_no}"])
+    parts.extend(["", "Thank you."])
+    return _append_credit_note_link("\n".join(parts), delivery, request=request)
+
+
 def _credit_account_pay_url(receipt, *, request=None) -> str:
     client_id = getattr(receipt, "client_id", None)
     if not client_id:
@@ -113,9 +676,9 @@ def _credit_account_pay_url(receipt, *, request=None) -> str:
 
 
 def maybe_send_receipt_share(receipt, *, message: str = "", request=None) -> None:
-    """Send a sale/quotation/credit receipt via Twilio when automations are on."""
+    """Send a sale/quotation/credit notice on enabled channels when automations are on."""
     row = get_communications_settings()
-    if not row.enable_automations or not row.has_twilio_credentials():
+    if not row.enable_automations:
         return
     kind = receipt.kind
     if kind == ShopReceiptKind.SALE and not row.auto_sale_receipt:
@@ -135,19 +698,103 @@ def maybe_send_receipt_share(receipt, *, message: str = "", request=None) -> Non
     phone = (receipt.client_phone or "").strip()
     if not phone and receipt.client_id:
         phone = (getattr(receipt.client, "phone_number", "") or "").strip()
+    email = ""
+    if receipt.client_id:
+        email = (getattr(receipt.client, "email", "") or "").strip()
     if kind == ShopReceiptKind.CREDIT:
         body = build_credit_sale_notification(receipt, request=request)
+        subject = "Credit sale notice"
+    elif kind == ShopReceiptKind.SALE:
+        body = build_sale_notification(receipt, request=request)
+        subject = "Sale receipt"
     else:
         body = (message or "").strip()
-    if not phone or not body:
-        if kind == ShopReceiptKind.CREDIT and not phone:
+        subject = "Quotation"
+    if not body:
+        return
+    if not phone and not email:
+        if kind in {ShopReceiptKind.CREDIT, ShopReceiptKind.SALE}:
             logger.warning(
-                "Credit WhatsApp skipped for receipt %s: no client phone.",
+                "%s notice skipped for receipt %s: no client phone or email.",
+                kind.title(),
                 receipt.pk,
             )
         return
-    _queue_send(phone, body, name=f"comms-auto-receipt-{receipt.pk}")
+    _queue_customer_notice(
+        phone=phone,
+        email=email,
+        body=body,
+        subject=subject,
+        name=f"comms-auto-receipt-{receipt.pk}",
+    )
 
+
+def maybe_send_delivery_on_way(delivery, *, request=None) -> None:
+    """Notify the customer that their rider is on the way (SMS / WhatsApp / email)."""
+    row = get_communications_settings()
+    if not row.enable_automations or not row.auto_delivery_on_way:
+        return
+    receipt = getattr(delivery, "receipt", None)
+    if receipt is None:
+        return
+    if _deliverable_triggered_draft_exists_for_trigger(
+        TRIGGER_DELIVERY_ON_WAY, getattr(receipt, "shop", None), row
+    ):
+        return
+    phone = (receipt.client_phone or "").strip()
+    if not phone and receipt.client_id:
+        phone = (getattr(receipt.client, "phone_number", "") or "").strip()
+    email = ""
+    if receipt.client_id:
+        email = (getattr(receipt.client, "email", "") or "").strip()
+    body = build_delivery_on_way_notification(delivery, request=request)
+    if not body or (not phone and not email):
+        logger.warning(
+            "Delivery on-way notice skipped for delivery %s: missing contact.",
+            getattr(delivery, "pk", None),
+        )
+        return
+    _queue_customer_notice(
+        phone=phone,
+        email=email,
+        body=body,
+        subject="Your delivery is on the way",
+        name=f"comms-delivery-on-way-{getattr(delivery, 'pk', 'new')}",
+    )
+
+
+def maybe_send_delivery_complete(delivery, *, request=None) -> None:
+    """Notify the customer that their delivery was completed (SMS / WhatsApp / email)."""
+    row = get_communications_settings()
+    if not row.enable_automations or not row.auto_delivery_complete:
+        return
+    receipt = getattr(delivery, "receipt", None)
+    if receipt is None:
+        return
+    if _deliverable_triggered_draft_exists_for_trigger(
+        TRIGGER_DELIVERY_COMPLETE, getattr(receipt, "shop", None), row
+    ):
+        return
+    phone = (receipt.client_phone or "").strip()
+    if not phone and receipt.client_id:
+        phone = (getattr(receipt.client, "phone_number", "") or "").strip()
+    email = ""
+    if receipt.client_id:
+        email = (getattr(receipt.client, "email", "") or "").strip()
+    body = build_delivery_complete_notification(delivery, request=request)
+    if not body or (not phone and not email):
+        logger.warning(
+            "Delivery complete notice skipped for delivery %s: missing contact.",
+            getattr(delivery, "pk", None),
+        )
+        return
+    _queue_customer_notice(
+        phone=phone,
+        email=email,
+        body=body,
+        subject="Your delivery is complete",
+        name=f"comms-delivery-complete-{getattr(delivery, 'pk', 'new')}",
+    )
 
 def credit_whatsapp_required() -> bool:
     row = get_communications_settings()
@@ -159,18 +806,21 @@ def credit_whatsapp_required() -> bool:
 
 
 def _deliverable_triggered_draft_exists(receipt, row) -> bool:
-    """An active draft for this receipt kind with at least one ready channel.
+    """An active draft for this receipt kind with at least one ready channel."""
+    return _deliverable_triggered_draft_exists_for_trigger(
+        receipt.kind, getattr(receipt, "shop", None), row
+    )
 
-    When true, the drafted message supersedes the legacy auto receipt share so
-    the customer gets one message, not two.
-    """
+
+def _deliverable_triggered_draft_exists_for_trigger(trigger, shop, row) -> bool:
+    """True when an active draft for ``trigger`` can send on a ready channel."""
     from .models import TriggeredMessage
 
     try:
         drafts = TriggeredMessage.objects.filter(
-            trigger=receipt.kind,
+            trigger=trigger,
             status=MESSAGE_STATUS_ACTIVE,
-            **_triggered_message_scope(getattr(receipt, "shop", None)),
+            **_triggered_message_scope(shop),
         )
         for draft in drafts:
             if any(
@@ -180,8 +830,8 @@ def _deliverable_triggered_draft_exists(receipt, row) -> bool:
                 return True
     except Exception:
         logger.exception(
-            "Triggered draft check failed for receipt %s",
-            getattr(receipt, "pk", "?"),
+            "Triggered draft check failed for trigger %s",
+            trigger,
         )
     return False
 
@@ -826,7 +1476,7 @@ def _receipt_doc_url(receipt, *, quotation: bool, request=None) -> str:
 
 
 def render_trigger_message(
-    template: str, receipt, *, link: str = "", request=None
+    template: str, receipt, *, link: str = "", request=None, delivery=None
 ) -> str:
     """Expand {placeholders} for a triggered message — plain str.replace only."""
     client_name = (getattr(receipt, "client_name", "") or "").strip()
@@ -842,6 +1492,13 @@ def render_trigger_message(
     )
     if due < 0:
         due = Decimal("0")
+    location = ""
+    rider_name = ""
+    receiver_name = ""
+    if delivery is not None:
+        location = (getattr(delivery, "location_text", "") or "").strip()
+        receiver_name = (getattr(delivery, "receiver_name", "") or "").strip()
+        rider_name = _delivery_rider_name(delivery)
     replacements = {
         "{first_name}": first,
         "{full_name}": client_name or "Customer",
@@ -854,6 +1511,9 @@ def render_trigger_message(
         "{trade_link}": "",
         "{receipt_link}": "",
         "{quotation_link}": "",
+        "{location}": location,
+        "{rider_name}": rider_name,
+        "{receiver_name}": receiver_name,
     }
     body = template or ""
     url = (link or "").strip()
@@ -879,7 +1539,9 @@ def render_trigger_message(
     for key, value in replacements.items():
         url = url.replace(key, value)
     url = url.strip()
-    if url:
+    # One link only — skip append when the body already has this URL
+    # (e.g. body used {receipt_link} and the Link field is also {receipt_link}).
+    if url and url not in body:
         body = f"{body}\n\n{url}" if body else url
     return body
 
@@ -917,26 +1579,50 @@ def render_supplier_trigger_message(
     for key, value in replacements.items():
         url = url.replace(key, value)
     url = url.strip()
-    if url:
+    if url and url not in body:
         body = f"{body}\n\n{url}" if body else url
     return body
+
+
+def _message_channel_ready(row) -> bool:
+    return bool(row.enable_message and (row.message_from_name or "").strip())
 
 
 def _triggered_channel_ready(row, channel: str) -> bool:
     """Whether the company enabled this channel and saved working credentials."""
     if channel == CHANNEL_SMS:
         return bool(row.enable_sms and row.has_sms_credentials())
+    if channel == CHANNEL_MESSAGE:
+        return _message_channel_ready(row)
     return bool(row.enable_whatsapp and row.has_twilio_credentials())
 
 
 def _trigger_channels(draft) -> list[str]:
     """Outbound channels for a draft; unknown values fall back to WhatsApp."""
     value = (getattr(draft, "channel", "") or "").strip()
+    if value == TRIGGER_CHANNEL_ALL:
+        return [CHANNEL_WHATSAPP, CHANNEL_SMS, CHANNEL_MESSAGE]
     if value == TRIGGER_CHANNEL_BOTH:
         return [CHANNEL_WHATSAPP, CHANNEL_SMS]
-    if value in {CHANNEL_WHATSAPP, CHANNEL_SMS}:
+    if value in {CHANNEL_WHATSAPP, CHANNEL_SMS, CHANNEL_MESSAGE}:
         return [value]
     return [CHANNEL_WHATSAPP]
+
+
+def _ready_customer_channels(row) -> list[str]:
+    """Channels for automatic customer notices (sale / credit / delivery).
+
+    WhatsApp follows the legacy credit rule: Twilio credentials are enough.
+    SMS and email still require their channel toggles plus credentials.
+    """
+    channels = []
+    if row.has_twilio_credentials():
+        channels.append(CHANNEL_WHATSAPP)
+    if row.enable_sms and row.has_sms_credentials():
+        channels.append(CHANNEL_SMS)
+    if _message_channel_ready(row):
+        channels.append(CHANNEL_MESSAGE)
+    return channels
 
 
 def maybe_send_triggered_messages(receipt, *, request=None) -> None:
@@ -960,10 +1646,7 @@ def maybe_send_triggered_messages(receipt, *, request=None) -> None:
     row = get_communications_settings()
     if not row.enable_automations:
         return
-    if not any(
-        _triggered_channel_ready(row, channel)
-        for channel in (CHANNEL_WHATSAPP, CHANNEL_SMS)
-    ):
+    if not _ready_customer_channels(row):
         return
     campaign_ids = _queue_triggered_messages(receipt, request)
     if not campaign_ids:
@@ -973,6 +1656,60 @@ def maybe_send_triggered_messages(receipt, *, request=None) -> None:
         args=(campaign_ids,),
         daemon=True,
         name=f"comms-triggered-{getattr(receipt, 'pk', 'new')}",
+    )
+    thread.start()
+
+
+def maybe_send_delivery_triggered_messages(delivery, *, request=None) -> None:
+    """Queue active 'delivery on the way' drafts when a rider accepts."""
+    receipt = getattr(delivery, "receipt", None)
+    if receipt is None:
+        return
+    row = get_communications_settings()
+    if not row.enable_automations:
+        return
+    if not _ready_customer_channels(row):
+        return
+    campaign_ids = _queue_triggered_messages_for_trigger(
+        receipt,
+        request,
+        trigger=TRIGGER_DELIVERY_ON_WAY,
+        delivery=delivery,
+    )
+    if not campaign_ids:
+        return
+    thread = threading.Thread(
+        target=_dispatch_queued_triggered,
+        args=(campaign_ids,),
+        daemon=True,
+        name=f"comms-delivery-triggered-{getattr(delivery, 'pk', 'new')}",
+    )
+    thread.start()
+
+
+def maybe_send_delivery_complete_triggered_messages(delivery, *, request=None) -> None:
+    """Queue active 'delivery completed' drafts when a rider marks delivered."""
+    receipt = getattr(delivery, "receipt", None)
+    if receipt is None:
+        return
+    row = get_communications_settings()
+    if not row.enable_automations:
+        return
+    if not _ready_customer_channels(row):
+        return
+    campaign_ids = _queue_triggered_messages_for_trigger(
+        receipt,
+        request,
+        trigger=TRIGGER_DELIVERY_COMPLETE,
+        delivery=delivery,
+    )
+    if not campaign_ids:
+        return
+    thread = threading.Thread(
+        target=_dispatch_queued_triggered,
+        args=(campaign_ids,),
+        daemon=True,
+        name=f"comms-delivery-complete-triggered-{getattr(delivery, 'pk', 'new')}",
     )
     thread.start()
 
@@ -999,13 +1736,22 @@ def _dispatch_queued_triggered(campaign_ids) -> None:
 
 def _queue_triggered_messages(receipt, request) -> list[int]:
     """Create triggered campaigns for this receipt; return pks due to send now."""
+    return _queue_triggered_messages_for_trigger(
+        receipt, request, trigger=receipt.kind
+    )
+
+
+def _queue_triggered_messages_for_trigger(
+    receipt, request, *, trigger: str, delivery=None
+) -> list[int]:
+    """Create triggered campaigns for an explicit trigger value."""
     from .models import TriggeredMessage
 
     try:
         row = get_communications_settings()
         drafts = list(
             TriggeredMessage.objects.filter(
-                trigger=receipt.kind,
+                trigger=trigger,
                 status=MESSAGE_STATUS_ACTIVE,
                 **_triggered_message_scope(getattr(receipt, "shop", None)),
             )
@@ -1015,7 +1761,10 @@ def _queue_triggered_messages(receipt, request) -> list[int]:
         phone = (receipt.client_phone or "").strip()
         if not phone and receipt.client_id:
             phone = (getattr(receipt.client, "phone_number", "") or "").strip()
-        if not phone:
+        email = ""
+        if receipt.client_id:
+            email = (getattr(receipt.client, "email", "") or "").strip()
+        if not phone and not email:
             return []
         due_now = []
         for draft in drafts:
@@ -1024,28 +1773,45 @@ def _queue_triggered_messages(receipt, request) -> list[int]:
                 for channel in _trigger_channels(draft)
                 if _triggered_channel_ready(row, channel)
             ]
+            if CHANNEL_MESSAGE in channels and not email:
+                channels = [c for c in channels if c != CHANNEL_MESSAGE]
+            if CHANNEL_WHATSAPP in channels or CHANNEL_SMS in channels:
+                if not phone:
+                    channels = [
+                        c
+                        for c in channels
+                        if c not in {CHANNEL_WHATSAPP, CHANNEL_SMS}
+                    ]
             if not channels:
                 continue
             body = render_trigger_message(
-                draft.body, receipt, link=draft.link, request=request
+                draft.body,
+                receipt,
+                link=draft.link,
+                request=request,
+                delivery=delivery,
             )
+            if trigger == TRIGGER_DELIVERY_COMPLETE and delivery is not None:
+                body = _append_credit_note_link(body, delivery, request=request)
             if not body:
                 continue
             campaign_id = _queue_triggered_send(
-                phone=phone,
+                phone=phone or email,
                 body=body,
                 receipt=receipt,
                 delay_minutes=draft.delay_minutes,
                 label=f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}",
                 channels=channels,
+                email=email,
             )
             if campaign_id:
                 due_now.append(campaign_id)
         return due_now
     except Exception:
         logger.exception(
-            "Triggered messages failed for receipt %s",
+            "Triggered messages failed for receipt %s trigger %s",
             getattr(receipt, "pk", "?"),
+            trigger,
         )
         return []
     finally:
@@ -1088,6 +1854,50 @@ def seed_shop_triggered_messages(shop) -> int:
     return len(rows)
 
 
+def _ensure_company_drafts(defaults, *, active: bool = True) -> int:
+    """Create missing company TriggeredMessage rows from ``(trigger, body, link)``."""
+    from .constants import (
+        MESSAGE_STATUS_ACTIVE,
+        MESSAGE_STATUS_DRAFT,
+        TRIGGER_CHANNEL_SMS,
+    )
+    from .models import TriggeredMessage
+
+    created = 0
+    status = MESSAGE_STATUS_ACTIVE if active else MESSAGE_STATUS_DRAFT
+    for trigger, body, link in defaults:
+        exists = TriggeredMessage.objects.filter(
+            shop__isnull=True, trigger=trigger
+        ).exists()
+        if exists:
+            continue
+        TriggeredMessage.objects.create(
+            shop=None,
+            trigger=trigger,
+            delay_minutes=0,
+            body=body,
+            link=(link or "").strip(),
+            channel=TRIGGER_CHANNEL_SMS,
+            status=status,
+        )
+        created += 1
+    return created
+
+
+def ensure_company_delivery_drafts(*, active: bool = True) -> int:
+    """Create missing company Delivery on-the-way / completed message drafts."""
+    from .constants import DEFAULT_DELIVERY_DRAFTS
+
+    return _ensure_company_drafts(DEFAULT_DELIVERY_DRAFTS, active=active)
+
+
+def ensure_company_credit_drafts(*, active: bool = True) -> int:
+    """Create missing company Credit sale / follow-up drafts (with account link)."""
+    from .constants import DEFAULT_CREDIT_DRAFTS
+
+    return _ensure_company_drafts(DEFAULT_CREDIT_DRAFTS, active=active)
+
+
 def _queue_triggered_send(
     *,
     phone: str,
@@ -1098,6 +1908,8 @@ def _queue_triggered_send(
     channels: list[str],
     party_name: str = "",
     shop=None,
+    email: str = "",
+    client=None,
 ) -> int | None:
     """Persist a one-recipient campaign; return its pk when it is due to send now."""
     from datetime import timedelta
@@ -1107,37 +1919,53 @@ def _queue_triggered_send(
 
     delay = max(0, int(delay_minutes or 0))
     due_at = timezone.now() + timedelta(minutes=delay)
+    client_obj = client if client is not None else getattr(receipt, "client", None)
     campaign = BroadcastCampaign.objects.create(
-        created_by=getattr(receipt, "created_by", None),
+        created_by=getattr(receipt, "created_by", None) if receipt is not None else None,
         body_template=body,
         filters={
             "triggered_message": True,
             "trigger_label": label,
             "send_after": due_at.isoformat(),
-            "receipt_id": getattr(receipt, "pk", None),
-            "shop_id": getattr(receipt, "shop_id", None) or getattr(shop, "pk", None),
+            "receipt_id": getattr(receipt, "pk", None) if receipt is not None else None,
+            "client_id": getattr(client_obj, "pk", None),
+            "shop_id": (
+                getattr(receipt, "shop_id", None)
+                if receipt is not None
+                else None
+            )
+            or getattr(shop, "pk", None),
+            "email": (email or "").strip(),
         },
         status=CAMPAIGN_QUEUED if delay <= 0 else CAMPAIGN_DRAFT,
         recipient_count=1,
     )
-    client = getattr(receipt, "client", None)
     recipient_name = (party_name or "").strip() or (
-        getattr(receipt, "client_name", "") or ""
-    ).strip()
-    OutboundMessage.objects.bulk_create(
-        [
+        getattr(receipt, "client_name", "") if receipt is not None else ""
+    ).strip() or (getattr(client_obj, "full_name", "") or "").strip()
+    email_addr = (email or "").strip()
+    rows = []
+    for channel in channels:
+        dest = email_addr if channel == CHANNEL_MESSAGE and email_addr else phone
+        if not dest:
+            continue
+        rows.append(
             OutboundMessage(
                 campaign=campaign,
                 channel=channel,
-                client=client if getattr(client, "pk", None) else None,
+                client=client_obj if getattr(client_obj, "pk", None) else None,
                 client_name=recipient_name,
-                phone=phone,
+                phone=dest,
                 body=body,
                 status=MSG_PENDING,
             )
-            for channel in channels
-        ]
-    )
+        )
+    if not rows:
+        campaign.delete()
+        return None
+    OutboundMessage.objects.bulk_create(rows)
+    campaign.recipient_count = len(rows)
+    campaign.save(update_fields=["recipient_count"])
     if delay <= 0:
         return campaign.pk
     timer = threading.Timer(delay * 60, _promote_due_sends)
@@ -1327,25 +2155,74 @@ def save_triggered_message(data, *, shop=None):
 
 
 def _queue_send(phone: str, body: str, *, name: str) -> None:
+    """Legacy WhatsApp-only helper — prefer ``_queue_customer_notice``."""
+    _queue_customer_notice(phone=phone, email="", body=body, name=name)
+
+
+def _queue_customer_notice(
+    *,
+    phone: str,
+    body: str,
+    name: str,
+    email: str = "",
+    subject: str = "",
+) -> None:
+    """Fan out a customer notice across every ready WhatsApp / SMS / email channel."""
+    row = get_communications_settings()
+    channels = _ready_customer_channels(row)
+    if not channels:
+        return
+    phone = (phone or "").strip()
+    email = (email or "").strip()
+    jobs = []
+    for channel in channels:
+        if channel in {CHANNEL_WHATSAPP, CHANNEL_SMS} and not phone:
+            continue
+        if channel == CHANNEL_MESSAGE and not email:
+            continue
+        jobs.append(channel)
+    if not jobs:
+        return
     thread = threading.Thread(
-        target=_send_quietly,
-        args=(phone, body),
+        target=_send_customer_notice_quietly,
+        args=(phone, email, body, jobs, subject),
         daemon=True,
         name=name,
     )
     thread.start()
 
 
-def _send_quietly(phone: str, body: str) -> None:
-    try:
-        from .twilio import send_whatsapp_message
+def _send_customer_notice_quietly(
+    phone: str, email: str, body: str, channels: list[str], subject: str
+) -> None:
+    row = get_communications_settings()
+    for channel in channels:
+        try:
+            if channel == CHANNEL_SMS:
+                from .sms import send_sms
 
-        result = send_whatsapp_message(phone=phone, text=body, skip_poll=True)
-        if not result.get("ok"):
-            err = str(result.get("error") or "")
-            if "sandbox" in err.lower() or "63015" in err or "63016" in err:
-                logger.info("Auto WhatsApp share skipped (sandbox): %s", err)
+                result = send_sms(phone=phone, message=body)
+            elif channel == CHANNEL_MESSAGE:
+                from .email_send import send_customer_email
+
+                result = send_customer_email(
+                    to_email=email,
+                    body=body,
+                    subject=subject or "Order update",
+                    from_name=row.message_from_name or "",
+                    reply_to=row.message_reply_to or "",
+                )
             else:
-                logger.warning("Auto WhatsApp share failed: %s", err)
-    except Exception:
-        logger.exception("Auto WhatsApp share failed")
+                from .twilio import send_whatsapp_message
+
+                result = send_whatsapp_message(phone=phone, text=body, skip_poll=True)
+            if not result.get("ok"):
+                err = str(result.get("error") or "")
+                if channel == CHANNEL_WHATSAPP and (
+                    "sandbox" in err.lower() or "63015" in err or "63016" in err
+                ):
+                    logger.info("Auto WhatsApp share skipped (sandbox): %s", err)
+                else:
+                    logger.warning("Auto %s notice failed: %s", channel, err)
+        except Exception:
+            logger.exception("Auto %s notice failed", channel)

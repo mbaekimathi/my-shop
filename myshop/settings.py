@@ -248,6 +248,10 @@ RATE_LIMITS = {
         "max": int(os.getenv("RATE_LIMIT_POS_SALE_MAX", "120")),
         "window": int(os.getenv("RATE_LIMIT_POS_SALE_WINDOW", "60")),
     },
+    "web_push_subscribe": {
+        "max": int(os.getenv("RATE_LIMIT_WEB_PUSH_MAX", "30")),
+        "window": int(os.getenv("RATE_LIMIT_WEB_PUSH_WINDOW", "60")),
+    },
 }
 
 EMPLOYEE_LIST_PAGE_SIZE = int(os.getenv("EMPLOYEE_LIST_PAGE_SIZE", "25"))
@@ -305,6 +309,14 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 # Google Maps Places (storefront delivery location search).
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+
+# Web Push (PWA device notifications). Prefer env; otherwise keys auto-generate
+# into .vapid_keys.json for local/dev.
+WEB_PUSH_VAPID_PUBLIC_KEY = os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY", "").strip()
+WEB_PUSH_VAPID_PRIVATE_KEY = os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY", "").strip()
+WEB_PUSH_VAPID_ADMIN_EMAIL = (
+    os.getenv("WEB_PUSH_VAPID_ADMIN_EMAIL", "") or "mailto:admin@localhost"
+).strip()
 
 # SMTP (hosted .env only — used when EMAIL_HOST is set)
 _email_host = (os.getenv("EMAIL_HOST") or "").strip()

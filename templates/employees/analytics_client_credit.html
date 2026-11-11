@@ -29,6 +29,12 @@
           <span>Share link</span>
         </button>
         {% endif %}
+        {% if can_pay or follow_up %}
+        <button type="button" class="ax-apply ax-apply--ghost" data-ax-follow-up-open>
+          <i data-lucide="calendar-clock" aria-hidden="true"></i>
+          <span>{% if follow_up %}Change follow-up{% else %}Set follow-up{% endif %}</span>
+        </button>
+        {% endif %}
         {% if can_pay %}
         <button type="button" class="ax-apply" data-ax-pay-open data-pay-all="1">
           <i data-lucide="wallet" aria-hidden="true"></i>
@@ -56,7 +62,13 @@
       </form>
     </div>
     <p class="ax-lead">
-      Select one or more credit receipts to pay, or use Pay amount to clear the oldest credits first
+      Select receipts to pay, or use Pay amount to clear the oldest credits first.
+      Account follow-up
+      {% if follow_up %}
+      is <strong class="{% if follow_up_overdue %}is-overdue{% endif %}">{{ follow_up }}</strong>
+      {% else %}
+      is not set
+      {% endif %}
       · {{ scope_hint|default:"All shops" }}
       · {{ report_period_label|default:"All time" }}.
     </p>
@@ -187,11 +199,68 @@
 {% endif %}
 {% include "employees/partials/analytics_receipt_manage_modal.html" %}
 {% include "employees/partials/analytics_share_credit_note_modal.html" %}
+{% if can_pay or follow_up %}
+<div
+  class="workspace-modal ax-follow-up-modal"
+  data-ax-follow-up-modal
+  data-follow-up-url="{{ follow_up_url }}"
+  hidden
+>
+  <div class="workspace-modal-backdrop" data-ax-follow-up-close></div>
+  <div
+    class="workspace-modal-dialog ax-pay-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-follow-up-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <h2 id="ax-follow-up-title">Account follow-up</h2>
+        <p class="ax-receipt-modal-meta">
+          Applies to all open credits for {{ client.full_name }}
+          · Balance {{ balance }}
+        </p>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-ax-follow-up-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="ax-pay-wrap">
+      <form class="ax-pay-form" data-ax-follow-up-form>
+        {% csrf_token %}
+        <label class="ax-pay-label" for="ax-account-follow-up-date">
+          Follow up on
+          <input
+            id="ax-account-follow-up-date"
+            class="ax-pay-input"
+            type="date"
+            name="credit_follow_up_date"
+            value="{{ follow_up_raw }}"
+            required
+            data-ax-follow-up-date
+          >
+        </label>
+        <p class="ax-receipt-manage-hint">
+          Saving notifies the client and schedules a morning reminder for this whole credit account.
+          Individual receipt pay-by dates stay unchanged.
+        </p>
+        <div class="ax-receipt-manage-actions">
+          <button type="submit" class="btn btn--primary" data-ax-follow-up-save>
+            Save follow-up
+          </button>
+        </div>
+        <p class="ax-pay-status" data-ax-follow-up-status hidden></p>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=17"></script>
+<script src="{% static 'js/analytics-receipt-ledger.js' %}?v=20"></script>
+<script src="{% static 'js/analytics-credit-follow-up.js' %}?v=1"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");

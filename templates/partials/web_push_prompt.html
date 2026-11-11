@@ -1,0 +1,31 @@
+{% load static %}
+<aside
+  class="web-push-prompt"
+  data-web-push
+  data-vapid-url="{% url 'employees:web_push_vapid_public_key' %}"
+  data-subscribe-url="{% url 'employees:web_push_subscribe' %}"
+  hidden
+  aria-label="Enable device alerts"
+>
+  <div class="web-push-prompt__icon" aria-hidden="true">
+    <img
+      src="{% static 'icons/myshop-icon-live.svg' %}"
+      alt=""
+      width="48"
+      height="48"
+      decoding="async"
+    >
+  </div>
+  <div class="web-push-prompt__copy">
+    <strong>Turn on device alerts</strong>
+    <span>Get notified on this phone for deliveries and stock transfers — even when the app is closed.</span>
+  </div>
+  <div class="web-push-prompt__actions">
+    <button type="button" class="web-push-prompt__btn" data-web-push-enable>
+      Enable alerts
+    </button>
+    <button type="button" class="web-push-prompt__dismiss" data-web-push-dismiss>
+      Not now
+    </button>
+  </div>
+</aside>

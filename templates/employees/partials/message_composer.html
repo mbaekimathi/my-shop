@@ -19,15 +19,30 @@
       <div class="msg-field-grid">
         <label class="msg-field">
           <span>Trigger</span>
-          <select name="trigger" required>
-            {% for value, label in trigger_choices %}
-            <option
-              value="{{ value }}"
-              {% if editing.trigger == value %}selected{% endif %}
-            >
-              {{ label }}
-            </option>
-            {% endfor %}
+          <select name="trigger" required data-msg-trigger>
+            {% if trigger_groups %}
+              {% for group_label, choices in trigger_groups %}
+              <optgroup label="{{ group_label }}">
+                {% for value, label in choices %}
+                <option
+                  value="{{ value }}"
+                  {% if editing.trigger == value %}selected{% endif %}
+                >
+                  {{ label }}
+                </option>
+                {% endfor %}
+              </optgroup>
+              {% endfor %}
+            {% else %}
+              {% for value, label in trigger_choices %}
+              <option
+                value="{{ value }}"
+                {% if editing.trigger == value %}selected{% endif %}
+              >
+                {{ label }}
+              </option>
+              {% endfor %}
+            {% endif %}
           </select>
         </label>
         <label class="msg-field">

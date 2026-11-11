@@ -4,7 +4,6 @@
   data-pay-url="{{ pay_url }}"
   {% if stk_initiate_url %}data-stk-initiate-url="{{ stk_initiate_url }}"{% endif %}
   {% if stk_status_url_template %}data-stk-status-url-template="{{ stk_status_url_template }}"{% endif %}
-  {% if receipt_update_url_template %}data-receipt-update-url-template="{{ receipt_update_url_template }}"{% endif %}
   data-account-kind="{{ account_kind }}"
   data-account-id="{{ account_id }}"
   data-stk-ready="{% if stk_ready %}1{% else %}0{% endif %}"
@@ -36,26 +35,6 @@
         <input type="hidden" name="account_id" value="{{ account_id }}">
         <input type="hidden" name="receipt_id" value="" data-ax-receipt-manage-id>
         <input type="hidden" name="stk_payment_id" value="" data-ax-receipt-manage-stk-id>
-
-        <div class="ax-receipt-manage-section">
-          <h3 class="ax-receipt-manage-heading">Payment due date</h3>
-          <label class="ax-pay-label" for="ax-receipt-manage-due-date">
-            Pay by
-            <input
-              id="ax-receipt-manage-due-date"
-              class="ax-pay-input"
-              type="date"
-              name="credit_due_date"
-              data-ax-receipt-manage-due-date
-              required
-            >
-          </label>
-          <div class="ax-receipt-manage-actions">
-            <button type="button" class="btn btn--ghost ax-receipt-manage-save-date" data-ax-receipt-manage-save-date>
-              Save date
-            </button>
-          </div>
-        </div>
 
         <div class="ax-receipt-manage-section" data-ax-receipt-manage-pay-wrap hidden>
           <h3 class="ax-receipt-manage-heading">Record payment</h3>

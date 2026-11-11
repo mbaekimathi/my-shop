@@ -11,7 +11,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
-from django.views.decorators.http import require_GET, require_http_methods
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from items.views import (
     item_management,
@@ -114,6 +114,7 @@ from .workspace import (
     sidebar_for_marketing_links,
     sidebar_for_module,
     sidebar_for_profile,
+    sidebar_for_rider,
     sidebar_for_role_dashboard,
     sidebar_for_settings,
     sidebar_for_super_admin,
@@ -962,6 +963,192 @@ def role_it_support(request):
     return _render_role_page(request, EmployeeRole.IT_SUPPORT)
 
 
+def _rider_page_context(request, *, active="dashboard"):
+    from shops.daraja_stk import stk_ready
+    from shops.models import SHOP_DELIVERY_DONE_STATUSES, ShopDeliveryStatus
+    from shops.services import open_deliveries_for_rider, rider_owned_deliveries
+
+    profile = get_profile_for_request(request)
+    meta = ROLE_PAGE_META[EmployeeRole.RIDER]
+    open_jobs = open_deliveries_for_rider(profile)
+    my_active = rider_owned_deliveries(
+        profile, statuses=[ShopDeliveryStatus.ACCEPTED]
+    )
+    my_done = rider_owned_deliveries(
+        profile, statuses=list(SHOP_DELIVERY_DONE_STATUSES)
+    )[:50]
+    return {
+        "profile": profile,
+        "meta": meta,
+        "role_label": profile.get_role_display(),
+        "status_label": profile.get_status_display(),
+        "page_sidebar": sidebar_for_rider(profile=profile, active=active),
+        "open_deliveries": open_jobs,
+        "active_deliveries": my_active,
+        "completed_deliveries": my_done,
+        "open_count": len(open_jobs),
+        "active_count": len(my_active),
+        "completed_count": len(my_done),
+        "google_maps_api_key": getattr(settings, "GOOGLE_MAPS_API_KEY", "") or "",
+        "rider_nav_active": active,
+        "stk_ready": stk_ready(),
+    }
+
+
+@role_required(EmployeeRole.RIDER)
+def role_rider(request):
+    return render(
+        request,
+        "employees/rider_dashboard.html",
+        {
+            **_rider_page_context(request, active="open"),
+            "delivery_section": "open",
+        },
+    )
+
+
+@role_required(EmployeeRole.RIDER)
+def rider_open_deliveries(request):
+    """Open deliveries live on the rider home — keep the old URL working."""
+    return redirect("employees:role_rider")
+
+
+@role_required(EmployeeRole.RIDER)
+@require_GET
+def rider_delivery_status_api(request):
+    """Pollable open-delivery snapshot for rider device sound alerts."""
+    from shops.services import rider_delivery_alert_payload
+
+    profile = get_profile_for_request(request)
+    return JsonResponse(rider_delivery_alert_payload(profile))
+
+
+@role_required(EmployeeRole.RIDER)
+def rider_active_deliveries(request):
+    return render(
+        request,
+        "employees/rider_deliveries.html",
+        {
+            **_rider_page_context(request, active="active"),
+            "page_title": "My active deliveries",
+            "page_summary": "Navigate to the drop and mark each job delivered when done.",
+            "page_icon": "navigation",
+            "delivery_section": "active",
+        },
+    )
+
+
+@role_required(EmployeeRole.RIDER)
+def rider_completed_deliveries(request):
+    return render(
+        request,
+        "employees/rider_deliveries.html",
+        {
+            **_rider_page_context(request, active="completed"),
+            "page_title": "Completed deliveries",
+            "page_summary": "List of finished jobs with expected time, time taken, and variance.",
+            "page_icon": "check-circle-2",
+            "delivery_section": "completed",
+        },
+    )
+
+
+@role_required(EmployeeRole.RIDER)
+@require_POST
+def rider_delivery_accept(request, delivery_id):
+    from shops.services import accept_shop_delivery
+
+    profile = get_profile_for_request(request)
+    try:
+        accept_shop_delivery(delivery_id=delivery_id, rider=profile)
+        messages.success(
+            request, "Delivery accepted. Client details are now on your active board."
+        )
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+    return redirect("employees:rider_active_deliveries")
+
+
+@role_required(EmployeeRole.RIDER)
+@require_POST
+def rider_delivery_complete(request, delivery_id):
+    from shops.models import ShopDeliveryStatus
+    from shops.services import complete_shop_delivery
+
+    profile = get_profile_for_request(request)
+    try:
+        delivery = complete_shop_delivery(
+            delivery_id=delivery_id,
+            rider=profile,
+            receiver_name=request.POST.get("receiver_name") or "",
+            payment_reference=request.POST.get("payment_reference") or "",
+            payment_at=request.POST.get("payment_at") or "",
+            payment_amount=request.POST.get("payment_amount") or "",
+        )
+        if delivery.status == ShopDeliveryStatus.DELIVERED_PAID:
+            messages.success(
+                request, "Delivery marked as delivered (paid). Sale/credit status unchanged."
+            )
+        else:
+            messages.success(
+                request, "Delivery marked as delivered. Sale/credit status unchanged."
+            )
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+        return redirect("employees:rider_active_deliveries")
+    return redirect("employees:rider_completed_deliveries")
+
+
+@role_required(EmployeeRole.RIDER)
+@require_POST
+def rider_delivery_stk_initiate(request, delivery_id):
+    from shops.daraja_stk import stk_payment_payload
+    from shops.services import initiate_rider_delivery_stk
+
+    profile = get_profile_for_request(request)
+    try:
+        payment = initiate_rider_delivery_stk(
+            delivery_id=delivery_id,
+            rider=profile,
+            phone=request.POST.get("phone") or "",
+            amount=request.POST.get("amount") or "",
+            request=request,
+        )
+    except ValidationError as exc:
+        return JsonResponse(
+            {"ok": False, "error": "; ".join(exc.messages)},
+            status=400,
+        )
+    return JsonResponse(
+        {
+            "ok": True,
+            "message": "STK Push sent. Ask the customer to enter their M-Pesa PIN.",
+            **stk_payment_payload(payment),
+        }
+    )
+
+
+@role_required(EmployeeRole.RIDER)
+@require_GET
+def rider_delivery_stk_status(request, delivery_id, payment_id):
+    from shops.daraja_stk import get_stk_payment, refresh_stk_payment_if_pending, stk_payment_payload
+    from shops.models import ShopDelivery
+
+    profile = get_profile_for_request(request)
+    delivery = (
+        ShopDelivery.objects.filter(pk=delivery_id, accepted_by=profile).first()
+    )
+    if delivery is None:
+        return JsonResponse({"ok": False, "error": "Delivery not found."}, status=404)
+    payment = get_stk_payment(payment_id)
+    if payment is None:
+        return JsonResponse({"ok": False, "error": "STK payment not found."}, status=404)
+    if payment.account_kind == "delivery" and payment.account_id != delivery.pk:
+        return JsonResponse({"ok": False, "error": "STK payment not found."}, status=404)
+    payment = refresh_stk_payment_if_pending(payment)
+    return JsonResponse({"ok": True, **stk_payment_payload(payment)})
+
+
 def _app_site_origin(request):
     """Public origin for the app/subdomain (hosted when known, else local)."""
     if _marketing_is_hosted(request):
@@ -1253,6 +1440,8 @@ def _communications_settings_hub(request, context):
 
 def _message_drafts_settings(request, context):
     from communications.automations import (
+        ensure_company_credit_drafts,
+        ensure_company_delivery_drafts,
         save_triggered_message,
         triggered_message_as_dict,
     )
@@ -1261,6 +1450,7 @@ def _message_drafts_settings(request, context):
         TRIGGER_CHANNEL_CHOICES,
         TRIGGER_DELAY_UNITS,
         TRIGGER_MESSAGE_CHOICES,
+        TRIGGER_MESSAGE_GROUPS,
         TRIGGER_MESSAGE_PLACEHOLDERS,
     )
     from communications.models import TriggeredMessage
@@ -1296,21 +1486,24 @@ def _message_drafts_settings(request, context):
             )
         return redirect(request.path)
 
+    # Keep Credit sale / follow-up and Delivery drafts in Saved messages.
+    ensure_company_credit_drafts(active=True)
+    ensure_company_delivery_drafts(active=True)
+
     edit_id = (request.GET.get("edit") or "").strip()
     editing = (
         TriggeredMessage.objects.filter(pk=edit_id, shop__isnull=True).first()
         if edit_id.isdigit()
         else None
     )
+    company_drafts = list(TriggeredMessage.objects.filter(shop__isnull=True))
     comms = get_communications_settings()
     context.update(
         {
-            "drafts": [
-                triggered_message_as_dict(row)
-                for row in TriggeredMessage.objects.filter(shop__isnull=True)
-            ],
+            "drafts": [triggered_message_as_dict(row) for row in company_drafts],
             "editing": triggered_message_as_dict(editing) if editing else None,
             "trigger_choices": TRIGGER_MESSAGE_CHOICES,
+            "trigger_groups": TRIGGER_MESSAGE_GROUPS,
             "status_choices": MESSAGE_STATUS_CHOICES,
             "channel_choices": TRIGGER_CHANNEL_CHOICES,
             "delay_units": TRIGGER_DELAY_UNITS,
@@ -1320,6 +1513,10 @@ def _message_drafts_settings(request, context):
                 and (
                     comms.has_twilio_credentials()
                     or (comms.enable_sms and comms.has_sms_credentials())
+                    or (
+                        comms.enable_message
+                        and (comms.message_from_name or "").strip()
+                    )
                 )
             ),
             "composer_cancel_url": request.path,

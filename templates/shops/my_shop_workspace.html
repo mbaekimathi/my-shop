@@ -479,6 +479,88 @@
       <p class="shop-cart-client-hint" data-cart-client-hint></p>
       {% endif %}
 
+      {% if "sale" in cart_kinds or "credit" in cart_kinds %}
+      <div
+        class="shop-cart-delivery"
+        data-cart-delivery-wrap
+        {% if shop.has_coordinates %}
+        data-shop-lat="{{ shop.latitude }}"
+        data-shop-lng="{{ shop.longitude }}"
+        {% endif %}
+      >
+        <label class="shop-cart-check">
+          <input type="checkbox" name="delivery" value="1" data-cart-delivery>
+          <span>Delivery</span>
+        </label>
+        <div class="shop-cart-delivery-fields" data-cart-delivery-fields hidden>
+          <label class="shop-cart-input shop-cart-delivery-location">
+            <span>Delivery location <span class="shop-serial-required" aria-hidden="true">*</span></span>
+            <div class="shop-cart-delivery-search">
+              <i data-lucide="map-pin" aria-hidden="true"></i>
+              <input
+                type="text"
+                name="delivery_location"
+                autocomplete="off"
+                data-cart-delivery-location
+                {% if google_maps_api_key %}data-maps-enabled="1"{% endif %}
+                placeholder="Search delivery location…"
+              >
+            </div>
+          </label>
+          <ul
+            class="shop-cart-delivery-suggestions"
+            data-cart-delivery-suggestions
+            hidden
+            role="listbox"
+            aria-label="Location suggestions"
+          ></ul>
+          <p class="shop-cart-client-note" data-cart-delivery-hint>
+            {% if google_maps_api_key %}
+            Live Google Maps search — pick a result to capture distance and travel time from this shop.
+            {% else %}
+            Enter the estate, street, or landmark. Set GOOGLE_MAPS_API_KEY for live map search.
+            {% endif %}
+            {% if not shop.has_coordinates %}
+            Shop pin is missing — set shop coordinates under shop settings for route estimates.
+            {% endif %}
+          </p>
+          <p class="shop-cart-delivery-selected" data-cart-delivery-selected hidden></p>
+          <p class="shop-cart-delivery-route" data-cart-delivery-route hidden></p>
+          <input type="hidden" name="delivery_lat" value="" data-cart-delivery-lat>
+          <input type="hidden" name="delivery_lng" value="" data-cart-delivery-lng>
+          <input type="hidden" name="delivery_maps_url" value="" data-cart-delivery-maps-url>
+          <input type="hidden" name="delivery_distance_km" value="" data-cart-delivery-distance>
+          <input type="hidden" name="delivery_eta_minutes" value="" data-cart-delivery-eta>
+
+          <label class="shop-cart-input shop-cart-delivery-riders">
+            <span>Assign rider <em>(optional)</em></span>
+            {% if delivery_riders %}
+            <select
+              name="delivery_rider_id"
+              data-cart-delivery-rider
+              aria-label="Assign rider"
+            >
+              <option value="" selected>Select a rider…</option>
+              {% for rider in delivery_riders %}
+              <option value="{{ rider.id }}">{{ rider.name }}</option>
+              {% endfor %}
+            </select>
+            <p class="shop-cart-client-note">
+              Leave empty to post on the riders board for any rider to accept.
+            </p>
+            {% else %}
+            <select disabled data-cart-delivery-rider aria-label="Assign rider">
+              <option value="" selected>No active riders yet</option>
+            </select>
+            <p class="shop-cart-client-note">
+              Open jobs will still appear on the rider board for any rider to accept.
+            </p>
+            {% endif %}
+          </label>
+        </div>
+      </div>
+      {% endif %}
+
       <div class="shop-cart-stk" data-cart-stk-panel hidden>
         <div
           class="shop-cart-stk-error"
@@ -826,11 +908,22 @@
   }
 })();
 </script>
+{% if google_maps_api_key %}
+<script>
+  window.__shopFloorMapsReady = function () {
+    document.dispatchEvent(new CustomEvent("shop-floor-maps-ready"));
+  };
+</script>
+<script
+  defer
+  src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=places&callback=__shopFloorMapsReady&v=weekly"
+></script>
+{% endif %}
 <script defer src="{% static 'js/shop-catalog.js' %}?v=20261106-hide-shop-qty"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=20261110-no-payby"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=20261108-receipt-copies"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261111-delivery-receipt"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=20261111-delivery-eta"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261111-stock-take-hide-scope"></script>
 <script defer src="{% static 'js/shop-stock-take.js' %}?v=6"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>

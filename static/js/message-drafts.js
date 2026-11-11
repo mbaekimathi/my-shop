@@ -22,12 +22,18 @@
     full_name: "Kim Otieno",
     shop_name: preview?.dataset.sampleShop || "MY-SHOP",
     total: "KSh 400.00",
+    balance: "KSh 400.00",
     receipt_number: "SL-0001",
     due_date: "in 30 days",
+    follow_up_date: "15 Dec 2026",
+    previous_follow_up: "11 Nov 2026",
     account_link: "https://myshop.example/credit-note/AbC123",
     trade_link: "https://myshop.example/trades/TdE901",
     receipt_link: "https://myshop.example/receipt/XyZ456",
     quotation_link: "https://myshop.example/quotation/QrT789",
+    location: "Ongata Rongai, Kenya",
+    rider_name: "Ride A",
+    receiver_name: "Kim Otieno",
   };
 
   function timingValue() {

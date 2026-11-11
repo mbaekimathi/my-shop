@@ -25,6 +25,7 @@ from .constants import (
     CAMPAIGN_DONE,
     CAMPAIGN_QUEUED,
     CAMPAIGN_SENDING,
+    CHANNEL_MESSAGE,
     CHANNEL_SMS,
     MAX_SEND_ATTEMPTS,
     MSG_FAILED,
@@ -331,6 +332,19 @@ def _deliver(message: OutboundMessage, *, skip_poll: bool = False) -> dict:
             phone=(message.phone or "").strip(),
             message=message.body,
         )
+    if message.channel == CHANNEL_MESSAGE:
+        from shops.services import get_communications_settings
+
+        from .email_send import send_customer_email
+
+        row = get_communications_settings()
+        return send_customer_email(
+            to_email=(message.phone or "").strip(),
+            body=message.body,
+            subject="Order update",
+            from_name=row.message_from_name or "",
+            reply_to=row.message_reply_to or "",
+        )
     media = (message.image_path or "").strip() or None
     dest = (message.phone or "").strip()
     kwargs = {
@@ -433,3 +447,17 @@ def _send_one(message: OutboundMessage, *, skip_poll: bool = False) -> None:
 )
 def process_campaign(self, campaign_id: int) -> str:
     return process_campaign_sync(campaign_id)
+
+
+@shared_task(
+    name="communications.process_credit_due_reminders",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=10 * 60,
+    time_limit=10 * 60 + 60,
+)
+def process_credit_due_reminders(self) -> dict:
+    """Morning-of-due-date client credit reminders (Celery beat / cron)."""
+    from .automations import send_credit_due_today_reminders
+
+    return send_credit_due_today_reminders()

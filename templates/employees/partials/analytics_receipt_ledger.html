@@ -150,7 +150,7 @@
                 Pay
               </button>
               {% endif %}
-              {% if ledger_show_manage and row.can_manage != False %}
+              {% if ledger_show_manage and row.can_manage != False and row.can_pay %}
               <button
                 type="button"
                 class="ax-eye ax-eye--manage"
@@ -163,8 +163,8 @@
                 data-receipt-due-raw="{{ row.due_raw }}"
                 data-receipt-pay-by="{{ row.pay_by }}"
                 data-receipt-pay-by-raw="{{ row.pay_by_raw }}"
-                data-receipt-can-pay="{% if row.can_pay %}1{% else %}0{% endif %}"
-                aria-label="Update {{ row.number }}"
+                data-receipt-can-pay="1"
+                aria-label="Record payment on {{ row.number }}"
               >
                 <i data-lucide="pencil" aria-hidden="true"></i>
               </button>

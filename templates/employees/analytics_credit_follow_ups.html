@@ -1,0 +1,144 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="ax ax--list-table"
+  data-animate="rise"
+  data-analytics
+  data-ax-section="credit-follow-ups"
+>
+  <header class="ax-top">
+    <div class="ax-top-main">
+      <div class="ax-title">
+        <h2>{{ headline }}</h2>
+        <span class="ax-period">{{ period_label }}</span>
+      </div>
+      <form class="ax-filters" method="get" data-analytics-filters>
+        <select name="outcome" aria-label="Outcome">
+          {% for option in outcome_options %}
+          <option value="{{ option.slug }}"{% if option.slug == outcome_filter %} selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if selected_shop_id == shop.pk %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+        {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=False %}
+        <button type="submit" class="ax-apply">Apply</button>
+      </form>
+    </div>
+    {% if lead %}<p class="ax-lead">{{ lead }}</p>{% endif %}
+  </header>
+
+  {% if summary_board %}
+  <section class="ax-summary-board" aria-label="Credit follow-up summary">
+    <article class="ax-summary-hero{% if summary_board.hero.tone %} is-{{ summary_board.hero.tone }}{% endif %}">
+      <span class="ax-summary-hero-label">{{ summary_board.hero.label }}</span>
+      <strong class="ax-summary-hero-value">{{ summary_board.hero.value }}</strong>
+      {% if summary_board.hero.hint %}<em class="ax-summary-hero-hint">{{ summary_board.hero.hint }}</em>{% endif %}
+    </article>
+    <div class="ax-summary-tiles">
+      {% for tile in summary_board.tiles %}
+      <article class="ax-summary-tile is-{{ tile.tone|default:'neutral' }}">
+        {% if tile.icon %}<i data-lucide="{{ tile.icon }}" aria-hidden="true"></i>{% endif %}
+        <div class="ax-summary-tile-body">
+          <span class="ax-summary-tile-label">{{ tile.label }}</span>
+          <strong class="ax-summary-tile-value">{{ tile.value }}</strong>
+          {% if tile.hint %}<em class="ax-summary-tile-hint">{{ tile.hint }}</em>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="ax-grid ax-grid--tables">
+    <section class="ax-card ax-card--wide">
+      <header class="ax-card-head">
+        <div class="ax-card-head-main">
+          <h3>Credit clients</h3>
+          <span class="ax-card-hint">Followed up or cleared · newest activity first</span>
+        </div>
+      </header>
+      <div class="ax-table-wrap ax-table-wrap--scroll ax-table-wrap--list">
+        <p class="ax-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
+        {% if rows %}
+        <table class="ax-table ax-table--audit">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Client</th>
+              <th>Outcome</th>
+              <th>Follow-up date</th>
+              <th>Balance</th>
+              <th>Shop</th>
+              <th>Detail</th>
+              <th>By</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr class="ax-audit-row is-{{ row.tone|default:'neutral' }}">
+              <td data-label="When">{{ row.when_label }}</td>
+              <td data-label="Client">
+                {% if row.href %}
+                <a href="{{ row.href }}">{{ row.client }}</a>
+                {% else %}
+                {{ row.client }}
+                {% endif %}
+              </td>
+              <td data-label="Outcome">
+                <span class="ax-audit-event">
+                  {% for outcome in row.outcomes %}
+                  <span class="ax-audit-event is-{{ outcome.tone }}">
+                    <i data-lucide="{{ outcome.icon }}" aria-hidden="true"></i>
+                    <span>{{ outcome.label }}</span>
+                  </span>
+                  {% endfor %}
+                </span>
+              </td>
+              <td data-label="Follow-up date">{{ row.follow_up_date|default:"—" }}</td>
+              <td data-label="Balance">{{ row.balance_label }}</td>
+              <td data-label="Shop">{{ row.shop }}</td>
+              <td data-label="Detail">{{ row.detail }}</td>
+              <td data-label="By">{{ row.actor }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="ax-empty">{{ empty_message }}</p>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const form = document.querySelector("[data-analytics-filters]");
+    if (!form) return;
+    const rangeSelect = form.querySelector("[data-analytics-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const syncRange = () => {
+      const range = rangeSelect?.value || "day";
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.disabled = !match;
+        field.required = match;
+      });
+    };
+    rangeSelect?.addEventListener("change", syncRange);
+    syncRange();
+  })();
+</script>
+{% endblock %}

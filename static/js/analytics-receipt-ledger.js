@@ -633,24 +633,57 @@
       const row = document.querySelector(`[data-ax-receipt-row][data-row-id="credit-${rowId}"]`);
       if (!row) return;
 
+      if (data.follow_up) {
+        const overdue = Boolean(data.follow_up_overdue);
+        const followCell = row.querySelector("[data-ax-follow-up-cell], [data-label='Follow up']");
+        const followLink = followCell?.querySelector("[data-ax-receipt-manage]");
+        if (followLink) {
+          followLink.classList.toggle("is-overdue", overdue);
+          followLink.innerHTML = overdue
+            ? `<span class="ax-pay-by is-overdue">${data.follow_up}</span><em>Change</em>`
+            : `<span class="ax-pay-by">${data.follow_up}</span><em>Change</em>`;
+          followLink.setAttribute(
+            "aria-label",
+            `Update follow-up date for ${
+              followLink.getAttribute("data-receipt-number") || "receipt"
+            }`
+          );
+        } else if (followCell) {
+          followCell.innerHTML = overdue
+            ? `<span class="ax-pay-by is-overdue">${data.follow_up}</span>`
+            : `<span class="ax-pay-by">${data.follow_up}</span>`;
+        }
+        row.querySelectorAll("[data-ax-receipt-manage]").forEach((btn) => {
+          btn.setAttribute("data-receipt-follow-up", data.follow_up);
+          if (data.follow_up_raw) {
+            btn.setAttribute("data-receipt-follow-up-raw", data.follow_up_raw);
+          }
+        });
+        const haystack = row.getAttribute("data-search-text") || "";
+        if (data.follow_up && !haystack.includes(data.follow_up)) {
+          row.setAttribute("data-search-text", `${haystack} ${data.follow_up}`.trim());
+        }
+        if (manageDueDate && data.follow_up_raw) {
+          manageDueDate.value = data.follow_up_raw;
+        }
+      }
+
       if (data.pay_by) {
+        const overdue = Boolean(data.pay_by_overdue);
         const payByCell = row.querySelector("[data-label='Pay by']");
-        if (payByCell) {
-          const overdue = Boolean(data.pay_by_overdue);
+        if (payByCell && !payByCell.querySelector("[data-ax-receipt-manage]")) {
           payByCell.innerHTML = overdue
             ? `<span class="ax-pay-by is-overdue">${data.pay_by}</span>`
-            : data.pay_by;
+            : `<span class="ax-pay-by">${data.pay_by}</span>`;
         }
-        activeManageButton.setAttribute("data-receipt-pay-by", data.pay_by);
-        if (data.pay_by_raw) {
-          activeManageButton.setAttribute("data-receipt-pay-by-raw", data.pay_by_raw);
-        }
+        row.querySelectorAll("[data-ax-receipt-manage]").forEach((btn) => {
+          btn.setAttribute("data-receipt-pay-by", data.pay_by);
+          if (data.pay_by_raw) {
+            btn.setAttribute("data-receipt-pay-by-raw", data.pay_by_raw);
+          }
+        });
         const viewBtn = row.querySelector("[data-ax-receipt-view]");
         if (viewBtn) viewBtn.setAttribute("data-receipt-pay-by", data.pay_by);
-        const haystack = row.getAttribute("data-search-text") || "";
-        if (data.pay_by && !haystack.includes(data.pay_by)) {
-          row.setAttribute("data-search-text", `${haystack} ${data.pay_by}`.trim());
-        }
       }
 
       if (data.receipt_due !== undefined) {
@@ -709,8 +742,6 @@
       const shop = button.getAttribute("data-receipt-shop") || "";
       const total = button.getAttribute("data-receipt-total") || "";
       const due = button.getAttribute("data-receipt-due") || "";
-      const payBy = button.getAttribute("data-receipt-pay-by") || "";
-      const payByRaw = button.getAttribute("data-receipt-pay-by-raw") || "";
       const dueRaw = button.getAttribute("data-receipt-due-raw") || "";
       const receiptId = button.getAttribute("data-receipt-id") || "";
       const canPayRow = button.getAttribute("data-receipt-can-pay") === "1";
@@ -722,9 +753,6 @@
           .join(" · ");
       }
       if (manageId) manageId.value = receiptId;
-      if (manageDueDate) {
-        manageDueDate.value = payByRaw;
-      }
       if (manageDueLabel) manageDueLabel.textContent = due || "—";
       if (manageAmount) {
         manageAmount.value = "";
@@ -743,7 +771,7 @@
       manageModal.hidden = false;
       syncModalOpen();
       window.lucide?.createIcons?.();
-      manageDueDate?.focus();
+      manageAmount?.focus();
     }
 
     async function pollManageStk(paymentId) {
@@ -772,15 +800,15 @@
 
     async function saveDueDate() {
       if (!receiptUpdateTemplate || !manageId?.value) return;
-      const dueDate = (manageDueDate?.value || "").trim();
-      if (!dueDate) {
-        setManageStatus("Enter a payment due date.", { error: true });
+      const followUp = (manageDueDate?.value || "").trim();
+      if (!followUp) {
+        setManageStatus("Enter a follow-up date.", { error: true });
         return;
       }
       if (manageSaveDate) manageSaveDate.disabled = true;
       try {
         const url = receiptUpdateTemplate.replace("__ID__", manageId.value);
-        const body = new URLSearchParams({ credit_due_date: dueDate });
+        const body = new URLSearchParams({ credit_follow_up_date: followUp });
         const response = await fetch(url, {
           method: "POST",
           headers: {
@@ -792,13 +820,13 @@
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) {
-          setManageStatus(data.error || "Could not update due date.", { error: true });
+          setManageStatus(data.error || "Could not update follow-up date.", { error: true });
           return;
         }
         updateLedgerRowFromManage(data);
-        setManageStatus(data.message || "Due date updated.");
+        setManageStatus(data.message || "Follow-up date saved.");
       } catch (err) {
-        setManageStatus(err.message || "Could not update due date.", { error: true });
+        setManageStatus(err.message || "Could not update follow-up date.", { error: true });
       } finally {
         if (manageSaveDate) manageSaveDate.disabled = false;
       }

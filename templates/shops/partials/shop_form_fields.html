@@ -2,10 +2,60 @@
   <span class="field-label">Branch name</span>
   <input type="text" name="name" value="{{ form_data.name }}" required placeholder="e.g. RICHCOM CBD" id="{{ prefix }}name" data-uppercase autocomplete="organization">
 </label>
-<label class="field">
+<div class="field shop-location-field" data-shop-location-field>
   <span class="field-label">Branch location</span>
-  <input type="text" name="location" value="{{ form_data.location }}" required placeholder="e.g. NAIROBI CBD" id="{{ prefix }}location" data-uppercase autocomplete="street-address">
-</label>
+  <div class="shop-location-search">
+    <i data-lucide="map-pin" aria-hidden="true"></i>
+    <input
+      type="text"
+      name="location"
+      value="{{ form_data.location }}"
+      required
+      placeholder="{% if google_maps_api_key %}Search Google Maps…{% else %}e.g. NAIROBI CBD{% endif %}"
+      id="{{ prefix }}location"
+      data-uppercase
+      data-shop-location-input
+      {% if google_maps_api_key %}data-maps-enabled="1"{% endif %}
+      autocomplete="off"
+      aria-autocomplete="list"
+      aria-controls="{{ prefix }}location-suggestions"
+    >
+  </div>
+  <ul
+    class="shop-location-suggestions"
+    id="{{ prefix }}location-suggestions"
+    data-shop-location-suggestions
+    hidden
+    role="listbox"
+    aria-label="Location suggestions"
+  ></ul>
+  <div class="shop-location-actions">
+    <button
+      class="btn btn--ghost shop-location-current"
+      type="button"
+      data-shop-location-current
+      {% if not google_maps_api_key %}disabled title="Set GOOGLE_MAPS_API_KEY to use current location"{% endif %}
+    >
+      <i data-lucide="locate-fixed" aria-hidden="true"></i>
+      <span>Use current location</span>
+    </button>
+    <p class="field-hint shop-location-selected" data-shop-location-selected {% if not form_data.latitude or not form_data.longitude %}hidden{% endif %}>
+      {% if form_data.latitude and form_data.longitude %}
+      Pin · {{ form_data.latitude }}, {{ form_data.longitude }}
+      {% endif %}
+    </p>
+  </div>
+  <p class="field-hint" data-shop-location-hint>
+    {% if google_maps_api_key %}
+    Live Google Maps search — pick a result or use your current location to save coordinates.
+    {% else %}
+    Enter the branch address. Set <code>GOOGLE_MAPS_API_KEY</code> for live map search and GPS.
+    {% endif %}
+  </p>
+  <input type="hidden" name="latitude" value="{{ form_data.latitude }}" data-shop-location-lat>
+  <input type="hidden" name="longitude" value="{{ form_data.longitude }}" data-shop-location-lng>
+  <input type="hidden" name="maps_url" value="{{ form_data.maps_url }}" data-shop-location-maps-url>
+</div>
 <label class="field">
   <span class="field-label">Branch email</span>
   <input type="email" name="email" value="{{ form_data.email }}" required placeholder="e.g. cbd@richcom.co.ke" id="{{ prefix }}email" data-lowercase autocomplete="email">

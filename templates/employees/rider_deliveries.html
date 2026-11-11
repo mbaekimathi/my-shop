@@ -1,0 +1,68 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ page_title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/rider.css' %}?v=20261111-rider-done-list">
+{% endblock %}
+
+{% block workspace_content %}
+<section class="rider-board" data-animate="rise">
+  <header class="rider-hero rider-hero--page">
+    <div class="rider-hero-top">
+      <div class="rider-hero-copy">
+        <p class="rider-kicker">
+          <span class="rider-kicker-dot" aria-hidden="true"></span>
+          <a href="{% url 'employees:role_rider' %}">Open deliveries</a>
+          · {{ page_title }}
+        </p>
+        <h2 class="rider-title">
+          <span class="rider-title-icon" aria-hidden="true">
+            <i data-lucide="{{ page_icon }}"></i>
+          </span>
+          {{ page_title }}
+        </h2>
+        {% if page_summary %}
+        <p class="rider-sub">{{ page_summary }}</p>
+        {% endif %}
+      </div>
+      <nav class="rider-page-nav rider-hub--mobile" aria-label="Delivery pages">
+        <a
+          class="rider-page-nav-link"
+          href="{% url 'employees:role_rider' %}"
+        >
+          Open
+          <span>{{ open_count }}</span>
+        </a>
+        <a
+          class="rider-page-nav-link{% if delivery_section == 'active' %} is-active{% endif %}"
+          href="{% url 'employees:rider_active_deliveries' %}"
+        >
+          Active
+          <span>{{ active_count }}</span>
+        </a>
+        <a
+          class="rider-page-nav-link{% if delivery_section == 'completed' %} is-active{% endif %}"
+          href="{% url 'employees:rider_completed_deliveries' %}"
+        >
+          Completed
+          <span>{{ completed_count }}</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="rider-panel rider-panel--{{ delivery_section }}" aria-label="{{ page_title }}">
+    {% include "employees/partials/rider_delivery_cards.html" %}
+  </section>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+{% if delivery_section == "active" %}
+<script src="{% static 'js/rider-delivery-complete.js' %}?v=20261111-rider-payflow" defer></script>
+{% endif %}
+{% endblock %}

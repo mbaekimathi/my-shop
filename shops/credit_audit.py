@@ -34,7 +34,12 @@ def _event_tone(kind: str) -> str:
     value = (kind or "").strip().lower()
     if value in {"payment_cash", "payment_mpesa"}:
         return "good"
-    if value in {"due_date_set", "due_date_changed"}:
+    if value in {
+        "due_date_set",
+        "due_date_changed",
+        "follow_up_set",
+        "follow_up_changed",
+    }:
         return "warn"
     if value in {"items_returned", "credit_cancelled"}:
         return "bad"
@@ -49,6 +54,8 @@ def _event_icon(kind: str) -> str:
         "payment_mpesa": "smartphone",
         "due_date_set": "calendar-plus",
         "due_date_changed": "calendar-clock",
+        "follow_up_set": "calendar-plus",
+        "follow_up_changed": "calendar-clock",
         "items_returned": "undo-2",
         "credit_cancelled": "ban",
     }
@@ -150,7 +157,11 @@ def log_credit_payment(
         amount=amount,
         detail=detail,
         actor=actor,
-        meta={"mpesa_receipt_number": mpesa_receipt_number or ""},
+        meta={
+            "mpesa_receipt_number": mpesa_receipt_number or "",
+            "cleared": due_after <= 0,
+            "due_after": str(due_after),
+        },
     )
 
 
@@ -185,6 +196,42 @@ def log_credit_due_date_change(
         meta={
             "old_due_date": old_date.isoformat() if old_date else "",
             "new_due_date": new_date.isoformat(),
+        },
+    )
+
+
+def log_credit_follow_up_change(
+    *,
+    client_id: int,
+    old_date,
+    new_date,
+    actor=None,
+    shop=None,
+) -> None:
+    if not client_id:
+        return
+    kind = (
+        ClientCreditAccountEventKind.FOLLOW_UP_SET
+        if old_date is None
+        else ClientCreditAccountEventKind.FOLLOW_UP_CHANGED
+    )
+    if old_date is None:
+        detail = f"Account follow-up set for {new_date.strftime('%d %b %Y')}"
+    else:
+        detail = (
+            "Account follow-up: "
+            f"{old_date.strftime('%d %b %Y')} → {new_date.strftime('%d %b %Y')}"
+        )
+    log_client_credit_event(
+        client_id=client_id,
+        kind=kind,
+        shop=shop,
+        receipt=None,
+        detail=detail,
+        actor=actor,
+        meta={
+            "old_follow_up_date": old_date.isoformat() if old_date else "",
+            "new_follow_up_date": new_date.isoformat(),
         },
     )
 
@@ -495,6 +542,14 @@ def build_credit_audits(*, profile, request=None, event_kind: str = "") -> dict:
     filter_employees = list(
         EmployeeProfile.objects.filter(status=EmployeeStatus.ACTIVE)
         .select_related("user")
+        .only(
+            "id",
+            "employee_id",
+            "user_id",
+            "user__first_name",
+            "user__last_name",
+            "user__username",
+        )
         .order_by("employee_id")[:300]
     )
     if employee_filter_id and not any(
@@ -575,23 +630,18 @@ def build_credit_audits(*, profile, request=None, event_kind: str = "") -> dict:
     if not shop_ids:
         return empty
 
-    client_ids = list(
-        ShopReceipt.objects.filter(
-            shop_id__in=shop_ids,
-            kind=ShopReceiptKind.CREDIT,
-            client_id__isnull=False,
-        )
-        .values_list("client_id", flat=True)
-        .distinct()
-    )
-    for client_id in client_ids:
-        ensure_client_credit_audit_backfill(
-            client_id=client_id,
-            shop_ids=shop_ids,
-        )
+    # Read existing audit events only — no per-client backfill on page load.
+    from django.db.models import Q
 
     events_qs = ClientCreditAccountEvent.objects.filter(
-        shop_id__in=shop_ids
+        Q(shop_id__in=shop_ids)
+        | Q(
+            shop_id__isnull=True,
+            kind__in=[
+                ClientCreditAccountEventKind.FOLLOW_UP_SET,
+                ClientCreditAccountEventKind.FOLLOW_UP_CHANGED,
+            ],
+        )
     ).exclude(kind__in=CREDIT_AUDIT_EXCLUDED_KINDS)
     if event_kinds:
         events_qs = events_qs.filter(kind__in=event_kinds)
@@ -607,8 +657,27 @@ def build_credit_audits(*, profile, request=None, event_kind: str = "") -> dict:
             "receipt",
             "actor",
             "actor__user",
-            "stk_payment",
-        ).order_by("-occurred_at", "-pk")
+        )
+        .only(
+            "id",
+            "kind",
+            "amount",
+            "detail",
+            "meta",
+            "occurred_at",
+            "client_id",
+            "client__full_name",
+            "shop_id",
+            "shop__name",
+            "receipt_id",
+            "receipt__receipt_number",
+            "actor_id",
+            "actor__employee_id",
+            "actor__user__first_name",
+            "actor__user__last_name",
+            "actor__user__username",
+        )
+        .order_by("-occurred_at", "-pk")[:1000]
     )
 
     rows = []
@@ -736,3 +805,382 @@ def client_credit_audit_url(role, client_id, *, query: str = "") -> str:
     if query:
         return f"{href}?{query}"
     return href
+
+
+CREDIT_FOLLOW_UP_OUTCOME_OPTIONS = (
+    {"slug": "", "label": "All outcomes"},
+    {"slug": "follow_up", "label": "Follow-up set"},
+    {"slug": "cleared", "label": "Credit cleared"},
+)
+
+_FOLLOW_UP_EVENT_KINDS = frozenset(
+    {
+        ClientCreditAccountEventKind.FOLLOW_UP_SET,
+        ClientCreditAccountEventKind.FOLLOW_UP_CHANGED,
+    }
+)
+_CLEAR_EVENT_KINDS = frozenset(
+    {
+        ClientCreditAccountEventKind.PAYMENT_CASH,
+        ClientCreditAccountEventKind.PAYMENT_MPESA,
+        ClientCreditAccountEventKind.CREDIT_CANCELLED,
+    }
+)
+
+
+def _event_cleared_credit(event) -> bool:
+    """True when this event closed the credit (paid in full or cancelled)."""
+    if _event_cleared_credit_fast(event):
+        return True
+    if event.kind not in {
+        ClientCreditAccountEventKind.PAYMENT_CASH,
+        ClientCreditAccountEventKind.PAYMENT_MPESA,
+    }:
+        return False
+    receipt = getattr(event, "receipt", None)
+    if receipt is None:
+        return False
+    return _due_amount(receipt.total, receipt.amount_paid) <= 0
+
+
+def _event_cleared_credit_fast(event) -> bool:
+    """Cleared check from event fields only — no related receipt fetch."""
+    kind = event.kind
+    if kind == ClientCreditAccountEventKind.CREDIT_CANCELLED:
+        return True
+    if kind not in {
+        ClientCreditAccountEventKind.PAYMENT_CASH,
+        ClientCreditAccountEventKind.PAYMENT_MPESA,
+    }:
+        return False
+    meta = event.meta or {}
+    if meta.get("cleared") is True:
+        return True
+    due_after = meta.get("due_after")
+    if due_after is not None:
+        try:
+            return Decimal(str(due_after)) <= 0
+        except Exception:
+            pass
+    return "Due after KSh 0" in (event.detail or "")
+
+
+def build_credit_follow_ups_page(*, profile, request=None) -> dict:
+    """List credit clients for allocated shops with period follow-up/clear status."""
+    from django.db.models import Q
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+    from employees.analytics_services import (
+        _date_filter_context,
+        _within_created_range,
+        actionable_shops_for_profile,
+    )
+
+    date_filter = _date_filter_context(request)
+    start, end = date_filter.get("start"), date_filter.get("end")
+    filter_shops = list(actionable_shops_for_profile(profile))
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+    allowed_shop_ids = [shop.pk for shop in filter_shops]
+
+    getter = getattr(request, "GET", {}) or {}
+    try:
+        shop_filter_id = int(getter.get("shop_id") or 0)
+    except (TypeError, ValueError):
+        shop_filter_id = 0
+    if shop_filter_id and shop_filter_id not in shops_by_id:
+        shop_filter_id = 0
+
+    outcome_raw = (getter.get("outcome") or "").strip().lower()
+    if outcome_raw not in {"follow_up", "cleared"}:
+        outcome_raw = ""
+
+    shop_ids = [shop_filter_id] if shop_filter_id else allowed_shop_ids
+    period_bits = [date_filter.get("report_period_label") or ""]
+    if outcome_raw == "follow_up":
+        period_bits.append("Follow-up set")
+    elif outcome_raw == "cleared":
+        period_bits.append("Credit cleared")
+    period_label = " · ".join(bit for bit in period_bits if bit)
+
+    role_segment = role_url_segment(profile.role)
+    account_href_template = reverse(
+        "employees:analytics_client_credit",
+        kwargs={"role_segment": role_segment, "client_id": 0},
+    )
+
+    def _account_href(client_id: int) -> str:
+        return account_href_template.replace("/0/", f"/{int(client_id)}/")
+
+    def _empty(*, message: str) -> dict:
+        return {
+            **date_filter,
+            "headline": "Credit follow-up",
+            "lead": (
+                "Credit clients for your shops that had a follow-up set "
+                "or a credit cleared in the selected period."
+            ),
+            "period_label": period_label,
+            "outcome_options": list(CREDIT_FOLLOW_UP_OUTCOME_OPTIONS),
+            "outcome_filter": outcome_raw,
+            "filter_shops": filter_shops,
+            "selected_shop_id": shop_filter_id or 0,
+            "rows": [],
+            "follow_up_count": 0,
+            "cleared_count": 0,
+            "client_count": 0,
+            "empty_message": message,
+            "summary_board": {
+                "hero": {
+                    "label": "Clients updated",
+                    "value": "0",
+                    "hint": "No activity yet",
+                    "tone": "neutral",
+                },
+                "tiles": [
+                    {
+                        "label": "Follow-ups",
+                        "value": "0",
+                        "hint": "In this period",
+                        "icon": "calendar-clock",
+                        "tone": "warn",
+                    },
+                    {
+                        "label": "Cleared",
+                        "value": "0",
+                        "hint": "In this period",
+                        "icon": "badge-check",
+                        "tone": "good",
+                    },
+                    {
+                        "label": "Shops",
+                        "value": str(len(shop_ids)),
+                        "hint": "In your allocation",
+                        "icon": "store",
+                        "tone": "shops",
+                    },
+                ],
+            },
+        }
+
+    if not shop_ids:
+        return _empty(message="No shops allocated to your account.")
+
+    from django.db.models import Max, Sum
+    from django.db.models.functions import Coalesce
+
+    credit_base = ShopReceipt.objects.filter(
+        shop_id__in=shop_ids,
+        kind=ShopReceiptKind.CREDIT,
+        client_id__isnull=False,
+    ).exclude(status=ShopReceiptStatus.CANCELLED)
+
+    balance_rows = list(
+        credit_base.values("client_id").annotate(
+            total_sum=Coalesce(Sum("total"), _zero()),
+            paid_sum=Coalesce(Sum("amount_paid"), _zero()),
+            latest_receipt_id=Max("id"),
+        )
+    )
+    if not balance_rows:
+        return _empty(message="No follow-ups or cleared credits in this period.")
+
+    credit_client_ids = [int(row["client_id"]) for row in balance_rows]
+    balance_by_client = {
+        int(row["client_id"]): _due_amount(row["total_sum"], row["paid_sum"])
+        for row in balance_rows
+    }
+    latest_receipt_ids = [
+        int(row["latest_receipt_id"])
+        for row in balance_rows
+        if row.get("latest_receipt_id")
+    ]
+    shop_by_client = {
+        int(client_id): (shop_name or "").strip() or "—"
+        for client_id, shop_name in ShopReceipt.objects.filter(
+            pk__in=latest_receipt_ids
+        ).values_list("client_id", "shop__name")
+    }
+
+    clients = {
+        row.pk: row
+        for row in Client.objects.filter(pk__in=credit_client_ids).only(
+            "id", "full_name", "credit_follow_up_date"
+        )
+    }
+
+    by_client: dict[int, dict] = {}
+    for client_id in credit_client_ids:
+        client = clients.get(client_id)
+        follow_up_date = ""
+        if client and client.credit_follow_up_date:
+            follow_up_date = client.credit_follow_up_date.strftime("%d %b %Y")
+        by_client[client_id] = {
+            "client_id": client_id,
+            "client": (client.full_name if client else "") or "—",
+            "shop": shop_by_client.get(client_id, "—"),
+            "balance": balance_by_client.get(client_id, _zero()),
+            "follow_up": False,
+            "cleared": False,
+            "follow_up_date": follow_up_date,
+            "when_label": "—",
+            "when_sort": None,
+            "actor": "—",
+            "detail": "No follow-up or clearance in this period.",
+            "amount": "—",
+            "href": _account_href(client_id),
+            "outcomes": [],
+        }
+
+    # Follow-up/clear events are written at save time — no audit backfill.
+
+    events_qs = ClientCreditAccountEvent.objects.filter(
+        client_id__in=credit_client_ids,
+        kind__in=list(_FOLLOW_UP_EVENT_KINDS | _CLEAR_EVENT_KINDS),
+    ).filter(
+        Q(shop_id__in=shop_ids)
+        | Q(shop_id__isnull=True, kind__in=list(_FOLLOW_UP_EVENT_KINDS))
+    )
+    events_qs = _within_created_range(events_qs, start, end, lookup="occurred_at")
+    events = list(
+        events_qs.select_related("shop", "actor", "actor__user").order_by(
+            "-occurred_at", "-pk"
+        )
+    )
+
+    for event in events:
+        row = by_client.get(event.client_id)
+        if row is None:
+            continue
+        is_follow_up = event.kind in _FOLLOW_UP_EVENT_KINDS
+        is_cleared = _event_cleared_credit_fast(event)
+        if event.kind in {
+            ClientCreditAccountEventKind.PAYMENT_CASH,
+            ClientCreditAccountEventKind.PAYMENT_MPESA,
+        } and not is_cleared:
+            continue
+        if not is_follow_up and not is_cleared:
+            continue
+        if is_follow_up:
+            row["follow_up"] = True
+        if is_cleared:
+            row["cleared"] = True
+        when = timezone.localtime(event.occurred_at)
+        if row["when_sort"] is None or event.occurred_at > row["when_sort"]:
+            row["when_label"] = when.strftime("%d %b %Y · %H:%M")
+            row["when_sort"] = event.occurred_at
+            row["actor"] = _actor_label(event.actor)
+            row["detail"] = event.detail or event.get_kind_display()
+            if event.amount is not None:
+                row["amount"] = _money_ksh(event.amount)
+            if event.shop:
+                row["shop"] = event.shop.name
+
+    rows = []
+    follow_up_count = 0
+    cleared_count = 0
+    for row in by_client.values():
+        # Only credits that were followed up or cleared in this period.
+        if not row["follow_up"] and not row["cleared"]:
+            continue
+        if outcome_raw == "follow_up" and not row["follow_up"]:
+            continue
+        if outcome_raw == "cleared" and not row["cleared"]:
+            continue
+        outcomes = []
+        if row["follow_up"]:
+            outcomes.append(
+                {
+                    "label": "Follow-up set",
+                    "tone": "warn",
+                    "icon": "calendar-clock",
+                }
+            )
+            follow_up_count += 1
+        if row["cleared"]:
+            outcomes.append(
+                {
+                    "label": "Credit cleared",
+                    "tone": "good",
+                    "icon": "badge-check",
+                }
+            )
+            cleared_count += 1
+        row["outcomes"] = outcomes
+        row["balance_label"] = _money_ksh(row["balance"])
+        if row["cleared"] and not row["follow_up"]:
+            row["tone"] = "good"
+        elif row["follow_up"]:
+            row["tone"] = "warn"
+        else:
+            row["tone"] = "neutral"
+        rows.append(row)
+
+    rows.sort(
+        key=lambda item: (
+            item["when_sort"] is None,
+            -(item["when_sort"].timestamp() if item["when_sort"] else 0),
+            item["client"].lower(),
+        )
+    )
+    for row in rows:
+        row.pop("when_sort", None)
+        row.pop("balance", None)
+
+    client_count = len(rows)
+    return {
+        **date_filter,
+        "headline": "Credit follow-up",
+        "lead": (
+            "Credit clients for your shops that had a follow-up set "
+            "or a credit cleared in the selected period."
+        ),
+        "period_label": period_label,
+        "outcome_options": list(CREDIT_FOLLOW_UP_OUTCOME_OPTIONS),
+        "outcome_filter": outcome_raw,
+        "filter_shops": filter_shops,
+        "selected_shop_id": shop_filter_id or 0,
+        "rows": rows,
+        "follow_up_count": follow_up_count,
+        "cleared_count": cleared_count,
+        "client_count": client_count,
+        "empty_message": (
+            "No matching follow-ups or cleared credits for this filter."
+            if outcome_raw or shop_filter_id
+            else "No follow-ups or cleared credits in this period."
+        ),
+        "summary_board": {
+            "hero": {
+                "label": "Clients updated",
+                "value": str(client_count),
+                "hint": (
+                    f"{follow_up_count} follow-up{'s' if follow_up_count != 1 else ''} · "
+                    f"{cleared_count} cleared"
+                ),
+                "tone": "neutral",
+            },
+            "tiles": [
+                {
+                    "label": "Follow-ups",
+                    "value": str(follow_up_count),
+                    "hint": "In this period",
+                    "icon": "calendar-clock",
+                    "tone": "warn" if follow_up_count else "neutral",
+                },
+                {
+                    "label": "Cleared",
+                    "value": str(cleared_count),
+                    "hint": "In this period",
+                    "icon": "badge-check",
+                    "tone": "good" if cleared_count else "neutral",
+                },
+                {
+                    "label": "Shops",
+                    "value": str(len(shop_ids)),
+                    "hint": "In your allocation",
+                    "icon": "store",
+                    "tone": "shops",
+                },
+            ],
+        },
+    }

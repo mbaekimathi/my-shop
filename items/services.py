@@ -3406,6 +3406,34 @@ def apply_stock_movement(
 
             logging.getLogger(__name__).exception("Buy stock WhatsApp share failed")
 
+    if (
+        last_movement is not None
+        and last_movement.movement_type == StockMovementType.REQUEST
+        and last_movement.request_status == StockRequestStatus.PENDING
+    ):
+        movement_id = last_movement.pk
+
+        def _push_stock_request():
+            try:
+                from employees.web_push import notify_stock_request_created
+
+                fresh = (
+                    StockMovement.objects.select_related("shop", "requested_from_shop")
+                    .filter(pk=movement_id)
+                    .first()
+                )
+                if fresh is not None:
+                    notify_stock_request_created(fresh)
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).exception(
+                    "Web Push stock-request alert failed for movement %s",
+                    movement_id,
+                )
+
+        transaction.on_commit(_push_stock_request)
+
     return last_movement
 
 
@@ -3495,6 +3523,20 @@ def cancel_pending_stock_transfer(*, movement: StockMovement, profile, reason: s
         return movement
 
 
+def _notify_stock_request_decided(movement):
+    try:
+        from employees.web_push import notify_stock_request_decided
+
+        notify_stock_request_decided(movement)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "Web Push stock-decision alert failed for movement %s",
+            getattr(movement, "pk", None),
+        )
+
+
 @transaction.atomic
 def respond_to_stock_request(
     *,
@@ -3580,6 +3622,7 @@ def respond_to_stock_request(
                 "responded_at",
             ]
         )
+        transaction.on_commit(lambda: _notify_stock_request_decided(movement))
         return movement
 
     serials_by_line = serials_by_line or {}
@@ -3733,6 +3776,7 @@ def respond_to_stock_request(
             "responded_at",
         ]
     )
+    transaction.on_commit(lambda: _notify_stock_request_decided(movement))
     return movement
 
 
