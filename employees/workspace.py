@@ -747,16 +747,14 @@ def sidebar_for_my_shop(
                     )
                 )
             if _allowed("stock_count"):
-                stock_count_href = reverse(
-                    "employees:my_shop_stock_count", kwargs={"shop_id": shop.pk}
-                )
-                if pending_stock_take_count:
-                    stock_count_href = f"{stock_count_href}?open=1"
                 primary.append(
                     _link(
                         "Stock count",
                         "clipboard-check",
-                        href=stock_count_href,
+                        href=reverse(
+                            "employees:my_shop_stock_count",
+                            kwargs={"shop_id": shop.pk},
+                        ),
                         active=active == "stock_count",
                         badge=pending_stock_take_count,
                     )
@@ -869,16 +867,14 @@ def sidebar_for_my_shop(
                 )
             )
         elif active == "stock_count" and _allowed("stock_count"):
-            stock_count_href = reverse(
-                "employees:my_shop_stock_count", kwargs={"shop_id": shop.pk}
-            )
-            if pending_stock_take_count:
-                stock_count_href = f"{stock_count_href}?open=1"
             primary.append(
                 _link(
                     "Stock count",
                     "clipboard-check",
-                    href=stock_count_href,
+                    href=reverse(
+                        "employees:my_shop_stock_count",
+                        kwargs={"shop_id": shop.pk},
+                    ),
                     active=True,
                     badge=pending_stock_take_count,
                 )

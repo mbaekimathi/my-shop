@@ -224,6 +224,35 @@
     if (event.key === "Escape" && !modal.hidden) closeModal();
   });
 
+  const looksLikeFileBytes = async (blob, { isExcel }) => {
+    if (!blob || blob.size < 4) return false;
+    try {
+      const header = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+      if (isExcel) {
+        // XLSX is a ZIP package (PK..).
+        return header[0] === 0x50 && header[1] === 0x4b;
+      }
+      // PDF magic: %PDF
+      return (
+        header[0] === 0x25
+        && header[1] === 0x50
+        && header[2] === 0x44
+        && header[3] === 0x46
+      );
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const triggerNativeDownload = (url) => {
+    const link = document.createElement("a");
+    link.href = url;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
   const downloadStockFile = async (button, { format }) => {
     if (!printUrl) {
       setStatus("Print URL is missing.", { error: true });
@@ -244,35 +273,67 @@
     button.disabled = true;
     setStatus(`Preparing ${label}…`);
 
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-        credentials: "same-origin",
-        headers: {
-          Accept: isExcel
-            ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            : "application/pdf",
-        },
-      });
-      if (!response.ok) {
-        let message = `Could not download the ${label}.`;
-        try {
-          const contentType = response.headers.get("Content-Type") || "";
-          if (contentType.includes("application/json")) {
-            const data = await response.json();
-            if (data?.error) message = data.error;
-          } else {
-            const text = await response.text();
-            const match = text.match(/class="print-error"[^>]*>([^<]+)/i);
-            if (match?.[1]) message = match[1].trim();
-          }
-        } catch (_) {
-          /* ignore */
+    const readErrorMessage = async (response, contentType) => {
+      let message = `Could not download the ${label}.`;
+      try {
+        if (contentType.includes("application/json")) {
+          const data = await response.json();
+          if (data?.error) message = data.error;
+        } else {
+          const text = await response.text();
+          const match = text.match(/class="print-error"[^>]*>([^<]+)/i);
+          if (match?.[1]) message = match[1].trim();
         }
-        throw new Error(message);
+      } catch (_) {
+        /* ignore */
+      }
+      return message;
+    };
+
+    try {
+      let response;
+      try {
+        response = await fetch(url, {
+          method: "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: {
+            Accept: isExcel
+              ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              : "application/pdf",
+          },
+        });
+      } catch (_) {
+        // Network / stale service worker: let the browser download natively.
+        triggerNativeDownload(url);
+        closeModal();
+        return;
+      }
+
+      const contentType = (response.headers.get("Content-Type") || "").toLowerCase();
+      if (!response.ok) {
+        setStatus(await readErrorMessage(response, contentType), { error: true });
+        return;
+      }
+
+      if (
+        contentType.includes("text/html")
+        || contentType.includes("application/json")
+      ) {
+        setStatus(await readErrorMessage(response, contentType), { error: true });
+        return;
       }
 
       const blob = await response.blob();
+      const validBytes = await looksLikeFileBytes(blob, { isExcel });
+      if (!validBytes) {
+        // Host/proxy may have rewritten the body; fall back to a direct
+        // browser download that bypasses fetch/blob entirely.
+        triggerNativeDownload(url);
+        closeModal();
+        return;
+      }
+
       const fallbackName = `stock-list-${isExcel ? "excel" : "a4"}-${new Date()
         .toISOString()
         .slice(0, 10)}${extension}`;

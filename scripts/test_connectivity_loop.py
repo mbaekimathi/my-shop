@@ -40,6 +40,7 @@ FIX_HINTS = {
     "offline event debounce": "window offline handler must delay before probing (noisy on Windows).",
     "sw ping bypass": "static/sw.js must not convert /employees/api/ping/ into a fake offline 503.",
     "sw auth bypass": "static/sw.js must not intercept login/register (no synthetic 503 Offline HTML).",
+    "sw download bypass": "static/sw.js must not intercept Excel/PDF attachment downloads.",
     "state machine: one fail": "A single failed probe must keep isOnline() true.",
     "state machine: two fails": "Two failed probes must keep isOnline() true.",
     "state machine: three fails": "Three consecutive failures alone must not mark offline (needs sustained outage).",
@@ -138,6 +139,14 @@ def check_source_invariants() -> list[tuple[str, bool, str]]:
             "sw auth bypass",
             "isAuthPath" in sw_src and "if (isAuthPath(url)) return;" in sw_src,
             "login/register bypass SW fetch handler",
+        )
+    )
+    results.append(
+        (
+            "sw download bypass",
+            "isFileDownload" in sw_src
+            and "if (isFileDownload(url, request)) return;" in sw_src,
+            "Excel/PDF attachment bypass SW fetch handler",
         )
     )
     results.append(

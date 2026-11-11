@@ -1138,8 +1138,11 @@ def _catalog_rows_for_items(shop, items):
                 "discount_min_qty": int(item.discount_min_qty or 0),
                 "discount_amount": str(item.discount_amount or 0),
                 "stock": _qty_number(stock_by_item.get(item.pk, 0)),
-                "stock_hidden": item_stock_is_hidden(item.pk, item.category, hide_state),
+                "stock_hidden": item_stock_is_hidden(
+                    item.pk, item.category, hide_state, shop_id=shop.pk
+                ),
                 "sold_quantity": _qty_number(getattr(item, "sold_quantity", 0) or 0),
+
                 "track_serial": bool(item.track_serial_number),
                 "image_url": image_url,
             }
@@ -1821,7 +1824,9 @@ def my_shop_workspace(request, shop_id):
     )
 
 
-def _stock_take_workspace_context(shop, *, force_open=False):
+def _stock_take_workspace_context(
+    shop, *, force_open=False, suppress_auto_open=False
+):
     from items.stock_take import (
         pending_stock_take_count_for_shop,
         pending_stock_take_for_shop,
@@ -1830,13 +1835,18 @@ def _stock_take_workspace_context(shop, *, force_open=False):
 
     assignment = pending_stock_take_for_shop(shop)
     pending_count = pending_stock_take_count_for_shop(shop)
+    results_url = reverse(
+        "employees:my_shop_stock_count", kwargs={"shop_id": shop.pk}
+    )
     if not assignment:
         return {
             "pending_stock_take": None,
             "pending_stock_take_payload": None,
             "stock_take_submit_url": "",
+            "stock_take_results_url": results_url,
             "pending_stock_take_count": pending_count,
             "stock_take_force_open": False,
+            "stock_take_suppress_auto_open": bool(suppress_auto_open),
         }
     return {
         "pending_stock_take": assignment,
@@ -1844,15 +1854,17 @@ def _stock_take_workspace_context(shop, *, force_open=False):
         "stock_take_submit_url": reverse(
             "employees:my_shop_stock_take_submit", kwargs={"shop_id": shop.pk}
         ),
+        "stock_take_results_url": results_url,
         "pending_stock_take_count": pending_count,
         "stock_take_force_open": bool(force_open),
+        "stock_take_suppress_auto_open": bool(suppress_auto_open) and not force_open,
     }
 
 
 @shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_stock_count(request, shop_id):
-    """Stock count performance board for all shops, with popup for this shop."""
+    """This shop's stock-count results (input vs system vs variance)."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return denied
@@ -1863,15 +1875,18 @@ def my_shop_stock_count(request, shop_id):
         return denied
 
     from items.stock_take import (
-        build_stock_take_performance,
+        build_shop_stock_count_results,
         pending_stock_take_count_for_shop,
     )
 
     shops = _shops_for_floor(profile, shop)
     pending_count = pending_stock_take_count_for_shop(shop)
     force_open = (request.GET.get("open") or "").strip() in ("1", "true", "yes")
-    take_context = _stock_take_workspace_context(shop, force_open=force_open)
-    boards = build_stock_take_performance(current_shop=shop)
+    # Results page stays readable: only open the count popup when ?open=1.
+    take_context = _stock_take_workspace_context(
+        shop, force_open=force_open, suppress_auto_open=True
+    )
+    shop_results = build_shop_stock_count_results(shop=shop)
 
     return _render_my_shop_tool_page(
         request,
@@ -1880,14 +1895,14 @@ def my_shop_stock_count(request, shop_id):
         shops=shops,
         active="stock_count",
         title="Stock count",
-        headline="Stock count performance",
-        summary="See every shop’s progress and scores. Open the popup to submit this shop’s count.",
+        headline="Stock count results",
+        summary="This shop only — your counted qty vs system stock qty and the variance (excess or short).",
         icon="clipboard-check",
         template_name="shops/my_shop_stock_count.html",
         pending_stock_take_count=pending_count,
         extra_context={
             **take_context,
-            "stock_take_boards": boards,
+            "stock_count_results": shop_results,
             "pending_stock_take_count": pending_count,
         },
     )

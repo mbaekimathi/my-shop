@@ -4,9 +4,11 @@
   class="workspace-modal stock-take-modal"
   data-stock-take-modal
   data-stock-take-submit-url="{{ stock_take_submit_url }}"
+  data-stock-take-results-url="{{ stock_take_results_url }}"
   data-assignment-id="{{ pending_stock_take_payload.assignment_id }}"
   data-deadline="{{ pending_stock_take_payload.deadline }}"
   {% if stock_take_force_open %}data-stock-take-force-open="1"{% endif %}
+  {% if stock_take_suppress_auto_open %}data-stock-take-suppress-auto-open="1"{% endif %}
   hidden
   role="dialog"
   aria-modal="true"

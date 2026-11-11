@@ -6,9 +6,9 @@ register = template.Library()
 
 
 @register.simple_tag
-def stock_qty(value, item_id=None, category=""):
+def stock_qty(value, item_id=None, category="", shop_id=None):
     """Show the on-hand number, or Hidden when this item is covered by the setting."""
-    if item_stock_is_hidden(item_id, category):
+    if item_stock_is_hidden(item_id, category, shop_id=shop_id):
         return HIDDEN_STOCK_LABEL
     if value is None or value == "":
         return 0

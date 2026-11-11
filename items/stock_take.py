@@ -21,7 +21,7 @@ from items.models import (
 )
 from shops.services import category_from_form_token
 
-STOCK_TAKE_HIDE_CACHE_KEY = "stock_take_open_hide:v1"
+STOCK_TAKE_HIDE_CACHE_KEY = "stock_take_open_hide:v2"
 STOCK_TAKE_HIDE_CACHE_TTL = 30
 _ZERO = Decimal("0")
 
@@ -38,55 +38,131 @@ def invalidate_stock_take_hide_cache() -> None:
     cache.delete(STOCK_TAKE_HIDE_CACHE_KEY)
 
 
+def _coverage_from_take(take: StockTake) -> tuple[set[int], set[str]]:
+    item_ids: set[int] = set()
+    categories: set[str] = set()
+    if take.scope_mode == StockTakeScope.CATEGORY:
+        for raw in take.categories or []:
+            categories.add(str(raw or "").strip())
+    else:
+        for raw in take.item_ids or []:
+            try:
+                item_ids.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+    return item_ids, categories
+
+
+def _coverage_hides(item_id, category, *, item_ids: set[int], categories: set[str]) -> bool:
+    cat = str(category or "").strip()
+    if cat in categories:
+        return True
+    try:
+        return int(item_id) in item_ids
+    except (TypeError, ValueError):
+        return False
+
+
 def open_stock_take_hide_sets() -> dict:
-    """Item ids / categories covered by open stock takes (numbers stay Hidden)."""
+    """Pending open stock-take coverage. Numbers stay Hidden until that shop submits."""
     cached = cache.get(STOCK_TAKE_HIDE_CACHE_KEY)
-    if isinstance(cached, dict):
+    if isinstance(cached, dict) and "by_shop" in cached:
+        by_shop = {}
+        for raw_shop_id, coverage in (cached.get("by_shop") or {}).items():
+            try:
+                shop_id = int(raw_shop_id)
+            except (TypeError, ValueError):
+                continue
+            by_shop[shop_id] = {
+                "item_ids": set(coverage.get("item_ids") or []),
+                "categories": set(coverage.get("categories") or []),
+            }
         return {
+            "by_shop": by_shop,
             "item_ids": set(cached.get("item_ids") or []),
             "categories": set(cached.get("categories") or []),
             "active": bool(cached.get("active")),
         }
 
+    by_shop: dict[int, dict] = {}
     item_ids: set[int] = set()
     categories: set[str] = set()
-    for take in StockTake.objects.filter(status=StockTakeStatus.OPEN).only(
-        "scope_mode", "categories", "item_ids"
-    ):
-        if take.scope_mode == StockTakeScope.CATEGORY:
-            for raw in take.categories or []:
-                categories.add(str(raw or "").strip())
-        else:
-            for raw in take.item_ids or []:
-                try:
-                    item_ids.add(int(raw))
-                except (TypeError, ValueError):
-                    continue
+    assignments = (
+        StockTakeAssignment.objects.filter(
+            status=StockTakeAssignmentStatus.PENDING,
+            stock_take__status=StockTakeStatus.OPEN,
+        )
+        .select_related("stock_take")
+        .only(
+            "shop_id",
+            "stock_take__scope_mode",
+            "stock_take__categories",
+            "stock_take__item_ids",
+        )
+    )
+    for assignment in assignments:
+        take_item_ids, take_categories = _coverage_from_take(assignment.stock_take)
+        if not take_item_ids and not take_categories:
+            continue
+        entry = by_shop.setdefault(
+            assignment.shop_id, {"item_ids": set(), "categories": set()}
+        )
+        entry["item_ids"].update(take_item_ids)
+        entry["categories"].update(take_categories)
+        item_ids.update(take_item_ids)
+        categories.update(take_categories)
 
     payload = {
+        "by_shop": {
+            str(shop_id): {
+                "item_ids": list(coverage["item_ids"]),
+                "categories": list(coverage["categories"]),
+            }
+            for shop_id, coverage in by_shop.items()
+        },
         "item_ids": list(item_ids),
         "categories": list(categories),
-        "active": bool(item_ids or categories),
+        "active": bool(by_shop),
     }
     cache.set(STOCK_TAKE_HIDE_CACHE_KEY, payload, STOCK_TAKE_HIDE_CACHE_TTL)
     return {
+        "by_shop": by_shop,
         "item_ids": item_ids,
         "categories": categories,
         "active": payload["active"],
     }
 
 
-def stock_take_hides_item(item_id, category="") -> bool:
+def stock_take_hides_item(item_id, category="", shop_id=None) -> bool:
+    """Hide on-hand numbers for pending stock-take coverage.
+
+    When shop_id is set, only that shop's unsubmitted assignment keeps numbers
+    Hidden. After the shop submits, its covered items are visible again even if
+    other shops are still pending on the same take.
+    """
     state = open_stock_take_hide_sets()
     if not state["active"]:
         return False
-    cat = str(category or "").strip()
-    if cat in state["categories"]:
-        return True
-    try:
-        return int(item_id) in state["item_ids"]
-    except (TypeError, ValueError):
-        return False
+    if shop_id is not None:
+        try:
+            shop_key = int(shop_id)
+        except (TypeError, ValueError):
+            return False
+        coverage = state["by_shop"].get(shop_key)
+        if not coverage:
+            return False
+        return _coverage_hides(
+            item_id,
+            category,
+            item_ids=coverage["item_ids"],
+            categories=coverage["categories"],
+        )
+    return _coverage_hides(
+        item_id,
+        category,
+        item_ids=state["item_ids"],
+        categories=state["categories"],
+    )
 
 
 def resolve_stock_take_items(*, scope_mode: str, categories, item_ids) -> list[Item]:
@@ -323,6 +399,136 @@ def build_stock_take_performance(*, current_shop=None, limit=20) -> list[dict]:
     return boards
 
 
+def _variance_display(*, variance: Decimal | None) -> dict:
+    """Human labels for counted − system (excess / short / match)."""
+    if variance is None:
+        return {
+            "variance": None,
+            "variance_qty": None,
+            "variance_kind": None,
+            "variance_label": None,
+            "match": False,
+        }
+    qty = _quantize(variance)
+    abs_qty = abs(qty)
+    label_qty = _qty_label(abs_qty)
+    pieces = _pieces_word(abs_qty)
+    if qty == 0:
+        return {
+            "variance": "0",
+            "variance_qty": "0",
+            "variance_kind": "match",
+            "variance_label": "Match",
+            "match": True,
+        }
+    if qty > 0:
+        return {
+            "variance": _qty_label(qty),
+            "variance_qty": _qty_label(qty),
+            "variance_kind": "excess",
+            "variance_label": f"Excess by {label_qty} {pieces}",
+            "match": False,
+        }
+    return {
+        "variance": _qty_label(qty),
+        "variance_qty": _qty_label(qty),
+        "variance_kind": "short",
+        "variance_label": f"Short by {label_qty} {pieces}",
+        "match": False,
+    }
+
+
+def build_shop_stock_count_results(*, shop, limit=20) -> list[dict]:
+    """This shop's stock-count line results: input vs system vs variance."""
+    if shop is None:
+        return []
+    assignments = list(
+        StockTakeAssignment.objects.filter(shop=shop)
+        .select_related("stock_take")
+        .prefetch_related("counts__item")
+        .order_by("-stock_take__created_at", "-id")[:limit]
+    )
+    results = []
+    for assignment in assignments:
+        take = assignment.stock_take
+        is_submitted = assignment.status == StockTakeAssignmentStatus.SUBMITTED
+        rows = []
+        correct = 0
+        excess_count = 0
+        short_count = 0
+        for count in assignment.counts.all():
+            item = count.item
+            system = _quantize(count.system_qty)
+            counted = (
+                _quantize(count.counted_qty)
+                if count.counted_qty is not None
+                else None
+            )
+            variance = None if counted is None else counted - system
+            display = _variance_display(variance=variance)
+            if display["match"]:
+                correct += 1
+            elif display["variance_kind"] == "excess":
+                excess_count += 1
+            elif display["variance_kind"] == "short":
+                short_count += 1
+            rows.append(
+                {
+                    "item": item,
+                    "counted_qty": (
+                        _qty_label(counted) if counted is not None else None
+                    ),
+                    "system_qty": _qty_label(system),
+                    **display,
+                }
+            )
+        # Show mismatches first so excess/short jumps out after submit.
+        if is_submitted:
+            kind_order = {"short": 0, "excess": 1, "match": 2, None: 3}
+            rows.sort(
+                key=lambda row: (
+                    kind_order.get(row.get("variance_kind"), 3),
+                    (row["item"].name or "").lower(),
+                    row["item"].pk,
+                )
+            )
+        total = len(rows)
+        percent = (
+            int(round((100 * correct / total), 0))
+            if is_submitted and total
+            else None
+        )
+        results.append(
+            {
+                "take": take,
+                "assignment": assignment,
+                "submitted": is_submitted,
+                "submitted_at": assignment.submitted_at,
+                "submitted_by_label": assignment.submitted_by_label or "",
+                "rows": rows,
+                "marks": correct if is_submitted else None,
+                "max_marks": total,
+                "percent": percent,
+                "excess_count": excess_count if is_submitted else None,
+                "short_count": short_count if is_submitted else None,
+                "overdue": bool(
+                    take.status == StockTakeStatus.OPEN
+                    and take.deadline
+                    and take.deadline < timezone.now()
+                ),
+            }
+        )
+    # Submitted scorecards first so this shop can open results immediately.
+    results.sort(
+        key=lambda row: (
+            0 if row["submitted"] else 1,
+            -(row["submitted_at"].timestamp() if row["submitted_at"] else 0),
+            -row["take"].pk,
+        )
+    )
+    return results
+
+
 def _qty_label(value: Decimal) -> str:
     text = format(value.normalize(), "f")
     if "." in text:
@@ -380,6 +586,18 @@ def _parse_count_qty(raw, *, item_name: str) -> Decimal:
     return qty
 
 
+def _pieces_word(abs_diff: Decimal) -> str:
+    return "piece" if abs_diff == 1 else "pieces"
+
+
+def _diff_status_label(*, match: bool, abs_diff: Decimal | None) -> str:
+    if match:
+        return "Correct"
+    if abs_diff is None:
+        return "Wrong"
+    return f"Wrong by {_qty_label(abs_diff)} {_pieces_word(abs_diff)}"
+
+
 def _shop_line_result(count: StockTakeCount) -> dict:
     item = count.item
     system = _quantize(count.system_qty)
@@ -387,6 +605,8 @@ def _shop_line_result(count: StockTakeCount) -> dict:
         _quantize(count.counted_qty) if count.counted_qty is not None else None
     )
     match = counted is not None and counted == system
+    diff = None if counted is None else counted - system
+    abs_diff = None if diff is None else abs(diff)
     return {
         "count_id": count.pk,
         "item_id": item.pk,
@@ -394,11 +614,14 @@ def _shop_line_result(count: StockTakeCount) -> dict:
         "category": item.category or "",
         "counted_qty": _qty_label(counted) if counted is not None else "—",
         "match": match,
+        "diff": _qty_label(diff) if diff is not None else "",
+        "abs_diff": _qty_label(abs_diff) if abs_diff is not None else "",
+        "status_label": _diff_status_label(match=match, abs_diff=abs_diff),
         # System qty intentionally omitted for shop floor feedback.
     }
 
 
-def _grade_payload(*, correct: int, total: int) -> dict:
+def _grade_payload(*, correct: int, total: int, pieces_off: Decimal = _ZERO) -> dict:
     wrong = max(0, total - correct)
     percent = int(round((100 * correct / total), 0)) if total else 0
     if percent >= 100:
@@ -417,11 +640,13 @@ def _grade_payload(*, correct: int, total: int) -> dict:
         grade = "low"
         grade_label = "Review needed"
         headline = "Let's recount carefully"
+    off = _quantize(pieces_off)
     return {
         "marks": correct,
         "correct": correct,
         "max_marks": total,
         "wrong": wrong,
+        "pieces_off": _qty_label(off),
         "percent": percent,
         "grade": grade,
         "grade_label": grade_label,
@@ -430,11 +655,18 @@ def _grade_payload(*, correct: int, total: int) -> dict:
 
 
 def build_stock_take_result(assignment: StockTakeAssignment) -> dict:
-    """Shop scorecard: correct/wrong + marks. Never exposes system qty."""
+    """Shop scorecard: correct/wrong + piece gaps. Never exposes system qty."""
     rows = list(assignment.counts.select_related("item").all())
     lines = [_shop_line_result(count) for count in rows]
     correct = sum(1 for line in lines if line["match"])
-    payload = _grade_payload(correct=correct, total=len(lines))
+    pieces_off = _ZERO
+    for count in rows:
+        if count.counted_qty is None:
+            continue
+        pieces_off += abs(_quantize(count.counted_qty) - _quantize(count.system_qty))
+    payload = _grade_payload(
+        correct=correct, total=len(lines), pieces_off=pieces_off
+    )
     payload.update(
         {
             "assignment_id": assignment.pk,
@@ -458,6 +690,8 @@ def _finalize_assignment_if_complete(
         assignment.save(
             update_fields=["status", "submitted_at", "submitted_by_label"]
         )
+        # Unhide this shop's covered items; other pending shops stay hidden.
+        invalidate_stock_take_hide_cache()
     return True
 
 

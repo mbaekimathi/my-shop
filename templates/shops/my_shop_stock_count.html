@@ -30,73 +30,121 @@
     <p>
       This shop has {{ pending_stock_take_count }} unsubmitted stock count{{ pending_stock_take_count|pluralize }}.
       <a class="stock-requests-banner-link" href="?open=1">Open the count popup</a>
+      when you are ready — results stay on this page after submit.
     </p>
   </div>
   {% endif %}
 
-  {% if stock_take_boards %}
-  <div class="stock-count-boards">
-    {% for board in stock_take_boards %}
-    <article class="stock-count-board">
+  {% if stock_count_results %}
+  <div class="stock-count-results">
+    {% for result in stock_count_results %}
+    <article class="stock-count-result-card">
       <header class="stock-count-board-head">
         <div>
           <p class="stock-settings-section-label">
-            Stock take #{{ board.take.pk }}
-            · {{ board.take.get_scope_mode_display }}
-            {% if board.overdue %}· Overdue{% endif %}
+            Stock take #{{ result.take.pk }}
+            · {{ result.take.get_scope_mode_display }}
+            {% if result.overdue %}· Overdue{% endif %}
           </p>
           <h3>
-            Deadline {{ board.take.deadline|date:"d M Y H:i" }}
-            <span class="stock-take-status stock-take-status--{{ board.take.status }}">
-              {{ board.take.get_status_display }}
+            Deadline {{ result.take.deadline|date:"d M Y H:i" }}
+            <span class="stock-take-status stock-take-status--{{ result.take.status }}">
+              {{ result.take.get_status_display }}
             </span>
           </h3>
-          {% if board.take.note %}
-          <p class="stock-count-board-note">{{ board.take.note }}</p>
+          {% if result.take.note %}
+          <p class="stock-count-board-note">{{ result.take.note }}</p>
           {% endif %}
         </div>
         <div class="stock-stats">
+          {% if result.submitted %}
           <p class="stock-stat">
-            <strong>{{ board.submitted_count }}</strong>
-            <span>submitted</span>
+            <strong>{{ result.marks }}/{{ result.max_marks }}</strong>
+            <span>matched</span>
           </p>
           <p class="stock-stat">
-            <strong>{{ board.pending_count }}</strong>
-            <span>waiting</span>
+            <strong>{{ result.percent }}%</strong>
+            <span>score</span>
           </p>
+          {% if result.excess_count %}
+          <p class="stock-stat">
+            <strong>{{ result.excess_count }}</strong>
+            <span>excess</span>
+          </p>
+          {% endif %}
+          {% if result.short_count %}
+          <p class="stock-stat">
+            <strong>{{ result.short_count }}</strong>
+            <span>short</span>
+          </p>
+          {% endif %}
+          {% else %}
+          <p class="stock-stat">
+            <strong>Pending</strong>
+            <span>not submitted</span>
+          </p>
+          {% endif %}
         </div>
       </header>
 
-      <div class="stock-count-shop-grid">
-        {% for row in board.shops %}
-        <div class="stock-count-shop-card{% if row.is_current %} is-current{% endif %}{% if row.submitted %} is-done{% else %} is-pending{% endif %}">
-          <div class="stock-count-shop-card-top">
-            <strong>{{ row.shop.name }}</strong>
-            {% if row.is_current %}<em>This shop</em>{% endif %}
-          </div>
-          {% if row.submitted %}
-          <p class="stock-count-shop-score">
-            <strong>{{ row.marks }}/{{ row.max_marks }}</strong>
-            <span>{{ row.percent }}%</span>
-          </p>
-          <p class="stock-count-shop-meta">
-            Submitted {% if row.submitted_at %}{{ row.submitted_at|date:"d M H:i" }}{% else %}—{% endif %}
-          </p>
-          {% else %}
-          <p class="stock-count-shop-score is-waiting">
-            <strong>Waiting</strong>
-            <span>{{ row.answered_count }}/{{ row.total_count }} answered</span>
-          </p>
-          <p class="stock-count-shop-meta">Not submitted yet</p>
-          {% endif %}
-        </div>
-        {% endfor %}
+      {% if result.submitted %}
+      <p class="stock-count-result-meta">
+        Submitted {% if result.submitted_at %}{{ result.submitted_at|date:"d M Y H:i" }}{% else %}—{% endif %}
+        {% if result.submitted_by_label %} · {{ result.submitted_by_label }}{% endif %}
+      </p>
+      <div class="stock-take-table-wrap stock-count-result-table-wrap">
+        <table class="stock-take-table stock-count-result-table">
+          <thead>
+            <tr>
+              <th scope="col">Item</th>
+              <th scope="col" class="stock-take-num">Your count</th>
+              <th scope="col" class="stock-take-num">System qty</th>
+              <th scope="col">Variance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in result.rows %}
+            <tr class="{% if row.variance_kind == 'match' %}is-match-row{% elif row.variance_kind == 'excess' %}is-excess-row{% elif row.variance_kind == 'short' %}is-short-row{% endif %}">
+              <td class="stock-take-item">
+                <strong>{{ row.item.name }}</strong>
+                {% if row.item.category %}<em>{{ row.item.category }}</em>{% endif %}
+              </td>
+              <td class="stock-take-num">
+                {% if row.counted_qty is not None %}{{ row.counted_qty }}{% else %}<span class="stock-take-muted">—</span>{% endif %}
+              </td>
+              <td class="stock-take-num">{{ row.system_qty }}</td>
+              <td class="stock-count-variance{% if row.variance_kind %} is-{{ row.variance_kind }}{% endif %}">
+                {% if row.variance_label %}
+                <strong>{{ row.variance_label }}</strong>
+                {% if row.variance_kind != 'match' %}
+                <span class="stock-count-variance-delta">({{ row.variance }})</span>
+                {% endif %}
+                {% else %}
+                <span class="stock-take-muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="4">No items in this stock take.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
+      {% else %}
+      <p class="stock-count-result-waiting">
+        Results for this take appear here after {{ shop.name }} submits its count.
+        {% if pending_stock_take_count %}
+        <a class="stock-requests-banner-link" href="?open=1">Open the count popup</a>
+        {% endif %}
+      </p>
+      {% endif %}
     </article>
     {% endfor %}
   </div>
   {% else %}
-  <p class="stock-settings-footnote">No stock takes yet. Create one from Stock Management → Stock Take.</p>
+  <p class="stock-settings-footnote">No stock takes yet for {{ shop.name }}. Create one from Stock Management → Stock Take.</p>
   {% endif %}
 </section>
 
@@ -105,5 +153,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/shop-stock-take.js' %}?v=6"></script>
+<script defer src="{% static 'js/shop-stock-take.js' %}?v=7"></script>
 {% endblock %}

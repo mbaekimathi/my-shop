@@ -1,5 +1,5 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v32";
+const CACHE_VERSION = "myshop-v33";
 
 // Precache only the shared shell. Page-specific bundles (my-shop, catalogs,
 // printer) are cached on first use via networkFirst to keep install light.
@@ -43,6 +43,32 @@ const isNavigation = (request) =>
 
 const isSameOrigin = (url) => url.origin === self.location.origin;
 
+/**
+ * Excel/PDF/CSV attachments must bypass the SW. Chrome has long corrupted
+ * binary downloads that flow through respondWith (especially on HTTPS deploys).
+ */
+const isFileDownload = (url, request) => {
+  if ((url.searchParams.get("download") || "").trim() === "1") return true;
+  const format = (url.searchParams.get("format") || "").trim().toLowerCase();
+  if (format === "xlsx" || format === "pdf" || format === "csv") return true;
+  const path = url.pathname.toLowerCase();
+  if (
+    path.endsWith(".xlsx")
+    || path.endsWith(".pdf")
+    || path.endsWith(".csv")
+    || path.endsWith(".xls")
+  ) {
+    return true;
+  }
+  const accept = (request.headers.get("accept") || "").toLowerCase();
+  return (
+    accept.includes("spreadsheetml")
+    || accept.includes("application/pdf")
+    || accept.includes("text/csv")
+    || accept.includes("application/vnd.ms-excel")
+  );
+};
+
 /** Auth HTML embeds CSRF tokens — never cache (stale token → 403 on POST). */
 const isAuthPath = (url) => {
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -61,9 +87,15 @@ const isAuthPath = (url) => {
 const cacheResponse = async (request, response) => {
   if (!response?.ok || !isSameOrigin(new URL(request.url))) return;
   const url = new URL(request.url);
-  if (isAuthPath(url) || isNavigation(request)) return;
-  const cache = await caches.open(CACHE_VERSION);
-  await cache.put(request, response.clone());
+  if (isAuthPath(url) || isNavigation(request) || isFileDownload(url, request)) {
+    return;
+  }
+  try {
+    const cache = await caches.open(CACHE_VERSION);
+    await cache.put(request, response.clone());
+  } catch (_) {
+    /* Quota / opaque / binary — never fail the real response. */
+  }
 };
 
 const networkFirst = (request, fallbackUrl) =>
@@ -131,6 +163,10 @@ self.addEventListener("fetch", (event) => {
   // Login/register/logout must hit the network directly (fresh CSRF + no fake
   // 503 "Offline" HTML when the origin is slow or the host is busy).
   if (isAuthPath(url)) return;
+
+  // File downloads (Excel/PDF/CSV) must not pass through respondWith — Chrome
+  // can truncate or corrupt attachment bodies on deployed HTTPS hosts.
+  if (isFileDownload(url, request)) return;
 
   if (isApi(url)) {
     event.respondWith(

@@ -493,7 +493,11 @@
                 </td>
                 {% else %}
                 <td class="stock-matrix-shop-col">
+                  {% if selected_shop %}
+                  {% stock_qty row.shop_qty item.pk item.category selected_shop.pk as shown_qty %}
+                  {% else %}
                   {% stock_qty row.shop_qty item.pk item.category as shown_qty %}
+                  {% endif %}
                   <span class="stock-matrix-qty{% if shown_qty == 'Hidden' %} is-hidden{% elif row.shop_qty == 0 %} is-empty{% endif %}">{{ shown_qty }}</span>
                 </td>
                 {% endif %}
@@ -523,7 +527,11 @@
                   </button>
                 </th>
                 <td class="stock-matrix-shop-col">
+                  {% if selected_shop %}
+                  {% stock_qty row.shop_qty item.pk item.category selected_shop.pk as shown_qty %}
+                  {% else %}
                   {% stock_qty row.shop_qty item.pk item.category as shown_qty %}
+                  {% endif %}
                   <span
                     class="stock-matrix-qty{% if shown_qty == 'Hidden' %} is-hidden{% elif row.shop_qty == 0 %} is-empty{% endif %}"
                     data-stock-display-qty
@@ -1437,6 +1445,6 @@
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
 {% if stock_mode == 'view' %}
-<script defer src="{% static 'js/stock-print.js' %}?v=10"></script>
+<script defer src="{% static 'js/stock-print.js' %}?v=11"></script>
 {% endif %}
 {% endblock %}

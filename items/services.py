@@ -595,14 +595,33 @@ def build_stock_catalog_page(
                     format(item.resolve_list_price(shop_override), "f")
                 )
             row["selling_prices"] = selling_prices
-        hidden = item_stock_is_hidden(item.pk, item.category, hide_state)
+        if use_multi_shop:
+            hidden_by_shop = [
+                item_stock_is_hidden(
+                    item.pk, item.category, hide_state, shop_id=sid
+                )
+                for sid in view_shop_ids
+            ]
+            hidden = any(hidden_by_shop)
+            row["stock_hidden_by_shop"] = hidden_by_shop
+        else:
+            hidden = item_stock_is_hidden(
+                item.pk, item.category, hide_state, shop_id=shop_id
+            )
+            row["stock_hidden_by_shop"] = [hidden] if shop_id else []
         row["stock_hidden"] = hidden
-        if hidden and mode == "view":
-            row["shop_qty"] = None
-            row["requested_from_qty"] = None
-            if use_multi_shop:
-                row["shop_quantities"] = [None] * len(view_shop_ids)
-                row["row_total"] = None
+        if mode == "view":
+            if use_multi_shop and row.get("shop_quantities") is not None:
+                quantities = row["shop_quantities"]
+                row["shop_quantities"] = [
+                    None if hidden_by_shop[index] else quantities[index]
+                    for index in range(len(view_shop_ids))
+                ]
+                if any(hidden_by_shop):
+                    row["row_total"] = None
+            elif hidden:
+                row["shop_qty"] = None
+                row["requested_from_qty"] = None
         rows.append(row)
 
     total_units = 0
@@ -3923,29 +3942,33 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
             if len(shops) == 1:
                 row["price"] = prices[0]["price"] if prices else "0.00"
         elif layout == "stock":
-            hidden = item_stock_is_hidden(item.pk, item.category, hide_state)
             quantities = []
             row_total = _ZERO_QTY
+            any_hidden = False
             for shop in shops:
                 qty = stock_map.get((item.pk, shop.pk), _ZERO_QTY)
                 row_total += qty
+                shop_hidden = item_stock_is_hidden(
+                    item.pk, item.category, hide_state, shop_id=shop.pk
+                )
+                any_hidden = any_hidden or shop_hidden
                 quantities.append(
                     {
                         "shop_id": shop.pk,
                         "shop_name": shop.name,
-                        "qty": HIDDEN_STOCK_LABEL if hidden else _format_qty(qty),
+                        "qty": HIDDEN_STOCK_LABEL if shop_hidden else _format_qty(qty),
                     }
                 )
             row["quantities"] = quantities
-            row["total"] = HIDDEN_STOCK_LABEL if hidden else _format_qty(row_total)
+            row["total"] = HIDDEN_STOCK_LABEL if any_hidden else _format_qty(row_total)
             if len(shops) == 1:
                 row["qty"] = quantities[0]["qty"] if quantities else "0"
         elif layout == "balances":
-            hidden = item_stock_is_hidden(item.pk, item.category, hide_state)
             quantities = []
             opening_total = 0
             sold_total = 0
             closing_total = 0
+            any_hidden = False
             for shop in shops:
                 figures = day_balances.get((item.pk, shop.pk)) or {
                     "opening": 0,
@@ -3955,7 +3978,11 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
                 opening_total += figures["opening"]
                 sold_total += figures["sold"]
                 closing_total += figures["closing"]
-                label = HIDDEN_STOCK_LABEL if hidden else None
+                shop_hidden = item_stock_is_hidden(
+                    item.pk, item.category, hide_state, shop_id=shop.pk
+                )
+                any_hidden = any_hidden or shop_hidden
+                label = HIDDEN_STOCK_LABEL if shop_hidden else None
                 quantities.append(
                     {
                         "shop_id": shop.pk,
@@ -3968,7 +3995,7 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
                 )
 
             def _show(total, key):
-                if hidden:
+                if any_hidden:
                     return HIDDEN_STOCK_LABEL
                 if len(quantities) <= 1:
                     return quantities[0][key] if quantities else "0"
@@ -3982,7 +4009,7 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
             row["opening"] = _show(opening_total, "opening")
             row["sold"] = _show(sold_total, "sold")
             row["closing"] = _show(closing_total, "closing")
-            hidden_or = HIDDEN_STOCK_LABEL if hidden else None
+            hidden_or = HIDDEN_STOCK_LABEL if any_hidden else None
             row["opening_total"] = hidden_or or _format_qty(opening_total)
             row["sold_total"] = hidden_or or _format_qty(sold_total)
             row["closing_total"] = hidden_or or _format_qty(closing_total)

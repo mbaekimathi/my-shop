@@ -110,10 +110,20 @@
     return Math.round(n * 1000) / 1000;
   };
 
-  const stockIsHidden = (item) => Boolean(item?.stock_hidden);
-  const qtyClass = (item, qty) =>
-    stockIsHidden(item) ? " is-hidden" : qty === 0 ? " is-empty" : "";
-  const visibleQty = (item, qty) => (stockIsHidden(item) ? "Hidden" : qty);
+  const stockIsHidden = (item, shopIndex = null) => {
+    if (
+      shopIndex != null &&
+      Array.isArray(item?.stock_hidden_by_shop) &&
+      item.stock_hidden_by_shop.length
+    ) {
+      return Boolean(item.stock_hidden_by_shop[shopIndex]);
+    }
+    return Boolean(item?.stock_hidden);
+  };
+  const qtyClass = (item, qty, shopIndex = null) =>
+    stockIsHidden(item, shopIndex) ? " is-hidden" : qty === 0 ? " is-empty" : "";
+  const visibleQty = (item, qty, shopIndex = null) =>
+    stockIsHidden(item, shopIndex) ? "Hidden" : qty;
 
   const simpleMode = panel.hasAttribute("data-stock-catalog-simple");
   const searchFirst = panel.hasAttribute("data-stock-catalog-search-first");
@@ -1369,36 +1379,38 @@
     }
 
     if (readOnlyMatrix) {
-      const hidden = stockIsHidden(item);
-      const quantities = hidden
-        ? Array.isArray(item.shop_quantities)
-          ? item.shop_quantities.map(() => null)
-          : [null]
-        : Array.isArray(item.shop_quantities)
-          ? item.shop_quantities.map((q) => normalizeStockQty(q))
-          : [stock];
-      const rowTotal = hidden
+      const quantities = Array.isArray(item.shop_quantities)
+        ? item.shop_quantities.map((q, index) =>
+            stockIsHidden(item, index) ? null : normalizeStockQty(q)
+          )
+        : [stockIsHidden(item, 0) ? null : stock];
+      const anyHidden = quantities.some((qty) => qty == null);
+      const rowTotal = anyHidden
         ? null
         : Number.isFinite(Number(item.row_total))
           ? normalizeStockQty(item.row_total)
           : normalizeStockQty(quantities.reduce((sum, q) => sum + q, 0));
       const qtyText = (qty) =>
-        hidden ? "Hidden" : qty === 0 ? "—" : qty;
+        qty == null ? "Hidden" : qty === 0 ? "—" : qty;
       const qtyCells = showAllShops
         ? quantities
             .map(
               (qty) =>
                 `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
-                  hidden ? " is-hidden" : qty === 0 ? " is-empty" : ""
+                  qty == null ? " is-hidden" : qty === 0 ? " is-empty" : ""
                 }">${qtyText(qty)}</span></td>`
             )
             .join("") +
           `<td class="stock-matrix-total-col"><span class="stock-matrix-qty stock-matrix-qty--total${
-            hidden ? " is-hidden" : rowTotal === 0 ? " is-empty" : ""
+            anyHidden ? " is-hidden" : rowTotal === 0 ? " is-empty" : ""
           }">${qtyText(rowTotal)}</span></td>`
         : `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
-            hidden ? " is-hidden" : (quantities[0] || 0) === 0 ? " is-empty" : ""
-          }">${qtyText(quantities[0] || 0)}</span></td>`;
+            quantities[0] == null
+              ? " is-hidden"
+              : quantities[0] === 0
+                ? " is-empty"
+                : ""
+          }">${qtyText(quantities[0])}</span></td>`;
       const header = document.createElement("tr");
       header.className = `stock-matrix-row${
         item.is_suspended ? " is-suspended" : ""

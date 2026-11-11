@@ -20,6 +20,7 @@
   const submitBtn = modal.querySelector("[data-stock-take-submit]");
   const countdownEl = modal.querySelector("[data-stock-take-countdown]");
   const url = modal.getAttribute("data-stock-take-submit-url") || "";
+  const resultsUrl = modal.getAttribute("data-stock-take-results-url") || "";
   const assignmentId =
     modal.getAttribute("data-assignment-id") ||
     String(payload.assignment_id || "");
@@ -334,9 +335,14 @@
     if (gradeLabel) gradeLabel.textContent = result.grade_label || "Marks";
     if (headline) headline.textContent = result.headline || "Results";
     if (summary) {
+      const piecesOff = String(result.pieces_off || "0");
+      const offBit =
+        Number(piecesOff) > 0
+          ? ` Off by ${piecesOff} piece${piecesOff === "1" ? "" : "s"} in total.`
+          : "";
       summary.textContent = `${result.marks || 0} of ${
         result.max_marks || 0
-      } items counted correctly.`;
+      } items counted correctly.${offBit}`;
     }
     if (ring) ring.style.setProperty("--score", String(result.percent || 0));
     animateNumber(marksEl, result.marks || 0);
@@ -362,18 +368,29 @@
           line.match ? "is-match" : "is-miss"
         }`;
         li.style.setProperty("--delay", `${0.08 + index * 0.06}s`);
+        const status = line.status_label
+          || (line.match
+            ? "Correct"
+            : line.abs_diff
+              ? `Wrong by ${line.abs_diff} piece${
+                  String(line.abs_diff) === "1" ? "" : "s"
+                }`
+              : "Wrong");
         li.innerHTML = `
           <span class="stock-take-result-icon">${
             line.match ? ICON_OK : ICON_BAD
           }</span>
           <span class="stock-take-result-item">
             <strong>${line.name || "Item"}</strong>
-            <em>${line.category || "Uncategorised"} · ${
-              line.match ? "Correct" : "Wrong"
-            }</em>
+            <em>${line.category || "Uncategorised"} · ${status}</em>
           </span>
           <span class="stock-take-result-figures">
             <span><i>You</i><b>${line.counted_qty}</b></span>
+            ${
+              line.match
+                ? ""
+                : `<span><i>Off by</i><b>${line.abs_diff || "—"}</b></span>`
+            }
           </span>
         `;
         resultList.appendChild(li);
@@ -393,12 +410,23 @@
     const detail = modal.querySelector("[data-stock-take-one-flash-detail]");
     if (icon) icon.innerHTML = line.match ? ICON_OK : ICON_BAD;
     if (title) {
-      title.textContent = line.match ? "Correct!" : "Not a match";
+      title.textContent = line.match
+        ? "Correct!"
+        : line.status_label ||
+          (line.abs_diff
+            ? `Wrong by ${line.abs_diff} piece${
+                String(line.abs_diff) === "1" ? "" : "s"
+              }`
+            : "Not a match");
     }
     if (detail) {
+      const offBit =
+        !line.match && line.abs_diff
+          ? ` · Off by ${line.abs_diff}`
+          : "";
       detail.textContent = complete
-        ? `Final marks ${marksSoFar}/${total}`
-        : `Your count ${line.counted_qty} · Marks so far ${marksSoFar}/${total}`;
+        ? `Final marks ${marksSoFar}/${total}${offBit}`
+        : `Your count ${line.counted_qty}${offBit} · Marks so far ${marksSoFar}/${total}`;
     }
     if (oneNext) {
       oneNext.hidden = complete;
@@ -514,6 +542,10 @@
   });
 
   modal.querySelector("[data-stock-take-done]")?.addEventListener("click", () => {
+    if (completed && resultsUrl) {
+      window.location.assign(resultsUrl);
+      return;
+    }
     dismissModal();
   });
 
@@ -529,7 +561,14 @@
   countdownTimer = window.setInterval(syncCountdown, 1000);
 
   const forceOpen = modal.getAttribute("data-stock-take-force-open") === "1";
-  if (forceOpen || shouldShowNow()) {
+  const suppressAutoOpen =
+    modal.getAttribute("data-stock-take-suppress-auto-open") === "1";
+  if (forceOpen) {
+    openModal();
+  } else if (suppressAutoOpen) {
+    // Results page: keep the page readable; open only via "Open count popup".
+    modal.hidden = true;
+  } else if (shouldShowNow()) {
     openModal();
   } else {
     modal.hidden = true;

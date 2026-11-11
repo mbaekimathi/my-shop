@@ -792,7 +792,7 @@ def stock_hide_state(settings_row: CompanyStockSettings | None = None) -> dict:
     }
 
 
-def item_stock_is_hidden(item_id, category="", state=None) -> bool:
+def item_stock_is_hidden(item_id, category="", state=None, shop_id=None) -> bool:
     state = state or stock_hide_state()
     mode = state["mode"]
     if mode == "all":
@@ -806,10 +806,10 @@ def item_stock_is_hidden(item_id, category="", state=None) -> bool:
                 return True
         except (TypeError, ValueError):
             pass
-    # Open stock takes also mask on-hand numbers for covered items.
+    # Pending stock takes mask on-hand numbers until that shop submits.
     from items.stock_take import stock_take_hides_item
 
-    return stock_take_hides_item(item_id, category)
+    return stock_take_hides_item(item_id, category, shop_id=shop_id)
 
 
 def save_stock_visibility(*, mode: str, categories, item_ids) -> CompanyStockSettings:

@@ -8263,6 +8263,114 @@
   opacity: 0.72;
 }
 
+.stock-count-results {
+  display: grid;
+  gap: 1rem;
+}
+
+.stock-count-result-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(16, 40, 44, 0.03), 0 14px 28px rgba(8, 28, 34, 0.04);
+}
+
+.stock-count-result-meta {
+  margin: 0;
+  padding: 0.55rem 1rem 0;
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.stock-count-result-table-wrap {
+  margin: 0.65rem 0.85rem 0.85rem;
+  border-radius: 12px;
+}
+
+.stock-count-result-table {
+  min-width: 28rem;
+}
+
+.stock-count-result-waiting {
+  margin: 0;
+  padding: 0.9rem 1rem 1rem;
+  font-size: 0.9rem;
+  color: var(--mist);
+}
+
+.stock-count-variance {
+  font-size: 0.86rem;
+  line-height: 1.25;
+}
+
+.stock-count-variance strong {
+  font-weight: 700;
+}
+
+.stock-count-variance-delta {
+  display: inline-block;
+  margin-left: 0.28rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  opacity: 0.78;
+}
+
+.stock-count-variance.is-match,
+.stock-take-num.is-match {
+  color: var(--ok, #2f7d4a);
+}
+
+.stock-count-variance.is-excess {
+  color: #9a6b12;
+}
+
+.stock-count-variance.is-short,
+.stock-take-num.is-diff {
+  color: var(--danger);
+}
+
+.stock-count-result-table tbody tr.is-match-row {
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 6%, transparent);
+}
+
+.stock-count-result-table tbody tr.is-excess-row {
+  background: color-mix(in srgb, #d4a017 7%, transparent);
+}
+
+.stock-count-result-table tbody tr.is-short-row {
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+
+.stock-count-all-shops {
+  margin-top: 1.15rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-muted) 40%, var(--surface));
+  overflow: hidden;
+}
+
+.stock-count-all-shops > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.8rem 1rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.stock-count-all-shops > summary::-webkit-details-marker {
+  display: none;
+}
+
+.stock-count-all-shops[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.stock-count-all-shops .stock-count-boards {
+  padding: 0.85rem;
+}
+
 .stock-count-boards {
   display: grid;
   gap: 1rem;

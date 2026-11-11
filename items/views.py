@@ -6612,7 +6612,7 @@ def stock_take_page(request, profile, meta, module):
                 return redirect(list_url)
             messages.success(
                 request,
-                "Stock take opened. Selected stock numbers are hidden until it is closed.",
+                "Stock take opened. Selected stock numbers stay hidden for each shop until that shop submits.",
             )
             return redirect(_detail_url(take.pk))
 
@@ -6626,7 +6626,10 @@ def stock_take_page(request, profile, meta, module):
                 messages.error(request, "Stock take not found.")
                 return redirect(list_url)
             close_stock_take(take=take, profile=profile)
-            messages.success(request, "Stock take closed. Stock numbers are visible again.")
+            messages.success(
+                request,
+                "Stock take closed. Any remaining hidden stock numbers are visible again.",
+            )
             return redirect(_detail_url(take.pk))
 
         messages.error(request, "Unknown action.")
@@ -9572,32 +9575,76 @@ def stock_management_print(request, role_segment):
         )
 
     if as_download:
+        from io import BytesIO
+
         stamp = printed_at.strftime("%Y-%m-%d")
         layout_slug = layout.replace(" ", "-")
         file_format = (request.GET.get("format") or "").strip().lower()
         if file_format == "xlsx":
-            xlsx_bytes = build_stock_print_xlsx(
-                document=document,
-                company_name=company_name,
-                printed_at=printed_at,
-            )
+            try:
+                xlsx_bytes = build_stock_print_xlsx(
+                    document=document,
+                    company_name=company_name,
+                    printed_at=printed_at,
+                )
+            except ImportError:
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": (
+                            "Excel export is not available on this server. "
+                            "Install openpyxl (pip install openpyxl) and restart the app."
+                        ),
+                    },
+                    status=503,
+                )
+            except Exception:
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "Could not build the Excel file. Try again.",
+                    },
+                    status=500,
+                )
             filename = f"stock-list-{layout_slug}-{stamp}.xlsx"
-            response = HttpResponse(
-                xlsx_bytes,
-                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            response = FileResponse(
+                BytesIO(xlsx_bytes),
+                as_attachment=True,
+                filename=filename,
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ),
             )
             response["Content-Length"] = str(len(xlsx_bytes))
-        else:
-            paper = "a4"
+            response["Cache-Control"] = "no-store"
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+
+        paper = "a4"
+        try:
             pdf_bytes = build_stock_print_pdf(
                 document=document,
                 company_name=company_name,
                 printed_at=printed_at,
             )
-            filename = f"stock-list-a4-{layout_slug}-{stamp}.pdf"
-            response = HttpResponse(pdf_bytes, content_type="application/pdf")
-            response["Content-Length"] = str(len(pdf_bytes))
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        except Exception:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "Could not build the PDF file. Try again.",
+                },
+                status=500,
+            )
+        filename = f"stock-list-a4-{layout_slug}-{stamp}.pdf"
+        response = FileResponse(
+            BytesIO(pdf_bytes),
+            as_attachment=True,
+            filename=filename,
+            content_type="application/pdf",
+        )
+        response["Content-Length"] = str(len(pdf_bytes))
+        response["Cache-Control"] = "no-store"
+        response["X-Content-Type-Options"] = "nosniff"
         return response
 
     context = {
