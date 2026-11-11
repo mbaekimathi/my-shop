@@ -125,23 +125,13 @@ def store_profile_session(request, profile):
 
 
 def employee_session_is_current(request) -> bool:
-    """True when this session is the account's most recent login.
+    """Employee sessions are concurrent across devices and tabs.
 
-    Each successful employee sign-in stamps EmployeeProfile.active_session_key;
-    older sessions on other devices are superseded and treated as signed out.
+    ``EmployeeProfile.active_session_key`` is still stamped on login for
+    diagnostics (most recent sign-in), but it is not enforced — a newer
+    login must not sign out older sessions on the same computer or elsewhere.
     """
-    if not request or not getattr(request, "user", None):
-        return True
-    if not request.user.is_authenticated:
-        return True
-    key = (
-        EmployeeProfile.objects.filter(user_id=request.user.pk)
-        .values_list("active_session_key", flat=True)
-        .first()
-    )
-    if not key:
-        return True
-    return key == request.session.session_key
+    return True
 
 
 def clear_profile_session(request):
@@ -228,16 +218,6 @@ def active_employee_required(view_func):
             return _login_redirect(
                 request,
                 message="No employee profile is linked to this account.",
-            )
-
-        if not employee_session_is_current(request):
-            from .portal_auth import end_employee_session
-
-            end_employee_session(request)
-            return _login_redirect(
-                request,
-                message="You were signed out — this account signed in on another device.",
-                level="info",
             )
 
         if meta["status"] == EmployeeStatus.PENDING_APPROVAL:

@@ -1260,6 +1260,15 @@ def sidebar_for_stock_management(
                 ),
                 ]
                 primary.extend(link for mode, link in candidates if _allowed(mode))
+                if _allowed("print") or _allowed("stock-take"):
+                    primary.append(
+                        _link(
+                            "Online stock take",
+                            "smartphone",
+                            href=stock_management_url(role, "online-stock-take"),
+                            active=active_mode == "online-stock-take",
+                        )
+                    )
                 if _allowed("view"):
                     primary.append(
                         _link(
@@ -1323,6 +1332,15 @@ def sidebar_for_stock_management(
                     "clipboard-check",
                     href=stock_management_url(role, "stock-take"),
                     active=active_mode == "stock-take",
+                )
+            )
+        if _allowed("print") or _allowed("stock-take"):
+            primary.append(
+                _link(
+                    "Online stock take",
+                    "smartphone",
+                    href=stock_management_url(role, "online-stock-take"),
+                    active=active_mode == "online-stock-take",
                 )
             )
         if _allowed("print"):

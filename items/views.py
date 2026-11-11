@@ -6697,6 +6697,124 @@ def stock_take_page(request, profile, meta, module):
     )
 
 
+def online_stock_take_page(request, profile, meta, module):
+    """Mobile-friendly online stock take: pick a shop, count, see excess/short."""
+    from employees.module_permissions import employee_may
+    from employees.workspace import sidebar_for_stock_management, stock_management_url
+    from items.models import StockTakeAssignment, StockTakeAssignmentStatus, StockTakeStatus
+    from items.stock_take import (
+        build_shop_stock_count_results,
+        online_stock_take_assignment_payload,
+        pending_stock_take_for_shop,
+        submit_stock_take_counts,
+        submit_stock_take_one,
+    )
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="online-stock-take",
+        profile=profile,
+    )
+    list_url = stock_management_url(profile.role, "online-stock-take")
+    create_url = stock_management_url(profile.role, "stock-take")
+    shops = actionable_shops_for_profile(profile)
+
+    try:
+        shop_id = int(request.GET.get("shop_id") or request.POST.get("shop_id") or 0)
+    except (TypeError, ValueError):
+        shop_id = 0
+    selected_shop = next((shop for shop in shops if shop.pk == shop_id), None)
+
+    if request.method == "POST":
+        if not selected_shop:
+            return JsonResponse(
+                {"ok": False, "error": "Select a shop for this stock count."},
+                status=400,
+            )
+        try:
+            assignment_id = int(request.POST.get("assignment_id") or 0)
+        except (TypeError, ValueError):
+            assignment_id = 0
+        assignment = (
+            StockTakeAssignment.objects.filter(
+                pk=assignment_id,
+                shop=selected_shop,
+                status=StockTakeAssignmentStatus.PENDING,
+                stock_take__status=StockTakeStatus.OPEN,
+            )
+            .select_related("stock_take")
+            .first()
+        )
+        if not assignment:
+            return JsonResponse(
+                {"ok": False, "error": "No open stock take for this shop."},
+                status=404,
+            )
+
+        user = getattr(profile, "user", None)
+        label = (
+            (getattr(user, "get_full_name", lambda: "")() or "")
+            or getattr(user, "username", "")
+            or getattr(profile, "employee_id", "")
+            or "Employee"
+        )
+        mode = (request.POST.get("submit_mode") or "all").strip().lower()
+        try:
+            if mode == "one":
+                payload = submit_stock_take_one(
+                    assignment=assignment,
+                    count_id=request.POST.get("count_id"),
+                    qty=request.POST.get("qty"),
+                    submitted_by_label=label,
+                )
+                return JsonResponse({"ok": True, **payload})
+
+            counts = {}
+            for key, value in request.POST.items():
+                if not key.startswith("count_"):
+                    continue
+                counts[key.replace("count_", "", 1)] = value
+            result = submit_stock_take_counts(
+                assignment=assignment,
+                counts=counts,
+                submitted_by_label=label,
+            )
+        except ValidationError as exc:
+            message = (
+                exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+            )
+            return JsonResponse({"ok": False, "error": message}, status=400)
+        return JsonResponse({"ok": True, "result": result})
+
+    pending = pending_stock_take_for_shop(selected_shop) if selected_shop else None
+    pending_payload = (
+        online_stock_take_assignment_payload(pending) if pending else None
+    )
+    results = (
+        build_shop_stock_count_results(shop=selected_shop) if selected_shop else []
+    )
+    can_create = employee_may(profile, "stock-management", "stock-take")
+
+    return render(
+        request,
+        "items/online_stock_take.html",
+        {
+            "page_meta": meta,
+            "page_module": module,
+            "page_sidebar": page_sidebar,
+            "stock_mode": "online-stock-take",
+            "online_stock_take_url": list_url,
+            "stock_take_create_url": create_url,
+            "online_shops": shops,
+            "selected_shop": selected_shop,
+            "pending_stock_take": pending,
+            "pending_stock_take_payload": pending_payload,
+            "stock_count_results": results,
+            "can_create_stock_take": can_create,
+        },
+    )
+
+
 def stock_settings(request, profile, meta, module):
     """Configure which stock in/out/request fields are compulsory."""
     from employees.module_permissions import employee_may
@@ -7238,20 +7356,39 @@ def stock_management(request, profile, meta, module, page_sidebar):
         "settings",
         "low-stock",
         "stock-take",
+        "online-stock-take",
         "request-audits",
         "activity-audits",
     ):
         mode = "view"
 
-    # Return-clients / serial-movements share the serials permission key.
-    denied = require_module_permission(
-        request, profile, "stock-management", mode
-    )
-    if denied is not None:
-        return denied
+    # Online stock take is reachable from Print or Stock Take permission.
+    if mode == "online-stock-take":
+        if not (
+            employee_may(profile, "stock-management", "print")
+            or employee_may(profile, "stock-management", "stock-take")
+        ):
+            denied = require_module_permission(
+                request, profile, "stock-management", "print"
+            )
+            if denied is not None:
+                return denied
+    else:
+        # Return-clients / serial-movements share the serials permission key.
+        denied = require_module_permission(
+            request, profile, "stock-management", mode
+        )
+        if denied is not None:
+            return denied
 
     # Stock In / Out / Request / Report / Movements / Serials: shop/store manager and IT.
-    if mode not in ("view", "settings", "low-stock", "stock-take") and profile.role not in FULL_STOCK_WORKFLOW_ROLES:
+    if mode not in (
+        "view",
+        "settings",
+        "low-stock",
+        "stock-take",
+        "online-stock-take",
+    ) and profile.role not in FULL_STOCK_WORKFLOW_ROLES:
         return _stock_redirect(request.path, "view")
 
     if mode == "settings":
@@ -7262,6 +7399,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if mode == "stock-take":
         return stock_take_page(request, profile, meta, module)
+
+    if mode == "online-stock-take":
+        return online_stock_take_page(request, profile, meta, module)
 
     if mode == "activity-audits":
         return stock_activity_audits(request, profile, meta, module)
@@ -7764,6 +7904,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         )
 
     from employees.access import role_url_segment
+    from employees.workspace import stock_management_url
 
     stock_catalog_url = ""
     if use_stock_catalog_api:
@@ -7870,6 +8011,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
                 kwargs={"role_segment": role_url_segment(profile.role)},
             ),
             "can_print_stock": employee_may(profile, "stock-management", "print"),
+            "online_stock_take_url": stock_management_url(
+                profile.role,
+                "online-stock-take",
+                shop_id=selected_shop.pk if selected_shop else "",
+            ),
             **request_context,
         },
     )

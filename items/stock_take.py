@@ -574,6 +574,18 @@ def stock_take_assignment_payload(assignment: StockTakeAssignment) -> dict:
     }
 
 
+def online_stock_take_assignment_payload(assignment: StockTakeAssignment) -> dict:
+    """HQ/online count form: includes system qty so variance can update live."""
+    payload = stock_take_assignment_payload(assignment)
+    system_by_count = {
+        count.pk: _qty_label(_quantize(count.system_qty))
+        for count in assignment.counts.all()
+    }
+    for line in payload["lines"]:
+        line["system_qty"] = system_by_count.get(line["count_id"], "0")
+    return payload
+
+
 def _parse_count_qty(raw, *, item_name: str) -> Decimal:
     if raw in (None, ""):
         raise ValidationError(f"Enter a count for {item_name}.")

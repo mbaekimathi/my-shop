@@ -1,9 +1,7 @@
 /**
- * Session expiry redirect + employee single-tab lock.
+ * Session expiry redirect for workspace pages.
  *
- * Shop sessions may run in many tabs and devices at once. Employee sessions
- * are single-tab: duplicate employee tabs are blocked.
- *
+ * Employee and shop sessions may run in many tabs and devices at once.
  * Same-origin fetches are stamped with the elapsed time since the last real
  * interaction (X-MyShop-Activity) so the server-side idle timeout can tell
  * user activity apart from background polls — polls may detect expiry but
@@ -11,7 +9,6 @@
  */
 
 let redirecting = false;
-let tabLockState = null;
 // One bad ping can be a rotation race; require consecutive misses before bounce.
 let consecutiveAuthFailures = 0;
 const AUTH_FAILURE_THRESHOLD = 2;
@@ -65,13 +62,6 @@ function withActivityStamp(args) {
     return args;
   }
 }
-
-const LOCK_KEY_PREFIX = "myshop-session-lock:";
-const CHANNEL_PREFIX = "myshop-session-lock-";
-const HEARTBEAT_MS = 1500;
-const STALE_MS = 4000;
-const CLAIM_CONFIRM_MS = 60;
-const RECLAIM_MS = 1000;
 
 function authRoot() {
   return document.querySelector("[data-workspace][data-auth-required]");
@@ -166,278 +156,6 @@ function installFetchGuard() {
   window.fetch = wrapped;
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-// Unique per page load — sessionStorage is copied when a tab is duplicated,
-// which would let the copy share the lock owner id and bypass the tab limit.
-function getTabId() {
-  const random =
-    typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return `tab-${random}`;
-}
-
-function lockStorageKey(mode) {
-  return `${LOCK_KEY_PREFIX}${mode}`;
-}
-
-function readLock(mode) {
-  try {
-    const raw = localStorage.getItem(lockStorageKey(mode));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed.owner !== "string") return null;
-    const ts = Number(parsed.ts) || 0;
-    return { owner: parsed.owner, ts };
-  } catch (_err) {
-    return null;
-  }
-}
-
-function writeLock(mode, owner) {
-  const payload = JSON.stringify({ owner, ts: Date.now() });
-  try {
-    localStorage.setItem(lockStorageKey(mode), payload);
-  } catch (_err) {
-    /* private mode / quota */
-  }
-}
-
-function clearLockIfOwned(mode, owner) {
-  const lock = readLock(mode);
-  if (lock && lock.owner === owner) {
-    try {
-      localStorage.removeItem(lockStorageKey(mode));
-    } catch (_err) {
-      /* ignore */
-    }
-  }
-}
-
-function lockIsFresh(lock) {
-  return Boolean(lock && Date.now() - lock.ts <= STALE_MS);
-}
-
-function isHeldByOther(mode, tabId) {
-  const lock = readLock(mode);
-  if (!lock || lock.owner === tabId) return false;
-  return lockIsFresh(lock);
-}
-
-function openLockChannel(mode) {
-  if (typeof BroadcastChannel === "undefined") return null;
-  try {
-    return new BroadcastChannel(`${CHANNEL_PREFIX}${mode}`);
-  } catch (_err) {
-    return null;
-  }
-}
-
-// A blocked employee tab offers the shop login so both portals can stay open.
-function altLoginUrl() {
-  const root = authRoot();
-  const declared = root?.getAttribute("data-alt-login-url") || "";
-  if (declared) return declared;
-  return "/employees/shops/login/?switch=1";
-}
-
-function blockPanel() {
-  return document.querySelector("[data-session-tab-block]");
-}
-
-function setBlocked(blocked) {
-  const panel = blockPanel();
-  const root = authRoot();
-  document.body.classList.toggle("session-tab-blocked", blocked);
-  if (root) root.classList.toggle("is-session-tab-blocked", blocked);
-  if (!panel) return;
-
-  panel.hidden = !blocked;
-  panel.setAttribute("aria-hidden", blocked ? "false" : "true");
-
-  const title = panel.querySelector("[data-session-tab-block-title]");
-  const detail = panel.querySelector("[data-session-tab-block-detail]");
-  const altLogin = panel.querySelector("[data-session-tab-alt-login]");
-  if (title) {
-    title.textContent = "Employee session already open";
-  }
-  if (detail) {
-    detail.textContent =
-      "This employee session is open in another tab. Only one employee tab can be active at a time; shop tabs can stay open alongside it.";
-  }
-  if (altLogin) {
-    altLogin.setAttribute("href", altLoginUrl());
-    altLogin.textContent = "Log in to a shop";
-  }
-}
-
-async function claimLock(mode, tabId, { force = false } = {}) {
-  if (!force && isHeldByOther(mode, tabId)) return false;
-  writeLock(mode, tabId);
-  await sleep(CLAIM_CONFIRM_MS);
-  const lock = readLock(mode);
-  if (!lock || lock.owner !== tabId) {
-    if (force) {
-      writeLock(mode, tabId);
-      await sleep(CLAIM_CONFIRM_MS);
-      const again = readLock(mode);
-      return Boolean(again && again.owner === tabId);
-    }
-    return false;
-  }
-  return true;
-}
-
-function broadcast(channel, message) {
-  if (!channel) return;
-  try {
-    channel.postMessage(message);
-  } catch (_err) {
-    /* ignore */
-  }
-}
-
-function startHeartbeat(mode, tabId, channel) {
-  writeLock(mode, tabId);
-  return window.setInterval(() => {
-    if (!tabLockState || tabLockState.blocked) return;
-    const lock = readLock(mode);
-    if (lock && lock.owner !== tabId && lockIsFresh(lock)) {
-      becomeBlocked(mode);
-      return;
-    }
-    writeLock(mode, tabId);
-    broadcast(channel, { type: "heartbeat", owner: tabId, mode });
-  }, HEARTBEAT_MS);
-}
-
-function startReclaim(mode) {
-  if (!tabLockState || tabLockState.reclaimId) return;
-  tabLockState.reclaimId = window.setInterval(async () => {
-    if (!tabLockState || !tabLockState.blocked) return;
-    const { tabId, channel } = tabLockState;
-    if (isHeldByOther(mode, tabId)) return;
-    const claimed = await claimLock(mode, tabId, { force: false });
-    if (!claimed || !tabLockState || !tabLockState.blocked) return;
-    becomeActive(mode, tabId, channel);
-  }, RECLAIM_MS);
-}
-
-function becomeBlocked(mode) {
-  if (!tabLockState) return;
-  tabLockState.blocked = true;
-  if (tabLockState.heartbeatId) {
-    window.clearInterval(tabLockState.heartbeatId);
-    tabLockState.heartbeatId = null;
-  }
-  setBlocked(true);
-  // Keep watching: when the owner tab closes or its lock goes stale, this tab
-  // takes over automatically instead of staying blocked.
-  startReclaim(mode);
-}
-
-function becomeActive(mode, tabId, channel) {
-  if (!tabLockState) return;
-  tabLockState.blocked = false;
-  setBlocked(false);
-  if (tabLockState.reclaimId) {
-    window.clearInterval(tabLockState.reclaimId);
-    tabLockState.reclaimId = null;
-  }
-  if (tabLockState.heartbeatId) window.clearInterval(tabLockState.heartbeatId);
-  tabLockState.heartbeatId = startHeartbeat(mode, tabId, channel);
-  broadcast(channel, { type: "claim", owner: tabId, mode });
-}
-
-async function takeover(mode) {
-  if (!tabLockState || tabLockState.mode !== mode) return;
-  const { tabId, channel } = tabLockState;
-  const ok = await claimLock(mode, tabId, { force: true });
-  if (!ok) return;
-  broadcast(channel, { type: "takeover", owner: tabId, mode });
-  becomeActive(mode, tabId, channel);
-  window.location.reload();
-}
-
-async function initTabLock() {
-  const root = authRoot();
-  if (!root) return;
-
-  const mode = expectedAuthMode();
-  // Shop workspaces allow concurrent sessions in many tabs/devices; only
-  // employee mode is limited to one tab.
-  if (mode !== "employee") return;
-
-  // localStorage required for cross-tab coordination
-  try {
-    const probe = "__myshop_lock_probe__";
-    localStorage.setItem(probe, "1");
-    localStorage.removeItem(probe);
-  } catch (_err) {
-    return;
-  }
-
-  const tabId = getTabId();
-  const channel = openLockChannel(mode);
-
-  const onStorage = (event) => {
-    if (!tabLockState || event.key !== lockStorageKey(mode)) return;
-    if (tabLockState.blocked) return;
-    const lock = readLock(mode);
-    if (lock && lock.owner !== tabId && lockIsFresh(lock)) {
-      becomeBlocked(mode);
-    }
-  };
-
-  const onPageHide = () => {
-    if (!tabLockState) return;
-    clearLockIfOwned(mode, tabId);
-    broadcast(channel, { type: "release", owner: tabId, mode });
-  };
-
-  tabLockState = {
-    mode,
-    tabId,
-    channel,
-    blocked: false,
-    heartbeatId: null,
-    reclaimId: null,
-    onStorage,
-    onPageHide,
-  };
-
-  window.addEventListener("storage", onStorage);
-  window.addEventListener("pagehide", onPageHide);
-
-  if (channel) {
-    channel.onmessage = (event) => {
-      const data = event?.data;
-      if (!data || data.mode !== mode || data.owner === tabId) return;
-      if (data.type === "claim" || data.type === "takeover" || data.type === "heartbeat") {
-        if (!tabLockState.blocked) becomeBlocked(mode);
-      }
-    };
-  }
-
-  const claimed = await claimLock(mode, tabId, { force: false });
-  if (!claimed) {
-    becomeBlocked(mode);
-  } else {
-    becomeActive(mode, tabId, channel);
-  }
-
-  const panel = blockPanel();
-  panel
-    ?.querySelector("[data-session-tab-takeover]")
-    ?.addEventListener("click", (event) => {
-      event.preventDefault();
-      takeover(mode);
-    });
-}
-
 export function initSessionGuard() {
   if (!authRoot()) return;
   installActivityTracker();
@@ -445,7 +163,6 @@ export function initSessionGuard() {
   document.addEventListener("myshop:ping", (event) => {
     onPingDetail(event.detail);
   });
-  initTabLock();
 }
 
 if (document.readyState === "loading") {

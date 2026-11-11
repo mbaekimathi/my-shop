@@ -1,4 +1,4 @@
-"""Employee accounts allow one live session; shop portal sessions coexist."""
+"""Employee and shop portal sessions coexist across devices; stamps are diagnostic."""
 
 from __future__ import annotations
 
@@ -216,20 +216,21 @@ class SingleSessionTests(TestCase):
         )
         self.assertEqual(self._idle_ts(client), last)
 
-    def test_second_employee_login_supersedes_first_device(self):
+    def test_second_employee_login_keeps_both_devices(self):
+        """Employee portal allows concurrent sessions — no device is superseded."""
         client_a = self._login_employee()
         self.assertTrue(self._ping(client_a).get("employee_auth"))
 
-        self._login_employee(Client())
+        client_b = self._login_employee(Client())
 
-        data = self._ping(client_a)
-        self.assertFalse(data.get("employee_auth"))
-        self.assertEqual(data.get("auth"), "none")
+        self.assertTrue(self._ping(client_a).get("employee_auth"))
+        self.assertTrue(self._ping(client_b).get("employee_auth"))
 
-        # The superseded device is also logged out of gated pages.
         response = client_a.get(reverse("employees:role_shop_cashier"))
-        self.assertEqual(response.status_code, 302)
-        self.assertTrue(response.url.startswith(reverse("employees:login")))
+        self.assertEqual(response.status_code, 200)
+
+        response = client_b.get(reverse("employees:role_shop_cashier"))
+        self.assertEqual(response.status_code, 200)
 
     def test_second_shop_login_keeps_both_devices(self):
         """Shop portal allows concurrent sessions — no device is superseded."""

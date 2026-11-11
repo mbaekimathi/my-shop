@@ -99,7 +99,7 @@ class EmployeeProfile(models.Model):
         blank=True,
         default="",
         editable=False,
-        help_text="Session key of the single live employee session.",
+        help_text="Most recent employee session key (diagnostic only; sessions are concurrent).",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

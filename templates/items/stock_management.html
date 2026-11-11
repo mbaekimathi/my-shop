@@ -1185,6 +1185,21 @@
     </div>
 
     <form class="stock-print-form" data-stock-print-form>
+      {% if online_stock_take_url %}
+      <a class="stock-print-online" href="{{ online_stock_take_url }}">
+        <span class="stock-print-online-icon" aria-hidden="true">
+          <i data-lucide="clipboard-check"></i>
+        </span>
+        <span class="stock-print-online-copy">
+          <strong>Online stock take</strong>
+          <small>Pick a shop, count on your phone, and see excess or short by how many.</small>
+        </span>
+        <span class="stock-print-online-go" aria-hidden="true">
+          <i data-lucide="arrow-right"></i>
+        </span>
+      </a>
+      {% endif %}
+
       <fieldset class="stock-print-options">
         <legend class="visually-hidden">Print layout</legend>
 

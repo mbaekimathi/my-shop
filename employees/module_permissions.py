@@ -103,11 +103,15 @@ def normalize_submodule(module_slug: str, submodule_slug: str) -> str:
         "return-clients",
         "request-audits",
         "activity-audits",
+        "online-stock-take",
     }:
         if slug == "request-audits":
             return "request"
         if slug == "activity-audits":
             return "view"
+        if slug == "online-stock-take":
+            # Linked from Print stock; allow anyone who can print or stock-take.
+            return "print"
         return "serials"
     return slug
 

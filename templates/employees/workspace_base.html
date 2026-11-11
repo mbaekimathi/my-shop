@@ -8,10 +8,10 @@
 <link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261108-mobile-fit">
 <link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261026-item-images">
 <link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261111-stock-count-variance">
+<link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261111-online-stock-take">
 <link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261108-confirm-float">
 <link rel="stylesheet" href="{% static 'css/app/credit-note.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261103-stock-print">
+<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261111-online-stock-take">
 <link rel="stylesheet" href="{% static 'css/app/comms.css' %}?v=20261108-act-view">
 <link rel="stylesheet" href="{% static 'css/app/components.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261019-split">
@@ -28,40 +28,6 @@
   data-dashboard-url="{{ page_sidebar.dashboard_url }}"
 >
   <div class="workspace-overlay" data-workspace-overlay hidden></div>
-
-  <div
-    class="session-tab-block"
-    data-session-tab-block
-    hidden
-    aria-hidden="true"
-    role="alertdialog"
-    aria-modal="true"
-    aria-labelledby="session-tab-block-title"
-    aria-describedby="session-tab-block-detail"
-  >
-    <div class="session-tab-block__card">
-      <p class="session-tab-block__eyebrow">One tab per session</p>
-      <h2 id="session-tab-block-title" data-session-tab-block-title>
-        Session already open
-      </h2>
-      <p id="session-tab-block-detail" data-session-tab-block-detail>
-        This session is open in another tab. Only one employee tab can be
-        active at a time; shop tabs can stay open alongside it.
-      </p>
-      <div class="session-tab-block__actions">
-        <button class="btn btn--primary" type="button" data-session-tab-takeover>
-          Use this tab instead
-        </button>
-        <a
-          class="btn btn--ghost-dark"
-          data-session-tab-alt-login
-          href="{% if workspace.is_shop_portal %}{% url 'employees:login' %}?switch=1{% else %}{% url 'employees:shop_login' %}?switch=1{% endif %}"
-        >
-          Log in to the other portal
-        </a>
-      </div>
-    </div>
-  </div>
 
   {% include "employees/partials/workspace_sidebar.html" %}
 

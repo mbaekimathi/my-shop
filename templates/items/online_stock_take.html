@@ -1,0 +1,269 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Online stock take — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="stock-panel stock-panel--settings stock-panel--online-take"
+  data-animate="rise"
+  data-stock-mode="online-stock-take"
+  data-online-stock-take
+  data-online-stock-take-url="{{ online_stock_take_url }}"
+  {% if selected_shop %}data-selected-shop-id="{{ selected_shop.pk }}"{% endif %}
+>
+  <header class="stock-panel-head stock-settings-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">Online stock take</p>
+        <h2>
+          {% if selected_shop %}
+          {{ selected_shop.name }}
+          {% else %}
+          Choose a shop
+          {% endif %}
+        </h2>
+        <p>
+          Count stock on this page. After you submit, variance shows as
+          excess or short — and by how many.
+        </p>
+      </div>
+      <div class="stock-settings-head-actions">
+        {% if can_create_stock_take %}
+        <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ stock_take_create_url }}">
+          <i data-lucide="plus" aria-hidden="true"></i>
+          <span>Start stock take</span>
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  <div class="online-take-shop-bar">
+    <label class="online-take-shop-pick">
+      <span>Shop</span>
+      <select data-online-take-shop aria-label="Select shop for stock count">
+        <option value="">Select shop…</option>
+        {% for shop in online_shops %}
+        <option value="{{ shop.pk }}"{% if selected_shop and selected_shop.pk == shop.pk %} selected{% endif %}>
+          {{ shop.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    {% if not online_shops %}
+    <p class="stock-settings-footnote">No shops are allocated to your account.</p>
+    {% endif %}
+  </div>
+
+  {% if not selected_shop %}
+  <div class="online-take-shop-grid">
+    {% for shop in online_shops %}
+    <a class="online-take-shop-card" href="{{ online_stock_take_url }}&shop_id={{ shop.pk }}">
+      <i data-lucide="store" aria-hidden="true"></i>
+      <strong>{{ shop.name }}</strong>
+      <span>Open stock count</span>
+    </a>
+    {% empty %}
+    <p class="stock-settings-footnote">Add shop access to start an online stock take.</p>
+    {% endfor %}
+  </div>
+  {% else %}
+
+  {% if pending_stock_take and pending_stock_take_payload %}
+  {{ pending_stock_take_payload|json_script:"online-stock-take-payload" }}
+  <article
+    class="online-take-count-card"
+    data-online-take-count
+    data-assignment-id="{{ pending_stock_take_payload.assignment_id }}"
+  >
+    <header class="online-take-count-head">
+      <div>
+        <p class="stock-settings-section-label">
+          Stock take #{{ pending_stock_take_payload.stock_take_id }}
+          {% if pending_stock_take_payload.overdue %}· Overdue{% endif %}
+        </p>
+        <h3>Enter counts for {{ selected_shop.name }}</h3>
+        <p>
+          Deadline {{ pending_stock_take_payload.deadline_label|default:"—" }}.
+          System qty stays visible here so you can see excess or short as you type.
+        </p>
+        {% if pending_stock_take_payload.note %}
+        <p class="stock-count-board-note">{{ pending_stock_take_payload.note }}</p>
+        {% endif %}
+      </div>
+      <p class="online-take-progress" data-online-take-progress>
+        0 / {{ pending_stock_take_payload.total_count }} filled
+      </p>
+    </header>
+
+    <label class="online-take-search">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input type="search" placeholder="Search items…" data-online-take-search autocomplete="off" aria-label="Search items">
+    </label>
+
+    <form class="online-take-form" data-online-take-form>
+      {% csrf_token %}
+      <input type="hidden" name="mode" value="online-stock-take">
+      <input type="hidden" name="shop_id" value="{{ selected_shop.pk }}">
+      <input type="hidden" name="assignment_id" value="{{ pending_stock_take_payload.assignment_id }}">
+      <input type="hidden" name="submit_mode" value="all">
+
+      <div class="online-take-list" data-online-take-list>
+        {% for line in pending_stock_take_payload.lines %}
+        <label
+          class="online-take-row{% if line.answered %} is-filled{% endif %}"
+          data-online-take-row
+          data-search="{{ line.name|lower }} {{ line.category|lower }}"
+          data-system-qty="{{ line.system_qty }}"
+        >
+          <span class="online-take-item">
+            <strong>{{ line.name }}</strong>
+            {% if line.category %}<em>{{ line.category }}</em>{% endif %}
+            <span class="online-take-system">System {{ line.system_qty }}</span>
+          </span>
+          <span class="online-take-qty">
+            <input
+              type="number"
+              name="count_{{ line.count_id }}"
+              inputmode="decimal"
+              step="any"
+              min="0"
+              placeholder="Count"
+              value="{{ line.counted_qty }}"
+              data-online-take-qty
+              aria-label="Counted qty for {{ line.name }}"
+            >
+          </span>
+          <span class="online-take-variance is-empty" data-online-take-variance>—</span>
+        </label>
+        {% empty %}
+        <p class="stock-settings-footnote">No items in this stock take.</p>
+        {% endfor %}
+      </div>
+
+      <p class="online-take-error" data-online-take-error hidden></p>
+
+      <div class="online-take-actions">
+        <button type="submit" class="btn btn--primary" data-online-take-submit>
+          <i data-lucide="check" aria-hidden="true"></i>
+          <span>Submit count</span>
+        </button>
+      </div>
+    </form>
+  </article>
+  {% else %}
+  <div class="online-take-empty">
+    <i data-lucide="clipboard-check" aria-hidden="true"></i>
+    <div>
+      <h3>No open count for {{ selected_shop.name }}</h3>
+      <p>
+        Start a stock take for this shop first, then come back here to count online.
+      </p>
+      {% if can_create_stock_take %}
+      <a class="btn btn--primary" href="{{ stock_take_create_url }}">Start stock take</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if stock_count_results %}
+  <div class="stock-count-results online-take-results">
+    <h3 class="stock-take-list-title">Results for {{ selected_shop.name }}</h3>
+    {% for result in stock_count_results %}
+    <article class="stock-count-result-card">
+      <header class="stock-count-board-head">
+        <div>
+          <p class="stock-settings-section-label">
+            Stock take #{{ result.take.pk }}
+            · {{ result.take.get_scope_mode_display }}
+            {% if result.overdue %}· Overdue{% endif %}
+          </p>
+          <h3>
+            Deadline {{ result.take.deadline|date:"d M Y H:i" }}
+            <span class="stock-take-status stock-take-status--{{ result.take.status }}">
+              {{ result.take.get_status_display }}
+            </span>
+          </h3>
+        </div>
+        <div class="stock-stats">
+          {% if result.submitted %}
+          <p class="stock-stat">
+            <strong>{{ result.marks }}/{{ result.max_marks }}</strong>
+            <span>matched</span>
+          </p>
+          {% if result.excess_count %}
+          <p class="stock-stat">
+            <strong>{{ result.excess_count }}</strong>
+            <span>excess</span>
+          </p>
+          {% endif %}
+          {% if result.short_count %}
+          <p class="stock-stat">
+            <strong>{{ result.short_count }}</strong>
+            <span>short</span>
+          </p>
+          {% endif %}
+          {% else %}
+          <p class="stock-stat">
+            <strong>Pending</strong>
+            <span>not submitted</span>
+          </p>
+          {% endif %}
+        </div>
+      </header>
+
+      {% if result.submitted %}
+      <div class="stock-take-table-wrap stock-count-result-table-wrap">
+        <table class="stock-take-table stock-count-result-table">
+          <thead>
+            <tr>
+              <th scope="col">Item</th>
+              <th scope="col" class="stock-take-num">Your count</th>
+              <th scope="col" class="stock-take-num">System qty</th>
+              <th scope="col">Variance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in result.rows %}
+            <tr class="{% if row.variance_kind == 'match' %}is-match-row{% elif row.variance_kind == 'excess' %}is-excess-row{% elif row.variance_kind == 'short' %}is-short-row{% endif %}">
+              <td class="stock-take-item">
+                <strong>{{ row.item.name }}</strong>
+                {% if row.item.category %}<em>{{ row.item.category }}</em>{% endif %}
+              </td>
+              <td class="stock-take-num">
+                {% if row.counted_qty is not None %}{{ row.counted_qty }}{% else %}<span class="stock-take-muted">—</span>{% endif %}
+              </td>
+              <td class="stock-take-num">{{ row.system_qty }}</td>
+              <td class="stock-count-variance{% if row.variance_kind %} is-{{ row.variance_kind }}{% endif %}">
+                {% if row.variance_label %}
+                <strong>{{ row.variance_label }}</strong>
+                {% if row.variance_kind != 'match' %}
+                <span class="stock-count-variance-delta">({{ row.variance }})</span>
+                {% endif %}
+                {% else %}
+                <span class="stock-take-muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="4">No items in this stock take.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/online-stock-take.js' %}?v=1"></script>
+{% endblock %}

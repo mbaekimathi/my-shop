@@ -9758,6 +9758,57 @@ body.serial-scan-open {
 }
 
 /* —— Print stock modal —— */
+.stock-print-online {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: inherit;
+  text-decoration: none;
+}
+
+.stock-print-online:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+
+.stock-print-online-icon,
+.stock-print-online-go {
+  display: inline-flex;
+  width: 1.7rem;
+  height: 1.7rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  color: var(--text-strong);
+}
+
+.stock-print-online-icon svg,
+.stock-print-online-go svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.stock-print-online-copy strong {
+  display: block;
+  color: var(--text-strong);
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.stock-print-online-copy small {
+  display: block;
+  margin-top: 0.12rem;
+  color: var(--mist-dim);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
 .stock-print-lead {
   margin: 0.35rem 0 0;
   color: var(--mist-dim);
