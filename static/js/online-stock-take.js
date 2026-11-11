@@ -1,6 +1,6 @@
 /**
  * Online stock take — live variance + autosave (separate from Stock count).
- * Updated/counted rows pin to the top Updated section.
+ * Floating cart shows filled counts; click toggles the counted-items list.
  */
 (function () {
   "use strict";
@@ -17,14 +17,25 @@
   const matchEl = root.querySelector("[data-online-take-match]");
   const excessEl = root.querySelector("[data-online-take-excess]");
   const shortEl = root.querySelector("[data-online-take-short]");
-  const updatedSection = root.querySelector("[data-online-take-updated]");
-  const updatedList = root.querySelector("[data-online-take-updated-list]");
-  const updatedCountEl = root.querySelector("[data-online-take-updated-count]");
   const shopId = root.getAttribute("data-selected-shop-id") || "";
   const csrfInput = root.querySelector("input[name=csrfmiddlewaretoken]");
   const SAVE_DELAY_MS = 450;
   const pendingTimers = new Map();
   const lastSaved = new Map();
+  /** Most-recently counted item ids first (for cart ordering). */
+  const recentFilledIds = [];
+
+  // Keep the cart outside transformed workspace ancestors so fixed = viewport.
+  let cart = document.querySelector("[data-online-take-cart]");
+  if (cart && cart.parentElement !== document.body) {
+    document.body.appendChild(cart);
+  }
+  const cartToggle = cart?.querySelector("[data-online-take-cart-toggle]");
+  const cartPanel = cart?.querySelector("[data-online-take-cart-panel]");
+  const cartClose = cart?.querySelector("[data-online-take-cart-close]");
+  const cartBadge = cart?.querySelector("[data-online-take-cart-badge]");
+  const cartHeading = cart?.querySelector("[data-online-take-cart-heading]");
+  const cartLines = cart?.querySelector("[data-online-take-cart-lines]");
 
   const readCookie = (name) => {
     const parts = `; ${document.cookie}`.split(`; ${name}=`);
@@ -35,6 +46,13 @@
   };
 
   const csrf = csrfInput?.value || readCookie("csrftoken") || "";
+
+  const escapeHtml = (value) =>
+    String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
 
   const setStatus = (message, { error = false } = {}) => {
     if (!statusEl) return;
@@ -98,6 +116,25 @@
     }
   };
 
+  const applyCountedBy = (row, label) => {
+    const byEl = row.querySelector("[data-online-take-by]");
+    if (!byEl) return;
+    const name = String(label || "").trim();
+    byEl.textContent = name || "—";
+    if (name) {
+      byEl.removeAttribute("data-empty");
+    } else {
+      byEl.setAttribute("data-empty", "");
+    }
+    const item = row.querySelector(".online-take-item strong");
+    const category = row.getAttribute("data-category-name") || "";
+    const itemName = item?.textContent?.trim() || "";
+    row.setAttribute(
+      "data-search",
+      `${itemName} ${category} ${name}`.trim().toLowerCase()
+    );
+  };
+
   const syncRow = (row) => {
     const input = row.querySelector("[data-online-take-qty]");
     if (!input) return;
@@ -107,6 +144,98 @@
     );
     applyVariance(row, result);
     row.classList.toggle("is-filled", input.value.trim() !== "");
+    if (!input.value.trim()) applyCountedBy(row, "");
+  };
+
+  const setCartOpen = (open) => {
+    const isOpen = Boolean(open);
+    cart?.classList.toggle("is-open", isOpen);
+    if (cartPanel) cartPanel.hidden = !isOpen;
+    if (cartToggle) {
+      cartToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      cartToggle.classList.toggle("is-open", isOpen);
+      cartToggle.title = isOpen ? "Hide counted items" : "Show counted items";
+    }
+  };
+
+  const renderCart = (rows) => {
+    if (!cartLines) return;
+    if (!rows.length) {
+      cartLines.innerHTML = `
+        <li class="online-take-cart-empty" data-online-take-cart-empty>
+          No counted items yet. Enter a physical count to add it here.
+        </li>
+      `;
+      return;
+    }
+
+    const html = rows
+      .map((row) => {
+        const itemId = row.getAttribute("data-item-id") || "";
+        const input = row.querySelector("[data-online-take-qty]");
+        const qty = input?.value.trim() || "";
+        const name =
+          row.querySelector(".online-take-item strong")?.textContent?.trim() ||
+          "Item";
+        const category =
+          row.getAttribute("data-category-name") ||
+          row.querySelector(".online-take-item em")?.textContent?.trim() ||
+          "";
+        const countedBy =
+          row.querySelector("[data-online-take-by]")?.textContent?.trim() || "";
+        const byLabel =
+          countedBy && countedBy !== "—" ? countedBy : "";
+        const result = varianceFor(qty, row.getAttribute("data-system-qty"));
+        return `
+          <li
+            class="online-take-cart-line is-${escapeHtml(result.kind)}"
+            data-online-take-cart-line
+            data-item-id="${escapeHtml(itemId)}"
+          >
+            <button type="button" data-online-take-cart-jump data-item-id="${escapeHtml(itemId)}">
+              <span class="online-take-cart-line-main">
+                <strong>${escapeHtml(name)}</strong>
+                ${category ? `<em>${escapeHtml(category)}</em>` : ""}
+                ${byLabel ? `<em class="online-take-cart-by">By ${escapeHtml(byLabel)}</em>` : ""}
+              </span>
+              <span class="online-take-cart-line-meta">
+                <b>${escapeHtml(qty)}</b>
+                ${
+                  result.kind !== "empty"
+                    ? `<em>${escapeHtml(result.label)}</em>`
+                    : ""
+                }
+              </span>
+            </button>
+          </li>
+        `;
+      })
+      .join("");
+    cartLines.innerHTML = html;
+  };
+
+  const touchFilledOrder = (itemId, filled) => {
+    if (!itemId) return;
+    const idx = recentFilledIds.indexOf(itemId);
+    if (idx >= 0) recentFilledIds.splice(idx, 1);
+    if (filled) recentFilledIds.unshift(itemId);
+  };
+
+  const orderedFilledRows = (rowById) => {
+    const ordered = [];
+    const seen = new Set();
+    recentFilledIds.forEach((id) => {
+      const row = rowById.get(id);
+      if (!row || seen.has(id)) return;
+      ordered.push(row);
+      seen.add(id);
+    });
+    rowById.forEach((row, id) => {
+      if (seen.has(id)) return;
+      ordered.push(row);
+      seen.add(id);
+    });
+    return ordered;
   };
 
   const syncSummary = () => {
@@ -116,108 +245,40 @@
     let match = 0;
     let excess = 0;
     let short = 0;
+    const rowById = new Map();
+    const liveIds = new Set();
     rows.forEach((row) => {
       const input = row.querySelector("[data-online-take-qty]");
       const value = input?.value.trim() || "";
+      const itemId = row.getAttribute("data-item-id") || "";
       if (!value) return;
       filled += 1;
+      if (itemId) {
+        liveIds.add(itemId);
+        rowById.set(itemId, row);
+      }
       const result = varianceFor(value, row.getAttribute("data-system-qty"));
       if (result.kind === "match") match += 1;
       if (result.kind === "excess") excess += 1;
       if (result.kind === "short") short += 1;
     });
+    for (let i = recentFilledIds.length - 1; i >= 0; i -= 1) {
+      if (!liveIds.has(recentFilledIds[i])) recentFilledIds.splice(i, 1);
+    }
     if (filledEl) filledEl.textContent = String(filled);
     if (matchEl) matchEl.textContent = String(match);
     if (excessEl) excessEl.textContent = String(excess);
     if (shortEl) shortEl.textContent = String(short);
-    if (updatedCountEl) {
-      const updatedRows = updatedList?.querySelectorAll("[data-online-take-row]") || [];
-      updatedCountEl.textContent = String(updatedRows.length);
+
+    if (cartBadge) {
+      cartBadge.textContent = String(filled);
+      cartBadge.hidden = filled === 0;
     }
-  };
-
-  const refreshCategoryVisibility = (section) => {
-    if (!section || section.hasAttribute("data-online-take-updated")) return;
-    const rows = section.querySelectorAll("[data-online-take-row]");
-    const countEl = section.querySelector("[data-online-take-category-count]");
-    if (countEl) countEl.textContent = String(rows.length);
-    section.hidden = rows.length === 0;
-  };
-
-  const findCategorySection = (categoryName) => {
-    const needle = (categoryName || "Uncategorised").trim().toLowerCase();
-    return (
-      [...(list?.querySelectorAll("[data-online-take-category]:not([data-online-take-updated])") || [])].find(
-        (section) =>
-          (section.getAttribute("data-category") || "") === needle ||
-          (section.getAttribute("data-category-name") || "").toLowerCase() === needle
-      ) || null
-    );
-  };
-
-  const ensureCategorySection = (categoryName) => {
-    let section = findCategorySection(categoryName);
-    if (section) return section;
-    if (!list) return null;
-    const name = (categoryName || "Uncategorised").trim() || "Uncategorised";
-    section = document.createElement("section");
-    section.className = "online-take-category";
-    section.setAttribute("data-online-take-category", "");
-    section.setAttribute("data-category", name.toLowerCase());
-    section.setAttribute("data-category-name", name);
-    section.innerHTML = `
-      <header class="online-take-category-head">
-        <h3></h3>
-        <span><span data-online-take-category-count>0</span> items</span>
-      </header>
-      <ul class="online-take-list" role="list" data-online-take-category-list>
-        <li class="online-take-list-head" aria-hidden="true">
-          <span>Item</span>
-          <span>Current stock</span>
-          <span>Physical count</span>
-          <span>Variance</span>
-        </li>
-      </ul>
-    `;
-    section.querySelector("h3").textContent = name;
-    list.appendChild(section);
-    return section;
-  };
-
-  const moveToUpdated = (row) => {
-    if (!updatedSection || !updatedList) return;
-    const head = updatedList.querySelector(".online-take-list-head");
-    if (head?.nextSibling) {
-      updatedList.insertBefore(row, head.nextSibling);
-    } else {
-      updatedList.appendChild(row);
+    if (cartHeading) {
+      cartHeading.textContent = `${filled} item${filled === 1 ? "" : "s"}`;
     }
-    updatedSection.hidden = false;
-    const source = row.closest("[data-online-take-category]:not([data-online-take-updated])");
-    if (source) refreshCategoryVisibility(source);
-  };
-
-  const moveToCategory = (row) => {
-    const categoryName = row.getAttribute("data-category-name") || "Uncategorised";
-    const section = ensureCategorySection(categoryName);
-    if (!section) return;
-    const targetList = section.querySelector("[data-online-take-category-list]");
-    if (!targetList) return;
-    targetList.appendChild(row);
-    section.hidden = false;
-    refreshCategoryVisibility(section);
-    if (updatedSection && updatedList) {
-      const remaining = updatedList.querySelectorAll("[data-online-take-row]");
-      updatedSection.hidden = remaining.length === 0;
-    }
-  };
-
-  const placeRowAfterSave = (row, qty) => {
-    if (qty !== "") {
-      moveToUpdated(row);
-    } else {
-      moveToCategory(row);
-    }
+    renderCart(orderedFilledRows(rowById));
+    if (filled === 0) setCartOpen(false);
   };
 
   const saveRow = async (row) => {
@@ -226,7 +287,6 @@
     if (!input || !itemId || !baseUrl || !shopId) return;
     const qty = input.value.trim();
     if (lastSaved.get(itemId) === qty) {
-      placeRowAfterSave(row, qty);
       syncSummary();
       return;
     }
@@ -265,7 +325,11 @@
         row.setAttribute("data-category-name", data.line.category);
       }
       syncRow(row);
-      placeRowAfterSave(row, qty);
+      applyCountedBy(
+        row,
+        qty !== "" ? data.line?.updated_by_label || "" : ""
+      );
+      touchFilledOrder(itemId, qty !== "");
       syncSummary();
       setStatus(`Saved ${data.line?.saved_at || ""}`.trim());
     } catch (error) {
@@ -287,6 +351,22 @@
         saveRow(row);
       }, SAVE_DELAY_MS)
     );
+  };
+
+  const jumpToRow = (itemId) => {
+    if (!itemId || !list) return;
+    const row = list.querySelector(
+      `[data-online-take-row][data-item-id="${CSS.escape(String(itemId))}"]`
+    );
+    if (!row) return;
+    row.hidden = false;
+    const section = row.closest("[data-online-take-category]");
+    if (section) section.hidden = false;
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    row.classList.add("is-cart-focus");
+    window.setTimeout(() => row.classList.remove("is-cart-focus"), 1400);
+    const input = row.querySelector("[data-online-take-qty]");
+    input?.focus({ preventScroll: true });
   };
 
   shopSelect?.addEventListener("change", () => {
@@ -311,13 +391,7 @@
         row.hidden = !show;
         if (show) visible += 1;
       });
-      if (section.hasAttribute("data-online-take-updated")) {
-        section.hidden =
-          (updatedList?.querySelectorAll("[data-online-take-row]").length || 0) === 0 ||
-          (Boolean(q) && visible === 0);
-      } else {
-        section.hidden = Boolean(q) && visible === 0;
-      }
+      section.hidden = Boolean(q) && visible === 0;
     });
   });
 
@@ -327,6 +401,10 @@
     const row = input.closest("[data-online-take-row]");
     if (!row) return;
     syncRow(row);
+    touchFilledOrder(
+      row.getAttribute("data-item-id"),
+      input.value.trim() !== ""
+    );
     syncSummary();
     queueSave(row);
   });
@@ -344,10 +422,48 @@
     saveRow(row);
   });
 
+  cartToggle?.addEventListener("click", () => {
+    const open = cartToggle.getAttribute("aria-expanded") !== "true";
+    setCartOpen(open);
+  });
+
+  cartClose?.addEventListener("click", () => setCartOpen(false));
+
+  cartLines?.addEventListener("click", (event) => {
+    const jump = event.target.closest("[data-online-take-cart-jump]");
+    if (!jump) return;
+    jumpToRow(jump.getAttribute("data-item-id"));
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && cart?.classList.contains("is-open")) {
+      setCartOpen(false);
+    }
+  });
+
   list?.querySelectorAll("[data-online-take-row]").forEach((row) => {
     const input = row.querySelector("[data-online-take-qty]");
-    if (input) lastSaved.set(row.getAttribute("data-item-id"), input.value.trim());
+    const itemId = row.getAttribute("data-item-id");
+    const qty = input?.value.trim() || "";
+    if (itemId) lastSaved.set(itemId, qty);
+    if (qty) touchFilledOrder(itemId, true);
     syncRow(row);
   });
+  // Server already sorts filled_lines newest-first; seed that order on load.
+  if (cartLines) {
+    const seeded = [
+      ...cartLines.querySelectorAll("[data-online-take-cart-line][data-item-id]"),
+    ]
+      .map((line) => line.getAttribute("data-item-id"))
+      .filter(Boolean);
+    if (seeded.length) {
+      recentFilledIds.length = 0;
+      recentFilledIds.push(...seeded);
+    }
+  }
   syncSummary();
+
+  if (typeof window.lucide?.createIcons === "function") {
+    window.lucide.createIcons();
+  }
 })();

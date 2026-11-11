@@ -25,7 +25,7 @@
         </h2>
         <p>
           Enter the physical count beside current stock. Variance updates live and each
-          input auto-saves. Updated items stay at the top.
+          input auto-saves. Open the floating cart to review counted items.
         </p>
       </div>
       {% if selected_shop %}
@@ -88,30 +88,6 @@
   {% csrf_token %}
 
   <div class="online-take-categories" data-online-take-list>
-    <section
-      class="online-take-category online-take-category--updated"
-      data-online-take-category
-      data-online-take-updated
-      data-category="updated"
-      {% if not online_catalog.updated_lines %}hidden{% endif %}
-    >
-      <header class="online-take-category-head">
-        <h3>Updated</h3>
-        <span><span data-online-take-updated-count>{{ online_catalog.updated_lines|length }}</span> item{{ online_catalog.updated_lines|length|pluralize }}</span>
-      </header>
-      <ul class="online-take-list" role="list" data-online-take-updated-list>
-        <li class="online-take-list-head" aria-hidden="true">
-          <span>Item</span>
-          <span>Current stock</span>
-          <span>Physical count</span>
-          <span>Variance</span>
-        </li>
-        {% for line in online_catalog.updated_lines %}
-        {% include "items/partials/online_stock_take_row.html" with line=line %}
-        {% endfor %}
-      </ul>
-    </section>
-
     {% for group in online_catalog.groups %}
     <section
       class="online-take-category"
@@ -129,6 +105,7 @@
           <span>Current stock</span>
           <span>Physical count</span>
           <span>Variance</span>
+          <span>Counted by</span>
         </li>
         {% for line in group.lines %}
         {% include "items/partials/online_stock_take_row.html" with line=line %}
@@ -136,16 +113,88 @@
       </ul>
     </section>
     {% empty %}
-    {% if not online_catalog.updated_lines %}
     <p class="stock-settings-footnote">No active items to count.</p>
-    {% endif %}
     {% endfor %}
   </div>
   {% endif %}
 </section>
 {% endblock %}
 
+{% block workspace_overlays %}
+{{ block.super }}
+{% if selected_shop %}
+<div class="online-take-cart" data-online-take-cart>
+  <div
+    id="online-take-cart-panel"
+    class="online-take-cart-panel"
+    data-online-take-cart-panel
+    hidden
+  >
+    <div class="online-take-cart-panel-head">
+      <div>
+        <p class="online-take-cart-kicker">Counted items</p>
+        <strong data-online-take-cart-heading>
+          {{ online_catalog.filled_count }} item{{ online_catalog.filled_count|pluralize }}
+        </strong>
+      </div>
+      <button
+        type="button"
+        class="online-take-cart-close"
+        data-online-take-cart-close
+        aria-label="Hide counted items"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <ul class="online-take-cart-lines" data-online-take-cart-lines role="list">
+      {% for line in online_catalog.filled_lines %}
+      <li
+        class="online-take-cart-line is-{{ line.variance_kind|default:'empty' }}"
+        data-online-take-cart-line
+        data-item-id="{{ line.item_id }}"
+      >
+        <button type="button" data-online-take-cart-jump data-item-id="{{ line.item_id }}">
+          <span class="online-take-cart-line-main">
+            <strong>{{ line.name }}</strong>
+            {% if line.category %}<em>{{ line.category }}</em>{% endif %}
+            {% if line.updated_by_label %}<em class="online-take-cart-by">By {{ line.updated_by_label }}</em>{% endif %}
+          </span>
+          <span class="online-take-cart-line-meta">
+            <b>{{ line.physical_qty }}</b>
+            {% if line.variance_label %}
+            <em>{{ line.variance_label }}</em>
+            {% endif %}
+          </span>
+        </button>
+      </li>
+      {% empty %}
+      <li class="online-take-cart-empty" data-online-take-cart-empty>
+        No counted items yet. Enter a physical count to add it here.
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  <button
+    type="button"
+    class="online-take-cart-fab"
+    data-online-take-cart-toggle
+    aria-expanded="false"
+    aria-controls="online-take-cart-panel"
+    aria-label="Counted items cart"
+    title="Show counted items"
+  >
+    <i data-lucide="shopping-cart" aria-hidden="true"></i>
+    <span
+      class="online-take-cart-badge"
+      data-online-take-cart-badge
+      {% if not online_catalog.filled_count %}hidden{% endif %}
+    >{{ online_catalog.filled_count }}</span>
+  </button>
+</div>
+{% endif %}
+{% endblock %}
+
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/online-stock-take.js' %}?v=3"></script>
+<script defer src="{% static 'js/online-stock-take.js' %}?v=5"></script>
 {% endblock %}

@@ -279,7 +279,11 @@
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if row.units_sale == 0 %} is-empty{% endif %}">{{ row.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return{% if row.units_return == 0 %} is-empty{% endif %}">{{ row.units_return }}</span></td>
                 <td data-label="Current stock">
+                  {% if row.shop_id and not row.is_item_total %}
+                  {% stock_qty row.current_stock row.item_id row.item_category row.shop_id as shown_stock %}
+                  {% else %}
                   {% stock_qty row.current_stock row.item_id row.item_category as shown_stock %}
+                  {% endif %}
                   <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_stock == 'Hidden' %} is-hidden{% elif row.current_stock == 0 %} is-empty{% endif %}">{{ shown_stock }}</span>
                 </td>
                 <td data-label="Last activity">
@@ -619,7 +623,11 @@
               <td data-label="Shop">{% if row.is_item_total %}<strong>Total</strong>{% else %}{{ row.shop_name }}{% endif %}</td>
               {% endif %}
               <td data-label="Starting stock">
+                {% if row.shop_id and not row.is_item_total %}
+                {% stock_qty row.starting_stock row.item.pk row.item.category row.shop_id as shown_start %}
+                {% else %}
                 {% stock_qty row.starting_stock row.item.pk row.item.category as shown_start %}
+                {% endif %}
                 <span class="stock-matrix-qty{% if shown_start == 'Hidden' %} is-hidden{% elif row.starting_stock == 0 %} is-empty{% endif %}">{{ shown_start }}</span>
               </td>
               <td data-label="Stock in">
@@ -644,7 +652,11 @@
                 <span class="stock-matrix-qty stock-report-qty--return{% if row.stock_return == 0 %} is-empty{% endif %}">{{ row.stock_return }}</span>
               </td>
               <td data-label="Closing stock">
+                {% if row.shop_id and not row.is_item_total %}
+                {% stock_qty row.closing_stock row.item.pk row.item.category row.shop_id as shown_close %}
+                {% else %}
                 {% stock_qty row.closing_stock row.item.pk row.item.category as shown_close %}
+                {% endif %}
                 <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_close == 'Hidden' %} is-hidden{% elif row.closing_stock == 0 %} is-empty{% endif %}">{{ shown_close }}</span>
               </td>
             </tr>

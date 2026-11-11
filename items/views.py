@@ -1070,6 +1070,7 @@ def item_suspended(request, profile, meta, module):
                 "has_stock": item.pk in stocked_item_ids,
                 "shop_stock_rows": [
                     {
+                        "shop_id": shop.pk,
                         "shop_name": shop.name,
                         "quantity": format(
                             (per_shop.get(shop.pk) or Decimal("0")).normalize(), "f"
@@ -2512,6 +2513,7 @@ def _build_item_report_rows(
         return {
             "item": item,
             "shop": shop,
+            "shop_id": shop.pk if shop is not None else None,
             "shop_name": shop.name if shop is not None else "",
             "is_item_start": False,
             "is_item_total": False,
@@ -6557,6 +6559,7 @@ def stock_take_page(request, profile, meta, module):
     """Create stock takes and compare shop counts against system qty."""
     from datetime import datetime
 
+    from django.utils import timezone
     from django.utils.dateparse import parse_datetime
     from employees.module_permissions import employee_may
     from employees.workspace import sidebar_for_stock_management, stock_management_url
@@ -6567,6 +6570,7 @@ def stock_take_page(request, profile, meta, module):
         build_stock_take_comparison,
         close_stock_take,
         create_stock_take,
+        update_stock_take,
     )
 
     page_sidebar = sidebar_for_stock_management(
@@ -6616,6 +6620,44 @@ def stock_take_page(request, profile, meta, module):
             )
             return redirect(_detail_url(take.pk))
 
+        if action == "update_stock_take":
+            try:
+                take_id = int(request.POST.get("take_id") or 0)
+            except (TypeError, ValueError):
+                take_id = 0
+            take = StockTake.objects.filter(pk=take_id).first()
+            if not take:
+                messages.error(request, "Stock take not found.")
+                return redirect(list_url)
+            raw_deadline = (request.POST.get("deadline") or "").strip()
+            deadline = parse_datetime(raw_deadline.replace("T", " ", 1))
+            if deadline is None and raw_deadline:
+                try:
+                    deadline = datetime.strptime(raw_deadline, "%Y-%m-%dT%H:%M")
+                except ValueError:
+                    deadline = None
+            try:
+                update_stock_take(
+                    take=take,
+                    scope_mode=request.POST.get("scope_mode"),
+                    categories=request.POST.getlist("categories"),
+                    item_ids=request.POST.getlist("item_ids"),
+                    shop_ids=request.POST.getlist("shop_ids"),
+                    deadline=deadline,
+                    note=request.POST.get("note") or "",
+                )
+            except ValidationError as exc:
+                message = (
+                    exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+                )
+                messages.error(request, message)
+                return redirect(_detail_url(take.pk))
+            messages.success(
+                request,
+                "Stock take updated. Unchecked shops and items were removed.",
+            )
+            return redirect(_detail_url(take.pk))
+
         if action == "close_stock_take":
             try:
                 take_id = int(request.POST.get("take_id") or 0)
@@ -6642,14 +6684,32 @@ def stock_take_page(request, profile, meta, module):
 
     selected_take = None
     comparison = None
+    edit_shop_ids = set()
+    edit_category_values = set()
+    edit_item_ids = set()
+    edit_deadline_value = ""
     if take_id:
         selected_take = (
             StockTake.objects.filter(pk=take_id)
             .select_related("created_by", "created_by__user", "closed_by", "closed_by__user")
+            .prefetch_related("assignments")
             .first()
         )
         if selected_take:
             comparison = build_stock_take_comparison(selected_take)
+            edit_shop_ids = {row.shop_id for row in selected_take.assignments.all()}
+            edit_category_values = {
+                category_form_token(name) for name in (selected_take.categories or [])
+            }
+            for raw in selected_take.item_ids or []:
+                try:
+                    edit_item_ids.add(int(raw))
+                except (TypeError, ValueError):
+                    continue
+            if selected_take.deadline:
+                edit_deadline_value = timezone.localtime(selected_take.deadline).strftime(
+                    "%Y-%m-%dT%H:%M"
+                )
 
     takes = list(
         StockTake.objects.select_related("created_by", "created_by__user").prefetch_related(
@@ -6663,6 +6723,16 @@ def stock_take_page(request, profile, meta, module):
         take.detail_url = _detail_url(take.pk)
 
     shops = actionable_shops_for_profile(profile)
+    if selected_take and edit_shop_ids:
+        known_ids = {shop.pk for shop in shops}
+        missing_ids = edit_shop_ids - known_ids
+        if missing_ids:
+            from shops.models import Shop
+
+            shops = list(shops) + list(
+                Shop.objects.filter(pk__in=missing_ids).order_by("name")
+            )
+            shops.sort(key=lambda row: ((row.name or "").lower(), row.pk))
     categories = [
         {"value": category_form_token(name), "label": name or "Uncategorised"}
         for name in Item.objects.filter(is_suspended=False)
@@ -6675,6 +6745,15 @@ def stock_take_page(request, profile, meta, module):
         .order_by("category", "name")
         .values("id", "name", "category")
     )
+    if selected_take and edit_item_ids:
+        known_item_ids = {row["id"] for row in items}
+        missing_item_ids = edit_item_ids - known_item_ids
+        if missing_item_ids:
+            items = items + list(
+                Item.objects.filter(pk__in=missing_item_ids)
+                .order_by("category", "name")
+                .values("id", "name", "category")
+            )
 
     return render(
         request,
@@ -6692,6 +6771,10 @@ def stock_take_page(request, profile, meta, module):
             "stock_take_shops": shops,
             "stock_take_categories": categories,
             "stock_take_items": items,
+            "stock_take_edit_shop_ids": edit_shop_ids,
+            "stock_take_edit_category_values": edit_category_values,
+            "stock_take_edit_item_ids": edit_item_ids,
+            "stock_take_edit_deadline_value": edit_deadline_value,
             "StockTakeStatus": StockTakeStatus,
         },
     )
@@ -6751,7 +6834,7 @@ def online_stock_take_page(request, profile, meta, module):
         build_online_stock_take_catalog(shop=selected_shop)
         if selected_shop
         else {
-            "updated_lines": [],
+            "filled_lines": [],
             "groups": [],
             "item_count": 0,
             "filled_count": 0,
@@ -7884,14 +7967,12 @@ def stock_management(request, profile, meta, module, page_sidebar):
     selected_shop_ids_csv = ",".join(str(sid) for sid in selected_shop_ids)
 
     from shops.services import get_company_stock_settings, stock_hide_state
-    from items.stock_take import open_stock_take_hide_sets
 
     stock_settings_row = get_company_stock_settings()
     stock_requirements_json = _json.dumps(stock_settings_row.as_requirements_dict())
-    hide_stock_numbers = (
-        stock_hide_state(stock_settings_row)["active"]
-        or open_stock_take_hide_sets()["active"]
-    )
+    # Stock-take hide is per shop+item; the summary total only follows company
+    # hide-stock settings so non-participating shops still show quantities.
+    hide_stock_numbers = stock_hide_state(stock_settings_row)["active"]
 
     if shop_filter_active:
         if len(selected_shops) == 1:

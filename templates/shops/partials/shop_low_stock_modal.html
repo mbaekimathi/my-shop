@@ -47,7 +47,7 @@
             {% endif %}
           </div>
           <div class="shop-low-stock-qty">
-            <strong>{% stock_qty row.quantity row.item_id row.category %}</strong>
+            <strong>{% stock_qty row.quantity row.item_id row.category row.shop_id %}</strong>
             <span class="shop-low-stock-meta">alert {{ row.threshold }}</span>
           </div>
         </li>

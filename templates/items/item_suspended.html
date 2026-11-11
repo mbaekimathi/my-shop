@@ -173,7 +173,7 @@
           <td data-label="Category">{{ row.item.category|default:"—" }}</td>
           {% for shop_row in row.shop_stock_rows %}
           <td class="item-cell--shop" data-label="{{ shop_row.shop_name }}">
-            {% stock_qty shop_row.quantity row.item.pk row.item.category as shown_qty %}
+            {% stock_qty shop_row.quantity row.item.pk row.item.category shop_row.shop_id as shown_qty %}
             {% if shop_row.has_stock %}
             <strong{% if shown_qty == "Hidden" %} class="is-hidden"{% endif %}>{{ shown_qty }}</strong>
             {% else %}
@@ -182,7 +182,7 @@
           </td>
           {% endfor %}
           <td class="item-cell--discount-num" data-label="Total">
-            <strong>{% stock_qty row.total_qty row.item.pk row.item.category %}</strong>
+            <strong>{{ row.total_qty }}</strong>
           </td>
           {% if can_toggle_suspend or can_delete %}
           <td class="item-cell--actions" data-label="Actions">

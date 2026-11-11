@@ -21,7 +21,7 @@ from items.models import (
 )
 from shops.services import category_from_form_token
 
-STOCK_TAKE_HIDE_CACHE_KEY = "stock_take_open_hide:v2"
+STOCK_TAKE_HIDE_CACHE_KEY = "stock_take_open_hide:v3"
 STOCK_TAKE_HIDE_CACHE_TTL = 30
 _ZERO = Decimal("0")
 
@@ -36,35 +36,16 @@ def _quantize(value) -> Decimal:
 
 def invalidate_stock_take_hide_cache() -> None:
     cache.delete(STOCK_TAKE_HIDE_CACHE_KEY)
-
-
-def _coverage_from_take(take: StockTake) -> tuple[set[int], set[str]]:
-    item_ids: set[int] = set()
-    categories: set[str] = set()
-    if take.scope_mode == StockTakeScope.CATEGORY:
-        for raw in take.categories or []:
-            categories.add(str(raw or "").strip())
-    else:
-        for raw in take.item_ids or []:
-            try:
-                item_ids.add(int(raw))
-            except (TypeError, ValueError):
-                continue
-    return item_ids, categories
-
-
-def _coverage_hides(item_id, category, *, item_ids: set[int], categories: set[str]) -> bool:
-    cat = str(category or "").strip()
-    if cat in categories:
-        return True
-    try:
-        return int(item_id) in item_ids
-    except (TypeError, ValueError):
-        return False
+    # Drop prior cache keys so old category-wide hide payloads cannot linger.
+    cache.delete("stock_take_open_hide:v2")
 
 
 def open_stock_take_hide_sets() -> dict:
-    """Pending open stock-take coverage. Numbers stay Hidden until that shop submits."""
+    """Pending open stock-take coverage, keyed by participating shop.
+
+    Only the exact count-line items for a pending shop stay Hidden. Shops that
+    are not on the take (or have already submitted) keep showing quantities.
+    """
     cached = cache.get(STOCK_TAKE_HIDE_CACHE_KEY)
     if isinstance(cached, dict) and "by_shop" in cached:
         by_shop = {}
@@ -73,101 +54,95 @@ def open_stock_take_hide_sets() -> dict:
                 shop_id = int(raw_shop_id)
             except (TypeError, ValueError):
                 continue
-            by_shop[shop_id] = {
-                "item_ids": set(coverage.get("item_ids") or []),
-                "categories": set(coverage.get("categories") or []),
-            }
+            item_ids = set()
+            for raw in coverage.get("item_ids") or []:
+                try:
+                    item_ids.add(int(raw))
+                except (TypeError, ValueError):
+                    continue
+            if item_ids:
+                by_shop[shop_id] = {"item_ids": item_ids}
         return {
             "by_shop": by_shop,
-            "item_ids": set(cached.get("item_ids") or []),
-            "categories": set(cached.get("categories") or []),
-            "active": bool(cached.get("active")),
+            "active": bool(by_shop),
         }
 
-    by_shop: dict[int, dict] = {}
-    item_ids: set[int] = set()
-    categories: set[str] = set()
-    assignments = (
+    by_shop: dict[int, set[int]] = {}
+    pending_assignment_ids = list(
         StockTakeAssignment.objects.filter(
             status=StockTakeAssignmentStatus.PENDING,
             stock_take__status=StockTakeStatus.OPEN,
-        )
-        .select_related("stock_take")
-        .only(
-            "shop_id",
-            "stock_take__scope_mode",
-            "stock_take__categories",
-            "stock_take__item_ids",
-        )
+        ).values_list("id", "shop_id")
     )
-    for assignment in assignments:
-        take_item_ids, take_categories = _coverage_from_take(assignment.stock_take)
-        if not take_item_ids and not take_categories:
-            continue
-        entry = by_shop.setdefault(
-            assignment.shop_id, {"item_ids": set(), "categories": set()}
-        )
-        entry["item_ids"].update(take_item_ids)
-        entry["categories"].update(take_categories)
-        item_ids.update(take_item_ids)
-        categories.update(take_categories)
+    if pending_assignment_ids:
+        assignment_shop = {
+            int(assignment_id): int(shop_id)
+            for assignment_id, shop_id in pending_assignment_ids
+        }
+        for assignment_id, item_id in StockTakeCount.objects.filter(
+            assignment_id__in=assignment_shop.keys()
+        ).values_list("assignment_id", "item_id"):
+            shop_id = assignment_shop.get(int(assignment_id))
+            if shop_id is None:
+                continue
+            by_shop.setdefault(shop_id, set()).add(int(item_id))
 
     payload = {
         "by_shop": {
-            str(shop_id): {
-                "item_ids": list(coverage["item_ids"]),
-                "categories": list(coverage["categories"]),
-            }
-            for shop_id, coverage in by_shop.items()
+            str(shop_id): {"item_ids": list(item_ids)}
+            for shop_id, item_ids in by_shop.items()
+            if item_ids
         },
-        "item_ids": list(item_ids),
-        "categories": list(categories),
         "active": bool(by_shop),
     }
     cache.set(STOCK_TAKE_HIDE_CACHE_KEY, payload, STOCK_TAKE_HIDE_CACHE_TTL)
     return {
-        "by_shop": by_shop,
-        "item_ids": item_ids,
-        "categories": categories,
+        "by_shop": {
+            shop_id: {"item_ids": item_ids} for shop_id, item_ids in by_shop.items()
+        },
         "active": payload["active"],
     }
 
 
 def stock_take_hides_item(item_id, category="", shop_id=None) -> bool:
-    """Hide on-hand numbers for pending stock-take coverage.
+    """Hide on-hand numbers only for selected take items at pending shops.
 
-    When shop_id is set, only that shop's unsubmitted assignment keeps numbers
-    Hidden. After the shop submits, its covered items are visible again even if
-    other shops are still pending on the same take.
+    Requires shop_id. Without a shop, stock-take masking does not apply — other
+    shops and aggregates keep showing quantities.
     """
+    if shop_id is None:
+        return False
+    try:
+        shop_key = int(shop_id)
+        item_key = int(item_id)
+    except (TypeError, ValueError):
+        return False
     state = open_stock_take_hide_sets()
     if not state["active"]:
         return False
-    if shop_id is not None:
-        try:
-            shop_key = int(shop_id)
-        except (TypeError, ValueError):
-            return False
-        coverage = state["by_shop"].get(shop_key)
-        if not coverage:
-            return False
-        return _coverage_hides(
-            item_id,
-            category,
-            item_ids=coverage["item_ids"],
-            categories=coverage["categories"],
-        )
-    return _coverage_hides(
-        item_id,
-        category,
-        item_ids=state["item_ids"],
-        categories=state["categories"],
-    )
+    coverage = state["by_shop"].get(shop_key)
+    if not coverage:
+        return False
+    return item_key in coverage["item_ids"]
 
 
-def resolve_stock_take_items(*, scope_mode: str, categories, item_ids) -> list[Item]:
+def resolve_stock_take_items(
+    *, scope_mode: str, categories, item_ids, allow_item_ids=None
+) -> list[Item]:
     mode = (scope_mode or "").strip().lower()
-    qs = Item.objects.filter(is_suspended=False).order_by("category", "name")
+    allowed = set()
+    for raw in allow_item_ids or []:
+        try:
+            allowed.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    qs = Item.objects.order_by("category", "name")
+    if not allowed:
+        qs = qs.filter(is_suspended=False)
+    else:
+        from django.db.models import Q
+
+        qs = qs.filter(Q(is_suspended=False) | Q(pk__in=allowed))
     if mode == StockTakeScope.CATEGORY:
         cleaned = []
         for raw in categories or []:
@@ -195,6 +170,85 @@ def resolve_stock_take_items(*, scope_mode: str, categories, item_ids) -> list[I
     raise ValidationError("Choose whether to stock-take by category or by item.")
 
 
+def _resolve_stock_take_shops(shop_ids, *, allow_shop_ids=None) -> list:
+    shops = []
+    seen = set()
+    from shops.models import Shop
+
+    allowed = set()
+    for raw in allow_shop_ids or []:
+        try:
+            allowed.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+
+    for raw in shop_ids or []:
+        try:
+            shop_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if shop_id in seen:
+            continue
+        seen.add(shop_id)
+        qs = Shop.objects.filter(pk=shop_id).order_by()
+        if shop_id not in allowed:
+            qs = qs.filter(is_hidden=False, is_suspended=False)
+        shop = qs.first()
+        if shop:
+            shops.append(shop)
+    if not shops:
+        raise ValidationError("Select at least one shop.")
+    return shops
+
+
+def _normalize_stock_take_deadline(deadline, *, require_future: bool):
+    if deadline is None:
+        raise ValidationError("Set a deadline for the stock take.")
+    if timezone.is_naive(deadline):
+        deadline = timezone.make_aware(deadline, timezone.get_current_timezone())
+    if require_future and deadline <= timezone.now():
+        raise ValidationError("Deadline must be in the future.")
+    return deadline
+
+
+def _cleaned_scope_payload(*, mode: str, items: list[Item]) -> tuple[list[str], list[int]]:
+    cleaned_categories: list[str] = []
+    cleaned_item_ids: list[int] = []
+    if mode == StockTakeScope.CATEGORY:
+        for item in items:
+            cat = item.category or ""
+            if cat not in cleaned_categories:
+                cleaned_categories.append(cat)
+    else:
+        cleaned_item_ids = [item.pk for item in items]
+    return cleaned_categories, cleaned_item_ids
+
+
+def _stock_map_for(*, shop_ids: list[int], item_ids: list[int]) -> dict:
+    if not shop_ids or not item_ids:
+        return {}
+    return {
+        (row.shop_id, row.item_id): row.quantity
+        for row in ShopStock.objects.filter(
+            shop_id__in=shop_ids,
+            item_id__in=item_ids,
+        ).only("shop_id", "item_id", "quantity")
+    }
+
+
+def _create_assignment_counts(*, assignment, shop_id: int, items: list[Item], stock_map: dict):
+    StockTakeCount.objects.bulk_create(
+        [
+            StockTakeCount(
+                assignment=assignment,
+                item=item,
+                system_qty=_quantize(stock_map.get((shop_id, item.pk), _ZERO)),
+            )
+            for item in items
+        ]
+    )
+
+
 @transaction.atomic
 def create_stock_take(
     *,
@@ -209,47 +263,12 @@ def create_stock_take(
     mode = (scope_mode or "").strip().lower()
     if mode not in {StockTakeScope.CATEGORY, StockTakeScope.ITEMS}:
         raise ValidationError("Choose whether to stock-take by category or by item.")
-    if deadline is None:
-        raise ValidationError("Set a deadline for the stock take.")
-    if timezone.is_naive(deadline):
-        deadline = timezone.make_aware(deadline, timezone.get_current_timezone())
-    if deadline <= timezone.now():
-        raise ValidationError("Deadline must be in the future.")
-
-    shops = []
-    seen = set()
-    from shops.models import Shop
-
-    for raw in shop_ids or []:
-        try:
-            shop_id = int(raw)
-        except (TypeError, ValueError):
-            continue
-        if shop_id in seen:
-            continue
-        seen.add(shop_id)
-        shop = (
-            Shop.objects.filter(pk=shop_id, is_hidden=False, is_suspended=False)
-            .order_by()
-            .first()
-        )
-        if shop:
-            shops.append(shop)
-    if not shops:
-        raise ValidationError("Select at least one shop.")
-
+    deadline = _normalize_stock_take_deadline(deadline, require_future=True)
+    shops = _resolve_stock_take_shops(shop_ids)
     items = resolve_stock_take_items(
         scope_mode=mode, categories=categories, item_ids=item_ids
     )
-    cleaned_categories = []
-    cleaned_item_ids = []
-    if mode == StockTakeScope.CATEGORY:
-        for item in items:
-            cat = item.category or ""
-            if cat not in cleaned_categories:
-                cleaned_categories.append(cat)
-    else:
-        cleaned_item_ids = [item.pk for item in items]
+    cleaned_categories, cleaned_item_ids = _cleaned_scope_payload(mode=mode, items=items)
 
     take = StockTake.objects.create(
         scope_mode=mode,
@@ -261,13 +280,10 @@ def create_stock_take(
         created_by=profile,
     )
 
-    stock_map = {
-        (row.shop_id, row.item_id): row.quantity
-        for row in ShopStock.objects.filter(
-            shop_id__in=[shop.pk for shop in shops],
-            item_id__in=[item.pk for item in items],
-        ).only("shop_id", "item_id", "quantity")
-    }
+    stock_map = _stock_map_for(
+        shop_ids=[shop.pk for shop in shops],
+        item_ids=[item.pk for item in items],
+    )
 
     for shop in shops:
         assignment = StockTakeAssignment.objects.create(
@@ -275,16 +291,137 @@ def create_stock_take(
             shop=shop,
             status=StockTakeAssignmentStatus.PENDING,
         )
-        StockTakeCount.objects.bulk_create(
-            [
-                StockTakeCount(
-                    assignment=assignment,
-                    item=item,
-                    system_qty=_quantize(stock_map.get((shop.pk, item.pk), _ZERO)),
-                )
-                for item in items
-            ]
+        _create_assignment_counts(
+            assignment=assignment,
+            shop_id=shop.pk,
+            items=items,
+            stock_map=stock_map,
         )
+
+    invalidate_stock_take_hide_cache()
+    return take
+
+
+@transaction.atomic
+def update_stock_take(
+    *,
+    take: StockTake,
+    scope_mode: str,
+    categories,
+    item_ids,
+    shop_ids,
+    deadline=None,
+    note: str | None = None,
+) -> StockTake:
+    """Edit an open stock take: add/remove shops and category/item coverage."""
+    take = StockTake.objects.select_for_update().get(pk=take.pk)
+    if take.status != StockTakeStatus.OPEN:
+        raise ValidationError("Closed stock takes cannot be edited.")
+
+    mode = (scope_mode or "").strip().lower()
+    if mode not in {StockTakeScope.CATEGORY, StockTakeScope.ITEMS}:
+        raise ValidationError("Choose whether to stock-take by category or by item.")
+
+    assignments = list(
+        StockTakeAssignment.objects.select_for_update()
+        .filter(stock_take=take)
+        .prefetch_related("counts")
+    )
+    by_shop = {row.shop_id: row for row in assignments}
+    shops = _resolve_stock_take_shops(
+        shop_ids, allow_shop_ids=list(by_shop.keys())
+    )
+    existing_item_ids = {
+        count.item_id
+        for assignment in assignments
+        for count in assignment.counts.all()
+    }
+    items = resolve_stock_take_items(
+        scope_mode=mode,
+        categories=categories,
+        item_ids=item_ids,
+        allow_item_ids=existing_item_ids,
+    )
+    cleaned_categories, cleaned_item_ids = _cleaned_scope_payload(mode=mode, items=items)
+    item_id_set = {item.pk for item in items}
+    shop_id_set = {shop.pk for shop in shops}
+
+    take.scope_mode = mode
+    take.categories = cleaned_categories
+    take.item_ids = cleaned_item_ids
+    if note is not None:
+        take.note = (note or "").strip()[:240]
+    if deadline is not None:
+        if timezone.is_naive(deadline):
+            deadline = timezone.make_aware(deadline, timezone.get_current_timezone())
+        # Keep an overdue deadline if the user did not change it; new values must be future.
+        if deadline != take.deadline:
+            deadline = _normalize_stock_take_deadline(deadline, require_future=True)
+        take.deadline = deadline
+    take.save(
+        update_fields=["scope_mode", "categories", "item_ids", "note", "deadline"]
+    )
+
+    remove_ids = [row.pk for row in assignments if row.shop_id not in shop_id_set]
+    if remove_ids:
+        StockTakeAssignment.objects.filter(pk__in=remove_ids).delete()
+
+    stock_map = _stock_map_for(
+        shop_ids=list(shop_id_set),
+        item_ids=list(item_id_set),
+    )
+    items_by_id = {item.pk: item for item in items}
+
+    for shop in shops:
+        assignment = by_shop.get(shop.pk)
+        if assignment is None:
+            assignment = StockTakeAssignment.objects.create(
+                stock_take=take,
+                shop=shop,
+                status=StockTakeAssignmentStatus.PENDING,
+            )
+            _create_assignment_counts(
+                assignment=assignment,
+                shop_id=shop.pk,
+                items=items,
+                stock_map=stock_map,
+            )
+            continue
+
+        existing_counts = list(assignment.counts.all())
+        existing_item_ids = {count.item_id for count in existing_counts}
+        drop_ids = [
+            count.pk
+            for count in existing_counts
+            if count.item_id not in item_id_set
+        ]
+        if drop_ids:
+            StockTakeCount.objects.filter(pk__in=drop_ids).delete()
+            existing_item_ids &= item_id_set
+
+        added_items = [
+            items_by_id[item_id]
+            for item_id in item_id_set
+            if item_id not in existing_item_ids
+        ]
+        if added_items:
+            _create_assignment_counts(
+                assignment=assignment,
+                shop_id=shop.pk,
+                items=added_items,
+                stock_map=stock_map,
+            )
+            if assignment.status == StockTakeAssignmentStatus.SUBMITTED:
+                assignment.status = StockTakeAssignmentStatus.PENDING
+                assignment.submitted_at = None
+                assignment.submitted_by_label = ""
+                assignment.save(
+                    update_fields=[
+                        "status",
+                        "submitted_at",
+                        "submitted_by_label",
+                    ]
+                )
 
     invalidate_stock_take_hide_cache()
     return take

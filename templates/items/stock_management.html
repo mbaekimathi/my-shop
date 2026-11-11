@@ -481,15 +481,16 @@
                   </div>
                 </th>
                 {% if show_all_shops %}
-                {% for qty in row.shop_quantities %}
+                {% for shop in display_shops %}
+                {% with qty=row.shop_quantities|index_at:forloop.counter0 %}
                 <td class="stock-matrix-shop-col">
-                  {% stock_qty qty item.pk item.category as shown_qty %}
+                  {% stock_qty qty item.pk item.category shop.pk as shown_qty %}
                   <span class="stock-matrix-qty{% if shown_qty == 'Hidden' %} is-hidden{% elif qty == 0 %} is-empty{% endif %}">{{ shown_qty }}</span>
                 </td>
+                {% endwith %}
                 {% endfor %}
                 <td class="stock-matrix-total-col">
-                  {% stock_qty row.row_total item.pk item.category as shown_total %}
-                  <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_total == 'Hidden' %} is-hidden{% elif row.row_total == 0 %} is-empty{% endif %}">{{ shown_total }}</span>
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if row.row_total == 0 %} is-empty{% endif %}">{{ row.row_total }}</span>
                 </td>
                 {% else %}
                 <td class="stock-matrix-shop-col">
@@ -1450,7 +1451,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/stock-catalog.js' %}?v=20261106-hide-stock"></script>
+<script defer src="{% static 'js/stock-catalog.js' %}?v=20261111-stock-take-hide-scope"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=20261024-decimals"></script>

@@ -72,12 +72,12 @@ def variance_payload(*, system: Decimal, physical: Decimal | None) -> dict:
 def build_online_stock_take_catalog(*, shop) -> dict:
     """All active items for one shop, grouped by category, with live variance.
 
-    Updated (counted) items are returned first as ``updated_lines`` so they pin
-    to the top of the page; remaining uncounted items stay under categories.
+    Counted items stay in their category groups. ``filled_lines`` powers the
+    floating cart summary (most recently updated first).
     """
     if shop is None:
         return {
-            "updated_lines": [],
+            "filled_lines": [],
             "groups": [],
             "item_count": 0,
             "filled_count": 0,
@@ -98,12 +98,12 @@ def build_online_stock_take_catalog(*, shop) -> dict:
     entry_map = {
         row.item_id: row
         for row in OnlineStockTakeEntry.objects.filter(shop=shop).only(
-            "item_id", "physical_qty", "updated_at"
+            "item_id", "physical_qty", "updated_at", "updated_by_label"
         )
     }
 
     groups: OrderedDict[str, list] = OrderedDict()
-    updated_lines = []
+    filled_lines = []
     filled = 0
     match_count = 0
     excess_count = 0
@@ -128,8 +128,14 @@ def build_online_stock_take_catalog(*, shop) -> dict:
                 _qty_label(physical) if physical is not None else ""
             ),
             "updated_at": entry.updated_at if entry is not None else None,
+            "updated_by_label": (
+                (entry.updated_by_label or "").strip()
+                if entry is not None and physical is not None
+                else ""
+            ),
             **variance,
         }
+        groups.setdefault(category, []).append(line)
         if physical is not None:
             filled += 1
             if variance["variance_kind"] == "match":
@@ -138,11 +144,9 @@ def build_online_stock_take_catalog(*, shop) -> dict:
                 excess_count += 1
             elif variance["variance_kind"] == "short":
                 short_count += 1
-            updated_lines.append(line)
-        else:
-            groups.setdefault(category, []).append(line)
+            filled_lines.append(line)
 
-    updated_lines.sort(
+    filled_lines.sort(
         key=lambda row: (
             -(row["updated_at"].timestamp() if row["updated_at"] else 0),
             (row["name"] or "").lower(),
@@ -151,7 +155,7 @@ def build_online_stock_take_catalog(*, shop) -> dict:
     )
 
     return {
-        "updated_lines": updated_lines,
+        "filled_lines": filled_lines,
         "groups": [
             {
                 "category": category,
@@ -232,6 +236,7 @@ def save_online_stock_take_line(
         "category": (item.category or "").strip() or "Uncategorised",
         "system_qty": _qty_label(system),
         "physical_qty": _qty_label(physical) if physical is not None else "",
+        "updated_by_label": label if physical is not None else "",
         "saved_at": timezone.localtime().strftime("%H:%M:%S"),
         **variance,
     }

@@ -2947,6 +2947,7 @@ def suggest_wholesale_unit_price(
 def _shop_stock_alert_payload(stock, threshold):
     return {
         "item_id": stock.item_id,
+        "shop_id": stock.shop_id,
         "name": stock.item.name,
         "category": stock.item.category,
         "quantity": _format_qty(stock.quantity),

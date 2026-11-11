@@ -4,7 +4,7 @@
   data-item-id="{{ line.item_id }}"
   data-system-qty="{{ line.system_qty }}"
   data-category-name="{{ line.category }}"
-  data-search="{{ line.name|lower }} {{ line.category|lower }}"
+  data-search="{{ line.name|lower }} {{ line.category|lower }} {{ line.updated_by_label|default:''|lower }}"
 >
   <span class="online-take-item">
     <strong>{{ line.name }}</strong>
@@ -32,6 +32,13 @@
     {% if line.variance_kind != 'match' %}
     <span>({{ line.variance }})</span>
     {% endif %}
+    {% else %}
+    —
+    {% endif %}
+  </span>
+  <span class="online-take-by" data-online-take-by{% if not line.updated_by_label %} data-empty{% endif %}>
+    {% if line.updated_by_label %}
+    {{ line.updated_by_label }}
     {% else %}
     —
     {% endif %}

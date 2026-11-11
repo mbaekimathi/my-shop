@@ -112,11 +112,14 @@
 
   const stockIsHidden = (item, shopIndex = null) => {
     if (
-      shopIndex != null &&
       Array.isArray(item?.stock_hidden_by_shop) &&
       item.stock_hidden_by_shop.length
     ) {
-      return Boolean(item.stock_hidden_by_shop[shopIndex]);
+      if (shopIndex != null) {
+        return Boolean(item.stock_hidden_by_shop[shopIndex]);
+      }
+      // No shop column: keep qty visible unless every shop column is hidden.
+      return item.stock_hidden_by_shop.every(Boolean);
     }
     return Boolean(item?.stock_hidden);
   };

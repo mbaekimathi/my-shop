@@ -74,15 +74,16 @@
               <span class="stock-report-from">{{ row.item.category }}</span>
             </a>
           </td>
-          {% for qty in row.shop_in_stock %}
-          <td class="stock-serials-col--num" data-label="Shop">
-            {% stock_qty qty row.item.pk row.item.category as shown_qty %}
+          {% for shop in display_shops %}
+          {% with qty=row.shop_in_stock|index_at:forloop.counter0 %}
+          <td class="stock-serials-col--num" data-label="{{ shop.name }}">
+            {% stock_qty qty row.item.pk row.item.category shop.pk as shown_qty %}
             <span class="stock-matrix-qty stock-report-qty--in{% if shown_qty == 'Hidden' %} is-hidden{% elif qty == 0 %} is-empty{% endif %}">{{ shown_qty }}</span>
           </td>
+          {% endwith %}
           {% endfor %}
           <td class="stock-serials-col--num" data-label="In stock">
-            {% stock_qty row.in_stock row.item.pk row.item.category as shown_in %}
-            <span class="stock-matrix-qty stock-report-qty--in{% if shown_in == 'Hidden' %} is-hidden{% elif row.in_stock == 0 %} is-empty{% endif %}">{{ shown_in }}</span>
+            <span class="stock-matrix-qty stock-report-qty--in{% if row.in_stock == 0 %} is-empty{% endif %}">{{ row.in_stock }}</span>
           </td>
           <td class="stock-serials-col--num" data-label="Out / sold">
             <span class="stock-matrix-qty stock-report-qty--out{% if row.out == 0 %} is-empty{% endif %}">{{ row.out }}</span>

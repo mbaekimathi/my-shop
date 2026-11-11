@@ -1,4 +1,4 @@
-/* MY-SHOP app — stock.css (split from app.css; cascade order preserved) */
+/* MY-SHOP app ? stock.css (split from app.css; cascade order preserved) */
 
 .stock-panel {
   margin-top: 0.35rem;
@@ -1035,7 +1035,7 @@
   color: var(--mist-dim);
 }
 
-/* Stock view — modern summary + analytics-style matrix */
+/* Stock view ? modern summary + analytics-style matrix */
 .stock-panel--view {
   padding: 1.05rem 1.05rem 1.2rem;
   border-color: color-mix(in srgb, var(--teal) 14%, var(--line));
@@ -1679,7 +1679,7 @@
   }
 }
 
-/* —— Analytics (compact) —— */
+/* ?? Analytics (compact) ?? */
 
 .stock-panel .item-search-field {
   border-color: var(--line);
@@ -2265,7 +2265,7 @@
   min-width: 6.5rem;
 }
 
-/* Editable multi-shop matrix — analytics-style dense list table */
+/* Editable multi-shop matrix ? analytics-style dense list table */
 .stock-matrix-scroll--list {
   border: 1px solid color-mix(in srgb, var(--line) 85%, var(--text-strong));
   border-radius: 10px;
@@ -3463,7 +3463,7 @@
   font-size: 0.78rem;
 }
 
-/* Dense serials list/detail — match stock-matrix--list / analytics */
+/* Dense serials list/detail ? match stock-matrix--list / analytics */
 .stock-panel--serials .stock-report-filters--serials {
   margin-top: 0.7rem;
   padding: 0.45rem 0.55rem;
@@ -4320,7 +4320,7 @@
     grid-column: 1 / -1;
   }
 
-  /* Item matrices use shared card layout below — do not force wide tables here */
+  /* Item matrices use shared card layout below ? do not force wide tables here */
 }
 
 /* Stock report + item summary: readable cards on tablet/phone */
@@ -5974,7 +5974,7 @@
   font-weight: 600;
 }
 
-/* Previous supply price — soft ghost inside the unit-buy field */
+/* Previous supply price ? soft ghost inside the unit-buy field */
 .stock-buy-price-wrap {
   position: relative;
   display: block;
@@ -6035,7 +6035,7 @@
   }
 }
 
-/* Dim only while empty + focused — never over typed digits */
+/* Dim only while empty + focused ? never over typed digits */
 .stock-buy-price-wrap:has(input:focus):not(.is-filled) .stock-buy-price-ghost {
   opacity: 0.28;
 }
@@ -6365,7 +6365,7 @@
   display: none;
 }
 
-/* Pending transfers — header bell + popup */
+/* Pending transfers ? header bell + popup */
 .stock-pending-bell {
   position: relative;
   align-self: center;
@@ -7460,9 +7460,9 @@
   }
 }
 
-/* —— MY-SHOP floor & shop picker —— */
+/* ?? MY-SHOP floor & shop picker ?? */
 
-/* —— Mobile: sideways scrolling for wide stock tables —— */
+/* ?? Mobile: sideways scrolling for wide stock tables ?? */
 @media (max-width: 899px) {
   /* Scroll-edge shadows show there are more columns off-screen. */
   .stock-matrix-scroll,
@@ -7780,9 +7780,14 @@
   }
 }
 
-/* —— Stock take —— */
+/* ?? Stock take ?? */
 .stock-panel--stock-take .stock-take-create {
   margin-bottom: 1.25rem;
+}
+
+.stock-panel--stock-take .stock-take-edit {
+  margin-top: 0.35rem;
+  margin-bottom: 1rem;
 }
 
 .stock-take-fields {
@@ -9028,7 +9033,7 @@
   }
 }
 
-/* �� Online stock take page �� */
+/* ?? Online stock take page ?? */
 .stock-panel--online-take {
   gap: 1rem;
 }
@@ -9323,7 +9328,7 @@
   }
 }
 
-/* Online stock take � category list (not cards), live variance + autosave */
+/* Online stock take ? category list (not cards), live variance + autosave */
 .stock-panel--online-take {
   gap: 0.9rem;
 }
@@ -9435,22 +9440,28 @@
   color: var(--mist-dim);
 }
 
-.online-take-list {
+.stock-panel--online-take .online-take-list {
+  display: block;
   list-style: none;
   margin: 0;
   padding: 0;
+  gap: 0;
 }
 
-.online-take-list-head,
-.online-take-row {
+.stock-panel--online-take .online-take-list-head,
+.stock-panel--online-take .online-take-row {
   display: grid;
-  grid-template-columns: minmax(10rem, 1.6fr) 6.5rem 7.5rem minmax(8rem, 1fr);
+  grid-template-columns: minmax(9rem, 1.45fr) 6rem 7rem minmax(7rem, 0.95fr) minmax(6.5rem, 0.85fr);
   gap: 0.55rem 0.75rem;
   align-items: center;
   padding: 0.55rem 0.9rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.online-take-list-head {
+.stock-panel--online-take .online-take-list-head {
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -9460,43 +9471,43 @@
   background: color-mix(in srgb, var(--panel-muted) 22%, transparent);
 }
 
-.online-take-row {
+.stock-panel--online-take .online-take-row {
   border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
 }
 
-.online-take-row:last-child {
+.stock-panel--online-take .online-take-row:last-child {
   border-bottom: 0;
 }
 
-.online-take-row.is-saving {
+.stock-panel--online-take .online-take-row.is-saving {
   opacity: 0.72;
 }
 
-.online-take-row.is-match {
+.stock-panel--online-take .online-take-row.is-match {
   background: color-mix(in srgb, var(--ok, #2f7d4a) 6%, transparent);
 }
 
-.online-take-row.is-excess {
+.stock-panel--online-take .online-take-row.is-excess {
   background: color-mix(in srgb, #d4a017 7%, transparent);
 }
 
-.online-take-row.is-short {
+.stock-panel--online-take .online-take-row.is-short {
   background: color-mix(in srgb, var(--danger) 7%, transparent);
 }
 
-.online-take-item strong {
+.stock-panel--online-take .online-take-item strong {
   display: block;
   font-size: 0.92rem;
   color: var(--text-strong);
 }
 
-.online-take-system {
+.stock-panel--online-take .online-take-system {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   text-align: right;
 }
 
-.online-take-qty input {
+.stock-panel--online-take .online-take-qty input {
   width: 100%;
   min-height: 2.35rem;
   border: 1px solid var(--line);
@@ -9509,62 +9520,204 @@
   text-align: right;
 }
 
-.online-take-qty input:focus {
+.stock-panel--online-take .online-take-qty input:focus {
   outline: 2px solid color-mix(in srgb, var(--accent, #1f6f78) 45%, transparent);
   outline-offset: 1px;
 }
 
-.online-take-variance {
+.stock-panel--online-take .online-take-variance {
   font-size: 0.84rem;
   line-height: 1.25;
 }
 
-.online-take-variance.is-empty {
+.stock-panel--online-take .online-take-variance.is-empty {
   color: var(--mist);
 }
 
-.online-take-variance.is-match {
+.stock-panel--online-take .online-take-variance.is-match {
   color: var(--ok, #2f7d4a);
 }
 
-.online-take-variance.is-excess {
+.stock-panel--online-take .online-take-variance.is-excess {
   color: #9a6b12;
 }
 
-.online-take-variance.is-short {
+.stock-panel--online-take .online-take-variance.is-short {
   color: var(--danger);
 }
 
-.online-take-variance strong {
+.stock-panel--online-take .online-take-variance strong {
   font-weight: 700;
 }
 
+.stock-panel--online-take .online-take-by {
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--text-strong);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stock-panel--online-take .online-take-by[data-empty] {
+  color: var(--mist);
+  font-weight: 600;
+}
+
 @media (max-width: 760px) {
-  .online-take-list-head {
+  .stock-panel--online-take .online-take-categories {
+    gap: 0.55rem;
+  }
+
+  .stock-panel--online-take .online-take-category {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    border-top: 1px solid var(--line);
+  }
+
+  .stock-panel--online-take .online-take-category-head {
+    padding: 0.45rem 0.15rem 0.35rem;
+    border-bottom: 0;
+    background: transparent;
+  }
+
+  .stock-panel--online-take .online-take-category-head h3 {
+    font-size: 0.82rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+  }
+
+  .stock-panel--online-take .online-take-category-head span {
+    font-size: 0.72rem;
+  }
+
+  .stock-panel--online-take .online-take-list-head {
     display: none;
   }
 
-  .online-take-row {
-    grid-template-columns: 1fr 1fr;
-    grid-template-areas:
-      "item item"
-      "system qty"
-      "variance variance";
-    padding: 0.75rem 0.85rem;
+  .stock-panel--online-take .online-take-list {
+    border-top: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
   }
 
-  .online-take-item { grid-area: item; }
-  .online-take-system {
+  /* Dense list: name | stock | count | variance / by */
+  .stock-panel--online-take .online-take-row {
+    grid-template-columns: minmax(0, 1fr) 2.4rem 4.2rem 3.1rem;
+    grid-template-areas:
+      "item system qty variance"
+      "by by by by";
+    gap: 0.12rem 0.35rem;
+    align-items: center;
+    min-height: 2.35rem;
+    padding: 0.28rem 0.05rem 0.34rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  }
+
+  .stock-panel--online-take .online-take-item {
+    grid-area: item;
+    min-width: 0;
+  }
+
+  .stock-panel--online-take .online-take-item strong {
+    font-size: 0.84rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .stock-panel--online-take .online-take-item em {
+    display: none;
+  }
+
+  .stock-panel--online-take .online-take-system {
     grid-area: system;
-    text-align: left;
-  }
-  .online-take-system::before {
-    content: "Current ";
-    font-weight: 600;
+    font-size: 0.78rem;
+    font-weight: 700;
     color: var(--mist-dim);
+    text-align: right;
   }
-  .online-take-qty { grid-area: qty; }
-  .online-take-variance { grid-area: variance; }
+
+  .stock-panel--online-take .online-take-system::before {
+    content: none;
+  }
+
+  .stock-panel--online-take .online-take-qty {
+    grid-area: qty;
+  }
+
+  .stock-panel--online-take .online-take-qty input {
+    min-height: 2rem;
+    padding: 0.15rem 0.3rem;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    font-weight: 700;
+  }
+
+  .stock-panel--online-take .online-take-variance {
+    grid-area: variance;
+    font-size: 0.74rem;
+    font-weight: 700;
+    line-height: 1.1;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Prefer compact delta on narrow screens; keep "Match" / "?" */
+  .stock-panel--online-take .online-take-variance.is-excess strong,
+  .stock-panel--online-take .online-take-variance.is-short strong {
+    display: none;
+  }
+
+  .stock-panel--online-take .online-take-variance.is-match strong {
+    font-size: 0.7rem;
+  }
+
+  .stock-panel--online-take .online-take-variance.is-excess span,
+  .stock-panel--online-take .online-take-variance.is-short span {
+    display: inline;
+  }
+
+  .stock-panel--online-take .online-take-variance.is-excess span::before,
+  .stock-panel--online-take .online-take-variance.is-short span::before {
+    content: none;
+  }
+
+  .stock-panel--online-take .online-take-variance.is-empty {
+    font-size: 0.78rem;
+    font-weight: 600;
+    opacity: 0.45;
+  }
+
+  .stock-panel--online-take .online-take-by {
+    grid-area: by;
+    font-size: 0.68rem;
+    color: var(--mist-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .stock-panel--online-take .online-take-by:not([data-empty])::before {
+    content: "By ";
+    font-weight: 600;
+  }
+
+  .stock-panel--online-take .online-take-by[data-empty] {
+    display: none;
+  }
+
+  .stock-panel--online-take .online-take-summary {
+    gap: 0.45rem 0.75rem;
+    padding: 0.45rem 0.65rem;
+  }
+
+  .stock-panel--online-take .online-take-toolbar {
+    gap: 0.55rem;
+  }
 }
 
 .online-take-category--updated {
@@ -9582,4 +9735,256 @@
   font-style: normal;
   font-size: 0.76rem;
   color: var(--mist-dim);
+}
+
+.online-take-row.is-cart-focus {
+  outline: 2px solid color-mix(in srgb, var(--accent, #1f6f78) 55%, transparent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent, #1f6f78) 12%, var(--surface));
+}
+
+/* Floating counted-items cart */
+.online-take-cart {
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.65rem;
+  pointer-events: none;
+}
+
+.online-take-cart-fab,
+.online-take-cart-panel,
+.online-take-cart-close {
+  pointer-events: auto;
+}
+
+.online-take-cart-fab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.4rem;
+  height: 3.4rem;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent, #1f6f78);
+  color: #fff;
+  box-shadow:
+    0 14px 28px color-mix(in srgb, var(--accent, #1f6f78) 38%, transparent),
+    0 2px 0 color-mix(in srgb, var(--text-strong) 8%, transparent);
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.online-take-cart-fab:hover {
+  transform: translateY(-2px) scale(1.04);
+}
+
+.online-take-cart-fab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #1f6f78) 55%, transparent);
+  outline-offset: 3px;
+}
+
+.online-take-cart-fab.is-open {
+  background: color-mix(in srgb, var(--accent, #1f6f78) 78%, #111);
+}
+
+.online-take-cart-fab i,
+.online-take-cart-fab svg {
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+.online-take-cart-badge {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.12rem;
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--text-strong, #122);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--surface, #fff);
+}
+
+.online-take-cart-badge[hidden] {
+  display: none !important;
+}
+
+.online-take-cart-panel {
+  width: min(22rem, calc(100vw - 1.75rem));
+  max-height: min(26rem, calc(100vh - 7rem));
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 0.8rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--accent, #1f6f78) 28%, var(--line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface, #fff) 94%, var(--accent, #1f6f78));
+  box-shadow: 0 18px 40px rgba(8, 28, 34, 0.18);
+}
+
+.online-take-cart-panel[hidden] {
+  display: none !important;
+}
+
+.online-take-cart-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-bottom: 0.55rem;
+}
+
+.online-take-cart-kicker {
+  margin: 0 0 0.15rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.online-take-cart-panel-head strong {
+  font-size: 0.95rem;
+  color: var(--text-strong);
+}
+
+.online-take-cart-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 45%, transparent);
+  color: var(--mist-dim);
+  cursor: pointer;
+}
+
+.online-take-cart-close:hover {
+  background: color-mix(in srgb, var(--line) 70%, transparent);
+  color: var(--text-strong);
+}
+
+.online-take-cart-close i,
+.online-take-cart-close svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.online-take-cart-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  display: grid;
+  gap: 0.4rem;
+  max-height: min(20rem, calc(100vh - 11rem));
+}
+
+.online-take-cart-empty {
+  padding: 0.85rem 0.7rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
+  color: var(--mist-dim);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.online-take-cart-line button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface, #fff);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.online-take-cart-line button:hover {
+  border-color: color-mix(in srgb, var(--accent, #1f6f78) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent, #1f6f78) 7%, var(--surface, #fff));
+}
+
+.online-take-cart-line-main {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.online-take-cart-line-main strong {
+  font-size: 0.86rem;
+  color: var(--text-strong);
+  line-height: 1.25;
+}
+
+.online-take-cart-line-main em,
+.online-take-cart-line-meta em {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--mist-dim);
+}
+
+.online-take-cart-line-main .online-take-cart-by {
+  display: block;
+}
+
+.online-take-cart-line-meta {
+  display: grid;
+  justify-items: end;
+  gap: 0.1rem;
+  text-align: right;
+}
+
+.online-take-cart-line-meta b {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+  color: var(--text-strong);
+}
+
+.online-take-cart-line.is-match .online-take-cart-line-meta em {
+  color: var(--ok, #2f7d4a);
+}
+
+.online-take-cart-line.is-excess .online-take-cart-line-meta em {
+  color: #9a6b12;
+}
+
+.online-take-cart-line.is-short .online-take-cart-line-meta em {
+  color: var(--danger);
+}
+
+@media (max-width: 720px) {
+  .online-take-cart {
+    right: max(0.75rem, env(safe-area-inset-right));
+    bottom: max(0.85rem, env(safe-area-inset-bottom));
+  }
+
+  .online-take-cart-fab {
+    width: 3.55rem;
+    height: 3.55rem;
+  }
+
+  .online-take-cart-panel {
+    width: min(20.5rem, calc(100vw - 1.4rem));
+  }
 }

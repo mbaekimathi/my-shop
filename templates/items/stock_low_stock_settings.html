@@ -135,7 +135,11 @@
               {% endif %}
             </td>
             <td class="low-stock-units low-stock-num">
+              {% if row.is_item_total %}
               {% stock_qty row.total_units row.item.pk row.item.category as shown_units %}
+              {% else %}
+              {% stock_qty row.total_units row.item.pk row.item.category row.shop_id as shown_units %}
+              {% endif %}
               <strong data-low-stock-units data-units="{{ row.total_units }}"{% if shown_units == "Hidden" %} data-stock-hidden="1" class="is-hidden"{% endif %}>{{ shown_units }}</strong>
             </td>
             <td class="low-stock-avg low-stock-num">
