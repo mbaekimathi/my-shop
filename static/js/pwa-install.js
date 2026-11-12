@@ -1,5 +1,6 @@
 (() => {
   const DISMISS_KEY = "myshop-pwa-install-dismissed";
+  const INSTALLED_KEY = "myshop-pwa-install-installed";
   const DISMISS_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 
   const roots = Array.from(document.querySelectorAll("[data-pwa-install]"));
@@ -30,6 +31,14 @@
     }
   };
 
+  const isInstalled = () => {
+    try {
+      return localStorage.getItem(INSTALLED_KEY) === "1";
+    } catch (_err) {
+      return false;
+    }
+  };
+
   const setDismissed = () => {
     try {
       localStorage.setItem(DISMISS_KEY, String(Date.now() + DISMISS_MS));
@@ -38,8 +47,26 @@
     }
   };
 
+  const setInstalled = () => {
+    try {
+      localStorage.setItem(INSTALLED_KEY, "1");
+      localStorage.removeItem(DISMISS_KEY);
+    } catch (_err) {
+      /* ignore */
+    }
+  };
+
+  const setOpen = (root, open) => {
+    const panel = root.querySelector("[data-pwa-install-panel]");
+    const toggleBtn = root.querySelector("[data-pwa-install-toggle]");
+    root.classList.toggle("is-open", open);
+    if (panel) panel.hidden = !open;
+    if (toggleBtn) toggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+
   const hideBanners = () => {
     roots.forEach((root) => {
+      setOpen(root, false);
       root.hidden = true;
       root.setAttribute("aria-hidden", "true");
       root.classList.remove("is-visible");
@@ -57,10 +84,17 @@
     hideCtas();
   };
 
+  const markInstalledAndHide = () => {
+    setInstalled();
+    alreadyInstalled = true;
+    hideAll();
+  };
+
   const showBanners = () => {
     roots.forEach((root) => {
       root.hidden = false;
       root.setAttribute("aria-hidden", "false");
+      setOpen(root, false);
       requestAnimationFrame(() => root.classList.add("is-visible"));
     });
   };
@@ -71,14 +105,14 @@
     });
   };
 
-  if (isStandalone()) {
-    hideAll();
-    return;
-  }
-
   let deferredPrompt = null;
   let canInstallNative = false;
-  let alreadyInstalled = false;
+  let alreadyInstalled = isInstalled();
+
+  if (isStandalone() || alreadyInstalled) {
+    markInstalledAndHide();
+    return;
+  }
 
   const syncBannerButtons = () => {
     roots.forEach((root) => {
@@ -101,7 +135,7 @@
         deferredPrompt = null;
         canInstallNative = false;
         if (choice?.outcome === "accepted") {
-          hideAll();
+          markInstalledAndHide();
         } else {
           setDismissed();
           hideBanners();
@@ -119,22 +153,23 @@
     const iosHint = root?.querySelector("[data-pwa-ios-hint]");
     if (iosHint) {
       showBanners();
+      setOpen(root, true);
       iosHint.hidden = false;
       iosHint.classList.add("is-pulse");
       window.setTimeout(() => iosHint.classList.remove("is-pulse"), 900);
       return;
     }
 
-    // Desktop / unsupported: scroll banner into view if present.
+    // Desktop / unsupported: open the panel if present.
     if (root) {
       showBanners();
-      root.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      setOpen(root, true);
     }
   };
 
   const maybeShow = () => {
-    if (alreadyInstalled || isStandalone()) {
-      hideAll();
+    if (alreadyInstalled || isInstalled() || isStandalone()) {
+      markInstalledAndHide();
       return;
     }
 
@@ -156,6 +191,10 @@
 
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
+    if (alreadyInstalled || isInstalled()) {
+      markInstalledAndHide();
+      return;
+    }
     deferredPrompt = event;
     canInstallNative = true;
     maybeShow();
@@ -164,11 +203,16 @@
   window.addEventListener("appinstalled", () => {
     deferredPrompt = null;
     canInstallNative = false;
-    alreadyInstalled = true;
-    hideAll();
+    markInstalledAndHide();
   });
 
   roots.forEach((root) => {
+    root.querySelectorAll("[data-pwa-install-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setOpen(root, !root.classList.contains("is-open"));
+      });
+    });
+
     root.querySelectorAll("[data-pwa-dismiss]").forEach((btn) => {
       btn.addEventListener("click", () => {
         setDismissed();
@@ -185,7 +229,33 @@
 
   ctaButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
+      const root = roots.find((node) => !node.hidden) || roots[0];
+      if (root && deferredPrompt) {
+        promptInstall(root);
+        return;
+      }
+      if (root) {
+        showBanners();
+        setOpen(root, true);
+        return;
+      }
       promptInstall();
+    });
+  });
+
+  document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-pwa-install-cta]")) return;
+    roots.forEach((root) => {
+      if (root.hidden || !root.classList.contains("is-open")) return;
+      if (root.contains(event.target)) return;
+      setOpen(root, false);
+    });
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    roots.forEach((root) => {
+      if (root.classList.contains("is-open")) setOpen(root, false);
     });
   });
 
@@ -194,8 +264,7 @@
       .getInstalledRelatedApps()
       .then((apps) => {
         if (Array.isArray(apps) && apps.length) {
-          alreadyInstalled = true;
-          hideAll();
+          markInstalledAndHide();
           return;
         }
         maybeShow();
@@ -207,7 +276,7 @@
 
   const mq = window.matchMedia("(display-mode: standalone)");
   const onMode = () => {
-    if (isStandalone()) hideAll();
+    if (isStandalone()) markInstalledAndHide();
   };
   if (typeof mq.addEventListener === "function") {
     mq.addEventListener("change", onMode);

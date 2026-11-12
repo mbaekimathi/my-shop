@@ -447,6 +447,11 @@ urlpatterns = [
         name="analytics_trade_detail",
     ),
     path(
+        "<role_segment:role_segment>/analytics/receipts/print/",
+        analytics_views.analytics_receipts_print,
+        name="analytics_receipts_print",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/receipts/<slug:kind>/",
         analytics_views.analytics_receipts_list,
         name="analytics_receipts_list",

@@ -2544,6 +2544,16 @@ RECEIPT_SETTING_GROUPS = (
             ("print_cashier_receipt", "Cashier receipt"),
         ),
     },
+    {
+        "title": "Confirm receipts",
+        "summary": "Rules for confirming pending sales in analytics.",
+        "toggles": (
+            (
+                "require_mpesa_reference_on_confirm",
+                "Compulsory M-Pesa reference number",
+            ),
+        ),
+    },
 )
 
 

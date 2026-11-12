@@ -89,6 +89,7 @@ POS_SETTING_FIELDS = {
     "enable_receipt_payment_methods",
     "show_client_phone_on_receipt",
     "show_return_notice_on_receipt",
+    "require_mpesa_reference_on_confirm",
     "show_maintainer_on_receipt",
 }
 
@@ -125,6 +126,7 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "enable_receipt_payment_methods",
         "show_client_phone_on_receipt",
         "show_return_notice_on_receipt",
+        "require_mpesa_reference_on_confirm",
         "return_notice_text",
         "receipt_paper_width",
         "receipt_format_sale",
@@ -3666,6 +3668,9 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "return_notice_text": (
             (getattr(row, "return_notice_text", "") or "").strip()
             or RECEIPT_NO_RETURN_NOTICE
+        ),
+        "require_mpesa_reference_on_confirm": bool(
+            getattr(row, "require_mpesa_reference_on_confirm", False)
         ),
         "show_maintainer_on_receipt": bool(
             getattr(row, "show_maintainer_on_receipt", False)
@@ -7666,6 +7671,7 @@ def _receipt_list_item(receipt) -> dict:
         "status_label": receipt.get_status_display(),
         "payment_method": receipt.payment_method,
         "payment_label": receipt.get_payment_method_display(),
+        "mpesa_receipt_number": receipt.mpesa_receipt_number or "",
         "client_name": receipt.client_name or "",
         "client_phone": receipt.client_phone or "",
         "shop_name": receipt.shop.name if getattr(receipt, "shop", None) else "",
@@ -8164,6 +8170,9 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
                 "tax_amount": str(receipt.tax_amount),
                 "cash_amount": str(receipt.cash_amount),
                 "mpesa_amount": str(receipt.mpesa_amount),
+                "require_mpesa_reference_on_confirm": bool(
+                    getattr(pos_settings, "require_mpesa_reference_on_confirm", False)
+                ),
                 "lines": line_payloads,
                 "returnable_lines": returnable_lines,
             },
@@ -9387,9 +9396,11 @@ def return_shop_receipt_items(
 
 
 @transaction.atomic
-def confirm_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
+def confirm_shop_receipt(
+    *, shop: Shop, receipt_id: int, actor, mpesa_receipt_number: str = ""
+) -> dict:
     """Mark a pending sales receipt as confirmed (credits/quotations not allowed)."""
-    from .models import ShopReceipt
+    from .models import ShopPaymentMethod, ShopReceipt
 
     if actor is None:
         raise ValidationError("Sign in to confirm receipts.")
@@ -9409,8 +9420,27 @@ def confirm_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
     if receipt.status != ShopReceiptStatus.ACTIVE:
         raise ValidationError("Only pending receipts can be confirmed.")
 
+    ref = (mpesa_receipt_number or "").strip()[:40]
+    existing_ref = (receipt.mpesa_receipt_number or "").strip()
+    needs_mpesa_ref = receipt.payment_method in {
+        ShopPaymentMethod.MPESA,
+        ShopPaymentMethod.BOTH,
+    }
+    if needs_mpesa_ref:
+        pos = get_effective_pos_settings(shop)
+        if bool(getattr(pos, "require_mpesa_reference_on_confirm", False)):
+            if not ref and not existing_ref:
+                raise ValidationError(
+                    "Enter the M-Pesa reference number before confirming this receipt."
+                )
+
     receipt.status = ShopReceiptStatus.CONFIRMED
-    receipt.save(update_fields=["status"])
+    update_fields = ["status"]
+    # Only overwrite when the user provided a reference.
+    if ref:
+        receipt.mpesa_receipt_number = ref
+        update_fields.append("mpesa_receipt_number")
+    receipt.save(update_fields=update_fields)
 
     detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
     return {
@@ -9419,6 +9449,7 @@ def confirm_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
         "message": f"Receipt {receipt.receipt_number} confirmed.",
         "status": receipt.status,
         "status_label": receipt.get_status_display(),
+        "mpesa_receipt_number": receipt.mpesa_receipt_number or "",
     }
 
 

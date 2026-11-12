@@ -1,5 +1,6 @@
 (() => {
   const DISMISS_KEY = "myshop-web-push-dismissed";
+  const ENABLED_KEY = "myshop-web-push-enabled";
   const DISMISS_MS = 1000 * 60 * 60 * 24 * 7;
 
   const root = document.querySelector("[data-web-push]");
@@ -33,6 +34,14 @@
     }
   };
 
+  const isEnabled = () => {
+    try {
+      return localStorage.getItem(ENABLED_KEY) === "1";
+    } catch (_err) {
+      return false;
+    }
+  };
+
   const setDismissed = () => {
     try {
       localStorage.setItem(DISMISS_KEY, String(Date.now() + DISMISS_MS));
@@ -41,17 +50,38 @@
     }
   };
 
+  const setEnabled = () => {
+    try {
+      localStorage.setItem(ENABLED_KEY, "1");
+      localStorage.removeItem(DISMISS_KEY);
+    } catch (_err) {
+      /* ignore */
+    }
+  };
+
+  const panel = root?.querySelector("[data-web-push-panel]");
+  const toggleBtn = root?.querySelector("[data-web-push-toggle]");
+
+  const setOpen = (open) => {
+    if (!root) return;
+    root.classList.toggle("is-open", open);
+    if (panel) panel.hidden = !open;
+    if (toggleBtn) toggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+
   const hidePrompt = () => {
     if (!root) return;
+    setOpen(false);
     root.hidden = true;
     root.classList.remove("is-visible");
   };
 
   const showPrompt = () => {
-    if (!root || isDismissed()) return;
+    if (!root || isDismissed() || isEnabled()) return;
     if (Notification.permission === "granted") return;
     if (Notification.permission === "denied") return;
     root.hidden = false;
+    setOpen(false);
     requestAnimationFrame(() => root.classList.add("is-visible"));
   };
 
@@ -94,8 +124,14 @@
     return Boolean(data?.ok);
   };
 
+  const markEnabledAndHide = () => {
+    setEnabled();
+    hidePrompt();
+  };
+
   const ensureSubscription = async () => {
     if (Notification.permission !== "granted") return false;
+    markEnabledAndHide();
     const publicKey = await fetchPublicKey();
     if (!publicKey) return false;
 
@@ -107,9 +143,7 @@
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
     }
-    const ok = await postSubscription(subscription);
-    if (ok) hidePrompt();
-    return ok;
+    return await postSubscription(subscription);
   };
 
   const enableAlerts = async () => {
@@ -119,11 +153,16 @@
         if (permission === "denied") hidePrompt();
         return false;
       }
+      markEnabledAndHide();
       return await ensureSubscription();
     } catch (_err) {
       return false;
     }
   };
+
+  toggleBtn?.addEventListener("click", () => {
+    setOpen(!root.classList.contains("is-open"));
+  });
 
   root?.querySelectorAll("[data-web-push-enable]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -138,11 +177,26 @@
     });
   });
 
-  // If already granted, quietly refresh the subscription after SW is ready.
-  if (Notification.permission === "granted") {
-    navigator.serviceWorker.ready
-      .then(() => ensureSubscription())
-      .catch(() => {});
+  document.addEventListener("click", (event) => {
+    if (!root || root.hidden || !root.classList.contains("is-open")) return;
+    if (root.contains(event.target)) return;
+    setOpen(false);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!root || !root.classList.contains("is-open")) return;
+    setOpen(false);
+  });
+
+  // If already granted / previously enabled, keep the prompt hidden and refresh the subscription.
+  if (Notification.permission === "granted" || isEnabled()) {
+    markEnabledAndHide();
+    if (Notification.permission === "granted") {
+      navigator.serviceWorker.ready
+        .then(() => ensureSubscription())
+        .catch(() => {});
+    }
   } else if (Notification.permission === "default") {
     window.setTimeout(showPrompt, 1200);
   } else {

@@ -2532,22 +2532,71 @@ class CreditDueDateReminderTests(TestCase):
         self.assertIn("KSh 500", outbound.body)
         send.assert_not_called()
 
-    def test_update_follow_up_skipped_when_toggle_off(self):
+    def test_update_follow_up_skipped_when_toggle_off_and_no_draft(self):
         from decimal import Decimal
         from unittest.mock import patch
 
         from communications.automations import maybe_send_credit_follow_up_updated
+        from communications.constants import (
+            MESSAGE_STATUS_DRAFT,
+            TRIGGER_CREDIT_FOLLOW_UP,
+        )
+        from communications.models import TriggeredMessage
         from shops.services import set_communications_setting
 
         set_communications_setting(field="auto_credit_due", enabled=False)
+        TriggeredMessage.objects.filter(
+            shop__isnull=True, trigger=TRIGGER_CREDIT_FOLLOW_UP
+        ).update(status=MESSAGE_STATUS_DRAFT)
         with (
             patch("communications.automations.threading.Thread", ImmediateThread),
             patch("communications.twilio.send_whatsapp_message") as send,
         ):
-            maybe_send_credit_follow_up_updated(
+            result = maybe_send_credit_follow_up_updated(
                 self.customer, old_date=self.today, balance=Decimal("500")
             )
         send.assert_not_called()
+        self.assertFalse(result["sent"])
+        self.assertIn("Credit follow-up", result["reason"])
+
+    def test_update_follow_up_sends_when_saved_message_active_even_if_toggle_off(self):
+        from decimal import Decimal
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_credit_follow_up_updated
+        from communications.constants import (
+            MESSAGE_STATUS_ACTIVE,
+            TRIGGER_CHANNEL_WHATSAPP,
+            TRIGGER_CREDIT_FOLLOW_UP,
+        )
+        from communications.models import TriggeredMessage
+        from shops.services import set_communications_setting
+
+        set_communications_setting(field="auto_credit_due", enabled=False)
+        set_communications_setting(field="enable_whatsapp", enabled=True)
+        TriggeredMessage.objects.filter(
+            shop__isnull=True, trigger=TRIGGER_CREDIT_FOLLOW_UP
+        ).delete()
+        TriggeredMessage.objects.create(
+            shop=None,
+            trigger=TRIGGER_CREDIT_FOLLOW_UP,
+            delay_minutes=0,
+            body="Saved follow-up for {first_name}.",
+            link="",
+            channel=TRIGGER_CHANNEL_WHATSAPP,
+            status=MESSAGE_STATUS_ACTIVE,
+        )
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
+            patch("communications.twilio.send_whatsapp_message") as send,
+        ):
+            send.return_value = {"ok": True, "messageId": "SMDRAFT2"}
+            result = maybe_send_credit_follow_up_updated(
+                self.customer, old_date=self.today, balance=Decimal("500")
+            )
+        self.assertTrue(result["sent"])
+        dispatch.assert_called_once()
 
     def test_follow_up_today_processor_sends_once_and_stamps(self):
         from unittest.mock import patch

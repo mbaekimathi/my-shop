@@ -346,9 +346,19 @@
     return true;
   };
 
+  const amountLabel = (row) => {
+    if (row.amount_label) return String(row.amount_label);
+    if (row.amount == null || row.amount === "") return "—";
+    return `KSh ${money(row.amount)}`;
+  };
+
   const renderRowHtml = (row) => {
     const actionable = Boolean(row.can_confirm || row.can_cancel);
     const number = escapeHtml(row.number || "");
+    const client = escapeHtml(row.client || "—");
+    const phone = escapeHtml(row.client_phone || "—");
+    const reference = escapeHtml((row.reference || "").trim() || "—");
+    const amount = escapeHtml(amountLabel(row));
     const status = escapeHtml(row.status || "");
     const statusLabel = escapeHtml(row.status_label || "");
     const when = escapeHtml(row.when || "");
@@ -374,10 +384,20 @@
   tabindex="0"
 >
   ${selectCell}
-  <td class="ax-cell--primary" data-label="Receipt">${number}</td>
-  <td data-label="Status">
-    <span class="shop-receipt-status ${statusClass(status)}">${statusLabel}</span>
+  <td class="ax-cell--primary ax-confirm-receipt-status" data-label="Receipt">
+    <div class="ax-confirm-stack">
+      <span class="ax-confirm-stack-main">${number}</span>
+      <span class="shop-receipt-status ${statusClass(status)}">${statusLabel}</span>
+    </div>
   </td>
+  <td class="ax-confirm-client-phone" data-label="Client">
+    <div class="ax-confirm-stack">
+      <span class="ax-confirm-stack-main">${client}</span>
+      <span class="ax-confirm-stack-sub">${phone}</span>
+    </div>
+  </td>
+  <td class="ax-confirm-amount" data-label="Amount">${amount}</td>
+  <td class="ax-confirm-reference" data-label="Reference">${reference}</td>
   <td class="ax-confirm-when" data-label="When">${when}</td>
 </tr>`;
   };
@@ -474,6 +494,11 @@
     syncSelectionBar();
   };
 
+  const isMpesaPayment = (method) => {
+    const key = String(method || "").trim().toLowerCase();
+    return key === "mpesa" || key === "both";
+  };
+
   const renderDetail = (payload) => {
     const receipt = payload.receipt || {};
     currentDetail = payload;
@@ -513,6 +538,35 @@
       })
       .join("");
 
+    const existingRef = String(receipt.mpesa_receipt_number || "").trim();
+    const requireMpesaRef = Boolean(receipt.require_mpesa_reference_on_confirm);
+    const showMpesaRefInput =
+      Boolean(receipt.can_confirm) && isMpesaPayment(receipt.payment_method);
+    const mpesaRefHint = requireMpesaRef ? "(required)" : "(optional)";
+    const mpesaRefHtml = showMpesaRefInput
+      ? `<div class="shop-receipt-mpesa-ref" data-confirm-mpesa-ref-wrap>
+  <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-mpesa-ref">
+    M-Pesa reference
+    <span class="shop-receipt-muted">${mpesaRefHint}</span>
+  </label>
+  <input
+    id="ax-confirm-mpesa-ref"
+    class="shop-receipt-mpesa-ref-input"
+    type="text"
+    name="mpesa_receipt_number"
+    value="${escapeHtml(existingRef)}"
+    placeholder="e.g. TKL4X2ABCD"
+    maxlength="40"
+    autocomplete="off"
+    spellcheck="false"
+    data-confirm-mpesa-ref
+    ${requireMpesaRef ? "required aria-required=\"true\"" : ""}
+  >
+</div>`
+      : existingRef
+        ? `<div><dt>M-Pesa ref</dt><dd>${escapeHtml(existingRef)}</dd></div>`
+        : "";
+
     if (modalBody) {
       modalBody.innerHTML = `
 <div class="shop-receipt-detail">
@@ -539,6 +593,7 @@
       <div><dt>Payment</dt><dd>${escapeHtml(
         receipt.payment_label || "—"
       )}</dd></div>
+      ${showMpesaRefInput ? "" : mpesaRefHtml}
       <div><dt>Client</dt><dd>${escapeHtml(
         receipt.client_name || "Walk-in"
       )}</dd></div>
@@ -550,6 +605,7 @@
         money(receipt.total)
       )}</dd></div>
     </dl>
+    ${showMpesaRefInput ? mpesaRefHtml : ""}
   </div>
 
   <div class="shop-receipt-card shop-receipt-card--items">
@@ -615,11 +671,29 @@
     }
   };
 
-  const postAction = async (template, successFallback) => {
+  const postAction = async (template, successFallback, { includeMpesaRef = false } = {}) => {
     if (busy || !currentDetail?.receipt?.id || !currentShopId || !template) return;
     if ((currentDetail?.receipt?.source || "pos") !== "pos") {
       window.alert("Only sales receipts can be confirmed or cancelled here.");
       return;
+    }
+    const body = new URLSearchParams();
+    if (includeMpesaRef) {
+      const receipt = currentDetail?.receipt || {};
+      const refInput = modal?.querySelector("[data-confirm-mpesa-ref]");
+      const ref = (refInput?.value || "").trim();
+      const existingRef = String(receipt.mpesa_receipt_number || "").trim();
+      const requireRef =
+        Boolean(receipt.require_mpesa_reference_on_confirm) &&
+        isMpesaPayment(receipt.payment_method);
+      if (requireRef && !ref && !existingRef) {
+        window.alert(
+          "Enter the M-Pesa reference number before confirming this receipt."
+        );
+        refInput?.focus();
+        return;
+      }
+      if (ref) body.set("mpesa_receipt_number", ref);
     }
     setActionBusy(true);
     try {
@@ -629,9 +703,11 @@
           method: "POST",
           headers: {
             Accept: "application/json",
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
             "X-CSRFToken": getCsrf(),
           },
           credentials: "same-origin",
+          body,
         }
       );
       const data = await res.json().catch(() => ({}));
@@ -896,7 +972,9 @@
 
   confirmBtn?.addEventListener("click", () => {
     if (!currentDetail?.receipt?.can_confirm) return;
-    postAction(confirmUrlTemplate, "Could not confirm receipt.");
+    postAction(confirmUrlTemplate, "Could not confirm receipt.", {
+      includeMpesaRef: true,
+    });
   });
 
   cancelBtn?.addEventListener("click", () => {

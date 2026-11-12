@@ -14,13 +14,13 @@
 <link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261026-item-images">
 <link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261111-online-take-live">
-<link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261108-confirm-float">
+<link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261112-confirm-layout">
 <link rel="stylesheet" href="{% static 'css/app/credit-note.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261103-stock-print">
+<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261112-confirm-mpesa-ref">
 <link rel="stylesheet" href="{% static 'css/app/comms.css' %}?v=20261108-act-view">
 <link rel="stylesheet" href="{% static 'css/app/components.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/web-push.css' %}?v=20261111-webpush">
+<link rel="stylesheet" href="{% static 'css/web-push.css' %}?v=20261112-webpush-fab">
 {% endblock %}
 
 {% block body %}
@@ -129,7 +129,7 @@
 {% if workspace.role == "rider" %}
 <script defer src="{% static 'js/rider-delivery-alerts.js' %}?v=20261111-rider-sound"></script>
 {% endif %}
-<script defer src="{% static 'js/web-push.js' %}?v=20261111-webpush"></script>
+<script defer src="{% static 'js/web-push.js' %}?v=20261112-webpush-fab"></script>
 <script type="module" src="{% static 'js/session-guard.js' %}?v=6"></script>
 <script>
   (() => {

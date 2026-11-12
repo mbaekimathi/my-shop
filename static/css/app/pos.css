@@ -909,6 +909,48 @@
   font-size: 0.92rem;
 }
 
+.shop-receipt-mpesa-ref {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+  min-width: 0;
+}
+
+.shop-receipt-mpesa-ref-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--text-strong);
+}
+
+.shop-receipt-mpesa-ref-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.35rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+}
+
+.shop-receipt-mpesa-ref-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.shop-receipt-mpesa-ref-input::placeholder {
+  color: var(--mist-dim);
+  letter-spacing: 0;
+}
+
 .shop-receipt-items-wrap {
   overflow: visible;
   min-width: 0;

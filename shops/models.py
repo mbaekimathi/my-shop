@@ -747,6 +747,13 @@ class CompanyPosSettings(models.Model):
         default="Goods once bought cannot be returned",
         help_text="Return-policy line printed on sale and credit receipts when enabled.",
     )
+    require_mpesa_reference_on_confirm = models.BooleanField(
+        default=False,
+        help_text=(
+            "When on, confirming an M-Pesa or Cash + M-Pesa sale requires a "
+            "reference number. When off, the reference is optional."
+        ),
+    )
     show_maintainer_on_receipt = models.BooleanField(
         default=False,
         help_text="When on, receipts print a 'System maintained by' line with the maintainer phone.",
@@ -1046,6 +1053,13 @@ class ShopPosSettings(models.Model):
         blank=True,
         default="Goods once bought cannot be returned",
         help_text="Return-policy line printed on sale and credit receipts when enabled.",
+    )
+    require_mpesa_reference_on_confirm = models.BooleanField(
+        default=False,
+        help_text=(
+            "When on, confirming an M-Pesa or Cash + M-Pesa sale requires a "
+            "reference number. When off, the reference is optional."
+        ),
     )
     show_maintainer_on_receipt = models.BooleanField(
         default=False,

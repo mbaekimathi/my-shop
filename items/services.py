@@ -3782,10 +3782,13 @@ def respond_to_stock_request(
 
 STOCK_PRINT_LAYOUTS = ("items", "prices", "stock", "balances")
 
-# Card grid: 297mm page minus 6mm top and 7mm bottom.
+# Dual-column A4 list: 297mm page minus 6mm top and 7mm bottom.
 _STOCK_PRINT_A4_PAGE_MM = 284.0
 _STOCK_PRINT_A4_HEADER_MM = 18.0
 _STOCK_PRINT_A4_FOOTNOTE_MM = 8.0
+_STOCK_PRINT_A4_CATEGORY_MM = 6.2
+_STOCK_PRINT_A4_ROW_MM = 4.7
+_STOCK_PRINT_A4_GAP_MM = 1.5
 # Legacy single-column table (item price list) still uses the older rhythm.
 _STOCK_PRINT_A4_LEGACY_PAGE_MM = 280.0
 _STOCK_PRINT_A4_LEGACY_HEADER_MM = 20.0
@@ -3793,6 +3796,50 @@ _STOCK_PRINT_A4_LEGACY_FOOTNOTE_MM = 6.0
 _STOCK_PRINT_A4_LEGACY_CATEGORY_MM = 7.2
 _STOCK_PRINT_A4_LEGACY_ROW_MM = 5.0
 _STOCK_PRINT_A4_LEGACY_GAP_MM = 1.5
+
+
+def stock_print_a4_uses_dual_columns(document: dict | None) -> bool:
+    """A4 packs two item lists side-by-side when columns still fit."""
+    if not document:
+        return False
+    layout = (document.get("layout") or "").strip().lower()
+    if layout not in STOCK_PRINT_LAYOUTS:
+        return False
+    shop_count = len(document.get("shops") or [])
+    # Multi-shop price/stock/balance grids need the full page width.
+    if layout in ("prices", "stock", "balances") and shop_count > 1:
+        return False
+    return True
+
+
+def pair_stock_print_a4_rows(document: dict | None) -> dict | None:
+    """Attach left/right lists for the dual half-page A4 sheet.
+
+    Rows are interleaved so both halves fill together: odd items on the
+    left, even items on the right. Also keeps ``pairs`` for PDF/table use.
+    """
+    if not document:
+        return document
+    if not stock_print_a4_uses_dual_columns(document):
+        document["a4_dual"] = False
+        return document
+    document["a4_dual"] = True
+    for group in document.get("categories") or []:
+        rows = list(group.get("rows") or [])
+        left_rows = rows[0::2]
+        right_rows = rows[1::2]
+        pairs = []
+        for index in range(max(len(left_rows), len(right_rows))):
+            pairs.append(
+                {
+                    "left": left_rows[index] if index < len(left_rows) else None,
+                    "right": right_rows[index] if index < len(right_rows) else None,
+                }
+            )
+        group["left_rows"] = left_rows
+        group["right_rows"] = right_rows
+        group["pairs"] = pairs
+    return document
 
 
 def estimate_stock_print_a4_pages(document: dict | None) -> int:
@@ -3818,11 +3865,16 @@ def estimate_stock_print_a4_pages(document: dict | None) -> int:
             )
         return max(1, math.ceil(height / _STOCK_PRINT_A4_LEGACY_PAGE_MM))
 
-    # One item per row: name in the first column, write-in columns beside it.
+    dual = stock_print_a4_uses_dual_columns(document)
     height = _STOCK_PRINT_A4_HEADER_MM + _STOCK_PRINT_A4_FOOTNOTE_MM
     for group in categories:
         rows = len(group.get("rows") or [])
-        height += 6.2 + rows * 4.7 + 1.5
+        line_count = math.ceil(rows / 2) if dual and rows else rows
+        height += (
+            _STOCK_PRINT_A4_CATEGORY_MM
+            + line_count * _STOCK_PRINT_A4_ROW_MM
+            + _STOCK_PRINT_A4_GAP_MM
+        )
     return max(1, math.ceil(height / _STOCK_PRINT_A4_PAGE_MM))
 
 
@@ -4089,6 +4141,7 @@ def build_stock_print_document(*, layout: str, shops) -> dict:
         "item_count": item_count,
         "balance_day": balance_day,
     }
+    document = pair_stock_print_a4_rows(document)
     document["a4_page_estimate"] = estimate_stock_print_a4_pages(document)
     return document
 
@@ -4292,9 +4345,9 @@ def build_stock_print_pdf(
 ) -> bytes:
     """Render the stock print document as a compact A4 table.
 
-    Item names stay in the first column. Items-only sheets add three
-    write-in columns (Shop qty, Count, Note). Current-stock sheets show
-    today's opening balance, units sold, and closing balance.
+    A4 uses two side-by-side item lists so the page fills left and right.
+    Items-only sheets add three write-in columns (Shop qty, Count, Note).
+    Balance sheets show opening, sold, closing, plus a blank Actual column.
     """
     from io import BytesIO
 
@@ -4304,7 +4357,6 @@ def build_stock_print_pdf(
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
     from reportlab.platypus import (
-        KeepTogether,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
@@ -4335,6 +4387,9 @@ def build_stock_print_pdf(
     head_fill = colors.HexColor("#d0d0d0")
     category_fill = colors.HexColor("#b8b8b8")
     accent = colors.HexColor("#000000")
+    row_alt = colors.HexColor("#f3f3f3")
+    system_fill = colors.HexColor("#fff7e8")
+    closing_fill = colors.HexColor("#ecfdf5")
 
     styles = getSampleStyleSheet()
     kicker = ParagraphStyle(
@@ -4397,70 +4452,58 @@ def build_stock_print_pdf(
         textColor=muted,
         leading=8,
     )
+    dual = stock_print_a4_uses_dual_columns(document)
+    name_size = 6.4 if dual else 7
+    head_size = 4.6 if dual else 5.2
+    system_size = 6.4 if dual else 7.5
     card_name = ParagraphStyle(
         "StockCardName",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=7,
+        fontSize=name_size,
         textColor=ink,
-        leading=8.2,
-    )
-    card_label = ParagraphStyle(
-        "StockCardLabel",
-        parent=styles["Normal"],
-        fontName=MANROPE_PDF_BOLD,
-        fontSize=5.5,
-        textColor=ink,
-        leading=6.6,
+        leading=name_size + 1.1,
     )
     card_head = ParagraphStyle(
         "StockCardHead",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=5.2,
+        fontSize=head_size,
         textColor=ink,
-        leading=6.2,
+        leading=head_size + 1.0,
         alignment=TA_CENTER,
     )
     card_system = ParagraphStyle(
         "StockCardSystem",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=7.5,
+        fontSize=system_size,
         textColor=ink,
-        leading=9,
+        leading=system_size + 1.2,
         alignment=TA_CENTER,
     )
     card_system_multi = ParagraphStyle(
         "StockCardSystemMulti",
         parent=card_system,
-        fontSize=5.6,
-        leading=6.8,
+        fontSize=5.2,
+        leading=6.2,
     )
     card_price = ParagraphStyle(
         "StockCardPrice",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=8,
+        fontSize=7 if dual else 8,
         textColor=ink,
-        leading=10,
+        leading=8.5 if dual else 10,
         alignment=TA_RIGHT,
-    )
-    card_price_line = ParagraphStyle(
-        "StockCardPriceLine",
-        parent=styles["Normal"],
-        fontName=MANROPE_PDF_BOLD,
-        fontSize=6.2,
-        textColor=ink,
-        leading=7.6,
     )
     cat_style = ParagraphStyle(
         "StockCat",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=7,
+        fontSize=6.5 if dual else 7,
         textColor=ink,
-        leading=8.5,
+        leading=8,
     )
 
     layout = (document.get("layout") or "items").strip().lower()
@@ -4515,63 +4558,105 @@ def build_stock_print_pdf(
     )
 
     if layout == "balances":
-        hint = "Opening is the system balance at the start of today. Sold is today's sales. Closing is the balance now. Write the counted quantity in Actual shop stock."
+        hint = (
+            "Two item lists share each A4 page. Opening, sold, and closing are "
+            "system figures; write the counted quantity in Actual."
+        )
     elif layout == "stock":
-        hint = "Item names are in the first column. Qty is the current system balance."
+        hint = (
+            "Two item lists share each A4 page. Qty is the current system balance."
+            if dual
+            else "Item names are in the first column. Qty is the current system balance."
+        )
     elif layout == "prices":
-        hint = "Item names are in the first column, with the selling price beside each name."
+        hint = (
+            "Two item lists share each A4 page, with the selling price beside each name."
+            if dual
+            else "Item names are in the first column, with the selling price beside each name."
+        )
     else:
-        hint = "Item names are in the first column. Write Shop qty, Count, and Note in the blank columns."
+        hint = (
+            "Two item lists share each A4 page. Columns are Item, Shop qty, "
+            "Count, and Note."
+        )
 
-    story: list = [header, Spacer(1, 1.1 * mm), Paragraph(_esc(hint), hint_style), Spacer(1, 1.3 * mm)]
+    story: list = [
+        header,
+        Spacer(1, 1.1 * mm),
+        Paragraph(_esc(hint), hint_style),
+        Spacer(1, 1.3 * mm),
+    ]
 
     usable = doc.width
-    row_alt = colors.HexColor("#f3f3f3")
-    system_fill = colors.HexColor("#fff7e8")
+    gutter = 2.2 * mm if dual else 0
+    panel_width = (usable - gutter) / 2 if dual else usable
 
     if layout == "balances":
-        labels = ["Item", "Opening", "Sold", "Closing", "Actual shop stock"]
-        col_widths = [
-            usable * 0.34,
-            usable * 0.15,
-            usable * 0.14,
-            usable * 0.15,
-            usable * 0.22,
+        labels = ["Item", "Open", "Sold", "Close", "Actual"] if dual else [
+            "Item",
+            "Opening",
+            "Sold",
+            "Closing",
+            "Actual shop stock",
         ]
-        system_col = 1
+        if dual:
+            panel_widths = [
+                panel_width * 0.36,
+                panel_width * 0.13,
+                panel_width * 0.12,
+                panel_width * 0.13,
+                panel_width * 0.26,
+            ]
+        else:
+            panel_widths = [
+                usable * 0.34,
+                usable * 0.15,
+                usable * 0.14,
+                usable * 0.15,
+                usable * 0.22,
+            ]
+        system_cols = (1, 3)
     elif layout == "stock":
         if len(shops) <= 1:
             labels = ["Item", "Qty"]
-            col_widths = [usable * 0.72, usable * 0.28]
+            panel_widths = [panel_width * 0.72, panel_width * 0.28]
         else:
             labels = ["Item"] + [str(shop.get("name") or "Shop") for shop in shops] + ["Total"]
             item_w = usable * (0.28 if len(labels) > 4 else 0.40)
             rest = (usable - item_w) / max(1, len(labels) - 1)
-            col_widths = [item_w] + [rest] * (len(labels) - 1)
-        system_col = None
+            panel_widths = [item_w] + [rest] * (len(labels) - 1)
+        system_cols = ()
     elif layout == "prices":
         if len(shops) <= 1:
             labels = ["Item", "Price"]
-            col_widths = [usable * 0.68, usable * 0.32]
+            panel_widths = [panel_width * 0.68, panel_width * 0.32]
         else:
             labels = ["Item"] + [str(shop.get("name") or "Shop") for shop in shops]
             item_w = usable * (0.30 if len(labels) > 4 else 0.40)
             rest = (usable - item_w) / max(1, len(labels) - 1)
-            col_widths = [item_w] + [rest] * (len(labels) - 1)
-        system_col = None
+            panel_widths = [item_w] + [rest] * (len(labels) - 1)
+        system_cols = ()
     else:
         labels = ["Item", "Shop qty", "Count", "Note"]
-        col_widths = [
-            usable * 0.46,
-            usable * 0.18,
-            usable * 0.18,
-            usable * 0.18,
+        # Keep the three write-in columns narrow so two lists fit on A4.
+        panel_widths = [
+            panel_width * 0.52,
+            panel_width * 0.16,
+            panel_width * 0.16,
+            panel_width * 0.16,
         ]
-        system_col = None
+        system_cols = ()
 
-    ncols = len(labels)
+    panel_cols = len(labels)
+    if dual:
+        col_widths = panel_widths + [gutter] + panel_widths
+    else:
+        col_widths = panel_widths
+    ncols = len(col_widths)
 
-    def _cells(row: dict) -> list:
+    def _cells(row: dict | None) -> list:
+        if row is None:
+            return [""] * panel_cols
         cells = [Paragraph(_esc(row.get("name") or ""), card_name)]
         if layout == "balances":
             balance_style = (
@@ -4593,50 +4678,123 @@ def build_stock_print_pdf(
         elif layout == "prices":
             if len(shops) <= 1:
                 prices = list(row.get("prices") or [])
-                amount = row.get("price") or (prices[0].get("price") if prices else "0.00")
+                amount = row.get("price") or (
+                    prices[0].get("price") if prices else "0.00"
+                )
                 cells.append(Paragraph(_esc(amount), card_price))
             else:
                 for entry in row.get("prices") or []:
-                    cells.append(Paragraph(_esc(entry.get("price") or "0.00"), card_price))
+                    cells.append(
+                        Paragraph(_esc(entry.get("price") or "0.00"), card_price)
+                    )
         else:
             cells.extend(["", "", ""])
-        while len(cells) < ncols:
+        while len(cells) < panel_cols:
             cells.append("")
-        return cells[:ncols]
+        return cells[:panel_cols]
+
+    def _head_row() -> list:
+        head = []
+        for index, label in enumerate(labels):
+            style = card_name if index == 0 else card_head
+            head.append(Paragraph(_esc(label).upper(), style))
+        if dual:
+            return head + [""] + head
+        return head
 
     categories = document.get("categories") or []
     if not categories:
         story.append(Paragraph("No items to print.", foot_style))
+    elif dual:
+        # One continuous dual list: header once, category as a simple row.
+        data = [_head_row()]
+        category_rows: list[int] = []
+        for group in categories:
+            rows = list(group.get("rows") or [])
+            category_rows.append(len(data))
+            data.append(
+                [
+                    Paragraph(
+                        _esc(str(group.get("name") or "Uncategorised").upper()),
+                        cat_style,
+                    )
+                ]
+                + [""] * (ncols - 1)
+            )
+            for index in range(0, len(rows), 2):
+                left = rows[index]
+                right = rows[index + 1] if index + 1 < len(rows) else None
+                data.append(_cells(left) + [""] + _cells(right))
+
+        table = Table(data, colWidths=col_widths, repeatRows=1)
+        left_last = panel_cols - 1
+        right_first = panel_cols + 1
+        right_last = ncols - 1
+        cmds = [
+            ("FONTNAME", (0, 0), (-1, -1), MANROPE_PDF),
+            ("TEXTCOLOR", (0, 0), (-1, -1), ink),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 1.2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 1.2),
+            ("TOPPADDING", (0, 0), (-1, 0), 1.0),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 1.0),
+            ("TOPPADDING", (0, 1), (-1, -1), 1.15),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 1.15),
+            ("BACKGROUND", (0, 0), (-1, 0), head_fill),
+            ("BOX", (0, 0), (-1, -1), 0.55, line),
+            ("GRID", (0, 0), (left_last, -1), 0.3, line_soft),
+            ("GRID", (right_first, 0), (right_last, -1), 0.3, line_soft),
+            ("BACKGROUND", (panel_cols, 0), (panel_cols, -1), colors.white),
+            ("ALIGN", (1, 0), (left_last, 0), "CENTER"),
+            ("ALIGN", (right_first + 1, 0), (right_last, 0), "CENTER"),
+            ("ALIGN", (1, 1), (left_last, -1), "CENTER"),
+            ("ALIGN", (right_first + 1, 1), (right_last, -1), "CENTER"),
+            ("ALIGN", (0, 1), (0, -1), "LEFT"),
+            ("ALIGN", (right_first, 1), (right_first, -1), "LEFT"),
+        ]
+        for row_index in category_rows:
+            cmds.append(("BACKGROUND", (0, row_index), (-1, row_index), category_fill))
+            cmds.append(("SPAN", (0, row_index), (-1, row_index)))
+            cmds.append(
+                ("BACKGROUND", (panel_cols, row_index), (panel_cols, row_index), category_fill)
+            )
+        if layout == "balances" and len(data) > 1:
+            for base in (0, right_first):
+                cmds.append(("BACKGROUND", (base + 1, 1), (base + 1, -1), system_fill))
+                cmds.append(("BACKGROUND", (base + 3, 1), (base + 3, -1), closing_fill))
+            for row_index in category_rows:
+                cmds.append(
+                    ("BACKGROUND", (0, row_index), (-1, row_index), category_fill)
+                )
+        table.setStyle(TableStyle(cmds))
+        story.append(table)
     else:
         for group in categories:
-            head = []
-            for index, label in enumerate(labels):
-                style = card_name if index == 0 else card_head
-                head.append(Paragraph(_esc(label).upper(), style))
+            rows = list(group.get("rows") or [])
             data = [
                 [Paragraph(_esc(str(group.get("name") or "Uncategorised").upper()), cat_style)]
                 + [""] * (ncols - 1),
-                head,
+                _head_row(),
             ]
-            for row in group.get("rows") or []:
+            for row in rows:
                 data.append(_cells(row))
 
             table = Table(data, colWidths=col_widths, repeatRows=2)
             cmds = [
                 ("FONTNAME", (0, 0), (-1, -1), MANROPE_PDF),
                 ("TEXTCOLOR", (0, 0), (-1, -1), ink),
-                ("GRID", (0, 0), (-1, -1), 0.35, line_soft),
-                ("BOX", (0, 0), (-1, -1), 0.7, line),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 2),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-                ("TOPPADDING", (0, 0), (-1, 1), 1.3),
-                ("BOTTOMPADDING", (0, 0), (-1, 1), 1.1),
+                ("TOPPADDING", (0, 0), (-1, 1), 1.1),
+                ("BOTTOMPADDING", (0, 0), (-1, 1), 1.0),
                 ("TOPPADDING", (0, 2), (-1, -1), 1.6),
                 ("BOTTOMPADDING", (0, 2), (-1, -1), 1.6),
                 ("BACKGROUND", (0, 0), (-1, 0), category_fill),
                 ("SPAN", (0, 0), (-1, 0)),
                 ("BACKGROUND", (0, 1), (-1, 1), head_fill),
+                ("BOX", (0, 0), (-1, -1), 0.7, line),
+                ("GRID", (0, 0), (-1, -1), 0.35, line_soft),
                 ("ALIGN", (1, 1), (-1, 1), "CENTER"),
                 ("ALIGN", (1, 2), (-1, -1), "CENTER"),
                 ("ALIGN", (0, 2), (0, -1), "LEFT"),
@@ -4644,11 +4802,9 @@ def build_stock_print_pdf(
             for r in range(2, len(data)):
                 if (r - 2) % 2 == 1:
                     cmds.append(("BACKGROUND", (0, r), (0, r), row_alt))
-            if system_col is not None and len(data) > 2:
+            if system_cols and len(data) > 2:
                 cmds.append(("BACKGROUND", (1, 2), (1, -1), system_fill))
-                cmds.append(
-                    ("BACKGROUND", (3, 2), (3, -1), colors.HexColor("#ecfdf5"))
-                )
+                cmds.append(("BACKGROUND", (3, 2), (3, -1), closing_fill))
             table.setStyle(TableStyle(cmds))
             story.append(table)
             story.append(Spacer(1, 1.6 * mm))

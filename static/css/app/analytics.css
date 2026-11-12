@@ -3182,9 +3182,9 @@
   }
 
   .ax--list-table .ax-table--confirm-compact {
-    min-width: 0;
+    min-width: 44rem;
     width: 100%;
-    font-size: 0.74rem;
+    font-size: 0.84rem;
   }
 
   .ax--list-table .ax-table--pl {
@@ -6223,7 +6223,7 @@
 
 /* Confirm receipts — modern responsive workspace. */
 .workspace-main:has(.ax--confirm[data-ax-section="confirm-receipts"]) {
-  width: min(52rem, calc(100% - 2rem));
+  width: min(76rem, calc(100% - 2rem));
   max-width: 100%;
   min-width: 0;
 }
@@ -6574,25 +6574,60 @@
 
 .ax--confirm .ax-confirm-list-wrap {
   min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
-.ax--confirm .ax-table--confirm-compact {
+.ax--confirm .ax-table--confirm-compact,
+.ax--list-table .ax-table--confirm-compact {
   width: 100% !important;
   max-width: none !important;
-  min-width: 0 !important;
+  min-width: 44rem !important;
   table-layout: fixed;
   border: 0;
   border-radius: 0;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.ax--confirm .ax-table--confirm-compact col.ax-col-select {
+  width: 2.75rem;
+}
+
+.ax--confirm .ax-table--confirm-compact col.ax-col-receipt {
+  width: 16%;
+}
+
+.ax--confirm .ax-table--confirm-compact col.ax-col-client {
+  width: 26%;
+}
+
+.ax--confirm .ax-table--confirm-compact col.ax-col-amount {
+  width: 14%;
+}
+
+.ax--confirm .ax-table--confirm-compact col.ax-col-reference {
+  width: 18%;
+}
+
+.ax--confirm .ax-table--confirm-compact col.ax-col-when {
+  width: 16%;
 }
 
 .ax--confirm .ax-table--confirm-compact th,
-.ax--confirm .ax-table--confirm-compact td {
-  padding: 0.72rem 0.85rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ax--confirm .ax-table--confirm-compact td,
+.ax--list-table.ax--confirm .ax-table--confirm-compact th,
+.ax--list-table.ax--confirm .ax-table--confirm-compact td {
+  display: table-cell !important;
+  box-sizing: border-box;
+  padding: 0.7rem 0.85rem;
   vertical-align: middle;
   border-right: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background-clip: padding-box;
 }
 
 .ax--confirm .ax-table--confirm-compact thead th {
@@ -6602,6 +6637,9 @@
   background: color-mix(in srgb, var(--teal) 5%, var(--surface));
   font-size: 0.66rem;
   letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  white-space: nowrap;
 }
 
 .ax--confirm .ax-table--confirm-compact th.ax-col-select,
@@ -6615,36 +6653,107 @@
   text-align: center;
 }
 
-.ax--confirm .ax-table--confirm-compact th:nth-child(2),
-.ax--confirm .ax-table--confirm-compact td:nth-child(2) {
-  width: 36%;
-}
-
-.ax--confirm .ax-table--confirm-compact th:nth-child(3),
-.ax--confirm .ax-table--confirm-compact td:nth-child(3) {
-  width: 26%;
-}
-
-.ax--confirm .ax-table--confirm-compact th:nth-child(4),
-.ax--confirm .ax-table--confirm-compact td:nth-child(4) {
-  width: 38%;
-}
-
 .ax--confirm .ax-table--confirm-compact .ax-cell--primary,
-.ax--confirm .ax-table--confirm-compact th.ax-th--item {
-  position: static;
-  left: auto;
-  box-shadow: none;
-  width: auto;
-  min-width: 0;
-  max-width: none;
+.ax--confirm .ax-table--confirm-compact th.ax-th--item,
+.ax--list-table.ax--confirm .ax-table--confirm-compact .ax-cell--primary,
+.ax--list-table.ax--confirm .ax-table--confirm-compact th.ax-th--item {
+  position: static !important;
+  left: auto !important;
+  z-index: auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  box-shadow: none !important;
   font-weight: 700;
   color: var(--teal);
+}
+
+.ax--confirm .ax-table--confirm-compact thead th.ax-th--item,
+.ax--list-table.ax--confirm .ax-table--confirm-compact thead th.ax-th--item {
+  background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+  color: var(--mist-dim);
+}
+
+.ax--confirm .ax-confirm-receipt-status,
+.ax--confirm .ax-confirm-client-phone {
+  white-space: normal;
+  overflow: visible;
+}
+
+.ax--confirm .ax-confirm-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.28rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ax--confirm .ax-confirm-stack-main {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-strong);
+}
+
+.ax--confirm .ax-confirm-receipt-status .ax-confirm-stack-main {
+  color: var(--teal);
+  font-size: 0.92rem;
+  letter-spacing: 0.01em;
+}
+
+.ax--confirm .ax-confirm-stack-sub {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--mist-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ax--confirm .ax-confirm-receipt-status .shop-receipt-status {
+  max-width: 100%;
+  width: fit-content;
+}
+
+.ax--confirm .ax-confirm-amount,
+.ax--confirm .ax-th--amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ax--confirm .ax-confirm-reference {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--text-strong);
+  white-space: nowrap;
 }
 
 .ax--confirm .ax-confirm-when {
   color: var(--mist-dim);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ax--confirm .ax-receipt-row td {
+  background: transparent;
+}
+
+.ax--confirm .ax-receipt-row:nth-child(even) td {
+  background: color-mix(in srgb, var(--line) 14%, var(--surface));
 }
 
 .ax--confirm .ax-receipt-row {
@@ -6832,6 +6941,7 @@
   .ax--confirm .ax-confirm-list-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
   }
 
   .ax--confirm .ax-confirm-empty {
@@ -6840,12 +6950,13 @@
   }
 
   .ax--confirm .ax-table--confirm-compact,
+  .ax--list-table .ax-table--confirm-compact,
   .ax--list-table.ax--ledger.ax--confirm[data-ax-section="confirm-receipts"] .ax-table--confirm-compact {
     width: 100% !important;
-    min-width: 0 !important;
+    min-width: 40rem !important;
     max-width: none !important;
     table-layout: fixed;
-    font-size: 0.7rem;
+    font-size: 0.78rem;
   }
 
   .ax--confirm .ax-table--confirm-compact thead {
@@ -6870,11 +6981,11 @@
   .ax--confirm .ax-table--confirm-compact td,
   .ax--list-table.ax--confirm .ax-table--confirm-compact th,
   .ax--list-table.ax--confirm .ax-table--confirm-compact td {
-    display: table-cell;
+    display: table-cell !important;
     width: auto;
     min-width: 0;
     max-width: none;
-    padding: 0.32rem 0.35rem;
+    padding: 0.55rem 0.55rem;
     border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -6883,50 +6994,88 @@
   }
 
   .ax--confirm .ax-table--confirm-compact td::before {
-    content: none;
-    display: none;
+    content: none !important;
+    display: none !important;
   }
 
   .ax--confirm .ax-table--confirm-compact thead th {
-    padding: 0.28rem 0.35rem;
-    font-size: 0.56rem;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.58rem;
   }
 
   .ax--confirm .ax-table--confirm-compact th.ax-col-select,
   .ax--confirm .ax-table--confirm-compact td.ax-col-select {
-    width: 2.35rem;
-    min-width: 2.35rem;
-    max-width: 2.35rem;
-    padding-inline: 0.2rem;
+    width: 2.4rem;
+    min-width: 2.4rem;
+    max-width: 2.4rem;
+    padding-inline: 0.25rem;
   }
 
-  .ax--confirm .ax-table--confirm-compact th:nth-child(2),
-  .ax--confirm .ax-table--confirm-compact td:nth-child(2) {
-    width: 34%;
+  .ax--confirm .ax-table--confirm-compact col.ax-col-select {
+    width: 2.4rem;
   }
 
-  .ax--confirm .ax-table--confirm-compact th:nth-child(3),
-  .ax--confirm .ax-table--confirm-compact td:nth-child(3) {
+  .ax--confirm .ax-table--confirm-compact col.ax-col-receipt {
+    width: 18%;
+  }
+
+  .ax--confirm .ax-table--confirm-compact col.ax-col-client {
     width: 24%;
   }
 
-  .ax--confirm .ax-table--confirm-compact th:nth-child(4),
-  .ax--confirm .ax-table--confirm-compact td:nth-child(4) {
-    width: 42%;
+  .ax--confirm .ax-table--confirm-compact col.ax-col-amount {
+    width: 14%;
+  }
+
+  .ax--confirm .ax-table--confirm-compact col.ax-col-reference {
+    width: 18%;
+  }
+
+  .ax--confirm .ax-table--confirm-compact col.ax-col-when {
+    width: 16%;
   }
 
   .ax--confirm .ax-table--confirm-compact td.ax-cell--primary,
   .ax--list-table.ax--confirm .ax-table--confirm-compact td.ax-cell--primary,
   .ax--list-table.ax--confirm .ax-table--confirm-compact th.ax-th--item {
-    position: static;
-    left: auto;
-    z-index: auto;
-    width: auto;
-    min-width: 0;
-    max-width: none;
-    box-shadow: none;
-    font-size: 0.72rem;
+    position: static !important;
+    left: auto !important;
+    z-index: auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    box-shadow: none !important;
+    font-size: 0.8rem;
     font-weight: 700;
+  }
+
+  .ax--confirm .ax-table--confirm-compact thead th.ax-th--item,
+  .ax--list-table.ax--confirm .ax-table--confirm-compact thead th.ax-th--item {
+    background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+  }
+
+  .ax--confirm .ax-confirm-receipt-status,
+  .ax--confirm .ax-confirm-client-phone {
+    white-space: normal;
+    overflow: visible;
+  }
+
+  .ax--confirm .ax-confirm-stack {
+    gap: 0.2rem;
+  }
+
+  .ax--confirm .ax-confirm-receipt-status .ax-confirm-stack-main {
+    font-size: 0.8rem;
+  }
+
+  .ax--confirm .ax-confirm-stack-sub {
+    font-size: 0.68rem;
+  }
+
+  .ax--confirm .ax-confirm-amount,
+  .ax--confirm .ax-confirm-reference,
+  .ax--confirm .ax-confirm-when {
+    font-size: 0.74rem;
   }
 
   .ax--confirm .ax-table--confirm-compact .shop-receipt-status {

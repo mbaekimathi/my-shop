@@ -29,6 +29,7 @@ from .analytics_services import (
     build_credit_clients_page,
     build_credit_report_page,
     build_item_report_page,
+    build_receipts_print_document,
     build_return_receipts_page,
     build_supplier_account,
     build_trade_out_detail,
@@ -36,6 +37,7 @@ from .analytics_services import (
     client_transactions_pdf_response,
     get_analytics_receipt_kind,
     get_analytics_section,
+    receipts_report_pdf_response,
     update_client_credit_follow_up_date,
 )
 from shops.credit_audit import client_credit_audit_url
@@ -154,23 +156,33 @@ def _render_analytics(
     )
     if page_override is not None:
         context["page"] = page_override
-    if (request.GET.get("download") or "").strip().lower() in (
+    download_mode = (request.GET.get("download") or "").strip().lower()
+    if download_mode in (
         "1",
         "pdf",
         "csv",
         "download",
+        "print",
     ):
         from .analytics_services import (
             credit_items_pdf_response,
+            receipts_report_pdf_response,
             tradings_report_pdf_response,
         )
 
         responder = {
             "credits": credit_items_pdf_response,
             "tradings": tradings_report_pdf_response,
+            "receipts": receipts_report_pdf_response,
         }.get(section["slug"])
         if responder is not None:
-            return responder(page=context.get("page") or {}, filters=context)
+            kwargs = {
+                "page": context.get("page") or {},
+                "filters": context,
+            }
+            if section["slug"] == "receipts":
+                kwargs["inline"] = download_mode == "print"
+            return responder(**kwargs)
     meta = _analytics_meta(section)
     if meta_override:
         meta = {**meta, **meta_override}
@@ -632,6 +644,87 @@ def analytics_credit_clients(request, role_segment):
                 profile.role, profile=profile, active="clients"
             ),
             **context,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_receipts_print(request, role_segment):
+    """Printable / downloadable receipts list (stock-style print popup)."""
+    from django.utils import timezone
+
+    from shops.services import get_company_profile
+
+    from .module_permissions import require_module_permission
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_receipts_print",
+            role_segment=expected,
+        )
+
+    denied = require_module_permission(request, profile, "analytics", "receipts")
+    if denied is not None:
+        return denied
+
+    paper = (request.GET.get("paper") or "a4").strip().lower()
+    if paper in ("58",):
+        paper = "50"
+    if paper not in ("a4", "80", "50"):
+        paper = "a4"
+
+    context = build_analytics_page(
+        profile=profile, request=request, section_slug="receipts"
+    )
+    page = context.get("page") or {}
+    document = build_receipts_print_document(filters=context)
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    printed_at = timezone.localtime()
+    as_download = (request.GET.get("download") or "").strip() == "1"
+    as_estimate = (request.GET.get("estimate") or "").strip() == "1"
+
+    if as_estimate:
+        return JsonResponse(
+            {
+                "ok": True,
+                "paper": "a4",
+                "receipt_count": document.get("receipt_total") or 0,
+                "a4_page_estimate": document.get("a4_page_estimate") or 1,
+                "kind_label": document.get("kind_label") or "All types",
+                "period_label": document.get("period_label") or "",
+            }
+        )
+
+    if as_download:
+        return receipts_report_pdf_response(
+            page=page, filters=context, inline=False
+        )
+
+    return render(
+        request,
+        "employees/analytics_receipts_print.html",
+        {
+            "document": document,
+            "paper": paper,
+            "error": "",
+            "printed_at": printed_at,
+            "company_name": company_name,
+            "a4_page_estimate": document.get("a4_page_estimate") or 1,
+            "auto_print": (request.GET.get("auto") or "").strip() == "1",
+            "is_download": False,
+            "report_period_label": context.get("report_period_label")
+            or document.get("period_label")
+            or "",
+            "receipt_status_label": context.get("receipt_status_label") or "",
         },
     )
 
@@ -2003,9 +2096,13 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
     if shop is None:
         return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
 
+    mpesa_receipt_number = (request.POST.get("mpesa_receipt_number") or "").strip()
     try:
         result = confirm_shop_receipt(
-            shop=shop, receipt_id=receipt_id, actor=profile
+            shop=shop,
+            receipt_id=receipt_id,
+            actor=profile,
+            mpesa_receipt_number=mpesa_receipt_number,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)

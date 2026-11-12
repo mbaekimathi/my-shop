@@ -369,20 +369,16 @@ def _queue_client_triggered_messages(
 def maybe_send_credit_follow_up_updated(
     client, *, old_date=None, balance=None, request=None
 ) -> dict:
-    """Notify the client that their account follow-up date was set/changed."""
+    """Notify the client that their account follow-up date was set/changed.
+
+    Sending is enabled by an Active "Credit follow-up" saved message (channel-ready).
+    The legacy Communications "Credit due dates" toggle only keeps the built-in
+    fallback template when no saved message is active.
+    """
     row = get_communications_settings()
     if not row.enable_automations:
         return {"sent": False, "reason": "Automations are off."}
-    if not row.auto_credit_due:
-        return {
-            "sent": False,
-            "reason": "Turn on Credit due dates under Communications automations.",
-        }
-    if not _ready_customer_channels(row):
-        return {
-            "sent": False,
-            "reason": "No ready send channel (WhatsApp, SMS, or email).",
-        }
+
     phone = (getattr(client, "phone_number", "") or "").strip()
     email = (getattr(client, "email", "") or "").strip()
     if not phone and not email:
@@ -421,6 +417,18 @@ def maybe_send_credit_follow_up_updated(
             "reason": "Credit follow-up draft could not be queued.",
         }
 
+    # No active saved message — optional built-in fallback via legacy toggle.
+    if not row.auto_credit_due:
+        return {
+            "sent": False,
+            "reason": "Activate Credit follow-up under Saved messages.",
+        }
+    if not _ready_customer_channels(row):
+        return {
+            "sent": False,
+            "reason": "No ready send channel (WhatsApp, SMS, or email).",
+        }
+
     body = build_credit_follow_up_updated_notification(
         client, old_date=old_date, balance=balance, request=request
     )
@@ -440,11 +448,15 @@ maybe_send_credit_due_date_updated = maybe_send_credit_follow_up_updated
 
 
 def send_credit_due_today_reminders(*, today=None) -> dict:
-    """Send morning-of-follow-up notices for clients with open credit accounts."""
+    """Send morning-of-follow-up notices for clients with open credit accounts.
+
+    Enabled by an Active "Credit follow-up today" saved message. The legacy
+    Communications "Credit due dates" toggle only keeps the built-in fallback.
+    """
     from shops.models import Client, ShopReceipt, ShopReceiptKind, ShopReceiptStatus
 
     row = get_communications_settings()
-    if not row.enable_automations or not row.auto_credit_due:
+    if not row.enable_automations:
         return {"ok": True, "sent": 0, "skipped": 0, "reason": "disabled"}
 
     day = today or timezone.localdate()
@@ -502,7 +514,7 @@ def send_credit_due_today_reminders(*, today=None) -> dict:
             else:
                 skipped += 1
                 continue
-        else:
+        elif row.auto_credit_due and _ready_customer_channels(row):
             body = build_credit_follow_up_today_notification(
                 client, balance=balance
             )
@@ -517,6 +529,9 @@ def send_credit_due_today_reminders(*, today=None) -> dict:
                 name=f"comms-credit-follow-up-today-{client.pk}",
             )
             queued = True
+        else:
+            skipped += 1
+            continue
 
         if queued:
             client.credit_follow_up_reminder_sent_on = day

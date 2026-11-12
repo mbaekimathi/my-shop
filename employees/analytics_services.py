@@ -151,7 +151,7 @@ ANALYTICS_SECTIONS = (
         "slug": "receipts",
         "label": "Receipts",
         "icon": "receipt",
-        "summary": "Confirm pending sales receipts across shops.",
+        "summary": "Browse all receipts by type and period across shops.",
     },
 )
 
@@ -2833,6 +2833,20 @@ def _expense_receipt_totals_by_shop(*, shop_ids, start, end) -> dict[int, tuple[
     return by_shop
 
 
+def _receipt_line_items_label(lines) -> str:
+    """Compact sold/received item list for analytics receipt tables."""
+    parts = []
+    for line in lines:
+        qty = Decimal(getattr(line, "quantity", 0) or 0)
+        if qty <= 0:
+            continue
+        name = (getattr(line, "item_name", None) or "").strip()
+        if not name and getattr(line, "item", None) is not None:
+            name = (getattr(line.item, "name", None) or "").strip()
+        parts.append(f"{name or 'Item'} ×{_qty_label(qty)}")
+    return ", ".join(parts) if parts else "—"
+
+
 def _list_stock_supplier_receipt_rows(*, shop_ids, start, end, search="", limit=None):
     """Stock-in GRN rows for analytics receipt lists."""
     qs = (
@@ -2860,6 +2874,7 @@ def _list_stock_supplier_receipt_rows(*, shop_ids, start, end, search="", limit=
             client = f"{supplier} · {supplier_phone}"
         number = format_simple_doc_number("I", movement.pk)
         shop_name = movement.shop.name if movement.shop else "—"
+        items = _receipt_line_items_label(lines)
         total = _zero()
         for line in lines:
             qty = Decimal(line.quantity or 0)
@@ -2879,6 +2894,7 @@ def _list_stock_supplier_receipt_rows(*, shop_ids, start, end, search="", limit=
                 shop_name,
                 supplier,
                 supplier_phone,
+                items,
                 cashier,
                 status_label,
                 "stock",
@@ -2892,6 +2908,9 @@ def _list_stock_supplier_receipt_rows(*, shop_ids, start, end, search="", limit=
                 "number": number,
                 "shop": shop_name,
                 "client": client,
+                "client_name": supplier,
+                "phone": supplier_phone or "—",
+                "items": items,
                 "total": _money_ksh(total),
                 "total_raw": total,
                 "status": status_label,
@@ -2932,6 +2951,7 @@ def _list_expense_supplier_receipt_rows(*, shop_ids, start, end, search="", limi
             client = f"{supplier} · {supplier_phone}"
         number = format_simple_doc_number("E", expense.pk)
         shop_name = expense.shop.name if expense.shop else "—"
+        items = (expense.name or "").strip() or "—"
         cashier = _cashier_label(getattr(expense, "created_by", None))
         haystack = " ".join(
             [
@@ -2939,7 +2959,7 @@ def _list_expense_supplier_receipt_rows(*, shop_ids, start, end, search="", limi
                 shop_name,
                 supplier,
                 supplier_phone,
-                expense.name or "",
+                items,
                 cashier,
                 "expense",
                 "supplier",
@@ -2952,6 +2972,9 @@ def _list_expense_supplier_receipt_rows(*, shop_ids, start, end, search="", limi
                 "number": number,
                 "shop": shop_name,
                 "client": client,
+                "client_name": supplier,
+                "phone": supplier_phone or "—",
+                "items": items,
                 "total": _money_ksh(expense.amount),
                 "total_raw": Decimal(expense.amount or 0),
                 "status": expense.get_payment_status_display(),
@@ -2988,6 +3011,7 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
                     "number": row["number"],
                     "shop": row["shop"],
                     "client": row["client"],
+                    "items": row.get("items") or "—",
                     "total": row["total"],
                     "status": row["status"],
                     "kind": row["kind"],
@@ -3027,6 +3051,7 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
         )
         .filter(_analytics_receipt_kind_filter(slug))
         .select_related("shop", "created_by", "created_by__user")
+        .prefetch_related("lines")
         .order_by("-created_at", "-id")
     )
     if slug not in {"cancelled", "partial-returns"}:
@@ -3037,7 +3062,8 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
             | Q(client_name__icontains=search)
             | Q(client_phone__icontains=search)
             | Q(shop__name__icontains=search)
-        )
+            | Q(lines__item_name__icontains=search)
+        ).distinct()
 
     rows = []
     for row in qs:
@@ -3050,6 +3076,7 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
                 "number": row.receipt_number,
                 "shop": row.shop.name if row.shop else "—",
                 "client": client,
+                "items": _receipt_line_items_label(row.lines.all()),
                 "total": _money_ksh(row.total),
                 "status": row.get_status_display(),
                 "kind": row.get_kind_display(),
@@ -3122,6 +3149,8 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
             "receipt_number",
             "client_name",
             "client_phone",
+            "mpesa_receipt_number",
+            "total",
             "status",
             "created_at",
             "shop__id",
@@ -3132,8 +3161,6 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
         qs = qs.filter(created_at__gte=start)
     if end is not None:
         qs = qs.filter(created_at__lt=end)
-    if status_key in status_map:
-        qs = qs.filter(status=status_map[status_key])
     if search:
         qs = qs.filter(
             Q(receipt_number__icontains=search)
@@ -3142,57 +3169,82 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
             | Q(shop__name__icontains=search)
         )
 
-    # Single-status lists skip the expensive CASE ranking.
-    if status_key in status_map:
-        qs = qs.order_by("-created_at", "-id")[:limit]
-    else:
-        qs = qs.annotate(
-            status_rank=Case(
-                When(status=ShopReceiptStatus.ACTIVE, then=Value(0)),
-                When(status=ShopReceiptStatus.PARTIAL_RETURN, then=Value(0)),
-                When(status=ShopReceiptStatus.CANCELLED, then=Value(1)),
-                When(status=ShopReceiptStatus.CONFIRMED, then=Value(2)),
-                default=Value(9),
-                output_field=IntegerField(),
+    def _serialize(receipts):
+        rows = []
+        for row in receipts:
+            is_pending = row.status == ShopReceiptStatus.ACTIVE
+            status_label = row.get_status_display()
+            shop_name = row.shop.name if row.shop else "—"
+            client = row.client_name or "Walk-in"
+            client_phone = row.client_phone or ""
+            reference = (row.mpesa_receipt_number or "").strip()
+            amount = Decimal(row.total or 0)
+            amount_label = _money_ksh(amount)
+            rows.append(
+                {
+                    "receipt_id": row.pk,
+                    "shop_id": row.shop_id,
+                    "source": "pos",
+                    "number": row.receipt_number,
+                    "shop": shop_name,
+                    "client": client,
+                    "client_phone": client_phone,
+                    "reference": reference,
+                    "amount": amount,
+                    "amount_label": amount_label,
+                    "status": row.status,
+                    "status_label": status_label,
+                    "kind": "sale",
+                    "kind_label": "Sale",
+                    "when": timezone.localtime(row.created_at).strftime(
+                        "%d %b %Y · %H:%M"
+                    ),
+                    "when_dt": row.created_at,
+                    "can_confirm": is_pending,
+                    "can_cancel": is_pending,
+                    "status_rank": CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9),
+                    "search_text": " ".join(
+                        [
+                            row.receipt_number or "",
+                            client,
+                            client_phone,
+                            reference,
+                            amount_label,
+                            shop_name,
+                            status_label,
+                            "Sale",
+                        ]
+                    ),
+                }
             )
-        ).order_by("status_rank", "-created_at", "-id")[:limit]
+        return rows
 
+    # Single-status lists are a straight newest-first slice.
+    if status_key in status_map:
+        return _serialize(
+            qs.filter(status=status_map[status_key]).order_by("-created_at", "-id")[
+                :limit
+            ]
+        )
+
+    # All statuses: fetch each band separately so a large pending set cannot
+    # crowd cancelled/confirmed out of the page (pending → cancelled → confirmed).
+    bands = (
+        (
+            [ShopReceiptStatus.ACTIVE, ShopReceiptStatus.PARTIAL_RETURN],
+            limit,
+        ),
+        ([ShopReceiptStatus.CANCELLED], limit),
+        ([ShopReceiptStatus.CONFIRMED], limit),
+    )
     rows = []
-    for row in qs:
-        is_pending = row.status == ShopReceiptStatus.ACTIVE
-        status_label = row.get_status_display()
-        shop_name = row.shop.name if row.shop else "—"
-        client = row.client_name or "Walk-in"
-        client_phone = row.client_phone or ""
-        rows.append(
-            {
-                "receipt_id": row.pk,
-                "shop_id": row.shop_id,
-                "source": "pos",
-                "number": row.receipt_number,
-                "shop": shop_name,
-                "client": client,
-                "client_phone": client_phone,
-                "status": row.status,
-                "status_label": status_label,
-                "kind": "sale",
-                "kind_label": "Sale",
-                "when": timezone.localtime(row.created_at).strftime("%d %b %Y · %H:%M"),
-                "when_dt": row.created_at,
-                "can_confirm": is_pending,
-                "can_cancel": is_pending,
-                "status_rank": CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9),
-                "search_text": " ".join(
-                    [
-                        row.receipt_number or "",
-                        client,
-                        client_phone,
-                        shop_name,
-                        status_label,
-                        "Sale",
-                    ]
-                ),
-            }
+    for statuses, band_limit in bands:
+        rows.extend(
+            _serialize(
+                qs.filter(status__in=statuses).order_by("-created_at", "-id")[
+                    :band_limit
+                ]
+            )
         )
     return rows
 
@@ -3316,6 +3368,9 @@ def _confirm_receipt_transfer_rows(
                 "shop": shop_name,
                 "client": route,
                 "client_phone": "",
+                "reference": "",
+                "amount": None,
+                "amount_label": "—",
                 "status": status,
                 "status_label": status_label,
                 "kind": kind,
@@ -3396,19 +3451,37 @@ def _confirm_receipts_collect_rows(*, shop_ids, start, end, status_key, search, 
             -int(row.get("receipt_id") or 0),
         )
     )
-    return rows[:limit]
+    # Cap each band independently so pending volume never drops cancelled/confirmed.
+    pending = [row for row in rows if int(row.get("status_rank", 9)) == 0]
+    cancelled = [row for row in rows if int(row.get("status_rank", 9)) == 1]
+    confirmed = [row for row in rows if int(row.get("status_rank", 9)) >= 2]
+    return pending[:limit] + cancelled[:limit] + confirmed[:limit]
 
 
 def serialize_confirm_receipt_rows(rows) -> list[dict]:
     """JSON-safe row payload for async list rendering."""
     payload = []
     for row in rows:
+        amount = row.get("amount")
+        amount_label = row.get("amount_label")
+        if amount_label in (None, ""):
+            amount_label = _money_ksh(amount) if amount is not None else "—"
+        reference = (row.get("reference") or "").strip()
         payload.append(
             {
                 "receipt_id": int(row.get("receipt_id") or 0),
                 "shop_id": int(row.get("shop_id") or 0),
                 "source": row.get("source") or "pos",
                 "number": row.get("number") or "",
+                "client": row.get("client") or "",
+                "client_phone": row.get("client_phone") or "",
+                "reference": reference,
+                "amount": (
+                    float(amount)
+                    if isinstance(amount, (int, float, Decimal))
+                    else None
+                ),
+                "amount_label": amount_label,
                 "status": row.get("status") or "",
                 "status_label": row.get("status_label") or "",
                 "when": row.get("when") or "",
@@ -3420,6 +3493,8 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                         str(row.get("number") or ""),
                         str(row.get("client") or ""),
                         str(row.get("client_phone") or ""),
+                        reference,
+                        str(amount_label or ""),
                         str(row.get("shop") or ""),
                         str(row.get("status_label") or ""),
                         str(row.get("kind_label") or ""),
@@ -4660,15 +4735,30 @@ def client_transactions_pdf_response(*, account: dict):
     return response
 
 
-def _pdf_download_href(query: str) -> str:
-    """Current filter query with the download flag swapped on."""
+def _pdf_export_href(query: str, *, mode: str = "pdf") -> str:
+    """Current filter query with a PDF export flag (download or print)."""
     from urllib.parse import parse_qs, urlencode
 
+    action = (mode or "pdf").strip().lower()
+    if action not in {"pdf", "print", "download", "1"}:
+        action = "pdf"
+    if action in {"download", "1"}:
+        action = "pdf"
     params = parse_qs(query or "", keep_blank_values=True)
     flat = {key: values[0] for key, values in params.items()}
     flat.pop("download", None)
-    flat["download"] = "pdf"
+    flat["download"] = action
     return f"?{urlencode(flat)}"
+
+
+def _pdf_download_href(query: str) -> str:
+    """Current filter query with the download flag swapped on."""
+    return _pdf_export_href(query, mode="pdf")
+
+
+def _pdf_print_href(query: str) -> str:
+    """Current filter query with the print (inline PDF) flag swapped on."""
+    return _pdf_export_href(query, mode="print")
 
 
 def _flatten_analytics_table(table: dict) -> tuple[list, list, list]:
@@ -5832,6 +5922,127 @@ def credit_items_pdf_response(*, page: dict, filters: dict):
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     response["Content-Length"] = str(len(pdf_bytes))
     return response
+
+
+def build_receipts_report_pdf(*, page: dict, filters: dict, company_name: str = "") -> bytes:
+    """Landscape A4 PDF of the filtered analytics receipts browse."""
+    period_label = filters.get("report_period_label") or "All time"
+    selected = set(filters.get("selected_shop_ids") or [])
+    filter_shops = list(filters.get("filter_shops") or [])
+    if selected:
+        names = [str(shop.name) for shop in filter_shops if shop.pk in selected]
+        shop_label = ", ".join(names) if names else "Selected shops"
+    else:
+        shop_label = "All shops"
+
+    kind = (page.get("receipt_kind") or filters.get("receipt_kind") or "all").strip().lower()
+    kind_label = {
+        "all": "All types",
+        "sales": "Sales",
+        "credits": "Credits",
+        "quotations": "Quotations",
+        "trade_out": "Trade out",
+        "trade_in": "Trade in",
+        "stock": "Stock suppliers",
+        "expense": "Expense suppliers",
+        "cancelled": "Cancelled",
+        "partial-returns": "Partial returns",
+    }.get(kind, "All types")
+    status_label = filters.get("receipt_status_label") or "Receipts"
+    meta_lines = [shop_label, period_label, kind_label, status_label]
+
+    sections = []
+    for table in page.get("tables") or []:
+        headers, aligns, rows = _flatten_analytics_table(table)
+        sections.append(
+            {
+                "kicker": "RECEIPTS",
+                "title": table.get("title") or "Table",
+                "headers": headers,
+                "aligns": aligns,
+                "rows": rows,
+                "empty": table.get("empty") or "No receipts.",
+                "footnote": table.get("footnote") or "",
+            }
+        )
+
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    return _analytics_report_pdf(
+        title="Receipts report",
+        subtitle=(
+            page.get("lead")
+            or "Filtered receipts across selected shops and period."
+        ),
+        brand=brand,
+        meta_lines=meta_lines,
+        kpi_cards=[
+            (
+                metric.get("label") or "",
+                metric.get("value") or "—",
+                metric.get("hint") or "",
+            )
+            for metric in page.get("metrics") or []
+        ],
+        sections=sections,
+        footer_note=(
+            f"{brand} · Receipts report · {shop_label} · {period_label} · {kind_label}"
+        ),
+    )
+
+
+def receipts_report_pdf_response(*, page: dict, filters: dict, inline: bool = False):
+    """PDF download/print for the filtered analytics receipts page."""
+    from django.http import HttpResponse
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    pdf_bytes = build_receipts_report_pdf(
+        page=page, filters=filters, company_name=company_name
+    )
+    stamp = timezone.localtime().strftime("%Y%m%d-%H%M")
+    kind = (page.get("receipt_kind") or "all").strip().lower() or "all"
+    filename = f"receipts-{kind}-{stamp}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    disposition = "inline" if inline else "attachment"
+    response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
+
+
+def build_receipts_print_document(*, filters) -> dict:
+    """Printable receipts list for the stock-style print popup."""
+    browse = _collect_analytics_receipts_browse(
+        filters=filters, include_receipt_actions=False
+    )
+    rows = [
+        {
+            "number": row.get("number") or "—",
+            "kind": row.get("kind") or "—",
+            "client_name": row.get("client_name") or "—",
+            "phone": row.get("phone") or "—",
+            "items": row.get("items") or "—",
+            "total": row.get("total") or "—",
+            "when": row.get("when") or "—",
+            "reference": "",
+        }
+        for row in browse["receipt_rows"]
+    ]
+    # Rough A4 estimate: header + ~28 receipt rows per page.
+    receipt_total = len(rows)
+    a4_page_estimate = max(1, (receipt_total + 27) // 28)
+    return {
+        "title": "Receipts",
+        "kind_label": browse["kind_label"],
+        "period_label": browse["period_label"],
+        "receipt_kind": browse["receipt_kind"] or "all",
+        "receipt_total": receipt_total,
+        "grand_amount": _money_ksh(browse["grand_amount"]),
+        "shop_count": len(browse["shops"]),
+        "a4_page_estimate": a4_page_estimate,
+        "rows": rows,
+    }
 
 
 def supplier_account_url(role, kind: str, supplier_id, *, query: str = "") -> str:
@@ -14094,123 +14305,50 @@ def _build_expense_category_suppliers(
     }
 
 
-def _build_receipts(filters):
-    """Receipts hub — Confirm and Return links only."""
-    from django.urls import reverse
-
-    from employees.access import role_url_segment
-
-    role = filters["role"]
-    query = filters.get("query") or ""
-    segment = role_url_segment(role)
-
-    confirm_href = reverse(
-        "employees:analytics_confirm_receipts",
-        kwargs={"role_segment": segment},
-    )
-    return_href = reverse(
-        "employees:analytics_return_receipts",
-        kwargs={"role_segment": segment},
-    )
-    if query:
-        confirm_href = f"{confirm_href}?{query}"
-        return_href = f"{return_href}?{query}"
-
-    return {
-        "headline": "Receipts",
-        "lead": "Choose a receipts tool below.",
-        "hide_date_filters": True,
-        "alerts": [],
-        "metrics": [],
-        "trends": [],
-        "charts": [],
-        "insights": [],
-        "tables": [],
-        "sections": [
-            _overview_section(
-                slug="confirm-receipts",
-                title="Confirm receipts",
-                icon="badge-check",
-                href=confirm_href,
-                value="Open",
-                hint="Confirm or cancel pending sales receipts",
-                body=(
-                    "Sales only — pending first, then cancelled, then confirmed."
-                ),
-            ),
-            _overview_section(
-                slug="return-receipts",
-                title="Return receipt",
-                icon="undo-2",
-                href=return_href,
-                value="Open",
-                hint="Return items or cancel sales and credits",
-                body="Open a receipt to return stock and update the sale.",
-            ),
-        ],
-    }
-
-def build_return_receipts_page(*, profile, request) -> dict:
-    """Return / cancel receipts ledger across shops."""
-    from django.urls import reverse
-
-    from employees.access import role_url_segment
-
-    filters = _filters_context(profile, request)
-    filters["role"] = profile.role
-    filters["query"] = request.GET.urlencode()
-    filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
-    page = _build_return_receipts(filters)
-    page["back_href"] = reverse(
-        "employees:analytics_section",
-        kwargs={
-            "role_segment": role_url_segment(profile.role),
-            "section": "receipts",
-        },
-    )
-    page["back_label"] = "Back to receipts"
-    return {
-        **filters,
-        "section_slug": "return-receipts",
-        "page": page,
-    }
-
-
-def _build_return_receipts(filters):
-    shop_ids = filters["active_shop_ids"]
-    shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
-    start, end = filters["start"], filters["end"]
-    role = filters["role"]
-    receipt_kind = (filters.get("receipt_kind") or "").strip().lower()
+def _normalize_analytics_receipt_kind(raw: str) -> str:
+    receipt_kind = (raw or "").strip().lower()
     if receipt_kind in ("", "all", "any"):
-        receipt_kind = ""
-    elif receipt_kind in ("sale", "sales"):
-        receipt_kind = "sales"
-    elif receipt_kind in ("credit", "credits"):
-        receipt_kind = "credits"
-    elif receipt_kind in ("quotation", "quotations", "quote"):
-        receipt_kind = "quotations"
-    elif receipt_kind in ("trade_out", "trade-out"):
-        receipt_kind = "trade_out"
-    elif receipt_kind in ("trade_in", "trade-in"):
-        receipt_kind = "trade_in"
-    elif receipt_kind in ("stock", "stock-suppliers", "stock_suppliers"):
-        receipt_kind = "stock"
-    elif receipt_kind in (
+        return ""
+    if receipt_kind in ("sale", "sales"):
+        return "sales"
+    if receipt_kind in ("credit", "credits"):
+        return "credits"
+    if receipt_kind in ("quotation", "quotations", "quote"):
+        return "quotations"
+    if receipt_kind in ("trade_out", "trade-out"):
+        return "trade_out"
+    if receipt_kind in ("trade_in", "trade-in"):
+        return "trade_in"
+    if receipt_kind in ("stock", "stock-suppliers", "stock_suppliers"):
+        return "stock"
+    if receipt_kind in (
         "expense",
         "expenses",
         "expense-suppliers",
         "expense_suppliers",
     ):
-        receipt_kind = "expense"
-    elif receipt_kind in ("cancelled", "cancel"):
-        receipt_kind = "cancelled"
-    elif receipt_kind in ("partial-returns", "partial_returns", "partial"):
-        receipt_kind = "partial-returns"
+        return "expense"
+    if receipt_kind in ("cancelled", "cancel"):
+        return "cancelled"
+    if receipt_kind in ("partial-returns", "partial_returns", "partial"):
+        return "partial-returns"
+    return receipt_kind
+
+
+def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool = False):
+    """Shared receipt browse payload for analytics receipts + return pages."""
+    shop_ids = filters["active_shop_ids"]
+    shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
+    start, end = filters["start"], filters["end"]
+    receipt_kind = _normalize_analytics_receipt_kind(filters.get("receipt_kind"))
+    receipt_status = filters.get("receipt_status")
+    apply_status = receipt_kind not in {"cancelled", "partial-returns"}
 
     all_receipts = ShopReceipt.objects.filter(
         shop_id__in=shop_ids, created_at__gte=start, created_at__lt=end
     )
+    if apply_status:
+        all_receipts = _apply_analytics_receipt_status(all_receipts, receipt_status)
     stock_by_shop = _stock_in_receipt_totals_by_shop(
         shop_ids=shop_ids, start=start, end=end
     )
@@ -14306,6 +14444,50 @@ def _build_return_receipts(filters):
     include_stock = receipt_kind in ("", "stock")
     include_expense = receipt_kind in ("", "expense")
 
+    def _row_payload(
+        *,
+        number,
+        kind_label,
+        client_name,
+        phone,
+        items,
+        total,
+        when,
+        when_dt,
+        sort_id,
+        receipt_id=None,
+        shop_id=None,
+    ):
+        items_label = (items or "").strip() or "—"
+        cells = [
+            number,
+            kind_label,
+            client_name,
+            phone,
+            items_label,
+            total,
+            when,
+            "",
+        ]
+        payload = {
+            "number": number,
+            "kind": kind_label,
+            "client_name": client_name,
+            "phone": phone,
+            "items": items_label,
+            "total": total,
+            "when": when,
+            "reference": "",
+            "when_dt": when_dt,
+            "sort_id": sort_id,
+            "cells": cells,
+            "search_text": " ".join(str(cell) for cell in cells if cell),
+        }
+        if include_receipt_actions and receipt_id is not None:
+            payload["receipt_id"] = receipt_id
+            payload["shop_id"] = shop_id
+        return payload
+
     if include_pos:
         pos_qs = (
             ShopReceipt.objects.filter(
@@ -14314,6 +14496,7 @@ def _build_return_receipts(filters):
                 created_at__lt=end,
             )
             .select_related("shop", "created_by", "created_by__user")
+            .prefetch_related("lines")
             .order_by("-created_at", "-id")
         )
         if receipt_kind in (
@@ -14326,75 +14509,66 @@ def _build_return_receipts(filters):
             "partial-returns",
         ):
             pos_qs = pos_qs.filter(_analytics_receipt_kind_filter(receipt_kind))
+        if apply_status:
+            pos_qs = _apply_analytics_receipt_status(pos_qs, receipt_status)
         for row in pos_qs:
-            cashier = _cashier_label(row.created_by)
-            client = row.client_name or "Walk-in"
-            if row.client_phone:
-                client = f"{client} · {row.client_phone}"
+            client_name = (row.client_name or "").strip() or "Walk-in"
+            phone = (row.client_phone or "").strip() or "—"
             merged.append(
-                {
-                    "receipt_id": row.pk,
-                    "shop_id": row.shop_id,
-                    "when_dt": row.created_at,
-                    "sort_id": row.pk,
-                    "cells": [
-                        row.receipt_number,
-                        row.get_kind_display(),
-                        row.shop.name if row.shop else "—",
-                        client,
-                        _money_ksh(row.total),
-                        row.get_status_display(),
-                        timezone.localtime(row.created_at).strftime("%d %b %Y · %H:%M"),
-                        cashier or "—",
-                    ],
-                }
+                _row_payload(
+                    number=row.receipt_number,
+                    kind_label=row.get_kind_display(),
+                    client_name=client_name,
+                    phone=phone,
+                    items=_receipt_line_items_label(row.lines.all()),
+                    total=_money_ksh(row.total),
+                    when=timezone.localtime(row.created_at).strftime(
+                        "%d %b %Y · %H:%M"
+                    ),
+                    when_dt=row.created_at,
+                    sort_id=row.pk,
+                    receipt_id=row.pk,
+                    shop_id=row.shop_id,
+                )
             )
     if include_stock:
         for row in _list_stock_supplier_receipt_rows(
             shop_ids=shop_ids, start=start, end=end
         ):
             merged.append(
-                {
-                    "when_dt": row["when_dt"],
-                    "sort_id": row["sort_id"],
-                    "cells": [
-                        row["number"],
-                        row["kind"],
-                        row["shop"],
-                        row["client"],
-                        row["total"],
-                        row["status"],
-                        row["when"],
-                        row["cashier"],
-                    ],
-                }
+                _row_payload(
+                    number=row["number"],
+                    kind_label=row["kind"],
+                    client_name=row.get("client_name") or row["client"] or "—",
+                    phone=row.get("phone") or "—",
+                    items=row.get("items") or "—",
+                    total=row["total"],
+                    when=row["when"],
+                    when_dt=row["when_dt"],
+                    sort_id=row["sort_id"],
+                )
             )
     if include_expense:
         for row in _list_expense_supplier_receipt_rows(
             shop_ids=shop_ids, start=start, end=end
         ):
             merged.append(
-                {
-                    "when_dt": row["when_dt"],
-                    "sort_id": row["sort_id"],
-                    "cells": [
-                        row["number"],
-                        row["kind"],
-                        row["shop"],
-                        row["client"],
-                        row["total"],
-                        row["status"],
-                        row["when"],
-                        row["cashier"],
-                    ],
-                }
+                _row_payload(
+                    number=row["number"],
+                    kind_label=row["kind"],
+                    client_name=row.get("client_name") or row["client"] or "—",
+                    phone=row.get("phone") or "—",
+                    items=row.get("items") or "—",
+                    total=row["total"],
+                    when=row["when"],
+                    when_dt=row["when_dt"],
+                    sort_id=row["sort_id"],
+                )
             )
     merged.sort(
         key=lambda item: (item["when_dt"], item["sort_id"]),
         reverse=True,
     )
-    receipt_rows = merged
-    receipt_total = len(receipt_rows)
 
     kind_label = (
         dict(kind_specs).get(receipt_kind, "All types")
@@ -14402,17 +14576,194 @@ def _build_return_receipts(filters):
         else "All types"
     )
     period_label = filters.get("report_period_label") or "selected period"
+    return {
+        "receipt_kind": receipt_kind,
+        "kind_label": kind_label,
+        "period_label": period_label,
+        "shops": shops,
+        "kind_specs": kind_specs,
+        "active_kinds": active_kinds,
+        "grand_docs": grand_docs,
+        "grand_amount": grand_amount,
+        "columns": columns,
+        "table_rows": table_rows,
+        "receipt_rows": merged,
+        "receipt_total": len(merged),
+    }
+
+
+def _build_receipts(filters):
+    """All-receipts browse — filter by type and period; Confirm / Return tools."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    role = filters["role"]
+    query = filters.get("query") or ""
+    segment = role_url_segment(role)
+    browse = _collect_analytics_receipts_browse(
+        filters=filters, include_receipt_actions=False
+    )
+    receipt_kind = browse["receipt_kind"]
+    kind_label = browse["kind_label"]
+    period_label = browse["period_label"]
     list_footnote = (
-        f"{receipt_total} receipt{'' if receipt_total == 1 else 's'}"
+        f"{browse['receipt_total']} receipt"
+        f"{'' if browse['receipt_total'] == 1 else 's'}"
+        + (f" · {kind_label}" if receipt_kind else "")
+        + f" for {period_label}."
+    )
+
+    confirm_href = reverse(
+        "employees:analytics_confirm_receipts",
+        kwargs={"role_segment": segment},
+    )
+    return_href = reverse(
+        "employees:analytics_return_receipts",
+        kwargs={"role_segment": segment},
+    )
+    if query:
+        confirm_href = f"{confirm_href}?{query}"
+        return_href = f"{return_href}?{query}"
+
+    return {
+        "headline": "Receipts",
+        "lead": "Filter by receipt type and period across selected shops.",
+        "list_table_layout": True,
+        "show_search": True,
+        "search_placeholder": "Search receipts…",
+        "search_empty": "No receipts match that search.",
+        "receipts_print_modal": True,
+        "receipts_print_url": reverse(
+            "employees:analytics_receipts_print",
+            kwargs={"role_segment": segment},
+        ),
+        "receipt_kind": receipt_kind or "all",
+        "alerts": [],
+        "metrics": [
+            _metric(
+                "Types",
+                str(len(browse["kind_specs"])),
+                hint=f"{browse['active_kinds']} with activity",
+            ),
+            _metric(
+                "Documents",
+                f"{browse['grand_docs']:,}",
+                hint=period_label,
+            ),
+            _metric(
+                "Shops",
+                str(len(browse["shops"])),
+                hint="In this view",
+            ),
+            _metric(
+                "Total value",
+                _money_ksh(browse["grand_amount"]),
+                hint="All document types" if not receipt_kind else kind_label,
+                tone="good" if browse["grand_amount"] > 0 else "neutral",
+            ),
+        ],
+        "trends": [],
+        "charts": [],
+        "insights": [],
+        "sections": [
+            _overview_section(
+                slug="confirm-receipts",
+                title="Confirm receipts",
+                icon="badge-check",
+                href=confirm_href,
+                value="Open",
+                hint="Confirm or cancel pending sales receipts",
+                body=(
+                    "Sales only — pending first, then cancelled, then confirmed."
+                ),
+            ),
+            _overview_section(
+                slug="return-receipts",
+                title="Return receipt",
+                icon="undo-2",
+                href=return_href,
+                value="Open",
+                hint="Return items or cancel sales and credits",
+                body="Open a receipt to return stock and update the sale.",
+            ),
+        ],
+        "tables": [
+            _table(
+                f"All receipts · {period_label}",
+                [
+                    "Receipt",
+                    "Type",
+                    "Client",
+                    "Phone",
+                    "Items",
+                    "Total",
+                    "Date & time",
+                    "Reference",
+                ],
+                browse["receipt_rows"],
+                empty="No receipts for selected shops and period.",
+                footnote=list_footnote,
+                shop_grid=False,
+                searchable=True,
+            ),
+            _table(
+                "Documents by shop",
+                browse["columns"],
+                browse["table_rows"],
+                empty="No receipts for selected shops and period.",
+                footnote="Docs = receipt count · Amt = document total.",
+            ),
+        ],
+    }
+
+
+def build_return_receipts_page(*, profile, request) -> dict:
+    """Return / cancel receipts ledger across shops."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    filters = _filters_context(profile, request)
+    filters["role"] = profile.role
+    filters["query"] = request.GET.urlencode()
+    filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
+    page = _build_return_receipts(filters)
+    page["back_href"] = reverse(
+        "employees:analytics_section",
+        kwargs={
+            "role_segment": role_url_segment(profile.role),
+            "section": "receipts",
+        },
+    )
+    page["back_label"] = "Back to receipts"
+    return {
+        **filters,
+        "section_slug": "return-receipts",
+        "page": page,
+    }
+
+
+def _build_return_receipts(filters):
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    browse = _collect_analytics_receipts_browse(
+        filters=filters, include_receipt_actions=True
+    )
+    receipt_kind = browse["receipt_kind"]
+    kind_label = browse["kind_label"]
+    period_label = browse["period_label"]
+    list_footnote = (
+        f"{browse['receipt_total']} receipt"
+        f"{'' if browse['receipt_total'] == 1 else 's'}"
         + (f" · {kind_label}" if receipt_kind else "")
         + f" for {period_label}."
         + " Sales/credit rows open return; supplier receipts are listed for review."
     )
 
-    from django.urls import reverse
-
-    from employees.access import role_url_segment
-
+    role = filters["role"]
     segment = role_url_segment(role)
     detail_template = reverse(
         "employees:analytics_receipt_detail",
@@ -14454,24 +14805,24 @@ def _build_return_receipts(filters):
         "metrics": [
             _metric(
                 "Types",
-                str(len(kind_specs)),
-                hint=f"{active_kinds} with activity",
+                str(len(browse["kind_specs"])),
+                hint=f"{browse['active_kinds']} with activity",
             ),
             _metric(
                 "Documents",
-                f"{grand_docs:,}",
+                f"{browse['grand_docs']:,}",
                 hint=period_label,
             ),
             _metric(
                 "Shops",
-                str(len(shops)),
+                str(len(browse["shops"])),
                 hint="In this view",
             ),
             _metric(
                 "Total value",
-                _money_ksh(grand_amount),
+                _money_ksh(browse["grand_amount"]),
                 hint="All document types" if not receipt_kind else kind_label,
-                tone="good" if grand_amount > 0 else "neutral",
+                tone="good" if browse["grand_amount"] > 0 else "neutral",
             ),
         ],
         "insights": [],
@@ -14481,14 +14832,14 @@ def _build_return_receipts(filters):
                 [
                     "Receipt",
                     "Type",
-                    "Shop",
-                    "Client / supplier",
+                    "Client",
+                    "Phone",
+                    "Items",
                     "Total",
-                    "Status",
-                    "When",
-                    "Cashier",
+                    "Date & time",
+                    "Reference",
                 ],
-                receipt_rows,
+                browse["receipt_rows"],
                 empty="No receipts for selected shops and period.",
                 footnote=list_footnote,
                 shop_grid=False,
@@ -14496,8 +14847,8 @@ def _build_return_receipts(filters):
             ),
             _table(
                 "Documents by shop",
-                columns,
-                table_rows,
+                browse["columns"],
+                browse["table_rows"],
                 empty="No receipts for selected shops and period.",
                 footnote="Docs = receipt count · Amt = document total.",
             ),

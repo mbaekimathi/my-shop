@@ -272,6 +272,41 @@
     body.paper-a4 table.sheet-grid.cols-many .col-item { width: 30%; }
     body.paper-a4 table.sheet-grid.cols-many .num { width: auto; }
 
+    /* Dual half-page A4: one continuous list, two item columns */
+    body.paper-a4.a4-dual table.sheet-grid.a4-dual-list {
+      width: 100%;
+      margin: 0 0 0.35rem;
+    }
+    body.paper-a4.a4-dual table.sheet-grid th { font-size: 5.5pt; }
+    body.paper-a4.a4-dual table.sheet-grid td { font-size: 7pt; padding: 0.3mm 0.55mm; }
+    body.paper-a4.a4-dual table.sheet-grid td.blank { height: 4mm; min-width: 7mm; }
+    body.paper-a4.a4-dual table.sheet-grid tbody tr:nth-child(even) td {
+      background: #fff;
+    }
+    body.paper-a4.a4-dual table.sheet-grid .col-gutter {
+      width: 2%;
+      padding: 0 !important;
+      border-top: 0 !important;
+      border-bottom: 0 !important;
+      background: #fff !important;
+    }
+    body.paper-a4.a4-dual .category-row th {
+      background: #e4e4e4 !important;
+      font-size: 6pt;
+      padding: 0.25mm 0.55mm;
+    }
+    body.paper-a4.a4-dual.layout-items table.sheet-grid .col-item { width: 26%; }
+    body.paper-a4.a4-dual.layout-items table.sheet-grid .col-write { width: 7.5%; }
+    body.paper-a4.a4-dual.layout-balances table.sheet-grid .col-item { width: 18%; }
+    body.paper-a4.a4-dual.layout-balances table.sheet-grid .col-system,
+    body.paper-a4.a4-dual.layout-balances table.sheet-grid .col-closing,
+    body.paper-a4.a4-dual.layout-balances table.sheet-grid .num { width: 6.5%; }
+    body.paper-a4.a4-dual.layout-balances table.sheet-grid .col-write { width: 12%; }
+    body.paper-a4.a4-dual.layout-stock table.sheet-grid .col-item,
+    body.paper-a4.a4-dual.layout-prices table.sheet-grid .col-item { width: 35%; }
+    body.paper-a4.a4-dual.layout-stock table.sheet-grid .num,
+    body.paper-a4.a4-dual.layout-prices table.sheet-grid .num { width: 14%; }
+
     .sheet-hint {
       margin: 0.15rem 0 0.4rem;
       font-size: 7.5pt;
@@ -468,7 +503,7 @@
     }
   </style>
 </head>
-<body class="paper-{{ paper|default:'a4' }}{% if document %} layout-{{ document.layout }}{% if document.shops|length > 1 %} shops-many{% endif %}{% endif %}">
+<body class="paper-{{ paper|default:'a4' }}{% if document %} layout-{{ document.layout }}{% if document.shops|length > 1 %} shops-many{% endif %}{% if document.a4_dual %} a4-dual{% endif %}{% endif %}">
   <div class="print-toolbar">
     <button type="button" class="primary" onclick="window.print()">Print / Save PDF</button>
     {% if not is_download %}
@@ -509,7 +544,17 @@
 
   {% if paper == "a4" or paper == "" %}
   <p class="sheet-hint">
-    {% if document.layout == "balances" %}
+    {% if document.a4_dual %}
+      {% if document.layout == "balances" %}
+        Two item lists share each A4 page. Opening, sold, and closing are system figures; write the counted quantity in Actual.
+      {% elif document.layout == "stock" %}
+        Two item lists share each A4 page. Qty is the current system balance.
+      {% elif document.layout == "prices" %}
+        Two item lists share each A4 page, with the selling price beside each name.
+      {% else %}
+        Two item lists share each A4 page. Columns are Item, Shop qty, Count, and Note.
+      {% endif %}
+    {% elif document.layout == "balances" %}
       Opening is the system balance at the start of today. Sold is today's sales. Closing is the balance now. Write the counted quantity in Actual shop stock.
     {% elif document.layout == "stock" %}
       Item names are in the first column. Qty is the current system balance.
@@ -521,6 +566,97 @@
   </p>
   {% endif %}
 
+  {% if paper != "80" and paper != "50" and document.a4_dual %}
+  <table class="sheet-grid a4-dual-list">
+    <thead>
+      <tr>
+        {% if document.layout == "balances" %}
+          <th class="col-item">Item</th>
+          <th class="col-system">Open</th>
+          <th class="num">Sold</th>
+          <th class="col-closing">Close</th>
+          <th class="col-write">Actual</th>
+          <th class="col-gutter" aria-hidden="true"></th>
+          <th class="col-item">Item</th>
+          <th class="col-system">Open</th>
+          <th class="num">Sold</th>
+          <th class="col-closing">Close</th>
+          <th class="col-write">Actual</th>
+        {% elif document.layout == "stock" %}
+          <th class="col-item">Item</th>
+          <th class="num">Qty</th>
+          <th class="col-gutter" aria-hidden="true"></th>
+          <th class="col-item">Item</th>
+          <th class="num">Qty</th>
+        {% elif document.layout == "prices" %}
+          <th class="col-item">Item</th>
+          <th class="num">Price</th>
+          <th class="col-gutter" aria-hidden="true"></th>
+          <th class="col-item">Item</th>
+          <th class="num">Price</th>
+        {% else %}
+          <th class="col-item">Item</th>
+          <th class="col-write">Shop qty</th>
+          <th class="col-write">Count</th>
+          <th class="col-write">Note</th>
+          <th class="col-gutter" aria-hidden="true"></th>
+          <th class="col-item">Item</th>
+          <th class="col-write">Shop qty</th>
+          <th class="col-write">Count</th>
+          <th class="col-write">Note</th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for group in document.categories %}
+      <tr class="category-row">
+        <th colspan="{% if document.layout == 'balances' %}11{% elif document.layout == 'stock' or document.layout == 'prices' %}5{% else %}9{% endif %}">{{ group.name }}</th>
+      </tr>
+      {% for pair in group.pairs %}
+      <tr>
+        {% if document.layout == "balances" %}
+          <td class="col-item">{% if pair.left %}{{ pair.left.name }}{% endif %}</td>
+          <td class="num col-system">{% if pair.left %}{{ pair.left.opening }}{% endif %}</td>
+          <td class="num">{% if pair.left %}{{ pair.left.sold }}{% endif %}</td>
+          <td class="num col-closing">{% if pair.left %}{{ pair.left.closing }}{% endif %}</td>
+          <td class="blank col-write">&nbsp;</td>
+          <td class="col-gutter" aria-hidden="true"></td>
+          <td class="col-item">{% if pair.right %}{{ pair.right.name }}{% endif %}</td>
+          <td class="num col-system">{% if pair.right %}{{ pair.right.opening }}{% endif %}</td>
+          <td class="num">{% if pair.right %}{{ pair.right.sold }}{% endif %}</td>
+          <td class="num col-closing">{% if pair.right %}{{ pair.right.closing }}{% endif %}</td>
+          <td class="blank col-write">{% if pair.right %}&nbsp;{% endif %}</td>
+        {% elif document.layout == "stock" %}
+          <td class="col-item">{% if pair.left %}{{ pair.left.name }}{% endif %}</td>
+          <td class="num">{% if pair.left %}{{ pair.left.qty }}{% endif %}</td>
+          <td class="col-gutter" aria-hidden="true"></td>
+          <td class="col-item">{% if pair.right %}{{ pair.right.name }}{% endif %}</td>
+          <td class="num">{% if pair.right %}{{ pair.right.qty }}{% endif %}</td>
+        {% elif document.layout == "prices" %}
+          <td class="col-item">{% if pair.left %}{{ pair.left.name }}{% endif %}</td>
+          <td class="num">{% if pair.left %}{{ pair.left.price }}{% endif %}</td>
+          <td class="col-gutter" aria-hidden="true"></td>
+          <td class="col-item">{% if pair.right %}{{ pair.right.name }}{% endif %}</td>
+          <td class="num">{% if pair.right %}{{ pair.right.price }}{% endif %}</td>
+        {% else %}
+          <td class="col-item">{% if pair.left %}{{ pair.left.name }}{% endif %}</td>
+          <td class="blank col-write">&nbsp;</td>
+          <td class="blank col-write">&nbsp;</td>
+          <td class="blank col-write">&nbsp;</td>
+          <td class="col-gutter" aria-hidden="true"></td>
+          <td class="col-item">{% if pair.right %}{{ pair.right.name }}{% endif %}</td>
+          <td class="blank col-write">{% if pair.right %}&nbsp;{% endif %}</td>
+          <td class="blank col-write">{% if pair.right %}&nbsp;{% endif %}</td>
+          <td class="blank col-write">{% if pair.right %}&nbsp;{% endif %}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+      {% empty %}
+      <tr><td colspan="9">No items to print.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
   {% for group in document.categories %}
   <table class="sheet-grid{% if paper == 'a4' and document.layout == 'prices' and document.shops|length > 3 %} cols-many{% endif %}">
     <thead>
@@ -602,6 +738,7 @@
   {% empty %}
   <p class="footnote"><span>No items to print.</span></p>
   {% endfor %}
+  {% endif %}
 
   <p class="footnote">
     <span>Generated from Stock Management · {{ document.title }}</span>

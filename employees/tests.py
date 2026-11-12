@@ -24,7 +24,15 @@ from employees.workspace import (
     sidebar_for_suppliers,
 )
 from items.services import actionable_shops_for_profile
-from shops.models import Client, Shop, ShopReceipt, ShopReceiptKind, ShopReceiptStatus
+from shops.models import (
+    Client,
+    Shop,
+    ShopPaymentMethod,
+    ShopReceipt,
+    ShopReceiptKind,
+    ShopReceiptLine,
+    ShopReceiptStatus,
+)
 
 
 class SupplierSidebarTests(TestCase):
@@ -175,6 +183,8 @@ class AnalyticsReceiptStatusSettingsTests(TestCase):
 
 class ConfirmSalesReceiptTests(TestCase):
     def setUp(self):
+        from shops.services import set_company_pos_setting
+
         self.user = User.objects.create_user(
             username="870011",
             password="confirm-pass",
@@ -199,6 +209,10 @@ class ConfirmSalesReceiptTests(TestCase):
             created_by=self.staff,
         )
         self.staff.assigned_shops.add(self.shop)
+        # Company POS settings are a singleton — reset between tests.
+        set_company_pos_setting(
+            field="require_mpesa_reference_on_confirm", enabled=False
+        )
 
     def _receipt(self, *, kind, number):
         return ShopReceipt.objects.create(
@@ -239,6 +253,105 @@ class ConfirmSalesReceiptTests(TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
 
+    def test_confirm_saves_optional_mpesa_reference(self):
+        from shops.services import confirm_shop_receipt
+
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-MPESA")
+        sale.payment_method = ShopPaymentMethod.MPESA
+        sale.save(update_fields=["payment_method"])
+
+        blank = confirm_shop_receipt(
+            shop=self.shop, receipt_id=sale.pk, actor=self.staff
+        )
+        sale.refresh_from_db()
+        self.assertTrue(blank["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+        self.assertEqual(sale.mpesa_receipt_number, "")
+
+        sale.status = ShopReceiptStatus.ACTIVE
+        sale.save(update_fields=["status"])
+        result = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            mpesa_receipt_number="  TKL4X2ABCD  ",
+        )
+        sale.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertEqual(sale.mpesa_receipt_number, "TKL4X2ABCD")
+        self.assertEqual(result.get("mpesa_receipt_number"), "TKL4X2ABCD")
+
+    def test_confirm_requires_mpesa_reference_when_setting_on(self):
+        from django.core.exceptions import ValidationError
+
+        from shops.services import (
+            confirm_shop_receipt,
+            get_shop_receipt_detail,
+            set_company_pos_setting,
+        )
+
+        set_company_pos_setting(
+            field="require_mpesa_reference_on_confirm", enabled=True
+        )
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-REQ-REF")
+        sale.payment_method = ShopPaymentMethod.MPESA
+        sale.save(update_fields=["payment_method"])
+
+        detail = get_shop_receipt_detail(shop=self.shop, receipt_id=sale.pk)
+        self.assertTrue(detail["receipt"]["require_mpesa_reference_on_confirm"])
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Enter the M-Pesa reference number before confirming this receipt.",
+        ):
+            confirm_shop_receipt(
+                shop=self.shop, receipt_id=sale.pk, actor=self.staff
+            )
+
+        result = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            mpesa_receipt_number="REQREF1234",
+        )
+        sale.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertEqual(sale.mpesa_receipt_number, "REQREF1234")
+        self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+
+    def test_confirm_accepts_existing_mpesa_reference_when_required(self):
+        from shops.services import confirm_shop_receipt, set_company_pos_setting
+
+        set_company_pos_setting(
+            field="require_mpesa_reference_on_confirm", enabled=True
+        )
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-EXIST-REF")
+        sale.payment_method = ShopPaymentMethod.MPESA
+        sale.mpesa_receipt_number = "ALREADYHERE"
+        sale.save(update_fields=["payment_method", "mpesa_receipt_number"])
+
+        result = confirm_shop_receipt(
+            shop=self.shop, receipt_id=sale.pk, actor=self.staff
+        )
+        sale.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+        self.assertEqual(sale.mpesa_receipt_number, "ALREADYHERE")
+
+    def test_confirm_does_not_require_reference_for_cash_when_setting_on(self):
+        from shops.services import confirm_shop_receipt, set_company_pos_setting
+
+        set_company_pos_setting(
+            field="require_mpesa_reference_on_confirm", enabled=True
+        )
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-CASH-OK")
+        result = confirm_shop_receipt(
+            shop=self.shop, receipt_id=sale.pk, actor=self.staff
+        )
+        sale.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+
     def test_confirm_page_lists_sales_only(self):
         from django.test import RequestFactory
 
@@ -256,6 +369,292 @@ class ConfirmSalesReceiptTests(TestCase):
         self.assertEqual(context["status_filter"], "")
         self.assertIn("kind_options", context)
         self.assertTrue(context["page"].get("rows_url"))
+        sale_row = context["rows"][0]
+        self.assertEqual(sale_row["client"], "Walk-in")
+        self.assertIn("amount_label", sale_row)
+        self.assertTrue(str(sale_row["amount_label"]).startswith("KSh"))
+
+    def test_confirm_page_orders_pending_cancelled_confirmed(self):
+        from django.test import RequestFactory
+        from unittest import mock
+
+        from employees.analytics_services import (
+            CONFIRM_RECEIPT_DEFAULT_LIMIT,
+            build_confirm_receipts_page,
+        )
+
+        confirmed = self._receipt(kind=ShopReceiptKind.SALE, number="SL-CONF")
+        confirmed.status = ShopReceiptStatus.CONFIRMED
+        confirmed.save(update_fields=["status"])
+        cancelled = self._receipt(kind=ShopReceiptKind.SALE, number="SL-CANCEL")
+        cancelled.status = ShopReceiptStatus.CANCELLED
+        cancelled.save(update_fields=["status"])
+        for i in range(CONFIRM_RECEIPT_DEFAULT_LIMIT + 5):
+            self._receipt(kind=ShopReceiptKind.SALE, number=f"SL-P{i:03d}")
+
+        request = RequestFactory().get(
+            "/it-support/analytics/confirm-receipts/",
+            {"kind": "sale", "range": "all"},
+        )
+        request.user = self.user
+        with mock.patch(
+            "employees.analytics_services.CONFIRM_RECEIPT_DEFAULT_LIMIT", 10
+        ):
+            context = build_confirm_receipts_page(
+                profile=self.staff, request=request
+            )
+        statuses = [row["status"] for row in context["rows"]]
+        self.assertIn(ShopReceiptStatus.CANCELLED, statuses)
+        self.assertIn(ShopReceiptStatus.CONFIRMED, statuses)
+        self.assertLess(
+            statuses.index(ShopReceiptStatus.ACTIVE),
+            statuses.index(ShopReceiptStatus.CANCELLED),
+        )
+        self.assertLess(
+            statuses.index(ShopReceiptStatus.CANCELLED),
+            statuses.index(ShopReceiptStatus.CONFIRMED),
+        )
+        # Pending fills its band first; cancelled/confirmed still trail after.
+        pending_count = sum(
+            1
+            for status in statuses
+            if status
+            in {ShopReceiptStatus.ACTIVE, ShopReceiptStatus.PARTIAL_RETURN}
+        )
+        self.assertEqual(pending_count, 10)
+        self.assertEqual(statuses[-2:], [
+            ShopReceiptStatus.CANCELLED,
+            ShopReceiptStatus.CONFIRMED,
+        ])
+
+
+class AnalyticsReceiptsBrowseTests(TestCase):
+    def setUp(self):
+        from django.utils import timezone
+
+        self.user = User.objects.create_user(
+            username="870012",
+            password="receipts-pass",
+            email="receipts@test.local",
+            is_active=True,
+        )
+        self.staff = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="870012",
+            phone_country_code="+254",
+            phone_number="700001102",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_MANAGER,
+        )
+        self.shop = Shop.objects.create(
+            name="RECEIPTS SHOP",
+            location="NAIROBI",
+            email="receipts-shop@test.local",
+            phone_number="0700001102",
+            login_code="870112",
+            password_hash="x",
+            created_by=self.staff,
+        )
+        self.staff.assigned_shops.add(self.shop)
+        self.today = timezone.localdate()
+
+    def _receipt(self, *, kind, number):
+        return ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=kind,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number=number,
+            client_name="Walk-in",
+            subtotal=100,
+            tax_percent=0,
+            tax_amount=0,
+            total=100,
+            amount_paid=100 if kind == ShopReceiptKind.SALE else 0,
+            payment_method="cash",
+            created_by=self.staff,
+        )
+
+    def test_receipts_section_lists_all_types_and_keeps_tools(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_analytics_page
+
+        self._receipt(kind=ShopReceiptKind.SALE, number="SL-R1")
+        self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-R1")
+        self._receipt(kind=ShopReceiptKind.QUOTATION, number="QT-R1")
+        request = RequestFactory().get(
+            "/shop-manager/analytics/receipts/",
+            {"range": "day", "date": self.today.isoformat()},
+        )
+        request.user = self.user
+        context = build_analytics_page(
+            profile=self.staff, request=request, section_slug="receipts"
+        )
+        page = context["page"]
+        self.assertFalse(page.get("hide_date_filters"))
+        self.assertEqual(page.get("receipt_kind"), "all")
+        self.assertEqual(len(page.get("sections") or []), 2)
+        list_table = page["tables"][0]
+        numbers = {row["cells"][0] for row in list_table["rows"]}
+        self.assertEqual(numbers, {"SL-R1", "CR-R1", "QT-R1"})
+
+    def test_receipts_section_filters_by_kind(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_analytics_page
+
+        self._receipt(kind=ShopReceiptKind.SALE, number="SL-R2")
+        self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-R2")
+        request = RequestFactory().get(
+            "/shop-manager/analytics/receipts/",
+            {
+                "range": "day",
+                "date": self.today.isoformat(),
+                "receipt_kind": "credits",
+            },
+        )
+        request.user = self.user
+        context = build_analytics_page(
+            profile=self.staff, request=request, section_slug="receipts"
+        )
+        page = context["page"]
+        self.assertEqual(page.get("receipt_kind"), "credits")
+        numbers = {row["cells"][0] for row in page["tables"][0]["rows"]}
+        self.assertEqual(numbers, {"CR-R2"})
+
+    def test_receipts_list_includes_bought_items(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_analytics_receipts_list
+
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-ITEMS")
+        ShopReceiptLine.objects.create(
+            receipt=sale,
+            item_name="USB Cable",
+            quantity=2,
+            unit_price=50,
+            line_total=100,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=sale,
+            item_name="Mouse",
+            quantity=1,
+            unit_price=100,
+            line_total=100,
+        )
+        request = RequestFactory().get(
+            "/shop-manager/analytics/receipts/sales/",
+            {
+                "range": "day",
+                "date": self.today.isoformat(),
+                "receipt_status": "pending",
+            },
+        )
+        request.user = self.user
+        context = build_analytics_receipts_list(
+            profile=self.staff, request=request, kind="sales"
+        )
+        self.assertEqual(len(context["rows"]), 1)
+        self.assertEqual(context["rows"][0]["number"], "SL-ITEMS")
+        self.assertEqual(context["rows"][0]["items"], "USB Cable ×2, Mouse ×1")
+
+    def test_receipts_section_columns_and_print_popup(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import (
+            build_analytics_page,
+            build_receipts_print_document,
+            receipts_report_pdf_response,
+        )
+
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-PRINT")
+        sale.client_name = "Ada Client"
+        sale.client_phone = "0700111222"
+        sale.save(update_fields=["client_name", "client_phone"])
+        ShopReceiptLine.objects.create(
+            receipt=sale,
+            item_name="Keyboard",
+            quantity=1,
+            unit_price=100,
+            line_total=100,
+        )
+        confirmed = self._receipt(kind=ShopReceiptKind.SALE, number="SL-CONF")
+        confirmed.status = ShopReceiptStatus.CONFIRMED
+        confirmed.save(update_fields=["status"])
+        request = RequestFactory().get(
+            "/shop-manager/analytics/receipts/",
+            {
+                "range": "day",
+                "date": self.today.isoformat(),
+                "receipt_kind": "sales",
+                "receipt_status": "pending",
+            },
+        )
+        request.user = self.user
+        context = build_analytics_page(
+            profile=self.staff, request=request, section_slug="receipts"
+        )
+        page = context["page"]
+        self.assertTrue(page.get("receipts_print_modal"))
+        self.assertIn("/analytics/receipts/print/", page.get("receipts_print_url") or "")
+        self.assertEqual(
+            page["tables"][0]["columns"],
+            [
+                "Receipt",
+                "Type",
+                "Client",
+                "Phone",
+                "Items",
+                "Total",
+                "Date & time",
+                "Reference",
+            ],
+        )
+        rows = page["tables"][0]["rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["cells"][0], "SL-PRINT")
+        self.assertEqual(rows[0]["cells"][2], "Ada Client")
+        self.assertEqual(rows[0]["cells"][3], "0700111222")
+        self.assertEqual(rows[0]["cells"][4], "Keyboard ×1")
+        self.assertEqual(rows[0]["cells"][7], "")
+
+        document = build_receipts_print_document(filters=context)
+        self.assertEqual(document["receipt_total"], 1)
+        self.assertEqual(document["rows"][0]["client_name"], "Ada Client")
+        self.assertEqual(document["rows"][0]["phone"], "0700111222")
+        self.assertEqual(document["rows"][0]["items"], "Keyboard ×1")
+
+        pdf_response = receipts_report_pdf_response(page=page, filters=context)
+        self.assertEqual(pdf_response["Content-Type"], "application/pdf")
+        self.assertTrue(pdf_response["Content-Disposition"].startswith("attachment;"))
+        self.assertTrue(pdf_response.content.startswith(b"%PDF"))
+
+        self.client.force_login(self.user)
+        print_params = {
+            "range": "day",
+            "date": self.today.isoformat(),
+            "receipt_kind": "sales",
+            "receipt_status": "pending",
+            "paper": "a4",
+        }
+        print_response = self.client.get(
+            "/shop-manager/analytics/receipts/print/", print_params
+        )
+        self.assertEqual(print_response.status_code, 200)
+        self.assertContains(print_response, "SL-PRINT")
+        self.assertContains(print_response, "Ada Client")
+        self.assertContains(print_response, "0700111222")
+
+        estimate_response = self.client.get(
+            "/shop-manager/analytics/receipts/print/",
+            {
+                **print_params,
+                "estimate": "1",
+            },
+        )
+        self.assertEqual(estimate_response.status_code, 200)
+        self.assertEqual(estimate_response["Content-Type"], "application/json")
+        self.assertEqual(estimate_response.json()["receipt_count"], 1)
 
 
 class DashboardSidebarLinkTests(TestCase):

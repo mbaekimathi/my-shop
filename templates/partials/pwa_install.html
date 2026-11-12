@@ -6,7 +6,14 @@
   aria-hidden="true"
   aria-label="Install {{ company_name|default:'MY-SHOP' }} app"
 >
-  <div class="pwa-install__icon" aria-hidden="true">
+  <button
+    type="button"
+    class="pwa-install__fab"
+    data-pwa-install-toggle
+    aria-expanded="false"
+    aria-controls="pwa-install-panel"
+    title="Get the {{ company_name|default:'MY-SHOP' }} app"
+  >
     <img
       src="{% static 'icons/myshop-icon-live.svg' %}"
       alt=""
@@ -14,20 +21,36 @@
       height="64"
       decoding="async"
     >
+  </button>
+  <div
+    id="pwa-install-panel"
+    class="pwa-install__panel"
+    data-pwa-install-panel
+    hidden
+  >
+    <div class="pwa-install__icon" aria-hidden="true">
+      <img
+        src="{% static 'icons/myshop-icon-live.svg' %}"
+        alt=""
+        width="64"
+        height="64"
+        decoding="async"
+      >
+    </div>
+    <div class="pwa-install__copy">
+      <strong>Get the {{ company_name|default:"MY-SHOP" }} app</strong>
+      <span>Install for quick access — opens straight at employee login.</span>
+    </div>
+    <div class="pwa-install__actions">
+      <button type="button" class="pwa-install__btn" data-pwa-install-btn>
+        Download app
+      </button>
+      <button type="button" class="pwa-install__dismiss" data-pwa-dismiss>
+        Not now
+      </button>
+    </div>
+    <p class="pwa-install__ios" data-pwa-ios-hint hidden>
+      On iPhone: tap <kbd>Share</kbd> then <strong>Add to Home Screen</strong>.
+    </p>
   </div>
-  <div class="pwa-install__copy">
-    <strong>Get the {{ company_name|default:"MY-SHOP" }} app</strong>
-    <span>Install for quick access — opens straight at employee login.</span>
-  </div>
-  <div class="pwa-install__actions">
-    <button type="button" class="pwa-install__btn" data-pwa-install-btn>
-      Download app
-    </button>
-    <button type="button" class="pwa-install__dismiss" data-pwa-dismiss>
-      Not now
-    </button>
-  </div>
-  <p class="pwa-install__ios" data-pwa-ios-hint hidden>
-    On iPhone: tap <kbd>Share</kbd> then <strong>Add to Home Screen</strong>.
-  </p>
 </aside>

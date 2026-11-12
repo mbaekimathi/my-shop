@@ -86,6 +86,7 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "enable_receipt_payment_methods",
         "show_client_phone_on_receipt",
         "show_return_notice_on_receipt",
+        "require_mpesa_reference_on_confirm",
         "return_notice_text",
         "receipt_paper_width",
         "receipt_format_sale",

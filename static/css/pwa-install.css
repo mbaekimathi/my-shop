@@ -1,15 +1,100 @@
-/* Mobile app install prompt — hidden when already installed (standalone). */
+/* Mobile app install prompt — icon expands to panel on click. */
+
+@keyframes pwa-float {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-7px) scale(1.04);
+  }
+}
+
+@keyframes pwa-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 10px 22px rgba(15, 143, 130, 0.28),
+      0 0 0 0 color-mix(in srgb, #0f8f82 0%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 14px 28px rgba(15, 143, 130, 0.36),
+      0 0 0 8px color-mix(in srgb, #0f8f82 20%, transparent);
+  }
+}
 
 .pwa-install {
   position: fixed;
-  inset: auto 1rem 1rem;
+  right: 1rem;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
   z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.65rem;
+  max-width: min(26rem, calc(100vw - 2rem));
+  opacity: 0;
+  transform: translateY(12px) scale(0.98);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
+  pointer-events: none;
+}
+
+.pwa-install.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.pwa-install[hidden] {
+  display: none !important;
+}
+
+.pwa-install__fab {
+  appearance: none;
+  border: 0;
+  width: 3.35rem;
+  height: 3.35rem;
+  padding: 0;
+  border-radius: 1rem;
+  overflow: hidden;
+  cursor: pointer;
+  background: linear-gradient(145deg, #0f8f82, #1a7d84 55%, #f2b045);
+  box-shadow: 0 10px 22px rgba(15, 143, 130, 0.28);
+  animation:
+    pwa-float 2.6s ease-in-out infinite,
+    pwa-glow 2.6s ease-in-out infinite;
+}
+
+.pwa-install.is-open .pwa-install__fab {
+  animation: none;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+  margin: 0;
+}
+
+.pwa-install__fab img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pwa-install__fab:focus-visible {
+  outline: 2px solid var(--teal, #0f8f82);
+  outline-offset: 3px;
+}
+
+.pwa-install__panel {
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 0.85rem;
   align-items: center;
-  max-width: 26rem;
-  margin-inline: auto;
+  width: min(26rem, calc(100vw - 2rem));
   padding: 0.85rem 0.95rem;
   border-radius: 1.15rem;
   border: 1px solid color-mix(in srgb, var(--teal, #0f8f82) 28%, transparent);
@@ -24,19 +109,24 @@
     0 0 0 1px rgba(255, 255, 255, 0.08) inset;
   backdrop-filter: blur(12px);
   opacity: 0;
-  transform: translateY(18px) scale(0.98);
-  transition:
-    opacity 0.35s ease,
-    transform 0.35s ease;
+  transform: translateY(10px) scale(0.97);
+  transform-origin: bottom right;
+  transition: opacity 0.28s ease, transform 0.28s ease;
+  pointer-events: none;
 }
 
-.pwa-install.is-visible {
+.pwa-install.is-open .pwa-install__panel {
   opacity: 1;
   transform: translateY(0) scale(1);
+  pointer-events: auto;
 }
 
-.pwa-install[hidden] {
+.pwa-install__panel[hidden] {
   display: none !important;
+}
+
+.pwa-install.is-open .pwa-install__panel[hidden] {
+  display: grid !important;
 }
 
 .pwa-install__icon {
@@ -216,7 +306,12 @@
 
 @media (max-width: 520px) {
   .pwa-install {
-    inset: auto 0.75rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    right: 0.75rem;
+    bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .pwa-install__panel,
+  .pwa-install.is-open .pwa-install__panel[hidden] {
     grid-template-columns: auto 1fr;
     grid-template-areas:
       "icon copy"
@@ -239,7 +334,7 @@
   }
 }
 
-html[data-theme="dark"] .pwa-install {
+html[data-theme="dark"] .pwa-install__panel {
   background:
     linear-gradient(
       135deg,

@@ -33,6 +33,7 @@ from .services import (
     create_item,
     delete_item,
     estimate_stock_print_a4_pages,
+    pair_stock_print_a4_rows,
     list_stock_requests_for_profile,
     summarize_stock_requests_for_profile,
     LOW_STOCK_USAGE_WEEKS,
@@ -9856,6 +9857,9 @@ def stock_management_print(request, role_segment):
         response["X-Content-Type-Options"] = "nosniff"
         return response
 
+    if paper == "a4":
+        document = pair_stock_print_a4_rows(document)
+
     context = {
         "document": document,
         "layout": layout,
@@ -9865,6 +9869,7 @@ def stock_management_print(request, role_segment):
         "company_name": company_name,
         "a4_page_estimate": document.get("a4_page_estimate")
         or estimate_stock_print_a4_pages(document),
+        "a4_dual": bool(document.get("a4_dual")),
         "auto_print": (request.GET.get("auto") or "").strip() == "1",
         "is_download": False,
     }

@@ -686,7 +686,7 @@ def _automation_toggles(comms: dict) -> list[dict]:
         {
             "field": "auto_credit_due",
             "label": "Credit due dates",
-            "summary": "Notify customers when a credit follow-up date is set, and again on that morning.",
+            "summary": "Built-in fallback only. Prefer activating Credit follow-up / Credit follow-up today under Saved messages.",
             "icon": "calendar-clock",
             "enabled": bool(comms.get("auto_credit_due")),
         },

@@ -76,6 +76,14 @@
 
     <div class="ax-confirm-list-wrap">
       <table class="ax-table ax-table--list ax-table--confirm-compact" data-ax-confirm-table{% if async_rows or not rows %} hidden{% endif %}>
+        <colgroup>
+          <col class="ax-col-select">
+          <col class="ax-col-receipt">
+          <col class="ax-col-client">
+          <col class="ax-col-amount">
+          <col class="ax-col-reference">
+          <col class="ax-col-when">
+        </colgroup>
         <thead>
           <tr>
             <th class="ax-col-select">
@@ -85,7 +93,9 @@
               </label>
             </th>
             <th class="ax-th--item">Receipt</th>
-            <th>Status</th>
+            <th>Client</th>
+            <th class="ax-th--amount">Amount</th>
+            <th>Reference</th>
             <th>Date &amp; time</th>
           </tr>
         </thead>
@@ -116,12 +126,22 @@
               <span class="ax-select-na" aria-hidden="true">—</span>
               {% endif %}
             </td>
-            <td class="ax-cell--primary" data-label="Receipt">{{ row.number }}</td>
-            <td data-label="Status">
-              <span class="shop-receipt-status {% if row.status == 'cancelled' %}is-cancelled{% elif row.status == 'partial_return' %}is-partial{% elif row.status == 'confirmed' %}is-confirmed{% else %}is-pending{% endif %}">
-                {{ row.status_label }}
-              </span>
+            <td class="ax-cell--primary ax-confirm-receipt-status" data-label="Receipt">
+              <div class="ax-confirm-stack">
+                <span class="ax-confirm-stack-main">{{ row.number }}</span>
+                <span class="shop-receipt-status {% if row.status == 'cancelled' %}is-cancelled{% elif row.status == 'partial_return' %}is-partial{% elif row.status == 'confirmed' %}is-confirmed{% else %}is-pending{% endif %}">
+                  {{ row.status_label }}
+                </span>
+              </div>
             </td>
+            <td class="ax-confirm-client-phone" data-label="Client">
+              <div class="ax-confirm-stack">
+                <span class="ax-confirm-stack-main">{{ row.client|default:"—" }}</span>
+                <span class="ax-confirm-stack-sub">{{ row.client_phone|default:"—" }}</span>
+              </div>
+            </td>
+            <td class="ax-confirm-amount" data-label="Amount">{{ row.amount_label|default:"—" }}</td>
+            <td class="ax-confirm-reference" data-label="Reference">{{ row.reference|default:"—" }}</td>
             <td class="ax-confirm-when" data-label="When">{{ row.when }}</td>
           </tr>
           {% endfor %}
@@ -217,7 +237,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=13"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=18"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");

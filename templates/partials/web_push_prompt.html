@@ -7,7 +7,14 @@
   hidden
   aria-label="Enable device alerts"
 >
-  <div class="web-push-prompt__icon" aria-hidden="true">
+  <button
+    type="button"
+    class="web-push-prompt__fab"
+    data-web-push-toggle
+    aria-expanded="false"
+    aria-controls="web-push-prompt-panel"
+    title="Turn on device alerts"
+  >
     <img
       src="{% static 'icons/myshop-icon-live.svg' %}"
       alt=""
@@ -15,17 +22,33 @@
       height="48"
       decoding="async"
     >
-  </div>
-  <div class="web-push-prompt__copy">
-    <strong>Turn on device alerts</strong>
-    <span>Get notified on this phone for deliveries and stock transfers — even when the app is closed.</span>
-  </div>
-  <div class="web-push-prompt__actions">
-    <button type="button" class="web-push-prompt__btn" data-web-push-enable>
-      Enable alerts
-    </button>
-    <button type="button" class="web-push-prompt__dismiss" data-web-push-dismiss>
-      Not now
-    </button>
+  </button>
+  <div
+    id="web-push-prompt-panel"
+    class="web-push-prompt__panel"
+    data-web-push-panel
+    hidden
+  >
+    <div class="web-push-prompt__icon" aria-hidden="true">
+      <img
+        src="{% static 'icons/myshop-icon-live.svg' %}"
+        alt=""
+        width="48"
+        height="48"
+        decoding="async"
+      >
+    </div>
+    <div class="web-push-prompt__copy">
+      <strong>Turn on device alerts</strong>
+      <span>Get notified on this phone for deliveries and stock transfers — even when the app is closed.</span>
+    </div>
+    <div class="web-push-prompt__actions">
+      <button type="button" class="web-push-prompt__btn" data-web-push-enable>
+        Enable alerts
+      </button>
+      <button type="button" class="web-push-prompt__dismiss" data-web-push-dismiss>
+        Not now
+      </button>
+    </div>
   </div>
 </aside>
