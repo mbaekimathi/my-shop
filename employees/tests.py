@@ -570,10 +570,9 @@ class ConfirmSalesReceiptTests(TestCase):
 
     def test_confirm_page_orders_pending_cancelled_confirmed(self):
         from django.test import RequestFactory
-        from unittest import mock
 
         from employees.analytics_services import (
-            CONFIRM_RECEIPT_DEFAULT_LIMIT,
+            _confirm_receipts_collect_rows,
             build_confirm_receipts_page,
         )
 
@@ -583,7 +582,7 @@ class ConfirmSalesReceiptTests(TestCase):
         cancelled = self._receipt(kind=ShopReceiptKind.SALE, number="SL-CANCEL")
         cancelled.status = ShopReceiptStatus.CANCELLED
         cancelled.save(update_fields=["status"])
-        for i in range(CONFIRM_RECEIPT_DEFAULT_LIMIT + 5):
+        for i in range(15):
             self._receipt(kind=ShopReceiptKind.SALE, number=f"SL-P{i:03d}")
 
         request = RequestFactory().get(
@@ -591,12 +590,7 @@ class ConfirmSalesReceiptTests(TestCase):
             {"kind": "sale", "range": "all"},
         )
         request.user = self.user
-        with mock.patch(
-            "employees.analytics_services.CONFIRM_RECEIPT_DEFAULT_LIMIT", 10
-        ):
-            context = build_confirm_receipts_page(
-                profile=self.staff, request=request
-            )
+        context = build_confirm_receipts_page(profile=self.staff, request=request)
         statuses = [row["status"] for row in context["rows"]]
         self.assertIn(ShopReceiptStatus.CANCELLED, statuses)
         self.assertIn(ShopReceiptStatus.CONFIRMED, statuses)
@@ -608,18 +602,42 @@ class ConfirmSalesReceiptTests(TestCase):
             statuses.index(ShopReceiptStatus.CANCELLED),
             statuses.index(ShopReceiptStatus.CONFIRMED),
         )
-        # Pending fills its band first; cancelled/confirmed still trail after.
+        # Uncapped page lists every receipt in the filtered period.
         pending_count = sum(
             1
             for status in statuses
             if status
             in {ShopReceiptStatus.ACTIVE, ShopReceiptStatus.PARTIAL_RETURN}
         )
-        self.assertEqual(pending_count, 10)
-        self.assertEqual(statuses[-2:], [
-            ShopReceiptStatus.CANCELLED,
-            ShopReceiptStatus.CONFIRMED,
-        ])
+        self.assertEqual(pending_count, 15)
+        self.assertEqual(
+            statuses[-2:],
+            [
+                ShopReceiptStatus.CANCELLED,
+                ShopReceiptStatus.CONFIRMED,
+            ],
+        )
+
+        # Explicit limit still caps each status band independently.
+        capped = _confirm_receipts_collect_rows(
+            shop_ids=context["active_shop_ids"],
+            start=context["start"],
+            end=context["end"],
+            status_key=context["status_filter"],
+            search=context["search"],
+            kind_key=context["kind_filter"],
+            limit=10,
+        )
+        capped_statuses = [row["status"] for row in capped]
+        capped_pending = sum(
+            1
+            for status in capped_statuses
+            if status
+            in {ShopReceiptStatus.ACTIVE, ShopReceiptStatus.PARTIAL_RETURN}
+        )
+        self.assertEqual(capped_pending, 10)
+        self.assertIn(ShopReceiptStatus.CANCELLED, capped_statuses)
+        self.assertIn(ShopReceiptStatus.CONFIRMED, capped_statuses)
 
 
 class AnalyticsReceiptsBrowseTests(TestCase):

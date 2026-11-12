@@ -3107,8 +3107,10 @@ CONFIRM_RECEIPT_KIND_FILTERS = (
     ("all", "All types"),
 )
 
-CONFIRM_RECEIPT_DEFAULT_LIMIT = 150
-CONFIRM_RECEIPT_PRINT_LIMIT = 500
+# Optional per-band cap when callers pass an explicit limit (e.g. tests).
+# Page / rows / print default to None = all receipts in the filtered period.
+CONFIRM_RECEIPT_DEFAULT_LIMIT = None
+CONFIRM_RECEIPT_PRINT_LIMIT = None
 # Always show every status: pending → cancelled → confirmed.
 CONFIRM_RECEIPT_STATUS_RANK = {
     ShopReceiptStatus.ACTIVE: 0,
@@ -3127,7 +3129,15 @@ def _confirm_receipt_status_key(raw: str | None) -> str:
     return ""
 
 
-def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limit=150):
+def _confirm_receipt_apply_limit(queryset, limit):
+    """Slice a queryset when limit is set; otherwise return the full ordered set."""
+    ordered = queryset
+    if limit is None:
+        return ordered
+    return ordered[: int(limit)]
+
+
+def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limit=None):
     status_map = {
         "pending": ShopReceiptStatus.ACTIVE,
         "active": ShopReceiptStatus.ACTIVE,
@@ -3247,35 +3257,36 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
     # Single-status lists are a straight newest-first slice.
     if status_key in status_map:
         return _serialize(
-            qs.filter(status=status_map[status_key]).order_by("-created_at", "-id")[
-                :limit
-            ]
+            _confirm_receipt_apply_limit(
+                qs.filter(status=status_map[status_key]).order_by(
+                    "-created_at", "-id"
+                ),
+                limit,
+            )
         )
 
     # All statuses: fetch each band separately so a large pending set cannot
     # crowd cancelled/confirmed out of the page (pending → cancelled → confirmed).
     bands = (
-        (
-            [ShopReceiptStatus.ACTIVE, ShopReceiptStatus.PARTIAL_RETURN],
-            limit,
-        ),
-        ([ShopReceiptStatus.CANCELLED], limit),
-        ([ShopReceiptStatus.CONFIRMED], limit),
+        [ShopReceiptStatus.ACTIVE, ShopReceiptStatus.PARTIAL_RETURN],
+        [ShopReceiptStatus.CANCELLED],
+        [ShopReceiptStatus.CONFIRMED],
     )
     rows = []
-    for statuses, band_limit in bands:
+    for statuses in bands:
         rows.extend(
             _serialize(
-                qs.filter(status__in=statuses).order_by("-created_at", "-id")[
-                    :band_limit
-                ]
+                _confirm_receipt_apply_limit(
+                    qs.filter(status__in=statuses).order_by("-created_at", "-id"),
+                    limit,
+                )
             )
         )
     return rows
 
 
 def _confirm_receipt_transfer_rows(
-    *, shop_ids, start, end, status_key, search, kind_key, limit=150
+    *, shop_ids, start, end, status_key, search, kind_key, limit=None
 ):
     """Inter-shop transfer delivery notes and goods-received slips."""
     from shops.services import DOC_NUMBER_PREFIX, format_simple_doc_number
@@ -3323,10 +3334,13 @@ def _confirm_receipt_transfer_rows(
     if end is not None:
         qs = qs.filter(created_at__lt=end)
 
-    qs = qs.order_by("-created_at", "-id")[: max(limit * 2, limit)]
+    ordered = qs.order_by("-created_at", "-id")
+    if limit is not None:
+        # Over-fetch a little so kind/status post-filters still fill the band.
+        ordered = ordered[: max(int(limit) * 2, int(limit))]
     search_l = (search or "").strip().lower()
     rows = []
-    for movement in qs:
+    for movement in ordered:
         is_fulfilled = movement.request_status == StockRequestStatus.FULFILLED
         is_declined = movement.request_status == StockRequestStatus.DECLINED
         from_shop = movement.shop
@@ -3408,7 +3422,7 @@ def _confirm_receipt_transfer_rows(
                 "search_text": haystack,
             }
         )
-        if len(rows) >= limit:
+        if limit is not None and len(rows) >= int(limit):
             break
     return rows
 
@@ -3445,8 +3459,13 @@ def _confirm_receipts_query_context(*, profile, request) -> dict:
 def _confirm_receipts_collect_rows(
     *, shop_ids, start, end, status_key, search, kind_key, limit=None
 ):
+    """Collect confirm-receipt rows for the filtered period.
+
+    limit=None returns every matching receipt (default for page / print).
+    An explicit int still caps each status band independently.
+    """
     rows = []
-    cap = CONFIRM_RECEIPT_DEFAULT_LIMIT if limit is None else int(limit)
+    band_limit = None if limit is None else int(limit)
     if kind_key in ("sale", "all"):
         rows.extend(
             _confirm_receipt_sale_rows(
@@ -3455,7 +3474,7 @@ def _confirm_receipts_collect_rows(
                 end=end,
                 status_key=status_key,
                 search=search,
-                limit=cap,
+                limit=band_limit,
             )
         )
     if kind_key in ("delivery", "goods_received", "all"):
@@ -3467,7 +3486,7 @@ def _confirm_receipts_collect_rows(
                 status_key=status_key,
                 search=search,
                 kind_key=kind_key if kind_key != "all" else "all",
-                limit=cap,
+                limit=band_limit,
             )
         )
 
@@ -3478,11 +3497,13 @@ def _confirm_receipts_collect_rows(
             -int(row.get("receipt_id") or 0),
         )
     )
-    # Cap each band independently so pending volume never drops cancelled/confirmed.
     pending = [row for row in rows if int(row.get("status_rank", 9)) == 0]
     cancelled = [row for row in rows if int(row.get("status_rank", 9)) == 1]
     confirmed = [row for row in rows if int(row.get("status_rank", 9)) >= 2]
-    return pending[:cap] + cancelled[:cap] + confirmed[:cap]
+    if band_limit is None:
+        return pending + cancelled + confirmed
+    # Cap each band independently so pending volume never drops cancelled/confirmed.
+    return pending[:band_limit] + cancelled[:band_limit] + confirmed[:band_limit]
 
 
 def serialize_confirm_receipt_rows(rows) -> list[dict]:
