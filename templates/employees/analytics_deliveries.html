@@ -78,14 +78,22 @@
           id="deliv-map"
           class="deliv-map"
           data-deliv-map
+          data-deliv-pin-url="{% static 'img/delivery-pin.png' %}"
           {% if google_maps_api_key %}data-maps-enabled="1"{% endif %}
         ></div>
         {% if google_maps_api_key and page.map_points %}
         <ul class="deliv-map-legend" aria-label="Map legend">
           <li><i class="is-heat" aria-hidden="true"></i> Density heatmap</li>
-          <li><i class="is-open" aria-hidden="true"></i> Open</li>
-          <li><i class="is-accepted" aria-hidden="true"></i> In progress</li>
-          <li><i class="is-done" aria-hidden="true"></i> Done</li>
+          <li>
+            <img
+              class="deliv-map-legend-pin"
+              src="{% static 'img/delivery-pin.png' %}"
+              alt=""
+              width="14"
+              height="18"
+            >
+            Delivery location
+          </li>
         </ul>
         {% elif not google_maps_api_key %}
         <p class="deliv-map-fallback">
@@ -274,9 +282,8 @@
   }
   .deliv-layout {
     display: grid;
-    grid-template-columns: minmax(0, 2.4fr) minmax(17rem, 0.9fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.85rem;
-    align-items: stretch;
   }
   .deliv-main { min-width: 0; }
   .deliv-map-panel,
@@ -321,13 +328,16 @@
     border-radius: 999px;
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent);
   }
-  .deliv-map-legend .is-open { background: #d97706; }
-  .deliv-map-legend .is-accepted { background: #2563eb; }
-  .deliv-map-legend .is-done { background: #15803d; }
   .deliv-map-legend .is-heat {
     background: linear-gradient(90deg, #22d3ee, #f97316 55%, #ef4444);
     border-radius: 0.2rem;
     width: 1.1rem;
+  }
+  .deliv-map-legend-pin {
+    width: 0.9rem;
+    height: 1.15rem;
+    object-fit: contain;
+    display: block;
   }
   .deliv-map {
     min-height: 34rem;
@@ -346,8 +356,6 @@
     display: inline !important;
   }
   .deliv-riders {
-    max-height: min(62vh, 44rem);
-    overflow: auto;
     align-content: start;
   }
   .deliv-map-fallback,
@@ -419,13 +427,11 @@
   }
   @media (max-width: 960px) {
     .deliv-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .deliv-layout { grid-template-columns: 1fr; }
     .deliv-map-panel { min-height: 0; }
     .deliv-map {
       min-height: 26rem;
       height: min(55vh, 34rem);
     }
-    .deliv-riders { max-height: none; }
   }
 </style>
 {% endblock %}
@@ -495,32 +501,14 @@
     });
     window.__delivMapInstance = map;
 
-    const statusColor = (key) => {
-      const status = String(key || "").toLowerCase();
-      if (status === "open") return "#d97706";
-      if (status === "accepted") return "#2563eb";
-      if (
-        status === "delivered" ||
-        status === "delivered_paid" ||
-        status === "completed"
-      ) {
-        return "#15803d";
-      }
-      return "#64748b";
-    };
-
-    const pinIcon = (color) => {
-      const svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48">` +
-        `<path fill="${color}" stroke="#fff" stroke-width="2" d="M18 1C9.7 1 3 7.7 3 16c0 11.2 13.2 29.2 13.8 30a1.5 1.5 0 0 0 2.4 0C19.8 45.2 33 27.2 33 16 33 7.7 26.3 1 18 1z"/>` +
-        `<circle cx="18" cy="16" r="6.2" fill="#fff"/>` +
-        `</svg>`;
-      return {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-        scaledSize: new google.maps.Size(30, 40),
-        anchor: new google.maps.Point(15, 40),
-      };
-    };
+    const pinUrl = el.getAttribute("data-deliv-pin-url") || "";
+    const pinIcon = pinUrl
+      ? {
+          url: pinUrl,
+          scaledSize: new google.maps.Size(42, 54),
+          anchor: new google.maps.Point(21, 54),
+        }
+      : undefined;
 
     const bounds = new google.maps.LatLngBounds();
     const info = new google.maps.InfoWindow();
@@ -539,7 +527,7 @@
       info.open({ map, anchor: marker });
     };
 
-    points.forEach((point) => {
+    points.forEach((point, index) => {
       const lat = Number(point.lat);
       const lng = Number(point.lng);
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
@@ -554,8 +542,9 @@
         map,
         position,
         title: point.label || "Delivery",
-        icon: pinIcon(statusColor(point.status_key)),
-        optimized: true,
+        icon: pinIcon,
+        optimized: false,
+        zIndex: 1000 + index,
       });
       marker.addListener("click", () => openInfo(marker, point));
     });
