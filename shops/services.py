@@ -7677,6 +7677,7 @@ def _receipt_list_item(receipt) -> dict:
         "shop_name": receipt.shop.name if getattr(receipt, "shop", None) else "",
         "total": str(receipt.total),
         "created_at": created.isoformat(),
+        "created_at_local": created.strftime("%Y-%m-%dT%H:%M"),
         "created_label": created.strftime("%d %b %Y · %H:%M"),
         "cashier": cashier,
         "can_return": (
@@ -7690,12 +7691,31 @@ def _receipt_list_item(receipt) -> dict:
         ),
         "can_confirm": (
             receipt.kind == ShopReceiptKind.SALE
-            and receipt.status == ShopReceiptStatus.ACTIVE
+            and receipt.status
+            in {ShopReceiptStatus.ACTIVE, ShopReceiptStatus.CANCELLED}
         ),
         "can_cancel": (
             receipt.kind == ShopReceiptKind.SALE
-            and receipt.status == ShopReceiptStatus.ACTIVE
+            and receipt.status
+            in {
+                ShopReceiptStatus.ACTIVE,
+                ShopReceiptStatus.CONFIRMED,
+                ShopReceiptStatus.PARTIAL_RETURN,
+            }
         ),
+        "can_set_pending": (
+            receipt.kind == ShopReceiptKind.SALE
+            and receipt.status
+            in {ShopReceiptStatus.CONFIRMED, ShopReceiptStatus.CANCELLED}
+        ),
+        "can_edit_status": receipt.kind == ShopReceiptKind.SALE
+        and receipt.status
+        in {
+            ShopReceiptStatus.ACTIVE,
+            ShopReceiptStatus.CONFIRMED,
+            ShopReceiptStatus.CANCELLED,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        },
     }
 
 
@@ -9395,12 +9415,263 @@ def return_shop_receipt_items(
     }
 
 
+def _resolve_confirm_receipt_status(raw: str | None) -> str:
+    key = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "pending": ShopReceiptStatus.ACTIVE,
+        "active": ShopReceiptStatus.ACTIVE,
+        "confirmed": ShopReceiptStatus.CONFIRMED,
+        "cancelled": ShopReceiptStatus.CANCELLED,
+        "cancel": ShopReceiptStatus.CANCELLED,
+    }
+    if key not in mapping:
+        raise ValidationError("Choose pending, confirmed, or cancelled.")
+    return mapping[key]
+
+
+def _sale_payment_split_for_total(receipt, total: Decimal) -> tuple[Decimal, Decimal]:
+    """Rebuild cash/M-Pesa split for a restored sale total."""
+    total = Decimal(total or 0).quantize(Decimal("0.01"))
+    orig_cash, orig_mpesa = _receipt_original_tender(
+        receipt.cash_amount,
+        receipt.mpesa_amount,
+        getattr(receipt, "return_payment_events", None),
+    )
+    orig_total = (orig_cash + orig_mpesa).quantize(Decimal("0.01"))
+    if orig_total > 0 and total > 0:
+        if orig_total == total:
+            return orig_cash, orig_mpesa
+        ratio = total / orig_total
+        cash = (orig_cash * ratio).quantize(Decimal("0.01"))
+        mpesa = (total - cash).quantize(Decimal("0.01"))
+        return cash, mpesa
+
+    if receipt.payment_method == ShopPaymentMethod.CASH:
+        return total, Decimal("0.00")
+    if receipt.payment_method == ShopPaymentMethod.MPESA:
+        return Decimal("0.00"), total
+    if receipt.payment_method == ShopPaymentMethod.BOTH:
+        cash = (total / Decimal("2")).quantize(Decimal("0.01"))
+        return cash, (total - cash).quantize(Decimal("0.01"))
+    return Decimal("0.00"), Decimal("0.00")
+
+
+@transaction.atomic
+def reopen_cancelled_shop_receipt(
+    *,
+    shop: Shop,
+    receipt_id: int,
+    actor,
+    target_status: str = ShopReceiptStatus.ACTIVE,
+) -> dict:
+    """Reopen a cancelled sale: reverse restocks and restore pending/confirmed."""
+    from items.models import Item, ItemSerial, ShopStock
+
+    from .models import ShopReceipt, ShopReceiptLine
+
+    if actor is None:
+        raise ValidationError("Sign in to update receipt status.")
+
+    if target_status not in {
+        ShopReceiptStatus.ACTIVE,
+        ShopReceiptStatus.CONFIRMED,
+    }:
+        raise ValidationError("Cancelled receipts can only reopen as pending or confirmed.")
+
+    try:
+        receipt = (
+            ShopReceipt.objects.select_for_update()
+            .select_related("shop")
+            .prefetch_related("lines")
+            .get(pk=receipt_id, shop=shop)
+        )
+    except ShopReceipt.DoesNotExist as exc:
+        raise ValidationError("Receipt not found for this shop.") from exc
+
+    if receipt.kind != ShopReceiptKind.SALE:
+        raise ValidationError("Only sales receipts can be reopened here.")
+    if receipt.status != ShopReceiptStatus.CANCELLED:
+        raise ValidationError("Only cancelled receipts can be reopened.")
+
+    lines = list(receipt.lines.all())
+    pos = get_effective_pos_settings(shop)
+    track_stock = bool(getattr(pos, "enable_stock_tracking", True))
+    now = timezone.now()
+    item_ids = {line.item_id for line in lines if line.item_id}
+    items_by_id = Item.objects.select_for_update().filter(pk__in=item_ids).in_bulk()
+    stock_by_item = {
+        row.item_id: row
+        for row in ShopStock.objects.select_for_update().filter(
+            shop=shop, item_id__in=item_ids
+        )
+    }
+    missing_stock_ids = [item_id for item_id in item_ids if item_id not in stock_by_item]
+    if missing_stock_ids:
+        ShopStock.objects.bulk_create(
+            [
+                ShopStock(shop=shop, item_id=item_id, quantity=0)
+                for item_id in missing_stock_ids
+            ],
+            ignore_conflicts=True,
+        )
+        for row in ShopStock.objects.select_for_update().filter(
+            shop=shop, item_id__in=missing_stock_ids
+        ):
+            stock_by_item[row.item_id] = row
+
+    stocks_to_update = []
+    items_to_update = []
+    serials_to_update = []
+    lines_to_update = []
+    errors = []
+
+    for line in lines:
+        restore_qty = _qty(line.returned_quantity)
+        serials = [
+            str(s).strip()
+            for s in (line.returned_serial_numbers or [])
+            if str(s).strip()
+        ]
+        if serials and restore_qty <= 0:
+            restore_qty = _qty(len(serials))
+        if restore_qty > 0 and track_stock and line.item_id:
+            item = items_by_id.get(line.item_id)
+            stock = stock_by_item.get(line.item_id)
+            if item is None or stock is None:
+                errors.append(f"“{line.item_name}”: stock record missing; cannot reopen.")
+                continue
+            available = _qty(stock.quantity)
+            if available < restore_qty:
+                errors.append(
+                    f"“{line.item_name}”: need {_qty_label(restore_qty)} in stock to "
+                    f"reopen, but only {_qty_label(available)} available."
+                )
+                continue
+            serial_objects = {}
+            if serials:
+                found = {
+                    row.serial_number: row
+                    for row in ItemSerial.objects.select_for_update().filter(
+                        item_id=line.item_id,
+                        serial_number__in=serials,
+                    )
+                }
+                missing = [s for s in serials if s not in found]
+                if missing:
+                    errors.append(
+                        f"“{line.item_name}”: serial not in the system "
+                        f"({', '.join(missing[:5])}{'…' if len(missing) > 5 else ''})."
+                    )
+                    continue
+                not_in_stock = [s for s in serials if not found[s].is_available]
+                if not_in_stock:
+                    errors.append(
+                        f"“{line.item_name}”: serial already sold again "
+                        f"({', '.join(not_in_stock[:5])}"
+                        f"{'…' if len(not_in_stock) > 5 else ''}). Cannot reopen."
+                    )
+                    continue
+                serial_objects = found
+                for serial_no in serials:
+                    obj = serial_objects[serial_no]
+                    obj.is_available = False
+                    obj.updated_at = now
+                    serials_to_update.append(obj)
+
+            stock.quantity = available - restore_qty
+            stock.updated_at = now
+            item.stock = max(Decimal("0"), _qty(item.stock) - restore_qty)
+            item.updated_at = now
+            stocks_to_update.append(stock)
+            items_to_update.append(item)
+
+        line.returned_quantity = Decimal("0")
+        line.returned_serial_numbers = []
+        line.return_batches = []
+        qty = _qty(line.quantity)
+        line.line_total = (Decimal(line.unit_price or 0) * qty).quantize(Decimal("0.01"))
+        lines_to_update.append(line)
+
+    if errors:
+        raise ValidationError(errors)
+
+    if lines_to_update:
+        ShopReceiptLine.objects.bulk_update(
+            lines_to_update,
+            [
+                "returned_quantity",
+                "returned_serial_numbers",
+                "return_batches",
+                "line_total",
+            ],
+        )
+    if stocks_to_update:
+        ShopStock.objects.bulk_update(
+            stocks_to_update, ["quantity", "updated_at"]
+        )
+    if items_to_update:
+        Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
+    if serials_to_update:
+        ItemSerial.objects.bulk_update(
+            serials_to_update, ["is_available", "updated_at"]
+        )
+
+    subtotal = sum(
+        (Decimal(line.unit_price or 0) * _qty(line.quantity)).quantize(Decimal("0.01"))
+        for line in lines
+    )
+    tax_percent = Decimal(receipt.tax_percent or 0)
+    tax_amount = (subtotal * tax_percent / Decimal("100")).quantize(Decimal("0.01"))
+    total = (subtotal + tax_amount).quantize(Decimal("0.01"))
+    cash_amount, mpesa_amount = _sale_payment_split_for_total(receipt, total)
+
+    receipt.subtotal = subtotal
+    receipt.tax_amount = tax_amount
+    receipt.total = total
+    receipt.cash_amount = cash_amount
+    receipt.mpesa_amount = mpesa_amount
+    receipt.amount_paid = total
+    receipt.status = target_status
+    receipt.return_payment_events = []
+    receipt.last_returned_at = None
+    receipt.last_returned_by = None
+    receipt.save(
+        update_fields=[
+            "subtotal",
+            "tax_amount",
+            "total",
+            "cash_amount",
+            "mpesa_amount",
+            "amount_paid",
+            "status",
+            "return_payment_events",
+            "last_returned_at",
+            "last_returned_by",
+        ]
+    )
+
+    detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+    label = "pending" if target_status == ShopReceiptStatus.ACTIVE else "confirmed"
+    return {
+        **detail,
+        "ok": True,
+        "message": f"Receipt {receipt.receipt_number} reopened as {label}.",
+        "status": receipt.status,
+        "status_label": receipt.get_status_display(),
+    }
+
+
 @transaction.atomic
 def confirm_shop_receipt(
-    *, shop: Shop, receipt_id: int, actor, mpesa_receipt_number: str = ""
+    *,
+    shop: Shop,
+    receipt_id: int,
+    actor,
+    mpesa_receipt_number: str = "",
+    payment_at=None,
 ) -> dict:
     """Mark a pending sales receipt as confirmed (credits/quotations not allowed)."""
-    from .models import ShopPaymentMethod, ShopReceipt
+    from .models import ShopReceipt
 
     if actor is None:
         raise ValidationError("Sign in to confirm receipts.")
@@ -9417,22 +9688,56 @@ def confirm_shop_receipt(
     if receipt.kind != ShopReceiptKind.SALE:
         raise ValidationError("Only sales receipts can be confirmed.")
 
-    if receipt.status != ShopReceiptStatus.ACTIVE:
-        raise ValidationError("Only pending receipts can be confirmed.")
+    if receipt.status == ShopReceiptStatus.CANCELLED:
+        # Release lock; reopen re-locks the same row.
+        receipt_pk = receipt.pk
+        del receipt
+        reopen_cancelled_shop_receipt(
+            shop=shop,
+            receipt_id=receipt_pk,
+            actor=actor,
+            target_status=ShopReceiptStatus.ACTIVE,
+        )
+        receipt = (
+            ShopReceipt.objects.select_for_update()
+            .select_related("created_by__user", "client", "shop")
+            .get(pk=receipt_pk, shop=shop)
+        )
+    elif receipt.status == ShopReceiptStatus.CONFIRMED:
+        detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+        return {
+            **detail,
+            "ok": True,
+            "message": f"Receipt {receipt.receipt_number} is already confirmed.",
+            "status": receipt.status,
+            "status_label": receipt.get_status_display(),
+            "mpesa_receipt_number": receipt.mpesa_receipt_number or "",
+        }
+    elif receipt.status != ShopReceiptStatus.ACTIVE:
+        raise ValidationError("Only pending or cancelled receipts can be confirmed.")
 
     ref = (mpesa_receipt_number or "").strip()[:40]
     existing_ref = (receipt.mpesa_receipt_number or "").strip()
-    needs_mpesa_ref = receipt.payment_method in {
-        ShopPaymentMethod.MPESA,
-        ShopPaymentMethod.BOTH,
-    }
-    if needs_mpesa_ref:
-        pos = get_effective_pos_settings(shop)
-        if bool(getattr(pos, "require_mpesa_reference_on_confirm", False)):
-            if not ref and not existing_ref:
-                raise ValidationError(
-                    "Enter the M-Pesa reference number before confirming this receipt."
-                )
+    pos = get_effective_pos_settings(shop)
+    require_details = bool(
+        getattr(pos, "require_mpesa_reference_on_confirm", False)
+    )
+    if require_details and not ref and not existing_ref:
+        raise ValidationError(
+            "Enter the reference number before confirming this receipt."
+        )
+
+    paid_at = payment_at
+    if paid_at in (None, ""):
+        paid_at = None
+    elif not hasattr(paid_at, "tzinfo"):
+        paid_at = _parse_delivery_payment_at(paid_at)
+    elif timezone.is_naive(paid_at):
+        paid_at = timezone.make_aware(paid_at, timezone.get_current_timezone())
+    if require_details and paid_at is None:
+        raise ValidationError(
+            "Enter the payment date and time before confirming this receipt."
+        )
 
     receipt.status = ShopReceiptStatus.CONFIRMED
     update_fields = ["status"]
@@ -9440,6 +9745,10 @@ def confirm_shop_receipt(
     if ref:
         receipt.mpesa_receipt_number = ref
         update_fields.append("mpesa_receipt_number")
+    # Stamp sale time to the editable payment moment (defaults to print time).
+    if paid_at is not None and paid_at != receipt.created_at:
+        receipt.created_at = paid_at
+        update_fields.append("created_at")
     receipt.save(update_fields=update_fields)
 
     detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
@@ -9454,8 +9763,94 @@ def confirm_shop_receipt(
 
 
 @transaction.atomic
+def set_confirm_receipt_status(
+    *,
+    shop: Shop,
+    receipt_id: int,
+    actor,
+    status: str,
+    mpesa_receipt_number: str = "",
+    payment_at=None,
+) -> dict:
+    """Set a sales receipt to pending, confirmed, or cancelled from confirm-receipts."""
+    from .models import ShopReceipt
+
+    if actor is None:
+        raise ValidationError("Sign in to update receipt status.")
+
+    target = _resolve_confirm_receipt_status(status)
+
+    try:
+        receipt = (
+            ShopReceipt.objects.select_for_update()
+            .select_related("shop")
+            .get(pk=receipt_id, shop=shop)
+        )
+    except ShopReceipt.DoesNotExist as exc:
+        raise ValidationError("Receipt not found for this shop.") from exc
+
+    if receipt.kind != ShopReceiptKind.SALE:
+        raise ValidationError("Only sales receipts can change status here.")
+
+    current = receipt.status
+    if current == ShopReceiptStatus.PARTIAL_RETURN and target != ShopReceiptStatus.CANCELLED:
+        raise ValidationError(
+            "Partially returned receipts can only be fully cancelled here."
+        )
+
+    if current == target:
+        detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+        return {
+            **detail,
+            "ok": True,
+            "message": f"Receipt {receipt.receipt_number} is already {receipt.get_status_display().lower()}.",
+            "status": receipt.status,
+            "status_label": receipt.get_status_display(),
+        }
+
+    receipt_pk = receipt.pk
+    del receipt
+
+    if target == ShopReceiptStatus.CONFIRMED:
+        return confirm_shop_receipt(
+            shop=shop,
+            receipt_id=receipt_pk,
+            actor=actor,
+            mpesa_receipt_number=mpesa_receipt_number,
+            payment_at=payment_at,
+        )
+
+    if target == ShopReceiptStatus.CANCELLED:
+        return cancel_pending_shop_receipt(
+            shop=shop, receipt_id=receipt_pk, actor=actor
+        )
+
+    # target == pending (ACTIVE)
+    if current == ShopReceiptStatus.CONFIRMED:
+        locked = ShopReceipt.objects.select_for_update().get(pk=receipt_pk, shop=shop)
+        locked.status = ShopReceiptStatus.ACTIVE
+        locked.save(update_fields=["status"])
+        detail = get_shop_receipt_detail(shop=shop, receipt_id=locked.pk)
+        return {
+            **detail,
+            "ok": True,
+            "message": f"Receipt {locked.receipt_number} set back to pending.",
+            "status": locked.status,
+            "status_label": locked.get_status_display(),
+        }
+    if current == ShopReceiptStatus.CANCELLED:
+        return reopen_cancelled_shop_receipt(
+            shop=shop,
+            receipt_id=receipt_pk,
+            actor=actor,
+            target_status=ShopReceiptStatus.ACTIVE,
+        )
+    raise ValidationError("That status change is not allowed.")
+
+
+@transaction.atomic
 def cancel_pending_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
-    """Cancel a pending sales receipt from confirm-receipts (restock sale lines)."""
+    """Cancel a sales receipt from confirm-receipts (restock remaining sale lines)."""
     from .models import ShopReceipt
 
     if actor is None:
@@ -9474,8 +9869,24 @@ def cancel_pending_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
     if receipt.kind != ShopReceiptKind.SALE:
         raise ValidationError("Only sales receipts can be cancelled here.")
 
-    if receipt.status != ShopReceiptStatus.ACTIVE:
-        raise ValidationError("Only pending receipts can be cancelled here.")
+    if receipt.status == ShopReceiptStatus.CANCELLED:
+        detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+        return {
+            **detail,
+            "ok": True,
+            "message": f"Receipt {receipt.receipt_number} is already cancelled.",
+            "status": receipt.status,
+            "status_label": receipt.get_status_display(),
+        }
+
+    if receipt.status not in {
+        ShopReceiptStatus.ACTIVE,
+        ShopReceiptStatus.CONFIRMED,
+        ShopReceiptStatus.PARTIAL_RETURN,
+    }:
+        raise ValidationError(
+            "Only pending, confirmed, or partially returned receipts can be cancelled here."
+        )
 
     lines_payload = []
     for line in receipt.lines.all():

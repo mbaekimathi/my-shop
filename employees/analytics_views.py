@@ -25,6 +25,7 @@ from .analytics_services import (
     build_client_tradings_page,
     build_client_transactions,
     build_confirm_receipts_page,
+    build_confirm_receipts_print_document,
     build_confirm_receipts_rows,
     build_credit_clients_page,
     build_credit_report_page,
@@ -855,6 +856,70 @@ def analytics_confirm_receipts(request, role_segment):
                 profile.role, active_view="confirm-receipts", profile=profile
             ),
             **context,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_confirm_receipts_print(request, role_segment):
+    """Printable filtered confirm-receipts list (A4 browser print)."""
+    from django.utils import timezone
+
+    from shops.services import get_company_profile
+
+    from .module_permissions import require_module_permission
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_confirm_receipts_print",
+            role_segment=expected,
+        )
+
+    denied = require_module_permission(
+        request, profile, "analytics", "confirm-receipts"
+    )
+    if denied is not None:
+        return denied
+
+    document = build_confirm_receipts_print_document(
+        profile=profile, request=request
+    )
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    printed_at = timezone.localtime()
+    as_estimate = (request.GET.get("estimate") or "").strip() == "1"
+    if as_estimate:
+        return JsonResponse(
+            {
+                "ok": True,
+                "paper": "a4",
+                "receipt_count": document.get("receipt_total") or 0,
+                "a4_page_estimate": document.get("a4_page_estimate") or 1,
+                "kind_label": document.get("kind_label") or "Sales",
+                "period_label": document.get("period_label") or "",
+            }
+        )
+
+    return render(
+        request,
+        "employees/analytics_confirm_receipts_print.html",
+        {
+            "document": document,
+            "paper": "a4",
+            "error": "",
+            "printed_at": printed_at,
+            "company_name": company_name,
+            "a4_page_estimate": document.get("a4_page_estimate") or 1,
+            "auto_print": (request.GET.get("auto") or "").strip() == "1",
+            "report_period_label": document.get("period_label") or "",
         },
     )
 
@@ -2097,12 +2162,14 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
         return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
 
     mpesa_receipt_number = (request.POST.get("mpesa_receipt_number") or "").strip()
+    payment_at = (request.POST.get("payment_at") or "").strip()
     try:
         result = confirm_shop_receipt(
             shop=shop,
             receipt_id=receipt_id,
             actor=profile,
             mpesa_receipt_number=mpesa_receipt_number,
+            payment_at=payment_at or None,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -2134,6 +2201,45 @@ def analytics_receipt_cancel(request, role_segment, shop_id, receipt_id):
     try:
         result = cancel_pending_shop_receipt(
             shop=shop, receipt_id=receipt_id, actor=profile
+        )
+    except ValidationError as exc:
+        message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+        return JsonResponse({"ok": False, "error": message}, status=400)
+    return JsonResponse(result)
+
+
+@active_employee_required
+@require_POST
+def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
+    """Set a sales receipt to pending, confirmed, or cancelled."""
+    from .module_permissions import require_module_permission
+    from shops.services import set_confirm_receipt_status
+
+    profile, err = _analytics_role_or_error(request, role_segment, as_json=True)
+    if err is not None:
+        return err
+
+    denied = require_module_permission(
+        request, profile, "analytics", "confirm-receipts", as_json=True
+    )
+    if denied is not None:
+        return denied
+
+    shop = _analytics_receipt_shop_access(profile, shop_id)
+    if shop is None:
+        return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
+
+    mpesa_receipt_number = (request.POST.get("mpesa_receipt_number") or "").strip()
+    payment_at = (request.POST.get("payment_at") or "").strip()
+    status = request.POST.get("status") or ""
+    try:
+        result = set_confirm_receipt_status(
+            shop=shop,
+            receipt_id=receipt_id,
+            actor=profile,
+            status=status,
+            mpesa_receipt_number=mpesa_receipt_number,
+            payment_at=payment_at or None,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)

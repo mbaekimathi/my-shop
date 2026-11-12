@@ -253,6 +253,85 @@ class ConfirmSalesReceiptTests(TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
 
+    def test_confirm_updates_payment_at_and_exposes_local_default(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from django.utils import timezone
+
+        from shops.services import confirm_shop_receipt, get_shop_receipt_detail
+
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-PAY-AT")
+        printed = timezone.make_aware(
+            datetime(2026, 11, 11, 13, 49), ZoneInfo("Africa/Nairobi")
+        )
+        type(sale).objects.filter(pk=sale.pk).update(created_at=printed)
+        sale.refresh_from_db()
+
+        detail = get_shop_receipt_detail(shop=self.shop, receipt_id=sale.pk)
+        self.assertEqual(detail["receipt"]["created_at_local"], "2026-11-11T13:49")
+
+        paid = timezone.make_aware(
+            datetime(2026, 11, 12, 9, 15), ZoneInfo("Africa/Nairobi")
+        )
+        result = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            payment_at="2026-11-12T09:15",
+        )
+        sale.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+        self.assertEqual(
+            timezone.localtime(sale.created_at).strftime("%Y-%m-%dT%H:%M"),
+            timezone.localtime(paid).strftime("%Y-%m-%dT%H:%M"),
+        )
+
+    def test_set_status_pending_confirmed_cancelled_round_trip(self):
+        from shops.services import set_confirm_receipt_status
+
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-STATUS")
+        confirmed = set_confirm_receipt_status(
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            status="confirmed",
+        )
+        sale.refresh_from_db()
+        self.assertTrue(confirmed["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+
+        pending = set_confirm_receipt_status(
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            status="pending",
+        )
+        sale.refresh_from_db()
+        self.assertTrue(pending["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.ACTIVE)
+
+        cancelled = set_confirm_receipt_status(
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            status="cancelled",
+        )
+        sale.refresh_from_db()
+        self.assertTrue(cancelled["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.CANCELLED)
+
+        reopened = set_confirm_receipt_status(
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            status="pending",
+        )
+        sale.refresh_from_db()
+        self.assertTrue(reopened["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.ACTIVE)
+
     def test_confirm_saves_optional_mpesa_reference(self):
         from shops.services import confirm_shop_receipt
 
@@ -302,10 +381,21 @@ class ConfirmSalesReceiptTests(TestCase):
 
         with self.assertRaisesMessage(
             ValidationError,
-            "Enter the M-Pesa reference number before confirming this receipt.",
+            "Enter the reference number before confirming this receipt.",
         ):
             confirm_shop_receipt(
                 shop=self.shop, receipt_id=sale.pk, actor=self.staff
+            )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Enter the payment date and time before confirming this receipt.",
+        ):
+            confirm_shop_receipt(
+                shop=self.shop,
+                receipt_id=sale.pk,
+                actor=self.staff,
+                mpesa_receipt_number="REQREF1234",
             )
 
         result = confirm_shop_receipt(
@@ -313,6 +403,7 @@ class ConfirmSalesReceiptTests(TestCase):
             receipt_id=sale.pk,
             actor=self.staff,
             mpesa_receipt_number="REQREF1234",
+            payment_at="2026-11-12T09:15",
         )
         sale.refresh_from_db()
         self.assertTrue(result["ok"])
@@ -331,26 +422,43 @@ class ConfirmSalesReceiptTests(TestCase):
         sale.save(update_fields=["payment_method", "mpesa_receipt_number"])
 
         result = confirm_shop_receipt(
-            shop=self.shop, receipt_id=sale.pk, actor=self.staff
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            payment_at="2026-11-12T09:15",
         )
         sale.refresh_from_db()
         self.assertTrue(result["ok"])
         self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
         self.assertEqual(sale.mpesa_receipt_number, "ALREADYHERE")
 
-    def test_confirm_does_not_require_reference_for_cash_when_setting_on(self):
+    def test_confirm_requires_reference_for_cash_when_setting_on(self):
+        from django.core.exceptions import ValidationError
+
         from shops.services import confirm_shop_receipt, set_company_pos_setting
 
         set_company_pos_setting(
             field="require_mpesa_reference_on_confirm", enabled=True
         )
         sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-CASH-OK")
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Enter the reference number before confirming this receipt.",
+        ):
+            confirm_shop_receipt(
+                shop=self.shop, receipt_id=sale.pk, actor=self.staff
+            )
         result = confirm_shop_receipt(
-            shop=self.shop, receipt_id=sale.pk, actor=self.staff
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            mpesa_receipt_number="CASHREF99",
+            payment_at="2026-11-12T09:15",
         )
         sale.refresh_from_db()
         self.assertTrue(result["ok"])
         self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+        self.assertEqual(sale.mpesa_receipt_number, "CASHREF99")
 
     def test_confirm_page_lists_sales_only(self):
         from django.test import RequestFactory
@@ -368,11 +476,35 @@ class ConfirmSalesReceiptTests(TestCase):
         self.assertEqual(context["kind_filter"], "sale")
         self.assertEqual(context["status_filter"], "")
         self.assertIn("kind_options", context)
+        self.assertIn(
+            "/analytics/confirm-receipts/print/",
+            context["page"].get("print_url") or "",
+        )
         self.assertTrue(context["page"].get("rows_url"))
         sale_row = context["rows"][0]
         self.assertEqual(sale_row["client"], "Walk-in")
         self.assertIn("amount_label", sale_row)
         self.assertTrue(str(sale_row["amount_label"]).startswith("KSh"))
+
+    def test_confirm_print_document_uses_filters(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_confirm_receipts_print_document
+
+        self._receipt(kind=ShopReceiptKind.SALE, number="SL-PRINT-1")
+        request = RequestFactory().get(
+            "/it-support/analytics/confirm-receipts/print/",
+            {"kind": "sale", "range": "month", "month": "2026-11"},
+        )
+        request.user = self.user
+        document = build_confirm_receipts_print_document(
+            profile=self.staff, request=request
+        )
+        self.assertEqual(document["kind_label"], "Sales")
+        self.assertGreaterEqual(document["receipt_total"], 1)
+        self.assertTrue(
+            any(row["number"] == "SL-PRINT-1" for row in document["rows"])
+        )
 
     def test_confirm_page_orders_pending_cancelled_confirmed(self):
         from django.test import RequestFactory

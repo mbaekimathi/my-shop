@@ -939,6 +939,105 @@ def submit_stock_take_counts(
     return build_stock_take_result(assignment)
 
 
+def build_stock_take_shop_totals(*, start=None, end=None, shop_ids=None) -> dict:
+    """Overall accuracy % per shop across submitted counts in a period.
+
+    Takes are included by ``created_at``. Only submitted assignments contribute
+    to the score; pending shops still appear when they were assigned.
+    """
+    takes_qs = StockTake.objects.all()
+    if start is not None:
+        takes_qs = takes_qs.filter(created_at__gte=start)
+    if end is not None:
+        takes_qs = takes_qs.filter(created_at__lt=end)
+    take_ids = list(takes_qs.values_list("id", flat=True))
+
+    assignments_qs = (
+        StockTakeAssignment.objects.filter(stock_take_id__in=take_ids)
+        .select_related("shop")
+        .prefetch_related("counts")
+        .order_by("shop__name", "id")
+    )
+    if shop_ids is not None:
+        assignments_qs = assignments_qs.filter(shop_id__in=list(shop_ids))
+
+    by_shop: dict[int, dict] = {}
+    for assignment in assignments_qs:
+        shop = assignment.shop
+        bucket = by_shop.setdefault(
+            shop.pk,
+            {
+                "shop": shop,
+                "correct": 0,
+                "total": 0,
+                "submitted_takes": 0,
+                "pending_takes": 0,
+                "take_count": 0,
+            },
+        )
+        bucket["take_count"] += 1
+        is_submitted = assignment.status == StockTakeAssignmentStatus.SUBMITTED
+        if is_submitted:
+            bucket["submitted_takes"] += 1
+            counts = list(assignment.counts.all())
+            bucket["total"] += len(counts)
+            bucket["correct"] += sum(
+                1
+                for row in counts
+                if row.counted_qty is not None
+                and _quantize(row.counted_qty) == _quantize(row.system_qty)
+            )
+        else:
+            bucket["pending_takes"] += 1
+
+    shops = []
+    for bucket in by_shop.values():
+        total = bucket["total"]
+        correct = bucket["correct"]
+        has_score = total > 0
+        grade = _grade_payload(correct=correct, total=total) if has_score else None
+        shops.append(
+            {
+                "shop": bucket["shop"],
+                "marks": grade["marks"] if grade else None,
+                "max_marks": total if has_score else 0,
+                "percent": grade["percent"] if grade else None,
+                "grade": grade["grade"] if grade else None,
+                "grade_label": grade["grade_label"] if grade else None,
+                "submitted_takes": bucket["submitted_takes"],
+                "pending_takes": bucket["pending_takes"],
+                "take_count": bucket["take_count"],
+                "has_score": has_score,
+            }
+        )
+    shops.sort(
+        key=lambda row: (
+            0 if row["has_score"] else 1,
+            -(row["percent"] if row["percent"] is not None else -1),
+            (row["shop"].name or "").lower(),
+            row["shop"].pk,
+        )
+    )
+    scored = [row for row in shops if row["has_score"]]
+    overall_correct = sum(row["marks"] or 0 for row in scored)
+    overall_total = sum(row["max_marks"] or 0 for row in scored)
+    overall = (
+        _grade_payload(correct=overall_correct, total=overall_total)
+        if overall_total
+        else None
+    )
+    return {
+        "shops": shops,
+        "shop_count": len(shops),
+        "scored_shop_count": len(scored),
+        "take_count": len(take_ids),
+        "overall_percent": overall["percent"] if overall else None,
+        "overall_marks": overall["marks"] if overall else None,
+        "overall_max_marks": overall_total if overall_total else 0,
+        "overall_grade": overall["grade"] if overall else None,
+    }
+
+
 def build_stock_take_comparison(take: StockTake) -> dict:
     assignments = list(
         take.assignments.select_related("shop")
@@ -946,8 +1045,12 @@ def build_stock_take_comparison(take: StockTake) -> dict:
         .order_by("shop__name")
     )
     item_map: dict[int, dict] = {}
+    shop_rows = []
     for assignment in assignments:
-        for count in assignment.counts.all():
+        counts = list(assignment.counts.all())
+        is_submitted = assignment.status == StockTakeAssignmentStatus.SUBMITTED
+        correct = 0
+        for count in counts:
             item = count.item
             row = item_map.setdefault(
                 item.pk,
@@ -959,14 +1062,31 @@ def build_stock_take_comparison(take: StockTake) -> dict:
             counted = count.counted_qty
             system = _quantize(count.system_qty)
             variance = None if counted is None else _quantize(counted) - system
+            match = variance == 0 if variance is not None else False
+            if match:
+                correct += 1
             row["shops"][assignment.shop_id] = {
                 "system_qty": system,
                 "counted_qty": counted,
                 "variance": variance,
-                "submitted": assignment.status
-                == StockTakeAssignmentStatus.SUBMITTED,
-                "match": variance == 0 if variance is not None else False,
+                "submitted": is_submitted,
+                "match": match,
             }
+        total = len(counts)
+        grade = _grade_payload(correct=correct, total=total) if is_submitted and total else None
+        shop_rows.append(
+            {
+                "assignment": assignment,
+                "shop": assignment.shop,
+                "status": assignment.status,
+                "submitted": is_submitted,
+                "marks": grade["marks"] if grade else None,
+                "max_marks": total,
+                "percent": grade["percent"] if grade else None,
+                "grade": grade["grade"] if grade else None,
+                "grade_label": grade["grade_label"] if grade else None,
+            }
+        )
 
     rows = []
     for row in sorted(
@@ -990,13 +1110,10 @@ def build_stock_take_comparison(take: StockTake) -> dict:
             cells.append(cell)
         rows.append({"item": row["item"], "cells": cells})
 
-    submitted = sum(
-        1
-        for a in assignments
-        if a.status == StockTakeAssignmentStatus.SUBMITTED
-    )
+    submitted = sum(1 for shop in shop_rows if shop["submitted"])
     return {
         "assignments": assignments,
+        "shops": shop_rows,
         "rows": rows,
         "submitted_count": submitted,
         "shop_count": len(assignments),

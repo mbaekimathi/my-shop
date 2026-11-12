@@ -462,6 +462,11 @@ urlpatterns = [
         name="analytics_confirm_receipts",
     ),
     path(
+        "<role_segment:role_segment>/analytics/confirm-receipts/print/",
+        analytics_views.analytics_confirm_receipts_print,
+        name="analytics_confirm_receipts_print",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/api/confirm-receipts/rows/",
         analytics_views.analytics_confirm_receipts_rows,
         name="analytics_confirm_receipts_rows",
@@ -490,6 +495,11 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/cancel/",
         analytics_views.analytics_receipt_cancel,
         name="analytics_receipt_cancel",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/set-status/",
+        analytics_views.analytics_receipt_set_status,
+        name="analytics_receipt_set_status",
     ),
     path(
         "<role_segment:role_segment>/analytics/api/receipts/<int:shop_id>/<int:receipt_id>/return/",

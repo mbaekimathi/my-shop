@@ -6263,6 +6263,14 @@
   gap: 0.65rem 1rem;
 }
 
+.ax--confirm .ax-confirm-top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
 .ax--confirm .ax-confirm-top .ax-title {
   gap: 0.45rem 0.65rem;
   min-width: 0;
@@ -6570,6 +6578,24 @@
 
 .ax-confirm-cart .ax-confirm-select-actions [data-ax-confirm-confirm-selected] {
   flex: 1 1 100%;
+}
+
+.shop-receipt-modal-actions .ax-confirm-status-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-right: auto;
+}
+
+.shop-receipt-modal-actions .ax-confirm-status-edit select {
+  min-height: 2.2rem;
+  min-width: 9.5rem;
+  border: 1px solid var(--line, rgba(15, 23, 42, 0.14));
+  border-radius: 0.55rem;
+  background: var(--panel, #fff);
+  color: inherit;
+  padding: 0.3rem 0.55rem;
+  font: inherit;
 }
 
 .ax--confirm .ax-confirm-list-wrap {

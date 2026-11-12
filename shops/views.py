@@ -3853,7 +3853,7 @@ SHOP_RECEIPT_SETTING_GROUPS = (
         "toggles": (
             (
                 "require_mpesa_reference_on_confirm",
-                "Compulsory M-Pesa reference number",
+                "Compulsory reference number",
             ),
         ),
     },

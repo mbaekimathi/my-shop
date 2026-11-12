@@ -750,8 +750,8 @@ class CompanyPosSettings(models.Model):
     require_mpesa_reference_on_confirm = models.BooleanField(
         default=False,
         help_text=(
-            "When on, confirming an M-Pesa or Cash + M-Pesa sale requires a "
-            "reference number. When off, the reference is optional."
+            "When on, confirming a sale requires a reference number. "
+            "When off, the reference is optional."
         ),
     )
     show_maintainer_on_receipt = models.BooleanField(
@@ -1057,8 +1057,8 @@ class ShopPosSettings(models.Model):
     require_mpesa_reference_on_confirm = models.BooleanField(
         default=False,
         help_text=(
-            "When on, confirming an M-Pesa or Cash + M-Pesa sale requires a "
-            "reference number. When off, the reference is optional."
+            "When on, confirming a sale requires a reference number. "
+            "When off, the reference is optional."
         ),
     )
     show_maintainer_on_receipt = models.BooleanField(

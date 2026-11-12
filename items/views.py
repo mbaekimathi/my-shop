@@ -6569,6 +6569,7 @@ def stock_take_page(request, profile, meta, module):
     from items.models import StockTake, StockTakeStatus
     from items.stock_take import (
         build_stock_take_comparison,
+        build_stock_take_shop_totals,
         close_stock_take,
         create_stock_take,
         update_stock_take,
@@ -6712,11 +6713,26 @@ def stock_take_page(request, profile, meta, module):
                     "%Y-%m-%dT%H:%M"
                 )
 
-    takes = list(
-        StockTake.objects.select_related("created_by", "created_by__user").prefetch_related(
-            "assignments"
-        )[:40]
+    # Leaderboard + list default to the current month when no range is chosen.
+    range_get = request.GET.copy()
+    if not (range_get.get("range") or "").strip():
+        range_get["range"] = "month"
+    request.GET = range_get
+    range_type, range_start, range_end, filter_context = _report_range_bounds(request)
+    range_labels = {
+        "day": "Day",
+        "period": "Period",
+        "month": "Month",
+        "year": "Year",
+    }
+
+    takes_qs = (
+        StockTake.objects.select_related("created_by", "created_by__user")
+        .prefetch_related("assignments")
+        .filter(created_at__gte=range_start, created_at__lt=range_end)
+        .order_by("-created_at", "-id")
     )
+    takes = list(takes_qs[:40])
     for take in takes:
         assignments = list(take.assignments.all())
         take.shop_count = len(assignments)
@@ -6734,6 +6750,11 @@ def stock_take_page(request, profile, meta, module):
                 Shop.objects.filter(pk__in=missing_ids).order_by("name")
             )
             shops.sort(key=lambda row: ((row.name or "").lower(), row.pk))
+    shop_totals = build_stock_take_shop_totals(
+        start=range_start,
+        end=range_end,
+        shop_ids=[shop.pk for shop in shops] or None,
+    )
     categories = [
         {"value": category_form_token(name), "label": name or "Uncategorised"}
         for name in Item.objects.filter(is_suspended=False)
@@ -6776,7 +6797,16 @@ def stock_take_page(request, profile, meta, module):
             "stock_take_edit_category_values": edit_category_values,
             "stock_take_edit_item_ids": edit_item_ids,
             "stock_take_edit_deadline_value": edit_deadline_value,
+            "stock_take_shop_totals": shop_totals,
             "StockTakeStatus": StockTakeStatus,
+            "report_range": filter_context["report_range"],
+            "report_range_label": range_labels.get(range_type, "Month"),
+            "report_period_label": filter_context.get("report_period_label") or "",
+            "report_date_value": filter_context["report_date_value"],
+            "report_date_from": filter_context["report_date_from"],
+            "report_date_to": filter_context["report_date_to"],
+            "report_month_value": filter_context["report_month_value"],
+            "report_year_value": filter_context["report_year_value"],
         },
     )
 

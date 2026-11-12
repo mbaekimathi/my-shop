@@ -148,7 +148,7 @@
   padding: 0.7rem 0.9rem;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--surface) 88%, #fff);
+  background: color-mix(in srgb, var(--panel-muted) 55%, var(--surface));
   box-shadow: 0 8px 20px rgba(8, 28, 34, 0.04);
   text-align: right;
 }
@@ -169,7 +169,7 @@
   padding: 0.62rem 0.85rem;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--accent-deep) 28%, var(--line));
-  background: color-mix(in srgb, var(--accent-deep) 10%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 10%, var(--surface));
   color: var(--text-strong);
   font-size: 0.84rem;
   font-weight: 650;
@@ -178,13 +178,13 @@
 }
 
 .stock-settings-jump:hover {
-  background: color-mix(in srgb, var(--accent-deep) 16%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 16%, var(--surface));
   border-color: color-mix(in srgb, var(--accent-deep) 42%, var(--line));
   transform: translateY(-1px);
 }
 
 .stock-settings-jump--ghost {
-  background: color-mix(in srgb, var(--surface) 90%, #fff);
+  background: color-mix(in srgb, var(--panel-muted) 60%, var(--surface));
   border-color: var(--line);
 }
 
@@ -886,7 +886,7 @@
   border-radius: 12px;
   font-size: 0.84rem;
   color: var(--mist-dim);
-  background: color-mix(in srgb, var(--accent-deep) 6%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 8%, var(--surface));
 }
 
 .stock-settings-readonly i,
@@ -3169,7 +3169,7 @@
   padding: 0.7rem 0.8rem;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(247, 249, 248, 0.7);
+  background: color-mix(in srgb, var(--panel-muted) 70%, var(--surface));
 }
 
 .stock-report-field {
@@ -7554,8 +7554,8 @@
 }
 
 .stock-settings-card--visibility .stock-settings-card-icon {
-  color: #4b5563;
-  background: color-mix(in srgb, #6b7280 14%, transparent);
+  color: var(--mist);
+  background: color-mix(in srgb, var(--mist) 14%, transparent);
 }
 
 .stock-visibility-form {
@@ -7598,7 +7598,7 @@
 
 .stock-visibility-mode.is-selected {
   border-color: color-mix(in srgb, var(--accent-deep) 48%, var(--line));
-  background: color-mix(in srgb, var(--accent-deep) 10%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 12%, var(--surface));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-deep) 18%, transparent);
 }
 
@@ -7615,7 +7615,7 @@
   width: 2.3rem;
   height: 2.3rem;
   border-radius: 11px;
-  background: rgba(16, 40, 44, 0.06);
+  background: color-mix(in srgb, var(--mist) 8%, transparent);
   color: var(--mist);
 }
 
@@ -7654,7 +7654,7 @@
   padding: 0.85rem;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: rgba(247, 249, 248, 0.55);
+  background: color-mix(in srgb, var(--panel-muted) 65%, var(--surface));
 }
 
 .stock-visibility-panel[hidden] {
@@ -7755,6 +7755,8 @@
 .stock-visibility-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .stock-settings-footnote--inline {
@@ -7781,8 +7783,27 @@
 }
 
 /* ?? Stock take ?? */
+.stock-take-initiate {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.stock-take-initiate-btn {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.stock-take-initiate-btn i,
+.stock-take-initiate-btn svg {
+  width: 1rem;
+  height: 1rem;
+}
+
 .stock-panel--stock-take .stock-take-create {
-  margin-bottom: 1.25rem;
+  margin-bottom: 0;
 }
 
 .stock-panel--stock-take .stock-take-edit {
@@ -7809,6 +7830,66 @@
   background: var(--input-bg, var(--surface));
   color: var(--text-strong);
   font: inherit;
+}
+
+.stock-take-overall {
+  margin: 0 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel-muted) 35%, var(--surface));
+  overflow: hidden;
+}
+
+.stock-take-overall-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.65rem;
+  align-items: end;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.stock-take-overall-head h3 {
+  margin: 0.15rem 0 0;
+  font-size: 1.05rem;
+  color: var(--text-strong);
+}
+
+.stock-take-overall-meta {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--mist);
+}
+
+.stock-take-overall-grid {
+  padding: 0.85rem;
+}
+
+.stock-take-overall .stock-count-shop-card.is-grade-perfect {
+  border-color: color-mix(in srgb, var(--ok, #2f7d4a) 35%, var(--line));
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 12%, var(--surface));
+}
+
+.stock-take-overall .stock-count-shop-card.is-grade-great {
+  border-color: color-mix(in srgb, #2a6fd1 32%, var(--line));
+  background: color-mix(in srgb, #2a6fd1 14%, var(--surface));
+}
+
+.stock-take-overall .stock-count-shop-card.is-grade-fair {
+  border-color: color-mix(in srgb, var(--accent-deep, #b7791f) 32%, var(--line));
+  background: color-mix(in srgb, var(--accent-deep, #b7791f) 14%, var(--surface));
+}
+
+.stock-take-overall .stock-count-shop-card.is-grade-low {
+  border-color: color-mix(in srgb, var(--danger, #c45c4a) 32%, var(--line));
+  background: color-mix(in srgb, var(--danger, #c45c4a) 14%, var(--surface));
+}
+
+.stock-take-overall .stock-settings-footnote {
+  margin: 0;
+  padding: 0.95rem 1rem 1.05rem;
 }
 
 .stock-take-list {
@@ -7847,7 +7928,7 @@
 
 .stock-take-list-row:hover {
   border-color: color-mix(in srgb, var(--accent-deep) 35%, var(--line));
-  background: color-mix(in srgb, var(--accent-deep) 6%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 8%, var(--surface));
 }
 
 .stock-take-list-main {
@@ -7877,13 +7958,13 @@
 }
 
 .stock-take-status--open {
-  color: #2a6fd1;
-  background: rgba(61, 139, 253, 0.14);
+  color: var(--info-text, #2a6fd1);
+  background: var(--info-bg, rgba(61, 139, 253, 0.14));
 }
 
 .stock-take-status--closed {
-  color: var(--mist);
-  background: rgba(16, 40, 44, 0.08);
+  color: var(--mist-dim);
+  background: color-mix(in srgb, var(--mist) 12%, transparent);
 }
 
 .stock-take-meta {
@@ -7911,7 +7992,7 @@
   margin: 0 0 0.85rem;
   padding: 0.7rem 0.85rem;
   border-left: 3px solid var(--accent-deep);
-  background: color-mix(in srgb, var(--accent-deep) 8%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 12%, var(--surface));
   color: var(--mist-dim);
   font-size: 0.88rem;
 }
@@ -7943,12 +8024,93 @@
 .stock-take-shop-pill.is-done {
   color: var(--ok, #2f7d4a);
   border-color: color-mix(in srgb, var(--ok, #2f7d4a) 35%, var(--line));
-  background: color-mix(in srgb, var(--ok, #2f7d4a) 10%, #fff);
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 12%, var(--surface));
 }
 
 .stock-take-shop-pill.is-pending {
   color: var(--mist);
   background: var(--panel-muted);
+}
+
+.stock-take-shop-score {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.stock-take-shop-score-meta {
+  font-weight: 600;
+  opacity: 0.72;
+}
+
+.stock-take-shop-pill.is-grade-perfect {
+  color: var(--ok, #2f7d4a);
+  border-color: color-mix(in srgb, var(--ok, #2f7d4a) 40%, var(--line));
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 14%, var(--surface));
+}
+
+.stock-take-shop-pill.is-grade-great {
+  color: #2a6fd1;
+  border-color: color-mix(in srgb, #2a6fd1 35%, var(--line));
+  background: color-mix(in srgb, #2a6fd1 14%, var(--surface));
+}
+
+.stock-take-shop-pill.is-grade-fair {
+  color: var(--accent-deep, #b7791f);
+  border-color: color-mix(in srgb, var(--accent-deep, #b7791f) 35%, var(--line));
+  background: color-mix(in srgb, var(--accent-deep, #b7791f) 14%, var(--surface));
+}
+
+.stock-take-shop-pill.is-grade-low {
+  color: var(--danger, #c45c4a);
+  border-color: color-mix(in srgb, var(--danger, #c45c4a) 35%, var(--line));
+  background: color-mix(in srgb, var(--danger, #c45c4a) 14%, var(--surface));
+}
+
+.stock-take-shop-head {
+  display: grid;
+  gap: 0.15rem;
+  justify-items: start;
+}
+
+.stock-take-shop-head strong {
+  font-weight: 750;
+}
+
+.stock-take-shop-head-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-style: normal;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--mist);
+}
+
+.stock-take-shop-head-score span {
+  font-weight: 650;
+  opacity: 0.78;
+}
+
+.stock-take-shop-head-score.is-grade-perfect {
+  color: var(--ok, #2f7d4a);
+}
+
+.stock-take-shop-head-score.is-grade-great {
+  color: #2a6fd1;
+}
+
+.stock-take-shop-head-score.is-grade-fair {
+  color: var(--accent-deep, #b7791f);
+}
+
+.stock-take-shop-head-score.is-grade-low {
+  color: var(--danger, #c45c4a);
+}
+
+.stock-take-shop-head-score.is-pending {
+  font-weight: 650;
+  color: var(--mist);
 }
 
 .stock-take-close-form {
@@ -8022,6 +8184,34 @@
   font-weight: 700;
 }
 
+/* Stock take — dark theme contrast */
+html[data-theme="dark"] .stock-take-shop-pill.is-grade-great,
+html[data-theme="dark"] .stock-take-shop-head-score.is-grade-great {
+  color: #7eb6ff;
+}
+
+html[data-theme="dark"] .stock-settings-card {
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2), 0 14px 28px rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme="dark"] .stock-settings-card:hover {
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2), 0 18px 34px rgba(0, 0, 0, 0.34);
+}
+
+html[data-theme="dark"] .stock-take-table th {
+  color: var(--text-muted);
+}
+
+html[data-theme="dark"] .stock-take-list-main em,
+html[data-theme="dark"] .stock-take-item em,
+html[data-theme="dark"] .stock-take-overall-meta,
+html[data-theme="dark"] .stock-count-shop-meta,
+html[data-theme="dark"] .stock-visibility-mode-copy em,
+html[data-theme="dark"] .stock-visibility-list--items em {
+  color: var(--text-muted);
+}
+
+
 .stock-take-modal-dialog {
   width: min(32rem, calc(100vw - 1.5rem));
   max-height: min(88dvh, 40rem);
@@ -8057,7 +8247,7 @@
   padding: 0.35rem 0.65rem;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--accent-deep) 30%, var(--line));
-  background: color-mix(in srgb, var(--accent-deep) 12%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 14%, var(--surface));
   color: var(--text-strong);
   font-size: 0.84rem;
   font-weight: 750;
@@ -8067,7 +8257,7 @@
 
 .stock-take-modal-countdown.is-overdue {
   border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
-  background: color-mix(in srgb, var(--danger) 12%, #fff);
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
   color: var(--danger);
 }
 
@@ -8106,7 +8296,7 @@
 .stock-take-mode-option.is-active {
   color: var(--text-strong);
   border-color: color-mix(in srgb, var(--accent-deep) 40%, var(--line));
-  background: color-mix(in srgb, var(--accent-deep) 14%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 16%, var(--surface));
 }
 
 .stock-take-one {
@@ -8123,7 +8313,7 @@
 .stock-take-one-progress-bar {
   height: 0.45rem;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--line) 80%, #fff);
+  background: color-mix(in srgb, var(--line) 55%, var(--surface));
   overflow: hidden;
 }
 
@@ -8213,12 +8403,12 @@
 
 .stock-take-one-flash.is-match {
   border-color: color-mix(in srgb, var(--ok, #2f7d4a) 35%, var(--line));
-  background: color-mix(in srgb, var(--ok, #2f7d4a) 12%, #fff);
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 14%, var(--surface));
 }
 
 .stock-take-one-flash.is-miss {
   border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
-  background: color-mix(in srgb, var(--danger) 12%, #fff);
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
 }
 
 .stock-take-one-flash-icon {
@@ -8437,12 +8627,12 @@
 }
 
 .stock-count-shop-card.is-done {
-  background: color-mix(in srgb, var(--ok, #2f7d4a) 8%, #fff);
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 12%, var(--surface));
   border-color: color-mix(in srgb, var(--ok, #2f7d4a) 28%, var(--line));
 }
 
 .stock-count-shop-card.is-pending {
-  background: color-mix(in srgb, var(--accent-deep) 6%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 8%, var(--surface));
 }
 
 .stock-count-shop-card-top {
@@ -8755,7 +8945,7 @@
 
 .stock-take-stat--ok {
   border-color: color-mix(in srgb, var(--ok, #2f7d4a) 28%, var(--line));
-  background: color-mix(in srgb, var(--ok, #2f7d4a) 10%, #fff);
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 12%, var(--surface));
 }
 
 .stock-take-stat--ok .stock-take-stat-icon {
@@ -8765,7 +8955,7 @@
 
 .stock-take-stat--bad {
   border-color: color-mix(in srgb, var(--danger) 28%, var(--line));
-  background: color-mix(in srgb, var(--danger) 10%, #fff);
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
 }
 
 .stock-take-stat--bad .stock-take-stat-icon {
@@ -8775,7 +8965,7 @@
 
 .stock-take-stat--score {
   border-color: color-mix(in srgb, var(--accent-deep) 28%, var(--line));
-  background: color-mix(in srgb, var(--accent-deep) 10%, #fff);
+  background: color-mix(in srgb, var(--accent-deep) 12%, var(--surface));
 }
 
 .stock-take-stat--score .stock-take-stat-icon {
@@ -8810,12 +9000,12 @@
 
 .stock-take-result-row.is-match {
   border-color: color-mix(in srgb, var(--ok, #2f7d4a) 30%, var(--line));
-  background: color-mix(in srgb, var(--ok, #2f7d4a) 8%, #fff);
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 12%, var(--surface));
 }
 
 .stock-take-result-row.is-miss {
   border-color: color-mix(in srgb, var(--danger) 30%, var(--line));
-  background: color-mix(in srgb, var(--danger) 8%, #fff);
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
 }
 
 .stock-take-result-icon {

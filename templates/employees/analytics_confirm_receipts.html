@@ -13,6 +13,7 @@
   data-receipt-detail-url="{{ page.detail_url_template }}"
   data-receipt-confirm-url="{{ page.confirm_url_template }}"
   data-receipt-cancel-url="{{ page.cancel_url_template }}"
+  data-receipt-set-status-url="{{ page.set_status_url_template }}"
   data-receipt-rows-url="{{ page.rows_url }}"
   data-async-rows="{% if async_rows %}1{% else %}0{% endif %}"
 >
@@ -23,11 +24,22 @@
         <h2>{{ page.headline }}</h2>
         <span class="ax-period" data-ax-confirm-period>{{ report_period_label }}</span>
       </div>
-      {% if page.back_href %}
-      <div class="ax-top-actions">
+      <div class="ax-top-actions ax-confirm-top-actions">
+        {% if page.print_url %}
+        <button
+          type="button"
+          class="ax-apply"
+          data-ax-confirm-print
+          data-print-url="{{ page.print_url }}"
+        >
+          <i data-lucide="printer" aria-hidden="true"></i>
+          Print list
+        </button>
+        {% endif %}
+        {% if page.back_href %}
         <a class="ax-apply ax-apply--ghost" href="{{ page.back_href }}">{{ page.back_label|default:"Back" }}</a>
+        {% endif %}
       </div>
-      {% endif %}
     </div>
     {% if page.lead %}<p class="ax-lead ax-confirm-lead">{{ page.lead }}</p>{% endif %}
     <form class="ax-filters ax-confirm-filters" method="get" data-analytics-filters>
@@ -102,18 +114,22 @@
         <tbody data-ax-confirm-rows>
           {% for row in rows %}
           <tr
-            class="ax-receipt-row{% if row.can_confirm or row.can_cancel %} is-selectable{% endif %}"
+            class="ax-receipt-row{% if row.can_confirm or row.can_cancel or row.can_set_pending %} is-selectable{% endif %}"
             data-receipt-id="{{ row.receipt_id }}"
             data-shop-id="{{ row.shop_id }}"
             data-receipt-source="{{ row.source|default:'pos' }}"
             data-receipt-number="{{ row.number }}"
+            data-receipt-status="{{ row.status }}"
             data-can-confirm="{% if row.can_confirm %}1{% else %}0{% endif %}"
             data-can-cancel="{% if row.can_cancel %}1{% else %}0{% endif %}"
+            data-can-set-pending="{% if row.can_set_pending %}1{% else %}0{% endif %}"
+            data-can-edit-status="{% if row.can_edit_status %}1{% else %}0{% endif %}"
+            data-require-confirm-details="{% if row.require_mpesa_reference_on_confirm %}1{% else %}0{% endif %}"
             data-search-text="{{ row.search_text|default:row.number }}"
             tabindex="0"
           >
             <td class="ax-col-select" data-label="Select">
-              {% if row.can_confirm or row.can_cancel %}
+              {% if row.can_confirm or row.can_cancel or row.can_set_pending %}
               <label class="ax-select-row">
                 <span class="visually-hidden">Select {{ row.number }}</span>
                 <input
@@ -180,11 +196,14 @@
       <button type="button" class="ax-apply ax-apply--ghost" data-ax-confirm-clear-selected disabled>
         Clear
       </button>
+      <button type="button" class="btn btn--ghost" data-ax-confirm-pending-selected disabled>
+        Set pending
+      </button>
       <button type="button" class="btn btn--ghost" data-ax-confirm-cancel-selected disabled>
-        Cancel selected
+        Set cancelled
       </button>
       <button type="button" class="ax-apply" data-ax-confirm-confirm-selected disabled>
-        Confirm selected
+        Set confirmed
       </button>
     </div>
   </div>
@@ -224,11 +243,16 @@
     </div>
 
     <div class="workspace-modal-actions shop-receipt-modal-actions" data-confirm-receipt-modal-actions hidden>
-      <button type="button" class="btn btn--ghost" data-confirm-receipt-cancel hidden>
-        Cancel receipt
-      </button>
-      <button type="button" class="btn btn--primary" data-confirm-receipt-confirm hidden>
-        Confirm receipt
+      <label class="ax-confirm-status-edit" data-confirm-receipt-status-wrap hidden>
+        <span class="visually-hidden">Receipt status</span>
+        <select data-confirm-receipt-status aria-label="Receipt status">
+          <option value="pending">Pending</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </label>
+      <button type="button" class="btn btn--primary" data-confirm-receipt-save-status hidden>
+        Update status
       </button>
     </div>
   </div>
@@ -237,7 +261,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=18"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=25"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");

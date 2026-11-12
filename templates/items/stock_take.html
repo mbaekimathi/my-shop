@@ -26,7 +26,7 @@
           {% if selected_take %}
           Compare system quantity with what each shop counted. On an open take you can uncheck shops or items to remove them.
           {% else %}
-          Choose categories or items, pick shops, set a deadline. Shops get a popup to enter counts; those stock numbers stay hidden for each shop until it submits.
+          Overall shop accuracy for {{ report_period_label }}. Choose categories or items, pick shops, set a deadline.
           {% endif %}
         </p>
       </div>
@@ -36,9 +36,74 @@
           <i data-lucide="arrow-left" aria-hidden="true"></i>
           <span>All stock takes</span>
         </a>
+        {% elif stock_take_shop_totals and stock_take_shop_totals.overall_percent is not None %}
+        <div class="stock-stats">
+          <p class="stock-stat">
+            <strong>{{ stock_take_shop_totals.overall_percent }}%</strong>
+            <span>overall</span>
+          </p>
+          <p class="stock-stat">
+            <strong>{{ stock_take_shop_totals.overall_marks }}/{{ stock_take_shop_totals.overall_max_marks }}</strong>
+            <span>matched</span>
+          </p>
+        </div>
         {% endif %}
       </div>
     </div>
+
+    {% if not selected_take %}
+    <form class="stock-report-filters" method="get" data-stock-report-filters data-stock-take-filters>
+      <input type="hidden" name="mode" value="stock-take">
+
+      <label class="stock-report-field">
+        <span>Time</span>
+        <select name="range" data-stock-report-range aria-label="Time range">
+          <option value="day"{% if report_range == "day" %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == "period" %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == "month" %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == "year" %} selected{% endif %}>Year</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field" data-range-field="day"{% if report_range != "day" %} hidden{% endif %}>
+        <span>Date</span>
+        <input type="date" name="date" value="{{ report_date_value }}" data-stock-report-calendar required aria-label="Select day">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != "period" %} hidden{% endif %}>
+        <span>From</span>
+        <input type="date" name="date_from" value="{{ report_date_from }}" data-stock-report-calendar required aria-label="Period start">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != "period" %} hidden{% endif %}>
+        <span>To</span>
+        <input type="date" name="date_to" value="{{ report_date_to }}" data-stock-report-calendar required aria-label="Period end">
+      </label>
+      <label class="stock-report-field" data-range-field="month"{% if report_range != "month" %} hidden{% endif %}>
+        <span>Month</span>
+        <input type="month" name="month" value="{{ report_month_value }}" data-stock-report-calendar required aria-label="Select month">
+      </label>
+      <label class="stock-report-field" data-range-field="year"{% if report_range != "year" %} hidden{% endif %}>
+        <span>Year</span>
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          data-stock-report-calendar
+          required
+          aria-label="Select year"
+        >
+      </label>
+
+      <div class="stock-report-actions">
+        <button type="submit" class="btn btn--primary">
+          <i data-lucide="filter" aria-hidden="true"></i>
+          <span>Apply</span>
+        </button>
+      </div>
+    </form>
+    {% endif %}
   </header>
 
   {% if not can_edit_stock_take %}
@@ -77,11 +142,16 @@
     {% endif %}
 
     <div class="stock-take-shops">
-      {% for assignment in stock_take_comparison.assignments %}
-      <span class="stock-take-shop-pill{% if assignment.status == 'submitted' %} is-done{% else %} is-pending{% endif %}">
-        <i data-lucide="{% if assignment.status == 'submitted' %}check{% else %}clock{% endif %}" aria-hidden="true"></i>
-        {{ assignment.shop.name }}
-        · {% if assignment.status == 'submitted' %}Submitted{% else %}Waiting{% endif %}
+      {% for shop in stock_take_comparison.shops %}
+      <span class="stock-take-shop-pill{% if shop.submitted %} is-done{% else %} is-pending{% endif %}{% if shop.grade %} is-grade-{{ shop.grade }}{% endif %}">
+        <i data-lucide="{% if shop.submitted %}check{% else %}clock{% endif %}" aria-hidden="true"></i>
+        {{ shop.shop.name }}
+        {% if shop.submitted and shop.percent is not None %}
+        · <strong class="stock-take-shop-score">{{ shop.percent }}%</strong>
+        <span class="stock-take-shop-score-meta">{{ shop.marks }}/{{ shop.max_marks }}</span>
+        {% else %}
+        · Waiting
+        {% endif %}
       </span>
       {% endfor %}
     </div>
@@ -223,13 +293,25 @@
         <thead>
           <tr>
             <th scope="col">Item</th>
-            {% for assignment in stock_take_comparison.assignments %}
-            <th scope="col" colspan="3">{{ assignment.shop.name }}</th>
+            {% for shop in stock_take_comparison.shops %}
+            <th scope="col" colspan="3">
+              <span class="stock-take-shop-head">
+                <strong>{{ shop.shop.name }}</strong>
+                {% if shop.submitted and shop.percent is not None %}
+                <em class="stock-take-shop-head-score{% if shop.grade %} is-grade-{{ shop.grade }}{% endif %}">
+                  {{ shop.percent }}%
+                  <span>{{ shop.marks }}/{{ shop.max_marks }} matched</span>
+                </em>
+                {% else %}
+                <em class="stock-take-shop-head-score is-pending">Waiting</em>
+                {% endif %}
+              </span>
+            </th>
             {% endfor %}
           </tr>
           <tr class="stock-take-subhead">
             <th scope="col"></th>
-            {% for assignment in stock_take_comparison.assignments %}
+            {% for shop in stock_take_comparison.shops %}
             <th scope="col" class="stock-take-num">System</th>
             <th scope="col" class="stock-take-num">Counted</th>
             <th scope="col" class="stock-take-num">Diff</th>
@@ -272,8 +354,62 @@
   </div>
   {% else %}
 
+  {% if stock_take_shop_totals %}
+  <section class="stock-take-overall" aria-label="Shop accuracy for {{ report_period_label }}">
+    <div class="stock-take-overall-head">
+      <div>
+        <p class="stock-settings-section-label">{{ report_range_label }} · {{ report_period_label }}</p>
+        <h3>Overall shop scores</h3>
+      </div>
+      <p class="stock-take-overall-meta">
+        {{ stock_take_shop_totals.take_count }} stock take{{ stock_take_shop_totals.take_count|pluralize }}
+        · {{ stock_take_shop_totals.scored_shop_count }} shop{{ stock_take_shop_totals.scored_shop_count|pluralize }} scored
+      </p>
+    </div>
+    {% if stock_take_shop_totals.shops %}
+    <div class="stock-count-shop-grid stock-take-overall-grid">
+      {% for shop in stock_take_shop_totals.shops %}
+      <article class="stock-count-shop-card{% if shop.has_score %} is-done{% else %} is-pending{% endif %}{% if shop.grade %} is-grade-{{ shop.grade }}{% endif %}">
+        <div class="stock-count-shop-card-top">
+          <strong>{{ shop.shop.name }}</strong>
+          {% if shop.has_score %}
+          <em>{{ shop.grade_label }}</em>
+          {% else %}
+          <em>Waiting</em>
+          {% endif %}
+        </div>
+        {% if shop.has_score %}
+        <p class="stock-count-shop-score">
+          <strong>{{ shop.percent }}%</strong>
+          <span>{{ shop.marks }}/{{ shop.max_marks }}</span>
+        </p>
+        {% else %}
+        <p class="stock-count-shop-score is-waiting">
+          <strong>—</strong>
+          <span>no submit yet</span>
+        </p>
+        {% endif %}
+        <p class="stock-count-shop-meta">
+          {{ shop.submitted_takes }}/{{ shop.take_count }} submitted
+          {% if shop.pending_takes %} · {{ shop.pending_takes }} pending{% endif %}
+        </p>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="stock-settings-footnote">No shop stock takes in {{ report_period_label }}.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
   {% if can_edit_stock_take %}
-  <article class="stock-settings-card stock-settings-card--visibility stock-take-create">
+  <div class="stock-take-initiate" data-stock-take-create>
+    <button type="button" class="btn btn--primary stock-take-initiate-btn" data-stock-take-create-open>
+      <i data-lucide="clipboard-plus" aria-hidden="true"></i>
+      <span>Initiate a stock count</span>
+    </button>
+
+    <article class="stock-settings-card stock-settings-card--visibility stock-take-create" data-stock-take-create-panel hidden>
     <header class="stock-settings-card-head">
       <span class="stock-settings-card-icon" aria-hidden="true">
         <i data-lucide="clipboard-check"></i>
@@ -389,14 +525,16 @@
       </div>
 
       <div class="stock-visibility-actions">
+        <button type="button" class="btn btn--ghost" data-stock-take-create-close>Cancel</button>
         <button type="submit" class="btn btn--primary">Open stock take</button>
       </div>
     </form>
   </article>
+  </div>
   {% endif %}
 
   <div class="stock-take-list">
-    <h3 class="stock-take-list-title">Recent stock takes</h3>
+    <h3 class="stock-take-list-title">Stock takes · {{ report_period_label }}</h3>
     {% if stock_takes %}
     <ul class="stock-take-list-rows">
       {% for take in stock_takes %}
@@ -415,7 +553,7 @@
       {% endfor %}
     </ul>
     {% else %}
-    <p class="stock-settings-footnote">No stock takes yet.</p>
+    <p class="stock-settings-footnote">No stock takes in {{ report_period_label }}.</p>
     {% endif %}
   </div>
   {% endif %}
@@ -424,5 +562,26 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-take.js' %}?v=2"></script>
+<script src="{% static 'js/stock-take.js' %}?v=4"></script>
+<script>
+  (() => {
+    const form = document.querySelector("[data-stock-take-filters]");
+    if (!form) return;
+    const rangeSelect = form.querySelector("[data-stock-report-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const syncRange = () => {
+      const range = rangeSelect?.value || "month";
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.querySelectorAll("input, select").forEach((input) => {
+          input.disabled = !match;
+          input.required = match;
+        });
+      });
+    };
+    rangeSelect?.addEventListener("change", syncRange);
+    syncRange();
+  })();
+</script>
 {% endblock %}

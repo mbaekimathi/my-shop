@@ -3108,6 +3108,7 @@ CONFIRM_RECEIPT_KIND_FILTERS = (
 )
 
 CONFIRM_RECEIPT_DEFAULT_LIMIT = 150
+CONFIRM_RECEIPT_PRINT_LIMIT = 500
 # Always show every status: pending → cancelled → confirmed.
 CONFIRM_RECEIPT_STATUS_RANK = {
     ShopReceiptStatus.ACTIVE: 0,
@@ -3170,9 +3171,15 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
         )
 
     def _serialize(receipts):
+        from shops.services import get_effective_pos_settings
+
         rows = []
+        require_by_shop: dict[int, bool] = {}
         for row in receipts:
             is_pending = row.status == ShopReceiptStatus.ACTIVE
+            is_confirmed = row.status == ShopReceiptStatus.CONFIRMED
+            is_cancelled = row.status == ShopReceiptStatus.CANCELLED
+            is_partial = row.status == ShopReceiptStatus.PARTIAL_RETURN
             status_label = row.get_status_display()
             shop_name = row.shop.name if row.shop else "—"
             client = row.client_name or "Walk-in"
@@ -3180,6 +3187,15 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
             reference = (row.mpesa_receipt_number or "").strip()
             amount = Decimal(row.total or 0)
             amount_label = _money_ksh(amount)
+            shop_pk = int(row.shop_id or 0)
+            if shop_pk not in require_by_shop:
+                require_by_shop[shop_pk] = bool(
+                    getattr(
+                        get_effective_pos_settings(row.shop),
+                        "require_mpesa_reference_on_confirm",
+                        False,
+                    )
+                )
             rows.append(
                 {
                     "receipt_id": row.pk,
@@ -3200,8 +3216,11 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
                         "%d %b %Y · %H:%M"
                     ),
                     "when_dt": row.created_at,
-                    "can_confirm": is_pending,
-                    "can_cancel": is_pending,
+                    "can_confirm": is_pending or is_cancelled,
+                    "can_cancel": is_pending or is_confirmed or is_partial,
+                    "can_set_pending": is_confirmed or is_cancelled,
+                    "can_edit_status": True,
+                    "require_mpesa_reference_on_confirm": require_by_shop[shop_pk],
                     "status_rank": CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9),
                     "search_text": " ".join(
                         [
@@ -3417,9 +3436,11 @@ def _confirm_receipts_query_context(*, profile, request) -> dict:
     }
 
 
-def _confirm_receipts_collect_rows(*, shop_ids, start, end, status_key, search, kind_key):
+def _confirm_receipts_collect_rows(
+    *, shop_ids, start, end, status_key, search, kind_key, limit=None
+):
     rows = []
-    limit = CONFIRM_RECEIPT_DEFAULT_LIMIT
+    cap = CONFIRM_RECEIPT_DEFAULT_LIMIT if limit is None else int(limit)
     if kind_key in ("sale", "all"):
         rows.extend(
             _confirm_receipt_sale_rows(
@@ -3428,7 +3449,7 @@ def _confirm_receipts_collect_rows(*, shop_ids, start, end, status_key, search, 
                 end=end,
                 status_key=status_key,
                 search=search,
-                limit=limit,
+                limit=cap,
             )
         )
     if kind_key in ("delivery", "goods_received", "all"):
@@ -3440,7 +3461,7 @@ def _confirm_receipts_collect_rows(*, shop_ids, start, end, status_key, search, 
                 status_key=status_key,
                 search=search,
                 kind_key=kind_key if kind_key != "all" else "all",
-                limit=limit,
+                limit=cap,
             )
         )
 
@@ -3455,7 +3476,7 @@ def _confirm_receipts_collect_rows(*, shop_ids, start, end, status_key, search, 
     pending = [row for row in rows if int(row.get("status_rank", 9)) == 0]
     cancelled = [row for row in rows if int(row.get("status_rank", 9)) == 1]
     confirmed = [row for row in rows if int(row.get("status_rank", 9)) >= 2]
-    return pending[:limit] + cancelled[:limit] + confirmed[:limit]
+    return pending[:cap] + cancelled[:cap] + confirmed[:cap]
 
 
 def serialize_confirm_receipt_rows(rows) -> list[dict]:
@@ -3487,6 +3508,11 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                 "when": row.get("when") or "",
                 "can_confirm": bool(row.get("can_confirm")),
                 "can_cancel": bool(row.get("can_cancel")),
+                "can_set_pending": bool(row.get("can_set_pending")),
+                "can_edit_status": bool(row.get("can_edit_status")),
+                "require_mpesa_reference_on_confirm": bool(
+                    row.get("require_mpesa_reference_on_confirm")
+                ),
                 "search_text": row.get("search_text")
                 or " ".join(
                     [
@@ -3571,8 +3597,20 @@ def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) 
             "receipt_id": 0,
         },
     )
+    set_status_template = reverse(
+        "employees:analytics_receipt_set_status",
+        kwargs={
+            "role_segment": segment,
+            "shop_id": 0,
+            "receipt_id": 0,
+        },
+    )
     rows_url = reverse(
         "employees:analytics_confirm_receipts_rows",
+        kwargs={"role_segment": segment},
+    )
+    print_url = reverse(
+        "employees:analytics_confirm_receipts_print",
         kwargs={"role_segment": segment},
     )
 
@@ -3585,14 +3623,68 @@ def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) 
             "headline": "Confirm receipts",
             "lead": (
                 "Live-search a receipt number, mark it, then search the next. "
-                "Confirm or cancel selected sales receipts together. Delivery "
-                "notes and goods received slips are listed for review only."
+                "Set selected sales to pending, confirmed, or cancelled. "
+                "Delivery notes and goods received slips are listed for review only."
             ),
             "detail_url_template": detail_template,
             "confirm_url_template": confirm_template,
             "cancel_url_template": cancel_template,
+            "set_status_url_template": set_status_template,
             "rows_url": rows_url,
+            "print_url": print_url,
         },
+    }
+
+
+def build_confirm_receipts_print_document(*, profile, request) -> dict:
+    """Printable confirm-receipts list for the current page filters."""
+    context = _confirm_receipts_query_context(profile=profile, request=request)
+    rows = _confirm_receipts_collect_rows(
+        shop_ids=context["active_shop_ids"],
+        start=context["start"],
+        end=context["end"],
+        status_key=context["status_filter"],
+        search=context["search"],
+        kind_key=context["kind_filter"],
+        limit=CONFIRM_RECEIPT_PRINT_LIMIT,
+    )
+    kind_label = dict(CONFIRM_RECEIPT_KIND_FILTERS).get(
+        context["kind_filter"], "Sales"
+    )
+    period_label = context.get("report_period_label") or "All time"
+    shop_label = context.get("shop_filter_label") or "All shops"
+    grand = _zero()
+    print_rows = []
+    for row in rows:
+        amount = row.get("amount")
+        if isinstance(amount, (int, float, Decimal)):
+            grand += Decimal(amount)
+        print_rows.append(
+            {
+                "number": row.get("number") or "—",
+                "status": row.get("status_label") or row.get("status") or "—",
+                "kind": row.get("kind_label") or row.get("kind") or "—",
+                "client_name": row.get("client") or "—",
+                "phone": row.get("client_phone") or "—",
+                "shop": row.get("shop") or "—",
+                "total": row.get("amount_label")
+                or (_money_ksh(amount) if amount is not None else "—"),
+                "reference": (row.get("reference") or "").strip() or "—",
+                "when": row.get("when") or "—",
+            }
+        )
+    receipt_total = len(print_rows)
+    a4_page_estimate = max(1, (receipt_total + 27) // 28)
+    return {
+        "title": "Confirm receipts",
+        "kind_label": kind_label,
+        "period_label": period_label,
+        "shop_label": shop_label,
+        "receipt_total": receipt_total,
+        "grand_amount": _money_ksh(grand),
+        "a4_page_estimate": a4_page_estimate,
+        "rows": print_rows,
+        "count_label": context.get("count_label") or "receipt",
     }
 
 
