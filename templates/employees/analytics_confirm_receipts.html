@@ -72,7 +72,7 @@
     <header class="ax-confirm-card-head">
       <div class="ax-confirm-card-title">
         <h3>Receipts</h3>
-        <p class="ax-confirm-card-hint">Live search, mark one, then search the next — selected stay on top</p>
+        <p class="ax-confirm-card-hint">Live search or tick receipts in place — selected stay where they are</p>
       </div>
       <label class="ax-table-search ax-confirm-live-search">
         <span class="visually-hidden">Live search receipt number</span>
@@ -261,7 +261,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=27"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=29"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");

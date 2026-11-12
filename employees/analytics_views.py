@@ -827,6 +827,17 @@ def analytics_confirm_receipts(request, role_segment):
     if denied is not None:
         return denied
 
+    # Bare URL defaults to the current month so async rows match a real period.
+    if not (request.GET.get("range") or "").strip():
+        from django.utils import timezone
+
+        params = request.GET.copy()
+        params["range"] = "month"
+        params["month"] = timezone.localdate().strftime("%Y-%m")
+        if not (params.get("kind") or "").strip():
+            params["kind"] = "sale"
+        return redirect(f"{request.path}?{params.urlencode()}")
+
     # Shell first: receipt rows load via the async JSON endpoint.
     context = build_confirm_receipts_page(
         profile=profile, request=request, include_rows=False

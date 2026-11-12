@@ -9782,14 +9782,10 @@ def confirm_shop_receipt(
     if ref:
         receipt.mpesa_receipt_number = ref
         update_fields.append("mpesa_receipt_number")
-    # Keep the confirm-entered payment moment separately from print time.
+    # Keep payment moment on confirmed_payment_at; leave created_at as print time.
     if paid_at is not None:
         receipt.confirmed_payment_at = paid_at
         update_fields.append("confirmed_payment_at")
-        # Stamp sale time to the editable payment moment.
-        if paid_at != receipt.created_at:
-            receipt.created_at = paid_at
-            update_fields.append("created_at")
     receipt.save(update_fields=update_fields)
 
     detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)

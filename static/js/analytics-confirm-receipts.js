@@ -276,17 +276,8 @@
 
   const isRowSelected = (row) => Boolean(rowCheckbox(row)?.checked);
 
-  const pinSelectedRows = () => {
-    if (!tbody) return;
-    const rows = allRows();
-    const selected = rows.filter(isRowSelected);
-    const rest = rows.filter((row) => !isRowSelected(row));
-    [...selected, ...rest].forEach((row) => tbody.appendChild(row));
-  };
-
   const resetLiveSearchForNext = ({ focus = true } = {}) => {
     if (liveSearch) liveSearch.value = "";
-    pinSelectedRows();
     filterRows();
     if (focus && liveSearch) liveSearch.focus();
   };
@@ -360,9 +351,6 @@
     syncSelectionBar();
     if (clearSearch) {
       resetLiveSearchForNext({ focus: true });
-    } else {
-      pinSelectedRows();
-      syncSelectionBar();
     }
     return true;
   };
@@ -455,10 +443,20 @@
 
   const rowsQueryUrl = () => {
     if (!rowsUrl) return "";
-    const params = new URLSearchParams(
-      filtersForm ? new FormData(filtersForm) : window.location.search
-    );
+    // Prefer the applied URL so async rows match the filtered period on the page.
+    const params = new URLSearchParams(window.location.search);
+    if (![...params.keys()].length && filtersForm) {
+      new FormData(filtersForm).forEach((value, key) => {
+        params.append(key, String(value));
+      });
+    }
     if (!params.has("kind")) params.set("kind", "sale");
+    if (!params.has("range")) {
+      const now = new Date();
+      const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      params.set("range", "month");
+      params.set("month", month);
+    }
     const qs = params.toString();
     return qs ? `${rowsUrl}?${qs}` : rowsUrl;
   };
@@ -947,21 +945,16 @@
       if (checked) {
         resetLiveSearchForNext({ focus: true });
       } else {
-        pinSelectedRows();
         filterRows();
       }
       return;
     }
 
     if (target.matches("[data-ax-confirm-select-row]")) {
+      // Keep the row in place so consecutive checks don't jump the list.
       syncSelectionBar();
-      if (target.checked) {
-        // After marking one match, restore the full list so the next
-        // live search can find another receipt quickly.
-        resetLiveSearchForNext({ focus: true });
-      } else {
-        pinSelectedRows();
-        filterRows();
+      if (liveSearch?.value) {
+        resetLiveSearchForNext({ focus: false });
       }
     }
   });
@@ -1054,7 +1047,6 @@
   clearSelectedBtn?.addEventListener("click", () => {
     if (busy) return;
     clearSelection();
-    pinSelectedRows();
     filterRows();
   });
 

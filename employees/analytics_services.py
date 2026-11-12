@@ -3198,11 +3198,11 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
             reference = (row.mpesa_receipt_number or "").strip()
             amount = Decimal(row.total or 0)
             amount_label = _money_ksh(amount)
-            confirmed_payment = getattr(row, "confirmed_payment_at", None)
-            # Date/time column is the payment moment entered on confirm — never print time.
+            printed_at = getattr(row, "created_at", None)
+            # Date/time column is print time — payment moment stays on confirmed_payment_at.
             when_label = (
-                timezone.localtime(confirmed_payment).strftime("%d %b %Y · %H:%M")
-                if confirmed_payment and is_confirmed
+                timezone.localtime(printed_at).strftime("%d %b %Y · %H:%M")
+                if printed_at
                 else "—"
             )
             shop_pk = int(row.shop_id or 0)
@@ -3231,7 +3231,7 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
                     "kind": "sale",
                     "kind_label": "Sale",
                     "when": when_label,
-                    "when_dt": confirmed_payment if is_confirmed else None,
+                    "when_dt": printed_at,
                     "can_confirm": is_pending or is_cancelled,
                     "can_cancel": is_pending or is_confirmed or is_partial,
                     "can_set_pending": is_confirmed or is_cancelled,
@@ -3247,6 +3247,7 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
                             amount_label,
                             shop_name,
                             status_label,
+                            when_label,
                             "Sale",
                         ]
                     ),
@@ -3437,13 +3438,35 @@ def _confirm_receipts_count_label(kind_key: str) -> str:
     return "receipt"
 
 
+def _confirm_receipts_effective_params(request) -> dict:
+    """Normalize confirm-receipts filters; bare page defaults to the current month."""
+    params = request.GET.copy()
+    if not (params.get("range") or "").strip():
+        params["range"] = "month"
+        params["month"] = timezone.localdate().strftime("%Y-%m")
+    elif (params.get("range") or "").strip().lower() == "month" and not (
+        params.get("month") or ""
+    ).strip():
+        params["month"] = timezone.localdate().strftime("%Y-%m")
+    if not (params.get("kind") or "").strip():
+        params["kind"] = "sale"
+    return params
+
+
 def _confirm_receipts_query_context(*, profile, request) -> dict:
+    params = _confirm_receipts_effective_params(request)
+
+    class _ParamsRequest:
+        GET = params
+        method = "GET"
+        user = getattr(request, "user", None)
+
     filters = _filters_context(
-        profile, request, allow_all_time=True, default_all_time=False
+        profile, _ParamsRequest(), allow_all_time=True, default_all_time=False
     )
     # Receipt lookup is client-side live search only — do not server-filter by q.
-    status_key = _confirm_receipt_status_key(request.GET.get("status"))
-    kind_key = (request.GET.get("kind") or "sale").strip().lower()
+    status_key = _confirm_receipt_status_key(params.get("status"))
+    kind_key = (params.get("kind") or "sale").strip().lower()
     if kind_key not in {value for value, _label in CONFIRM_RECEIPT_KIND_FILTERS}:
         kind_key = "sale"
     return {
@@ -3649,7 +3672,7 @@ def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) 
         "page": {
             "headline": "Confirm receipts",
             "lead": (
-                "Live-search a receipt number, mark it, then search the next. "
+                "Tick receipts in place or live-search a number. "
                 "Set selected sales to pending, confirmed, or cancelled. "
                 "Delivery notes and goods received slips are listed for review only."
             ),

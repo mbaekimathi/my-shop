@@ -285,11 +285,8 @@ class ConfirmSalesReceiptTests(TestCase):
         pending_row = next(
             row for row in pending_page["rows"] if row["number"] == "SL-PAY-AT"
         )
-        self.assertEqual(pending_row["when"], "—")
+        self.assertEqual(pending_row["when"], "11 Nov 2026 · 13:49")
 
-        paid = timezone.make_aware(
-            datetime(2026, 11, 12, 9, 15), ZoneInfo("Africa/Nairobi")
-        )
         result = confirm_shop_receipt(
             shop=self.shop,
             receipt_id=sale.pk,
@@ -299,9 +296,10 @@ class ConfirmSalesReceiptTests(TestCase):
         sale.refresh_from_db()
         self.assertTrue(result["ok"])
         self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+        # Print time stays on created_at; payment time is confirmed_payment_at only.
         self.assertEqual(
             timezone.localtime(sale.created_at).strftime("%Y-%m-%dT%H:%M"),
-            timezone.localtime(paid).strftime("%Y-%m-%dT%H:%M"),
+            "2026-11-11T13:49",
         )
         self.assertEqual(
             timezone.localtime(sale.confirmed_payment_at).strftime("%Y-%m-%dT%H:%M"),
@@ -320,7 +318,7 @@ class ConfirmSalesReceiptTests(TestCase):
         confirmed_row = next(
             row for row in confirmed_page["rows"] if row["number"] == "SL-PAY-AT"
         )
-        self.assertEqual(confirmed_row["when"], "12 Nov 2026 · 09:15")
+        self.assertEqual(confirmed_row["when"], "11 Nov 2026 · 13:49")
 
     def test_set_status_pending_confirmed_cancelled_round_trip(self):
         from shops.services import set_confirm_receipt_status
@@ -524,6 +522,7 @@ class ConfirmSalesReceiptTests(TestCase):
 
     def test_confirm_page_lists_sales_only(self):
         from django.test import RequestFactory
+        from django.utils import timezone
 
         from employees.analytics_services import build_confirm_receipts_page
 
@@ -537,6 +536,12 @@ class ConfirmSalesReceiptTests(TestCase):
         self.assertEqual(kinds, {"sale"})
         self.assertEqual(context["kind_filter"], "sale")
         self.assertEqual(context["status_filter"], "")
+        # Bare page defaults to the current month (not an empty "today" day range).
+        self.assertEqual(context["report_range"], "month")
+        self.assertEqual(
+            context["report_month_value"],
+            timezone.localdate().strftime("%Y-%m"),
+        )
         self.assertIn("kind_options", context)
         self.assertIn(
             "/analytics/confirm-receipts/print/",
