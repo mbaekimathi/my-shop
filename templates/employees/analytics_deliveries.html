@@ -348,11 +348,16 @@
     overflow: hidden;
   }
   /* core.css sets img { max-width:100%; display:block } which collapses Map pins */
+  #deliv-map img,
+  #deliv-map .gm-style img,
+  #deliv-map .gm-style > div > div > img,
   .deliv-map img,
   .deliv-map .gm-style img,
   .deliv-map .gm-style svg {
     max-width: none !important;
     max-height: none !important;
+    width: auto !important;
+    height: auto !important;
     display: inline !important;
   }
   .deliv-riders {
@@ -438,11 +443,20 @@
 
 {% block extra_js %}
 {{ block.super }}
-{{ page.map_points_json|json_script:"deliv-map-points" }}
+{{ page.map_points|json_script:"deliv-map-points" }}
 <script>
-  window.__delivMapPoints = JSON.parse(
-    document.getElementById("deliv-map-points").textContent
-  );
+  (() => {
+    const raw = document.getElementById("deliv-map-points")?.textContent || "[]";
+    let points = [];
+    try {
+      points = JSON.parse(raw);
+      // Older payloads accidentally double-encoded the array as a JSON string.
+      if (typeof points === "string") points = JSON.parse(points);
+    } catch (_) {
+      points = [];
+    }
+    window.__delivMapPoints = Array.isArray(points) ? points : [];
+  })();
   (() => {
     const root = document.querySelector("[data-deliv-tabs]");
     if (!root) return;

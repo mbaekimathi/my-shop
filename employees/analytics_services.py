@@ -10568,6 +10568,7 @@ def _delivery_rating_payload(scores: list[float]) -> dict:
 
 def _build_deliveries(filters):
     """Customer delivery jobs — heatmap, pin markers, and rider completion counts."""
+    import re
     from collections import defaultdict
     from decimal import Decimal
 
@@ -10598,37 +10599,60 @@ def _build_deliveries(filters):
         ShopDeliveryStatus.ACCEPTED,
         *done_statuses,
     )
-    map_jobs = [
-        row
-        for row in qs.filter(status__in=map_statuses)
-        if row.latitude is not None and row.longitude is not None
-    ]
-    map_points = [
-        {
-            "id": row.pk,
-            "lat": float(row.latitude),
-            "lng": float(row.longitude),
-            "label": row.receipt.receipt_number,
-            "client": row.client_name or "Client",
-            "phone": row.client_phone or "",
-            "location": row.location_text,
-            "shop": row.shop.name,
-            "status": row.get_status_display(),
-            "status_key": row.status,
-            "rider": (
-                (
-                    row.accepted_by.user.get_full_name()
-                    or row.accepted_by.user.username
-                )
-                if row.accepted_by_id
-                else ""
-            ),
-            "maps_url": row.maps_url or "",
-            # Completed jobs weigh denser on the heatmap.
-            "weight": 2.0 if row.status in done_statuses else 1.0,
-        }
-        for row in map_jobs
-    ]
+    def _coords_for_delivery(row):
+        if row.latitude is not None and row.longitude is not None:
+            return float(row.latitude), float(row.longitude)
+        # Recover pins from maps links when lat/lng columns were left blank.
+        url = (row.maps_url or "").strip()
+        if not url:
+            return None
+        match = re.search(
+            r"[?&]query=(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",
+            url,
+        )
+        if not match:
+            match = re.search(
+                r"@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)",
+                url,
+            )
+        if not match:
+            return None
+        try:
+            return float(match.group(1)), float(match.group(2))
+        except (TypeError, ValueError):
+            return None
+
+    map_points = []
+    for row in qs.filter(status__in=map_statuses):
+        coords = _coords_for_delivery(row)
+        if coords is None:
+            continue
+        lat, lng = coords
+        map_points.append(
+            {
+                "id": row.pk,
+                "lat": lat,
+                "lng": lng,
+                "label": row.receipt.receipt_number,
+                "client": row.client_name or "Client",
+                "phone": row.client_phone or "",
+                "location": row.location_text,
+                "shop": row.shop.name,
+                "status": row.get_status_display(),
+                "status_key": row.status,
+                "rider": (
+                    (
+                        row.accepted_by.user.get_full_name()
+                        or row.accepted_by.user.username
+                    )
+                    if row.accepted_by_id
+                    else ""
+                ),
+                "maps_url": row.maps_url or "",
+                # Completed jobs weigh denser on the heatmap.
+                "weight": 2.0 if row.status in done_statuses else 1.0,
+            }
+        )
 
     rider_rows = list(
         qs.filter(accepted_by__isnull=False)
@@ -10737,8 +10761,6 @@ def _build_deliveries(filters):
             }
         )
 
-    import json
-
     return {
         "headline": "Deliveries",
         "lead": (
@@ -10753,7 +10775,6 @@ def _build_deliveries(filters):
         "total_count": open_count + accepted_count + completed_count,
         "total_value": total_value,
         "map_points": map_points,
-        "map_points_json": json.dumps(map_points),
         "riders": riders,
         "recent_rows": recent_rows,
         "tables": [
