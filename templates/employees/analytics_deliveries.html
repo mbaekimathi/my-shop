@@ -347,17 +347,15 @@
     background: color-mix(in srgb, var(--mist) 10%, var(--panel));
     overflow: hidden;
   }
-  /* core.css sets img { max-width:100%; display:block } which collapses Map pins */
+  /*
+    core.css `img { max-width:100%; display:block }` collapses Maps pins into white boxes.
+    Only lift max-* / display — never force width/height (Maps sets those itself).
+  */
   #deliv-map img,
-  #deliv-map .gm-style img,
-  #deliv-map .gm-style > div > div > img,
   .deliv-map img,
-  .deliv-map .gm-style img,
-  .deliv-map .gm-style svg {
+  .deliv-map .gm-style img {
     max-width: none !important;
     max-height: none !important;
-    width: auto !important;
-    height: auto !important;
     display: inline !important;
   }
   .deliv-riders {
@@ -515,14 +513,19 @@
     });
     window.__delivMapInstance = map;
 
-    const pinUrl = el.getAttribute("data-deliv-pin-url") || "";
-    const pinIcon = pinUrl
-      ? {
-          url: pinUrl,
-          scaledSize: new google.maps.Size(42, 54),
-          anchor: new google.maps.Point(21, 54),
-        }
-      : undefined;
+    // Inline SVG pin — avoids CSS breaking the large PNG into white boxes.
+    const pinSvg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48">` +
+      `<path fill="#e53935" stroke="#ffffff" stroke-width="1.5" ` +
+      `d="M18 1.5C9.44 1.5 2.5 8.44 2.5 17c0 11.6 13.7 28.7 14.3 29.5a1.6 1.6 0 0 0 2.4 0C19.8 45.7 33.5 28.6 33.5 17 33.5 8.44 26.56 1.5 18 1.5z"/>` +
+      `<circle cx="18" cy="17" r="6" fill="#ffffff"/>` +
+      `</svg>`;
+    const pinIcon = {
+      url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(pinSvg)}`,
+      scaledSize: new google.maps.Size(36, 48),
+      size: new google.maps.Size(36, 48),
+      anchor: new google.maps.Point(18, 48),
+    };
 
     const bounds = new google.maps.LatLngBounds();
     const info = new google.maps.InfoWindow();
@@ -557,7 +560,7 @@
         position,
         title: point.label || "Delivery",
         icon: pinIcon,
-        optimized: false,
+        optimized: true,
         zIndex: 1000 + index,
       });
       marker.addListener("click", () => openInfo(marker, point));
