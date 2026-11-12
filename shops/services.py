@@ -2802,6 +2802,31 @@ def update_company_and_shop_profiles(data, files, *, shops=None) -> CompanyProfi
     return profile_row
 
 
+def sync_require_mpesa_reference_on_confirm_to_shops(
+    *, enabled: bool | None = None
+) -> int:
+    """
+    Copy company compulsory-reference setting onto shop receipt overrides.
+
+    Shops with override_receipt keep their own receipt flags; without this sync,
+    turning the company toggle on leaves those shops stuck on the old False value.
+    """
+    company = get_company_pos_settings()
+    value = (
+        bool(company.require_mpesa_reference_on_confirm)
+        if enabled is None
+        else bool(enabled)
+    )
+    updated = (
+        ShopPosSettings.objects.filter(override_receipt=True)
+        .exclude(require_mpesa_reference_on_confirm=value)
+        .update(require_mpesa_reference_on_confirm=value)
+    )
+    if updated:
+        _invalidate_pos_settings_cache()
+    return int(updated)
+
+
 def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")
@@ -2809,6 +2834,8 @@ def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:
     settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
     setattr(settings_row, field, bool(enabled))
     settings_row.save(update_fields=[field, "updated_at"])
+    if field == "require_mpesa_reference_on_confirm":
+        sync_require_mpesa_reference_on_confirm_to_shops(enabled=bool(enabled))
     _invalidate_pos_settings_cache()
     return get_company_pos_settings()
 

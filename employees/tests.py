@@ -360,6 +360,34 @@ class ConfirmSalesReceiptTests(TestCase):
         self.assertEqual(sale.mpesa_receipt_number, "TKL4X2ABCD")
         self.assertEqual(result.get("mpesa_receipt_number"), "TKL4X2ABCD")
 
+    def test_company_require_reference_syncs_to_shop_receipt_overrides(self):
+        from shops.models import ShopPosSettings
+        from shops.services import (
+            get_effective_pos_settings,
+            set_company_pos_setting,
+            set_shop_pos_override,
+            set_shop_pos_setting,
+        )
+
+        set_shop_pos_override(shop=self.shop, section="receipt", enabled=True)
+        set_shop_pos_setting(
+            shop=self.shop,
+            field="require_mpesa_reference_on_confirm",
+            enabled=False,
+        )
+        self.assertFalse(
+            get_effective_pos_settings(self.shop).require_mpesa_reference_on_confirm
+        )
+
+        set_company_pos_setting(
+            field="require_mpesa_reference_on_confirm", enabled=True
+        )
+        shop_row = ShopPosSettings.objects.get(shop=self.shop)
+        self.assertTrue(shop_row.require_mpesa_reference_on_confirm)
+        self.assertTrue(
+            get_effective_pos_settings(self.shop).require_mpesa_reference_on_confirm
+        )
+
     def test_confirm_requires_mpesa_reference_when_setting_on(self):
         from django.core.exceptions import ValidationError
 
