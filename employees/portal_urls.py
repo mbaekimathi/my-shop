@@ -2,7 +2,13 @@ from django.urls import path
 
 from shops import views as shop_views
 
-from . import analytics_views, converters, hr_views, views  # noqa: F401 — registers role_segment converter
+from . import (  # noqa: F401 — registers role_segment converter
+    analytics_views,
+    converters,
+    hr_views,
+    store_stock_views,
+    views,
+)
 from communications import views as communications_views
 
 urlpatterns = [
@@ -242,6 +248,31 @@ urlpatterns = [
     ),
     path("shop-manager/", views.role_shop_manager, name="role_shop_manager"),
     path("store-manager/", views.role_store_manager, name="role_store_manager"),
+    path(
+        "store-manager/store-stock-in/",
+        store_stock_views.store_stock_in,
+        name="store_stock_in",
+    ),
+    path(
+        "store-manager/store-stock-out/",
+        store_stock_views.store_stock_out,
+        name="store_stock_out",
+    ),
+    path(
+        "store-manager/store-report/",
+        store_stock_views.store_stock_report,
+        name="store_stock_report",
+    ),
+    path(
+        "store-manager/store-stock/api/items/",
+        store_stock_views.store_stock_item_search,
+        name="store_stock_item_search",
+    ),
+    path(
+        "store-manager/store-stock/api/employees/",
+        store_stock_views.store_stock_employee_search,
+        name="store_stock_employee_search",
+    ),
     path("shop-cashier/", views.role_shop_cashier, name="role_shop_cashier"),
     path("it-support/", views.role_it_support, name="role_it_support"),
     path("rider/", views.role_rider, name="role_rider"),

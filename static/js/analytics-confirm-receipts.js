@@ -549,18 +549,33 @@
 
   const shouldShowConfirmFields = (receipt, chosenStatus) => {
     if (!receipt) return false;
-    if (!Boolean(receipt.require_mpesa_reference_on_confirm)) return false;
     if (!Boolean(receipt.can_edit_status)) return false;
     if (String(receipt.status || "") === "partial_return") return false;
     const chosen = chosenStatus || statusKeyForUi(receipt.status);
-    return chosen === "confirmed" || Boolean(receipt.can_confirm);
+    // Always offer payment time + reference when confirming (required only if setting on).
+    return chosen === "confirmed";
   };
 
   const syncConfirmFieldsVisibility = () => {
     const receipt = currentDetail?.receipt || {};
     const chosen = statusSelect?.value || statusKeyForUi(receipt.status);
     const wrap = modalBody?.querySelector("[data-confirm-fields]");
-    if (wrap) wrap.hidden = !shouldShowConfirmFields(receipt, chosen);
+    const show = shouldShowConfirmFields(receipt, chosen);
+    if (wrap) wrap.hidden = !show;
+    const requireDetails = Boolean(receipt.require_mpesa_reference_on_confirm);
+    modalBody
+      ?.querySelectorAll(
+        "[data-confirm-payment-at], [data-confirm-mpesa-ref]"
+      )
+      .forEach((input) => {
+        if (requireDetails) {
+          input.setAttribute("required", "required");
+          input.setAttribute("aria-required", "true");
+        } else {
+          input.removeAttribute("required");
+          input.setAttribute("aria-required", "false");
+        }
+      });
   };
 
   const renderDetail = (payload) => {
@@ -616,20 +631,26 @@
     const requireConfirmDetails = Boolean(
       receipt.require_mpesa_reference_on_confirm
     );
-    const paymentAtValue = String(receipt.created_at_local || "").trim();
+    const optionalHint = requireConfirmDetails ? "required" : "optional";
+    // Only show a previously entered confirm payment time — never auto-fill print time.
+    const paymentAtValue = String(
+      receipt.confirmed_payment_at_local || ""
+    ).trim();
     const showConfirmFields = shouldShowConfirmFields(
       receipt,
       statusSelect?.value || statusKeyForUi(receipt.status)
     );
-    const confirmFieldsHtml = requireConfirmDetails
-      ? `<div class="shop-receipt-card shop-receipt-card--confirm" data-confirm-fields${
-          showConfirmFields ? "" : " hidden"
-        }>
+    const requiredAttrs = requireConfirmDetails
+      ? `required aria-required="true"`
+      : `aria-required="false"`;
+    const confirmFieldsHtml = `<div class="shop-receipt-card shop-receipt-card--confirm" data-confirm-fields${
+      showConfirmFields ? "" : " hidden"
+    }>
   <div class="shop-receipt-confirm-fields">
     <div class="shop-receipt-mpesa-ref" data-confirm-payment-at-wrap>
       <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-at">
         Payment date &amp; time
-        <span class="shop-receipt-muted">(required)</span>
+        <span class="shop-receipt-muted">(${optionalHint})</span>
       </label>
       <input
         id="ax-confirm-payment-at"
@@ -638,14 +659,13 @@
         name="payment_at"
         value="${escapeHtml(paymentAtValue)}"
         data-confirm-payment-at
-        required
-        aria-required="true"
+        ${requiredAttrs}
       >
     </div>
     <div class="shop-receipt-mpesa-ref" data-confirm-mpesa-ref-wrap>
       <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-mpesa-ref">
         Reference number
-        <span class="shop-receipt-muted">(required)</span>
+        <span class="shop-receipt-muted">(${optionalHint})</span>
       </label>
       <input
         id="ax-confirm-mpesa-ref"
@@ -658,13 +678,11 @@
         autocomplete="off"
         spellcheck="false"
         data-confirm-mpesa-ref
-        required
-        aria-required="true"
+        ${requiredAttrs}
       >
     </div>
   </div>
-</div>`
-      : "";
+</div>`;
 
     if (modalBody) {
       modalBody.innerHTML = `
@@ -835,16 +853,26 @@
     if (!targets.length) return;
 
     if (mode === "confirm") {
+      // Always open the modal so payment time + reference can be entered
+      // (required when compulsory is on; optional when off).
+      if (targets.length === 1) {
+        openConfirmWithDetails(targets[0]);
+        return;
+      }
       const needsDetails = targets.filter(rowRequiresConfirmDetails);
       if (needsDetails.length) {
-        if (needsDetails.length === 1 && targets.length === 1) {
-          openConfirmWithDetails(needsDetails[0]);
-          return;
-        }
         window.alert(
           "Compulsory reference is enabled. Open each receipt, enter the reference number and payment date & time, then save as Confirmed."
         );
         openConfirmWithDetails(needsDetails[0]);
+        return;
+      }
+      // Multiple optional confirms: allow silent bulk, or open first to enter details.
+      const enterDetails = window.confirm(
+        `Confirm ${targets.length} receipts now?\n\nOK = confirm without reference/payment time\nCancel = open the first receipt to enter details`
+      );
+      if (!enterDetails) {
+        openConfirmWithDetails(targets[0]);
         return;
       }
     }

@@ -722,3 +722,61 @@ class OnlineStockTakeEntry(models.Model):
 
     def __str__(self):
         return f"Online count {self.item_id} @ shop {self.shop_id}"
+
+
+class StoreStockMovementType(models.TextChoices):
+    IN = "in", "Store stock in"
+    OUT = "out", "Store stock out"
+
+
+class StoreStock(models.Model):
+    """Central store qty for an item — independent of ShopStock / Item.stock."""
+
+    item = models.OneToOneField(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="store_stock",
+    )
+    quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["item__category", "item__name"]
+
+    def __str__(self):
+        return f"Store stock {self.item_id}: {self.quantity}"
+
+
+class StoreStockMovement(models.Model):
+    """Ledger for store stock in/out. Never mutates shop floor stock."""
+
+    movement_type = models.CharField(
+        max_length=8,
+        choices=StoreStockMovementType.choices,
+        db_index=True,
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.PROTECT,
+        related_name="store_stock_movements",
+    )
+    quantity = models.DecimalField(max_digits=12, decimal_places=3)
+    balance_after = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    created_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.PROTECT,
+        related_name="store_stock_movements_created",
+    )
+    received_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.PROTECT,
+        related_name="store_stock_movements_received",
+    )
+    note = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"Store {self.movement_type} {self.quantity} of item {self.item_id}"

@@ -78,13 +78,8 @@ STORE_MANAGER_ALLOWED_KEYS = frozenset(
     }
 )
 
-STORE_MANAGER_DASHBOARD_MODULES = frozenset(
-    {
-        "item-management",
-        "stock-management",
-        "analytics",
-    }
-)
+# Home / sidebar module shortcuts for Store Manager (empty for now).
+STORE_MANAGER_DASHBOARD_MODULES = frozenset()
 
 
 def role_default_permission(profile, module_slug: str, submodule_slug: str) -> bool:

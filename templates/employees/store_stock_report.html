@@ -1,0 +1,199 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=5">
+{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="store-stock store-stock--report"
+  data-animate="rise"
+  data-store-stock-report
+  data-item-search-url="{{ item_search_url }}"
+>
+  <header class="store-stock-hero">
+    <div class="store-stock-hero-copy">
+      <p class="store-stock-kicker">
+        <span class="store-stock-mode-pill" aria-hidden="true">
+          <i data-lucide="{{ meta.icon }}"></i>
+        </span>
+        Store inventory
+      </p>
+      <h2>{{ meta.headline }}</h2>
+      <p class="store-stock-lead">{{ meta.summary }}</p>
+    </div>
+    <dl class="store-stock-stats">
+      <div class="store-stock-stat">
+        <dt>In</dt>
+        <dd>{{ page.total_in_display }}</dd>
+      </div>
+      <div class="store-stock-stat">
+        <dt>Out</dt>
+        <dd>{{ page.total_out_display }}</dd>
+      </div>
+      <div class="store-stock-stat">
+        <dt>Lines</dt>
+        <dd data-store-report-visible-count>{{ page.row_count }}</dd>
+      </div>
+    </dl>
+  </header>
+
+  <section class="store-stock-panel" aria-labelledby="store-report-filters-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="store-report-filters-title">Filters</h3>
+        <p>Choose a period and optionally one item to inspect its store movements.</p>
+      </div>
+      <p class="store-stock-period-chip">{{ report_period_label }}</p>
+    </div>
+
+    <form class="store-stock-filters" method="get" data-store-report-filters>
+      <div class="store-stock-field store-stock-field--range">
+        <span>Range</span>
+        <div class="store-stock-range-fields">
+          {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
+        </div>
+      </div>
+
+      <label class="store-stock-field">
+        <span>Movement</span>
+        <select name="type" aria-label="Movement type">
+          {% for value, label in page.type_options %}
+          <option value="{{ value }}"{% if page.movement_type == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="store-stock-field store-stock-search" data-store-report-item-root>
+        <span>Item</span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input
+            type="search"
+            autocomplete="off"
+            placeholder="All items — search to filter one"
+            value="{{ page.selected_item_label }}"
+            data-store-report-item-query
+            aria-autocomplete="list"
+            aria-controls="store-report-item-results"
+          >
+        </div>
+        <input type="hidden" name="item_id" value="{{ page.selected_item_id }}" data-store-report-item-id>
+        <p class="store-stock-selected" data-store-report-item-selected{% if not page.selected_item_label %} hidden{% endif %}>
+          {{ page.selected_item_label }}
+          {% if page.current_store_qty %}· store qty {{ page.current_store_qty }}{% endif %}
+        </p>
+        <ul
+          class="store-stock-results"
+          id="store-report-item-results"
+          role="listbox"
+          data-store-report-item-results
+          hidden
+        ></ul>
+        <button type="button" class="store-stock-clear-item" data-store-report-item-clear{% if not page.selected_item_id %} hidden{% endif %}>
+          Clear item filter
+        </button>
+      </label>
+
+      <div class="store-stock-filter-actions">
+        <button type="submit" class="store-stock-btn store-stock-btn--primary">Apply</button>
+        <a class="store-stock-btn store-stock-btn--ghost" href="{% url 'employees:store_stock_report' %}">Reset</a>
+      </div>
+    </form>
+  </section>
+
+  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="store-report-list-title">
+    <div class="store-stock-panel-head store-stock-panel-head--list">
+      <div>
+        <h3 id="store-report-list-title">Movements</h3>
+        <p>
+          {% if page.truncated %}
+          Showing the latest 500 matching lines.
+          {% else %}
+          Store stock in/out for {{ report_period_label|lower }}.
+          {% endif %}
+        </p>
+      </div>
+      <label class="store-stock-filter">
+        <i data-lucide="filter" aria-hidden="true"></i>
+        <input
+          type="search"
+          placeholder="Filter visible rows…"
+          autocomplete="off"
+          data-store-report-row-filter
+          aria-label="Filter visible movements"
+        >
+      </label>
+    </div>
+
+    {% if page.rows %}
+    <div class="store-stock-table-wrap">
+      <table class="store-stock-table store-stock-report-table">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Type</th>
+            <th scope="col">Item</th>
+            <th scope="col" class="store-stock-col-qty">Qty</th>
+            <th scope="col" class="store-stock-col-qty">Balance</th>
+            <th scope="col">People</th>
+            <th scope="col">Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in page.rows %}
+          <tr
+            class="store-stock-row store-stock-row--{{ row.movement_type }}"
+            data-store-report-row
+            data-search="{{ row.search_text }}"
+          >
+            <td data-label="When">{{ row.when }}</td>
+            <td data-label="Type">
+              <span class="store-stock-type-pill store-stock-type-pill--{{ row.movement_type }}">
+                {{ row.movement_label }}
+              </span>
+            </td>
+            <td data-label="Item">
+              <div class="store-stock-item-cell">
+                <span class="store-stock-item-name">{{ row.item_name }}</span>
+                <span class="store-stock-item-cat-mobile">{{ row.item_category }}</span>
+              </div>
+              <span class="store-stock-report-category">{{ row.item_category }}</span>
+            </td>
+            <td class="store-stock-col-qty" data-label="Qty">
+              <span class="store-stock-balance-pill">{{ row.quantity_display }}</span>
+            </td>
+            <td class="store-stock-col-qty" data-label="Balance">{{ row.balance_after_display }}</td>
+            <td data-label="People">
+              <div class="store-stock-people">
+                <span><em>Recorded</em> {{ row.recorded_by }}</span>
+                <span><em>{{ row.counterpart_label }}</em> {{ row.counterpart }}</span>
+              </div>
+            </td>
+            <td data-label="Note">{{ row.note|default:"—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="store-stock-empty-filter" data-store-report-no-filter-results hidden>
+      No movements match that filter.
+    </p>
+    {% else %}
+    <div class="store-stock-empty">
+      <i data-lucide="clipboard-list" aria-hidden="true"></i>
+      <p><strong>No movements for this filter.</strong> Try another period or clear the item filter.</p>
+    </div>
+    {% endif %}
+  </section>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/store-stock-report.js' %}?v=1"></script>
+{% endblock %}

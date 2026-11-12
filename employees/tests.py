@@ -257,8 +257,10 @@ class ConfirmSalesReceiptTests(TestCase):
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
+        from django.test import RequestFactory
         from django.utils import timezone
 
+        from employees.analytics_services import build_confirm_receipts_page
         from shops.services import confirm_shop_receipt, get_shop_receipt_detail
 
         sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-PAY-AT")
@@ -270,6 +272,20 @@ class ConfirmSalesReceiptTests(TestCase):
 
         detail = get_shop_receipt_detail(shop=self.shop, receipt_id=sale.pk)
         self.assertEqual(detail["receipt"]["created_at_local"], "2026-11-11T13:49")
+        self.assertEqual(detail["receipt"]["confirmed_payment_at_local"], "")
+
+        request = RequestFactory().get(
+            "/it-support/analytics/confirm-receipts/",
+            {"kind": "sale", "range": "all"},
+        )
+        request.user = self.user
+        pending_page = build_confirm_receipts_page(
+            profile=self.staff, request=request
+        )
+        pending_row = next(
+            row for row in pending_page["rows"] if row["number"] == "SL-PAY-AT"
+        )
+        self.assertEqual(pending_row["when"], "—")
 
         paid = timezone.make_aware(
             datetime(2026, 11, 12, 9, 15), ZoneInfo("Africa/Nairobi")
@@ -287,6 +303,24 @@ class ConfirmSalesReceiptTests(TestCase):
             timezone.localtime(sale.created_at).strftime("%Y-%m-%dT%H:%M"),
             timezone.localtime(paid).strftime("%Y-%m-%dT%H:%M"),
         )
+        self.assertEqual(
+            timezone.localtime(sale.confirmed_payment_at).strftime("%Y-%m-%dT%H:%M"),
+            "2026-11-12T09:15",
+        )
+        confirmed_detail = get_shop_receipt_detail(
+            shop=self.shop, receipt_id=sale.pk
+        )
+        self.assertEqual(
+            confirmed_detail["receipt"]["confirmed_payment_at_local"],
+            "2026-11-12T09:15",
+        )
+        confirmed_page = build_confirm_receipts_page(
+            profile=self.staff, request=request
+        )
+        confirmed_row = next(
+            row for row in confirmed_page["rows"] if row["number"] == "SL-PAY-AT"
+        )
+        self.assertEqual(confirmed_row["when"], "12 Nov 2026 · 09:15")
 
     def test_set_status_pending_confirmed_cancelled_round_trip(self):
         from shops.services import set_confirm_receipt_status
@@ -2855,21 +2889,125 @@ class StoreManagerRoleTests(TestCase):
 
     def test_dashboard_only_store_modules(self):
         slugs = {m["slug"] for m in self.get_dashboard_modules(EmployeeRole.STORE_MANAGER)}
-        self.assertEqual(slugs, {"item-management", "stock-management", "analytics"})
+        self.assertEqual(slugs, set())
 
         sidebar = self.sidebar_for_role_dashboard(
             EmployeeRole.STORE_MANAGER, profile=self.manager
         )
         labels = [item["label"] for item in sidebar["primary"]]
-        self.assertIn("Item Management", labels)
-        self.assertIn("Stock Management", labels)
-        self.assertIn("Analytics", labels)
+        self.assertEqual(
+            labels, ["Store Stock In", "Store Stock Out", "Store Report"]
+        )
+        self.assertNotIn("Item Management", labels)
+        self.assertNotIn("Stock Management", labels)
+        self.assertNotIn("Analytics", labels)
         self.assertNotIn("Shop Management", labels)
         self.assertNotIn("HR Management", labels)
         self.assertNotIn("Communications", labels)
         self.assertNotIn("Credits", labels)
         self.assertNotIn("Clients", labels)
         self.assertNotIn("Suppliers", labels)
+
+    def test_store_stock_in_out_separate_from_shop_stock(self):
+        from decimal import Decimal
+
+        from items.models import Item, ShopStock, StoreStock
+        from items.store_stock_services import (
+            record_store_stock_in,
+            record_store_stock_out,
+        )
+
+        receiver_user = User.objects.create_user(
+            username="830032",
+            password=self.password,
+            email="recv@test.local",
+            first_name="RECV",
+            last_name="ER",
+            is_active=True,
+        )
+        receiver = EmployeeProfile.objects.create(
+            user=receiver_user,
+            employee_id="830032",
+            phone_country_code="+254",
+            phone_number="700000933",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.EMPLOYEE,
+        )
+        item = Item.objects.create(
+            category="PARTS",
+            name="STORE BOLT",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("12.00"),
+            stock=Decimal("5.000"),
+        )
+        shop_row = ShopStock.objects.create(
+            shop=self.shop_a,
+            item=item,
+            quantity=Decimal("5.000"),
+        )
+        company_stock_before = item.stock
+        shop_qty_before = shop_row.quantity
+
+        inward = record_store_stock_in(
+            actor=self.manager,
+            item_id=item.pk,
+            quantity="3",
+            received_by_id=receiver.pk,
+        )
+        self.assertEqual(inward.quantity, Decimal("3.000"))
+        self.assertEqual(StoreStock.objects.get(item=item).quantity, Decimal("3.000"))
+
+        outward = record_store_stock_out(
+            actor=self.manager,
+            item_id=item.pk,
+            quantity="1",
+            received_by_id=receiver.pk,
+        )
+        self.assertEqual(outward.received_by_id, receiver.pk)
+        self.assertEqual(StoreStock.objects.get(item=item).quantity, Decimal("2.000"))
+
+        item.refresh_from_db()
+        shop_row.refresh_from_db()
+        self.assertEqual(item.stock, company_stock_before)
+        self.assertEqual(shop_row.quantity, shop_qty_before)
+
+        self.client.login(username="830031", password=self.password)
+        page = self.client.get("/store-manager/store-stock-in/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Store stock in")
+        self.assertContains(page, "STORE BOLT")
+        self.assertContains(page, f'name="qty_{item.pk}"')
+        posted = self.client.post(
+            "/store-manager/store-stock-in/",
+            {
+                f"qty_{item.pk}": "1",
+                "received_by_id": receiver.pk,
+                "note": "delivery",
+            },
+        )
+        self.assertEqual(posted.status_code, 302)
+        self.assertEqual(StoreStock.objects.get(item=item).quantity, Decimal("3.000"))
+        item.refresh_from_db()
+        shop_row.refresh_from_db()
+        self.assertEqual(item.stock, company_stock_before)
+        self.assertEqual(shop_row.quantity, shop_qty_before)
+
+        out_page = self.client.get("/store-manager/store-stock-out/")
+        self.assertEqual(out_page.status_code, 200)
+        self.assertContains(out_page, "STORE BOLT")
+        self.assertContains(out_page, f'name="qty_{item.pk}"')
+
+        report = self.client.get("/store-manager/store-report/")
+        self.assertEqual(report.status_code, 200)
+        self.assertContains(report, "Store report")
+        self.assertContains(report, "STORE BOLT")
+        filtered = self.client.get(
+            "/store-manager/store-report/",
+            {"range": "all", "item_id": item.pk, "type": "in"},
+        )
+        self.assertEqual(filtered.status_code, 200)
+        self.assertContains(filtered, "STORE BOLT")
+        self.assertContains(filtered, "Stock in")
 
     def test_analytics_sections_limited_to_items_stock_trading(self):
         may = self.employee_may

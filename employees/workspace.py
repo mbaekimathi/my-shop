@@ -228,6 +228,9 @@ def _workspace_parent_url(request, role):
         "employees:rider_open_deliveries",
         "employees:rider_active_deliveries",
         "employees:rider_completed_deliveries",
+        "employees:store_stock_in",
+        "employees:store_stock_out",
+        "employees:store_stock_report",
     }:
         return dashboard
 
@@ -650,6 +653,55 @@ def sidebar_for_rider(profile=None, *, active="open"):
     )
 
 
+def store_stock_in_url():
+    return reverse("employees:store_stock_in")
+
+
+def store_stock_out_url():
+    return reverse("employees:store_stock_out")
+
+
+def store_stock_report_url():
+    return reverse("employees:store_stock_report")
+
+
+def sidebar_for_store_stock(role, *, profile=None, active="in"):
+    """Sidebar for central store stock in/out/report pages."""
+    dashboard_url = reverse(role_home_url_name(role))
+    return resolve_sidebar_hrefs(
+        {
+            "page": "store_stock",
+            "dashboard_url": dashboard_url,
+            "primary": [
+                _link(
+                    "Store Stock In",
+                    "package-plus",
+                    href=store_stock_in_url(),
+                    active=active == "in",
+                ),
+                _link(
+                    "Store Stock Out",
+                    "package-minus",
+                    href=store_stock_out_url(),
+                    active=active == "out",
+                ),
+                _link(
+                    "Store Report",
+                    "clipboard-list",
+                    href=store_stock_report_url(),
+                    active=active == "report",
+                ),
+            ],
+            "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
 def sidebar_for_role_dashboard(
     role, profile=None, *, active_slug=None, omit_dashboard_link=True
 ):
@@ -664,6 +716,29 @@ def sidebar_for_role_dashboard(
     primary = _module_sidebar_links(
         role, active_slug=active_slug, profile=profile, skip_slugs=skip_slugs
     )
+    if role == EmployeeRole.STORE_MANAGER:
+        primary.extend(
+            [
+                _link(
+                    "Store Stock In",
+                    "package-plus",
+                    href=store_stock_in_url(),
+                    active=active_slug == "store-stock-in",
+                ),
+                _link(
+                    "Store Stock Out",
+                    "package-minus",
+                    href=store_stock_out_url(),
+                    active=active_slug == "store-stock-out",
+                ),
+                _link(
+                    "Store Report",
+                    "clipboard-list",
+                    href=store_stock_report_url(),
+                    active=active_slug == "store-report",
+                ),
+            ]
+        )
     if role in comms_roles:
         primary.append(
             _link(

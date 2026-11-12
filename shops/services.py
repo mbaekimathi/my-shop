@@ -7685,6 +7685,10 @@ def _shop_receipt_date_bounds(
 
 def _receipt_list_item(receipt) -> dict:
     created = timezone.localtime(receipt.created_at)
+    confirmed_payment = getattr(receipt, "confirmed_payment_at", None)
+    confirmed_local = (
+        timezone.localtime(confirmed_payment) if confirmed_payment else None
+    )
     cashier = employee_display_name(
         receipt.created_by if receipt.created_by_id else None
     )
@@ -7706,6 +7710,12 @@ def _receipt_list_item(receipt) -> dict:
         "created_at": created.isoformat(),
         "created_at_local": created.strftime("%Y-%m-%dT%H:%M"),
         "created_label": created.strftime("%d %b %Y · %H:%M"),
+        "confirmed_payment_at": (
+            confirmed_local.isoformat() if confirmed_local else ""
+        ),
+        "confirmed_payment_at_local": (
+            confirmed_local.strftime("%Y-%m-%dT%H:%M") if confirmed_local else ""
+        ),
         "cashier": cashier,
         "can_return": (
             receipt.kind
@@ -9772,10 +9782,14 @@ def confirm_shop_receipt(
     if ref:
         receipt.mpesa_receipt_number = ref
         update_fields.append("mpesa_receipt_number")
-    # Stamp sale time to the editable payment moment (defaults to print time).
-    if paid_at is not None and paid_at != receipt.created_at:
-        receipt.created_at = paid_at
-        update_fields.append("created_at")
+    # Keep the confirm-entered payment moment separately from print time.
+    if paid_at is not None:
+        receipt.confirmed_payment_at = paid_at
+        update_fields.append("confirmed_payment_at")
+        # Stamp sale time to the editable payment moment.
+        if paid_at != receipt.created_at:
+            receipt.created_at = paid_at
+            update_fields.append("created_at")
     receipt.save(update_fields=update_fields)
 
     detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)

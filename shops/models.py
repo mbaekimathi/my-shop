@@ -176,6 +176,11 @@ class ShopReceipt(models.Model):
     cash_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     mpesa_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     mpesa_receipt_number = models.CharField(max_length=40, blank=True, default="")
+    confirmed_payment_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Payment date/time entered when confirming the sale in analytics.",
+    )
     settled_from_credit = models.BooleanField(
         default=False,
         db_index=True,

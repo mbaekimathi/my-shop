@@ -3151,6 +3151,7 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
             "client_name",
             "client_phone",
             "mpesa_receipt_number",
+            "confirmed_payment_at",
             "total",
             "status",
             "created_at",
@@ -3187,6 +3188,13 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
             reference = (row.mpesa_receipt_number or "").strip()
             amount = Decimal(row.total or 0)
             amount_label = _money_ksh(amount)
+            confirmed_payment = getattr(row, "confirmed_payment_at", None)
+            # Date/time column is the payment moment entered on confirm — never print time.
+            when_label = (
+                timezone.localtime(confirmed_payment).strftime("%d %b %Y · %H:%M")
+                if confirmed_payment and is_confirmed
+                else "—"
+            )
             shop_pk = int(row.shop_id or 0)
             if shop_pk not in require_by_shop:
                 require_by_shop[shop_pk] = bool(
@@ -3212,10 +3220,8 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
                     "status_label": status_label,
                     "kind": "sale",
                     "kind_label": "Sale",
-                    "when": timezone.localtime(row.created_at).strftime(
-                        "%d %b %Y · %H:%M"
-                    ),
-                    "when_dt": row.created_at,
+                    "when": when_label,
+                    "when_dt": confirmed_payment if is_confirmed else None,
                     "can_confirm": is_pending or is_cancelled,
                     "can_cancel": is_pending or is_confirmed or is_partial,
                     "can_set_pending": is_confirmed or is_cancelled,
