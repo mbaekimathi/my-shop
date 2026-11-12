@@ -940,10 +940,11 @@ def submit_stock_take_counts(
 
 
 def build_stock_take_shop_totals(*, start=None, end=None, shop_ids=None) -> dict:
-    """Overall accuracy % per shop across submitted counts in a period.
+    """Overall accuracy % per shop across all allocated counts in a period.
 
-    Takes are included by ``created_at``. Only submitted assignments contribute
-    to the score; pending shops still appear when they were assigned.
+    Takes are included by ``created_at``. Every allocated item counts toward
+    the denominator — unsubmitted (pending) assignments score 0 for those
+    lines so missing submits pull the shop average down.
     """
     takes_qs = StockTake.objects.all()
     if start is not None:
@@ -976,11 +977,11 @@ def build_stock_take_shop_totals(*, start=None, end=None, shop_ids=None) -> dict
             },
         )
         bucket["take_count"] += 1
+        counts = list(assignment.counts.all())
+        bucket["total"] += len(counts)
         is_submitted = assignment.status == StockTakeAssignmentStatus.SUBMITTED
         if is_submitted:
             bucket["submitted_takes"] += 1
-            counts = list(assignment.counts.all())
-            bucket["total"] += len(counts)
             bucket["correct"] += sum(
                 1
                 for row in counts
