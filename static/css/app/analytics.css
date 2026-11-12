@@ -4606,28 +4606,33 @@
   opacity: 0.84;
 }
 
-.ax--list-table[data-ax-section="credit-audits"] .ax-top-main {
+.ax--list-table[data-ax-section="credit-audits"] .ax-top-main,
+.ax--list-table[data-ax-section="return-receipts-audits"] .ax-top-main {
   align-items: flex-start;
 }
 
-.ax--list-table[data-ax-section="credit-audits"] .ax-filters {
+.ax--list-table[data-ax-section="credit-audits"] .ax-filters,
+.ax--list-table[data-ax-section="return-receipts-audits"] .ax-filters {
   flex: 1 1 16rem;
   justify-content: flex-end;
   min-width: 0;
 }
 
-.ax--list-table[data-ax-section="credit-audits"] .ax-filters select[name="event"] {
+.ax--list-table[data-ax-section="credit-audits"] .ax-filters select[name="event"],
+.ax--list-table[data-ax-section="return-receipts-audits"] .ax-filters select[name="status"] {
   min-width: 11rem;
   max-width: 16rem;
 }
 
 @media (max-width: 640px) {
-  .ax--list-table[data-ax-section="credit-audits"] .ax-top-main {
+  .ax--list-table[data-ax-section="credit-audits"] .ax-top-main,
+  .ax--list-table[data-ax-section="return-receipts-audits"] .ax-top-main {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .ax--list-table[data-ax-section="credit-audits"] .ax-filters {
+  .ax--list-table[data-ax-section="credit-audits"] .ax-filters,
+  .ax--list-table[data-ax-section="return-receipts-audits"] .ax-filters {
     display: grid;
     grid-template-columns: 1fr 1fr;
     width: 100%;
@@ -4637,13 +4642,18 @@
   .ax--list-table[data-ax-section="credit-audits"] .ax-filters select,
   .ax--list-table[data-ax-section="credit-audits"] .ax-filters input[type="date"],
   .ax--list-table[data-ax-section="credit-audits"] .ax-filters input[type="month"],
-  .ax--list-table[data-ax-section="credit-audits"] .ax-filters input[type="number"] {
+  .ax--list-table[data-ax-section="credit-audits"] .ax-filters input[type="number"],
+  .ax--list-table[data-ax-section="return-receipts-audits"] .ax-filters select,
+  .ax--list-table[data-ax-section="return-receipts-audits"] .ax-filters input[type="date"],
+  .ax--list-table[data-ax-section="return-receipts-audits"] .ax-filters input[type="month"],
+  .ax--list-table[data-ax-section="return-receipts-audits"] .ax-filters input[type="number"] {
     width: 100%;
     min-width: 0;
     max-width: none;
   }
 
-  .ax--list-table[data-ax-section="credit-audits"] .ax-filters .ax-apply {
+  .ax--list-table[data-ax-section="credit-audits"] .ax-filters .ax-apply,
+  .ax--list-table[data-ax-section="return-receipts-audits"] .ax-filters .ax-apply {
     grid-column: 1 / -1;
     width: 100%;
   }
@@ -4657,6 +4667,11 @@
 }
 
 .ax--list-table[data-ax-section="credit-audits"] .ax-table--audit td:nth-child(7) {
+  max-width: 22rem;
+}
+
+.ax--list-table[data-ax-section="return-receipts-audits"] .ax-table--audit td:nth-child(6),
+.ax--list-table[data-ax-section="return-receipts-audits"] .ax-table--audit td:nth-child(7) {
   max-width: 22rem;
 }
 

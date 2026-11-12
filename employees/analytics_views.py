@@ -31,6 +31,7 @@ from .analytics_services import (
     build_credit_report_page,
     build_item_report_page,
     build_receipts_print_document,
+    build_return_receipts_audits,
     build_return_receipts_page,
     build_supplier_account,
     build_trade_out_detail,
@@ -1005,6 +1006,69 @@ def analytics_return_receipts(request, role_segment):
                 profile.role, active_view="return-receipts", profile=profile
             ),
             **context,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_return_receipts_audits(request, role_segment):
+    """Audit of cancelled / partially returned receipts with reason, items, and initiator."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_return_receipts_audits",
+            role_segment=expected,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(
+        request, profile, "analytics", "return-receipts"
+    )
+    if denied is not None:
+        return denied
+
+    trail = build_return_receipts_audits(
+        profile=profile,
+        request=request,
+        status_filter=request.GET.get("status") or "",
+    )
+    return render(
+        request,
+        "employees/analytics_return_receipts_audits.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Returned receipts audit · Analytics",
+                "headline": "Returned receipts audit",
+                "summary": (
+                    "Cancelled and partially returned receipts with reason, "
+                    "items, and who initiated the return."
+                ),
+                "icon": "scroll-text",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_analytics_section(
+                profile.role,
+                active_view="return-receipts-audits",
+                profile=profile,
+            ),
+            **trail,
         },
     )
 

@@ -28,6 +28,13 @@
         <a class="ax-apply ax-apply--ghost" href="{{ page.back_href }}">{{ page.back_label|default:"Back" }}</a>
       </div>
       {% endif %}
+      {% if page.return_audits_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ page.return_audits_href }}">
+          {{ page.return_audits_label|default:"Returned receipts audit" }}
+        </a>
+      </div>
+      {% endif %}
       {% if page.supply_analytics_href %}
       <div class="ax-top-actions">
         <a class="ax-apply ax-apply--ghost" href="{{ page.supply_analytics_href }}">

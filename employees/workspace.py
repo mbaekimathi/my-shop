@@ -1650,6 +1650,13 @@ def analytics_return_receipts_url(role):
     )
 
 
+def analytics_return_receipts_audits_url(role):
+    return reverse(
+        "employees:analytics_return_receipts_audits",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+
+
 def analytics_item_report_url(role):
     return reverse(
         "employees:analytics_item_report",
@@ -1755,6 +1762,7 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
     special_labels = {
         "confirm-receipts": ("Confirm receipts", "badge-check"),
         "return-receipts": ("Return receipt", "undo-2"),
+        "return-receipts-audits": ("Returned receipts audit", "scroll-text"),
         "settings": ("Analytics settings", "settings"),
     }
 
@@ -1785,15 +1793,32 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
                         active=False,
                     )
                 )
-            label, icon = special_labels[active_view]
-            perm = active_view
-            if profile is None or employee_may(profile, "analytics", perm):
-                href = (
-                    analytics_confirm_receipts_url(role)
-                    if active_view == "confirm-receipts"
-                    else analytics_return_receipts_url(role)
-                )
-                primary.append(_link(label, icon, href=href, active=True))
+            if active_view in {"return-receipts", "return-receipts-audits"}:
+                if profile is None or employee_may(
+                    profile, "analytics", "return-receipts"
+                ):
+                    primary.append(
+                        _link(
+                            "Return receipt",
+                            "undo-2",
+                            href=analytics_return_receipts_url(role),
+                            active=active_view == "return-receipts",
+                        )
+                    )
+                    primary.append(
+                        _link(
+                            "Returned receipts audit",
+                            "scroll-text",
+                            href=analytics_return_receipts_audits_url(role),
+                            active=active_view == "return-receipts-audits",
+                        )
+                    )
+            else:
+                label, icon = special_labels[active_view]
+                perm = active_view
+                if profile is None or employee_may(profile, "analytics", perm):
+                    href = analytics_confirm_receipts_url(role)
+                    primary.append(_link(label, icon, href=href, active=True))
     else:
         section_slug = "items" if active_view == "item-report" else section_slug
         section = ANALYTICS_SECTION_BY_SLUG.get(section_slug)

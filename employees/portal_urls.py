@@ -508,6 +508,11 @@ urlpatterns = [
         name="analytics_return_receipts",
     ),
     path(
+        "<role_segment:role_segment>/analytics/return-receipts/audits/",
+        analytics_views.analytics_return_receipts_audits,
+        name="analytics_return_receipts_audits",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/api/receipts/verify-login/",
         analytics_views.analytics_receipt_verify_login,
         name="analytics_receipt_verify_login",

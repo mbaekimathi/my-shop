@@ -43,95 +43,173 @@
     </article>
   </div>
 
-  <div class="deliv-layout">
-    <section class="deliv-map-panel" aria-label="Delivery map">
-      <h3 class="deliv-section-title">Delivery locations</h3>
-      <div
-        id="deliv-map"
-        class="deliv-map"
-        data-deliv-map
-        {% if google_maps_api_key %}data-maps-enabled="1"{% endif %}
-      ></div>
-      {% if not google_maps_api_key %}
-      <p class="deliv-map-fallback">
-        Set <code>GOOGLE_MAPS_API_KEY</code> to show the interactive map.
-        {% if page.map_points %}
-        {{ page.map_points|length }} located delivery{{ page.map_points|length|pluralize }} still listed below.
-        {% endif %}
-      </p>
-      {% elif not page.map_points %}
-      <p class="deliv-map-fallback">No delivery locations with coordinates in this period.</p>
-      {% endif %}
-    </section>
+  <nav class="deliv-tabs ax-tabs" role="tablist" aria-label="Deliveries view" data-deliv-tabs>
+    <button
+      type="button"
+      class="ax-tab is-active"
+      role="tab"
+      id="deliv-tab-map"
+      aria-selected="true"
+      aria-controls="deliv-panel-map"
+      data-deliv-tab="map"
+    >Map</button>
+    <button
+      type="button"
+      class="ax-tab"
+      role="tab"
+      id="deliv-tab-recent"
+      aria-selected="false"
+      aria-controls="deliv-panel-recent"
+      data-deliv-tab="recent"
+    >Recent deliveries</button>
+  </nav>
 
-    <section class="deliv-riders" aria-label="Riders">
-      <h3 class="deliv-section-title">Riders</h3>
+  <div class="deliv-layout">
+    <div class="deliv-main">
+      <section
+        class="deliv-map-panel"
+        id="deliv-panel-map"
+        role="tabpanel"
+        aria-labelledby="deliv-tab-map"
+        data-deliv-panel="map"
+      >
+        <h3 class="deliv-section-title">Delivery locations</h3>
+        <div
+          id="deliv-map"
+          class="deliv-map"
+          data-deliv-map
+          {% if google_maps_api_key %}data-maps-enabled="1"{% endif %}
+        ></div>
+        {% if google_maps_api_key and page.map_points %}
+        <ul class="deliv-map-legend" aria-label="Map legend">
+          <li><i class="is-heat" aria-hidden="true"></i> Density heatmap</li>
+          <li><i class="is-open" aria-hidden="true"></i> Open</li>
+          <li><i class="is-accepted" aria-hidden="true"></i> In progress</li>
+          <li><i class="is-done" aria-hidden="true"></i> Done</li>
+        </ul>
+        {% elif not google_maps_api_key %}
+        <p class="deliv-map-fallback">
+          Set <code>GOOGLE_MAPS_API_KEY</code> to show the interactive map.
+          {% if page.map_points %}
+          {{ page.map_points|length }} located delivery{{ page.map_points|length|pluralize }} still listed in Recent.
+          {% endif %}
+        </p>
+        {% elif not page.map_points %}
+        <p class="deliv-map-fallback">No delivery locations with coordinates in this period.</p>
+        {% endif %}
+      </section>
+
+      <section
+        class="deliv-recent"
+        id="deliv-panel-recent"
+        role="tabpanel"
+        aria-labelledby="deliv-tab-recent"
+        data-deliv-panel="recent"
+        hidden
+      >
+        <h3 class="deliv-section-title">Recent deliveries</h3>
+        {% if page.recent_rows %}
+        <div class="deliv-table-wrap">
+          <table class="deliv-table">
+            <thead>
+              <tr>
+                <th>Receipt</th>
+                <th>Client</th>
+                <th>Location</th>
+                <th>Rider</th>
+                <th>Status</th>
+                <th>Time</th>
+                <th>Shop</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in page.recent_rows %}
+              <tr>
+                <td>{{ row.receipt }}</td>
+                <td>
+                  <strong>{{ row.client }}</strong>
+                  <small>{{ row.phone }}</small>
+                </td>
+                <td>
+                  {% if row.maps_url %}
+                  <a href="{{ row.maps_url }}" target="_blank" rel="noopener noreferrer">{{ row.location }}</a>
+                  {% else %}
+                  {{ row.location }}
+                  {% endif %}
+                </td>
+                <td>{{ row.rider }}</td>
+                <td><span class="deliv-status is-{{ row.status_key }}">{{ row.status }}</span></td>
+                <td>
+                  {% if row.actual_minutes is not None %}
+                  <strong>{{ row.actual_minutes }} min</strong>
+                  {% if row.eta_minutes is not None %}
+                  <small>ETA {{ row.eta_minutes }} min</small>
+                  {% endif %}
+                  {% if row.timing_label %}
+                  <small class="deliv-timing is-{{ row.timing_tone }}">{{ row.timing_label }}</small>
+                  {% endif %}
+                  {% else %}
+                  <span class="deliv-empty">—</span>
+                  {% endif %}
+                </td>
+                <td>{{ row.shop }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="deliv-empty">No delivery jobs in this period.</p>
+        {% endif %}
+      </section>
+    </div>
+
+    <section class="deliv-riders" aria-label="Riders breakdown">
+      <h3 class="deliv-section-title">Riders breakdown</h3>
+      <p class="deliv-riders-hint">Rating compares accept→complete time against the ETA.</p>
       {% if page.riders %}
-      <ul class="deliv-rider-list">
-        {% for rider in page.riders %}
-        <li class="deliv-rider">
-          <div>
-            <strong>{{ rider.name }}</strong>
-            <span>{{ rider.employee_id }}</span>
-          </div>
-          <div class="deliv-rider-counts">
-            <em>{{ rider.completed }}</em>
-            <span>deliveries done</span>
-            {% if rider.accepted %}
-            <small>{{ rider.accepted }} in progress</small>
-            {% endif %}
-          </div>
-        </li>
-        {% endfor %}
-      </ul>
+      <div class="deliv-table-wrap">
+        <table class="deliv-table deliv-table--riders">
+          <thead>
+            <tr>
+              <th>Rider</th>
+              <th>Delivered</th>
+              <th>In progress</th>
+              <th>Delivery rating</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rider in page.riders %}
+            <tr>
+              <td>
+                <strong>{{ rider.name }}</strong>
+                <small>{{ rider.employee_id }}</small>
+              </td>
+              <td class="deliv-num">{{ rider.delivered }}</td>
+              <td class="deliv-num">{{ rider.in_progress }}</td>
+              <td>
+                {% if rider.rating is not None %}
+                <span class="deliv-rating is-{{ rider.rating_tone }}">
+                  <strong>{{ rider.rating_stars }}★</strong>
+                  <em>{{ rider.rating }}% · {{ rider.rating_label }}</em>
+                </span>
+                {% if rider.avg_minutes is not None %}
+                <small>Avg {{ rider.avg_minutes }} min · {{ rider.timed_count }} timed</small>
+                {% endif %}
+                {% else %}
+                <span class="deliv-empty">No timed jobs</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
       {% else %}
       <p class="deliv-empty">No riders have accepted deliveries in this period.</p>
       {% endif %}
     </section>
   </div>
-
-  <section class="deliv-recent" aria-label="Recent deliveries">
-    <h3 class="deliv-section-title">Recent deliveries</h3>
-    {% if page.recent_rows %}
-    <div class="deliv-table-wrap">
-      <table class="deliv-table">
-        <thead>
-          <tr>
-            <th>Receipt</th>
-            <th>Client</th>
-            <th>Location</th>
-            <th>Rider</th>
-            <th>Status</th>
-            <th>Shop</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in page.recent_rows %}
-          <tr>
-            <td>{{ row.receipt }}</td>
-            <td>
-              <strong>{{ row.client }}</strong>
-              <small>{{ row.phone }}</small>
-            </td>
-            <td>
-              {% if row.maps_url %}
-              <a href="{{ row.maps_url }}" target="_blank" rel="noopener noreferrer">{{ row.location }}</a>
-              {% else %}
-              {{ row.location }}
-              {% endif %}
-            </td>
-            <td>{{ row.rider }}</td>
-            <td><span class="deliv-status is-{{ row.status_key }}">{{ row.status }}</span></td>
-            <td>{{ row.shop }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="deliv-empty">No delivery jobs in this period.</p>
-    {% endif %}
-  </section>
 </section>
 {% endblock %}
 
@@ -189,11 +267,18 @@
   }
   .deliv-stat span { font-size: 0.74rem; color: var(--mist-dim); text-transform: uppercase; letter-spacing: 0.04em; }
   .deliv-stat strong { font-size: 1.15rem; color: var(--text-strong); }
+  .deliv-tabs { margin: 0; }
+  .deliv-tabs .ax-tab {
+    cursor: pointer;
+    font: inherit;
+  }
   .deliv-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1.6fr) minmax(16rem, 0.9fr);
+    grid-template-columns: minmax(0, 2.4fr) minmax(17rem, 0.9fr);
     gap: 0.85rem;
+    align-items: stretch;
   }
+  .deliv-main { min-width: 0; }
   .deliv-map-panel,
   .deliv-riders,
   .deliv-recent {
@@ -204,9 +289,49 @@
     border-radius: 0.85rem;
     background: color-mix(in srgb, var(--panel) 94%, transparent);
   }
+  .deliv-map-panel {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    min-height: 38rem;
+  }
+  .deliv-recent { align-content: start; }
   .deliv-section-title { margin: 0; font-size: 0.98rem; }
+  .deliv-riders-hint {
+    margin: 0;
+    color: var(--mist-dim);
+    font-size: 0.76rem;
+  }
+  .deliv-map-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem 0.85rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.74rem;
+    color: var(--mist-dim);
+  }
+  .deliv-map-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .deliv-map-legend i {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 999px;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent);
+  }
+  .deliv-map-legend .is-open { background: #d97706; }
+  .deliv-map-legend .is-accepted { background: #2563eb; }
+  .deliv-map-legend .is-done { background: #15803d; }
+  .deliv-map-legend .is-heat {
+    background: linear-gradient(90deg, #22d3ee, #f97316 55%, #ef4444);
+    border-radius: 0.2rem;
+    width: 1.1rem;
+  }
   .deliv-map {
-    min-height: 22rem;
+    min-height: 34rem;
+    height: min(62vh, 44rem);
     border-radius: 0.7rem;
     border: 1px solid var(--line);
     background: color-mix(in srgb, var(--mist) 10%, var(--panel));
@@ -220,36 +345,16 @@
     max-height: none !important;
     display: inline !important;
   }
+  .deliv-riders {
+    max-height: min(62vh, 44rem);
+    overflow: auto;
+    align-content: start;
+  }
   .deliv-map-fallback,
   .deliv-empty {
     margin: 0;
     color: var(--mist-dim);
     font-size: 0.84rem;
-  }
-  .deliv-rider-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
-  .deliv-rider {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.7rem 0.75rem;
-    border: 1px solid var(--line);
-    border-radius: 0.65rem;
-    background: var(--panel);
-  }
-  .deliv-rider strong { display: block; color: var(--text-strong); }
-  .deliv-rider span { color: var(--mist-dim); font-size: 0.76rem; }
-  .deliv-rider-counts { text-align: right; }
-  .deliv-rider-counts em {
-    font-style: normal;
-    font-size: 1.25rem;
-    font-weight: 800;
-    color: var(--text-strong);
-  }
-  .deliv-rider-counts span,
-  .deliv-rider-counts small {
-    display: block;
-    color: var(--mist-dim);
-    font-size: 0.72rem;
   }
   .deliv-table-wrap { overflow: auto; }
   .deliv-table {
@@ -271,6 +376,31 @@
     color: var(--mist-dim);
   }
   .deliv-table small { display: block; color: var(--mist-dim); }
+  .deliv-table--riders .deliv-num {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--text-strong);
+  }
+  .deliv-rating {
+    display: grid;
+    gap: 0.1rem;
+  }
+  .deliv-rating strong {
+    font-size: 1rem;
+    color: var(--text-strong);
+  }
+  .deliv-rating em {
+    font-style: normal;
+    font-size: 0.74rem;
+    color: var(--mist-dim);
+  }
+  .deliv-rating.is-great strong { color: #15803d; }
+  .deliv-rating.is-good strong { color: #2563eb; }
+  .deliv-rating.is-fair strong { color: #d97706; }
+  .deliv-rating.is-low strong { color: #b91c1c; }
+  .deliv-timing.is-early { color: #15803d; }
+  .deliv-timing.is-near { color: #d97706; }
+  .deliv-timing.is-late { color: #b91c1c; }
   .deliv-status {
     display: inline-block;
     padding: 0.15rem 0.4rem;
@@ -290,6 +420,12 @@
   @media (max-width: 960px) {
     .deliv-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .deliv-layout { grid-template-columns: 1fr; }
+    .deliv-map-panel { min-height: 0; }
+    .deliv-map {
+      min-height: 26rem;
+      height: min(55vh, 34rem);
+    }
+    .deliv-riders { max-height: none; }
   }
 </style>
 {% endblock %}
@@ -301,6 +437,41 @@
   window.__delivMapPoints = JSON.parse(
     document.getElementById("deliv-map-points").textContent
   );
+  (() => {
+    const root = document.querySelector("[data-deliv-tabs]");
+    if (!root) return;
+    const tabs = [...root.querySelectorAll("[data-deliv-tab]")];
+    const panels = [
+      ...document.querySelectorAll("[data-deliv-panel]"),
+    ];
+    const activate = (name) => {
+      tabs.forEach((tab) => {
+        const on = tab.getAttribute("data-deliv-tab") === name;
+        tab.classList.toggle("is-active", on);
+        tab.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      panels.forEach((panel) => {
+        const on = panel.getAttribute("data-deliv-panel") === name;
+        panel.hidden = !on;
+      });
+      if (name === "map" && window.google?.maps && window.__delivMapInstance) {
+        google.maps.event.trigger(window.__delivMapInstance, "resize");
+      }
+      try {
+        const url = new URL(window.location.href);
+        if (name === "map") url.searchParams.delete("view");
+        else url.searchParams.set("view", name);
+        window.history.replaceState({}, "", url);
+      } catch (_) {}
+    };
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () =>
+        activate(tab.getAttribute("data-deliv-tab"))
+      );
+    });
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("view") === "recent") activate("recent");
+  })();
 </script>
 {% if google_maps_api_key %}
 <script>
@@ -314,25 +485,47 @@
       ? { lat: Number(points[0].lat), lng: Number(points[0].lng) }
       : { lat: -1.286389, lng: 36.817223 };
 
-    let AdvancedMarkerElement = null;
-    try {
-      const markerLib = await google.maps.importLibrary("marker");
-      AdvancedMarkerElement = markerLib.AdvancedMarkerElement;
-    } catch (_) {
-      AdvancedMarkerElement = null;
-    }
-
     const map = new google.maps.Map(el, {
       zoom: points.length > 1 ? 11 : 13,
       center,
       mapTypeControl: false,
       streetViewControl: false,
       fullscreenControl: true,
-      ...(AdvancedMarkerElement ? { mapId: "DEMO_MAP_ID" } : {}),
+      gestureHandling: "greedy",
     });
+    window.__delivMapInstance = map;
+
+    const statusColor = (key) => {
+      const status = String(key || "").toLowerCase();
+      if (status === "open") return "#d97706";
+      if (status === "accepted") return "#2563eb";
+      if (
+        status === "delivered" ||
+        status === "delivered_paid" ||
+        status === "completed"
+      ) {
+        return "#15803d";
+      }
+      return "#64748b";
+    };
+
+    const pinIcon = (color) => {
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48">` +
+        `<path fill="${color}" stroke="#fff" stroke-width="2" d="M18 1C9.7 1 3 7.7 3 16c0 11.2 13.2 29.2 13.8 30a1.5 1.5 0 0 0 2.4 0C19.8 45.2 33 27.2 33 16 33 7.7 26.3 1 18 1z"/>` +
+        `<circle cx="18" cy="16" r="6.2" fill="#fff"/>` +
+        `</svg>`;
+      return {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        scaledSize: new google.maps.Size(30, 40),
+        anchor: new google.maps.Point(15, 40),
+      };
+    };
+
     const bounds = new google.maps.LatLngBounds();
     const info = new google.maps.InfoWindow();
-    const openInfo = (anchor, point) => {
+    const heatData = [];
+    const openInfo = (marker, point) => {
       const lines = [
         `<strong>${point.label || "Delivery"}</strong>`,
         point.client || "",
@@ -343,7 +536,7 @@
         point.status || "",
       ].filter(Boolean);
       info.setContent(`<div style="max-width:220px">${lines.join("<br>")}</div>`);
-      info.open({ map, anchor });
+      info.open({ map, anchor: marker });
     };
 
     points.forEach((point) => {
@@ -352,31 +545,49 @@
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
       const position = { lat, lng };
       bounds.extend(position);
-      if (AdvancedMarkerElement) {
-        const marker = new AdvancedMarkerElement({
-          map,
-          position,
-          title: point.label || "Delivery",
-          gmpClickable: true,
-        });
-        marker.addListener("click", () => openInfo(marker, point));
-      } else {
-        const marker = new google.maps.Marker({
-          map,
-          position,
-          title: point.label || "Delivery",
-        });
-        marker.addListener("click", () => openInfo(marker, point));
-      }
+      const weight = Number(point.weight);
+      heatData.push({
+        location: new google.maps.LatLng(lat, lng),
+        weight: Number.isFinite(weight) && weight > 0 ? weight : 1,
+      });
+      const marker = new google.maps.Marker({
+        map,
+        position,
+        title: point.label || "Delivery",
+        icon: pinIcon(statusColor(point.status_key)),
+        optimized: true,
+      });
+      marker.addListener("click", () => openInfo(marker, point));
     });
-    if (points.length > 1) map.fitBounds(bounds, 48);
-    else if (points.length === 1) map.setCenter(bounds.getCenter());
+
+    if (heatData.length) {
+      try {
+        const viz = await google.maps.importLibrary("visualization");
+        const HeatmapLayer = viz.HeatmapLayer;
+        new HeatmapLayer({
+          data: heatData,
+          map,
+          radius: 42,
+          opacity: 0.62,
+          dissipating: true,
+          maxIntensity: Math.max(4, Math.ceil(heatData.length / 3)),
+        });
+      } catch (_) {
+        // Visualization library unavailable — markers still show locations.
+      }
+    }
+
+    if (points.length > 1) map.fitBounds(bounds, 56);
+    else if (points.length === 1) {
+      map.setCenter(bounds.getCenter());
+      map.setZoom(14);
+    }
   };
 </script>
 <script
   async
   defer
-  src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=marker&callback=__delivMapsReady&v=weekly"
+  src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=visualization&callback=__delivMapsReady&v=weekly"
 ></script>
 {% endif %}
 {% endblock %}

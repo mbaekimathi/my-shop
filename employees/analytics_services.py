@@ -10520,8 +10520,55 @@ def _supply_summary_board(
     }
 
 
+def _delivery_time_score(*, actual_minutes, expected_minutes) -> float | None:
+    """0–100 score from accept→complete time vs ETA. On time / early = 100."""
+    if actual_minutes is None or expected_minutes is None:
+        return None
+    try:
+        actual = int(actual_minutes)
+        expected = int(expected_minutes)
+    except (TypeError, ValueError):
+        return None
+    if expected <= 0 or actual < 0:
+        return None
+    if actual <= expected:
+        return 100.0
+    # Linear drop to 0 at 2× ETA.
+    return max(0.0, 100.0 * (2.0 * expected - actual) / expected)
+
+
+def _delivery_rating_payload(scores: list[float]) -> dict:
+    """Aggregate timed-delivery scores into a display rating."""
+    if not scores:
+        return {
+            "rating": None,
+            "rating_label": "—",
+            "rating_stars": None,
+            "rating_tone": "",
+            "timed_count": 0,
+        }
+    avg = sum(scores) / len(scores)
+    stars = round(avg / 20.0, 1)  # 0–5
+    if avg >= 90:
+        label, tone = "Excellent", "great"
+    elif avg >= 75:
+        label, tone = "Good", "good"
+    elif avg >= 50:
+        label, tone = "Fair", "fair"
+    else:
+        label, tone = "Slow", "low"
+    return {
+        "rating": int(round(avg)),
+        "rating_label": label,
+        "rating_stars": stars,
+        "rating_tone": tone,
+        "timed_count": len(scores),
+    }
+
+
 def _build_deliveries(filters):
-    """Customer delivery jobs — map markers and rider completion counts."""
+    """Customer delivery jobs — heatmap, pin markers, and rider completion counts."""
+    from collections import defaultdict
     from decimal import Decimal
 
     from shops.models import ShopDelivery, ShopDeliveryStatus
@@ -10539,13 +10586,17 @@ def _build_deliveries(filters):
         "accepted_by__user",
     )
 
+    done_statuses = (
+        ShopDeliveryStatus.DELIVERED,
+        ShopDeliveryStatus.DELIVERED_PAID,
+        ShopDeliveryStatus.COMPLETED,
+    )
+
     # Plot every active/finished job with a pin — open ones still need riders.
     map_statuses = (
         ShopDeliveryStatus.OPEN,
         ShopDeliveryStatus.ACCEPTED,
-        ShopDeliveryStatus.DELIVERED,
-        ShopDeliveryStatus.DELIVERED_PAID,
-        ShopDeliveryStatus.COMPLETED,
+        *done_statuses,
     )
     map_jobs = [
         row
@@ -10563,6 +10614,7 @@ def _build_deliveries(filters):
             "location": row.location_text,
             "shop": row.shop.name,
             "status": row.get_status_display(),
+            "status_key": row.status,
             "rider": (
                 (
                     row.accepted_by.user.get_full_name()
@@ -10572,6 +10624,8 @@ def _build_deliveries(filters):
                 else ""
             ),
             "maps_url": row.maps_url or "",
+            # Completed jobs weigh denser on the heatmap.
+            "weight": 2.0 if row.status in done_statuses else 1.0,
         }
         for row in map_jobs
     ]
@@ -10589,13 +10643,7 @@ def _build_deliveries(filters):
             total=Count("id"),
             completed=Count(
                 "id",
-                filter=Q(
-                    status__in=(
-                        ShopDeliveryStatus.DELIVERED,
-                        ShopDeliveryStatus.DELIVERED_PAID,
-                        ShopDeliveryStatus.COMPLETED,
-                    )
-                ),
+                filter=Q(status__in=done_statuses),
             ),
             accepted=Count(
                 "id",
@@ -10604,32 +10652,55 @@ def _build_deliveries(filters):
         )
         .order_by("-completed", "-total", "accepted_by__employee_id")
     )
+
+    scores_by_rider: dict[int, list[float]] = defaultdict(list)
+    minutes_by_rider: dict[int, list[int]] = defaultdict(list)
+    for job in qs.filter(
+        accepted_by__isnull=False,
+        status__in=done_statuses,
+    ):
+        actual = job.actual_minutes
+        score = _delivery_time_score(
+            actual_minutes=actual,
+            expected_minutes=job.expected_minutes,
+        )
+        if score is not None:
+            scores_by_rider[job.accepted_by_id].append(score)
+        if actual is not None:
+            minutes_by_rider[job.accepted_by_id].append(int(actual))
+
     riders = []
     for row in rider_rows:
         first = (row.get("accepted_by__user__first_name") or "").strip()
         last = (row.get("accepted_by__user__last_name") or "").strip()
         username = (row.get("accepted_by__user__username") or "").strip()
         name = f"{first} {last}".strip() or username or "Rider"
+        rider_id = row["accepted_by_id"]
+        rating = _delivery_rating_payload(scores_by_rider.get(rider_id, []))
+        timed_minutes = minutes_by_rider.get(rider_id) or []
+        avg_minutes = (
+            int(round(sum(timed_minutes) / len(timed_minutes)))
+            if timed_minutes
+            else None
+        )
         riders.append(
             {
-                "id": row["accepted_by_id"],
+                "id": rider_id,
                 "employee_id": row.get("accepted_by__employee_id") or "",
                 "name": name,
                 "total": int(row["total"] or 0),
                 "completed": int(row["completed"] or 0),
+                "delivered": int(row["completed"] or 0),
                 "accepted": int(row["accepted"] or 0),
+                "in_progress": int(row["accepted"] or 0),
+                "avg_minutes": avg_minutes,
+                **rating,
             }
         )
 
     open_count = qs.filter(status=ShopDeliveryStatus.OPEN).count()
     accepted_count = qs.filter(status=ShopDeliveryStatus.ACCEPTED).count()
-    completed_count = qs.filter(
-        status__in=(
-            ShopDeliveryStatus.DELIVERED,
-            ShopDeliveryStatus.DELIVERED_PAID,
-            ShopDeliveryStatus.COMPLETED,
-        )
-    ).count()
+    completed_count = qs.filter(status__in=done_statuses).count()
     total_value = qs.aggregate(total=Sum("receipt__total"))["total"] or Decimal("0")
 
     recent = list(
@@ -10659,6 +10730,10 @@ def _build_deliveries(filters):
                 "created_at": row.created_at,
                 "maps_url": row.maps_url or "",
                 "has_coords": row.has_coordinates(),
+                "actual_minutes": row.actual_minutes,
+                "eta_minutes": row.expected_minutes,
+                "timing_label": row.timing_variance_label or "",
+                "timing_tone": row.timing_variance_tone or "",
             }
         )
 
@@ -10667,7 +10742,8 @@ def _build_deliveries(filters):
     return {
         "headline": "Deliveries",
         "lead": (
-            "Map of delivery locations plus riders and how many jobs each completed."
+            "Heatmap and pins for delivery locations, rider breakdown by time rating, "
+            "and a recent deliveries list."
         ),
         "period_label": filters.get("period_label") or "",
         "hide_date_filters": False,
@@ -10686,17 +10762,25 @@ def _build_deliveries(filters):
                 "columns": [
                     {"key": "name", "label": "Rider"},
                     {"key": "employee_id", "label": "ID"},
-                    {"key": "completed", "label": "Deliveries done"},
-                    {"key": "accepted", "label": "In progress"},
-                    {"key": "total", "label": "Total accepted"},
+                    {"key": "delivered", "label": "Delivered"},
+                    {"key": "in_progress", "label": "In progress"},
+                    {"key": "rating_label", "label": "Delivery rating"},
+                    {"key": "avg_minutes", "label": "Avg minutes"},
                 ],
                 "rows": [
                     {
                         "name": r["name"],
                         "employee_id": r["employee_id"],
-                        "completed": r["completed"],
-                        "accepted": r["accepted"],
-                        "total": r["total"],
+                        "delivered": r["delivered"],
+                        "in_progress": r["in_progress"],
+                        "rating_label": (
+                            f"{r['rating']}% · {r['rating_label']}"
+                            if r["rating"] is not None
+                            else "—"
+                        ),
+                        "avg_minutes": (
+                            r["avg_minutes"] if r["avg_minutes"] is not None else "—"
+                        ),
                     }
                     for r in riders
                 ],
@@ -14871,18 +14955,346 @@ def build_return_receipts_page(*, profile, request) -> dict:
     filters["query"] = request.GET.urlencode()
     filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
     page = _build_return_receipts(filters)
+    segment = role_url_segment(profile.role)
     page["back_href"] = reverse(
         "employees:analytics_section",
         kwargs={
-            "role_segment": role_url_segment(profile.role),
+            "role_segment": segment,
             "section": "receipts",
         },
     )
     page["back_label"] = "Back to receipts"
+    page["return_audits_href"] = reverse(
+        "employees:analytics_return_receipts_audits",
+        kwargs={"role_segment": segment},
+    )
+    page["return_audits_label"] = "Returned receipts audit"
     return {
         **filters,
         "section_slug": "return-receipts",
         "page": page,
+    }
+
+
+def build_return_receipts_audits(*, profile, request=None, status_filter: str = "") -> dict:
+    """Audit trail of cancelled / partially returned receipts with reason, items, and actor."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+    from shops.services import employee_display_name
+
+    date_filter = _date_filter_context(request)
+    start, end = date_filter.get("start"), date_filter.get("end")
+    filter_shops = list(actionable_shops_for_profile(profile))
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+    allowed_shop_ids = [shop.pk for shop in filter_shops]
+
+    try:
+        shop_filter_id = int((getattr(request, "GET", {}) or {}).get("shop_id") or 0)
+    except (TypeError, ValueError):
+        shop_filter_id = 0
+    if shop_filter_id and shop_filter_id not in shops_by_id:
+        shop_filter_id = 0
+
+    try:
+        employee_filter_id = int(
+            (getattr(request, "GET", {}) or {}).get("employee_id") or 0
+        )
+    except (TypeError, ValueError):
+        employee_filter_id = 0
+
+    filter_employees = list(
+        EmployeeProfile.objects.filter(status=EmployeeStatus.ACTIVE)
+        .select_related("user")
+        .only(
+            "id",
+            "employee_id",
+            "user_id",
+            "user__first_name",
+            "user__last_name",
+            "user__username",
+        )
+        .order_by("employee_id")[:300]
+    )
+    if employee_filter_id and not any(
+        emp.pk == employee_filter_id for emp in filter_employees
+    ):
+        employee_filter_id = 0
+
+    status_raw = (status_filter or "").strip().lower()
+    status_options = [
+        {"slug": "", "label": "Cancelled & partial returns"},
+        {"slug": "cancelled", "label": "Cancelled only"},
+        {"slug": "partial_return", "label": "Partial returns only"},
+    ]
+    if status_raw not in {"cancelled", "partial_return"}:
+        status_raw = ""
+    status_filter_label = next(
+        (opt["label"] for opt in status_options if opt["slug"] == status_raw),
+        status_options[0]["label"],
+    )
+    if status_raw:
+        status_values = [status_raw]
+    else:
+        status_values = [
+            ShopReceiptStatus.CANCELLED,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        ]
+
+    shop_ids = [shop_filter_id] if shop_filter_id else allowed_shop_ids
+    period_bits = [date_filter.get("report_period_label") or ""]
+    if status_raw:
+        period_bits.append(status_filter_label)
+    period_label = " · ".join(bit for bit in period_bits if bit)
+    empty_message = (
+        "No matching returned receipts for this filter."
+        if status_raw or shop_filter_id or employee_filter_id
+        else "No cancelled or partially returned receipts recorded yet."
+    )
+    segment = role_url_segment(profile.role)
+    back_href = reverse(
+        "employees:analytics_return_receipts",
+        kwargs={"role_segment": segment},
+    )
+    empty = {
+        **date_filter,
+        "headline": "Returned receipts audit",
+        "lead": (
+            "Receipts cancelled or partially returned — reason, returned items, "
+            "and who initiated the return."
+        ),
+        "period_label": period_label,
+        "status_options": status_options,
+        "status_filter": status_raw,
+        "status_filter_label": status_filter_label,
+        "filter_shops": filter_shops,
+        "filter_employees": filter_employees,
+        "selected_shop_id": shop_filter_id or 0,
+        "selected_employee_id": employee_filter_id or 0,
+        "back_href": back_href,
+        "back_label": "Back to return receipt",
+        "rows": [],
+        "receipt_count": 0,
+        "cancelled_count": 0,
+        "partial_count": 0,
+        "empty_message": empty_message,
+        "summary_board": {
+            "hero": {
+                "label": "Returned receipts",
+                "value": "0",
+                "hint": "No returns yet",
+                "tone": "neutral",
+            },
+            "tiles": [
+                {
+                    "label": "Cancelled",
+                    "value": "0",
+                    "hint": "Fully returned",
+                    "icon": "ban",
+                    "tone": "bad",
+                },
+                {
+                    "label": "Partial returns",
+                    "value": "0",
+                    "hint": "Some items kept",
+                    "icon": "undo-2",
+                    "tone": "warn",
+                },
+                {
+                    "label": "Initiators",
+                    "value": "0",
+                    "hint": "Staff who returned",
+                    "icon": "user-check",
+                    "tone": "shops",
+                },
+            ],
+        },
+    }
+    if not shop_ids:
+        return empty
+
+    qs = ShopReceipt.objects.filter(
+        shop_id__in=shop_ids,
+        status__in=status_values,
+    )
+    if employee_filter_id:
+        qs = qs.filter(last_returned_by_id=employee_filter_id)
+    qs = _within_created_range(qs, start, end, lookup="last_returned_at")
+    receipts = list(
+        qs.select_related(
+            "shop",
+            "last_returned_by",
+            "last_returned_by__user",
+        )
+        .prefetch_related("lines")
+        .order_by("-last_returned_at", "-pk")[:1000]
+    )
+
+    actor_ids = set()
+    for receipt in receipts:
+        if receipt.last_returned_by_id:
+            actor_ids.add(receipt.last_returned_by_id)
+        for line in receipt.lines.all():
+            for batch in line.return_batches or []:
+                if not isinstance(batch, dict):
+                    continue
+                by_id = batch.get("by_id")
+                try:
+                    by_id = int(by_id) if by_id is not None else 0
+                except (TypeError, ValueError):
+                    by_id = 0
+                if by_id:
+                    actor_ids.add(by_id)
+
+    actors_by_id = {
+        emp.pk: emp
+        for emp in EmployeeProfile.objects.filter(pk__in=actor_ids).select_related(
+            "user"
+        )
+    }
+
+    rows = []
+    cancelled_count = 0
+    partial_count = 0
+    initiator_ids: set[int] = set()
+    for receipt in receipts:
+        if receipt.status == ShopReceiptStatus.CANCELLED:
+            cancelled_count += 1
+            tone = "bad"
+            icon = "ban"
+        else:
+            partial_count += 1
+            tone = "warn"
+            icon = "undo-2"
+
+        item_parts = []
+        reasons: list[str] = []
+        seen_reasons: set[str] = set()
+        batch_actor_ids: list[int] = []
+        for line in receipt.lines.all():
+            batches = [
+                batch
+                for batch in (line.return_batches or [])
+                if isinstance(batch, dict)
+            ]
+            returned_qty = Decimal(line.returned_quantity or 0)
+            if returned_qty <= 0 and not batches:
+                continue
+            qty_label = _qty_label(returned_qty if returned_qty > 0 else 0)
+            if batches:
+                batch_qty = sum(
+                    Decimal(str(batch.get("qty") or 0)) for batch in batches
+                )
+                if batch_qty > 0:
+                    qty_label = _qty_label(batch_qty)
+            name = (line.item_name or "Item").strip() or "Item"
+            item_parts.append(f"{name} × {qty_label}")
+            for batch in batches:
+                reason = (batch.get("reason") or "").strip()
+                if reason and reason not in seen_reasons:
+                    seen_reasons.add(reason)
+                    reasons.append(reason)
+                by_id = batch.get("by_id")
+                try:
+                    by_id = int(by_id) if by_id is not None else 0
+                except (TypeError, ValueError):
+                    by_id = 0
+                if by_id:
+                    batch_actor_ids.append(by_id)
+
+        if not item_parts:
+            item_parts = ["—"]
+        if not reasons and receipt.status == ShopReceiptStatus.CANCELLED:
+            reasons = ["Receipt cancelled"]
+
+        actor = receipt.last_returned_by
+        if actor is None and batch_actor_ids:
+            actor = actors_by_id.get(batch_actor_ids[-1])
+        actor_label = employee_display_name(actor) if actor else "—"
+        if actor and getattr(actor, "employee_id", None):
+            actor_label = f"{actor_label} ({actor.employee_id})".strip()
+        if actor and actor.pk:
+            initiator_ids.add(actor.pk)
+
+        when = receipt.last_returned_at
+        when_label = (
+            timezone.localtime(when).strftime("%d %b %Y · %H:%M") if when else "—"
+        )
+        client = (receipt.client_name or "").strip() or "—"
+        rows.append(
+            {
+                "id": receipt.pk,
+                "when_label": when_label,
+                "receipt_number": receipt.receipt_number,
+                "kind_label": receipt.get_kind_display(),
+                "status": receipt.status,
+                "status_label": receipt.get_status_display(),
+                "tone": tone,
+                "icon": icon,
+                "shop": receipt.shop.name if receipt.shop_id else "—",
+                "client": client,
+                "items": " · ".join(item_parts),
+                "reason": " · ".join(reasons) if reasons else "—",
+                "actor": actor_label,
+            }
+        )
+
+    receipt_count = len(rows)
+    return {
+        **date_filter,
+        "headline": "Returned receipts audit",
+        "lead": (
+            "Receipts cancelled or partially returned — reason, returned items, "
+            "and who initiated the return."
+        ),
+        "period_label": period_label,
+        "status_options": status_options,
+        "status_filter": status_raw,
+        "status_filter_label": status_filter_label,
+        "filter_shops": filter_shops,
+        "filter_employees": filter_employees,
+        "selected_shop_id": shop_filter_id or 0,
+        "selected_employee_id": employee_filter_id or 0,
+        "back_href": back_href,
+        "back_label": "Back to return receipt",
+        "rows": rows,
+        "receipt_count": receipt_count,
+        "cancelled_count": cancelled_count,
+        "partial_count": partial_count,
+        "empty_message": empty_message,
+        "summary_board": {
+            "hero": {
+                "label": "Returned receipts",
+                "value": str(receipt_count),
+                "hint": (
+                    f"{cancelled_count} cancelled · {partial_count} partial"
+                ),
+                "tone": "neutral",
+            },
+            "tiles": [
+                {
+                    "label": "Cancelled",
+                    "value": str(cancelled_count),
+                    "hint": "Fully returned",
+                    "icon": "ban",
+                    "tone": "bad",
+                },
+                {
+                    "label": "Partial returns",
+                    "value": str(partial_count),
+                    "hint": "Some items kept",
+                    "icon": "undo-2",
+                    "tone": "warn",
+                },
+                {
+                    "label": "Initiators",
+                    "value": str(len(initiator_ids)),
+                    "hint": "Staff who returned",
+                    "icon": "user-check",
+                    "tone": "shops",
+                },
+            ],
+        },
     }
 
 
