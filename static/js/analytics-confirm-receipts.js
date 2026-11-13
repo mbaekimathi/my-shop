@@ -83,6 +83,36 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
 
+  const todayIso = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const splitLocalDateTime = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw.includes("T")) {
+      return { date: raw.slice(0, 10) || "", time: "" };
+    }
+    const [datePart, timePart = ""] = raw.split("T");
+    return {
+      date: (datePart || "").slice(0, 10),
+      time: (timePart || "").slice(0, 5),
+    };
+  };
+
+  // Default date to today; leave time empty for easy entry.
+  const defaultConfirmPaymentParts = (receipt = {}) => {
+    const saved = splitLocalDateTime(receipt.confirmed_payment_at_local);
+    if (saved.date && saved.time) return saved;
+    return {
+      date: saved.date || todayIso(),
+      time: saved.time || "",
+    };
+  };
+
   const money = (value) => {
     const n = Number(value);
     if (!Number.isFinite(n)) return String(value ?? "0");
@@ -418,6 +448,9 @@
       <span class="ax-confirm-stack-sub">${phone}</span>
     </div>
   </td>
+  <td class="ax-confirm-sold-as" data-label="Sold as">${escapeHtml(
+    row.sold_as_label || "—"
+  )}</td>
   <td class="ax-confirm-amount" data-label="Amount">${amount}</td>
   <td class="ax-confirm-reference" data-label="Reference">${reference}</td>
   <td class="ax-confirm-when" data-label="When">${when}</td>
@@ -582,7 +615,7 @@
     const requireDetails = Boolean(receipt.require_mpesa_reference_on_confirm);
     modalBody
       ?.querySelectorAll(
-        "[data-confirm-payment-at], [data-confirm-mpesa-ref]"
+        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref]"
       )
       .forEach((input) => {
         if (requireDetails) {
@@ -649,10 +682,7 @@
       receipt.require_mpesa_reference_on_confirm
     );
     const optionalHint = requireConfirmDetails ? "required" : "optional";
-    // Only show a previously entered confirm payment time — never auto-fill print time.
-    const paymentAtValue = String(
-      receipt.confirmed_payment_at_local || ""
-    ).trim();
+    const paymentParts = defaultConfirmPaymentParts(receipt);
     const showConfirmFields = shouldShowConfirmFields(
       receipt,
       statusSelect?.value || statusKeyForUi(receipt.status)
@@ -698,20 +728,37 @@
     }>
   <div class="shop-receipt-confirm-fields">
     ${creditAmountField}
-    <div class="shop-receipt-mpesa-ref" data-confirm-payment-at-wrap>
-      <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-at">
-        Payment date &amp; time
-        <span class="shop-receipt-muted">(${optionalHint})</span>
-      </label>
-      <input
-        id="ax-confirm-payment-at"
-        class="shop-receipt-mpesa-ref-input"
-        type="datetime-local"
-        name="payment_at"
-        value="${escapeHtml(paymentAtValue)}"
-        data-confirm-payment-at
-        ${requiredAttrs}
-      >
+    <div class="shop-receipt-confirm-datetime" data-confirm-payment-at-wrap>
+      <div class="shop-receipt-mpesa-ref">
+        <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-date">
+          Payment date
+          <span class="shop-receipt-muted">(${optionalHint})</span>
+        </label>
+        <input
+          id="ax-confirm-payment-date"
+          class="shop-receipt-mpesa-ref-input"
+          type="date"
+          name="payment_date"
+          value="${escapeHtml(paymentParts.date)}"
+          data-confirm-payment-date
+          ${requiredAttrs}
+        >
+      </div>
+      <div class="shop-receipt-mpesa-ref">
+        <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-time">
+          Payment time
+          <span class="shop-receipt-muted">(${optionalHint})</span>
+        </label>
+        <input
+          id="ax-confirm-payment-time"
+          class="shop-receipt-mpesa-ref-input"
+          type="time"
+          name="payment_time"
+          value="${escapeHtml(paymentParts.time)}"
+          data-confirm-payment-time
+          ${requiredAttrs}
+        >
+      </div>
     </div>
     <div class="shop-receipt-mpesa-ref" data-confirm-mpesa-ref-wrap>
       <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-mpesa-ref">
@@ -1175,8 +1222,12 @@
   const appendConfirmFields = (body) => {
     const receipt = currentDetail?.receipt || {};
     const requireDetails = Boolean(receipt.require_mpesa_reference_on_confirm);
-    const atInput = modal?.querySelector("[data-confirm-payment-at]");
-    const paymentAt = (atInput?.value || "").trim();
+    const dateInput = modal?.querySelector("[data-confirm-payment-date]");
+    const timeInput = modal?.querySelector("[data-confirm-payment-time]");
+    const paymentDate = (dateInput?.value || "").trim();
+    const paymentTime = (timeInput?.value || "").trim();
+    const paymentAt =
+      paymentDate && paymentTime ? `${paymentDate}T${paymentTime}` : "";
     const refInput = modal?.querySelector("[data-confirm-mpesa-ref]");
     const ref = (refInput?.value || "").trim();
     const amountInput = modal?.querySelector("[data-confirm-credit-amount]");
@@ -1202,7 +1253,7 @@
       }
       if (!paymentAt) {
         window.alert("Enter the payment date and time before confirming.");
-        atInput?.focus();
+        (!paymentDate ? dateInput : timeInput)?.focus();
         return false;
       }
     }

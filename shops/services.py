@@ -7683,6 +7683,23 @@ def _shop_receipt_date_bounds(
     raise ValidationError("Choose day, period, month, or year.")
 
 
+def _receipt_sold_as_payload(receipt) -> dict:
+    """Shop vs delivery for customer sales/credits; blank for other receipt kinds."""
+    kind = getattr(receipt, "kind", None)
+    if kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
+        return {"sold_as": "", "sold_as_label": "—"}
+    if hasattr(receipt, "has_customer_delivery"):
+        is_delivery = bool(getattr(receipt, "has_customer_delivery"))
+    else:
+        try:
+            is_delivery = getattr(receipt, "delivery", None) is not None
+        except ShopDelivery.DoesNotExist:
+            is_delivery = False
+    if is_delivery:
+        return {"sold_as": "delivery", "sold_as_label": "Delivery"}
+    return {"sold_as": "shop", "sold_as_label": "Shop"}
+
+
 def _receipt_list_item(receipt) -> dict:
     created = timezone.localtime(receipt.created_at)
     confirmed_payment = getattr(receipt, "confirmed_payment_at", None)
@@ -7717,6 +7734,7 @@ def _receipt_list_item(receipt) -> dict:
             confirmed_local.strftime("%Y-%m-%dT%H:%M") if confirmed_local else ""
         ),
         "cashier": cashier,
+        **_receipt_sold_as_payload(receipt),
         "can_return": (
             receipt.kind
             in {
@@ -7789,6 +7807,8 @@ def _stock_receipt_list_item(movement) -> dict:
         "created_at": created.isoformat(),
         "created_label": created.strftime("%d %b %Y · %H:%M"),
         "cashier": cashier,
+        "sold_as": "",
+        "sold_as_label": "—",
         "can_return": False,
     }
 
@@ -7819,6 +7839,8 @@ def _expense_receipt_list_item(expense) -> dict:
         "created_at": created.isoformat(),
         "created_label": created.strftime("%d %b %Y · %H:%M"),
         "cashier": cashier,
+        "sold_as": "",
+        "sold_as_label": "—",
         "can_return": False,
     }
 
@@ -7889,7 +7911,7 @@ def list_shop_receipts(
     """List POS, stock-supplier, and expense-supplier receipts for a shop."""
     from datetime import datetime, time
 
-    from django.db.models import Q
+    from django.db.models import Exists, OuterRef, Q
 
     from items.models import StockMovement, StockMovementType
 
@@ -7964,6 +7986,11 @@ def list_shop_receipts(
                 created_at__lte=end_dt,
             )
             .select_related("created_by__user")
+            .annotate(
+                has_customer_delivery=Exists(
+                    ShopDelivery.objects.filter(receipt_id=OuterRef("pk"))
+                )
+            )
             .order_by("-created_at", "-id")
         )
         if kind_key == "sales_credits":

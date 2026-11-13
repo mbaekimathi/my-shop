@@ -108,6 +108,7 @@
         <tr>
           <th>Receipt</th>
           <th>Type</th>
+          <th>Sold as</th>
           <th>Client / supplier</th>
           <th>Total</th>
           <th>When</th>
@@ -116,7 +117,7 @@
       </thead>
       <tbody data-receipts-list>
         <tr class="shop-receipts-empty-row">
-          <td colspan="6">Loading…</td>
+          <td colspan="7">Loading…</td>
         </tr>
       </tbody>
     </table>
@@ -184,5 +185,5 @@
 {{ block.super }}
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=20261110-no-payby"></script>
-<script defer src="{% static 'js/my-shop-receipts.js' %}?v=20261113-credit-amount"></script>
+<script defer src="{% static 'js/my-shop-receipts.js' %}?v=20261113-empty-time"></script>
 {% endblock %}

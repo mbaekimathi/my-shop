@@ -62,15 +62,26 @@
     return `${y}-${m}-${day}`;
   };
 
-  // Default confirm moment: today's date + print clock time (editable).
-  const defaultConfirmPaymentAt = (receipt = {}) => {
-    const saved = String(receipt.confirmed_payment_at_local || "").trim();
-    if (saved) return saved;
-    const printed = String(receipt.created_at_local || "").trim();
-    const printTime = printed.includes("T")
-      ? printed.split("T")[1].slice(0, 5)
-      : "";
-    return printTime ? `${todayIso()}T${printTime}` : `${todayIso()}T00:00`;
+  // Default confirm date to today; leave time empty for easy entry.
+  const splitLocalDateTime = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw.includes("T")) {
+      return { date: raw.slice(0, 10) || "", time: "" };
+    }
+    const [datePart, timePart = ""] = raw.split("T");
+    return {
+      date: (datePart || "").slice(0, 10),
+      time: (timePart || "").slice(0, 5),
+    };
+  };
+
+  const defaultConfirmPaymentParts = (receipt = {}) => {
+    const saved = splitLocalDateTime(receipt.confirmed_payment_at_local);
+    if (saved.date && saved.time) return saved;
+    return {
+      date: saved.date || todayIso(),
+      time: saved.time || "",
+    };
   };
 
   const monthIso = () => todayIso().slice(0, 7);
@@ -213,6 +224,7 @@
               }`
             : "—";
         const source = escapeHtml(row.source || "pos");
+        const soldAs = escapeHtml(row.sold_as_label || "—");
         return `<tr class="shop-receipts-row" data-receipt-id="${row.id}" data-receipt-source="${source}" tabindex="0">
   <td data-label="Receipt">
     <strong>${escapeHtml(row.receipt_number)}</strong>
@@ -220,6 +232,7 @@
   <td data-label="Type"><span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(
     row.kind
   )}">${escapeHtml(row.kind_label)}</span></td>
+  <td data-label="Sold as">${soldAs}</td>
   <td class="shop-receipts-client" data-label="Client">${client}</td>
   <td class="shop-receipts-total" data-label="Total">KSh ${escapeHtml(money(row.total))}</td>
   <td class="shop-receipts-when" data-label="When">${escapeHtml(row.created_label)}</td>
@@ -321,10 +334,11 @@
     confirmVerified = false;
     const codeInput = modalBody?.querySelector("[data-confirm-login-code]");
     if (codeInput) codeInput.value = "";
-    const paymentAt = modalBody?.querySelector("[data-confirm-payment-at]");
-    if (paymentAt) {
-      paymentAt.value = defaultConfirmPaymentAt(receipt);
-    }
+    const parts = defaultConfirmPaymentParts(receipt);
+    const paymentDate = modalBody?.querySelector("[data-confirm-payment-date]");
+    const paymentTime = modalBody?.querySelector("[data-confirm-payment-time]");
+    if (paymentDate) paymentDate.value = parts.date;
+    if (paymentTime) paymentTime.value = parts.time;
     const refInput = modalBody?.querySelector("[data-confirm-mpesa-ref]");
     if (refInput && !refInput.value) {
       refInput.value = String(receipt.mpesa_receipt_number || "").trim();
@@ -345,8 +359,8 @@
     setConfirmStatus(
       creditNotice ||
         (receipt.require_mpesa_reference_on_confirm
-          ? "Defaults: today + print time. Enter reference number and staff 6-digit ID."
-          : "Defaults: today + print time. Enter staff 6-digit ID to confirm.")
+          ? "Date defaults to today. Enter time, reference number, and staff 6-digit ID."
+          : "Date defaults to today. Enter time and staff 6-digit ID to confirm.")
     );
     syncSubmitConfirm();
     refreshIcons();
@@ -435,9 +449,14 @@
 
   const confirmFieldValues = () => {
     const receipt = currentDetail?.receipt || {};
-    const paymentAt = (
-      modalBody?.querySelector("[data-confirm-payment-at]")?.value || ""
+    const paymentDate = (
+      modalBody?.querySelector("[data-confirm-payment-date]")?.value || ""
     ).trim();
+    const paymentTime = (
+      modalBody?.querySelector("[data-confirm-payment-time]")?.value || ""
+    ).trim();
+    const paymentAt =
+      paymentDate && paymentTime ? `${paymentDate}T${paymentTime}` : "";
     const ref = (
       modalBody?.querySelector("[data-confirm-mpesa-ref]")?.value || ""
     ).trim();
@@ -450,6 +469,8 @@
     const due = creditDueValue(receipt);
     return {
       paymentAt,
+      paymentDate,
+      paymentTime,
       ref,
       amount,
       existingRef,
@@ -602,7 +623,7 @@
     const savedPaymentAt = String(
       receipt.confirmed_payment_at_local || ""
     ).trim();
-    const paymentAtLocal = defaultConfirmPaymentAt(receipt);
+    const paymentParts = defaultConfirmPaymentParts(receipt);
     const requireConfirmDetails = Boolean(
       receipt.require_mpesa_reference_on_confirm
     );
@@ -730,7 +751,7 @@
     const creditDue = creditDueValue(receipt);
     const confirmLead = isCredit
       ? "Enter the amount received. Full balance clears and confirms the credit; a smaller amount records a partial confirmation."
-      : "Confirm this sale. Date defaults to today and time to when it was printed — change either if needed, then confirm.";
+      : "Confirm this sale. Date defaults to today; enter the payment time, then confirm.";
     const creditAmountField = isCredit
       ? `<div class="shop-receipt-mpesa-ref" data-confirm-credit-amount-wrap>
         <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-credit-amount">
@@ -834,20 +855,37 @@
   <div class="shop-receipt-card shop-receipt-card--confirm">
     <div class="shop-receipt-confirm-fields">
       ${creditAmountField}
-      <div class="shop-receipt-mpesa-ref" data-confirm-payment-at-wrap>
-        <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-payment-at">
-          Payment date &amp; time
-          <span class="shop-receipt-muted">(${optionalHint})</span>
-        </label>
-        <input
-          id="shop-confirm-payment-at"
-          class="shop-receipt-mpesa-ref-input"
-          type="datetime-local"
-          name="payment_at"
-          value="${escapeHtml(paymentAtLocal)}"
-          data-confirm-payment-at
-          ${requiredAttrs}
-        >
+      <div class="shop-receipt-confirm-datetime" data-confirm-payment-at-wrap>
+        <div class="shop-receipt-mpesa-ref">
+          <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-payment-date">
+            Payment date
+            <span class="shop-receipt-muted">(${optionalHint})</span>
+          </label>
+          <input
+            id="shop-confirm-payment-date"
+            class="shop-receipt-mpesa-ref-input"
+            type="date"
+            name="payment_date"
+            value="${escapeHtml(paymentParts.date)}"
+            data-confirm-payment-date
+            ${requiredAttrs}
+          >
+        </div>
+        <div class="shop-receipt-mpesa-ref">
+          <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-payment-time">
+            Payment time
+            <span class="shop-receipt-muted">(${optionalHint})</span>
+          </label>
+          <input
+            id="shop-confirm-payment-time"
+            class="shop-receipt-mpesa-ref-input"
+            type="time"
+            name="payment_time"
+            value="${escapeHtml(paymentParts.time)}"
+            data-confirm-payment-time
+            ${requiredAttrs}
+          >
+        </div>
       </div>
       <div class="shop-receipt-mpesa-ref" data-confirm-mpesa-ref-wrap>
         <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-mpesa-ref">
@@ -1079,11 +1117,18 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
         return;
       }
       if (!paymentAt) {
+        const { paymentDate, paymentTime } = confirmFieldValues();
         setConfirmStatus(
           "Enter the payment date and time before confirming.",
           { error: true }
         );
-        modalBody?.querySelector("[data-confirm-payment-at]")?.focus();
+        modalBody
+          ?.querySelector(
+            !paymentDate
+              ? "[data-confirm-payment-date]"
+              : "[data-confirm-payment-time]"
+          )
+          ?.focus();
         syncSubmitConfirm();
         return;
       }
@@ -1279,7 +1324,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     }
     if (
       target?.matches?.(
-        "[data-confirm-payment-at], [data-confirm-mpesa-ref], [data-confirm-credit-amount]"
+        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref], [data-confirm-credit-amount]"
       )
     ) {
       syncSubmitConfirm();
@@ -1322,7 +1367,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     const target = event.target;
     if (
       target?.matches?.(
-        "[data-confirm-payment-at], [data-confirm-mpesa-ref], [data-confirm-credit-amount]"
+        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref], [data-confirm-credit-amount]"
       )
     ) {
       syncSubmitConfirm();

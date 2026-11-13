@@ -6640,19 +6640,23 @@
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-client {
-  width: 26%;
+  width: 22%;
+}
+
+.ax--confirm .ax-table--confirm-compact col.ax-col-sold-as {
+  width: 9%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-amount {
-  width: 14%;
+  width: 12%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-reference {
-  width: 18%;
+  width: 16%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-when {
-  width: 16%;
+  width: 14%;
 }
 
 .ax--confirm .ax-table--confirm-compact th,

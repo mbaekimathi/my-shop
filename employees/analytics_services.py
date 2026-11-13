@@ -14,9 +14,11 @@ from django.db.models import (
     Count,
     DateTimeField,
     DecimalField,
+    Exists,
     ExpressionWrapper,
     F,
     IntegerField,
+    OuterRef,
     Q,
     Sum,
     Value,
@@ -49,6 +51,7 @@ from shops.models import (
     ExpensePaymentStatus,
     ExpenseSupplier,
     ShopDaySession,
+    ShopDelivery,
     ShopReceipt,
     ShopReceiptKind,
     ShopReceiptLine,
@@ -3160,6 +3163,11 @@ def _confirm_receipt_sale_rows(
     qs = (
         ShopReceipt.objects.filter(shop_id__in=shop_ids, kind__in=kind_list)
         .select_related("shop")
+        .annotate(
+            has_customer_delivery=Exists(
+                ShopDelivery.objects.filter(receipt_id=OuterRef("pk"))
+            )
+        )
         .only(
             "id",
             "shop_id",
@@ -3240,6 +3248,12 @@ def _confirm_receipt_sale_rows(
                     )
                 )
             kind_label = "Credit" if is_credit else "Sale"
+            if bool(getattr(row, "has_customer_delivery", False)):
+                sold_as = "delivery"
+                sold_as_label = "Delivery"
+            else:
+                sold_as = "shop"
+                sold_as_label = "Shop"
             if is_credit:
                 # Pending credits confirm with an amount (full clear or partial).
                 can_confirm = is_pending or is_cancelled
@@ -3283,6 +3297,8 @@ def _confirm_receipt_sale_rows(
                     "status_label": status_label,
                     "kind": "credit" if is_credit else "sale",
                     "kind_label": kind_label,
+                    "sold_as": sold_as,
+                    "sold_as_label": sold_as_label,
                     "when": when_label,
                     "when_dt": printed_at,
                     "can_confirm": can_confirm,
@@ -3308,6 +3324,7 @@ def _confirm_receipt_sale_rows(
                             status_label,
                             when_label,
                             kind_label,
+                            sold_as_label,
                         ]
                     ),
                 }
@@ -3474,6 +3491,8 @@ def _confirm_receipt_transfer_rows(
                 "status_label": status_label,
                 "kind": kind,
                 "kind_label": kind_label,
+                "sold_as": "",
+                "sold_as_label": "—",
                 "when": timezone.localtime(when_dt).strftime("%d %b %Y · %H:%M"),
                 "when_dt": when_dt,
                 "can_confirm": False,
@@ -3654,6 +3673,8 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                 ),
                 "kind": row.get("kind") or "sale",
                 "kind_label": row.get("kind_label") or "",
+                "sold_as": row.get("sold_as") or "",
+                "sold_as_label": row.get("sold_as_label") or "—",
                 "is_partial_confirmation": bool(row.get("is_partial_confirmation")),
                 "credit_clear_on_confirm": bool(row.get("credit_clear_on_confirm")),
                 "credit_clear_mode": row.get("credit_clear_mode") or "",
@@ -3671,6 +3692,7 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                         str(row.get("shop") or ""),
                         str(row.get("status_label") or ""),
                         str(row.get("kind_label") or ""),
+                        str(row.get("sold_as_label") or ""),
                     ]
                 ),
             }
@@ -3816,6 +3838,7 @@ def build_confirm_receipts_print_document(*, profile, request) -> dict:
                 "client_name": row.get("client") or "—",
                 "phone": row.get("client_phone") or "—",
                 "shop": row.get("shop") or "—",
+                "sold_as": row.get("sold_as_label") or "—",
                 "total": row.get("amount_label")
                 or (_money_ksh(amount) if amount is not None else "—"),
                 "reference": (row.get("reference") or "").strip() or "—",

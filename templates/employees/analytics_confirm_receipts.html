@@ -92,6 +92,7 @@
           <col class="ax-col-select">
           <col class="ax-col-receipt">
           <col class="ax-col-client">
+          <col class="ax-col-sold-as">
           <col class="ax-col-amount">
           <col class="ax-col-reference">
           <col class="ax-col-when">
@@ -106,6 +107,7 @@
             </th>
             <th class="ax-th--item">Receipt</th>
             <th>Client</th>
+            <th>Sold as</th>
             <th class="ax-th--amount">Amount</th>
             <th>Reference</th>
             <th>Date &amp; time</th>
@@ -159,6 +161,7 @@
                 <span class="ax-confirm-stack-sub">{{ row.client_phone|default:"—" }}</span>
               </div>
             </td>
+            <td class="ax-confirm-sold-as" data-label="Sold as">{{ row.sold_as_label|default:"—" }}</td>
             <td class="ax-confirm-amount" data-label="Amount">{{ row.amount_label|default:"—" }}</td>
             <td class="ax-confirm-reference" data-label="Reference">{{ row.reference|default:"—" }}</td>
             <td class="ax-confirm-when" data-label="When">{{ row.when }}</td>
@@ -264,7 +267,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=32"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=35"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");
