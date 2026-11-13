@@ -2879,6 +2879,8 @@ def my_shop_receipt_confirm(request, shop_id, receipt_id):
                 "login_code": request.POST.get("login_code"),
                 "mpesa_receipt_number": request.POST.get("mpesa_receipt_number"),
                 "payment_at": request.POST.get("payment_at"),
+                "amount": request.POST.get("amount"),
+                "payment_method": request.POST.get("payment_method"),
             }
     except (TypeError, ValueError, json.JSONDecodeError):
         return JsonResponse({"ok": False, "error": "Invalid confirm payload."}, status=400)
@@ -2918,6 +2920,8 @@ def my_shop_receipt_confirm(request, shop_id, receipt_id):
             actor=authorising,
             mpesa_receipt_number=(payload.get("mpesa_receipt_number") or "").strip(),
             payment_at=(payload.get("payment_at") or "").strip() or None,
+            amount=payload.get("amount"),
+            payment_method=(payload.get("payment_method") or "").strip(),
         )
     except ValidationError as exc:
         errors = _validation_errors(exc)

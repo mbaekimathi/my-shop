@@ -3241,23 +3241,21 @@ def _confirm_receipt_sale_rows(
                 )
             kind_label = "Credit" if is_credit else "Sale"
             if is_credit:
-                # Show Confirm for pending credits; submit still requires full payment.
+                # Pending credits confirm with an amount (full clear or partial).
                 can_confirm = is_pending or is_cancelled
                 can_cancel = False
                 can_set_pending = False
-                can_edit_status = can_confirm and bool(
-                    credit_state and credit_state["fully_paid"]
-                )
+                can_edit_status = can_confirm
                 status_rank = (
                     0
                     if is_partial_confirmation or is_pending
                     else CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9)
                 )
-                credit_clear_on_confirm = bool(
-                    credit_state and credit_state["fully_paid"]
-                )
+                credit_clear_on_confirm = True
                 credit_clear_mode = (credit_state or {}).get("clear_mode") or ""
                 credit_confirm_notice = (credit_state or {}).get("confirm_notice") or ""
+                credit_due = str((credit_state or {}).get("due") or "0.00")
+                credit_paid = str((credit_state or {}).get("paid") or "0.00")
             else:
                 can_confirm = is_pending or is_cancelled
                 can_cancel = is_pending or is_confirmed or is_partial
@@ -3267,6 +3265,8 @@ def _confirm_receipt_sale_rows(
                 credit_clear_on_confirm = False
                 credit_clear_mode = ""
                 credit_confirm_notice = ""
+                credit_due = "0.00"
+                credit_paid = "0.00"
             rows.append(
                 {
                     "receipt_id": row.pk,
@@ -3294,6 +3294,8 @@ def _confirm_receipt_sale_rows(
                     "credit_clear_on_confirm": credit_clear_on_confirm,
                     "credit_clear_mode": credit_clear_mode,
                     "credit_confirm_notice": credit_confirm_notice,
+                    "credit_due": credit_due,
+                    "amount_paid": credit_paid,
                     "status_rank": status_rank,
                     "search_text": " ".join(
                         [
@@ -3656,6 +3658,8 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                 "credit_clear_on_confirm": bool(row.get("credit_clear_on_confirm")),
                 "credit_clear_mode": row.get("credit_clear_mode") or "",
                 "credit_confirm_notice": row.get("credit_confirm_notice") or "",
+                "credit_due": str(row.get("credit_due") or "0.00"),
+                "amount_paid": str(row.get("amount_paid") or "0.00"),
                 "search_text": row.get("search_text")
                 or " ".join(
                     [
@@ -3767,8 +3771,8 @@ def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) 
             "lead": (
                 "Tick receipts in place or live-search a number. "
                 "Set selected sales to pending, confirmed, or cancelled. "
-                "Fully paid credits can be confirmed — that clears the credit fully. "
-                "Partially paid credits show as Partial confirmation until paid in full. "
+                "Credits confirm with an amount — full balance clears to a confirmed sale; "
+                "a smaller amount records a partial confirmation. "
                 "Delivery notes and goods received slips are listed for review only."
             ),
             "detail_url_template": detail_template,

@@ -272,7 +272,7 @@ class ConfirmSalesReceiptTests(TestCase):
             created_by=self.staff,
         )
 
-    def test_confirm_rejects_unpaid_credit_and_quotation(self):
+    def test_confirm_rejects_quotation_and_requires_credit_amount(self):
         from decimal import Decimal
 
         from django.core.exceptions import ValidationError
@@ -286,36 +286,42 @@ class ConfirmSalesReceiptTests(TestCase):
         quote = self._receipt(kind=ShopReceiptKind.QUOTATION, number="QT-1")
         with self.assertRaisesMessage(
             ValidationError,
-            "Only a fully paid credit can be confirmed and cleared.",
+            "Enter the amount to confirm for this credit.",
         ):
             confirm_shop_receipt(shop=self.shop, receipt_id=credit.pk, actor=self.staff)
         with self.assertRaisesMessage(
             ValidationError,
-            "Only sales and fully paid credits can be confirmed.",
+            "Only sales and credits can be confirmed.",
         ):
             confirm_shop_receipt(shop=self.shop, receipt_id=quote.pk, actor=self.staff)
 
     def test_confirm_credit_partial_and_full(self):
         from decimal import Decimal
 
-        from django.core.exceptions import ValidationError
         from django.test import RequestFactory
 
         from employees.analytics_services import build_confirm_receipts_page
         from shops.services import confirm_shop_receipt
 
-        partial = self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-PARTIAL")
-        partial.amount_paid = Decimal("40.00")
-        partial.cash_amount = Decimal("40.00")
-        partial.save(update_fields=["amount_paid", "cash_amount"])
-        with self.assertRaisesMessage(
-            ValidationError,
-            "This credit is only partially paid. It shows as Partial confirmation "
-            "until fully paid — only then can it be confirmed and cleared.",
-        ):
-            confirm_shop_receipt(
-                shop=self.shop, receipt_id=partial.pk, actor=self.staff
-            )
+        open_credit = self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-OPEN")
+        open_credit.amount_paid = Decimal("0.00")
+        open_credit.cash_amount = Decimal("0.00")
+        open_credit.save(update_fields=["amount_paid", "cash_amount"])
+
+        partial = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=open_credit.pk,
+            actor=self.staff,
+            amount="40.00",
+            payment_method="cash",
+        )
+        open_credit.refresh_from_db()
+        self.assertTrue(partial["ok"])
+        self.assertTrue(partial.get("partial_credit"))
+        self.assertEqual(partial["status_label"], "Partial confirmation")
+        self.assertEqual(open_credit.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(open_credit.amount_paid, Decimal("40.00"))
+        self.assertEqual(open_credit.status, ShopReceiptStatus.ACTIVE)
 
         request = RequestFactory().get(
             "/it-support/analytics/confirm-receipts/",
@@ -324,26 +330,26 @@ class ConfirmSalesReceiptTests(TestCase):
         request.user = self.user
         page = build_confirm_receipts_page(profile=self.staff, request=request)
         partial_row = next(
-            row for row in page["rows"] if row["number"] == "CR-PARTIAL"
+            row for row in page["rows"] if row["number"] == "CR-OPEN"
         )
         self.assertEqual(partial_row["status_label"], "Partial confirmation")
         self.assertTrue(partial_row["is_partial_confirmation"])
         self.assertTrue(partial_row["can_confirm"])
-        self.assertFalse(partial_row["credit_clear_on_confirm"])
+        self.assertTrue(partial_row["credit_clear_on_confirm"])
 
-        full = self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-FULL")
-        full.amount_paid = Decimal("100.00")
-        full.cash_amount = Decimal("100.00")
-        full.save(update_fields=["amount_paid", "cash_amount"])
-        result = confirm_shop_receipt(
-            shop=self.shop, receipt_id=full.pk, actor=self.staff
+        full = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=open_credit.pk,
+            actor=self.staff,
+            amount="60.00",
+            payment_method="cash",
         )
-        full.refresh_from_db()
-        self.assertTrue(result["ok"])
-        self.assertTrue(result.get("cleared_credit"))
-        self.assertEqual(full.kind, ShopReceiptKind.SALE)
-        self.assertTrue(full.settled_from_credit)
-        self.assertEqual(full.status, ShopReceiptStatus.CONFIRMED)
+        open_credit.refresh_from_db()
+        self.assertTrue(full["ok"])
+        self.assertTrue(full.get("cleared_credit"))
+        self.assertEqual(open_credit.kind, ShopReceiptKind.SALE)
+        self.assertTrue(open_credit.settled_from_credit)
+        self.assertEqual(open_credit.status, ShopReceiptStatus.CONFIRMED)
 
     def test_confirm_accepts_pending_sale(self):
         from shops.services import confirm_shop_receipt

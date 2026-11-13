@@ -660,10 +660,44 @@
     const requiredAttrs = requireConfirmDetails
       ? `required aria-required="true"`
       : `aria-required="false"`;
+    const isCredit = Boolean(receipt.is_credit || receipt.kind === "credit");
+    const creditDue = Number(receipt.credit_due);
+    const dueValue =
+      Number.isFinite(creditDue) && creditDue > 0
+        ? creditDue
+        : Math.max(
+            0,
+            Number(receipt.total || 0) - Number(receipt.amount_paid || 0)
+          );
+    const creditAmountField = isCredit
+      ? `<div class="shop-receipt-mpesa-ref" data-confirm-credit-amount-wrap>
+      <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-credit-amount">
+        Confirm amount
+        <span class="shop-receipt-muted">(due KSh ${escapeHtml(
+          money(dueValue)
+        )})</span>
+      </label>
+      <input
+        id="ax-confirm-credit-amount"
+        class="shop-receipt-mpesa-ref-input"
+        type="number"
+        name="amount"
+        min="0.01"
+        step="0.01"
+        max="${escapeHtml(String(dueValue || ""))}"
+        value="${escapeHtml(dueValue > 0 ? String(dueValue) : "")}"
+        inputmode="decimal"
+        data-confirm-credit-amount
+        required
+        aria-required="true"
+      >
+    </div>`
+      : "";
     const confirmFieldsHtml = `<div class="shop-receipt-card shop-receipt-card--confirm" data-confirm-fields${
       showConfirmFields ? "" : " hidden"
     }>
   <div class="shop-receipt-confirm-fields">
+    ${creditAmountField}
     <div class="shop-receipt-mpesa-ref" data-confirm-payment-at-wrap>
       <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-at">
         Payment date &amp; time
@@ -702,9 +736,9 @@
 </div>`;
     const creditNotice = String(receipt.credit_confirm_notice || "").trim();
     const creditNoticeHtml = creditNotice
-      ? `<p class="shop-receipts-status${
-          receipt.is_partial_confirmation ? " is-error" : ""
-        }" data-credit-confirm-notice>${escapeHtml(creditNotice)}</p>`
+      ? `<p class="shop-receipts-status" data-credit-confirm-notice>${escapeHtml(
+          creditNotice
+        )}</p>`
       : "";
     const detailStatus = receipt.is_partial_confirmation
       ? "partial_confirmation"
@@ -880,19 +914,19 @@
     if (!targets.length) return;
 
     if (mode === "confirm") {
-      const unpaidCredits = targets.filter(
-        (row) =>
-          row.getAttribute("data-receipt-kind") === "credit" &&
-          row.getAttribute("data-credit-clear-on-confirm") !== "1"
+      // Credits need an amount in the modal (full clear or partial confirmation).
+      const creditTargets = targets.filter(
+        (row) => row.getAttribute("data-receipt-kind") === "credit"
       );
-      if (unpaidCredits.length) {
-        const notice =
-          unpaidCredits[0].getAttribute("data-credit-confirm-notice") ||
-          "Only fully paid credits can be confirmed and cleared.";
-        window.alert(notice);
-        if (targets.length === 1) {
-          openRowDetail(unpaidCredits[0]);
+      if (creditTargets.length) {
+        if (creditTargets.length === 1 && targets.length === 1) {
+          openConfirmWithDetails(creditTargets[0]);
+          return;
         }
+        window.alert(
+          "Credits need a confirm amount. Open each credit, enter the amount (full balance clears; less is a partial confirmation), then save as Confirmed."
+        );
+        openConfirmWithDetails(creditTargets[0]);
         return;
       }
       // Always open the modal so payment time + reference can be entered
@@ -900,23 +934,6 @@
       if (targets.length === 1) {
         openConfirmWithDetails(targets[0]);
         return;
-      }
-      const creditTargets = targets.filter(
-        (row) => row.getAttribute("data-credit-clear-on-confirm") === "1"
-      );
-      if (creditTargets.length) {
-        const notice =
-          creditTargets[0].getAttribute("data-credit-confirm-notice") ||
-          "Confirming will clear selected credits fully and convert them to confirmed sales.";
-        if (
-          !window.confirm(
-            `${notice}\n\nContinue with ${creditTargets.length} credit${
-              creditTargets.length === 1 ? "" : "s"
-            }?`
-          )
-        ) {
-          return;
-        }
       }
       const needsDetails = targets.filter(rowRequiresConfirmDetails);
       if (needsDetails.length) {
@@ -1162,7 +1179,18 @@
     const paymentAt = (atInput?.value || "").trim();
     const refInput = modal?.querySelector("[data-confirm-mpesa-ref]");
     const ref = (refInput?.value || "").trim();
+    const amountInput = modal?.querySelector("[data-confirm-credit-amount]");
+    const amount = (amountInput?.value || "").trim();
     const existingRef = String(receipt.mpesa_receipt_number || "").trim();
+    const isCredit = Boolean(receipt.is_credit || receipt.kind === "credit");
+    const due = Number(receipt.credit_due);
+    const dueValue =
+      Number.isFinite(due) && due > 0
+        ? due
+        : Math.max(
+            0,
+            Number(receipt.total || 0) - Number(receipt.amount_paid || 0)
+          );
 
     if (requireDetails) {
       if (!ref && !existingRef) {
@@ -1177,6 +1205,23 @@
         atInput?.focus();
         return false;
       }
+    }
+    if (isCredit && dueValue > 0) {
+      const n = Number(amount);
+      if (!amount || !Number.isFinite(n) || n <= 0) {
+        window.alert("Enter the amount to confirm for this credit.");
+        amountInput?.focus();
+        return false;
+      }
+      if (n > dueValue + 0.0001) {
+        window.alert(
+          `Confirm amount cannot exceed the balance due (KSh ${money(dueValue)}).`
+        );
+        amountInput?.focus();
+        return false;
+      }
+      body.set("amount", amount);
+      body.set("payment_method", ref || existingRef ? "mpesa" : "cash");
     }
     if (ref) body.set("mpesa_receipt_number", ref);
     if (paymentAt) body.set("payment_at", paymentAt);
@@ -1199,9 +1244,19 @@
       if (!appendConfirmFields(body)) return;
       const receipt = currentDetail.receipt || {};
       if (receipt.is_credit || receipt.kind === "credit") {
-        const notice =
-          String(receipt.credit_confirm_notice || "").trim() ||
-          "Confirming will clear this credit fully and convert it to a confirmed sale.";
+        const amount = Number(body.get("amount") || 0);
+        const due = Number(receipt.credit_due);
+        const dueValue =
+          Number.isFinite(due) && due > 0
+            ? due
+            : Math.max(
+                0,
+                Number(receipt.total || 0) - Number(receipt.amount_paid || 0)
+              );
+        const full = !(dueValue > 0) || amount >= dueValue - 0.0001;
+        const notice = full
+          ? "This will clear the credit fully and convert it to a confirmed sale."
+          : "This will record a partial confirmation for the amount entered.";
         if (!window.confirm(`${notice}\n\nContinue?`)) {
           return;
         }

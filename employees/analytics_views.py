@@ -2261,6 +2261,8 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
 
     mpesa_receipt_number = (request.POST.get("mpesa_receipt_number") or "").strip()
     payment_at = (request.POST.get("payment_at") or "").strip()
+    amount = (request.POST.get("amount") or "").strip()
+    payment_method = (request.POST.get("payment_method") or "").strip()
     try:
         result = confirm_shop_receipt(
             shop=shop,
@@ -2268,6 +2270,8 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
             actor=profile,
             mpesa_receipt_number=mpesa_receipt_number,
             payment_at=payment_at or None,
+            amount=amount or None,
+            payment_method=payment_method,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -2329,6 +2333,8 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
 
     mpesa_receipt_number = (request.POST.get("mpesa_receipt_number") or "").strip()
     payment_at = (request.POST.get("payment_at") or "").strip()
+    amount = (request.POST.get("amount") or "").strip()
+    payment_method = (request.POST.get("payment_method") or "").strip()
     status = request.POST.get("status") or ""
     try:
         result = set_confirm_receipt_status(
@@ -2338,6 +2344,8 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
             status=status,
             mpesa_receipt_number=mpesa_receipt_number,
             payment_at=payment_at or None,
+            amount=amount or None,
+            payment_method=payment_method,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
