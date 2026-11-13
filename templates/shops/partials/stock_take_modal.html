@@ -1,7 +1,7 @@
 {% if pending_stock_take and pending_stock_take_payload %}
 {{ pending_stock_take_payload|json_script:"stock-take-payload" }}
 <div
-  class="workspace-modal stock-take-modal"
+  class="workspace-modal stock-take-modal{% if pending_stock_take_payload.overdue %} is-locked{% endif %}"
   data-stock-take-modal
   data-stock-take-submit-url="{{ stock_take_submit_url }}"
   data-stock-take-results-url="{{ stock_take_results_url }}"
@@ -30,7 +30,7 @@
           aria-live="polite"
         >
           {% if pending_stock_take_payload.overdue %}
-          Deadline passed
+          Deadline passed — locked
           {% else %}
           Time left —
           {% endif %}
@@ -56,6 +56,7 @@
         class="stock-take-mode-option is-active"
         data-stock-take-mode="one"
         aria-selected="true"
+        {% if pending_stock_take_payload.overdue %}disabled{% endif %}
       >
         One by one
       </button>
@@ -64,6 +65,7 @@
         class="stock-take-mode-option"
         data-stock-take-mode="all"
         aria-selected="false"
+        {% if pending_stock_take_payload.overdue %}disabled{% endif %}
       >
         All at once
       </button>
@@ -90,10 +92,16 @@
             placeholder="Qty on hand"
             autocomplete="off"
             data-stock-take-one-qty
+            {% if pending_stock_take_payload.overdue %}disabled{% endif %}
           >
         </label>
-        <button type="button" class="btn btn--primary stock-take-one-submit" data-stock-take-one-submit>
-          Check this item
+        <button
+          type="button"
+          class="btn btn--primary stock-take-one-submit"
+          data-stock-take-one-submit
+          {% if pending_stock_take_payload.overdue %}disabled{% endif %}
+        >
+          {% if pending_stock_take_payload.overdue %}Locked — deadline passed{% else %}Check this item{% endif %}
         </button>
       </div>
 
@@ -131,16 +139,26 @@
             autocomplete="off"
             value="{{ line.counted_qty }}"
             {% if line.answered %}data-answered="1"{% endif %}
+            {% if pending_stock_take_payload.overdue %}disabled{% endif %}
           >
         </label>
         {% endfor %}
       </div>
-      <button type="submit" class="btn btn--primary" data-stock-take-submit>
-        Submit all
+      <button
+        type="submit"
+        class="btn btn--primary"
+        data-stock-take-submit
+        {% if pending_stock_take_payload.overdue %}disabled{% endif %}
+      >
+        {% if pending_stock_take_payload.overdue %}Locked — deadline passed{% else %}Submit all{% endif %}
       </button>
     </form>
 
-    <p class="stock-take-modal-error" data-stock-take-error hidden></p>
+    <p
+      class="stock-take-modal-error"
+      data-stock-take-error
+      {% if not pending_stock_take_payload.overdue %}hidden{% endif %}
+    >{% if pending_stock_take_payload.overdue %}The stock take deadline has passed. Counting is locked.{% endif %}</p>
 
     <div class="workspace-modal-actions stock-take-modal-actions" data-stock-take-entry data-stock-take-snooze-row>
       <div class="stock-take-snooze" data-stock-take-snooze>

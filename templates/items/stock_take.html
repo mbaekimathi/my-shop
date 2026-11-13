@@ -24,7 +24,7 @@
         </h2>
         <p>
           {% if selected_take %}
-          Compare system quantity with what each shop counted. On an open take you can uncheck shops or items to remove them.
+          Compare system quantity with what each shop counted. Use Edit to change shops, items, or the deadline.
           {% else %}
           Overall shop accuracy for {{ report_period_label }}. Choose categories or items, pick shops, set a deadline.
           {% endif %}
@@ -157,135 +157,148 @@
     </div>
 
     {% if can_edit_stock_take and selected_take.status == 'open' %}
-    <article class="stock-settings-card stock-settings-card--visibility stock-take-create stock-take-edit">
-      <header class="stock-settings-card-head">
-        <span class="stock-settings-card-icon" aria-hidden="true">
-          <i data-lucide="pencil"></i>
-        </span>
-        <div class="stock-settings-card-titles">
-          <h3>Edit this stock take</h3>
-          <p>Uncheck a shop or item to remove it. You can also add shops or items, then save.</p>
-        </div>
-      </header>
+    <div class="stock-take-edit-wrap" data-stock-take-edit>
+      <div class="stock-take-edit-toolbar">
+        <button type="button" class="btn btn--primary" data-stock-take-edit-open>
+          <i data-lucide="pencil" aria-hidden="true"></i>
+          <span>Edit</span>
+        </button>
+        <form method="post" class="stock-take-close-form">
+          {% csrf_token %}
+          <input type="hidden" name="mode" value="stock-take">
+          <input type="hidden" name="action" value="close_stock_take">
+          <input type="hidden" name="take_id" value="{{ selected_take.pk }}">
+          <button type="submit" class="btn btn--ghost">Close stock take</button>
+        </form>
+      </div>
 
-      <form class="stock-visibility-form stock-take-form" method="post" data-stock-take-form>
-        {% csrf_token %}
-        <input type="hidden" name="mode" value="stock-take">
-        <input type="hidden" name="action" value="update_stock_take">
-        <input type="hidden" name="take_id" value="{{ selected_take.pk }}">
-
-        <fieldset class="stock-visibility-modes">
-          <legend class="stock-settings-section-label">What to count</legend>
-          <label class="stock-visibility-mode{% if selected_take.scope_mode == 'category' %} is-selected{% endif %}">
-            <input type="radio" name="scope_mode" value="category"{% if selected_take.scope_mode == 'category' %} checked{% endif %} data-stock-take-scope>
-            <span class="stock-visibility-mode-icon" aria-hidden="true"><i data-lucide="layers"></i></span>
-            <span class="stock-visibility-mode-copy">
-              <strong>By category</strong>
-              <em>All items in the categories you select.</em>
-            </span>
-          </label>
-          <label class="stock-visibility-mode{% if selected_take.scope_mode == 'items' %} is-selected{% endif %}">
-            <input type="radio" name="scope_mode" value="items"{% if selected_take.scope_mode == 'items' %} checked{% endif %} data-stock-take-scope>
-            <span class="stock-visibility-mode-icon" aria-hidden="true"><i data-lucide="package"></i></span>
-            <span class="stock-visibility-mode-copy">
-              <strong>By item</strong>
-              <em>Only the products you pick.</em>
-            </span>
-          </label>
-        </fieldset>
-
-        <div class="stock-visibility-panel" data-stock-take-panel="category"{% if selected_take.scope_mode != 'category' %} hidden{% endif %}>
-          <div class="stock-visibility-panel-head">
-            <p class="stock-settings-section-label">Categories</p>
+      <article
+        class="stock-settings-card stock-settings-card--visibility stock-take-create stock-take-edit"
+        data-stock-take-edit-panel
+        hidden
+      >
+        <header class="stock-settings-card-head">
+          <span class="stock-settings-card-icon" aria-hidden="true">
+            <i data-lucide="pencil"></i>
+          </span>
+          <div class="stock-settings-card-titles">
+            <h3>Edit this stock take</h3>
+            <p>Uncheck a shop or item to remove it. You can also add shops or items, then save.</p>
           </div>
-          {% if stock_take_categories %}
-          <ul class="stock-visibility-list">
-            {% for category in stock_take_categories %}
-            <li>
-              <label>
-                <input type="checkbox" name="categories" value="{{ category.value }}"{% if category.value in stock_take_edit_category_values %} checked{% endif %}>
-                <span>{{ category.label }}</span>
-              </label>
-            </li>
-            {% endfor %}
-          </ul>
-          {% else %}
-          <p class="stock-settings-footnote stock-settings-footnote--inline">No categories yet.</p>
-          {% endif %}
-        </div>
+        </header>
 
-        <div class="stock-visibility-panel" data-stock-take-panel="items"{% if selected_take.scope_mode != 'items' %} hidden{% endif %}>
-          <div class="stock-visibility-panel-head">
-            <p class="stock-settings-section-label">Items</p>
+        <form class="stock-visibility-form stock-take-form" method="post" data-stock-take-form>
+          {% csrf_token %}
+          <input type="hidden" name="mode" value="stock-take">
+          <input type="hidden" name="action" value="update_stock_take">
+          <input type="hidden" name="take_id" value="{{ selected_take.pk }}">
+
+          <fieldset class="stock-visibility-modes">
+            <legend class="stock-settings-section-label">What to count</legend>
+            <label class="stock-visibility-mode{% if selected_take.scope_mode == 'category' %} is-selected{% endif %}">
+              <input type="radio" name="scope_mode" value="category"{% if selected_take.scope_mode == 'category' %} checked{% endif %} data-stock-take-scope>
+              <span class="stock-visibility-mode-icon" aria-hidden="true"><i data-lucide="layers"></i></span>
+              <span class="stock-visibility-mode-copy">
+                <strong>By category</strong>
+                <em>All items in the categories you select.</em>
+              </span>
+            </label>
+            <label class="stock-visibility-mode{% if selected_take.scope_mode == 'items' %} is-selected{% endif %}">
+              <input type="radio" name="scope_mode" value="items"{% if selected_take.scope_mode == 'items' %} checked{% endif %} data-stock-take-scope>
+              <span class="stock-visibility-mode-icon" aria-hidden="true"><i data-lucide="package"></i></span>
+              <span class="stock-visibility-mode-copy">
+                <strong>By item</strong>
+                <em>Only the products you pick.</em>
+              </span>
+            </label>
+          </fieldset>
+
+          <div class="stock-visibility-panel" data-stock-take-panel="category"{% if selected_take.scope_mode != 'category' %} hidden{% endif %}>
+            <div class="stock-visibility-panel-head">
+              <p class="stock-settings-section-label">Categories</p>
+            </div>
+            {% if stock_take_categories %}
+            <ul class="stock-visibility-list">
+              {% for category in stock_take_categories %}
+              <li>
+                <label>
+                  <input type="checkbox" name="categories" value="{{ category.value }}"{% if category.value in stock_take_edit_category_values %} checked{% endif %}>
+                  <span>{{ category.label }}</span>
+                </label>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="stock-settings-footnote stock-settings-footnote--inline">No categories yet.</p>
+            {% endif %}
           </div>
-          <label class="stock-visibility-search">
-            <i data-lucide="search" aria-hidden="true"></i>
-            <span class="visually-hidden">Search items</span>
-            <input type="search" placeholder="Search items" data-stock-take-item-search autocomplete="off">
-          </label>
-          {% if stock_take_items %}
-          <ul class="stock-visibility-list stock-visibility-list--items">
-            {% for item in stock_take_items %}
-            <li data-stock-take-item data-search="{{ item.name|lower }} {{ item.category|lower }}">
-              <label>
-                <input type="checkbox" name="item_ids" value="{{ item.id }}"{% if item.id in stock_take_edit_item_ids %} checked{% endif %}>
-                <span>
-                  <strong>{{ item.name }}</strong>
-                  {% if item.category %}<em>{{ item.category }}</em>{% endif %}
-                </span>
-              </label>
-            </li>
-            {% endfor %}
-          </ul>
-          {% else %}
-          <p class="stock-settings-footnote stock-settings-footnote--inline">No items yet.</p>
-          {% endif %}
-        </div>
 
-        <div class="stock-visibility-panel">
-          <div class="stock-visibility-panel-head">
-            <p class="stock-settings-section-label">Shops</p>
+          <div class="stock-visibility-panel" data-stock-take-panel="items"{% if selected_take.scope_mode != 'items' %} hidden{% endif %}>
+            <div class="stock-visibility-panel-head">
+              <p class="stock-settings-section-label">Items</p>
+            </div>
+            <label class="stock-visibility-search">
+              <i data-lucide="search" aria-hidden="true"></i>
+              <span class="visually-hidden">Search items</span>
+              <input type="search" placeholder="Search items" data-stock-take-item-search autocomplete="off">
+            </label>
+            {% if stock_take_items %}
+            <ul class="stock-visibility-list stock-visibility-list--items">
+              {% for item in stock_take_items %}
+              <li data-stock-take-item data-search="{{ item.name|lower }} {{ item.category|lower }}">
+                <label>
+                  <input type="checkbox" name="item_ids" value="{{ item.id }}"{% if item.id in stock_take_edit_item_ids %} checked{% endif %}>
+                  <span>
+                    <strong>{{ item.name }}</strong>
+                    {% if item.category %}<em>{{ item.category }}</em>{% endif %}
+                  </span>
+                </label>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="stock-settings-footnote stock-settings-footnote--inline">No items yet.</p>
+            {% endif %}
           </div>
-          {% if stock_take_shops %}
-          <ul class="stock-visibility-list">
-            {% for shop in stock_take_shops %}
-            <li>
-              <label>
-                <input type="checkbox" name="shop_ids" value="{{ shop.pk }}"{% if shop.pk in stock_take_edit_shop_ids %} checked{% endif %}>
-                <span>{{ shop.name }}</span>
-              </label>
-            </li>
-            {% endfor %}
-          </ul>
-          {% else %}
-          <p class="stock-settings-footnote stock-settings-footnote--inline">No shops available.</p>
-          {% endif %}
-        </div>
 
-        <div class="stock-take-fields">
-          <label class="stock-take-field">
-            <span class="stock-settings-section-label">Deadline</span>
-            <input type="datetime-local" name="deadline" value="{{ stock_take_edit_deadline_value }}" required>
-          </label>
-          <label class="stock-take-field">
-            <span class="stock-settings-section-label">Note (optional)</span>
-            <input type="text" name="note" maxlength="240" value="{{ selected_take.note }}" placeholder="e.g. March count — phones">
-          </label>
-        </div>
+          <div class="stock-visibility-panel">
+            <div class="stock-visibility-panel-head">
+              <p class="stock-settings-section-label">Shops</p>
+            </div>
+            {% if stock_take_shops %}
+            <ul class="stock-visibility-list">
+              {% for shop in stock_take_shops %}
+              <li>
+                <label>
+                  <input type="checkbox" name="shop_ids" value="{{ shop.pk }}"{% if shop.pk in stock_take_edit_shop_ids %} checked{% endif %}>
+                  <span>{{ shop.name }}</span>
+                </label>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="stock-settings-footnote stock-settings-footnote--inline">No shops available.</p>
+            {% endif %}
+          </div>
 
-        <div class="stock-visibility-actions">
-          <button type="submit" class="btn btn--primary">Save changes</button>
-        </div>
-      </form>
-    </article>
+          <div class="stock-take-fields">
+            <label class="stock-take-field">
+              <span class="stock-settings-section-label">Deadline</span>
+              <input type="datetime-local" name="deadline" value="{{ stock_take_edit_deadline_value }}" required>
+            </label>
+            <label class="stock-take-field">
+              <span class="stock-settings-section-label">Note (optional)</span>
+              <input type="text" name="note" maxlength="240" value="{{ selected_take.note }}" placeholder="e.g. March count — phones">
+            </label>
+          </div>
 
-    <form method="post" class="stock-take-close-form">
-      {% csrf_token %}
-      <input type="hidden" name="mode" value="stock-take">
-      <input type="hidden" name="action" value="close_stock_take">
-      <input type="hidden" name="take_id" value="{{ selected_take.pk }}">
-      <button type="submit" class="btn btn--ghost">Close stock take</button>
-    </form>
+          <div class="stock-visibility-actions">
+            <button type="button" class="btn btn--ghost" data-stock-take-edit-close>Cancel</button>
+            <button type="submit" class="btn btn--primary">Save changes</button>
+          </div>
+        </form>
+      </article>
+    </div>
     {% endif %}
 
     <div class="stock-take-table-wrap">
@@ -562,7 +575,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-take.js' %}?v=4"></script>
+<script src="{% static 'js/stock-take.js' %}?v=5"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-stock-take-filters]");

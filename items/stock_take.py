@@ -529,7 +529,7 @@ def build_stock_take_performance(*, current_shop=None, limit=20) -> list[dict]:
                 "overdue": bool(
                     take.status == StockTakeStatus.OPEN
                     and take.deadline
-                    and take.deadline < timezone.now()
+                    and take.deadline <= timezone.now()
                 ),
             }
         )
@@ -651,7 +651,7 @@ def build_shop_stock_count_results(*, shop, limit=20) -> list[dict]:
                 "overdue": bool(
                     take.status == StockTakeStatus.OPEN
                     and take.deadline
-                    and take.deadline < timezone.now()
+                    and take.deadline <= timezone.now()
                 ),
             }
         )
@@ -704,7 +704,7 @@ def stock_take_assignment_payload(assignment: StockTakeAssignment) -> dict:
         if take.deadline
         else "",
         "note": take.note or "",
-        "overdue": bool(take.deadline and take.deadline < timezone.now()),
+        "overdue": bool(take.deadline and take.deadline <= timezone.now()),
         "answered_count": answered,
         "total_count": len(lines),
         "lines": lines,
@@ -844,6 +844,19 @@ def _finalize_assignment_if_complete(
     return True
 
 
+def _assert_assignment_submittable(assignment: StockTakeAssignment) -> None:
+    """Reject closed, already-submitted, or past-deadline counts."""
+    take = assignment.stock_take
+    if take.status != StockTakeStatus.OPEN:
+        raise ValidationError("This stock take is closed.")
+    if assignment.status == StockTakeAssignmentStatus.SUBMITTED:
+        raise ValidationError("This shop already submitted its stock take.")
+    if take.deadline and take.deadline <= timezone.now():
+        raise ValidationError(
+            "The stock take deadline has passed. Counting is locked."
+        )
+
+
 @transaction.atomic
 def submit_stock_take_one(
     *,
@@ -859,10 +872,7 @@ def submit_stock_take_one(
         .prefetch_related("counts__item")
         .get(pk=assignment.pk)
     )
-    if assignment.stock_take.status != StockTakeStatus.OPEN:
-        raise ValidationError("This stock take is closed.")
-    if assignment.status == StockTakeAssignmentStatus.SUBMITTED:
-        raise ValidationError("This shop already submitted its stock take.")
+    _assert_assignment_submittable(assignment)
 
     try:
         count_pk = int(count_id)
@@ -917,10 +927,7 @@ def submit_stock_take_counts(
         .prefetch_related("counts__item")
         .get(pk=assignment.pk)
     )
-    if assignment.stock_take.status != StockTakeStatus.OPEN:
-        raise ValidationError("This stock take is closed.")
-    if assignment.status == StockTakeAssignmentStatus.SUBMITTED:
-        raise ValidationError("This shop already submitted its stock take.")
+    _assert_assignment_submittable(assignment)
 
     count_rows = {row.pk: row for row in assignment.counts.all()}
     if not count_rows:
@@ -1089,17 +1096,53 @@ def build_stock_take_comparison(take: StockTake) -> dict:
             }
         )
 
-    rows = []
-    for row in sorted(
-        item_map.values(),
-        key=lambda entry: (
+    def _row_variance_kind(cells) -> str | None:
+        """Worst submitted variance on the row: short → excess → match."""
+        has_short = False
+        has_excess = False
+        has_match = False
+        for cell in cells:
+            variance = cell.get("variance")
+            if variance is None:
+                continue
+            if variance < 0:
+                has_short = True
+            elif variance > 0:
+                has_excess = True
+            else:
+                has_match = True
+        if has_short:
+            return "short"
+        if has_excess:
+            return "excess"
+        if has_match:
+            return "match"
+        return None
+
+    def _row_sort_key(entry):
+        kind_order = {"short": 0, "excess": 1, "match": 2, None: 3}
+        # Among shorts/excess, larger absolute gap first; then name.
+        worst_gap = _ZERO
+        for cell in entry["cells"]:
+            variance = cell.get("variance")
+            if variance is None:
+                continue
+            gap = abs(_quantize(variance))
+            if gap > worst_gap:
+                worst_gap = gap
+        return (
+            kind_order.get(entry.get("variance_kind"), 3),
+            -worst_gap,
             (entry["item"].category or "").lower(),
             entry["item"].name.lower(),
-        ),
-    ):
+            entry["item"].pk,
+        )
+
+    rows = []
+    for entry in item_map.values():
         cells = []
         for assignment in assignments:
-            cell = row["shops"].get(assignment.shop_id)
+            cell = entry["shops"].get(assignment.shop_id)
             if cell is None:
                 cell = {
                     "system_qty": _ZERO,
@@ -1109,7 +1152,14 @@ def build_stock_take_comparison(take: StockTake) -> dict:
                     "match": False,
                 }
             cells.append(cell)
-        rows.append({"item": row["item"], "cells": cells})
+        rows.append(
+            {
+                "item": entry["item"],
+                "cells": cells,
+                "variance_kind": _row_variance_kind(cells),
+            }
+        )
+    rows.sort(key=_row_sort_key)
 
     submitted = sum(1 for shop in shop_rows if shop["submitted"])
     return {
@@ -1122,6 +1172,6 @@ def build_stock_take_comparison(take: StockTake) -> dict:
         "overdue": bool(
             take.status == StockTakeStatus.OPEN
             and take.deadline
-            and take.deadline < timezone.now()
+            and take.deadline <= timezone.now()
         ),
     }

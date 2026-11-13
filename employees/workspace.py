@@ -748,6 +748,14 @@ def sidebar_for_role_dashboard(
                 active=active_slug == "marketing",
             )
         )
+        primary.append(
+            _link(
+                "Chatbot",
+                "bot",
+                href=reverse("chat:home"),
+                active=active_slug == "chatbot",
+            )
+        )
     return resolve_sidebar_hrefs(
         {
             "page": "role_dashboard",
@@ -1246,7 +1254,7 @@ def sidebar_for_stock_management(
 
     if role in full_workflow_roles:
         primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-        # Serials workflow: Serials, movements, and return clients only.
+        # Focused sub-workflows: only that page's links (not the full stock menu).
         if active_mode in ("serials", "serial-movements", "return-clients"):
             if _allowed("serials"):
                 primary.extend(
@@ -1271,35 +1279,93 @@ def sidebar_for_stock_management(
                         ),
                     ]
                 )
-        else:
-            if active_mode in ("request", "request-audits") and _allowed("request"):
-                primary.extend(
-                    [
-                        _link(
-                            "Transfer stock",
-                            "clipboard-list",
-                            href=stock_management_url(role, "request", **shop_kwargs),
-                            active=active_mode == "request",
-                        ),
-                        _link(
-                            "Transfer audits",
-                            "scroll-text",
-                            href=stock_management_url(role, "request-audits"),
-                            active=active_mode == "request-audits",
-                        ),
-                        _link(
-                            "Activity analytics",
-                            "activity",
-                            href=stock_management_url(role, "activity-audits"),
-                            active=False,
-                        ),
-                    ]
+        elif active_mode in ("request", "request-audits") and _allowed("request"):
+            primary.extend(
+                [
+                    _link(
+                        "Transfer stock",
+                        "clipboard-list",
+                        href=stock_management_url(role, "request", **shop_kwargs),
+                        active=active_mode == "request",
+                    ),
+                    _link(
+                        "Transfer audits",
+                        "scroll-text",
+                        href=stock_management_url(role, "request-audits"),
+                        active=active_mode == "request-audits",
+                    ),
+                    _link(
+                        "Activity analytics",
+                        "activity",
+                        href=stock_management_url(role, "activity-audits"),
+                        active=False,
+                    ),
+                ]
+            )
+        elif active_mode in (
+            "settings",
+            "low-stock",
+            "stock-take",
+            "online-stock-take",
+        ):
+            if _allowed("settings"):
+                primary.append(
+                    _link(
+                        "Stock Settings",
+                        "sliders-horizontal",
+                        href=stock_management_url(role, "settings"),
+                        active=active_mode == "settings",
+                    )
                 )
-            else:
-                view_shop_id = (
+            if _allowed("low-stock"):
+                primary.append(
+                    _link(
+                        "Low Stock Alerts",
+                        "bell-ring",
+                        href=stock_management_url(role, "low-stock"),
+                        active=active_mode == "low-stock",
+                    )
+                )
+            if _allowed("stock-take"):
+                primary.append(
+                    _link(
+                        "Stock Take",
+                        "clipboard-check",
+                        href=stock_management_url(role, "stock-take"),
+                        active=active_mode == "stock-take",
+                    )
+                )
+            if _allowed("print") or _allowed("stock-take"):
+                primary.append(
+                    _link(
+                        "Online stock take",
+                        "smartphone",
+                        href=stock_management_url(role, "online-stock-take"),
+                        active=active_mode == "online-stock-take",
+                    )
+                )
+            if _allowed("print"):
+                # Modal lives on Current Stock; open via ?print=1 from settings pages.
+                _print_shop = (
                     resolved_shop_ids[0] if len(resolved_shop_ids) == 1 else ""
                 )
-                candidates = [
+                print_href = stock_management_url(
+                    role, "view", shop_id=_print_shop
+                )
+                sep = "&" if "?" in print_href else "?"
+                primary.append(
+                    _action(
+                        "Print stock",
+                        "printer",
+                        action="print-stock",
+                        href=f"{print_href}{sep}print=1",
+                    )
+                )
+        else:
+            view_shop_id = (
+                resolved_shop_ids[0] if len(resolved_shop_ids) == 1 else ""
+            )
+            candidates = [
                 (
                     "view",
                     _link(
@@ -1376,113 +1442,91 @@ def sidebar_for_stock_management(
                         active=active_mode == "settings",
                     ),
                 ),
-                (
-                    "low-stock",
+            ]
+            primary.extend(link for mode, link in candidates if _allowed(mode))
+            if _allowed("view"):
+                primary.append(
+                    _link(
+                        "Activity analytics",
+                        "activity",
+                        href=stock_management_url(role, "activity-audits"),
+                        active=active_mode == "activity-audits",
+                    )
+                )
+    else:
+        primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+        if active_mode in (
+            "settings",
+            "low-stock",
+            "stock-take",
+            "online-stock-take",
+        ):
+            if _allowed("settings"):
+                primary.append(
+                    _link(
+                        "Stock Settings",
+                        "sliders-horizontal",
+                        href=stock_management_url(role, "settings"),
+                        active=active_mode == "settings",
+                    )
+                )
+            if _allowed("low-stock"):
+                primary.append(
                     _link(
                         "Low Stock Alerts",
                         "bell-ring",
                         href=stock_management_url(role, "low-stock"),
                         active=active_mode == "low-stock",
-                    ),
-                ),
-                (
-                    "stock-take",
+                    )
+                )
+            if _allowed("stock-take"):
+                primary.append(
                     _link(
                         "Stock Take",
                         "clipboard-check",
                         href=stock_management_url(role, "stock-take"),
                         active=active_mode == "stock-take",
-                    ),
-                ),
-                ]
-                primary.extend(link for mode, link in candidates if _allowed(mode))
-                if _allowed("print") or _allowed("stock-take"):
-                    primary.append(
-                        _link(
-                            "Online stock take",
-                            "smartphone",
-                            href=stock_management_url(role, "online-stock-take"),
-                            active=active_mode == "online-stock-take",
-                        )
                     )
-                if _allowed("view"):
-                    primary.append(
-                        _link(
-                            "Activity analytics",
-                            "activity",
-                            href=stock_management_url(role, "activity-audits"),
-                            active=active_mode == "activity-audits",
-                        )
+                )
+            if _allowed("print") or _allowed("stock-take"):
+                primary.append(
+                    _link(
+                        "Online stock take",
+                        "smartphone",
+                        href=stock_management_url(role, "online-stock-take"),
+                        active=active_mode == "online-stock-take",
                     )
-                from shops.services import company_pos_analytics_section_visible
-
-                if (
-                    company_pos_analytics_section_visible("tradings")
-                    and (profile is None or employee_may(profile, "analytics", "tradings"))
-                ):
-                    primary.append(
-                        _link(
-                            "Tradings",
-                            "repeat",
-                            href=analytics_section_url(role, "tradings"),
-                            active=False,
-                        )
+                )
+            if _allowed("print"):
+                print_href = stock_management_url(role, "view", shop_id=shop_id)
+                sep = "&" if "?" in print_href else "?"
+                primary.append(
+                    _action(
+                        "Print stock",
+                        "printer",
+                        action="print-stock",
+                        href=f"{print_href}{sep}print=1",
                     )
-                if active_mode == "view" and _allowed("print"):
-                    primary.append(
-                        _action("Print stock", "printer", action="print-stock")
+                )
+        else:
+            if _allowed("view"):
+                primary.append(
+                    _link(
+                        "Current Stock",
+                        "boxes",
+                        href=stock_management_url(role, "view", shop_id=shop_id),
+                        active=active_mode == "view",
                     )
-    else:
-        primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-        if _allowed("view"):
-            primary.append(
-                _link(
-                    "Current Stock",
-                    "boxes",
-                    href=stock_management_url(role, "view", shop_id=shop_id),
-                    active=active_mode == "view",
                 )
-            )
-        if _allowed("settings"):
-            primary.append(
-                _link(
-                    "Stock Settings",
-                    "sliders-horizontal",
-                    href=stock_management_url(role, "settings"),
-                    active=active_mode == "settings",
+            if _allowed("settings"):
+                primary.append(
+                    _link(
+                        "Stock Settings",
+                        "sliders-horizontal",
+                        href=stock_management_url(role, "settings"),
+                        active=active_mode == "settings",
+                    )
                 )
-            )
-        if _allowed("low-stock"):
-            primary.append(
-                _link(
-                    "Low Stock Alerts",
-                    "bell-ring",
-                    href=stock_management_url(role, "low-stock"),
-                    active=active_mode == "low-stock",
-                )
-            )
-        if _allowed("stock-take"):
-            primary.append(
-                _link(
-                    "Stock Take",
-                    "clipboard-check",
-                    href=stock_management_url(role, "stock-take"),
-                    active=active_mode == "stock-take",
-                )
-            )
-        if _allowed("print") or _allowed("stock-take"):
-            primary.append(
-                _link(
-                    "Online stock take",
-                    "smartphone",
-                    href=stock_management_url(role, "online-stock-take"),
-                    active=active_mode == "online-stock-take",
-                )
-            )
-        if _allowed("print"):
-            primary.append(
-                _action("Print stock", "printer", action="print-stock")
-            )
 
     return resolve_sidebar_hrefs(
         {
@@ -1537,12 +1581,24 @@ def _hr_section_href(role, section):
     return hr_section_url(role, section)
 
 
+def pending_hr_approvals_count():
+    """How many employee registrations still await approval."""
+    from .models import EmployeeProfile, EmployeeStatus
+
+    return EmployeeProfile.objects.filter(
+        status=EmployeeStatus.PENDING_APPROVAL
+    ).count()
+
+
 def sidebar_for_hr_management(role, *, active_view="home", profile=None):
     """Sidebar links for the HR Management module."""
     from .module_permissions import employee_may
 
     dashboard_url = reverse(role_home_url_name(role))
     hr_url = hr_management_url(role)
+    segment = role_url_segment(role)
+    can_approvals = profile is None or employee_may(profile, "hr-management", "approvals")
+    pending_approvals = pending_hr_approvals_count() if can_approvals else 0
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
     if profile is None or employee_may(profile, "hr-management", "home"):
         primary.append(
@@ -1553,16 +1609,33 @@ def sidebar_for_hr_management(role, *, active_view="home", profile=None):
                 active=active_view == "home",
             )
         )
-    section_links = [
-        _link(
-            section["label"],
-            section["icon"],
-            href=_hr_section_href(role, section["slug"]),
-            active=active_view == section["slug"],
-        )
-        for section in HR_SIDEBAR_SECTIONS
-        if profile is None or employee_may(profile, "hr-management", section["slug"])
-    ]
+    section_links = []
+    for section in HR_SIDEBAR_SECTIONS:
+        if profile is not None and not employee_may(
+            profile, "hr-management", section["slug"]
+        ):
+            continue
+        if section["slug"] == "approvals":
+            section_links.append(
+                _link(
+                    section["label"],
+                    section["icon"],
+                    href=_hr_section_href(role, section["slug"]),
+                    active=active_view == section["slug"],
+                    badge=pending_approvals,
+                    live_badge=True,
+                    nav_key="hr-approvals",
+                )
+            )
+        else:
+            section_links.append(
+                _link(
+                    section["label"],
+                    section["icon"],
+                    href=_hr_section_href(role, section["slug"]),
+                    active=active_view == section["slug"],
+                )
+            )
     if active_view == "home" and (
         profile is None or employee_may(profile, "hr-management", "register")
     ):
@@ -1570,19 +1643,24 @@ def sidebar_for_hr_management(role, *, active_view="home", profile=None):
             _action("Register employee", "user-plus", action="register-employee")
         )
     primary.extend(section_links)
-    return resolve_sidebar_hrefs(
-        {
-            "page": "hr_management",
-            "dashboard_url": dashboard_url,
-            "primary": primary,
-            "footer": _footer_site_links(
-                profile=profile,
-                tail=[
-                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
-                ],
-            ),
-        }
-    )
+    sidebar = {
+        "page": "hr_management",
+        "dashboard_url": dashboard_url,
+        "primary": primary,
+        "footer": _footer_site_links(
+            profile=profile,
+            tail=[
+                _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+            ],
+        ),
+    }
+    if can_approvals:
+        sidebar["hr_approvals_status_url"] = reverse(
+            "employees:hr_pending_approvals_status",
+            kwargs={"role_segment": segment},
+        )
+        sidebar["pending_hr_approvals_count"] = pending_approvals
+    return resolve_sidebar_hrefs(sidebar)
 
 
 def sidebar_for_hr_permissions(role, profile=None):
@@ -1686,6 +1764,9 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
             continue
         if section["slug"] in ANALYTICS_DASHBOARD_SECTION_SLUGS:
             continue
+        # Supply analytics lives under the Stock page, not the overview hub.
+        if section["slug"] == "supply":
+            continue
         if profile is not None and not employee_may(
             profile, "analytics", section["slug"]
         ):
@@ -1702,7 +1783,8 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
                 active=section["slug"] == active_view,
             )
         )
-        if section["slug"] == "items":
+        # Item report lives under the Items page, not the overview hub.
+        if section["slug"] == "items" and active_view in ("items", "item-report"):
             section_links.append(
                 _link(
                     "Item report",
@@ -1711,6 +1793,17 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
                     active=active_view == "item-report",
                 )
             )
+        if section["slug"] == "stock" and active_view in ("stock", "supply"):
+            if profile is None or employee_may(profile, "analytics", "supply"):
+                if company_pos_analytics_section_visible("supply"):
+                    section_links.append(
+                        _link(
+                            "Supply analytics",
+                            "truck",
+                            href=analytics_section_url(role, "supply"),
+                            active=active_view == "supply",
+                        )
+                    )
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
     if show_overview and (profile is None or employee_may(profile, "analytics", "view")):
         primary.append(
@@ -1887,21 +1980,52 @@ def sidebar_for_analytics_detail(role, *, profile=None):
     )
 
 
-def sidebar_for_stock(role, *, profile=None):
-    """Focused sidebar for stock analytics."""
+def sidebar_for_stock(role, *, profile=None, active="stock"):
+    """Focused sidebar for stock analytics — Stock + Supply analytics."""
+    from .module_permissions import employee_may
+    from shops.services import company_pos_analytics_section_visible
+
     dashboard_url = reverse(role_home_url_name(role))
-    return resolve_sidebar_hrefs(
-        {
-            "page": "analytics",
-            "dashboard_url": dashboard_url,
-            "primary": [
-                _link("Dashboard", "layout-dashboard", href=dashboard_url),
+    home_url = analytics_url(role)
+    active = (active or "stock").strip().lower()
+    primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+    if role != EmployeeRole.STORE_MANAGER and (
+        profile is None or employee_may(profile, "analytics", "view")
+    ):
+        primary.append(_link("Overview", "layout-grid", href=home_url, active=False))
+    if profile is None or employee_may(profile, "analytics", "stock"):
+        primary.append(
+            _link(
+                "Stock",
+                "package",
+                href=analytics_section_url(role, "stock"),
+                active=active == "stock",
+            )
+        )
+    if profile is None or employee_may(profile, "analytics", "supply"):
+        if company_pos_analytics_section_visible("supply"):
+            primary.append(
                 _link(
                     "Supply analytics",
                     "truck",
                     href=analytics_section_url(role, "supply"),
-                ),
-            ],
+                    active=active == "supply",
+                )
+            )
+    if profile is None or employee_may(profile, "analytics", "settings"):
+        primary.append(
+            _link(
+                "Analytics settings",
+                "settings",
+                href=analytics_settings_url(role),
+                active=False,
+            )
+        )
+    return resolve_sidebar_hrefs(
+        {
+            "page": "analytics",
+            "dashboard_url": dashboard_url,
+            "primary": primary,
             "footer": _footer_site_links(
                 profile=profile,
                 tail=[

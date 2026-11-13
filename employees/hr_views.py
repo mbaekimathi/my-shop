@@ -39,7 +39,13 @@ from .services import (
     validate_employee_registration,
     validate_employee_update,
 )
-from .workspace import hr_approvals_url, hr_section_url, sidebar_for_hr_permissions, sidebar_for_hr_management
+from .workspace import (
+    hr_approvals_url,
+    hr_section_url,
+    pending_hr_approvals_count,
+    sidebar_for_hr_permissions,
+    sidebar_for_hr_management,
+)
 
 
 HR_SECTIONS = {
@@ -799,9 +805,7 @@ def _render_hr_management(request, profile, meta, module, page_sidebar, page_num
             return denied
         form_data, form_errors, open_register_modal = _register_context(request)
 
-    pending_count = EmployeeProfile.objects.filter(
-        status=EmployeeStatus.PENDING_APPROVAL
-    ).count()
+    pending_count = pending_hr_approvals_count()
     employees_qs = _managed_employees_queryset()
     if search:
         employees_qs = employees_qs.filter(
@@ -973,6 +977,39 @@ def hr_management_page(request, role_segment, page=None):
         module,
         page_sidebar,
         page_number=page or 1,
+    )
+
+
+@active_employee_required
+@require_http_methods(["GET"])
+def hr_pending_approvals_status(request, role_segment):
+    """JSON snapshot for live Approvals nav badge + page counts."""
+    from .module_permissions import require_module_permission
+
+    profile = get_profile_for_request(request)
+    expected_segment = role_url_segment(profile.role)
+    if role_segment != expected_segment:
+        return JsonResponse(
+            {"ok": False, "error": "role_mismatch"},
+            status=403,
+        )
+
+    denied = require_module_permission(
+        request, profile, "hr-management", "approvals"
+    )
+    if denied is not None:
+        return JsonResponse(
+            {"ok": False, "error": "forbidden"},
+            status=403,
+        )
+
+    pending_count = pending_hr_approvals_count()
+    return JsonResponse(
+        {
+            "ok": True,
+            "pending_count": pending_count,
+            "approvals_url": hr_approvals_url(profile.role),
+        }
     )
 
 

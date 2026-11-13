@@ -10,30 +10,19 @@
   data-animate="rise"
   data-stock-mode="settings"
   data-stock-settings
-  data-settings-tab="{{ stock_settings_tab }}"
   data-can-edit="{% if can_edit_stock_settings %}1{% else %}0{% endif %}"
 >
   <header class="stock-panel-head stock-settings-head">
     <div class="stock-panel-head-top">
       <div>
         <p class="stock-kicker">Stock settings</p>
-        <h2>{% if stock_settings_tab == "numbers" %}Stock numbers{% else %}Compulsory inputs{% endif %}</h2>
+        <h2>Compulsory inputs</h2>
         <p>
-          {% if stock_settings_tab == "numbers" %}
-          Control who can see on-hand quantities. Stock in, stock out, transfers, and sales still use the real numbers.
-          {% else %}
           Choose which details staff must fill before submitting stock in, stock out, or a request.
           Core fields stay locked so movements always stay valid.
-          {% endif %}
         </p>
       </div>
       <div class="stock-settings-head-actions">
-        <a class="stock-settings-jump" href="{{ low_stock_settings_url }}">
-          <i data-lucide="bell-ring" aria-hidden="true"></i>
-          <span>Low stock alerts</span>
-          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
-        </a>
-        {% if stock_settings_tab != "numbers" %}
         <div class="stock-settings-meter" aria-label="Optional rules enabled">
           <p class="stock-settings-meter-value">
             <strong data-stock-settings-enabled-count>{{ stock_settings_enabled_count }}</strong>
@@ -41,36 +30,9 @@
           </p>
           <p class="stock-settings-meter-label">optional rules on</p>
         </div>
-        {% else %}
-        <div class="stock-settings-meter stock-settings-meter--visibility" aria-label="Current visibility">
-          <p class="stock-settings-meter-value">
-            <strong>{{ hide_stock_mode_label }}</strong>
-          </p>
-          <p class="stock-settings-meter-label">visibility mode</p>
-        </div>
-        {% endif %}
       </div>
     </div>
   </header>
-
-  <nav class="stock-mode-switch stock-settings-tabs" aria-label="Stock settings sections">
-    <a
-      class="stock-mode-option{% if stock_settings_tab != 'numbers' %} is-active{% endif %}"
-      href="{{ stock_settings_inputs_url }}"
-      {% if stock_settings_tab != "numbers" %}aria-current="page"{% endif %}
-    >
-      <i data-lucide="sliders-horizontal" aria-hidden="true"></i>
-      <span>Compulsory inputs</span>
-    </a>
-    <a
-      class="stock-mode-option{% if stock_settings_tab == 'numbers' %} is-active{% endif %}"
-      href="{{ stock_settings_numbers_url }}"
-      {% if stock_settings_tab == "numbers" %}aria-current="page"{% endif %}
-    >
-      <i data-lucide="eye-off" aria-hidden="true"></i>
-      <span>Stock numbers</span>
-    </a>
-  </nav>
 
   {% if not can_edit_stock_settings %}
   <p class="stock-settings-readonly">
@@ -79,141 +41,6 @@
   </p>
   {% endif %}
 
-  {% if stock_settings_tab == "numbers" %}
-  <article class="stock-settings-card stock-settings-card--visibility">
-    <header class="stock-settings-card-head">
-      <span class="stock-settings-card-icon" aria-hidden="true">
-        <i data-lucide="eye-off"></i>
-      </span>
-      <div class="stock-settings-card-titles">
-        <h3>Who can see the number</h3>
-        <p>Hide current quantity on stock screens. Operations still count the real stock.</p>
-      </div>
-    </header>
-    <form class="stock-visibility-form" method="post" data-stock-visibility-form>
-      {% csrf_token %}
-      <input type="hidden" name="mode" value="settings">
-      <input type="hidden" name="tab" value="numbers">
-      <input type="hidden" name="action" value="save_stock_visibility">
-
-      <fieldset class="stock-visibility-modes">
-        <legend class="visually-hidden">Visibility mode</legend>
-        <label class="stock-visibility-mode{% if hide_stock_mode == 'show' %} is-selected{% endif %}">
-          <input type="radio" name="hide_stock_mode" value="show" {% if hide_stock_mode == "show" %}checked{% endif %} {% if not can_edit_stock_settings %}disabled{% endif %}>
-          <span class="stock-visibility-mode-icon" aria-hidden="true">
-            <i data-lucide="eye"></i>
-          </span>
-          <span class="stock-visibility-mode-copy">
-            <strong>Show stock numbers</strong>
-            <em>Everyone with stock access sees on-hand quantities.</em>
-          </span>
-        </label>
-        <label class="stock-visibility-mode{% if hide_stock_mode == 'all' %} is-selected{% endif %}">
-          <input type="radio" name="hide_stock_mode" value="all" {% if hide_stock_mode == "all" %}checked{% endif %} {% if not can_edit_stock_settings %}disabled{% endif %}>
-          <span class="stock-visibility-mode-icon" aria-hidden="true">
-            <i data-lucide="eye-off"></i>
-          </span>
-          <span class="stock-visibility-mode-copy">
-            <strong>Hide all current stock</strong>
-            <em>Replace every on-hand figure with “Hidden”.</em>
-          </span>
-        </label>
-        <label class="stock-visibility-mode{% if hide_stock_mode == 'category' %} is-selected{% endif %}">
-          <input type="radio" name="hide_stock_mode" value="category" {% if hide_stock_mode == "category" %}checked{% endif %} {% if not can_edit_stock_settings %}disabled{% endif %}>
-          <span class="stock-visibility-mode-icon" aria-hidden="true">
-            <i data-lucide="layers"></i>
-          </span>
-          <span class="stock-visibility-mode-copy">
-            <strong>Hide selected categories</strong>
-            <em>Only the categories you pick stay hidden.</em>
-          </span>
-        </label>
-        <label class="stock-visibility-mode{% if hide_stock_mode == 'items' %} is-selected{% endif %}">
-          <input type="radio" name="hide_stock_mode" value="items" {% if hide_stock_mode == "items" %}checked{% endif %} {% if not can_edit_stock_settings %}disabled{% endif %}>
-          <span class="stock-visibility-mode-icon" aria-hidden="true">
-            <i data-lucide="package"></i>
-          </span>
-          <span class="stock-visibility-mode-copy">
-            <strong>Hide selected items</strong>
-            <em>Pick individual products whose qty stays private.</em>
-          </span>
-        </label>
-      </fieldset>
-
-      <div class="stock-visibility-panel" data-hide-panel="category" {% if hide_stock_mode != "category" %}hidden{% endif %}>
-        <div class="stock-visibility-panel-head">
-          <p class="stock-settings-section-label">Categories</p>
-          {% if hide_stock_categories %}
-          <p class="stock-visibility-panel-count" data-hide-selected-count>{{ hide_stock_categories|length }} selected</p>
-          {% endif %}
-        </div>
-        {% if visibility_categories %}
-        <ul class="stock-visibility-list">
-          {% for category in visibility_categories %}
-          <li>
-            <label>
-              <input
-                type="checkbox"
-                name="hide_stock_categories"
-                value="{{ category.value }}"
-                {% if category.value in hide_stock_categories %}checked{% endif %}
-                {% if not can_edit_stock_settings %}disabled{% endif %}
-              >
-              <span>{{ category.label }}</span>
-            </label>
-          </li>
-          {% endfor %}
-        </ul>
-        {% else %}
-        <p class="stock-settings-footnote stock-settings-footnote--inline">No categories yet.</p>
-        {% endif %}
-      </div>
-
-      <div class="stock-visibility-panel" data-hide-panel="items" {% if hide_stock_mode != "items" %}hidden{% endif %}>
-        <div class="stock-visibility-panel-head">
-          <p class="stock-settings-section-label">Items</p>
-          {% if hide_stock_item_ids %}
-          <p class="stock-visibility-panel-count" data-hide-selected-count>{{ hide_stock_item_ids|length }} selected</p>
-          {% endif %}
-        </div>
-        <label class="stock-visibility-search">
-          <i data-lucide="search" aria-hidden="true"></i>
-          <span class="visually-hidden">Search items</span>
-          <input type="search" placeholder="Search items" data-hide-item-search autocomplete="off">
-        </label>
-        {% if visibility_items %}
-        <ul class="stock-visibility-list stock-visibility-list--items">
-          {% for item in visibility_items %}
-          <li data-hide-item data-search="{{ item.name|lower }} {{ item.category|lower }}">
-            <label>
-              <input
-                type="checkbox"
-                name="hide_stock_item_ids"
-                value="{{ item.id }}"
-                {% if item.id in hide_stock_item_ids %}checked{% endif %}
-                {% if not can_edit_stock_settings %}disabled{% endif %}
-              >
-              <span>
-                <strong>{{ item.name }}</strong>
-                {% if item.category %}<em>{{ item.category }}</em>{% endif %}
-              </span>
-            </label>
-          </li>
-          {% endfor %}
-        </ul>
-        {% else %}
-        <p class="stock-settings-footnote stock-settings-footnote--inline">No items yet.</p>
-        {% endif %}
-      </div>
-
-      {% if can_edit_stock_settings %}
-      <div class="stock-visibility-actions">
-        <button type="submit" class="btn btn--primary">Save visibility</button>
-      </div>
-      {% endif %}
-    </form>
-  </article>
-  {% else %}
   <div class="stock-settings-grid">
     {% for group in stock_setting_groups %}
     <article class="stock-settings-card stock-settings-card--{{ group.key }}">
@@ -291,16 +118,11 @@
     </article>
     {% endfor %}
   </div>
-  {% endif %}
 
   <p class="stock-settings-footnote">
     <i data-lucide="zap" aria-hidden="true"></i>
     <span>
-      {% if stock_settings_tab == "numbers" %}
-      Visibility changes apply immediately on Current Stock, Stock In/Out, Transfer, and shop-floor screens.
-      {% else %}
       Changes apply immediately to Stock In, Stock Out, Transfer Stock, and shop-floor buy stock.
-      {% endif %}
     </span>
   </p>
 </section>
@@ -308,5 +130,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-settings.js' %}?v=20261110-visibility-clear"></script>
+<script src="{% static 'js/stock-settings.js' %}?v=20261113-inputs-only"></script>
 {% endblock %}

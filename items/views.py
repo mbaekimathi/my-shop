@@ -6817,6 +6817,7 @@ def online_stock_take_page(request, profile, meta, module):
     from items.online_stock_take import (
         build_online_stock_take_catalog,
         build_online_stock_take_sync,
+        resolve_online_stock_take_date,
         save_online_stock_take_line,
     )
 
@@ -6833,6 +6834,10 @@ def online_stock_take_page(request, profile, meta, module):
     except (TypeError, ValueError):
         shop_id = 0
     selected_shop = next((shop for shop in shops if shop.pk == shop_id), None)
+    count_date = resolve_online_stock_take_date(
+        request.POST.get("date") if request.method == "POST" else request.GET.get("date")
+    )
+    count_date_value = count_date.isoformat()
 
     if request.method == "POST":
         if not selected_shop:
@@ -6852,6 +6857,7 @@ def online_stock_take_page(request, profile, meta, module):
                 shop=selected_shop,
                 item_id=request.POST.get("item_id"),
                 qty=request.POST.get("qty"),
+                count_date=count_date,
                 profile=profile,
                 updated_by_label=label,
             )
@@ -6872,11 +6878,15 @@ def online_stock_take_page(request, profile, meta, module):
                 {"ok": False, "error": "Select a shop for this online stock take."},
                 status=400,
             )
-        sync = build_online_stock_take_sync(shop=selected_shop)
+        sync = build_online_stock_take_sync(
+            shop=selected_shop, count_date=count_date
+        )
         return JsonResponse({"ok": True, **sync})
 
     catalog = (
-        build_online_stock_take_catalog(shop=selected_shop)
+        build_online_stock_take_catalog(
+            shop=selected_shop, count_date=count_date
+        )
         if selected_shop
         else {
             "filled_lines": [],
@@ -6886,10 +6896,11 @@ def online_stock_take_page(request, profile, meta, module):
             "match_count": 0,
             "excess_count": 0,
             "short_count": 0,
+            "count_date": count_date,
         }
     )
     sync_meta = (
-        build_online_stock_take_sync(shop=selected_shop)
+        build_online_stock_take_sync(shop=selected_shop, count_date=count_date)
         if selected_shop
         else {"revision": "0:"}
     )
@@ -6905,6 +6916,8 @@ def online_stock_take_page(request, profile, meta, module):
             "online_stock_take_url": list_url,
             "online_shops": shops,
             "selected_shop": selected_shop,
+            "online_count_date": count_date,
+            "online_count_date_value": count_date_value,
             "online_catalog": catalog,
             "online_sync_revision": sync_meta.get("revision") or "0:",
         },
@@ -6917,11 +6930,8 @@ def stock_settings(request, profile, meta, module):
     from employees.workspace import sidebar_for_stock_management, stock_management_url
     from shops.services import (
         get_company_stock_settings,
-        save_stock_visibility,
         set_company_stock_setting,
-        stock_hide_state,
         stock_settings_as_dict,
-        category_form_token,
     )
 
     page_sidebar = sidebar_for_stock_management(
@@ -6935,19 +6945,11 @@ def stock_settings(request, profile, meta, module):
         or request.headers.get("X-Requested-With") == "XMLHttpRequest"
         or (request.POST.get("ajax") or "") == "1"
     )
+    settings_url = stock_management_url(profile.role, "settings")
 
-    def _settings_tab(raw):
-        return "numbers" if (raw or "").strip().lower() == "numbers" else "inputs"
-
-    def _settings_url(tab="inputs"):
-        base = stock_management_url(profile.role, "settings")
-        if tab == "numbers":
-            return f"{base}&tab=numbers"
-        return base
-
-    settings_tab = _settings_tab(
-        request.POST.get("tab") if request.method == "POST" else request.GET.get("tab")
-    )
+    # Stock numbers tab removed — old ?tab=numbers bookmarks land on inputs.
+    if (request.GET.get("tab") or "").strip().lower() == "numbers":
+        return redirect(settings_url)
 
     if request.method == "POST":
         if not can_edit:
@@ -6957,7 +6959,7 @@ def stock_settings(request, profile, meta, module):
                     status=403,
                 )
             messages.error(request, "You cannot change stock settings.")
-            return redirect(_settings_url(settings_tab))
+            return redirect(settings_url)
 
         action = (request.POST.get("action") or "").strip()
         if action == "toggle_stock_setting":
@@ -6978,7 +6980,7 @@ def stock_settings(request, profile, meta, module):
                 if wants_json:
                     return JsonResponse({"ok": False, "error": message}, status=400)
                 messages.error(request, message)
-                return redirect(_settings_url("inputs"))
+                return redirect(settings_url)
             if wants_json:
                 return JsonResponse(
                     {
@@ -6989,41 +6991,12 @@ def stock_settings(request, profile, meta, module):
                     }
                 )
             messages.success(request, "Stock setting updated.")
-            return redirect(_settings_url("inputs"))
-
-        if action == "save_stock_visibility":
-            try:
-                save_stock_visibility(
-                    mode=request.POST.get("hide_stock_mode"),
-                    categories=request.POST.getlist("hide_stock_categories"),
-                    item_ids=request.POST.getlist("hide_stock_item_ids"),
-                )
-            except ValidationError as exc:
-                message = (
-                    exc.messages[0] if getattr(exc, "messages", None) else str(exc)
-                )
-                if wants_json:
-                    return JsonResponse({"ok": False, "error": message}, status=400)
-                messages.error(request, message)
-                return redirect(_settings_url("numbers"))
-            if wants_json:
-                state = stock_hide_state()
-                return JsonResponse(
-                    {
-                        "ok": True,
-                        "mode": state["mode"],
-                        "categories": state["categories"],
-                        "item_ids": state["item_ids"],
-                        "active": state["active"],
-                    }
-                )
-            messages.success(request, "Stock number visibility updated.")
-            return redirect(_settings_url("numbers"))
+            return redirect(settings_url)
 
         if wants_json:
             return JsonResponse({"ok": False, "error": "Unknown action."}, status=400)
         messages.error(request, "Unknown action.")
-        return redirect(_settings_url(settings_tab))
+        return redirect(settings_url)
 
     settings_row = get_company_stock_settings()
     setting_groups = (
@@ -7091,7 +7064,7 @@ def stock_settings(request, profile, meta, module):
                 },
             ),
         },
-            {
+        {
             "key": "request",
             "title": "Transfer Stock",
             "summary": "Send stock to another shop for confirmation",
@@ -7119,25 +7092,6 @@ def stock_settings(request, profile, meta, module):
         if toggle["enabled"]
     )
     toggle_count = sum(len(group["toggles"]) for group in setting_groups)
-    hide_state = stock_hide_state(settings_row)
-    hide_mode_labels = {
-        "show": "Shown",
-        "all": "All hidden",
-        "category": "By category",
-        "items": "By item",
-    }
-    visibility_categories = [
-        {"value": category_form_token(name), "label": name or "Uncategorised"}
-        for name in Item.objects.filter(is_suspended=False)
-        .order_by("category")
-        .values_list("category", flat=True)
-        .distinct()
-    ]
-    visibility_items = list(
-        Item.objects.filter(is_suspended=False)
-        .order_by("category", "name")
-        .values("id", "name", "category")
-    )
 
     return render(
         request,
@@ -7147,25 +7101,12 @@ def stock_settings(request, profile, meta, module):
             "page_module": module,
             "page_sidebar": page_sidebar,
             "stock_mode": "settings",
-            "stock_settings_tab": settings_tab,
-            "stock_settings_inputs_url": _settings_url("inputs"),
-            "stock_settings_numbers_url": _settings_url("numbers"),
             "can_edit_stock_settings": can_edit,
             "stock_setting_groups": setting_groups,
             "stock_settings_enabled_count": enabled_count,
             "stock_settings_toggle_count": toggle_count,
             "stock_requirements_json": json.dumps(settings_row.as_requirements_dict()),
             "low_stock_settings_url": stock_management_url(profile.role, "low-stock"),
-            "hide_stock_mode": hide_state["mode"],
-            "hide_stock_mode_label": hide_mode_labels.get(
-                hide_state["mode"], "Shown"
-            ),
-            "hide_stock_categories": [
-                category_form_token(name) for name in hide_state["categories"]
-            ],
-            "hide_stock_item_ids": hide_state["item_ids"],
-            "visibility_categories": visibility_categories,
-            "visibility_items": visibility_items,
         },
     )
 

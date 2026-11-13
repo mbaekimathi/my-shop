@@ -675,7 +675,7 @@ class StockTakeCount(models.Model):
 
 
 class OnlineStockTakeEntry(models.Model):
-    """HQ live physical count draft for one shop item (separate from Stock Take)."""
+    """HQ live physical count for one shop item on one day (not company Stock Take)."""
 
     shop = models.ForeignKey(
         "shops.Shop",
@@ -687,6 +687,8 @@ class OnlineStockTakeEntry(models.Model):
         on_delete=models.CASCADE,
         related_name="online_stock_take_entries",
     )
+    # Local calendar day this count belongs to — supports daily stock takes.
+    count_date = models.DateField(db_index=True)
     physical_qty = models.DecimalField(
         max_digits=12,
         decimal_places=3,
@@ -712,16 +714,16 @@ class OnlineStockTakeEntry(models.Model):
     updated_by_label = models.CharField(max_length=160, blank=True, default="")
 
     class Meta:
-        ordering = ["item__category", "item__name", "id"]
+        ordering = ["-count_date", "item__category", "item__name", "id"]
         constraints = [
             models.UniqueConstraint(
-                fields=["shop", "item"],
-                name="uniq_online_stock_take_shop_item",
+                fields=["shop", "item", "count_date"],
+                name="uniq_online_stock_take_shop_item_date",
             )
         ]
 
     def __str__(self):
-        return f"Online count {self.item_id} @ shop {self.shop_id}"
+        return f"Online count {self.item_id} @ shop {self.shop_id} on {self.count_date}"
 
 
 class StoreStockMovementType(models.TextChoices):

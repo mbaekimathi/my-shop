@@ -52,6 +52,16 @@
         <a class="ax-apply ax-apply--ghost" href="{{ credit_report_href }}">Credit reports</a>
       </div>
       {% endif %}
+      {% if item_report_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ item_report_href }}">Item report</a>
+      </div>
+      {% endif %}
+      {% if stock_supply_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ stock_supply_href }}">Supply analytics</a>
+      </div>
+      {% endif %}
       {% if credit_audits_href %}
       <div class="ax-top-actions">
         <a class="ax-apply ax-apply--ghost" href="{{ credit_audits_href }}">Activity analytics</a>

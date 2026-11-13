@@ -1,0 +1,283 @@
+{% extends "chat/base.html" %}
+{% load static %}
+
+{% block title %}{{ role_label }} — {{ company_name|default:"MY-SHOP" }} Chat{% endblock %}
+{% block body_class %}page-chat{% endblock %}
+
+{% block body %}
+<section
+  class="comms wa-app sm-app"
+  data-sm-app
+  data-items-url="{{ items_url }}"
+  data-employees-url="{{ employees_url }}"
+  data-stock-in-url="{{ stock_in_url }}"
+  data-stock-out-url="{{ stock_out_url }}"
+  data-report-url="{{ report_url }}"
+  data-feed-url="{{ feed_url }}"
+>
+  {% csrf_token %}
+
+  <header class="wa-app__bar">
+    <div class="wa-app__brand">
+      <span class="comms-avatar wa-app__logo" data-tone="1" aria-hidden="true">
+        <i data-lucide="{{ role_icon }}"></i>
+      </span>
+      <div>
+        <strong>{{ role_label }}</strong>
+        <span>{{ company_name|default:"MY-SHOP" }} · central store</span>
+      </div>
+    </div>
+    <div class="wa-app__bar-actions">
+      <button type="button" class="comms-icon-btn" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode">
+        <i data-lucide="moon" data-icon-dark></i><i data-lucide="sun" data-icon-light></i>
+      </button>
+      <form method="post" action="{% url 'chat:logout' %}" style="display:inline">
+        {% csrf_token %}
+        <button type="submit" class="comms-icon-btn" title="Sign out" aria-label="Sign out">
+          <i data-lucide="log-out"></i>
+        </button>
+      </form>
+    </div>
+  </header>
+
+  {# WhatsApp-style dashboard — chat rows link into each store tool. #}
+  <div class="wa-app__shell" data-sm-home>
+    <aside class="wa-app__list sm-dash">
+      <div class="wa-app__list-tools">
+        <span class="sm-dash__title">
+          <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+          Dashboard
+        </span>
+      </div>
+      <div class="wa-app__chats" role="list">
+        <button type="button" class="wa-chat" data-sm-open="feed" title="Store Assistant">
+          <span class="comms-avatar" data-tone="1" aria-hidden="true">
+            <i data-lucide="warehouse"></i>
+          </span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Store Assistant</strong></span>
+            <span class="wa-chat__preview">Activity feed · stock in &amp; out</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
+        <button type="button" class="wa-chat" data-sm-open="in" title="Store Stock In">
+          <span class="comms-avatar sm-dash__ico sm-dash__ico--in" aria-hidden="true">
+            <i data-lucide="package-plus"></i>
+          </span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Store Stock In</strong></span>
+            <span class="wa-chat__preview">Receive items into central store</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
+        <button type="button" class="wa-chat" data-sm-open="out" title="Store Stock Out">
+          <span class="comms-avatar sm-dash__ico sm-dash__ico--out" aria-hidden="true">
+            <i data-lucide="package-minus"></i>
+          </span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Store Stock Out</strong></span>
+            <span class="wa-chat__preview">Issue items from central store</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
+        <button type="button" class="wa-chat" data-sm-open="report" title="Store Report">
+          <span class="comms-avatar sm-dash__ico sm-dash__ico--report" aria-hidden="true">
+            <i data-lucide="clipboard-list"></i>
+          </span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Store Report</strong></span>
+            <span class="wa-chat__preview">Movement history and balances</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
+      </div>
+    </aside>
+  </div>
+
+  <div class="wa-stock sm-feed-panel" data-sm-panel="feed" hidden>
+    <div class="wa-app__contacts-head">
+      <button type="button" class="comms-icon-btn" data-sm-back aria-label="Back">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <strong>Store Assistant</strong>
+    </div>
+    <div class="wa-app__stage sm-stage" data-sm-feed>
+      <div class="wa-sys" data-sm-feed-empty>
+        <span>Store stock in and stock out appear here like chat messages.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="wa-stock" data-sm-panel="form" hidden>
+    <div class="wa-app__contacts-head">
+      <button type="button" class="comms-icon-btn" data-sm-back aria-label="Back">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <strong data-sm-form-title>Store Stock In</strong>
+    </div>
+
+    <div class="wa-stock__body">
+      <label class="wa-stock__field">
+        <span data-sm-counterpart-label>Who delivered</span>
+        <div class="wa-stock__typeahead" data-sm-employee-root>
+          <input
+            type="text"
+            placeholder="Search staff by name…"
+            autocomplete="off"
+            data-sm-employee-query
+            aria-label="Counterpart"
+          >
+          <div class="wa-stock__suggest" data-sm-employee-results hidden></div>
+        </div>
+        <input type="hidden" data-sm-employee-id value="">
+      </label>
+
+      <label class="wa-stock__field">
+        <span>Note <em>optional</em></span>
+        <input
+          type="text"
+          maxlength="255"
+          placeholder="Delivery note, reference…"
+          data-sm-note
+          aria-label="Note"
+        >
+      </label>
+
+      <div>
+        <p class="wa-stock__label">
+          Items
+          <span class="wa-stock__count" data-sm-cart-count hidden>0</span>
+        </p>
+        <div class="wa-stock__items" data-sm-cart-items></div>
+        <p class="wa-app__none" data-sm-cart-empty>Add items with the search below.</p>
+
+        <div class="wa-stock__add">
+          <div class="wa-stock__typeahead">
+            <input
+              type="text"
+              placeholder="Type item name…"
+              autocomplete="off"
+              data-sm-item-input
+              aria-label="Search item"
+            >
+            <div class="wa-stock__suggest" data-sm-item-suggest hidden></div>
+          </div>
+          <div class="wa-stock__entryrow sm-entryrow">
+            <input
+              type="number"
+              placeholder="Qty"
+              min="0"
+              step="any"
+              inputmode="decimal"
+              data-sm-qty
+              aria-label="Quantity"
+            >
+            <input
+              type="text"
+              readonly
+              tabindex="-1"
+              placeholder="Store qty"
+              data-sm-have
+              aria-label="Current store quantity"
+            >
+          </div>
+          <button type="button" class="wa-chip wa-chip--send" data-sm-add>Add</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="wa-stock__foot">
+      <button type="button" class="btn btn--block wa-stock__send" data-sm-submit>
+        <i data-lucide="send" aria-hidden="true"></i>
+        <span data-sm-submit-label>Record stock in</span>
+      </button>
+      <p class="wa-stock__error" data-sm-form-status hidden role="status"></p>
+    </div>
+  </div>
+
+  <div class="wa-stock" data-sm-panel="report" hidden>
+    <div class="wa-app__contacts-head">
+      <button type="button" class="comms-icon-btn" data-sm-back aria-label="Back">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <strong>Store Report</strong>
+    </div>
+
+    <div class="wa-stock__body">
+      <div class="wa-period sm-period" data-sm-period>
+        <span class="wa-period__modes" role="group" aria-label="Period">
+          <button type="button" class="wa-period__btn is-on" data-sm-range="all">All</button>
+          <button type="button" class="wa-period__btn" data-sm-range="today">Today</button>
+          <button type="button" class="wa-period__btn" data-sm-range="week">Week</button>
+          <button type="button" class="wa-period__btn" data-sm-range="month">Month</button>
+          <button type="button" class="wa-period__btn" data-sm-range="custom">Custom</button>
+        </span>
+        <span class="wa-period__fields" data-sm-custom-fields hidden>
+          <input type="date" data-sm-from aria-label="From date">
+          <input type="date" data-sm-to aria-label="To date">
+        </span>
+      </div>
+
+      <label class="wa-stock__field">
+        <span>Type</span>
+        <select data-sm-type aria-label="Movement type">
+          <option value="all">All movements</option>
+          <option value="in">Stock in</option>
+          <option value="out">Stock out</option>
+        </select>
+      </label>
+
+      <label class="wa-stock__field">
+        <span>Item</span>
+        <div class="wa-stock__typeahead" data-sm-report-item-root>
+          <input
+            type="text"
+            placeholder="Search item (blank = all)…"
+            autocomplete="off"
+            data-sm-report-item-query
+            aria-label="Search item"
+          >
+          <div class="wa-stock__suggest" data-sm-report-item-results hidden></div>
+        </div>
+        <input type="hidden" data-sm-report-item-id value="">
+      </label>
+
+      <div class="sm-stats" data-sm-stats>
+        <div class="sm-stat">
+          <span>In</span>
+          <strong data-sm-total-in>0</strong>
+        </div>
+        <div class="sm-stat">
+          <span>Out</span>
+          <strong data-sm-total-out>0</strong>
+        </div>
+        <div class="sm-stat">
+          <span>Rows</span>
+          <strong data-sm-row-count>0</strong>
+        </div>
+        <div class="sm-stat" data-sm-store-qty-wrap hidden>
+          <span>Store qty</span>
+          <strong data-sm-store-qty>—</strong>
+        </div>
+      </div>
+
+      <div class="sm-report-list" data-sm-report-rows>
+        <p class="sm-report-empty">Search an item or tap Show report.</p>
+      </div>
+    </div>
+
+    <div class="wa-stock__foot">
+      <button type="button" class="btn btn--block wa-stock__send" data-sm-report-go>
+        <i data-lucide="search" aria-hidden="true"></i>
+        <span>Show report</span>
+      </button>
+    </div>
+  </div>
+
+  {% include "chat/partials/app_footer.html" %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script defer src="{% static 'js/store-manager.js' %}?v=7"></script>
+{% endblock %}

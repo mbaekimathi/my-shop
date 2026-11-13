@@ -1,0 +1,40 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="description" content="{{ company_name|default:'MY-SHOP' }} — shop-to-shop chat and business data assistant.">
+  <link rel="manifest" href="{% url 'chat:manifest' %}">
+  <meta name="theme-color" content="#00a884">
+  <link rel="icon" href="{% url 'chat:app_icon' size=192 %}?rounded=1" type="image/png">
+  <link rel="apple-touch-icon" href="{% url 'chat:app_icon' size=192 %}?rounded=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#075e54">
+  <title>{% block title %}{{ company_name|default:"MY-SHOP" }} Chat{% endblock %}</title>
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem("myshop-theme");
+        var theme = stored === "dark" || stored === "light" ? stored : "light";
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
+  <link rel="preload" href="{% static 'fonts/manrope-latin.woff2' %}" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{% static 'css/chatbot.css' %}?v=68">
+  <script src="{% static 'vendor/lucide.min.js' %}" defer></script>
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  {% block body %}{% endblock %}
+  <script>
+    window.__CHATBOT_SW_URL__ = "{% url 'chat:service_worker' %}";
+    window.__CHATBOT_SW_SCOPE__ = "{% url 'chat:home' %}";
+  </script>
+  <script defer src="{% static 'js/pwa-update.js' %}?v=4"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

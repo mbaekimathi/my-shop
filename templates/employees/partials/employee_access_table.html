@@ -11,7 +11,7 @@
       </div>
       <div class="stock-stats">
         <p class="stock-stat">
-          <strong>{{ employees_page.paginator.count }}</strong>
+          <strong data-hr-approvals-count>{{ employees_page.paginator.count }}</strong>
           <span>pending</span>
         </p>
         {% if employees_page.paginator.num_pages > 1 %}

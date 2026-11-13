@@ -1,0 +1,450 @@
+{% extends "chat/base.html" %}
+{% load static %}
+
+{% block title %}Chats — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+{% block body_class %}page-chat{% endblock %}
+
+{% block body %}
+<section
+  class="comms wa-app"
+  data-wa-app
+  data-poll-url="{% url 'chat:api_poll' %}"
+  data-open-url="{% url 'chat:api_open' %}"
+  data-group-url="{% url 'chat:api_group_create' %}"
+  data-group-update-base="{% url 'chat:api_group_update' conversation_id=0 %}"
+  data-group-delete-base="{% url 'chat:api_group_delete' conversation_id=0 %}"
+  data-send-base="{% url 'chat:api_send' conversation_id=0 %}"
+  data-read-base="{% url 'chat:api_read' conversation_id=0 %}"
+  data-typing-base="{% url 'chat:api_typing' conversation_id=0 %}"
+  data-history-base="{% url 'chat:api_history' conversation_id=0 %}"
+  data-transfer-base="{% url 'chat:api_transfer' conversation_id=0 %}"
+  data-transfers-url="{% url 'chat:api_transfers' %}"
+  data-respond-base="{% url 'chat:api_transfer_respond' movement_id=0 %}"
+  data-pending-base="{% url 'chat:api_pending_confirm' message_id=0 %}"
+  data-quick-stockin-base="{% url 'chat:api_quick_stockin' conversation_id=0 %}"
+  data-stockin-url="{% url 'chat:api_stock_in' %}"
+  data-sale-url="{% url 'chat:api_sale' %}"
+  data-expense-url="{% url 'chat:api_expense' %}"
+  data-item-search-url="{% url 'chat:api_item_search' %}"
+  data-supplier-search-url="{% url 'chat:api_supplier_search' %}"
+  data-client-search-url="{% url 'chat:api_client_search' %}"
+  data-serial-search-url="{% url 'chat:api_serial_search' %}"
+  data-receipts-url="{% url 'chat:receipts' %}"
+  data-receipt-items-base="{% url 'chat:api_receipt_items' receipt_id=0 %}"
+  data-me-id="{{ me.id }}"
+>
+  {% csrf_token %}
+  <script type="application/json" id="chat-init-conversations">{{ conversations_json|safe }}</script>
+  <script type="application/json" id="chat-init-contacts">{{ contacts_json|safe }}</script>
+  <script type="application/json" id="chat-init-suggestions">{{ suggestions_json|safe }}</script>
+  <script type="application/json" id="chat-init-receipt-status">{{ receipt_status_default_json|safe }}</script>
+  <script type="application/json" id="chat-init-me">{"id": {{ me.id }}, "name": "{{ me.name|escapejs }}", "code": "{{ me.code }}", "location": "{{ me.location|escapejs }}", "initials": "{{ me.initials }}", "tone": {{ me.tone }}, "needs_member_confirm": {{ me.needs_member_confirm|yesno:"true,false" }}, "staff_view": {{ me.staff_view|yesno:"true,false" }}, "trade_out": {{ me.trade_out|yesno:"true,false" }}, "trade_in": {{ me.trade_in|yesno:"true,false" }}}</script>
+
+  <header class="wa-app__bar">
+    <div class="wa-app__brand">
+      <span class="comms-avatar wa-app__logo" data-tone="{{ me.tone }}" aria-hidden="true">{{ me.initials }}</span>
+      <div>
+        <strong>{{ me.name }}</strong>
+        <span>Shop {{ me.code }} &middot; {{ company_name|default:"MY-SHOP" }} chat</span>
+      </div>
+    </div>
+    <div class="wa-app__bar-actions">
+      {% if me.staff_view %}
+      <a class="comms-icon-btn" href="{% url 'chat:all_shops' %}" title="All shops" aria-label="All shops">
+        <i data-lucide="layers" aria-hidden="true"></i>
+      </a>
+      {% endif %}
+      <button type="button" class="comms-icon-btn" data-wa-mute title="Mute notification sounds" aria-label="Toggle notification sounds" aria-pressed="false">
+        <i data-lucide="bell" aria-hidden="true" data-bell-on></i>
+        <i data-lucide="bell-off" aria-hidden="true" data-bell-off hidden></i>
+      </button>
+      <button type="button" class="comms-icon-btn" data-theme-toggle title="Toggle theme" aria-label="Toggle theme">
+        <i data-lucide="moon" aria-hidden="true" data-icon-dark></i>
+        <i data-lucide="sun" aria-hidden="true" data-icon-light></i>
+      </button>
+      <form method="post" action="{% url 'chat:logout' %}" style="display:inline">
+        {% csrf_token %}
+        <button type="submit" class="comms-icon-btn" title="Sign out" aria-label="Sign out">
+          <i data-lucide="log-out" aria-hidden="true"></i>
+        </button>
+      </form>
+    </div>
+  </header>
+
+  <div class="wa-app__shell">
+    <aside class="wa-app__list" data-wa-list-pane>
+      <div class="wa-app__list-tools">
+        <button type="button" class="wa-app__new" data-wa-new title="New chat">
+          <i data-lucide="square-pen" aria-hidden="true"></i>
+          <span>New chat</span>
+        </button>
+        <label class="wa-app__search">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input type="search" placeholder="Search chats" autocomplete="off" data-wa-search aria-label="Search chats">
+        </label>
+      </div>
+      <div class="wa-app__chats" data-wa-chats role="list"></div>
+
+      <div class="wa-fabs" data-wa-fabs>
+        <button type="button" class="wa-fab" data-fab="sale" title="New sale" aria-label="New sale">
+          <i data-lucide="shopping-cart" aria-hidden="true"></i>
+        </button>
+        <div class="wa-fab-group" data-fab-others>
+          <div class="wa-fab-more" data-fab-more hidden>
+            <button type="button" data-fab="stockin">
+              <i data-lucide="package-plus" aria-hidden="true"></i><span>Stock in</span>
+            </button>
+            <button type="button" data-fab="transfer">
+              <i data-lucide="arrow-right-left" aria-hidden="true"></i><span>Transfer</span>
+            </button>
+            {% if me.trade_out %}
+            <button type="button" data-fab="trade_out">
+              <i data-lucide="repeat" aria-hidden="true"></i><span>Trade out</span>
+            </button>
+            {% endif %}
+            {% if me.trade_in %}
+            <button type="button" data-fab="trade_in">
+              <i data-lucide="repeat" aria-hidden="true"></i><span>Trade in</span>
+            </button>
+            {% endif %}
+            <button type="button" data-fab="expense">
+              <i data-lucide="wallet" aria-hidden="true"></i><span>Expense</span>
+            </button>
+            <button type="button" data-fab="receipts">
+              <i data-lucide="receipt" aria-hidden="true"></i><span>Receipts</span>
+            </button>
+          </div>
+          <button type="button" class="wa-fab" data-fab-others-toggle title="Others" aria-label="Others" aria-expanded="false" aria-haspopup="true">
+            <i data-lucide="ellipsis" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="wa-app__chat" data-wa-chat-pane>
+      <div class="wa-app__empty" data-wa-empty>
+        <span class="wa-app__empty-icon" aria-hidden="true">
+          <i data-lucide="messages-square"></i>
+        </span>
+        <h2>{{ company_name|default:"MY-SHOP" }} chat</h2>
+        <p>Pick a chat on the left, or start a new one with another shop. The Assistant answers questions from your shop's data.</p>
+      </div>
+
+      <div class="wa-app__thread" data-wa-thread hidden>
+        <header class="wa-app__chat-head">
+          <button type="button" class="comms-icon-btn comms-icon-btn--soft wa-app__back" data-wa-back aria-label="Back to chats">
+            <i data-lucide="arrow-left" aria-hidden="true"></i>
+          </button>
+          <span class="comms-avatar" data-wa-head-avatar data-tone="1">?</span>
+          <div class="wa-app__chat-who">
+            <strong data-wa-head-name>Chat</strong>
+            <span data-wa-head-meta></span>
+          </div>
+          <button type="button" class="comms-icon-btn comms-icon-btn--soft wa-app__group-settings" data-wa-group-settings hidden title="Group settings" aria-label="Group settings">
+            <i data-lucide="settings" aria-hidden="true"></i>
+          </button>
+        </header>
+        <div class="wa-app__stage" data-wa-stage>
+          <button type="button" class="wa-load-more" data-wa-load-more hidden>Load earlier messages</button>
+        </div>
+        <div class="wa-suggestions" data-wa-suggestions hidden></div>
+        <div class="wa-period" data-wa-period hidden>
+          <span class="wa-period__topic" data-wa-period-topic></span>
+          <span class="wa-period__modes" role="group" aria-label="Period type">
+            <button type="button" class="wa-period__btn is-on" data-period-mode="day">Day</button>
+            <button type="button" class="wa-period__btn" data-period-mode="period">Period</button>
+            <button type="button" class="wa-period__btn" data-period-mode="month">Month</button>
+            <button type="button" class="wa-period__btn" data-period-mode="year">Year</button>
+          </span>
+          <label class="wa-period__scope" data-wa-receipt-scope hidden>
+            <span class="wa-period__scope-label">Receipts</span>
+            <select data-wa-receipt-status aria-label="Receipt status" title="Pending or confirmed receipts">
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed</option>
+            </select>
+          </label>
+          <span class="wa-period__fields">
+            <input type="date" data-wa-date-day aria-label="Pick a day" title="Day">
+            <input type="date" data-wa-date-from aria-label="From date" title="From" hidden>
+            <input type="date" data-wa-date-to aria-label="To date" title="To" hidden>
+            <input type="month" data-wa-month aria-label="Pick a month" title="Month" hidden>
+            <select data-wa-year aria-label="Year" title="Year" hidden></select>
+          </span>
+          <button type="button" class="wa-period__btn wa-period__btn--go" data-wa-period-go title="Apply" aria-label="Apply">
+            <i data-lucide="arrow-right" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="wa-period__btn" data-wa-period-close aria-label="Close">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
+        <form class="wa-app__composer" data-wa-composer>
+          <div class="wa-app__emoji-pop" data-wa-emoji-pop hidden></div>
+          <div class="wa-menu" data-wa-menu hidden>
+            <button type="button" data-menu="photo"><i data-lucide="image" aria-hidden="true"></i><span>Photo</span></button>
+            <button type="button" data-menu="transfer"><i data-lucide="arrow-right-left" aria-hidden="true"></i><span>Transfer stock</span></button>
+            <button type="button" data-menu="stockin"><i data-lucide="package-plus" aria-hidden="true"></i><span>Stock in</span></button>
+            <button type="button" data-menu="sale"><i data-lucide="shopping-cart" aria-hidden="true"></i><span>New sale</span></button>
+            {% if me.trade_enabled %}
+            <button type="button" data-menu="trade"><i data-lucide="repeat" aria-hidden="true"></i><span>Trade</span></button>
+            {% endif %}
+            <button type="button" data-menu="expense"><i data-lucide="wallet" aria-hidden="true"></i><span>Expense</span></button>
+          </div>
+          <button type="button" class="comms-icon-btn comms-icon-btn--soft" data-wa-emoji title="Emoji" aria-label="Emoji">
+            <i data-lucide="smile" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="comms-icon-btn comms-icon-btn--soft" data-wa-plus title="Attach" aria-label="Attach">
+            <i data-lucide="plus" aria-hidden="true"></i>
+          </button>
+          <input type="file" accept="image/*" hidden data-wa-file>
+          <div class="comms-composer-box">
+            <textarea rows="1" placeholder="Type a message" data-wa-input></textarea>
+          </div>
+          <button type="submit" class="comms-send-fab" data-wa-send aria-label="Send">
+            <i data-lucide="send" aria-hidden="true"></i>
+          </button>
+        </form>
+      </div>
+
+    </section>
+  </div>
+
+  <div class="wa-app__contacts" data-wa-contacts hidden>
+    <div class="wa-app__contacts-head">
+      <button type="button" class="comms-icon-btn" data-wa-contacts-close aria-label="Close">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <strong data-wa-contacts-title>New chat</strong>
+    </div>
+    <label class="wa-app__search">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input type="search" placeholder="Search shops" autocomplete="off" data-wa-contact-search aria-label="Search shops">
+    </label>
+    <div class="wa-app__contact-list" data-wa-contact-list></div>
+    <div class="wa-group-foot" data-wa-groupfoot hidden>
+      <input type="text" class="wa-group-name" placeholder="Group name (required)"
+             maxlength="80" autocomplete="off" data-wa-groupname aria-label="Group name">
+      <button type="button" class="btn btn--block wa-group-create" data-wa-groupcreate>
+        <i data-lucide="users" aria-hidden="true"></i>
+        <span data-wa-groupcreate-label>Create group</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="wa-group-settings" data-wa-group-panel hidden>
+    <div class="wa-app__contacts-head">
+      <button type="button" class="comms-icon-btn" data-wa-group-panel-close aria-label="Close">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <strong>Group settings</strong>
+    </div>
+    <div class="wa-group-settings__body">
+      <label class="wa-group-settings__field">
+        <span>Group name</span>
+        <input type="text" class="wa-group-name" maxlength="80" autocomplete="off"
+               placeholder="Group name" data-wa-group-rename aria-label="Group name">
+      </label>
+      <button type="button" class="btn btn--block" data-wa-group-save>
+        <i data-lucide="check" aria-hidden="true"></i>
+        <span>Save name</span>
+      </button>
+      <p class="wa-group-settings__hint" data-wa-group-activity-hint hidden>
+        Shared activity feeds reappear automatically the next time that action runs.
+      </p>
+      <button type="button" class="btn btn--block btn--danger" data-wa-group-delete>
+        <i data-lucide="trash-2" aria-hidden="true"></i>
+        <span>Delete group</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="wa-stock" data-stock-panel hidden>
+    <div class="wa-app__contacts-head">
+      <button type="button" class="comms-icon-btn" data-stock-close aria-label="Close">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <strong data-stock-title>Transfer stock</strong>
+    </div>
+    <div class="wa-stock__body">
+      <label class="wa-stock__field" data-stock-dest-wrap>
+        <span>Transfer to</span>
+        <select data-stock-dest></select>
+      </label>
+
+      {% if me.trade_enabled %}
+      <div class="wa-stock__field" data-stock-tradekinds hidden>
+        <span>Trade type</span>
+        <div class="wa-stock__seg" role="group" aria-label="Trade type">
+          {% if me.trade_out %}
+          <label class="wa-stock__segopt">
+            <input type="radio" name="wa_trade_kind" value="trade_out" data-trade-kind checked>
+            <span>Trade out</span>
+          </label>
+          {% endif %}
+          {% if me.trade_in %}
+          <label class="wa-stock__segopt">
+            <input type="radio" name="wa_trade_kind" value="trade_in" data-trade-kind{% if not me.trade_out %} checked{% endif %}>
+            <span>Trade in</span>
+          </label>
+          {% endif %}
+        </div>
+        <p class="wa-stock__tradehint" data-stock-tradehint></p>
+      </div>
+      {% endif %}
+
+      <div class="wa-stock__supplier" data-stock-expense hidden>
+        <p class="wa-stock__label">Add expense</p>
+        <div class="wa-stock__expgrid">
+          <select data-expense-category aria-label="Expense category">
+            <option value="">Category…</option>
+            {% for value, label in expense_categories %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+          <select data-expense-status aria-label="Payment status">
+            <option value="paid">Paid</option>
+            <option value="partial">Partial</option>
+            <option value="unpaid">Unpaid</option>
+          </select>
+        </div>
+        <input type="text" placeholder="Expense name e.g. Fuel" autocomplete="off"
+               maxlength="200" data-expense-name aria-label="Expense name">
+        <div class="wa-stock__amount">
+          <span aria-hidden="true">KSh</span>
+          <input type="number" placeholder="0.00" min="0" step="any" inputmode="decimal"
+                 data-expense-amount aria-label="Amount">
+        </div>
+        <button type="button" class="wa-chip wa-chip--send" data-expense-add>Add</button>
+      </div>
+
+      <div data-stock-itemwrap>
+      <p class="wa-stock__label"><span data-stock-listlabel>Items</span> <span class="wa-stock__count" data-stock-count hidden>0</span></p>
+      <div class="wa-stock__items" data-stock-items></div>
+      <p class="wa-app__none" data-stock-empty>Add items with the search below.</p>
+
+      <div class="wa-stock__add" data-stock-itemadd>
+        <div class="wa-stock__typeahead">
+          <input type="text" placeholder="Type item name…" autocomplete="off" data-stock-item-input>
+          <div class="wa-stock__suggest" data-stock-item-suggest hidden></div>
+        </div>
+        <div class="wa-stock__serialwrap" data-stock-serialwrap hidden>
+          <div class="wa-stock__scan">
+            <i data-lucide="barcode" aria-hidden="true"></i>
+            <input type="text" placeholder="Scan or type serial, press Enter" autocomplete="off" data-stock-serial>
+            <button type="button" class="wa-stock__scanbtn" data-stock-scanbtn title="Scan with camera" aria-label="Scan with camera">
+              <i data-lucide="camera" aria-hidden="true"></i>
+            </button>
+            <span class="wa-stock__scancount" data-stock-serialcount>0</span>
+          </div>
+          <p class="wa-stock__scanhint">Each serial = 1 unit. Paste several separated by spaces.</p>
+          <div class="wa-stock__serials" data-stock-serials></div>
+          <div class="wa-stock__suggest" data-stock-serial-suggest hidden></div>
+        </div>
+        <div class="wa-stock__entryrow">
+          <input type="number" placeholder="Qty" min="0" step="any" inputmode="decimal" data-stock-qty>
+          <input type="number" placeholder="Buy price (optional)" min="0" step="any" inputmode="decimal" data-stock-price hidden>
+        </div>
+        <button type="button" class="wa-chip wa-chip--send" data-stock-add>Add</button>
+      </div>
+      </div>
+
+
+    </div>
+
+    <div class="wa-stock__foot">
+      <div class="wa-stock__checkout" data-stock-checkout>
+      <button type="button" class="wa-stock__detailstoggle" data-stock-detailstoggle
+              hidden aria-expanded="false" aria-controls="wa-stock-details">
+        <span data-stock-detailstoggle-label>Payment &amp; client</span>
+        <i data-lucide="chevron-down" aria-hidden="true"></i>
+      </button>
+      <div class="wa-stock__details" id="wa-stock-details" data-stock-details hidden>
+      <div class="wa-stock__fields" data-stock-supplier hidden>
+        <div class="wa-stock__typeahead">
+          <input type="tel" placeholder="Phone number e.g. 0712 345 678"
+                 autocomplete="off" inputmode="tel" data-stock-phone
+                 aria-label="Supplier phone">
+          <div class="wa-stock__suggest" data-stock-phone-suggest hidden></div>
+        </div>
+        <div class="wa-stock__typeahead">
+          <input type="text" placeholder="Supplier name" autocomplete="off"
+                 data-stock-supname aria-label="Supplier name">
+          <div class="wa-stock__suggest" data-stock-name-suggest hidden></div>
+        </div>
+      </div>
+      <div class="wa-stock__fields" data-stock-payment hidden>
+        <p class="wa-stock__label">Payment <em>(required)</em></p>
+        <div class="wa-stock__expgrid">
+          <select data-stock-kind aria-label="Sale type">
+            <option value="sale">Sale</option>
+            <option value="credit">Credit</option>
+            <option value="quotation">Quotation</option>
+          </select>
+          <select data-stock-paymethod aria-label="Payment method">
+            <option value="cash">Cash</option>
+            <option value="mpesa">M-Pesa</option>
+            <option value="both">Cash + M-Pesa</option>
+          </select>
+        </div>
+        <input type="date" data-stock-duedate hidden title="Credit due date">
+        <div class="wa-stock__paysplit" data-stock-paysplit hidden>
+          <input type="number" placeholder="Cash amount" min="0" step="any" data-stock-cashamt>
+          <input type="number" placeholder="M-Pesa amount" min="0" step="any" data-stock-mpesaamt>
+        </div>
+      </div>
+      <div class="wa-stock__fields" data-stock-client hidden>
+        <p class="wa-stock__label">Client</p>
+        <div class="wa-stock__typeahead">
+          <input type="text" placeholder="Client name (optional)" autocomplete="off" data-stock-clientname>
+          <div class="wa-stock__suggest" data-stock-clientname-suggest hidden></div>
+        </div>
+        <div class="wa-stock__typeahead">
+          <input type="tel" placeholder="Client phone (optional)" autocomplete="off" data-stock-clientphone>
+          <div class="wa-stock__suggest" data-stock-clientphone-suggest hidden></div>
+        </div>
+        <label class="wa-stock__check" data-stock-whatsapp-wrap hidden>
+          <input type="checkbox" data-stock-whatsapp checked>
+          <span>Send to client's WhatsApp</span>
+        </label>
+      </div>
+      </div>
+      </div>
+      <div class="wa-stock__total" data-stock-total hidden>
+        <span>Total</span><b data-stock-total-val>KSh 0.00</b>
+      </div>
+      <div class="wa-stock__codebox" data-stock-codebox hidden>
+        <label class="wa-stock__codelabel" for="wa-stock-staffcode">Staff code</label>
+        <input id="wa-stock-staffcode" type="password" placeholder="••••••" autocomplete="new-password"
+               inputmode="numeric" maxlength="6" spellcheck="false"
+               data-lpignore="true" data-1p-ignore="true" data-stock-staffcode
+               aria-label="6-digit staff code">
+        <span class="wa-stock__codehint">Sale completes when your code is verified</span>
+      </div>
+      <button type="button" class="btn btn--block wa-stock__send" data-stock-submit>
+        <i data-lucide="send" aria-hidden="true"></i>
+        <span data-stock-submit-label>Send transfer</span>
+      </button>
+      <p class="wa-stock__error" data-stock-error hidden></p>
+    </div>
+  </div>
+
+  <div class="wa-scan-modal" data-scan-modal hidden>
+    <div class="wa-scan-modal__bar">
+      <strong>Scan serial number</strong>
+      <button type="button" class="comms-icon-btn" data-scan-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="wa-scan-modal__reader" data-scan-reader id="wa-scan-reader"></div>
+    <p class="wa-scan-modal__hint">Point the camera at the serial barcode — each scan adds one unit.</p>
+  </div>
+
+  <div class="wa-toast" data-wa-toast hidden></div>
+
+  {% include "chat/partials/app_footer.html" %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script defer src="{% static 'js/vendor/html5-qrcode.min.js' %}"></script>
+<script defer src="{% static 'js/chatbot.js' %}?v=61"></script>
+{% endblock %}

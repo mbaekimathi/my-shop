@@ -1,0 +1,314 @@
+{% extends "chat/base.html" %}
+{% load static %}
+
+{% block title %}Sign in — {{ company_name|default:"MY-SHOP" }} Chat{% endblock %}
+{% block body_class %}page-auth{% endblock %}
+
+{% block body %}
+<div class="auth-shell">
+  <aside class="auth-visual">
+    <picture>
+      <source srcset="{% static 'img/hero-pos.webp' %}" type="image/webp">
+      <img class="auth-visual-image" src="{% static 'img/hero-pos.jpg' %}" alt="" width="1536" height="1024" decoding="async">
+    </picture>
+    <div class="auth-visual-scrim"></div>
+    <div class="auth-visual-content">
+      <div class="auth-visual-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <p class="brand brand--aside">{{ company_name|default:"MY-SHOP" }}</p>
+      </div>
+      <p class="auth-visual-kicker">Shop chat</p>
+      <p class="auth-visual-lead">Message other branches and ask the assistant about your sales, stock and credit.</p>
+      <ul class="auth-visual-points">
+        <li><i data-lucide="messages-square" aria-hidden="true"></i><span>Chat directly with any registered shop</span></li>
+        <li><i data-lucide="bot" aria-hidden="true"></i><span>Assistant answers questions from live shop data</span></li>
+        <li><i data-lucide="shield-check" aria-hidden="true"></i><span>Same branch code and password as MY-SHOP</span></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="auth-main">
+    <div class="auth-toolbar">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle dark mode">
+        <i data-lucide="moon" aria-hidden="true" data-icon-dark></i>
+        <i data-lucide="sun" aria-hidden="true" data-icon-light></i>
+      </button>
+    </div>
+
+    <div class="auth-card" data-animate="rise">
+      <header class="auth-head">
+        <p class="auth-eyebrow">{{ company_name|default:"MY-SHOP" }} chat</p>
+        <h1>Sign in</h1>
+        <p>Use your shop's shared 6-digit code and password.</p>
+      </header>
+
+      <div class="auth-tabs" role="tablist">
+        <button type="button" class="auth-tab{% if mode != "employee" %} is-active{% endif %}" data-auth-tab="shop" role="tab">
+          <i data-lucide="store" aria-hidden="true"></i><span>Shop</span>
+        </button>
+        <button type="button" class="auth-tab{% if mode == "employee" %} is-active{% endif %}" data-auth-tab="employee" role="tab">
+          <i data-lucide="user-cog" aria-hidden="true"></i><span>Employee</span>
+        </button>
+      </div>
+
+      <section class="auth-panel" data-auth-panel="shop"{% if mode == "employee" %} hidden{% endif %}>
+        <header class="auth-panel-head">
+          <span class="auth-panel-badge" aria-hidden="true"><i data-lucide="store"></i></span>
+          <div>
+            <p class="auth-panel-kicker">Branch access</p>
+            <h2>Shop Login</h2>
+            <p>Messages and data stay between registered shops.</p>
+          </div>
+        </header>
+
+        {% if error and mode != "employee" %}
+        <div class="form-alert" role="alert">
+          <i data-lucide="alert-circle" aria-hidden="true"></i>
+          <span>{{ error }}</span>
+        </div>
+        {% endif %}
+
+        <form class="auth-form" method="post" action="{% url 'chat:login' %}{% if request.GET.next %}?next={{ request.GET.next }}{% endif %}" autocomplete="on">
+          {% csrf_token %}
+          <input type="hidden" name="mode" value="shop">
+          <label class="field">
+            <span>Shop code</span>
+            <input
+              type="text"
+              name="login_code"
+              value="{{ login_code }}"
+              autocomplete="username"
+              required
+              inputmode="numeric"
+              pattern="\d{6}"
+              maxlength="6"
+              placeholder="e.g. 104220"
+              autofocus
+            >
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <div class="password-field">
+              <input
+                type="password"
+                name="password"
+                autocomplete="current-password"
+                required
+                placeholder="Enter shop password"
+                data-password-input
+              >
+              <button class="password-toggle" type="button" aria-label="Show password" data-password-toggle>
+                <i data-lucide="eye" aria-hidden="true" data-eye-open></i>
+                <i data-lucide="eye-off" aria-hidden="true" data-eye-closed hidden></i>
+              </button>
+            </div>
+          </label>
+          <button class="btn btn--block auth-submit" type="submit">
+            <i data-lucide="messages-square" aria-hidden="true"></i>
+            <span>Open shop chat</span>
+          </button>
+        </form>
+      </section>
+
+      <section class="auth-panel" data-auth-panel="employee"{% if mode != "employee" %} hidden{% endif %}>
+        <header class="auth-panel-head">
+          <span class="auth-panel-badge" aria-hidden="true"><i data-lucide="user-cog"></i></span>
+          <div>
+            <p class="auth-panel-kicker">Staff access</p>
+            <h2>Employee Login</h2>
+            <p>Sign in with your staff ID. Admins and IT open all shops; other roles open their workspace.</p>
+          </div>
+        </header>
+
+        {% if error and mode == "employee" %}
+        <div class="form-alert" role="alert">
+          <i data-lucide="alert-circle" aria-hidden="true"></i>
+          <span>{{ error }}</span>
+        </div>
+        {% endif %}
+
+        <form class="auth-form" method="post" action="{% url 'chat:login' %}" autocomplete="on">
+          {% csrf_token %}
+          <input type="hidden" name="mode" value="employee">
+          <label class="field">
+            <span>Staff ID</span>
+            <input
+              type="text"
+              name="login_code"
+              value="{% if mode == "employee" %}{{ login_code }}{% endif %}"
+              autocomplete="username"
+              required
+              inputmode="numeric"
+              pattern="\d{6}"
+              maxlength="6"
+              placeholder="Your 6-digit staff ID"
+            >
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <div class="password-field">
+              <input
+                type="password"
+                name="password"
+                autocomplete="current-password"
+                required
+                placeholder="Your staff password"
+                data-password-input-emp
+              >
+              <button class="password-toggle" type="button" aria-label="Show password" data-password-toggle-emp>
+                <i data-lucide="eye" aria-hidden="true" data-eye-open-emp></i>
+                <i data-lucide="eye-off" aria-hidden="true" data-eye-closed-emp hidden></i>
+              </button>
+            </div>
+          </label>
+          <button class="btn btn--block auth-submit" type="submit">
+            <i data-lucide="shield-check" aria-hidden="true"></i>
+            <span>Sign in as staff</span>
+          </button>
+        </form>
+      </section>
+    </div>
+
+    {% include "chat/partials/app_footer.html" %}
+  </main>
+</div>
+
+<div class="install-toast" data-install-toast role="status" hidden>
+  <span class="install-toast__icon" aria-hidden="true"><i data-lucide="smartphone"></i></span>
+  <div class="install-toast__body">
+    <b>Get the app</b>
+    <small data-install-hint>Install {{ company_name|default:"MY-SHOP" }} Chat for one-tap access.</small>
+  </div>
+  <button type="button" class="btn install-toast__btn" data-install-btn>
+    <i data-lucide="download" aria-hidden="true"></i>
+    <span>Install</span>
+  </button>
+  <button type="button" class="install-toast__close" data-install-close aria-label="Dismiss install prompt">
+    <i data-lucide="x" aria-hidden="true"></i>
+  </button>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    var toggle = document.querySelector("[data-password-toggle]");
+    var input = document.querySelector("[data-password-input]");
+    if (toggle && input) {
+      toggle.addEventListener("click", function () {
+        var show = input.type === "password";
+        input.type = show ? "text" : "password";
+        toggle.querySelector("[data-eye-open]").hidden = show;
+        toggle.querySelector("[data-eye-closed]").hidden = !show;
+      });
+    }
+    // Shop / Employee tab switch
+    document.querySelectorAll("[data-auth-tab]").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        var key = tab.dataset.authTab;
+        document.querySelectorAll("[data-auth-tab]").forEach(function (t) {
+          t.classList.toggle("is-active", t === tab);
+        });
+        document.querySelectorAll("[data-auth-panel]").forEach(function (p) {
+          p.hidden = p.dataset.authPanel !== key;
+        });
+      });
+    });
+    // Employee panel password toggle
+    var empToggle = document.querySelector("[data-password-toggle-emp]");
+    var empInput = document.querySelector("[data-password-input-emp]");
+    if (empToggle && empInput) {
+      empToggle.addEventListener("click", function () {
+        var show = empInput.type === "password";
+        empInput.type = show ? "text" : "password";
+        empToggle.querySelector("[data-eye-open-emp]").hidden = show;
+        empToggle.querySelector("[data-eye-closed-emp]").hidden = !show;
+      });
+    }
+
+    // PWA install toast — floats over the page like a notification instead
+    // of sitting inside the form. Shown when the browser can install, or on
+    // mobile for manual Add-to-Home-Screen instructions. Dismissed once per
+    // session.
+    var installToast = document.querySelector("[data-install-toast]");
+    var installBtn = document.querySelector("[data-install-btn]");
+    var installClose = document.querySelector("[data-install-close]");
+    var installHint = document.querySelector("[data-install-hint]");
+    var deferredPrompt = null;
+
+    if (installToast) {
+      // Already installed → running standalone → never show the toast.
+      var installed =
+        window.matchMedia("(display-mode: standalone)").matches ||
+        window.matchMedia("(display-mode: fullscreen)").matches ||
+        window.navigator.standalone === true ||           // iOS
+        (document.referrer || "").indexOf("android-app://") === 0;
+
+      var dismissed = false;
+      try { dismissed = sessionStorage.getItem("myshop-install-dismissed") === "1"; } catch (e) {}
+
+      var isMobile =
+        window.matchMedia("(pointer: coarse)").matches ||
+        /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+
+      function showInstallToast() {
+        if (!installed && !dismissed) installToast.hidden = false;
+      }
+
+      if (!installed && !dismissed) {
+        // Mobile browsers without a programmatic prompt still get manual
+        // Add-to-Home-Screen instructions; desktop waits for the event.
+        if (isMobile) setTimeout(showInstallToast, 1800);
+        window.addEventListener("beforeinstallprompt", function (e) {
+          e.preventDefault();
+          deferredPrompt = e;
+          setTimeout(showInstallToast, 1200);
+        });
+      }
+      window.addEventListener("appinstalled", function () {
+        installToast.hidden = true;
+      });
+      if (installBtn) {
+        installBtn.addEventListener("click", function () {
+          if (deferredPrompt) {
+            deferredPrompt.prompt();
+            deferredPrompt = null;
+          } else if (installHint) {
+            installHint.textContent =
+              "Tap your browser menu (⋮ / Share) → 'Add to Home Screen'.";
+          }
+        });
+      }
+      if (installClose) {
+        installClose.addEventListener("click", function () {
+          installToast.hidden = true;
+          dismissed = true;
+          try { sessionStorage.setItem("myshop-install-dismissed", "1"); } catch (e) {}
+        });
+      }
+      // Service worker registration + auto-update lives in pwa-update.js
+      // (loaded from base.html on every page, including the installed PWA).
+    }
+
+    var themeBtn = document.querySelector("[data-theme-toggle]");
+    function paint() {
+      var dark = document.documentElement.getAttribute("data-theme") === "dark";
+      if (themeBtn) {
+        themeBtn.querySelector("[data-icon-dark]").hidden = dark;
+        themeBtn.querySelector("[data-icon-light]").hidden = !dark;
+      }
+    }
+    if (themeBtn) {
+      themeBtn.addEventListener("click", function () {
+        var dark = document.documentElement.getAttribute("data-theme") === "dark";
+        var next = dark ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", next);
+        try { localStorage.setItem("myshop-theme", next); } catch (e) {}
+        paint();
+      });
+    }
+    paint();
+    if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+  })();
+</script>
+{% endblock %}

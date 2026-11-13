@@ -1,5 +1,6 @@
 from django.contrib.auth.models import User
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.urls import reverse
 
 from employees.analytics_services import ANALYTICS_SECTIONS, _build_clients
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
@@ -20,6 +21,7 @@ from employees.workspace import (
     sidebar_for_my_shop,
     sidebar_for_role_dashboard,
     sidebar_for_settings,
+    sidebar_for_stock,
     sidebar_for_super_admin,
     sidebar_for_suppliers,
 )
@@ -55,6 +57,10 @@ class AnalyticsSidebarTests(TestCase):
         self.assertIn("Revenue", labels)
         self.assertIn("Receipts", labels)
         self.assertIn("Analytics settings", labels)
+        self.assertIn("Items", labels)
+        self.assertIn("Stock", labels)
+        self.assertNotIn("Item report", labels)
+        self.assertNotIn("Supply analytics", labels)
         self.assertNotIn("Clients", labels)
         self.assertNotIn("Suppliers", labels)
 
@@ -68,6 +74,42 @@ class AnalyticsSidebarTests(TestCase):
         )
         self.assertTrue(sidebar["primary"][2]["active"])
         self.assertFalse(sidebar["primary"][1]["active"])
+
+    def test_items_section_sidebar_includes_item_report(self):
+        sidebar = sidebar_for_analytics_section(
+            EmployeeRole.IT_SUPPORT, active_view="items"
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertEqual(
+            labels,
+            ["Dashboard", "Overview", "Items", "Item report", "Analytics settings"],
+        )
+        self.assertTrue(sidebar["primary"][2]["active"])
+        self.assertFalse(sidebar["primary"][3]["active"])
+        self.assertIn("/analytics/items/report/", sidebar["primary"][3]["href"])
+
+    def test_stock_sidebar_includes_supply_analytics(self):
+        sidebar = sidebar_for_stock(EmployeeRole.IT_SUPPORT, active="stock")
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertEqual(
+            labels,
+            [
+                "Dashboard",
+                "Overview",
+                "Stock",
+                "Supply analytics",
+                "Analytics settings",
+            ],
+        )
+        self.assertTrue(sidebar["primary"][2]["active"])
+        self.assertFalse(sidebar["primary"][3]["active"])
+        self.assertIn("/analytics/supply/", sidebar["primary"][3]["href"])
+
+        supply = sidebar_for_stock(EmployeeRole.IT_SUPPORT, active="supply")
+        supply_labels = [item["label"] for item in supply["primary"]]
+        self.assertEqual(labels, supply_labels)
+        self.assertTrue(supply["primary"][3]["active"])
+        self.assertFalse(supply["primary"][2]["active"])
 
     def test_confirm_receipts_sidebar_is_focused(self):
         sidebar = sidebar_for_analytics_section(
@@ -880,6 +922,9 @@ class DashboardSidebarLinkTests(TestCase):
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertNotIn("Dashboard", labels)
         self.assertIn("Marketing links", labels)
+        self.assertIn("Chatbot", labels)
+        chatbot = next(item for item in sidebar["primary"] if item["label"] == "Chatbot")
+        self.assertEqual(chatbot["href"], reverse("chat:home"))
         self.assertNotIn("WhatsApp", labels)
 
     def test_whatsapp_link_lives_in_marketing_sidebar(self):
@@ -1939,6 +1984,7 @@ class CreditsShopScopeTests(TestCase):
         html = response.content.decode()
         self.assertIn("Credit reports", html)
         self.assertIn("Credit items by shop", html)
+        self.assertNotIn("Client credit accounts by shop", html)
 
     def test_credits_page_due_today_followup_payload(self):
         from datetime import date
@@ -3051,6 +3097,7 @@ class StoreManagerRoleTests(TestCase):
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertNotIn("Overview", labels)
         self.assertIn("Items", labels)
+        self.assertIn("Item report", labels)
         self.assertIn("Stock", labels)
         self.assertIn("Tradings", labels)
         self.assertNotIn("Credits", labels)

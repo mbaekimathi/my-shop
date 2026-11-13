@@ -611,8 +611,8 @@
   background: var(--panel-muted);
 }
 
-/* Permissions matrix → per-employee cards below desktop sidebar breakpoint */
-@media (max-width: 979px) {
+/* Permissions matrix → per-employee cards on phones only (tablet/desktop keep table) */
+@media (max-width: 639px) {
   .perm-table {
     width: 100%;
     min-width: 0;

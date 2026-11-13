@@ -13084,18 +13084,6 @@ def _build_credits(filters):
             )
         )
 
-    clients_page = _build_clients({**filters, "from_credits": True})
-    alerts += list(clients_page.get("alerts") or [])
-    client_table = (clients_page.get("tables") or [None])[0]
-    if client_table is not None:
-        client_table["search_placeholder"] = (
-            clients_page.get("search_placeholder")
-            or "Search clients by name or phone…"
-        )
-        client_table["search_empty"] = (
-            clients_page.get("search_empty") or "No clients match that search."
-        )
-
     columns = [{"label": "Item"}]
     for index, shop in enumerate(shops):
         col = _shop_col(shop)
@@ -13133,8 +13121,7 @@ def _build_credits(filters):
         "headline": "Credits",
         "lead": (
             f"Items on credit for {period_label} — each shop column shows "
-            f"qty, credit amount, % paid back, and top credit day. "
-            f"Open a client below to view their account."
+            f"qty, credit amount, % paid back, and top credit day."
         ),
         "alerts": alerts,
         "show_search": True,
@@ -13172,7 +13159,6 @@ def _build_credits(filters):
                 shop_grid=True,
                 searchable=True,
             ),
-            *([client_table] if client_table is not None else []),
         ],
     }
 

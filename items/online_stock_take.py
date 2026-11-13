@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
@@ -31,6 +32,21 @@ def _qty_label(value: Decimal) -> str:
 
 def _pieces_word(abs_diff: Decimal) -> str:
     return "piece" if abs_diff == 1 else "pieces"
+
+
+def resolve_online_stock_take_date(raw=None) -> date:
+    """Parse YYYY-MM-DD; default to today's local date."""
+    today = timezone.localdate()
+    if raw in (None, ""):
+        return today
+    text = str(raw).strip()[:10]
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        try:
+            return datetime.strptime(text, "%Y-%m-%d").date()
+        except ValueError:
+            return today
 
 
 def variance_payload(*, system: Decimal, physical: Decimal | None) -> dict:
@@ -78,12 +94,13 @@ def _baseline_system(*, entry, live_system: Decimal) -> Decimal:
     return _quantize(entry.system_qty_at_count)
 
 
-def build_online_stock_take_catalog(*, shop) -> dict:
-    """All active items for one shop, grouped by category, with frozen variance.
+def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> dict:
+    """All active items for one shop/day, grouped by category, with frozen variance.
 
     Counted items stay in their category groups. ``filled_lines`` powers the
     floating cart summary (most recently updated first).
     """
+    count_date = count_date or timezone.localdate()
     if shop is None:
         return {
             "filled_lines": [],
@@ -93,6 +110,7 @@ def build_online_stock_take_catalog(*, shop) -> dict:
             "match_count": 0,
             "excess_count": 0,
             "short_count": 0,
+            "count_date": count_date,
         }
 
     items = list(
@@ -106,12 +124,15 @@ def build_online_stock_take_catalog(*, shop) -> dict:
     }
     entry_map = {
         row.item_id: row
-        for row in OnlineStockTakeEntry.objects.filter(shop=shop).only(
+        for row in OnlineStockTakeEntry.objects.filter(
+            shop=shop, count_date=count_date
+        ).only(
             "item_id",
             "physical_qty",
             "system_qty_at_count",
             "updated_at",
             "updated_by_label",
+            "count_date",
         )
     }
 
@@ -184,21 +205,26 @@ def build_online_stock_take_catalog(*, shop) -> dict:
         "match_count": match_count,
         "excess_count": excess_count,
         "short_count": short_count,
+        "count_date": count_date,
     }
 
 
-def build_online_stock_take_sync(*, shop) -> dict:
+def build_online_stock_take_sync(
+    *, shop, count_date: date | None = None
+) -> dict:
     """Lightweight payload of current filled counts for cross-device live sync."""
+    count_date = count_date or timezone.localdate()
     if shop is None:
         return {
             "shop_id": None,
+            "count_date": count_date.isoformat(),
             "revision": "0:",
             "lines": [],
             "filled_count": 0,
         }
 
     entries = list(
-        OnlineStockTakeEntry.objects.filter(shop=shop)
+        OnlineStockTakeEntry.objects.filter(shop=shop, count_date=count_date)
         .exclude(physical_qty__isnull=True)
         .only(
             "item_id",
@@ -258,6 +284,7 @@ def build_online_stock_take_sync(*, shop) -> dict:
     )
     return {
         "shop_id": shop.pk,
+        "count_date": count_date.isoformat(),
         "revision": revision,
         "lines": lines,
         "filled_count": len(lines),
@@ -282,10 +309,12 @@ def save_online_stock_take_line(
     shop,
     item_id,
     qty,
+    count_date: date | None = None,
     profile=None,
     updated_by_label: str = "",
 ) -> dict:
-    """Autosave one physical count against book qty frozen at save time."""
+    """Autosave one physical count for a shop/day against book qty frozen at save."""
+    count_date = count_date or timezone.localdate()
     try:
         item_pk = int(item_id)
     except (TypeError, ValueError) as exc:
@@ -309,7 +338,9 @@ def save_online_stock_take_line(
     label = (updated_by_label or "").strip()[:160]
 
     if physical is None:
-        OnlineStockTakeEntry.objects.filter(shop=shop, item=item).delete()
+        OnlineStockTakeEntry.objects.filter(
+            shop=shop, item=item, count_date=count_date
+        ).delete()
         updated_at = None
         system = live_system
     else:
@@ -317,6 +348,7 @@ def save_online_stock_take_line(
         entry, _created = OnlineStockTakeEntry.objects.update_or_create(
             shop=shop,
             item=item,
+            count_date=count_date,
             defaults={
                 "physical_qty": physical,
                 "system_qty_at_count": live_system,
@@ -328,7 +360,7 @@ def save_online_stock_take_line(
         system = live_system
 
     variance = variance_payload(system=system, physical=physical)
-    sync = build_online_stock_take_sync(shop=shop)
+    sync = build_online_stock_take_sync(shop=shop, count_date=count_date)
     return {
         "item_id": item.pk,
         "name": item.name,
@@ -341,6 +373,7 @@ def save_online_stock_take_line(
             timezone.localtime(updated_at).isoformat() if updated_at is not None else ""
         ),
         "saved_at": timezone.localtime().strftime("%H:%M:%S"),
+        "count_date": count_date.isoformat(),
         "revision": sync["revision"],
         **variance,
     }

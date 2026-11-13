@@ -9,12 +9,12 @@
 {% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/app/settings.css' %}?v=20261108-total-emphasis">
+<link rel="stylesheet" href="{% static 'css/app/settings.css' %}?v=20261113-perm-mobile">
 <link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261108-mobile-fit">
 <link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261026-item-images">
-<link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261112-stock-take-dark">
-<link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261112-confirm-print">
+<link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261113-mobile-cards">
+<link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261113-online-take-day">
+<link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261113-quiet-data">
 <link rel="stylesheet" href="{% static 'css/app/credit-note.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261112-confirm-item-list">
 <link rel="stylesheet" href="{% static 'css/app/comms.css' %}?v=20261108-act-view">
@@ -34,6 +34,9 @@
   data-dashboard-url="{{ page_sidebar.dashboard_url }}"
   data-web-push-vapid-url="{% url 'employees:web_push_vapid_public_key' %}"
   data-web-push-subscribe-url="{% url 'employees:web_push_subscribe' %}"
+  {% if page_sidebar.hr_approvals_status_url %}
+  data-hr-approvals-status-url="{{ page_sidebar.hr_approvals_status_url }}"
+  {% endif %}
   {% if workspace.role == "rider" %}
   data-rider-alerts
   data-status-url="{% url 'employees:rider_delivery_status' %}"
@@ -334,9 +337,19 @@
       return true;
     };
 
-    ["buy-stock", "register-expense"].forEach((name) => {
+    ["buy-stock", "register-expense", "print-stock"].forEach((name) => {
       document.querySelectorAll(`[data-modal-open="${name}"]`).forEach((trigger) => {
         trigger.addEventListener("click", (event) => {
+          if (name === "print-stock") {
+            // stock-print.js owns the modal when present; otherwise follow data-href.
+            if (document.querySelector(`[data-modal="${name}"]`)) return;
+            const href = trigger.getAttribute("data-href");
+            if (href) {
+              event.preventDefault();
+              window.location.assign(href);
+            }
+            return;
+          }
           const focusSelector =
             name === "buy-stock" ? "[data-item-search]" : "[data-expense-name-draft]";
           if (openWorkspaceActionModal(name, focusSelector)) {
@@ -347,6 +360,8 @@
           if (href) window.location.assign(href);
         });
       });
+
+      if (name === "print-stock") return;
 
       const modal = document.querySelector(`[data-modal="${name}"]`);
       modal?.addEventListener("click", (event) => {

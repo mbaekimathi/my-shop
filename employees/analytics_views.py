@@ -190,6 +190,8 @@ def _render_analytics(
         meta = {**meta, **meta_override}
     credit_report_href = ""
     credit_clients_href = ""
+    item_report_href = ""
+    stock_supply_href = ""
     if section["slug"] == "credits":
         credit_report_href = reverse(
             "employees:analytics_credit_report",
@@ -204,6 +206,23 @@ def _render_analytics(
             credit_clients_href = (
                 f"{credit_clients_href}?{context['query']}"
             )
+    elif section["slug"] == "items":
+        from .workspace import analytics_item_report_url
+
+        item_report_href = analytics_item_report_url(profile.role)
+        if context.get("query"):
+            item_report_href = f"{item_report_href}?{context['query']}"
+    elif section["slug"] == "stock":
+        from .workspace import analytics_section_url
+        from .module_permissions import employee_may
+        from shops.services import company_pos_analytics_section_visible
+
+        if employee_may(profile, "analytics", "supply") and company_pos_analytics_section_visible(
+            "supply"
+        ):
+            stock_supply_href = analytics_section_url(profile.role, "supply")
+            if context.get("query"):
+                stock_supply_href = f"{stock_supply_href}?{context['query']}"
     return render(
         request,
         (
@@ -224,6 +243,8 @@ def _render_analytics(
             "google_maps_api_key": getattr(settings, "GOOGLE_MAPS_API_KEY", "") or "",
             "credit_report_href": credit_report_href,
             "credit_clients_href": credit_clients_href,
+            "item_report_href": item_report_href,
+            "stock_supply_href": stock_supply_href,
             "credit_audits_href": (
                 reverse(
                     "employees:analytics_credit_audits",
@@ -237,8 +258,10 @@ def _render_analytics(
                 if section["slug"] == "suppliers"
                 else sidebar_for_credits(profile.role, profile=profile)
                 if section["slug"] == "credits"
-                else sidebar_for_stock(profile.role, profile=profile)
-                if section["slug"] == "stock"
+                else sidebar_for_stock(
+                    profile.role, profile=profile, active=section["slug"]
+                )
+                if section["slug"] in {"stock", "supply"}
                 else sidebar_for_role_dashboard(
                     profile.role,
                     profile=profile,

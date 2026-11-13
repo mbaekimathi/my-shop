@@ -9,6 +9,7 @@
   if (!root) return;
 
   const shopSelect = root.querySelector("[data-online-take-shop]");
+  const dateInput = root.querySelector("[data-online-take-date]");
   const baseUrl = root.getAttribute("data-online-stock-take-url") || "";
   const list = root.querySelector("[data-online-take-list]");
   const searchInput = root.querySelector("[data-online-take-search]");
@@ -19,7 +20,26 @@
   const excessEl = root.querySelector("[data-online-take-excess]");
   const shortEl = root.querySelector("[data-online-take-short]");
   const shopId = root.getAttribute("data-selected-shop-id") || "";
+  const countDate =
+    root.getAttribute("data-online-count-date") ||
+    dateInput?.value ||
+    "";
   const csrfInput = root.querySelector("input[name=csrfmiddlewaretoken]");
+
+  const buildPageUrl = ({ shopId: nextShopId, date: nextDate } = {}) => {
+    const url = new URL(baseUrl, window.location.origin);
+    const shopValue =
+      nextShopId === undefined ? shopId : String(nextShopId || "").trim();
+    const dateValue =
+      nextDate === undefined
+        ? countDate
+        : String(nextDate || "").trim();
+    if (shopValue) url.searchParams.set("shop_id", shopValue);
+    else url.searchParams.delete("shop_id");
+    if (dateValue) url.searchParams.set("date", dateValue);
+    else url.searchParams.delete("date");
+    return url;
+  };
   const SAVE_DELAY_MS = 450;
   const POLL_MS = 3000;
   const pendingTimers = new Map();
@@ -435,6 +455,7 @@
       qty,
       csrfmiddlewaretoken: csrf,
     });
+    if (countDate) body.set("date", countDate);
     try {
       const response = await fetch(baseUrl, {
         method: "POST",
@@ -498,8 +519,7 @@
     pollInFlight = true;
     if (savingCount === 0) setLiveStatus("Syncing", { state: "syncing" });
     try {
-      const url = new URL(baseUrl, window.location.origin);
-      url.searchParams.set("shop_id", shopId);
+      const url = buildPageUrl();
       url.searchParams.set("sync", "1");
       const response = await fetch(url.toString(), {
         headers: {
@@ -570,13 +590,17 @@
   shopSelect?.addEventListener("change", () => {
     if (!baseUrl) return;
     const nextShopId = (shopSelect.value || "").trim();
-    const url = new URL(baseUrl, window.location.origin);
-    if (nextShopId) {
-      url.searchParams.set("shop_id", nextShopId);
-    } else {
-      url.searchParams.delete("shop_id");
-    }
-    window.location.assign(url.toString());
+    window.location.assign(
+      buildPageUrl({ shopId: nextShopId, date: countDate }).toString()
+    );
+  });
+
+  dateInput?.addEventListener("change", () => {
+    if (!baseUrl) return;
+    const nextDate = (dateInput.value || "").trim();
+    window.location.assign(
+      buildPageUrl({ shopId, date: nextDate }).toString()
+    );
   });
 
   const applySearchFilter = (rawQuery) => {

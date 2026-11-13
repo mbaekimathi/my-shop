@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     "shops.apps.ShopsConfig",
     "pos",
     "communications.apps.CommunicationsConfig",
+    "chat",
 ]
 
 MIDDLEWARE = [
@@ -266,6 +267,14 @@ CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "300"))
 
 WHATSAPP_MEDIA_MAX_BYTES = int(os.getenv("WHATSAPP_MEDIA_MAX_BYTES", str(4 * 1024 * 1024)))
+
+# Chatbot app (mounted at /chatbot/) — separate session keys from portal/employee auth
+CHAT_ATTACHMENT_MAX_BYTES = int(
+    os.getenv("CHAT_ATTACHMENT_MAX_BYTES", str(4 * 1024 * 1024))
+)
+CHAT_MESSAGE_MAX_LENGTH = int(os.getenv("CHAT_MESSAGE_MAX_LENGTH", "4000"))
+CHAT_POLL_ONLINE_SECONDS = int(os.getenv("CHAT_POLL_ONLINE_SECONDS", "25"))
+
 # auto | celery | inline | cron — see communications.campaigns.enqueue_campaign
 COMMS_SEND_MODE = (os.getenv("COMMS_SEND_MODE", "auto") or "auto").strip().lower()
 COMMS_INLINE_SEND = (os.getenv("COMMS_INLINE_SEND", "") or "").strip().lower() in {

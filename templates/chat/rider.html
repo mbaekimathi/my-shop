@@ -1,0 +1,168 @@
+{% extends "chat/base.html" %}
+{% load static %}
+
+{% block title %}{{ role_label }} — {{ company_name|default:"MY-SHOP" }} Chat{% endblock %}
+{% block body_class %}page-chat{% endblock %}
+
+{% block body %}
+<section
+  class="comms wa-app rider-app is-chat-open"
+  data-rider-app
+  data-board-url="{{ board_url }}"
+  data-status-url="{{ status_url }}"
+  data-accept-url="{{ accept_url_template }}"
+  data-complete-url="{{ complete_url_template }}"
+>
+  {% csrf_token %}
+
+  <header class="wa-app__bar">
+    <div class="wa-app__brand">
+      <span class="comms-avatar wa-app__logo" data-tone="1" aria-hidden="true">
+        <i data-lucide="{{ role_icon }}"></i>
+      </span>
+      <div>
+        <strong>{{ role_label }}</strong>
+        <span>{{ company_name|default:"MY-SHOP" }} · deliveries</span>
+      </div>
+    </div>
+    <div class="wa-app__bar-actions">
+      <button type="button" class="comms-icon-btn" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode">
+        <i data-lucide="moon" data-icon-dark></i><i data-lucide="sun" data-icon-light></i>
+      </button>
+      <form method="post" action="{% url 'chat:logout' %}" style="display:inline">
+        {% csrf_token %}
+        <button type="submit" class="comms-icon-btn" title="Sign out" aria-label="Sign out">
+          <i data-lucide="log-out"></i>
+        </button>
+      </form>
+    </div>
+  </header>
+
+  <div class="wa-app__shell" data-rider-home>
+    <div class="wa-app__chat">
+      <div class="wa-app__thread">
+        <header class="wa-app__chat-head">
+          <span class="comms-avatar" data-tone="1" aria-hidden="true">
+            <i data-lucide="bike"></i>
+          </span>
+          <div class="wa-app__chat-who">
+            <strong>Delivery Assistant</strong>
+            <span>View · accept · complete deliveries</span>
+          </div>
+        </header>
+
+        <div class="rider-tabs" role="tablist" aria-label="Delivery boards">
+          <button type="button" class="wa-period__btn is-on" role="tab" aria-selected="true" data-rider-tab="open">
+            Open
+            <span class="rider-tab-count" data-rider-count="open">0</span>
+          </button>
+          <button type="button" class="wa-period__btn" role="tab" aria-selected="false" data-rider-tab="active">
+            Active
+            <span class="rider-tab-count" data-rider-count="active">0</span>
+          </button>
+          <button type="button" class="wa-period__btn" role="tab" aria-selected="false" data-rider-tab="completed">
+            Done
+            <span class="rider-tab-count" data-rider-count="completed">0</span>
+          </button>
+        </div>
+
+        <div class="wa-app__stage rider-stage" data-rider-feed>
+          <div class="wa-sys" data-rider-feed-empty>
+            <span>Delivery jobs appear here like chat messages.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wa-stock" data-rider-panel="complete" hidden>
+    <div class="wa-app__contacts-head">
+      <button type="button" class="comms-icon-btn" data-rider-back aria-label="Back">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <strong data-rider-complete-title>Complete delivery</strong>
+    </div>
+
+    <div class="wa-stock__body">
+      <p class="rider-complete-summary" data-rider-complete-summary></p>
+
+      <div data-rider-sale-fields hidden>
+        <label class="wa-stock__field">
+          <span>Received by</span>
+          <input
+            type="text"
+            maxlength="200"
+            autocomplete="name"
+            placeholder="Person who received the goods"
+            data-rider-receiver
+            aria-label="Received by"
+          >
+        </label>
+        <p class="rider-hint">Defaults to the client name — edit if someone else received it.</p>
+      </div>
+
+      <div data-rider-credit-fields hidden>
+        <p class="wa-stock__label">How was payment handled?</p>
+        <div class="rider-pay-modes" role="radiogroup" aria-label="Payment method">
+          <button type="button" class="rider-pay-mode is-on" data-pay-mode="unpaid" aria-pressed="true">
+            <strong>Unpaid</strong>
+            <small>Deliver now, collect later</small>
+          </button>
+          <button type="button" class="rider-pay-mode" data-pay-mode="paid" aria-pressed="false">
+            <strong>Paid</strong>
+            <small>Enter M-Pesa / cash ref</small>
+          </button>
+        </div>
+
+        <div data-pay-panel="unpaid">
+          <p class="rider-hint">Marks this run as delivered (not paid). The credit sale stays open.</p>
+        </div>
+
+        <div data-pay-panel="paid" hidden>
+          <label class="wa-stock__field">
+            <span>Payment reference</span>
+            <input
+              type="text"
+              maxlength="64"
+              autocomplete="off"
+              placeholder="M-Pesa code / receipt no."
+              data-rider-payment-ref
+              aria-label="Payment reference"
+            >
+          </label>
+          <label class="wa-stock__field">
+            <span>Payment date &amp; time <em>optional</em></span>
+            <input type="datetime-local" data-rider-payment-at aria-label="Payment date and time">
+          </label>
+          <label class="wa-stock__field">
+            <span>Amount collected <em>optional</em></span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              data-rider-payment-amount
+              aria-label="Amount collected"
+            >
+          </label>
+          <p class="rider-hint">Reference required for delivered (paid). Does not convert the credit sale.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="wa-stock__foot">
+      <button type="button" class="btn btn--block wa-stock__send" data-rider-complete-submit>
+        <i data-lucide="check-circle-2" aria-hidden="true"></i>
+        <span data-rider-complete-label>Mark delivered</span>
+      </button>
+      <p class="wa-stock__error" data-rider-form-status hidden role="status"></p>
+    </div>
+  </div>
+
+  {% include "chat/partials/app_footer.html" %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script defer src="{% static 'js/rider.js' %}?v=2"></script>
+{% endblock %}

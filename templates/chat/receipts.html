@@ -1,0 +1,187 @@
+{% extends "chat/base.html" %}
+{% load static %}
+
+{% block title %}Receipts — {{ me.name }}{% endblock %}
+{% block body_class %}page-chat{% endblock %}
+
+{% block body %}
+<section
+  class="comms wa-app rcpt-app"
+  data-rcpt-app
+  data-list-url="{{ list_url }}"
+  data-detail-base="{{ detail_base }}"
+  data-confirm-url="{{ confirm_url }}"
+  data-cancel-url="{{ cancel_url }}"
+  data-return-url="{{ return_url }}"
+  data-chat-url="{{ chat_url }}"
+>
+  {% csrf_token %}
+
+  <header class="wa-app__bar">
+    <div class="wa-app__brand">
+      <a class="comms-icon-btn" href="{{ chat_url }}" aria-label="Back to chats" title="Back to chats">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </a>
+      <span class="comms-avatar wa-app__logo" data-tone="{{ me.tone }}" aria-hidden="true">{{ me.initials }}</span>
+      <div>
+        <strong>Receipts</strong>
+        <span>{{ me.name }} · {{ company_name|default:"MY-SHOP" }}</span>
+      </div>
+    </div>
+    <div class="wa-app__bar-actions">
+      <button type="button" class="comms-icon-btn" data-theme-toggle title="Toggle theme" aria-label="Toggle theme">
+        <i data-lucide="moon" data-icon-dark></i><i data-lucide="sun" data-icon-light></i>
+      </button>
+    </div>
+  </header>
+
+  <div class="rcpt-shell">
+    <div class="rcpt-toolbar">
+      <div class="rcpt-filters">
+        <div class="wa-period rcpt-period" data-rcpt-period>
+          <span class="wa-period__modes rcpt-modes" role="group" aria-label="Period type">
+            <button type="button" class="wa-period__btn is-on" data-period-mode="day">Day</button>
+            <button type="button" class="wa-period__btn" data-period-mode="period">Period</button>
+            <button type="button" class="wa-period__btn" data-period-mode="month">Month</button>
+            <button type="button" class="wa-period__btn" data-period-mode="year">Year</button>
+          </span>
+          <span class="wa-period__fields rcpt-fields">
+            <input type="date" data-rcpt-day aria-label="Pick a day" title="Day">
+            <input type="date" data-rcpt-from aria-label="From date" title="From" hidden>
+            <input type="date" data-rcpt-to aria-label="To date" title="To" hidden>
+            <input type="month" data-rcpt-month aria-label="Pick a month" title="Month" hidden>
+            <select data-rcpt-year aria-label="Year" title="Year" hidden></select>
+          </span>
+          <label class="wa-period__scope rcpt-scope">
+            <span class="wa-period__scope-label">Status</span>
+            <select data-rcpt-status aria-label="Receipt status">
+              <option value="pending" selected>Pending</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+          <label class="wa-period__scope rcpt-scope">
+            <span class="wa-period__scope-label">Kind</span>
+            <select data-rcpt-kind aria-label="Receipt kind">
+              <option value="sale" selected>Sales</option>
+              <option value="credit">Credits</option>
+              <option value="quotation">Quotations</option>
+              <option value="sales_credits">Sales + credits</option>
+              <option value="all">All kinds</option>
+            </select>
+          </label>
+          <button type="button" class="wa-period__btn wa-period__btn--go rcpt-go" data-rcpt-go title="Apply filters" aria-label="Apply filters">
+            <i data-lucide="arrow-right" aria-hidden="true"></i>
+          </button>
+        </div>
+        <label class="rcpt-search">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input type="search" data-rcpt-q placeholder="Search number or client" autocomplete="off" aria-label="Search receipts">
+        </label>
+      </div>
+
+    </div>
+
+    <div class="rcpt-body">
+      <div class="rcpt-list-pane">
+        <div class="rcpt-list" data-rcpt-list role="list"></div>
+      </div>
+      <aside class="rcpt-detail" data-rcpt-detail hidden>
+        <header class="rcpt-detail__head">
+          <div>
+            <p class="rcpt-detail__eyebrow">Receipt</p>
+            <strong data-rcpt-detail-title>Receipt</strong>
+          </div>
+          <button type="button" class="comms-icon-btn" data-rcpt-detail-close aria-label="Close detail">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </header>
+        <div class="rcpt-detail__body" data-rcpt-detail-body></div>
+      </aside>
+    </div>
+  </div>
+
+  <div class="rcpt-cart" data-rcpt-actions hidden>
+    <div class="rcpt-cart__panel" data-rcpt-cart-panel hidden>
+      <p class="rcpt-cart__label">
+        <span data-rcpt-selcount>0</span> selected
+      </p>
+      <button type="button" class="rcpt-act" data-rcpt-confirm disabled>
+        <i data-lucide="check" aria-hidden="true"></i><span>Confirm</span>
+      </button>
+      <button type="button" class="rcpt-act rcpt-act--warn" data-rcpt-cancel disabled>
+        <i data-lucide="x" aria-hidden="true"></i><span>Cancel</span>
+      </button>
+      <button type="button" class="rcpt-act rcpt-act--mute" data-rcpt-return disabled>
+        <i data-lucide="undo-2" aria-hidden="true"></i><span>Return</span>
+      </button>
+    </div>
+    <button
+      type="button"
+      class="rcpt-cart__fab"
+      data-rcpt-cart-toggle
+      title="Selected receipts"
+      aria-label="Selected receipts"
+      aria-expanded="false"
+      aria-haspopup="true"
+    >
+      <i data-lucide="shopping-cart" aria-hidden="true"></i>
+      <span class="rcpt-cart__badge" data-rcpt-cart-badge>0</span>
+    </button>
+  </div>
+
+  <div class="rcpt-modal" data-rcpt-code-modal hidden>
+    <div class="rcpt-modal__card">
+      <div class="rcpt-modal__icon" aria-hidden="true"><i data-lucide="shield-check"></i></div>
+      <strong data-rcpt-code-title>Staff code</strong>
+      <p class="rcpt-modal__hint" data-rcpt-code-hint>Enter a shop member’s 6-digit staff code to continue.</p>
+      <label class="rcpt-field">
+        <span>Staff code</span>
+        <input type="password" inputmode="numeric" maxlength="6" autocomplete="one-time-code"
+               data-rcpt-code placeholder="••••••" aria-label="Staff code">
+      </label>
+      <div class="rcpt-modal__btns">
+        <button type="button" class="rcpt-act rcpt-act--mute" data-rcpt-code-cancel>Back</button>
+        <button type="button" class="rcpt-act" data-rcpt-code-ok>Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="rcpt-modal" data-rcpt-return-modal hidden>
+    <div class="rcpt-modal__card rcpt-modal__card--wide">
+      <header class="rcpt-detail__head">
+        <div>
+          <p class="rcpt-detail__eyebrow">Returns</p>
+          <strong>Return items</strong>
+        </div>
+        <button type="button" class="comms-icon-btn" data-rcpt-return-close aria-label="Close">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </header>
+      <div class="rcpt-return-body" data-rcpt-return-body></div>
+      <label class="rcpt-field">
+        <span>Reason</span>
+        <input type="text" data-rcpt-return-reason maxlength="500" placeholder="Why are these being returned?">
+      </label>
+      <label class="rcpt-field">
+        <span>Staff code</span>
+        <input type="password" inputmode="numeric" maxlength="6" autocomplete="one-time-code"
+               data-rcpt-return-code placeholder="Member’s 6-digit code">
+      </label>
+      <div class="rcpt-modal__btns">
+        <button type="button" class="rcpt-act rcpt-act--mute" data-rcpt-return-close>Back</button>
+        <button type="button" class="rcpt-act" data-rcpt-return-submit>Return selected</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wa-toast" data-wa-toast hidden></div>
+
+  {% include "chat/partials/app_footer.html" %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script defer src="{% static 'js/receipts.js' %}?v=3"></script>
+{% endblock %}

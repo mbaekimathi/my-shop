@@ -37,6 +37,7 @@
   const oneFlash = modal.querySelector("[data-stock-take-one-flash]");
   const deadlineAt = deadlineRaw ? Date.parse(deadlineRaw) : NaN;
   let completed = false;
+  let locked = false;
   let countdownTimer = 0;
   let mode = "one";
   let oneIndex = 0;
@@ -44,6 +45,7 @@
   const lines = Array.isArray(payload.lines) ? payload.lines.slice() : [];
   const MIN_SNOOZE_MS = 60 * 1000;
   const MAX_SNOOZE_MS = 48 * 60 * 60 * 1000;
+  const LOCKED_MESSAGE = "The stock take deadline has passed. Counting is locked.";
 
   const ICON_OK =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
@@ -83,12 +85,45 @@
     return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
   };
 
+  const isDeadlinePassed = () =>
+    Number.isFinite(deadlineAt) && deadlineAt - Date.now() <= 0;
+
+  const lockForDeadline = () => {
+    if (locked || completed) return;
+    locked = true;
+    modal.classList.add("is-locked");
+    if (countdownEl) {
+      countdownEl.textContent = "Deadline passed — locked";
+      countdownEl.classList.add("is-overdue");
+    }
+    showError(LOCKED_MESSAGE);
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Locked — deadline passed";
+    }
+    if (oneSubmit) {
+      oneSubmit.disabled = true;
+      oneSubmit.textContent = "Locked — deadline passed";
+    }
+    if (oneQty) oneQty.disabled = true;
+    if (oneNext) oneNext.disabled = true;
+    modal.querySelectorAll("[data-stock-take-mode]").forEach((btn) => {
+      btn.disabled = true;
+    });
+    form?.querySelectorAll("input[type=number]").forEach((input) => {
+      input.disabled = true;
+    });
+    if (countdownTimer) {
+      window.clearInterval(countdownTimer);
+      countdownTimer = 0;
+    }
+  };
+
   const syncCountdown = () => {
-    if (!countdownEl || !Number.isFinite(deadlineAt) || completed) return;
+    if (!countdownEl || !Number.isFinite(deadlineAt) || completed || locked) return;
     const remaining = deadlineAt - Date.now();
     if (remaining <= 0) {
-      countdownEl.textContent = "Deadline passed — submit as soon as you can";
-      countdownEl.classList.add("is-overdue");
+      lockForDeadline();
       return;
     }
     countdownEl.classList.remove("is-overdue");
@@ -227,6 +262,7 @@
   };
 
   const setMode = (next) => {
+    if (locked) return;
     mode = next === "all" ? "all" : "one";
     try {
       localStorage.setItem(modePrefKey, mode);
@@ -272,12 +308,15 @@
     if (oneNext) oneNext.hidden = true;
     if (oneQty) {
       oneQty.value = "";
-      oneQty.disabled = Boolean(line.answered && unansweredIndexes().length === 0);
-      oneQty.focus();
+      oneQty.disabled =
+        locked || Boolean(line.answered && unansweredIndexes().length === 0);
+      if (!locked) oneQty.focus();
     }
     if (oneSubmit) {
-      oneSubmit.disabled = false;
-      oneSubmit.textContent = "Check this item";
+      oneSubmit.disabled = locked;
+      oneSubmit.textContent = locked
+        ? "Locked — deadline passed"
+        : "Check this item";
     }
 
     if (!unansweredIndexes().length && lines.every((row) => row.answered)) {
@@ -454,13 +493,17 @@
 
   modal.querySelectorAll("[data-stock-take-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      if (completed || awaitingNext) return;
+      if (completed || locked || awaitingNext) return;
       setMode(btn.getAttribute("data-stock-take-mode"));
     });
   });
 
   oneSubmit?.addEventListener("click", async () => {
-    if (!url || completed || awaitingNext) return;
+    if (!url || completed || locked || awaitingNext) return;
+    if (isDeadlinePassed()) {
+      lockForDeadline();
+      return;
+    }
     const line = lines[currentOneIndex()];
     if (!line || line.answered) return;
     const qty = (oneQty?.value || "").trim();
@@ -494,7 +537,12 @@
         window.setTimeout(() => showResults(data.result), 700);
       }
     } catch (error) {
-      showError(error.message || "Could not check this item.");
+      const message = error.message || "Could not check this item.";
+      showError(message);
+      if (/deadline has passed|locked/i.test(message)) {
+        lockForDeadline();
+        return;
+      }
       oneSubmit.disabled = false;
       oneSubmit.textContent = "Check this item";
     }
@@ -503,18 +551,23 @@
   oneQty?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
+    if (locked) return;
     oneSubmit?.click();
   });
 
   oneNext?.addEventListener("click", () => {
-    if (completed) return;
+    if (completed || locked) return;
     awaitingNext = false;
     renderOneItem();
   });
 
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!url || completed) return;
+    if (!url || completed || locked) return;
+    if (isDeadlinePassed()) {
+      lockForDeadline();
+      return;
+    }
     showError("");
     if (submitBtn) {
       submitBtn.disabled = true;
@@ -526,7 +579,12 @@
       const data = await postForm(body);
       showResults(data.result || {});
     } catch (error) {
-      showError(error.message || "Could not submit stock take.");
+      const message = error.message || "Could not submit stock take.";
+      showError(message);
+      if (/deadline has passed|locked/i.test(message)) {
+        lockForDeadline();
+        return;
+      }
       if (submitBtn) {
         submitBtn.disabled = false;
         submitBtn.textContent = "Submit all";
@@ -557,8 +615,12 @@
   }
   setMode(preferredMode);
 
-  syncCountdown();
-  countdownTimer = window.setInterval(syncCountdown, 1000);
+  if (isDeadlinePassed()) {
+    lockForDeadline();
+  } else {
+    syncCountdown();
+    countdownTimer = window.setInterval(syncCountdown, 1000);
+  }
 
   const forceOpen = modal.getAttribute("data-stock-take-force-open") === "1";
   const suppressAutoOpen =

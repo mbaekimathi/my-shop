@@ -4289,3 +4289,103 @@ class SuspendedItemsPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "SUSPENDED CABLE")
         self.assertContains(response, "ACTIVE CABLE")
+
+
+class StockTakeDeadlineLockTests(TestCase):
+    def setUp(self):
+        from items.models import Item, ShopStock, StockTakeScope
+        from items.stock_take import create_stock_take
+
+        self.user = User.objects.create_user(
+            username="850011",
+            password="stock-take-pass",
+            email="stock-take@test.local",
+            first_name="STOCK",
+            last_name="TAKE",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="850011",
+            phone_country_code="+254",
+            phone_number="700000950",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="STOCK TAKE SHOP",
+            location="NAIROBI",
+            email="stock-take-shop@test.local",
+            phone_number="0700000950",
+            login_code="850111",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.item = Item.objects.create(
+            category="CABLES",
+            name="STOCK TAKE CABLE",
+            minimum_selling_price=Decimal("100.00"),
+            shop_price=Decimal("150.00"),
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(shop=self.shop, item=self.item, quantity=5)
+        self.take = create_stock_take(
+            profile=self.profile,
+            scope_mode=StockTakeScope.ITEMS,
+            categories=[],
+            item_ids=[self.item.pk],
+            shop_ids=[self.shop.pk],
+            deadline=timezone.now() + timedelta(hours=2),
+            note="Deadline lock test",
+        )
+        self.assignment = self.take.assignments.select_related("stock_take").get(
+            shop=self.shop
+        )
+        self.count = self.assignment.counts.get(item=self.item)
+
+    def test_submit_all_rejected_after_deadline(self):
+        from django.core.exceptions import ValidationError
+        from items.stock_take import submit_stock_take_counts
+
+        self.take.deadline = timezone.now() - timedelta(minutes=1)
+        self.take.save(update_fields=["deadline"])
+        with self.assertRaises(ValidationError) as ctx:
+            submit_stock_take_counts(
+                assignment=self.assignment,
+                counts={str(self.count.pk): "5"},
+                submitted_by_label="Tester",
+            )
+        self.assertIn("deadline has passed", str(ctx.exception).lower())
+        self.assignment.refresh_from_db()
+        self.count.refresh_from_db()
+        self.assertEqual(self.assignment.status, "pending")
+        self.assertIsNone(self.count.counted_qty)
+
+    def test_submit_one_rejected_after_deadline(self):
+        from django.core.exceptions import ValidationError
+        from items.stock_take import submit_stock_take_one
+
+        self.take.deadline = timezone.now() - timedelta(minutes=1)
+        self.take.save(update_fields=["deadline"])
+        with self.assertRaises(ValidationError) as ctx:
+            submit_stock_take_one(
+                assignment=self.assignment,
+                count_id=self.count.pk,
+                qty="5",
+                submitted_by_label="Tester",
+            )
+        self.assertIn("deadline has passed", str(ctx.exception).lower())
+        self.count.refresh_from_db()
+        self.assertIsNone(self.count.counted_qty)
+
+    def test_submit_allowed_before_deadline(self):
+        from items.stock_take import submit_stock_take_counts
+
+        result = submit_stock_take_counts(
+            assignment=self.assignment,
+            counts={str(self.count.pk): "5"},
+            submitted_by_label="Tester",
+        )
+        self.assignment.refresh_from_db()
+        self.assertEqual(self.assignment.status, "submitted")
+        self.assertEqual(result["assignment_id"], self.assignment.pk)

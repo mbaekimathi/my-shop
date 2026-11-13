@@ -6,7 +6,19 @@
   "use strict";
 
   const modal = document.querySelector("[data-modal='print-stock']");
-  if (!modal) return;
+
+  // From Stock Settings sidebar: jump to Current Stock with ?print=1 when modal is absent.
+  if (!modal) {
+    document.querySelectorAll('[data-modal-open="print-stock"]').forEach((trigger) => {
+      trigger.addEventListener("click", (event) => {
+        const href = trigger.getAttribute("data-href");
+        if (!href) return;
+        event.preventDefault();
+        window.location.assign(href);
+      });
+    });
+    return;
+  }
 
   const form = modal.querySelector("[data-stock-print-form]");
   const printUrl = modal.getAttribute("data-stock-print-url") || "";
@@ -207,6 +219,22 @@
       closeModal();
     });
   });
+
+  // Open from Stock Settings → Print stock (?print=1), then clean the URL.
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("print") === "1") {
+      openModal();
+      params.delete("print");
+      const query = params.toString();
+      const next = `${window.location.pathname}${query ? `?${query}` : ""}${
+        window.location.hash || ""
+      }`;
+      window.history.replaceState({}, "", next);
+    }
+  } catch (_err) {
+    /* ignore */
+  }
 
   form?.addEventListener("change", (event) => {
     const name = event.target?.name;

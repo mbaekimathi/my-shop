@@ -19,6 +19,23 @@
     btn.addEventListener("click", () => setCreateOpen(false));
   });
 
+  const editRoot = root.querySelector("[data-stock-take-edit]");
+  const editPanel = editRoot?.querySelector("[data-stock-take-edit-panel]");
+  const editOpen = editRoot?.querySelector("[data-stock-take-edit-open]");
+  const setEditOpen = (open) => {
+    if (!editRoot || !editPanel || !editOpen) return;
+    editPanel.hidden = !open;
+    editOpen.hidden = open;
+    editRoot.classList.toggle("is-open", open);
+    if (open) {
+      editPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+  editOpen?.addEventListener("click", () => setEditOpen(true));
+  editRoot?.querySelectorAll("[data-stock-take-edit-close]").forEach((btn) => {
+    btn.addEventListener("click", () => setEditOpen(false));
+  });
+
   const forms = [...root.querySelectorAll("[data-stock-take-form]")];
   forms.forEach((form) => {
     const scopeInputs = form.querySelectorAll("[data-stock-take-scope]");

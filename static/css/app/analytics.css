@@ -1,4 +1,4 @@
-/* MY-SHOP app — analytics.css (split from app.css; cascade order preserved) */
+/* MY-SHOP app ? analytics.css (split from app.css; cascade order preserved) */
 
 .ax {
   display: grid;
@@ -2323,7 +2323,7 @@
   color: color-mix(in srgb, var(--accent) 40%, var(--text-strong));
 }
 
-/* Quad cells — qty · amount · pct · day in one shop column (item report). */
+/* Quad cells ? qty ? amount ? pct ? day in one shop column (item report). */
 .ax-pair--quad,
 .ax-th-pair--quad,
 .ax-th-pair-cols--quad {
@@ -2520,7 +2520,7 @@
   white-space: nowrap;
 }
 
-/* Readable P&L matrix — few analytical columns, no ultra-dense squeeze. */
+/* Readable P&L matrix ? few analytical columns, no ultra-dense squeeze. */
 @media (min-width: 900px) {
   .ax-table--pl {
     table-layout: auto;
@@ -2682,7 +2682,7 @@
   }
 }
 
-/* Analytics list tables — scrollable rows/columns, sticky label column. */
+/* Analytics list tables ? scrollable rows/columns, sticky label column. */
 .ax--list-table .ax-kpis {
   display: flex;
   flex-wrap: nowrap;
@@ -2905,7 +2905,7 @@
   background: color-mix(in srgb, var(--panel-muted) 75%, var(--surface));
 }
 
-/* Analytics list tables — readable column spacing on desktop. */
+/* Analytics list tables ? readable column spacing on desktop. */
 @media (min-width: 900px) {
   .ax--list-table .ax-table--shops,
   .ax--list-table .ax-table--items,
@@ -2978,7 +2978,7 @@
     display: none;
   }
 
-  /* Quad cells stay four-across (qty · amt · % · day) in list tables. */
+  /* Quad cells stay four-across (qty ? amt ? % ? day) in list tables. */
   .ax--list-table .ax-table th.ax-th--pair:has(.ax-th-pair--quad),
   .ax--list-table .ax-table td.ax-cell--pair:has(.ax-pair--quad) {
     width: 13.4rem;
@@ -3065,7 +3065,7 @@
   }
 }
 
-/* Analytics list tables — flat cells, tone via text color only. */
+/* Analytics list tables ? flat cells, tone via text color only. */
 .ax--list-table .ax-table .ax-pair.is-good .ax-pair-amt {
   background: transparent;
   box-shadow: none;
@@ -3270,7 +3270,7 @@
   }
 }
 
-/* Sales — shop summary matrix; columns keep readable width and scroll sideways. */
+/* Sales ? shop summary matrix; columns keep readable width and scroll sideways. */
 .ax--list-table[data-ax-section="sales"] {
   width: 100%;
   min-width: 0;
@@ -3457,7 +3457,7 @@
   }
 }
 
-/* Sales matrix — keep readable column widths and scroll sideways when needed. */
+/* Sales matrix ? keep readable column widths and scroll sideways when needed. */
 .ax--list-table[data-ax-section="sales"] .ax-table-wrap--list,
 .ax--list-table[data-ax-section="sales"] .ax-table-wrap--scroll {
   overflow-x: auto;
@@ -3777,7 +3777,7 @@
   }
 }
 
-/* Items — profit summary, searchable shop matrix. */
+/* Items ? profit summary, searchable shop matrix. */
 .ax--list-table[data-ax-section="items"] {
   width: 100%;
   min-width: 0;
@@ -3910,7 +3910,7 @@
   background: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
-/* Stock — inventory summary, searchable shop matrix. */
+/* Stock ? inventory summary, searchable shop matrix. */
 .ax--list-table[data-ax-section="stock"] {
   width: 100%;
   min-width: 0;
@@ -4049,7 +4049,7 @@
   background: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
-/* Credits — outstanding balance summary, searchable client matrix. */
+/* Credits ? outstanding balance summary, searchable client matrix. */
 .ax--list-table[data-ax-section="credits"] {
   width: 100%;
   min-width: 0;
@@ -4224,7 +4224,7 @@
   }
 }
 
-/* Client account — summary board + searchable receipt ledger. */
+/* Client account ? summary board + searchable receipt ledger. */
 .ax--list-table[data-ax-section="client-account"] {
   width: 100%;
   min-width: 0;
@@ -5140,7 +5140,7 @@
   background: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
-/* Suppliers / expenses — modern matrix (matches stock & credits). */
+/* Suppliers / expenses ? modern matrix (matches stock & credits). */
 .ax--list-table[data-ax-section="suppliers"],
 .ax--list-table[data-ax-section="expenses"] {
   width: 100%;
@@ -5437,7 +5437,7 @@
   }
 }
 
-/* Balances — grouped till KPIs, banded shop matrix, session ledger. */
+/* Balances ? grouped till KPIs, banded shop matrix, session ledger. */
 .ax--list-table[data-ax-section="balances"] {
   width: 100%;
   min-width: 0;
@@ -6012,7 +6012,7 @@
   color: var(--mist-dim);
 }
 
-/* —— Supplier / expense ledger pages —— */
+/* ?? Supplier / expense ledger pages ?? */
 .workspace-main:has(.ax--ledger) {
   width: min(1120px, calc(100% - 2rem));
   max-width: 1120px;
@@ -6187,7 +6187,7 @@
   font-weight: 700;
 }
 
-/* Receipts list — filter toolbar; card-stack on phone. */
+/* Receipts list ? filter toolbar; card-stack on phone. */
 [data-ax-section="receipts-list"] .ax-top-main {
   align-items: flex-start;
 }
@@ -6236,7 +6236,7 @@
   }
 }
 
-/* Confirm receipts — modern responsive workspace. */
+/* Confirm receipts ? modern responsive workspace. */
 .workspace-main:has(.ax--confirm[data-ax-section="confirm-receipts"]) {
   width: min(76rem, calc(100% - 2rem));
   max-width: 100%;
@@ -7219,7 +7219,7 @@
   }
 }
 
-/* Return receipts — same compact list layout as confirm receipts. */
+/* Return receipts ? same compact list layout as confirm receipts. */
 .ax--list-table[data-ax-section="return-receipts"] .ax-top-main {
   align-items: flex-start;
 }
@@ -8009,9 +8009,9 @@
   }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   List-table pages — unified worksheet look (matches .ovs cards).
-   ───────────────────────────────────────────────────────────── */
+/* ?????????????????????????????????????????????????????????????
+   List-table pages ? unified worksheet look (matches .ovs cards).
+   ????????????????????????????????????????????????????????????? */
 
 .ax--list-table .ax-card {
   display: grid;
@@ -8080,7 +8080,7 @@
   background: color-mix(in srgb, var(--teal) 8%, var(--surface));
 }
 
-/* Till boards + summary tiles — same card chrome as the sheet cards. */
+/* Till boards + summary tiles ? same card chrome as the sheet cards. */
 .ax--list-table .ax-till-card {
   border-radius: 14px;
   box-shadow:
@@ -8088,7 +8088,7 @@
     0 10px 24px rgba(8, 24, 28, 0.05);
 }
 
-/* ── List-table responsive polish — PC / tablet / mobile ── */
+/* ?? List-table responsive polish ? PC / tablet / mobile ?? */
 @media (max-width: 899px) {
   /* Keep card titles + hints from squeezing on tablet. */
   .ax--list-table .ax-card-head {
@@ -8125,18 +8125,18 @@
   }
 }
 
-/* Wide PC screens — give dense shop matrices more room (matches .ovs). */
+/* Wide PC screens ? give dense shop matrices more room (matches .ovs). */
 @media (min-width: 1400px) {
   .workspace-main:has(.ax--list-table .ax-table--shops) {
     width: min(1440px, calc(100% - 2rem));
   }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Mobile (≤699px): tables collapse into stacked cards.
-   Each td carries data-label → rendered as "Label  value" rows;
+/* ?????????????????????????????????????????????????????????????
+   Mobile (?699px): tables collapse into stacked cards.
+   Each td carries data-label ? rendered as "Label  value" rows;
    the first cell becomes the card's title.
-   ───────────────────────────────────────────────────────────── */
+   ????????????????????????????????????????????????????????????? */
 @media (max-width: 699px) {
   .ax--list-table .ax-table-wrap,
   .ax--list-table .ax-table-wrap--scroll,
@@ -8276,7 +8276,7 @@
 }
 
 @media (max-width: 699px) {
-  /* Card mode: per-cell band/zebra tints look patchy — clear them,
+  /* Card mode: per-cell band/zebra tints look patchy ? clear them,
      tint the row card itself instead. */
   .ax--list-table .ax-table tbody tr:nth-child(n) td {
     background: transparent;
@@ -8301,7 +8301,7 @@
   }
 }
 
-/* ── Analytics settings ─────────────────────────────────────── */
+/* ?? Analytics settings ??????????????????????????????????????? */
 
 .ax--settings {
   gap: 1rem;
@@ -8854,5 +8854,404 @@ body.ax-credit-due-open {
     justify-items: stretch;
     grid-template-columns: 1fr auto;
     align-items: center;
+  }
+}
+
+/* =============================================================================
+   Quiet data mode ? less chrome, numbers first. No logic changes; display only.
+   ============================================================================= */
+
+.ax {
+  gap: 0.65rem;
+}
+
+.ax-top {
+  gap: 0.45rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.ax:not(.ax--account):not(.ax--ledger) .ax-lead,
+.ax-insights,
+.ax-charts,
+.ax-band-legend,
+.ax-card-hint,
+.ax-card-sub,
+.ax-scroll-hint,
+.ax-spark,
+.ax-summary-hero-hint,
+.ax-summary-tile-hint,
+.ax-till-metric-hint,
+.ax-section-body,
+.ax-section-open,
+.ax-mini-bars,
+.ax-kpi em,
+.ax-alert-action,
+.ax-settings-kicker,
+.ax-settings-choice-points,
+.ax-settings-choice-summary,
+.ax-settings-note,
+.ax-settings-hint,
+.ax-settings-panel-head p {
+  display: none !important;
+}
+
+.ax--account .ax-lead,
+.ax--ledger .ax-lead {
+  font-size: 0.74rem;
+  line-height: 1.3;
+  color: var(--mist-dim);
+}
+
+.ax-account-kicker {
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+}
+
+.ax-title h2 {
+  font-size: clamp(1rem, 1.8vw, 1.15rem);
+}
+
+.ax-period {
+  padding: 0.12rem 0.45rem;
+  border-radius: 6px;
+  font-size: 0.68rem;
+}
+
+.ax-filters {
+  gap: 0.3rem;
+}
+
+.ax-filters select,
+.ax-filters input {
+  min-height: 1.95rem;
+  padding: 0.25rem 0.45rem;
+  border-radius: 7px;
+  font-size: 0.78rem;
+}
+
+.ax-apply {
+  min-height: 1.95rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 7px;
+  font-size: 0.78rem;
+}
+
+.ax-alert {
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  gap: 0.15rem;
+}
+
+.ax-trends {
+  gap: 0.4rem;
+}
+
+.ax-trend-card {
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  gap: 0.1rem;
+}
+
+.ax-summary-board {
+  gap: 0.45rem;
+}
+
+.ax-summary-hero {
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+}
+
+.ax-summary-hero-value {
+  font-size: clamp(1.15rem, 2.2vw, 1.45rem);
+}
+
+.ax-summary-tiles {
+  gap: 0.4rem;
+}
+
+.ax-summary-tile {
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  gap: 0.4rem;
+}
+
+.ax-summary-tile i {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.ax-kpis {
+  gap: 0.4rem;
+}
+
+.ax-kpi {
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+}
+
+.ax-kpi em {
+  display: none !important;
+}
+
+.ax-till-board {
+  gap: 0.45rem;
+}
+
+.ax-till-card {
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+}
+
+.ax-sections {
+  gap: 0.4rem;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+
+.ax-section {
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  gap: 0.15rem;
+}
+
+.ax-section-value {
+  font-size: 0.98rem;
+}
+
+.ax-card {
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.ax-card-head {
+  padding: 0.55rem 0.7rem 0.35rem;
+  gap: 0.35rem;
+}
+
+.ax-card-head h3 {
+  font-size: 0.88rem;
+}
+
+.ax-grid {
+  gap: 0.55rem;
+}
+
+.ax-grid--tables {
+  gap: 0.55rem;
+}
+
+/* Settings: keep the choice, drop the essay */
+.ax-settings-choice-eyebrow {
+  font-size: 0.65rem;
+}
+
+.ax-settings-choice {
+  padding: 0.7rem 0.75rem;
+}
+
+.ax-settings-panel-head h3 {
+  margin: 0;
+}
+
+.ax--settings .ax-lead {
+  display: none !important;
+}
+
+.ax-receipt-scope,
+.ovs-filters .ax-receipt-scope {
+  padding: 0.1rem;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.ax-receipt-scope-ui {
+  min-height: 1.55rem;
+  padding: 0.12rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.ax-receipt-scope-ui i,
+.ax-receipt-scope-ui svg {
+  display: none;
+}
+
+/* Wider frame for data sheets on tablet+ */
+.workspace-main:has(.ax),
+.workspace-main:has(.ovs),
+.workspace-main:has(.deliv) {
+  width: min(1440px, calc(100% - 1.5rem));
+}
+
+@media (max-width: 1199px) {
+  .workspace-main:has(.ax),
+  .workspace-main:has(.ovs),
+  .workspace-main:has(.deliv) {
+    width: calc(100% - 1.25rem);
+    max-width: none;
+  }
+}
+
+/* -- Tablet --------------------------------------------------- */
+@media (max-width: 1100px) {
+  .ax-summary-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ax-charts {
+    display: none !important;
+  }
+
+  .ax-top-main {
+    align-items: stretch;
+  }
+
+  .ax-filters {
+    width: 100%;
+  }
+}
+
+/* -- Phone + small tablet ------------------------------------- */
+@media (max-width: 720px) {
+  .ax {
+    gap: 0.55rem;
+  }
+
+  .ax-top {
+    padding: 0.55rem 0.6rem;
+  }
+
+  .ax-top-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax-top-actions {
+    width: 100%;
+  }
+
+  .ax-top-actions .ax-apply {
+    flex: 1 1 auto;
+  }
+
+  .ax-filters {
+    width: 100%;
+  }
+
+  .ax-filters select[name="shop_id"],
+  .ax-filters select[name="item_id"],
+  .ax-filters select[name="receipt_kind"],
+  .ax-filters select[name="status"] {
+    flex: 1 1 100%;
+  }
+
+  .ax-filters input[type="date"],
+  .ax-filters input[type="month"],
+  .ax-filters input[type="number"] {
+    flex: 1 1 7.5rem;
+    width: auto;
+    min-width: 0;
+  }
+
+  .ax-filters .ax-apply {
+    flex: 1 1 auto;
+  }
+
+  .ax-summary-hero {
+    padding: 0.55rem 0.65rem;
+  }
+
+  .ax-summary-tiles {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ax-summary-tile-value {
+    font-size: 0.92rem;
+  }
+
+  .ax-kpis:not(.ax-kpis--dynamic) {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ax-trends {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ax-till-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .ax-card-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax-table-search {
+    width: 100%;
+  }
+
+  .ax-table-search input {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .ax-summary-tiles,
+  .ax-trends {
+    grid-template-columns: 1fr;
+  }
+
+  .ax:not(.ax--list-table) .ax-kpis {
+    grid-template-columns: 1fr;
+  }
+
+  .ax-period {
+    max-width: 100%;
+  }
+
+  .ax-top-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem;
+  }
+
+  .ax-top-actions .ax-apply {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Trade detail drill-down ? quieter + fluid */
+.ax--trade-detail {
+  max-width: none;
+  gap: 0.65rem;
+  padding-bottom: 0.75rem;
+}
+
+.ax--trade-detail .td-kicker {
+  display: none;
+}
+
+.ax--trade-detail .td-head-copy h1 {
+  font-size: clamp(1.05rem, 2.5vw, 1.3rem);
+}
+
+.ax--trade-detail .td-balance {
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: none;
+}
+
+@media (max-width: 720px) {
+  .ax--trade-detail .td-head-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ax--trade-detail .td-balance {
+    grid-template-columns: 1fr;
   }
 }

@@ -384,6 +384,274 @@
 
   });
 
+
+
+  const workspaceRoot = document.querySelector("[data-workspace]");
+
+  const approvalsStatusUrl = workspaceRoot?.dataset?.hrApprovalsStatusUrl || "";
+
+  if (approvalsStatusUrl) {
+
+    const POLL_MS = 12000;
+
+    let lastCount = null;
+
+    let pollTimer = null;
+
+
+
+    const pushApprovalsToast = (text) => {
+
+      let host = document.querySelector("[data-workspace-toast]");
+
+      if (!host) {
+
+        host = document.createElement("div");
+
+        host.className = "workspace-toast";
+
+        host.setAttribute("role", "status");
+
+        host.setAttribute("aria-live", "polite");
+
+        host.setAttribute("data-workspace-toast", "");
+
+        document.querySelector(".workspace-frame")?.appendChild(host);
+
+      }
+
+      let list = host.querySelector(".message-list");
+
+      if (!list) {
+
+        list = document.createElement("ul");
+
+        list.className = "message-list workspace-messages";
+
+        host.appendChild(list);
+
+      }
+
+      const item = document.createElement("li");
+
+      item.className = "workspace-toast__item workspace-toast__item--warning";
+
+      item.dataset.toastDuration = "4500";
+
+      item.innerHTML = `<span class="workspace-toast__text"></span>`;
+
+      item.querySelector(".workspace-toast__text").textContent = text;
+
+      list.appendChild(item);
+
+      window.setTimeout(() => item.remove(), 4500);
+
+    };
+
+
+
+    const updateApprovalsBadges = (count, { notify = false } = {}) => {
+
+      const n = Math.max(0, Number(count) || 0);
+
+      const label =
+
+        n === 1 ? "1 pending approval" : `${n} pending approvals`;
+
+
+
+      document.querySelectorAll("[data-hr-approvals-nav-badge]").forEach((el) => {
+
+        el.textContent = String(n);
+
+        if (n < 1) el.setAttribute("hidden", "");
+
+        else el.removeAttribute("hidden");
+
+        el.setAttribute("aria-label", label);
+
+      });
+
+
+
+      const nav = document.querySelector("[data-hr-approvals-nav]");
+
+      if (nav) {
+
+        nav.classList.toggle("has-live-badge", n > 0);
+
+      }
+
+
+
+      document.querySelectorAll("[data-hr-approvals-count]").forEach((el) => {
+
+        el.textContent = String(n);
+
+      });
+
+
+
+      document.querySelectorAll("[data-hr-approvals-stat]").forEach((el) => {
+
+        if (n < 1) el.setAttribute("hidden", "");
+
+        else el.removeAttribute("hidden");
+
+      });
+
+
+
+      if (notify && n > 0) {
+
+        const message =
+
+          n === 1
+
+            ? "1 employee is waiting for approval."
+
+            : `${n} employees are waiting for approval.`;
+
+        pushApprovalsToast(message);
+
+        if ("Notification" in window && Notification.permission === "granted") {
+
+          try {
+
+            new Notification("Employee approvals", {
+
+              body: message,
+
+              tag: "hr-approvals",
+
+            });
+
+          } catch (_err) {
+
+            /* ignore */
+
+          }
+
+        } else if (
+
+          "Notification" in window &&
+
+          Notification.permission === "default"
+
+        ) {
+
+          Notification.requestPermission().catch(() => {});
+
+        }
+
+      }
+
+    };
+
+
+
+    const pollApprovals = async () => {
+
+      if (document.hidden) return;
+
+      try {
+
+        const response = await fetch(approvalsStatusUrl, {
+
+          headers: {
+
+            Accept: "application/json",
+
+            "X-Requested-With": "XMLHttpRequest",
+
+          },
+
+          credentials: "same-origin",
+
+        });
+
+        if (response.status === 401 || response.status === 403) {
+
+          if (pollTimer) {
+
+            window.clearInterval(pollTimer);
+
+            pollTimer = null;
+
+          }
+
+          return;
+
+        }
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        if (!data?.ok) return;
+
+        const nextCount =
+
+          typeof data.pending_count === "number" ? data.pending_count : 0;
+
+        const increased =
+
+          lastCount !== null && nextCount > lastCount;
+
+        updateApprovalsBadges(nextCount, { notify: increased });
+
+        if (
+
+          increased &&
+
+          document.querySelector(".item-panel--approvals")
+
+        ) {
+
+          window.setTimeout(() => window.location.reload(), 800);
+
+        }
+
+        lastCount = nextCount;
+
+      } catch (_err) {
+
+        /* ignore transient poll errors */
+
+      }
+
+    };
+
+
+
+    const seedBadge = document.querySelector("[data-hr-approvals-nav-badge]");
+
+    if (seedBadge && !seedBadge.hasAttribute("hidden")) {
+
+      lastCount = Number(seedBadge.textContent) || 0;
+
+    } else {
+
+      const seedCount = document.querySelector("[data-hr-approvals-count]");
+
+      lastCount = seedCount ? Number(seedCount.textContent) || 0 : 0;
+
+    }
+
+
+
+    pollApprovals();
+
+    pollTimer = window.setInterval(pollApprovals, POLL_MS);
+
+    document.addEventListener("visibilitychange", () => {
+
+      if (!document.hidden) pollApprovals();
+
+    });
+
+  }
+
 })();
 
 

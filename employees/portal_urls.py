@@ -318,6 +318,11 @@ urlpatterns = [
     ),
     path("it-support/marketing/", views.marketing_links, name="marketing_links"),
     path(
+        "<role_segment:role_segment>/hr-management/approvals/status/",
+        hr_views.hr_pending_approvals_status,
+        name="hr_pending_approvals_status",
+    ),
+    path(
         "<role_segment:role_segment>/hr-management/approvals/<int:page>/",
         hr_views.hr_employee_approvals,
         name="hr_employee_approvals_page",

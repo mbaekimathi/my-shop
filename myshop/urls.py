@@ -16,6 +16,7 @@ urlpatterns = [
     path("", include("core.urls")),
     path("", include(employee_patterns)),
     path("pos/", include("pos.urls")),
+    path("chatbot/", include("chat.urls")),
 ]
 
 if settings.DEBUG or settings.SERVE_MEDIA_IN_PRODUCTION:

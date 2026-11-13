@@ -616,3 +616,68 @@
     background: color-mix(in srgb, var(--teal) 5%, var(--surface));
   }
 }
+
+/* Quiet data mode ? overview */
+.ovs-lead {
+  display: none !important;
+}
+
+.ovs {
+  gap: 0.85rem;
+}
+
+.ovs-head {
+  gap: 0.5rem 1rem;
+}
+
+.ovs-title h2 {
+  font-size: 1.05rem;
+}
+
+.ovs-sheet {
+  padding: 0.65rem 0.7rem 0.6rem;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.ovs-sheet-title {
+  font-size: 0.86rem;
+  margin-bottom: 0.35rem;
+}
+
+.ovs-note {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  .ovs-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ovs-filters {
+    width: 100%;
+  }
+
+  .ovs-filters select[name="shop_id"] {
+    flex: 1 1 100%;
+  }
+
+  .ovs-filters input[type="date"],
+  .ovs-filters input[type="month"],
+  .ovs-filters input[type="number"] {
+    flex: 1 1 7.5rem;
+    width: auto;
+    min-width: 0;
+  }
+
+  .ovs-apply {
+    flex: 1 1 auto;
+  }
+}
+
+@media (min-width: 700px) and (max-width: 1199px) {
+  .workspace-main:has(.ovs) {
+    width: calc(100% - 1.25rem);
+  }
+}

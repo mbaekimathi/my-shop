@@ -1,0 +1,197 @@
+{% extends "chat/base.html" %}
+{% load static %}
+
+{% block title %}All shops — {{ company_name|default:"MY-SHOP" }} Chat{% endblock %}
+{% block body_class %}page-chat{% endblock %}
+
+{% block body %}
+<section
+  class="comms wa-app all-app"
+  data-all-chat-url="{% url 'chat:api_all_chat' %}"
+  data-receipt-items-base="{% url 'chat:api_receipt_items' receipt_id=0 %}"
+>
+  <header class="wa-app__bar">
+    <div class="wa-app__brand">
+      <button type="button" class="comms-icon-btn" data-all-back data-fallback="{% url 'chat:app' %}" aria-label="Back" title="Back">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <span class="comms-avatar wa-app__logo" data-tone="1" aria-hidden="true"><i data-lucide="layers"></i></span>
+      <div>
+        <strong>All shops</strong>
+        <span>Combined view · staff ({{ employee.role|default:"employee" }})</span>
+      </div>
+    </div>
+    <div class="wa-app__bar-actions">
+      <button type="button" class="comms-icon-btn" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode">
+        <i data-lucide="moon" data-icon-dark></i><i data-lucide="sun" data-icon-light></i>
+      </button>
+      <form method="post" action="{% url 'chat:logout' %}" style="display:inline">
+        {% csrf_token %}
+        <button type="submit" class="comms-icon-btn" title="Sign out" aria-label="Sign out">
+          <i data-lucide="log-out"></i>
+        </button>
+      </form>
+    </div>
+  </header>
+
+  <div class="wa-app__shell">
+    <aside class="wa-app__list all-list">
+      <div class="wa-app__list-tools">
+        <span class="all-shops-title"><i data-lucide="store" aria-hidden="true"></i> Shops</span>
+      </div>
+      <div class="wa-app__chats all-shops" role="list">
+        <a class="wa-chat is-active" href="{% url 'chat:all_shops' %}">
+          <span class="comms-avatar" data-tone="1" aria-hidden="true"><i data-lucide="layers"></i></span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>All shops</strong></span>
+            <span class="wa-chat__preview">Combined view</span>
+          </span>
+        </a>
+        {% for shop in shops %}
+        <form method="post" action="{% url 'chat:pick_shop' %}">
+          {% csrf_token %}
+          <input type="hidden" name="shop_id" value="{{ shop.id }}">
+          <button type="submit" class="wa-chat" title="Open {{ shop.name }}">
+            <span class="comms-avatar" data-tone="{{ shop.tone }}" aria-hidden="true">{{ shop.initials }}</span>
+            <span class="wa-chat__main">
+              <span class="wa-chat__top"><strong>{{ shop.name }}</strong></span>
+              <span class="wa-chat__preview">{{ shop.location }}</span>
+            </span>
+            <i data-lucide="chevron-right" aria-hidden="true"></i>
+          </button>
+        </form>
+        {% empty %}
+        <p class="wa-app__none">No active shops found.</p>
+        {% endfor %}
+      </div>
+
+      <div class="wa-fabs" data-all-fabs>
+        <button type="button" class="wa-fab" data-fab="sale" title="New sale" aria-label="New sale">
+          <i data-lucide="shopping-cart" aria-hidden="true"></i>
+        </button>
+        <div class="wa-fab-group" data-fab-others>
+          <div class="wa-fab-more" data-fab-more hidden>
+            <button type="button" data-fab="stockin">
+              <i data-lucide="package-plus" aria-hidden="true"></i><span>Stock in</span>
+            </button>
+            <button type="button" data-fab="transfer">
+              <i data-lucide="arrow-right-left" aria-hidden="true"></i><span>Transfer</span>
+            </button>
+            <button type="button" data-fab="trade_out">
+              <i data-lucide="repeat" aria-hidden="true"></i><span>Trade out</span>
+            </button>
+            <button type="button" data-fab="trade_in">
+              <i data-lucide="repeat" aria-hidden="true"></i><span>Trade in</span>
+            </button>
+            <button type="button" data-fab="expense">
+              <i data-lucide="wallet" aria-hidden="true"></i><span>Expense</span>
+            </button>
+            <button type="button" data-fab="receipts">
+              <i data-lucide="receipt" aria-hidden="true"></i><span>Receipts</span>
+            </button>
+          </div>
+          <button type="button" class="wa-fab" data-fab-others-toggle title="Others" aria-label="Others" aria-expanded="false" aria-haspopup="true">
+            <i data-lucide="ellipsis" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="wa-menu all-menu" id="allFabMenu" hidden>
+        <span class="all-menu__title" id="allFabTitle">Pick a shop</span>
+        {% for shop in shops %}
+        <button type="button" data-shop-pick="{{ shop.id }}">
+          <i data-lucide="store" aria-hidden="true"></i><span>{{ shop.name }}</span>
+        </button>
+        {% endfor %}
+      </div>
+      <form method="post" action="{% url 'chat:pick_shop' %}" id="allFabForm" hidden>
+        {% csrf_token %}
+        <input type="hidden" name="shop_id" id="allFabShop">
+        <input type="hidden" name="fab" id="allFabMode">
+      </form>
+    </aside>
+
+    <section class="wa-app__chat">
+      <div class="all-sugs" id="allSugs">
+        <button type="button" class="wa-sug" data-sug="Sales">Sales</button>
+        <button type="button" class="wa-sug" data-sug="Items">Items</button>
+        <button type="button" class="wa-sug" data-sug="Credits">Credits</button>
+        <button type="button" class="wa-sug" data-sug="Expenses">Expenses</button>
+        <button type="button" class="wa-sug" data-sug="Stock movement">Stock movement</button>
+        <button type="button" class="wa-sug" data-sug="Summary">Summary</button>
+      </div>
+
+      <div class="wa-period all-period" id="allPeriod" hidden>
+        <span class="wa-period__topic" id="allPeriodTopic"></span>
+        <span class="wa-period__modes" role="group" aria-label="Period type">
+          <button type="button" class="wa-period__btn is-on" data-period-mode="day">Day</button>
+          <button type="button" class="wa-period__btn" data-period-mode="period">Period</button>
+          <button type="button" class="wa-period__btn" data-period-mode="month">Month</button>
+          <button type="button" class="wa-period__btn" data-period-mode="year">Year</button>
+        </span>
+        <label class="wa-period__scope" id="allReceiptScope" hidden>
+          <span class="wa-period__scope-label">Receipts</span>
+          <select id="allReceiptStatus" aria-label="Receipt status" title="Pending or confirmed receipts">
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+          </select>
+        </label>
+        <span class="wa-period__fields">
+          <input type="date" id="allDateDay" aria-label="Pick a day" title="Day">
+          <input type="date" id="allDateFrom" aria-label="From date" title="From" hidden>
+          <input type="date" id="allDateTo" aria-label="To date" title="To" hidden>
+          <input type="month" id="allMonth" aria-label="Pick a month" title="Month" hidden>
+          <select id="allYear" aria-label="Year" title="Year" hidden></select>
+        </span>
+        <button type="button" class="wa-period__btn wa-period__btn--go" id="allPeriodGo" title="Apply" aria-label="Apply">
+          <i data-lucide="arrow-right" aria-hidden="true"></i>
+        </button>
+        <button type="button" class="wa-period__btn" id="allPeriodClose" aria-label="Close">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </div>
+
+      <main class="all-stage" id="allStage" aria-live="polite">
+        <section class="all-overview" aria-label="All shops — today">
+          <div class="all-overview__head">
+            <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+            <span>Today — all shops</span>
+          </div>
+          <div class="pick-totals">
+            <div class="pick-total"><small>Sales</small><b>{{ totals.sales }}</b></div>
+            <div class="pick-total"><small>Receipts</small><b>{{ totals.receipts }}</b></div>
+            <div class="pick-total"><small>Expenses</small><b>{{ totals.expenses }}</b></div>
+            <div class="pick-total"><small>Credit owed</small><b>{{ totals.credit }}</b></div>
+          </div>
+          <div class="wa-stats">
+            {% for row in shop_rows %}
+            <div class="wa-stats__row">
+              <span>{{ row.shop.name }} <small class="all-overview__meta">· {{ row.shop.location }} · {{ row.receipts }} sale{{ row.receipts|pluralize }} · exp {{ row.expenses_fmt }} · cr {{ row.credit_fmt }}</small></span>
+              <b>{{ row.sales_fmt }}</b>
+            </div>
+            {% empty %}
+            <p class="wa-app__none">No active shops found.</p>
+            {% endfor %}
+          </div>
+        </section>
+        <div class="wa-bubble-row is-in"><div class="wa-bubble is-in"><p><strong>All-shops assistant</strong><br>Ask about every shop combined — sales, credits, expenses, stock movement, summary.</p></div></div>
+      </main>
+
+      <form class="wa-app__composer all-composer" id="allForm">
+        {% csrf_token %}
+        <div class="comms-composer-box">
+          <input type="text" id="allInput" placeholder="Ask about all shops…" autocomplete="off" autofocus>
+        </div>
+        <button type="submit" class="comms-send-fab" aria-label="Send"><i data-lucide="send"></i></button>
+      </form>
+    </section>
+  </div>
+
+  {% include "chat/partials/app_footer.html" %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script type="application/json" id="all-init-receipt-status">{{ receipt_status_default_json|safe }}</script>
+<script defer src="{% static 'js/all.js' %}?v=17"></script>
+{% endblock %}
