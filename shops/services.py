@@ -9752,15 +9752,14 @@ def _credit_confirm_payload(receipt) -> dict:
 
 
 def _receipt_can_confirm(receipt) -> bool:
+    """Whether the Confirm action should appear (submit still enforces credit rules)."""
     if receipt.status not in {
         ShopReceiptStatus.ACTIVE,
         ShopReceiptStatus.CANCELLED,
     }:
         return False
-    if receipt.kind == ShopReceiptKind.SALE:
+    if receipt.kind in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
         return True
-    if receipt.kind == ShopReceiptKind.CREDIT:
-        return bool(credit_confirm_state(receipt)["fully_paid"])
     return False
 
 

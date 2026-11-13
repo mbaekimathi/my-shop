@@ -3241,12 +3241,13 @@ def _confirm_receipt_sale_rows(
                 )
             kind_label = "Credit" if is_credit else "Sale"
             if is_credit:
-                can_confirm = bool(credit_state and credit_state["fully_paid"]) and (
-                    is_pending or is_cancelled
-                )
+                # Show Confirm for pending credits; submit still requires full payment.
+                can_confirm = is_pending or is_cancelled
                 can_cancel = False
                 can_set_pending = False
-                can_edit_status = can_confirm
+                can_edit_status = can_confirm and bool(
+                    credit_state and credit_state["fully_paid"]
+                )
                 status_rank = (
                     0
                     if is_partial_confirmation or is_pending

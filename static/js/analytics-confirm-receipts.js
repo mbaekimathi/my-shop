@@ -880,6 +880,21 @@
     if (!targets.length) return;
 
     if (mode === "confirm") {
+      const unpaidCredits = targets.filter(
+        (row) =>
+          row.getAttribute("data-receipt-kind") === "credit" &&
+          row.getAttribute("data-credit-clear-on-confirm") !== "1"
+      );
+      if (unpaidCredits.length) {
+        const notice =
+          unpaidCredits[0].getAttribute("data-credit-confirm-notice") ||
+          "Only fully paid credits can be confirmed and cleared.";
+        window.alert(notice);
+        if (targets.length === 1) {
+          openRowDetail(unpaidCredits[0]);
+        }
+        return;
+      }
       // Always open the modal so payment time + reference can be entered
       // (required when compulsory is on; optional when off).
       if (targets.length === 1) {

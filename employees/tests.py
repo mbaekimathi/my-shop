@@ -328,7 +328,8 @@ class ConfirmSalesReceiptTests(TestCase):
         )
         self.assertEqual(partial_row["status_label"], "Partial confirmation")
         self.assertTrue(partial_row["is_partial_confirmation"])
-        self.assertFalse(partial_row["can_confirm"])
+        self.assertTrue(partial_row["can_confirm"])
+        self.assertFalse(partial_row["credit_clear_on_confirm"])
 
         full = self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-FULL")
         full.amount_paid = Decimal("100.00")

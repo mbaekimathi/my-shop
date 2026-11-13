@@ -157,11 +157,25 @@
 
   const statusClass = (status) => {
     if (status === "cancelled") return "is-cancelled";
-    if (status === "partial_return" || status === "partial" || status === "unpaid") {
+    if (
+      status === "partial_return" ||
+      status === "partial_confirmation" ||
+      status === "partial" ||
+      status === "unpaid"
+    ) {
       return "is-partial";
     }
     if (status === "confirmed") return "is-confirmed";
     return "is-pending";
+  };
+
+  const creditConfirmBlocked = (receipt = {}) => {
+    if (!(receipt.is_credit || receipt.kind === "credit")) return "";
+    if (receipt.credit_clear_on_confirm) return "";
+    return (
+      String(receipt.credit_confirm_notice || "").trim() ||
+      "Only a fully paid credit can be confirmed and cleared."
+    );
   };
 
   const renderList = (receipts, count) => {
@@ -283,7 +297,15 @@
   };
 
   const setConfirmMode = (on) => {
-    if (on && returnMode) setReturnMode(false);
+    const receipt = currentDetail?.receipt || {};
+    if (on) {
+      const blocked = creditConfirmBlocked(receipt);
+      if (blocked) {
+        window.alert(blocked);
+        return;
+      }
+      if (returnMode) setReturnMode(false);
+    }
     confirmMode = Boolean(on);
     const panel = modalBody?.querySelector("[data-confirm-panel]");
     const detailPanel = modalBody?.querySelector("[data-detail-panel]");
@@ -301,7 +323,6 @@
     const codeInput = modalBody?.querySelector("[data-confirm-login-code]");
     if (codeInput) codeInput.value = "";
     const paymentAt = modalBody?.querySelector("[data-confirm-payment-at]");
-    const receipt = currentDetail?.receipt || {};
     if (paymentAt) {
       paymentAt.value = defaultConfirmPaymentAt(receipt);
     }
@@ -314,10 +335,12 @@
         preventScroll: true,
       });
     }, 40);
+    const creditNotice = String(receipt.credit_confirm_notice || "").trim();
     setConfirmStatus(
-      receipt.require_mpesa_reference_on_confirm
-        ? "Defaults: today + print time. Enter reference number and staff 6-digit ID."
-        : "Defaults: today + print time. Enter staff 6-digit ID to confirm."
+      creditNotice ||
+        (receipt.require_mpesa_reference_on_confirm
+          ? "Defaults: today + print time. Enter reference number and staff 6-digit ID."
+          : "Defaults: today + print time. Enter staff 6-digit ID to confirm.")
     );
     syncSubmitConfirm();
     refreshIcons();
@@ -666,6 +689,22 @@
 </div>`
       : "";
 
+    const detailStatus = receipt.is_partial_confirmation
+      ? "partial_confirmation"
+      : receipt.status;
+    const creditNotice = String(receipt.credit_confirm_notice || "").trim();
+    const creditNoticeHtml = creditNotice
+      ? `<p class="shop-receipts-status${
+          receipt.is_partial_confirmation || !receipt.credit_clear_on_confirm
+            ? " is-error"
+            : ""
+        }">${escapeHtml(creditNotice)}</p>`
+      : "";
+    const isCredit = receipt.is_credit || receipt.kind === "credit";
+    const confirmLead = isCredit
+      ? "Confirming a fully paid credit clears it and converts it to a confirmed sale. Date defaults to today and time to when it was printed."
+      : "Confirm this sale. Date defaults to today and time to when it was printed — change either if needed, then confirm.";
+
     if (modalBody) {
       modalBody.innerHTML = `
 <div class="shop-receipt-detail" data-detail-panel>
@@ -675,7 +714,7 @@
         receipt.kind
       )}">${escapeHtml(receipt.kind_label)}</span>
       <span class="shop-receipt-status ${statusClass(
-        receipt.status
+        detailStatus
       )}">${escapeHtml(receipt.status_label)}</span>
     </div>
     <p class="shop-receipt-summary-when"><strong>${escapeHtml(
@@ -684,6 +723,7 @@
     <p class="shop-receipt-muted">Cashier: ${escapeHtml(
       receipt.cashier || "—"
     )}</p>
+    ${creditNoticeHtml}
   </div>
   ${ticketPreview}
   ${clientBlock}
@@ -715,6 +755,13 @@
         money(receipt.total)
       )}</dd></div>
       ${
+        isCredit
+          ? `<div><dt>Paid</dt><dd>KSh ${escapeHtml(
+              money(receipt.amount_paid)
+            )}</dd></div>`
+          : ""
+      }
+      ${
         receipt.kind === "sale"
           ? `<div><dt>Payment</dt><dd>${escapeHtml(
               receipt.payment_label || "—"
@@ -726,7 +773,7 @@
 </div>
 <div class="shop-receipt-return shop-receipt-confirm" data-confirm-panel hidden>
   <p class="shop-receipt-muted">
-    Confirm this sale. Date defaults to today and time to when it was printed — change either if needed, then confirm.
+    ${confirmLead}
     ${
       requireConfirmDetails
         ? "Reference number is compulsory."
@@ -984,6 +1031,23 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     if (!confirmVerified || code.length !== 6) {
       syncSubmitConfirm();
       return;
+    }
+    const receipt = currentDetail.receipt || {};
+    const blocked = creditConfirmBlocked(receipt);
+    if (blocked) {
+      setConfirmStatus(blocked, { error: true });
+      window.alert(blocked);
+      syncSubmitConfirm();
+      return;
+    }
+    if (receipt.is_credit || receipt.kind === "credit") {
+      const notice =
+        String(receipt.credit_confirm_notice || "").trim() ||
+        "Confirming will clear this credit fully and convert it to a confirmed sale.";
+      if (!window.confirm(`${notice}\n\nContinue?`)) {
+        syncSubmitConfirm();
+        return;
+      }
     }
     if (submitConfirmBtn) submitConfirmBtn.disabled = true;
     setConfirmStatus("Confirming receipt…");
