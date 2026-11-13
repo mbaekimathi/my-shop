@@ -125,6 +125,11 @@ urlpatterns = [
         name="my_shop_receipt_detail",
     ),
     path(
+        "my-shop/<int:shop_id>/receipts/<int:receipt_id>/confirm/",
+        shop_views.my_shop_receipt_confirm,
+        name="my_shop_receipt_confirm",
+    ),
+    path(
         "my-shop/<int:shop_id>/receipts/<int:receipt_id>/return/",
         shop_views.my_shop_receipt_return,
         name="my_shop_receipt_return",

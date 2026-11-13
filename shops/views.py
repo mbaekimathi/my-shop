@@ -110,6 +110,7 @@ from .services import (
     get_open_shop_day,
     get_shop_pos_settings,
     get_shop_receipt_detail,
+    confirm_shop_receipt,
     list_shop_day_sessions,
     list_shop_receipts,
     open_shop_day,
@@ -2685,7 +2686,7 @@ def expense_supplier_search_api(request):
 @shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_receipts(request, shop_id):
-    """Browse, reprint, and return receipts for the active shop."""
+    """Browse, reprint, confirm, and return receipts for the active shop."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return denied
@@ -2704,7 +2705,7 @@ def my_shop_receipts(request, shop_id):
         active="receipts",
         title=f"Receipts — {shop.name}",
         headline="Receipts",
-        summary=f"Search, reprint, or return receipts for {shop.name} — sales, credits, quotations, stock suppliers, and expense suppliers.",
+        summary=f"Search, reprint, confirm, or return receipts for {shop.name} — sales, credits, quotations, stock suppliers, and expense suppliers.",
         icon="receipt",
         template_name="shops/my_shop_receipts.html",
         extra_context={
@@ -2716,6 +2717,10 @@ def my_shop_receipts(request, shop_id):
             ),
             "receipt_detail_url_template": reverse(
                 "employees:my_shop_receipt_detail",
+                kwargs={"shop_id": shop.pk, "receipt_id": 0},
+            ),
+            "receipt_confirm_url_template": reverse(
+                "employees:my_shop_receipt_confirm",
                 kwargs={"shop_id": shop.pk, "receipt_id": 0},
             ),
             "receipt_return_url_template": reverse(
@@ -2840,6 +2845,86 @@ def my_shop_receipt_return(request, shop_id, receipt_id):
             {
                 "ok": False,
                 "error": errors[0] if errors else "Return failed.",
+                "errors": errors,
+            },
+            status=400,
+        )
+
+    return JsonResponse(result)
+
+
+@shop_floor_required
+@require_POST
+def my_shop_receipt_confirm(request, shop_id, receipt_id):
+    """Confirm a pending sales receipt (staff ID + optional reference / payment time)."""
+    import json
+
+    from employees.module_permissions import ensure_employee_may
+    from employees.services import invalid_staff_code_message
+
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(
+        request, profile, "receipts", as_json=True, portal_ok=True
+    )
+    if denied:
+        return denied
+
+    try:
+        if request.content_type and "application/json" in request.content_type:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        else:
+            payload = {
+                "login_code": request.POST.get("login_code"),
+                "mpesa_receipt_number": request.POST.get("mpesa_receipt_number"),
+                "payment_at": request.POST.get("payment_at"),
+            }
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return JsonResponse({"ok": False, "error": "Invalid confirm payload."}, status=400)
+
+    login_code = (payload.get("login_code") or "").strip()
+    authorising = verify_active_employee_code(login_code)
+    if authorising is None:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": invalid_staff_code_message(login_code, shop=shop),
+            },
+            status=400,
+        )
+    try:
+        ensure_employee_may(
+            authorising,
+            "my-shop",
+            "receipts",
+            message="You do not have permission to confirm receipts.",
+        )
+    except ValidationError as exc:
+        errors = _validation_errors(exc)
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": errors[0] if errors else "Permission denied.",
+                "errors": errors,
+            },
+            status=403,
+        )
+
+    try:
+        result = confirm_shop_receipt(
+            shop=shop,
+            receipt_id=receipt_id,
+            actor=authorising,
+            mpesa_receipt_number=(payload.get("mpesa_receipt_number") or "").strip(),
+            payment_at=(payload.get("payment_at") or "").strip() or None,
+        )
+    except ValidationError as exc:
+        errors = _validation_errors(exc)
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": errors[0] if errors else "Confirm failed.",
                 "errors": errors,
             },
             status=400,

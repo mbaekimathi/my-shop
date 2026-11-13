@@ -10,6 +10,7 @@
   data-verify-login-url="{{ verify_login_code_url }}"
   data-receipts-list-url="{{ receipts_list_url }}"
   data-receipt-detail-url="{{ receipt_detail_url_template }}"
+  data-receipt-confirm-url="{{ receipt_confirm_url_template }}"
   data-receipt-return-url="{{ receipt_return_url_template }}"
   data-print-relay-url="{{ print_relay_url }}"
   data-print-channels="{{ pos_flags.print_channels|join:',' }}"
@@ -154,9 +155,19 @@
         <i data-lucide="printer" aria-hidden="true"></i>
         Reprint
       </button>
+      <button type="button" class="btn btn--ghost" data-receipt-start-confirm hidden>
+        <i data-lucide="badge-check" aria-hidden="true"></i>
+        Confirm receipt
+      </button>
       <button type="button" class="btn btn--ghost" data-receipt-start-return hidden>
         <i data-lucide="undo-2" aria-hidden="true"></i>
         Return items
+      </button>
+      <button type="button" class="btn btn--ghost" data-receipt-cancel-confirm hidden>
+        Cancel
+      </button>
+      <button type="button" class="btn btn--primary" data-receipt-submit-confirm hidden disabled>
+        Confirm receipt
       </button>
       <button type="button" class="btn btn--ghost" data-receipt-cancel-return hidden>
         Cancel
@@ -173,5 +184,5 @@
 {{ block.super }}
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=20261110-no-payby"></script>
-<script defer src="{% static 'js/my-shop-receipts.js' %}?v=20261024-decimal-inputs"></script>
+<script defer src="{% static 'js/my-shop-receipts.js' %}?v=20261113-confirm-defaults"></script>
 {% endblock %}

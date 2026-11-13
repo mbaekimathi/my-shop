@@ -109,7 +109,9 @@
 
   const statusClass = (status) => {
     if (status === "cancelled") return "is-cancelled";
-    if (status === "partial_return") return "is-partial";
+    if (status === "partial_return" || status === "partial_confirmation") {
+      return "is-partial";
+    }
     if (status === "confirmed") return "is-confirmed";
     return "is-pending";
   };
@@ -389,6 +391,7 @@
   data-shop-id="${Number(row.shop_id) || 0}"
   data-receipt-source="${escapeHtml(row.source || "pos")}"
   data-receipt-number="${number}"
+  data-receipt-kind="${escapeHtml(row.kind || "sale")}"
   data-receipt-status="${status}"
   data-can-confirm="${row.can_confirm ? "1" : "0"}"
   data-can-cancel="${row.can_cancel ? "1" : "0"}"
@@ -397,6 +400,8 @@
   data-require-confirm-details="${
     row.require_mpesa_reference_on_confirm ? "1" : "0"
   }"
+  data-credit-clear-on-confirm="${row.credit_clear_on_confirm ? "1" : "0"}"
+  data-credit-confirm-notice="${escapeHtml(row.credit_confirm_notice || "")}"
   data-search-text="${searchText}"
   tabindex="0"
 >
@@ -450,12 +455,26 @@
         params.append(key, String(value));
       });
     }
-    if (!params.has("kind")) params.set("kind", "sale");
+    if (!params.has("kind")) {
+      const receiptKind = (params.get("receipt_kind") || "").trim().toLowerCase();
+      if (receiptKind === "all" || receiptKind === "any") params.set("kind", "all");
+      else if (receiptKind === "credit" || receiptKind === "credits") {
+        params.set("kind", "credit");
+      } else if (receiptKind === "sale" || receiptKind === "sales") {
+        params.set("kind", "sale");
+      } else {
+        params.set("kind", "sale");
+      }
+    }
     if (!params.has("range")) {
       const now = new Date();
-      const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-      params.set("range", "month");
-      params.set("month", month);
+      const date = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      ].join("-");
+      params.set("range", "day");
+      params.set("date", date);
     }
     const qs = params.toString();
     return qs ? `${rowsUrl}?${qs}` : rowsUrl;
@@ -681,6 +700,15 @@
     </div>
   </div>
 </div>`;
+    const creditNotice = String(receipt.credit_confirm_notice || "").trim();
+    const creditNoticeHtml = creditNotice
+      ? `<p class="shop-receipts-status${
+          receipt.is_partial_confirmation ? " is-error" : ""
+        }" data-credit-confirm-notice>${escapeHtml(creditNotice)}</p>`
+      : "";
+    const detailStatus = receipt.is_partial_confirmation
+      ? "partial_confirmation"
+      : receipt.status;
 
     if (modalBody) {
       modalBody.innerHTML = `
@@ -691,9 +719,10 @@
         (receipt.kind || "").replace(/\s+/g, "_")
       )}">${escapeHtml(receipt.kind_label || "")}</span>
       <span class="shop-receipt-status ${statusClass(
-        receipt.status
+        detailStatus
       )}">${escapeHtml(receipt.status_label || "")}</span>
     </div>
+    ${creditNoticeHtml}
     <p class="shop-receipt-summary-when"><strong>${escapeHtml(
       receipt.created_label || "—"
     )}</strong></p>
@@ -856,6 +885,23 @@
       if (targets.length === 1) {
         openConfirmWithDetails(targets[0]);
         return;
+      }
+      const creditTargets = targets.filter(
+        (row) => row.getAttribute("data-credit-clear-on-confirm") === "1"
+      );
+      if (creditTargets.length) {
+        const notice =
+          creditTargets[0].getAttribute("data-credit-confirm-notice") ||
+          "Confirming will clear selected credits fully and convert them to confirmed sales.";
+        if (
+          !window.confirm(
+            `${notice}\n\nContinue with ${creditTargets.length} credit${
+              creditTargets.length === 1 ? "" : "s"
+            }?`
+          )
+        ) {
+          return;
+        }
       }
       const needsDetails = targets.filter(rowRequiresConfirmDetails);
       if (needsDetails.length) {
@@ -1136,6 +1182,15 @@
     body.set("status", status);
     if (status === "confirmed") {
       if (!appendConfirmFields(body)) return;
+      const receipt = currentDetail.receipt || {};
+      if (receipt.is_credit || receipt.kind === "credit") {
+        const notice =
+          String(receipt.credit_confirm_notice || "").trim() ||
+          "Confirming will clear this credit fully and convert it to a confirmed sale.";
+        if (!window.confirm(`${notice}\n\nContinue?`)) {
+          return;
+        }
+      }
     }
     if (status === "cancelled") {
       const number = currentDetail?.receipt?.receipt_number || "this receipt";

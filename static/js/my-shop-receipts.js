@@ -5,6 +5,8 @@
   const listUrl = root.getAttribute("data-receipts-list-url") || "";
   const detailUrlTemplate =
     root.getAttribute("data-receipt-detail-url") || "";
+  const confirmUrlTemplate =
+    root.getAttribute("data-receipt-confirm-url") || "";
   const returnUrlTemplate =
     root.getAttribute("data-receipt-return-url") || "";
   const verifyUrl = root.getAttribute("data-verify-login-url") || "";
@@ -33,6 +35,9 @@
   const modalTitle = modal?.querySelector("[data-receipt-modal-title]");
   const modalActions = modal?.querySelector("[data-receipt-modal-actions]");
   const reprintBtn = modal?.querySelector("[data-receipt-reprint]");
+  const startConfirmBtn = modal?.querySelector("[data-receipt-start-confirm]");
+  const cancelConfirmBtn = modal?.querySelector("[data-receipt-cancel-confirm]");
+  const submitConfirmBtn = modal?.querySelector("[data-receipt-submit-confirm]");
   const startReturnBtn = modal?.querySelector("[data-receipt-start-return]");
   const cancelReturnBtn = modal?.querySelector("[data-receipt-cancel-return]");
   const confirmReturnBtn = modal?.querySelector("[data-receipt-confirm-return]");
@@ -43,8 +48,10 @@
   let verifyTimer = null;
   let verifySeq = 0;
   let verified = false;
+  let confirmVerified = false;
   let currentDetail = null;
   let returnMode = false;
+  let confirmMode = false;
   let printPayload = null;
 
   const todayIso = () => {
@@ -53,6 +60,17 @@
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
+  };
+
+  // Default confirm moment: today's date + print clock time (editable).
+  const defaultConfirmPaymentAt = (receipt = {}) => {
+    const saved = String(receipt.confirmed_payment_at_local || "").trim();
+    if (saved) return saved;
+    const printed = String(receipt.created_at_local || "").trim();
+    const printTime = printed.includes("T")
+      ? printed.split("T")[1].slice(0, 5)
+      : "";
+    return printTime ? `${todayIso()}T${printTime}` : `${todayIso()}T00:00`;
   };
 
   const monthIso = () => todayIso().slice(0, 7);
@@ -230,7 +248,9 @@
     currentDetail = null;
     printPayload = null;
     returnMode = false;
+    confirmMode = false;
     verified = false;
+    confirmVerified = false;
   };
 
   const openModal = () => {
@@ -240,19 +260,79 @@
     refreshIcons();
   };
 
-  const setReturnMode = (on) => {
-    returnMode = Boolean(on);
-    if (startReturnBtn) startReturnBtn.hidden = returnMode || !currentDetail?.receipt?.can_return;
+  const syncActionButtons = () => {
+    const receipt = currentDetail?.receipt || {};
+    const busyMode = returnMode || confirmMode;
+    if (reprintBtn) reprintBtn.hidden = busyMode;
+    if (startConfirmBtn) {
+      startConfirmBtn.hidden = busyMode || !receipt.can_confirm;
+    }
+    if (cancelConfirmBtn) cancelConfirmBtn.hidden = !confirmMode;
+    if (submitConfirmBtn) {
+      submitConfirmBtn.hidden = !confirmMode;
+      if (!confirmMode) submitConfirmBtn.disabled = true;
+    }
+    if (startReturnBtn) {
+      startReturnBtn.hidden = busyMode || !receipt.can_return;
+    }
     if (cancelReturnBtn) cancelReturnBtn.hidden = !returnMode;
     if (confirmReturnBtn) {
       confirmReturnBtn.hidden = !returnMode;
-      confirmReturnBtn.disabled = true;
+      if (!returnMode) confirmReturnBtn.disabled = true;
     }
-    if (reprintBtn) reprintBtn.hidden = returnMode;
+  };
+
+  const setConfirmMode = (on) => {
+    if (on && returnMode) setReturnMode(false);
+    confirmMode = Boolean(on);
+    const panel = modalBody?.querySelector("[data-confirm-panel]");
+    const detailPanel = modalBody?.querySelector("[data-detail-panel]");
+    const returnPanel = modalBody?.querySelector("[data-return-panel]");
+    if (panel) panel.hidden = !confirmMode;
+    if (detailPanel) detailPanel.hidden = confirmMode || returnMode;
+    if (returnPanel && confirmMode) returnPanel.hidden = true;
+    syncActionButtons();
+    if (!confirmMode) {
+      confirmVerified = false;
+      syncSubmitConfirm();
+      return;
+    }
+    confirmVerified = false;
+    const codeInput = modalBody?.querySelector("[data-confirm-login-code]");
+    if (codeInput) codeInput.value = "";
+    const paymentAt = modalBody?.querySelector("[data-confirm-payment-at]");
+    const receipt = currentDetail?.receipt || {};
+    if (paymentAt) {
+      paymentAt.value = defaultConfirmPaymentAt(receipt);
+    }
+    const refInput = modalBody?.querySelector("[data-confirm-mpesa-ref]");
+    if (refInput && !refInput.value) {
+      refInput.value = String(receipt.mpesa_receipt_number || "").trim();
+    }
+    window.setTimeout(() => {
+      modalBody?.querySelector("[data-confirm-login-code]")?.focus?.({
+        preventScroll: true,
+      });
+    }, 40);
+    setConfirmStatus(
+      receipt.require_mpesa_reference_on_confirm
+        ? "Defaults: today + print time. Enter reference number and staff 6-digit ID."
+        : "Defaults: today + print time. Enter staff 6-digit ID to confirm."
+    );
+    syncSubmitConfirm();
+    refreshIcons();
+  };
+
+  const setReturnMode = (on) => {
+    if (on && confirmMode) setConfirmMode(false);
+    returnMode = Boolean(on);
     const panel = modalBody?.querySelector("[data-return-panel]");
     const detailPanel = modalBody?.querySelector("[data-detail-panel]");
+    const confirmPanel = modalBody?.querySelector("[data-confirm-panel]");
     if (panel) panel.hidden = !returnMode;
-    if (detailPanel) detailPanel.hidden = returnMode;
+    if (detailPanel) detailPanel.hidden = returnMode || confirmMode;
+    if (confirmPanel && returnMode) confirmPanel.hidden = true;
+    syncActionButtons();
     if (!returnMode) {
       verified = false;
       syncConfirmReturn();
@@ -269,6 +349,14 @@
     setReturnStatus("Enter a return reason and an active staff 6-digit ID.");
     syncConfirmReturn();
     refreshIcons();
+  };
+
+  const setConfirmStatus = (message, { ok = false, error = false } = {}) => {
+    const el = modalBody?.querySelector("[data-confirm-status]");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-ok", ok);
+    el.classList.toggle("is-error", error);
   };
 
   const setReturnStatus = (message, { ok = false, error = false } = {}) => {
@@ -316,27 +404,59 @@
     );
   };
 
-  const verifyReturnCode = async () => {
-    const codeInput = modalBody?.querySelector("[data-return-login-code]");
+  const confirmFieldValues = () => {
+    const receipt = currentDetail?.receipt || {};
+    const paymentAt = (
+      modalBody?.querySelector("[data-confirm-payment-at]")?.value || ""
+    ).trim();
+    const ref = (
+      modalBody?.querySelector("[data-confirm-mpesa-ref]")?.value || ""
+    ).trim();
+    const existingRef = String(receipt.mpesa_receipt_number || "").trim();
+    const requireDetails = Boolean(receipt.require_mpesa_reference_on_confirm);
+    return { paymentAt, ref, existingRef, requireDetails };
+  };
+
+  const syncSubmitConfirm = () => {
+    if (!submitConfirmBtn) return;
+    const { paymentAt, ref, existingRef, requireDetails } = confirmFieldValues();
+    const detailsOk =
+      !requireDetails ||
+      ((Boolean(ref) || Boolean(existingRef)) && Boolean(paymentAt));
+    submitConfirmBtn.disabled = !(
+      confirmMode &&
+      confirmVerified &&
+      detailsOk
+    );
+  };
+
+  const verifyStaffCode = async ({
+    codeSelector,
+    setStatus,
+    setVerified,
+    afterVerify,
+    emptyMessage,
+  }) => {
+    const codeInput = modalBody?.querySelector(codeSelector);
     const code = (codeInput?.value || "").trim();
     const current = ++verifySeq;
     if (code.length < 6) {
-      verified = false;
-      setReturnStatus(
+      setVerified(false);
+      setStatus(
         code.length
           ? `Enter ${6 - code.length} more digit${6 - code.length === 1 ? "" : "s"}.`
-          : "Enter an active staff 6-digit ID to authorise the return."
+          : emptyMessage
       );
-      syncConfirmReturn();
+      afterVerify();
       return;
     }
     if (!verifyUrl) {
-      verified = false;
-      setReturnStatus("Verification is unavailable.", { error: true });
-      syncConfirmReturn();
+      setVerified(false);
+      setStatus("Verification is unavailable.", { error: true });
+      afterVerify();
       return;
     }
-    setReturnStatus("Checking staff ID…");
+    setStatus("Checking staff ID…");
     try {
       const body = new URLSearchParams({ login_code: code });
       const res = await fetch(verifyUrl, {
@@ -350,25 +470,53 @@
       });
       const data = await res.json().catch(() => ({}));
       if (current !== verifySeq) return;
-      verified = Boolean(res.ok && data.ok);
-      setReturnStatus(
-        verified
+      const ok = Boolean(res.ok && data.ok);
+      setVerified(ok);
+      setStatus(
+        ok
           ? `Authorised${data.name ? `: ${data.name}` : ""}.`
           : data.error || "Invalid staff ID.",
-        { ok: verified, error: !verified }
+        { ok, error: !ok }
       );
-      syncConfirmReturn();
+      afterVerify();
     } catch (_err) {
       if (current !== verifySeq) return;
-      verified = false;
-      setReturnStatus("Could not verify staff ID.", { error: true });
-      syncConfirmReturn();
+      setVerified(false);
+      setStatus("Could not verify staff ID.", { error: true });
+      afterVerify();
     }
   };
 
-  const scheduleVerify = () => {
+  const verifyReturnCode = () =>
+    verifyStaffCode({
+      codeSelector: "[data-return-login-code]",
+      setStatus: setReturnStatus,
+      setVerified: (value) => {
+        verified = value;
+      },
+      afterVerify: syncConfirmReturn,
+      emptyMessage:
+        "Enter an active staff 6-digit ID to authorise the return.",
+    });
+
+  const verifyConfirmCode = () =>
+    verifyStaffCode({
+      codeSelector: "[data-confirm-login-code]",
+      setStatus: setConfirmStatus,
+      setVerified: (value) => {
+        confirmVerified = value;
+      },
+      afterVerify: syncSubmitConfirm,
+      emptyMessage:
+        "Enter an active staff 6-digit ID to authorise confirmation.",
+    });
+
+  const scheduleVerify = (kind = "return") => {
     window.clearTimeout(verifyTimer);
-    verifyTimer = window.setTimeout(verifyReturnCode, 280);
+    verifyTimer = window.setTimeout(
+      kind === "confirm" ? verifyConfirmCode : verifyReturnCode,
+      280
+    );
   };
 
   const renderDetail = (payload) => {
@@ -385,12 +533,11 @@
       modalTitle.textContent = receipt.receipt_number || "Receipt";
     }
     if (modalActions) modalActions.hidden = false;
-    if (startReturnBtn) {
-      startReturnBtn.hidden = !receipt.can_return;
-    }
-    if (cancelReturnBtn) cancelReturnBtn.hidden = true;
-    if (confirmReturnBtn) confirmReturnBtn.hidden = true;
-    if (reprintBtn) reprintBtn.hidden = false;
+    confirmMode = false;
+    returnMode = false;
+    confirmVerified = false;
+    verified = false;
+    syncActionButtons();
 
     const lines = receipt.lines || [];
     const returnable = receipt.returnable_lines || [];
@@ -398,6 +545,31 @@
       receipt.source === "stock" || receipt.source === "expense" || receipt.kind === "stock" || receipt.kind === "expense"
         ? "Supplier"
         : "Customer";
+    const existingRef = String(receipt.mpesa_receipt_number || "").trim();
+    const savedPaymentAt = String(
+      receipt.confirmed_payment_at_local || ""
+    ).trim();
+    const paymentAtLocal = defaultConfirmPaymentAt(receipt);
+    const requireConfirmDetails = Boolean(
+      receipt.require_mpesa_reference_on_confirm
+    );
+    const optionalHint = requireConfirmDetails ? "required" : "optional";
+    const requiredAttrs = requireConfirmDetails
+      ? `required aria-required="true"`
+      : `aria-required="false"`;
+    const confirmMetaRows = [];
+    if (existingRef) {
+      confirmMetaRows.push(
+        `<div><dt>Reference</dt><dd>${escapeHtml(existingRef)}</dd></div>`
+      );
+    }
+    if (savedPaymentAt) {
+      confirmMetaRows.push(
+        `<div><dt>Paid at</dt><dd>${escapeHtml(
+          savedPaymentAt.replace("T", " ")
+        )}</dd></div>`
+      );
+    }
     const clientBlock =
       receipt.client_name || receipt.client_phone
         ? `<div class="shop-receipt-card">
@@ -405,11 +577,16 @@
   <dl>
     <div><dt>Name</dt><dd>${escapeHtml(receipt.client_name || "—")}</dd></div>
     <div><dt>Phone</dt><dd>${escapeHtml(receipt.client_phone || "—")}</dd></div>
+    ${confirmMetaRows.join("")}
   </dl>
 </div>`
         : `<div class="shop-receipt-card">
   <h3>${partyTitle}</h3>
-  <p class="shop-receipt-muted">No ${partyTitle.toLowerCase()} details on this receipt.</p>
+  ${
+    confirmMetaRows.length
+      ? `<dl>${confirmMetaRows.join("")}</dl>`
+      : `<p class="shop-receipt-muted">No ${partyTitle.toLowerCase()} details on this receipt.</p>`
+  }
 </div>`;
 
     const itemsHtml = lines
@@ -547,6 +724,68 @@
     </dl>
   </div>
 </div>
+<div class="shop-receipt-return shop-receipt-confirm" data-confirm-panel hidden>
+  <p class="shop-receipt-muted">
+    Confirm this sale. Date defaults to today and time to when it was printed — change either if needed, then confirm.
+    ${
+      requireConfirmDetails
+        ? "Reference number is compulsory."
+        : "Reference number is optional."
+    }
+  </p>
+  <div class="shop-receipt-card shop-receipt-card--confirm">
+    <div class="shop-receipt-confirm-fields">
+      <div class="shop-receipt-mpesa-ref" data-confirm-payment-at-wrap>
+        <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-payment-at">
+          Payment date &amp; time
+          <span class="shop-receipt-muted">(${optionalHint})</span>
+        </label>
+        <input
+          id="shop-confirm-payment-at"
+          class="shop-receipt-mpesa-ref-input"
+          type="datetime-local"
+          name="payment_at"
+          value="${escapeHtml(paymentAtLocal)}"
+          data-confirm-payment-at
+          ${requiredAttrs}
+        >
+      </div>
+      <div class="shop-receipt-mpesa-ref" data-confirm-mpesa-ref-wrap>
+        <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-mpesa-ref">
+          Reference number
+          <span class="shop-receipt-muted">(${optionalHint})</span>
+        </label>
+        <input
+          id="shop-confirm-mpesa-ref"
+          class="shop-receipt-mpesa-ref-input"
+          type="text"
+          name="mpesa_receipt_number"
+          value="${escapeHtml(existingRef)}"
+          placeholder="e.g. TKL4X2ABCD"
+          maxlength="40"
+          autocomplete="off"
+          spellcheck="false"
+          data-confirm-mpesa-ref
+          ${requiredAttrs}
+        >
+      </div>
+    </div>
+  </div>
+  <label class="shop-cart-input shop-receipt-return-code">
+    <span>Staff 6-digit ID</span>
+    <input
+      type="password"
+      inputmode="numeric"
+      maxlength="6"
+      autocomplete="one-time-code"
+      placeholder="••••••"
+      data-confirm-login-code
+    >
+  </label>
+  <p class="shop-receipts-status" data-confirm-status>
+    Enter an active staff 6-digit ID to authorise confirmation.
+  </p>
+</div>
 <div class="shop-receipt-return" data-return-panel hidden>
   <style>
     .shop-receipt-return-reason{display:grid!important;gap:.35rem;margin:0;min-width:0}
@@ -591,7 +830,6 @@
 </div>`;
     }
 
-    returnMode = false;
     refreshIcons();
   };
 
@@ -717,6 +955,71 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     return true;
   };
 
+  const submitConfirm = async () => {
+    if (!currentDetail?.receipt?.id || !confirmUrlTemplate) return;
+    const code = (
+      modalBody?.querySelector("[data-confirm-login-code]")?.value || ""
+    ).trim();
+    const { paymentAt, ref, existingRef, requireDetails } = confirmFieldValues();
+    if (requireDetails) {
+      if (!ref && !existingRef) {
+        setConfirmStatus(
+          "Enter the reference number before confirming this receipt.",
+          { error: true }
+        );
+        modalBody?.querySelector("[data-confirm-mpesa-ref]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+      if (!paymentAt) {
+        setConfirmStatus(
+          "Enter the payment date and time before confirming.",
+          { error: true }
+        );
+        modalBody?.querySelector("[data-confirm-payment-at]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+    }
+    if (!confirmVerified || code.length !== 6) {
+      syncSubmitConfirm();
+      return;
+    }
+    if (submitConfirmBtn) submitConfirmBtn.disabled = true;
+    setConfirmStatus("Confirming receipt…");
+    try {
+      const res = await fetch(
+        urlFor(confirmUrlTemplate, currentDetail.receipt.id),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "X-CSRFToken": getCsrf(),
+          },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            login_code: code,
+            mpesa_receipt_number: ref,
+            payment_at: paymentAt,
+          }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setConfirmStatus(data.error || "Confirm failed.", { error: true });
+        syncSubmitConfirm();
+        return;
+      }
+      setPageStatus(data.message || "Receipt confirmed.", { error: false });
+      renderDetail(data);
+      scheduleLoad(80);
+    } catch (_err) {
+      setConfirmStatus("Confirm failed.", { error: true });
+      syncSubmitConfirm();
+    }
+  };
+
   const submitReturn = async () => {
     if (!currentDetail?.receipt?.id || !returnUrlTemplate) return;
     const lines = selectedReturnLines();
@@ -815,15 +1118,32 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     }
   });
 
+  startConfirmBtn?.addEventListener("click", () => setConfirmMode(true));
+  cancelConfirmBtn?.addEventListener("click", () => setConfirmMode(false));
+  submitConfirmBtn?.addEventListener("click", submitConfirm);
   startReturnBtn?.addEventListener("click", () => setReturnMode(true));
   cancelReturnBtn?.addEventListener("click", () => setReturnMode(false));
   confirmReturnBtn?.addEventListener("click", submitReturn);
 
   modalBody?.addEventListener("input", (event) => {
     const target = event.target;
+    if (target?.matches?.("[data-confirm-login-code]")) {
+      confirmVerified = false;
+      scheduleVerify("confirm");
+      syncSubmitConfirm();
+      return;
+    }
+    if (
+      target?.matches?.(
+        "[data-confirm-payment-at], [data-confirm-mpesa-ref]"
+      )
+    ) {
+      syncSubmitConfirm();
+      return;
+    }
     if (target?.matches?.("[data-return-login-code]")) {
       verified = false;
-      scheduleVerify();
+      scheduleVerify("return");
       syncConfirmReturn();
       return;
     }
@@ -856,6 +1176,14 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 
   modalBody?.addEventListener("change", (event) => {
     const target = event.target;
+    if (
+      target?.matches?.(
+        "[data-confirm-payment-at], [data-confirm-mpesa-ref]"
+      )
+    ) {
+      syncSubmitConfirm();
+      return;
+    }
     if (
       target?.matches?.(
         "[data-return-check], [data-return-qty], [data-return-serial]"

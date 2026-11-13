@@ -3102,6 +3102,7 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
 
 CONFIRM_RECEIPT_KIND_FILTERS = (
     ("sale", "Sales"),
+    ("credit", "Credits"),
     ("delivery", "Delivery notes"),
     ("goods_received", "Goods received"),
     ("all", "All types"),
@@ -3137,7 +3138,9 @@ def _confirm_receipt_apply_limit(queryset, limit):
     return ordered[: int(limit)]
 
 
-def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limit=None):
+def _confirm_receipt_sale_rows(
+    *, shop_ids, start, end, status_key, search, limit=None, kinds=None
+):
     status_map = {
         "pending": ShopReceiptStatus.ACTIVE,
         "active": ShopReceiptStatus.ACTIVE,
@@ -3150,9 +3153,12 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
     }
     if not shop_ids:
         return []
+    kind_list = list(kinds or [ShopReceiptKind.SALE])
+    if not kind_list:
+        return []
 
     qs = (
-        ShopReceipt.objects.filter(shop_id__in=shop_ids, kind=ShopReceiptKind.SALE)
+        ShopReceipt.objects.filter(shop_id__in=shop_ids, kind__in=kind_list)
         .select_related("shop")
         .only(
             "id",
@@ -3163,6 +3169,8 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
             "mpesa_receipt_number",
             "confirmed_payment_at",
             "total",
+            "amount_paid",
+            "kind",
             "status",
             "created_at",
             "shop__id",
@@ -3182,16 +3190,33 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
         )
 
     def _serialize(receipts):
-        from shops.services import get_effective_pos_settings
+        from shops.services import (
+            credit_confirm_state,
+            get_effective_pos_settings,
+        )
 
         rows = []
         require_by_shop: dict[int, bool] = {}
         for row in receipts:
+            is_credit = row.kind == ShopReceiptKind.CREDIT
+            credit_state = credit_confirm_state(row) if is_credit else None
             is_pending = row.status == ShopReceiptStatus.ACTIVE
             is_confirmed = row.status == ShopReceiptStatus.CONFIRMED
             is_cancelled = row.status == ShopReceiptStatus.CANCELLED
             is_partial = row.status == ShopReceiptStatus.PARTIAL_RETURN
-            status_label = row.get_status_display()
+            is_partial_confirmation = bool(
+                credit_state and credit_state["partially_paid"]
+            )
+            status_label = (
+                credit_state["status_label"]
+                if credit_state
+                else row.get_status_display()
+            )
+            status_value = (
+                "partial_confirmation"
+                if is_partial_confirmation
+                else row.status
+            )
             shop_name = row.shop.name if row.shop else "—"
             client = row.client_name or "Walk-in"
             client_phone = row.client_phone or ""
@@ -3214,6 +3239,33 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
                         False,
                     )
                 )
+            kind_label = "Credit" if is_credit else "Sale"
+            if is_credit:
+                can_confirm = bool(credit_state and credit_state["fully_paid"]) and (
+                    is_pending or is_cancelled
+                )
+                can_cancel = False
+                can_set_pending = False
+                can_edit_status = can_confirm
+                status_rank = (
+                    0
+                    if is_partial_confirmation or is_pending
+                    else CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9)
+                )
+                credit_clear_on_confirm = bool(
+                    credit_state and credit_state["fully_paid"]
+                )
+                credit_clear_mode = (credit_state or {}).get("clear_mode") or ""
+                credit_confirm_notice = (credit_state or {}).get("confirm_notice") or ""
+            else:
+                can_confirm = is_pending or is_cancelled
+                can_cancel = is_pending or is_confirmed or is_partial
+                can_set_pending = is_confirmed or is_cancelled
+                can_edit_status = True
+                status_rank = CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9)
+                credit_clear_on_confirm = False
+                credit_clear_mode = ""
+                credit_confirm_notice = ""
             rows.append(
                 {
                     "receipt_id": row.pk,
@@ -3226,18 +3278,22 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
                     "reference": reference,
                     "amount": amount,
                     "amount_label": amount_label,
-                    "status": row.status,
+                    "status": status_value,
                     "status_label": status_label,
-                    "kind": "sale",
-                    "kind_label": "Sale",
+                    "kind": "credit" if is_credit else "sale",
+                    "kind_label": kind_label,
                     "when": when_label,
                     "when_dt": printed_at,
-                    "can_confirm": is_pending or is_cancelled,
-                    "can_cancel": is_pending or is_confirmed or is_partial,
-                    "can_set_pending": is_confirmed or is_cancelled,
-                    "can_edit_status": True,
+                    "can_confirm": can_confirm,
+                    "can_cancel": can_cancel,
+                    "can_set_pending": can_set_pending,
+                    "can_edit_status": can_edit_status,
                     "require_mpesa_reference_on_confirm": require_by_shop[shop_pk],
-                    "status_rank": CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9),
+                    "is_partial_confirmation": is_partial_confirmation,
+                    "credit_clear_on_confirm": credit_clear_on_confirm,
+                    "credit_clear_mode": credit_clear_mode,
+                    "credit_confirm_notice": credit_confirm_notice,
+                    "status_rank": status_rank,
                     "search_text": " ".join(
                         [
                             row.receipt_number or "",
@@ -3248,7 +3304,7 @@ def _confirm_receipt_sale_rows(*, shop_ids, start, end, status_key, search, limi
                             shop_name,
                             status_label,
                             when_label,
-                            "Sale",
+                            kind_label,
                         ]
                     ),
                 }
@@ -3431,11 +3487,25 @@ def _confirm_receipt_transfer_rows(
 def _confirm_receipts_count_label(kind_key: str) -> str:
     if kind_key == "sale":
         return "sales receipt"
+    if kind_key == "credit":
+        return "credit receipt"
     if kind_key == "delivery":
         return "delivery note"
     if kind_key == "goods_received":
         return "goods received slip"
     return "receipt"
+
+
+def _confirm_receipts_map_receipt_kind(raw: str) -> str:
+    """Map receipts-browse receipt_kind query values onto confirm kind filters."""
+    key = (raw or "").strip().lower()
+    if key in ("all", "any"):
+        return "all"
+    if key in ("sale", "sales"):
+        return "sale"
+    if key in ("credit", "credits"):
+        return "credit"
+    return ""
 
 
 def _confirm_receipts_effective_params(request) -> dict:
@@ -3451,7 +3521,8 @@ def _confirm_receipts_effective_params(request) -> dict:
     elif range_raw == "month" and not (params.get("month") or "").strip():
         params["month"] = today.strftime("%Y-%m")
     if not (params.get("kind") or "").strip():
-        params["kind"] = "sale"
+        mapped = _confirm_receipts_map_receipt_kind(params.get("receipt_kind"))
+        params["kind"] = mapped or "sale"
     return params
 
 
@@ -3500,6 +3571,19 @@ def _confirm_receipts_collect_rows(
                 status_key=status_key,
                 search=search,
                 limit=band_limit,
+                kinds=[ShopReceiptKind.SALE],
+            )
+        )
+    if kind_key in ("credit", "all"):
+        rows.extend(
+            _confirm_receipt_sale_rows(
+                shop_ids=shop_ids,
+                start=start,
+                end=end,
+                status_key=status_key,
+                search=search,
+                limit=band_limit,
+                kinds=[ShopReceiptKind.CREDIT],
             )
         )
     if kind_key in ("delivery", "goods_received", "all"):
@@ -3565,6 +3649,12 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                 "require_mpesa_reference_on_confirm": bool(
                     row.get("require_mpesa_reference_on_confirm")
                 ),
+                "kind": row.get("kind") or "sale",
+                "kind_label": row.get("kind_label") or "",
+                "is_partial_confirmation": bool(row.get("is_partial_confirmation")),
+                "credit_clear_on_confirm": bool(row.get("credit_clear_on_confirm")),
+                "credit_clear_mode": row.get("credit_clear_mode") or "",
+                "credit_confirm_notice": row.get("credit_confirm_notice") or "",
                 "search_text": row.get("search_text")
                 or " ".join(
                     [
@@ -3676,6 +3766,8 @@ def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) 
             "lead": (
                 "Tick receipts in place or live-search a number. "
                 "Set selected sales to pending, confirmed, or cancelled. "
+                "Fully paid credits can be confirmed — that clears the credit fully. "
+                "Partially paid credits show as Partial confirmation until paid in full. "
                 "Delivery notes and goods received slips are listed for review only."
             ),
             "detail_url_template": detail_template,
@@ -14908,9 +15000,10 @@ def _build_receipts(filters):
                 icon="badge-check",
                 href=confirm_href,
                 value="Open",
-                hint="Confirm or cancel pending sales receipts",
+                hint="Confirm sales and fully paid credits",
                 body=(
-                    "Sales only — pending first, then cancelled, then confirmed."
+                    "Sales and credits — pending first; partial credits show "
+                    "Partial confirmation until fully paid."
                 ),
             ),
             _overview_section(

@@ -7726,11 +7726,7 @@ def _receipt_list_item(receipt) -> dict:
             }
             and receipt.status != ShopReceiptStatus.CANCELLED
         ),
-        "can_confirm": (
-            receipt.kind == ShopReceiptKind.SALE
-            and receipt.status
-            in {ShopReceiptStatus.ACTIVE, ShopReceiptStatus.CANCELLED}
-        ),
+        "can_confirm": _receipt_can_confirm(receipt),
         "can_cancel": (
             receipt.kind == ShopReceiptKind.SALE
             and receipt.status
@@ -7745,14 +7741,8 @@ def _receipt_list_item(receipt) -> dict:
             and receipt.status
             in {ShopReceiptStatus.CONFIRMED, ShopReceiptStatus.CANCELLED}
         ),
-        "can_edit_status": receipt.kind == ShopReceiptKind.SALE
-        and receipt.status
-        in {
-            ShopReceiptStatus.ACTIVE,
-            ShopReceiptStatus.CONFIRMED,
-            ShopReceiptStatus.CANCELLED,
-            ShopReceiptStatus.PARTIAL_RETURN,
-        },
+        "can_edit_status": _receipt_can_edit_confirm_status(receipt),
+        **_credit_confirm_payload(receipt),
     }
 
 
@@ -9698,6 +9688,98 @@ def reopen_cancelled_shop_receipt(
     }
 
 
+def _credit_paid_and_due(receipt) -> tuple[Decimal, Decimal]:
+    total = Decimal(receipt.total or 0)
+    paid = Decimal(receipt.amount_paid or 0)
+    due = total - paid
+    if due < 0:
+        due = Decimal("0.00")
+    return paid.quantize(Decimal("0.01")), due.quantize(Decimal("0.01"))
+
+
+def credit_confirm_state(receipt) -> dict:
+    """Confirm eligibility for a credit receipt (full clear only)."""
+    paid, due = _credit_paid_and_due(receipt)
+    partially_paid = paid > 0 and due > 0
+    fully_paid = due <= 0 and (paid > 0 or Decimal(receipt.total or 0) <= 0)
+    if partially_paid:
+        status_label = "Partial confirmation"
+    elif receipt.status == ShopReceiptStatus.ACTIVE:
+        status_label = "Pending"
+    else:
+        status_label = receipt.get_status_display()
+    return {
+        "paid": paid,
+        "due": due,
+        "fully_paid": fully_paid,
+        "partially_paid": partially_paid,
+        "status_label": status_label,
+        "clears_on_confirm": True,
+        "clear_mode": "fully" if fully_paid else ("partially" if partially_paid else ""),
+        "confirm_notice": (
+            "Confirming will clear this credit fully and convert it to a confirmed sale."
+            if fully_paid
+            else (
+                "This credit is only partially paid. It shows as Partial confirmation "
+                "until it is fully paid — only then can it be confirmed and cleared."
+                if partially_paid
+                else "Only a fully paid credit can be confirmed and cleared."
+            )
+        ),
+    }
+
+
+def _credit_confirm_payload(receipt) -> dict:
+    if getattr(receipt, "kind", None) != ShopReceiptKind.CREDIT:
+        return {
+            "is_credit": False,
+            "is_partial_confirmation": False,
+            "credit_clear_on_confirm": False,
+            "credit_clear_mode": "",
+            "credit_confirm_notice": "",
+            "amount_paid": str(Decimal(getattr(receipt, "amount_paid", 0) or 0)),
+        }
+    state = credit_confirm_state(receipt)
+    return {
+        "is_credit": True,
+        "is_partial_confirmation": state["partially_paid"],
+        "credit_clear_on_confirm": state["fully_paid"],
+        "credit_clear_mode": state["clear_mode"],
+        "credit_confirm_notice": state["confirm_notice"],
+        "amount_paid": str(state["paid"]),
+        "status_label": state["status_label"],
+    }
+
+
+def _receipt_can_confirm(receipt) -> bool:
+    if receipt.status not in {
+        ShopReceiptStatus.ACTIVE,
+        ShopReceiptStatus.CANCELLED,
+    }:
+        return False
+    if receipt.kind == ShopReceiptKind.SALE:
+        return True
+    if receipt.kind == ShopReceiptKind.CREDIT:
+        return bool(credit_confirm_state(receipt)["fully_paid"])
+    return False
+
+
+def _receipt_can_edit_confirm_status(receipt) -> bool:
+    if receipt.status not in {
+        ShopReceiptStatus.ACTIVE,
+        ShopReceiptStatus.CONFIRMED,
+        ShopReceiptStatus.CANCELLED,
+        ShopReceiptStatus.PARTIAL_RETURN,
+    }:
+        return False
+    if receipt.kind == ShopReceiptKind.SALE:
+        return True
+    if receipt.kind == ShopReceiptKind.CREDIT:
+        # Fully paid credits can be confirmed (cleared). Partials are display-only.
+        return bool(credit_confirm_state(receipt)["fully_paid"])
+    return False
+
+
 @transaction.atomic
 def confirm_shop_receipt(
     *,
@@ -9707,7 +9789,7 @@ def confirm_shop_receipt(
     mpesa_receipt_number: str = "",
     payment_at=None,
 ) -> dict:
-    """Mark a pending sales receipt as confirmed (credits/quotations not allowed)."""
+    """Mark a pending sale (or fully paid credit) as confirmed."""
     from .models import ShopReceipt
 
     if actor is None:
@@ -9722,8 +9804,37 @@ def confirm_shop_receipt(
     except ShopReceipt.DoesNotExist as exc:
         raise ValidationError("Receipt not found for this shop.") from exc
 
-    if receipt.kind != ShopReceiptKind.SALE:
-        raise ValidationError("Only sales receipts can be confirmed.")
+    cleared_credit = False
+    if receipt.kind == ShopReceiptKind.CREDIT:
+        state = credit_confirm_state(receipt)
+        if state["partially_paid"]:
+            raise ValidationError(
+                "This credit is only partially paid. It shows as Partial confirmation "
+                "until fully paid — only then can it be confirmed and cleared."
+            )
+        if not state["fully_paid"]:
+            raise ValidationError(
+                "Only a fully paid credit can be confirmed and cleared."
+            )
+        from shops.credit_settlement import convert_settled_credit_to_sale
+
+        cleared_credit = convert_settled_credit_to_sale(receipt)
+        if not cleared_credit and receipt.kind != ShopReceiptKind.SALE:
+            raise ValidationError("Could not clear this credit receipt.")
+        if cleared_credit:
+            # Persist the clear before any reopen/reload so status updates keep SALE.
+            receipt.save(
+                update_fields=[
+                    "kind",
+                    "payment_method",
+                    "credit_due_date",
+                    "cash_amount",
+                    "mpesa_amount",
+                    "settled_from_credit",
+                ]
+            )
+    elif receipt.kind != ShopReceiptKind.SALE:
+        raise ValidationError("Only sales and fully paid credits can be confirmed.")
 
     if receipt.status == ShopReceiptStatus.CANCELLED:
         # Release lock; reopen re-locks the same row.
@@ -9778,6 +9889,17 @@ def confirm_shop_receipt(
 
     receipt.status = ShopReceiptStatus.CONFIRMED
     update_fields = ["status"]
+    if cleared_credit:
+        for field in (
+            "kind",
+            "payment_method",
+            "credit_due_date",
+            "cash_amount",
+            "mpesa_amount",
+            "settled_from_credit",
+        ):
+            if field not in update_fields:
+                update_fields.append(field)
     # Only overwrite when the user provided a reference.
     if ref:
         receipt.mpesa_receipt_number = ref
@@ -9789,13 +9911,19 @@ def confirm_shop_receipt(
     receipt.save(update_fields=update_fields)
 
     detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+    message = f"Receipt {receipt.receipt_number} confirmed."
+    if cleared_credit:
+        message = (
+            f"Credit {receipt.receipt_number} cleared fully and confirmed as a sale."
+        )
     return {
         **detail,
         "ok": True,
-        "message": f"Receipt {receipt.receipt_number} confirmed.",
+        "message": message,
         "status": receipt.status,
         "status_label": receipt.get_status_display(),
         "mpesa_receipt_number": receipt.mpesa_receipt_number or "",
+        "cleared_credit": cleared_credit,
     }
 
 
@@ -9809,7 +9937,7 @@ def set_confirm_receipt_status(
     mpesa_receipt_number: str = "",
     payment_at=None,
 ) -> dict:
-    """Set a sales receipt to pending, confirmed, or cancelled from confirm-receipts."""
+    """Set a sales (or fully paid credit) receipt status from confirm-receipts."""
     from .models import ShopReceipt
 
     if actor is None:
@@ -9826,8 +9954,15 @@ def set_confirm_receipt_status(
     except ShopReceipt.DoesNotExist as exc:
         raise ValidationError("Receipt not found for this shop.") from exc
 
-    if receipt.kind != ShopReceiptKind.SALE:
-        raise ValidationError("Only sales receipts can change status here.")
+    if receipt.kind == ShopReceiptKind.CREDIT:
+        if target != ShopReceiptStatus.CONFIRMED:
+            raise ValidationError(
+                "Credits can only be confirmed here when fully paid "
+                "(partial credits show as Partial confirmation)."
+            )
+        # Fall through to confirm_shop_receipt below after releasing this lock path.
+    elif receipt.kind != ShopReceiptKind.SALE:
+        raise ValidationError("Only sales and fully paid credits can change status here.")
 
     current = receipt.status
     if current == ShopReceiptStatus.PARTIAL_RETURN and target != ShopReceiptStatus.CANCELLED:

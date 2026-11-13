@@ -272,17 +272,77 @@ class ConfirmSalesReceiptTests(TestCase):
             created_by=self.staff,
         )
 
-    def test_confirm_rejects_credit_and_quotation(self):
+    def test_confirm_rejects_unpaid_credit_and_quotation(self):
+        from decimal import Decimal
+
         from django.core.exceptions import ValidationError
 
         from shops.services import confirm_shop_receipt
 
         credit = self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-1")
+        credit.amount_paid = Decimal("0.00")
+        credit.cash_amount = Decimal("0.00")
+        credit.save(update_fields=["amount_paid", "cash_amount"])
         quote = self._receipt(kind=ShopReceiptKind.QUOTATION, number="QT-1")
-        with self.assertRaisesMessage(ValidationError, "Only sales receipts can be confirmed."):
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Only a fully paid credit can be confirmed and cleared.",
+        ):
             confirm_shop_receipt(shop=self.shop, receipt_id=credit.pk, actor=self.staff)
-        with self.assertRaisesMessage(ValidationError, "Only sales receipts can be confirmed."):
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Only sales and fully paid credits can be confirmed.",
+        ):
             confirm_shop_receipt(shop=self.shop, receipt_id=quote.pk, actor=self.staff)
+
+    def test_confirm_credit_partial_and_full(self):
+        from decimal import Decimal
+
+        from django.core.exceptions import ValidationError
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_confirm_receipts_page
+        from shops.services import confirm_shop_receipt
+
+        partial = self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-PARTIAL")
+        partial.amount_paid = Decimal("40.00")
+        partial.cash_amount = Decimal("40.00")
+        partial.save(update_fields=["amount_paid", "cash_amount"])
+        with self.assertRaisesMessage(
+            ValidationError,
+            "This credit is only partially paid. It shows as Partial confirmation "
+            "until fully paid — only then can it be confirmed and cleared.",
+        ):
+            confirm_shop_receipt(
+                shop=self.shop, receipt_id=partial.pk, actor=self.staff
+            )
+
+        request = RequestFactory().get(
+            "/it-support/analytics/confirm-receipts/",
+            {"kind": "credit", "range": "all"},
+        )
+        request.user = self.user
+        page = build_confirm_receipts_page(profile=self.staff, request=request)
+        partial_row = next(
+            row for row in page["rows"] if row["number"] == "CR-PARTIAL"
+        )
+        self.assertEqual(partial_row["status_label"], "Partial confirmation")
+        self.assertTrue(partial_row["is_partial_confirmation"])
+        self.assertFalse(partial_row["can_confirm"])
+
+        full = self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-FULL")
+        full.amount_paid = Decimal("100.00")
+        full.cash_amount = Decimal("100.00")
+        full.save(update_fields=["amount_paid", "cash_amount"])
+        result = confirm_shop_receipt(
+            shop=self.shop, receipt_id=full.pk, actor=self.staff
+        )
+        full.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result.get("cleared_credit"))
+        self.assertEqual(full.kind, ShopReceiptKind.SALE)
+        self.assertTrue(full.settled_from_credit)
+        self.assertEqual(full.status, ShopReceiptStatus.CONFIRMED)
 
     def test_confirm_accepts_pending_sale(self):
         from shops.services import confirm_shop_receipt

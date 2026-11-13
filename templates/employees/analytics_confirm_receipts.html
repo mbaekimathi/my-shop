@@ -119,12 +119,15 @@
             data-shop-id="{{ row.shop_id }}"
             data-receipt-source="{{ row.source|default:'pos' }}"
             data-receipt-number="{{ row.number }}"
+            data-receipt-kind="{{ row.kind|default:'sale' }}"
             data-receipt-status="{{ row.status }}"
             data-can-confirm="{% if row.can_confirm %}1{% else %}0{% endif %}"
             data-can-cancel="{% if row.can_cancel %}1{% else %}0{% endif %}"
             data-can-set-pending="{% if row.can_set_pending %}1{% else %}0{% endif %}"
             data-can-edit-status="{% if row.can_edit_status %}1{% else %}0{% endif %}"
             data-require-confirm-details="{% if row.require_mpesa_reference_on_confirm %}1{% else %}0{% endif %}"
+            data-credit-clear-on-confirm="{% if row.credit_clear_on_confirm %}1{% else %}0{% endif %}"
+            data-credit-confirm-notice="{{ row.credit_confirm_notice|default:'' }}"
             data-search-text="{{ row.search_text|default:row.number }}"
             tabindex="0"
           >
@@ -145,7 +148,7 @@
             <td class="ax-cell--primary ax-confirm-receipt-status" data-label="Receipt">
               <div class="ax-confirm-stack">
                 <span class="ax-confirm-stack-main">{{ row.number }}</span>
-                <span class="shop-receipt-status {% if row.status == 'cancelled' %}is-cancelled{% elif row.status == 'partial_return' %}is-partial{% elif row.status == 'confirmed' %}is-confirmed{% else %}is-pending{% endif %}">
+                <span class="shop-receipt-status {% if row.status == 'cancelled' %}is-cancelled{% elif row.status == 'partial_return' or row.status == 'partial_confirmation' or row.is_partial_confirmation %}is-partial{% elif row.status == 'confirmed' %}is-confirmed{% else %}is-pending{% endif %}">
                   {{ row.status_label }}
                 </span>
               </div>
@@ -261,7 +264,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=29"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=30"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");
