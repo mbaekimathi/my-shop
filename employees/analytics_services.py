@@ -3439,15 +3439,17 @@ def _confirm_receipts_count_label(kind_key: str) -> str:
 
 
 def _confirm_receipts_effective_params(request) -> dict:
-    """Normalize confirm-receipts filters; bare page defaults to the current month."""
+    """Normalize confirm-receipts filters; bare page defaults to today (day)."""
     params = request.GET.copy()
-    if not (params.get("range") or "").strip():
-        params["range"] = "month"
-        params["month"] = timezone.localdate().strftime("%Y-%m")
-    elif (params.get("range") or "").strip().lower() == "month" and not (
-        params.get("month") or ""
-    ).strip():
-        params["month"] = timezone.localdate().strftime("%Y-%m")
+    today = timezone.localdate()
+    range_raw = (params.get("range") or "").strip().lower()
+    if not range_raw:
+        params["range"] = "day"
+        params["date"] = today.isoformat()
+    elif range_raw == "day" and not (params.get("date") or "").strip():
+        params["date"] = today.isoformat()
+    elif range_raw == "month" and not (params.get("month") or "").strip():
+        params["month"] = today.strftime("%Y-%m")
     if not (params.get("kind") or "").strip():
         params["kind"] = "sale"
     return params

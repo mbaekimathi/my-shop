@@ -578,11 +578,11 @@ class ConfirmSalesReceiptTests(TestCase):
         self.assertEqual(kinds, {"sale"})
         self.assertEqual(context["kind_filter"], "sale")
         self.assertEqual(context["status_filter"], "")
-        # Bare page defaults to the current month (not an empty "today" day range).
-        self.assertEqual(context["report_range"], "month")
+        # Bare page defaults to today (day range).
+        self.assertEqual(context["report_range"], "day")
         self.assertEqual(
-            context["report_month_value"],
-            timezone.localdate().strftime("%Y-%m"),
+            context["report_date_value"],
+            timezone.localdate().isoformat(),
         )
         self.assertIn("kind_options", context)
         self.assertIn(

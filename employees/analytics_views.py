@@ -851,13 +851,13 @@ def analytics_confirm_receipts(request, role_segment):
     if denied is not None:
         return denied
 
-    # Bare URL defaults to the current month so async rows match a real period.
+    # Bare URL defaults to today so async rows match a real day period.
     if not (request.GET.get("range") or "").strip():
         from django.utils import timezone
 
         params = request.GET.copy()
-        params["range"] = "month"
-        params["month"] = timezone.localdate().strftime("%Y-%m")
+        params["range"] = "day"
+        params["date"] = timezone.localdate().isoformat()
         if not (params.get("kind") or "").strip():
             params["kind"] = "sale"
         return redirect(f"{request.path}?{params.urlencode()}")
