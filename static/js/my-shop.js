@@ -3709,9 +3709,12 @@
       if (clientBlock) clientBlock.hidden = false;
       const hasSerials = cartHasSerialTracked();
       const eitherRequired = kind === "credit" || kind === "quotation";
+      const tradeNeedsClient = isTrade && clientDataEnabled;
       const phoneRequired =
-        requireClientPhone || (kind === "credit" && creditWhatsapp) || isTrade;
-      const nameRequired = requireClientName || isTrade;
+        requireClientPhone ||
+        (kind === "credit" && creditWhatsapp) ||
+        tradeNeedsClient;
+      const nameRequired = requireClientName || tradeNeedsClient;
       const blockRequired = phoneRequired || nameRequired || eitherRequired;
       if (clientPhoneInput) clientPhoneInput.required = phoneRequired;
       if (clientNameInput) clientNameInput.required = nameRequired;
@@ -3727,11 +3730,13 @@
           clientNote.textContent =
             "Enter the client phone number. A credit sale notice is sent on WhatsApp.";
         } else if (kind === "trade_out") {
-          clientNote.textContent =
-            "Client who is taking the goods. Name and phone are required.";
+          clientNote.textContent = tradeNeedsClient
+            ? "Client who is taking the goods. Name and phone are required."
+            : "Optional. Client who is taking the goods.";
         } else if (kind === "trade_in") {
-          clientNote.textContent =
-            "Client who brought the goods. Name and phone are required. Settle later.";
+          clientNote.textContent = tradeNeedsClient
+            ? "Client who brought the goods. Name and phone are required. Settle later."
+            : "Optional. Client who brought the goods. Settle later.";
         } else if (phoneRequired && nameRequired) {
           clientNote.textContent = "Client phone and full name are required.";
         } else if (phoneRequired) {
@@ -4477,7 +4482,7 @@
             focusCartClientFields();
             return;
           }
-          if (kind === "trade_out" || kind === "trade_in") {
+          if (clientDataEnabled && (kind === "trade_out" || kind === "trade_in")) {
             if (!name) {
               setCartStatus("Enter the client full name.", { error: true });
               focusCartClientFields();
@@ -7508,12 +7513,12 @@
       tradeClient.normalizePhoneField({ force: true });
       const phone = (tradeClientPhoneEl?.value || "").trim();
       tradeClient.hideSuggest();
-      if (!name) {
+      if (clientDataEnabled && !name) {
         setTradeStatus("Enter the client full name.", { error: true });
         tradeClientNameEl?.focus();
         return;
       }
-      if (!phone) {
+      if (clientDataEnabled && !phone) {
         setTradeStatus("Enter the client phone number.", { error: true });
         tradeClientPhoneEl?.focus();
         return;

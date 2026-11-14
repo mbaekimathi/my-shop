@@ -97,7 +97,7 @@
             <label class="shop-cart-input">
               <span>
                 Client full name
-                <span class="shop-serial-required" aria-hidden="true">*</span>
+                {% if pos_flags.enable_client_data %}<span class="shop-serial-required" aria-hidden="true">*</span>{% else %}<em>(optional)</em>{% endif %}
               </span>
               <input
                 type="text"
@@ -107,7 +107,7 @@
                 data-trade-client-name
                 aria-autocomplete="list"
                 aria-controls="shop-trade-client-suggest"
-                required
+                {% if pos_flags.enable_client_data %}required{% endif %}
               >
             </label>
             <div
@@ -121,7 +121,7 @@
           <label class="shop-cart-input">
             <span>
               Client phone
-              <span class="shop-serial-required" aria-hidden="true">*</span>
+              {% if pos_flags.enable_client_data %}<span class="shop-serial-required" aria-hidden="true">*</span>{% else %}<em>(optional)</em>{% endif %}
             </span>
             <input
               type="tel"
@@ -130,7 +130,7 @@
               inputmode="tel"
               placeholder="07XX XXX XXX"
               data-trade-client-phone
-              required
+              {% if pos_flags.enable_client_data %}required{% endif %}
             >
           </label>
         </div>

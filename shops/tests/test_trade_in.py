@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
@@ -86,6 +87,39 @@ class TradeInCheckoutTests(TestCase):
                 "lines": [{"id": self.item.pk, "qty": 2, "price": price}],
             },
         )
+
+    def _checkout_without_client(self):
+        return complete_shop_checkout(
+            shop=self.shop,
+            profile=self.profile,
+            payload={
+                "kind": "trade_in",
+                "client_name": "",
+                "client_phone": "",
+                "login_code": "100002",
+                "lines": [{"id": self.item.pk, "qty": 1, "price": "350.00"}],
+            },
+        )
+
+    def _set_client_data(self, enabled):
+        from shops.services import _invalidate_pos_settings_cache, get_shop_pos_settings
+
+        for row in (get_company_pos_settings(), get_shop_pos_settings(self.shop)):
+            row.enable_client_data = enabled
+            row.save(update_fields=["enable_client_data"])
+        _invalidate_pos_settings_cache()
+
+    def test_trade_in_requires_client_when_client_data_enabled(self):
+        self._set_client_data(True)
+        with self.assertRaises(ValidationError):
+            self._checkout_without_client()
+
+    def test_trade_in_skips_client_when_client_data_disabled(self):
+        self._set_client_data(False)
+        receipt = self._checkout_without_client()["receipt"]
+        self.assertEqual(receipt.kind, ShopReceiptKind.TRADE_IN)
+        self.assertEqual(receipt.client_name, "")
+        self.assertIsNone(receipt.client_id)
 
     def test_trade_in_moves_stock_from_source_shop(self):
         result = self._checkout()
