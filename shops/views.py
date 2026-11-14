@@ -1956,12 +1956,21 @@ def my_shop_shelf_stock(request, shop_id):
     )
 
     if request.method == "POST":
+        actor = profile
+        if actor is None:
+            login_code = (request.POST.get("login_code") or "").strip()
+            denied = _require_my_shop_permission(
+                request, profile, "shelf_stock", login_code=login_code, shop=shop
+            )
+            if denied:
+                return denied
+            actor = verify_active_employee_code(login_code)
         action = (request.POST.get("action") or "").strip()
         try:
             if action == "register":
                 item = register_shelf_item(
                     shop=shop,
-                    actor=profile,
+                    actor=actor,
                     name=request.POST.get("name"),
                     unit=request.POST.get("unit"),
                     opening_qty=request.POST.get("opening_qty"),
@@ -1974,7 +1983,7 @@ def my_shop_shelf_stock(request, shop_id):
                     shelf_item_id=request.POST.get("shelf_item_id"),
                     mode=action,
                     qty=request.POST.get("qty"),
-                    actor=profile,
+                    actor=actor,
                     note=request.POST.get("note") or "",
                 )
                 verb = "Added" if action == ShelfStockMovementType.IN else "Removed"
@@ -2018,6 +2027,7 @@ def my_shop_shelf_stock(request, shop_id):
             "shelf_low_count": sum(1 for row in shelf_items if row["is_low"]),
             "shelf_movements": recent_shelf_movements(shop=shop),
             "item_stock_tracking": bool(getattr(pos, "enable_stock_tracking", True)),
+            "shelf_needs_staff_id": profile is None,
         },
     )
 

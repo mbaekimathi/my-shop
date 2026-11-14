@@ -9,7 +9,12 @@ from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
-from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+from employees.models import (
+    EmployeeModulePermission,
+    EmployeeProfile,
+    EmployeeRole,
+    EmployeeStatus,
+)
 from items.models import Item, ShelfItem, ShelfStockMovement, ShopStock
 from shops.models import CompanyPosSettings, Shop, ShopPosSettings
 from shops.services import (
@@ -57,6 +62,7 @@ class ShelfStockTests(TestCase):
         )
         ShopPosSettings.objects.filter(shop=self.shop).delete()
         _invalidate_pos_settings_cache()
+        self.staff = {"login_code": self.profile.employee_id}
         self.url = reverse(
             "employees:my_shop_shelf_stock", kwargs={"shop_id": self.shop.pk}
         )
@@ -91,17 +97,17 @@ class ShelfStockTests(TestCase):
 
         client.post(
             self.url,
-            {"action": "register", "name": "Sugar bag", "unit": "bags", "opening_qty": "5"},
+            {"action": "register", "name": "Sugar bag", "unit": "bags", "opening_qty": "5", **self.staff},
         )
         shelf = ShelfItem.objects.get(shop=self.shop, name="Sugar bag")
         self.assertEqual(shelf.quantity, Decimal("5"))
 
-        client.post(self.url, {"action": "in", "shelf_item_id": shelf.pk, "qty": "3"})
-        client.post(self.url, {"action": "out", "shelf_item_id": shelf.pk, "qty": "2"})
+        client.post(self.url, {"action": "in", "shelf_item_id": shelf.pk, "qty": "3", **self.staff})
+        client.post(self.url, {"action": "out", "shelf_item_id": shelf.pk, "qty": "2", **self.staff})
         shelf.refresh_from_db()
         self.assertEqual(shelf.quantity, Decimal("6"))
 
-        client.post(self.url, {"action": "out", "shelf_item_id": shelf.pk, "qty": "100"})
+        client.post(self.url, {"action": "out", "shelf_item_id": shelf.pk, "qty": "100", **self.staff})
         shelf.refresh_from_db()
         self.assertEqual(shelf.quantity, Decimal("6"))
         self.assertEqual(
@@ -114,15 +120,37 @@ class ShelfStockTests(TestCase):
         )
 
         response = client.post(
-            self.url, {"action": "register", "name": "sugar BAG"}, follow=True
+            self.url, {"action": "register", "name": "sugar BAG", **self.staff}, follow=True
         )
         self.assertContains(response, "already on the shelf list")
 
-        client.post(self.url, {"action": "archive", "shelf_item_id": shelf.pk})
+        client.post(self.url, {"action": "archive", "shelf_item_id": shelf.pk, **self.staff})
         shelf.refresh_from_db()
         self.assertTrue(shelf.is_archived)
         response = client.get(self.url)
         self.assertContains(response, "No shelf stock yet")
+
+    def test_portal_changes_require_permitted_staff_id(self):
+        set_company_pos_setting(field="enable_shelf_mode", enabled=True)
+        client = self._login()
+        client.post(self.url, {"action": "register", "name": "No code"})
+        client.post(
+            self.url, {"action": "register", "name": "Bad code", "login_code": "999999"}
+        )
+        EmployeeModulePermission.objects.create(
+            employee=self.profile,
+            module_slug="my-shop",
+            submodule_slug="shelf_stock",
+            allowed=False,
+        )
+        client.post(self.url, {"action": "register", "name": "Denied", **self.staff})
+        self.assertFalse(ShelfItem.objects.filter(shop=self.shop).exists())
+
+        EmployeeModulePermission.objects.filter(employee=self.profile).update(allowed=True)
+        client.post(self.url, {"action": "register", "name": "Allowed", **self.staff})
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        self.assertEqual(shelf.name, "Allowed")
+        self.assertEqual(shelf.created_by, self.profile)
 
     def test_shelf_items_do_not_touch_item_stock(self):
         set_company_pos_setting(field="enable_shelf_mode", enabled=True)
@@ -135,13 +163,14 @@ class ShelfStockTests(TestCase):
         )
         ShopStock.objects.create(shop=self.shop, item=item, quantity=Decimal("4"))
         client = self._login()
-        client.post(self.url, {"action": "register", "name": "Sugar bag", "opening_qty": "9"})
+        client.post(self.url, {"action": "register", "name": "Sugar bag", "opening_qty": "9", **self.staff})
         client.post(
             self.url,
             {
                 "action": "in",
                 "shelf_item_id": ShelfItem.objects.get(shop=self.shop).pk,
                 "qty": "1",
+                **self.staff,
             },
         )
         self.assertEqual(

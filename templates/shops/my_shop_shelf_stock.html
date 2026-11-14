@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=9">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=10">
 {% endblock %}
 
 {% block workspace_content %}
@@ -36,6 +36,24 @@
     </dl>
   </header>
 
+  {% if shelf_needs_staff_id %}
+  <section class="store-stock-panel shelf-stock-staff" aria-labelledby="shelf-staff-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="shelf-staff-title">Staff ID</h3>
+        <p>Enter your 6-digit staff ID before registering or changing shelf stock.</p>
+      </div>
+    </div>
+    <label class="store-stock-field shelf-stock-staff-field">
+      <span>Staff ID</span>
+      <div class="store-stock-input-wrap">
+        <i data-lucide="user-round" aria-hidden="true"></i>
+        <input type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 digits" data-shelf-staff-id>
+      </div>
+    </label>
+  </section>
+  {% endif %}
+
   <section class="store-stock-panel" aria-labelledby="shelf-register-title">
     <div class="store-stock-panel-head">
       <div>
@@ -44,7 +62,7 @@
       </div>
     </div>
     <form method="post" class="store-stock-meta-grid shelf-stock-register" data-shelf-register-form>
-      {% csrf_token %}
+      {% csrf_token %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
       <input type="hidden" name="action" value="register">
       <label class="store-stock-field">
         <span>Name</span>
@@ -114,7 +132,7 @@
             </td>
             <td class="shelf-stock-col-change" data-label="Change">
               <form method="post" class="shelf-stock-move">
-                {% csrf_token %}
+                {% csrf_token %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
                 <input type="hidden" name="shelf_item_id" value="{{ row.id }}">
                 <input
                   class="store-stock-qty-input"
@@ -131,8 +149,8 @@
                 <button type="submit" name="action" value="in" class="store-stock-btn store-stock-btn--primary">Add</button>
                 <button type="submit" name="action" value="out" class="store-stock-btn store-stock-btn--ghost">Remove</button>
               </form>
-              <form method="post" class="shelf-stock-archive" onsubmit="return confirm('Remove “{{ row.name|escapejs }}” from the shelf list?');">
-                {% csrf_token %}
+              <form method="post" class="shelf-stock-archive" data-shelf-confirm="Remove “{{ row.name }}” from the shelf list?">
+                {% csrf_token %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
                 <input type="hidden" name="shelf_item_id" value="{{ row.id }}">
                 <button type="submit" name="action" value="archive" class="store-stock-btn store-stock-btn--ghost" aria-label="Delete {{ row.name }} from the shelf list">
                   <i data-lucide="trash-2" aria-hidden="true"></i>
@@ -189,4 +207,38 @@
   </section>
   {% endif %}
 </section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+(function () {
+  var root = document.querySelector("[data-shelf-stock]");
+  if (!root) return;
+  var staff = root.querySelector("[data-shelf-staff-id]");
+  root.querySelectorAll("form").forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      var hidden = form.querySelector("[data-shelf-login-code]");
+      if (hidden && staff) {
+        var code = (staff.value || "").replace(/\D+/g, "");
+        if (code.length !== 6) {
+          event.preventDefault();
+          staff.setCustomValidity("Enter your 6-digit staff ID.");
+          staff.reportValidity();
+          staff.focus();
+          return;
+        }
+        hidden.value = code;
+      }
+      var question = form.getAttribute("data-shelf-confirm");
+      if (question && !window.confirm(question)) {
+        event.preventDefault();
+      }
+    });
+  });
+  if (staff) {
+    staff.addEventListener("input", function () { staff.setCustomValidity(""); });
+  }
+})();
+</script>
 {% endblock %}
