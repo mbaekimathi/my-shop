@@ -7733,6 +7733,9 @@ def _receipt_list_item(receipt) -> dict:
         "confirmed_payment_at_local": (
             confirmed_local.strftime("%Y-%m-%dT%H:%M") if confirmed_local else ""
         ),
+        "confirmed_payment_label": (
+            confirmed_local.strftime("%d %b %Y · %H:%M") if confirmed_local else ""
+        ),
         "cashier": cashier,
         **_receipt_sold_as_payload(receipt),
         "can_return": (
