@@ -5864,6 +5864,22 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         message=f"You do not have permission to complete a {kind}.",
     )
 
+    confirm_raw = payload.get("confirm")
+    confirm_requested = confirm_raw is True or str(
+        confirm_raw or ""
+    ).strip().lower() in {"1", "true", "on", "yes"}
+    if confirm_requested:
+        if kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
+            raise ValidationError(
+                "Only sales and credits can be confirmed at checkout."
+            )
+        ensure_employee_may(
+            authorising,
+            "my-shop",
+            "receipts",
+            message="You do not have permission to confirm receipts.",
+        )
+
     client_name = (payload.get("client_name") or "").strip().upper()
     client_phone_raw = (payload.get("client_phone") or "").strip()
     client_phone = format_kenya_phone(client_phone_raw) if client_phone_raw else ""
@@ -6468,11 +6484,31 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                     lines=prepared,
                 )
 
+        confirm_result = None
+        if confirm_requested:
+            confirm_result = confirm_shop_receipt(
+                shop=shop,
+                receipt_id=receipt.pk,
+                actor=authorising,
+                mpesa_receipt_number=(
+                    payload.get("confirm_mpesa_receipt_number")
+                    or payload.get("mpesa_receipt_number")
+                    or ""
+                ).strip(),
+                payment_at=(payload.get("confirm_payment_at") or "").strip()
+                or None,
+                amount=payload.get("confirm_amount"),
+                payment_method=(
+                    payload.get("confirm_payment_method") or ""
+                ).strip(),
+            )
+            receipt.refresh_from_db()
+
     ticket = _build_receipt_ticket_data(receipt, line_rows)
     message = _render_receipt_text(ticket)
     qr = receipt_qr_for_receipt(receipt, pos_settings)
     print_copies = build_receipt_print_copies(
-        ticket, settings_row=pos_settings, qr=qr, kind=kind
+        ticket, settings_row=pos_settings, qr=qr, kind=receipt.kind
     )
     whatsapp_url = ""
     if share_whatsapp:
@@ -6521,6 +6557,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         ),
         "stock_updates": stock_updates,
         "mpesa_receipt_number": receipt.mpesa_receipt_number or "",
+        "confirmed": receipt.status == ShopReceiptStatus.CONFIRMED,
+        "receipt_status": receipt.status,
+        "receipt_status_label": receipt.get_status_display(),
+        "confirm_message": (confirm_result or {}).get("message") or "",
     }
 
 

@@ -3753,6 +3753,25 @@ html[data-theme="dark"] .shop-cart-fab-count {
   background: color-mix(in srgb, var(--panel) 92%, var(--accent) 8%);
 }
 
+.shop-cart-confirm {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.shop-cart-confirm[hidden],
+.shop-cart-confirm-fields[hidden] {
+  display: none !important;
+}
+
+.shop-cart-confirm-fields {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  border-radius: 0.7rem;
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent) 8%);
+}
+
 .shop-cart-delivery-search {
   display: flex;
   align-items: center;

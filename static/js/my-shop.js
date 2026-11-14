@@ -2590,6 +2590,26 @@
     const deliveryRiderSelect = checkoutForm?.querySelector(
       "[data-cart-delivery-rider]"
     );
+    const confirmWrap = checkoutForm?.querySelector("[data-cart-confirm-wrap]");
+    const confirmToggle = checkoutForm?.querySelector("[data-cart-confirm]");
+    const confirmFields = checkoutForm?.querySelector(
+      "[data-cart-confirm-fields]"
+    );
+    const confirmDateInput = checkoutForm?.querySelector(
+      "[data-cart-confirm-date]"
+    );
+    const confirmTimeInput = checkoutForm?.querySelector(
+      "[data-cart-confirm-time]"
+    );
+    const confirmRefInput = checkoutForm?.querySelector(
+      "[data-cart-confirm-ref]"
+    );
+    const confirmAmountWrap = checkoutForm?.querySelector(
+      "[data-cart-confirm-amount-wrap]"
+    );
+    const confirmAmountInput = checkoutForm?.querySelector(
+      "[data-cart-confirm-amount]"
+    );
     const shopOriginLat = Number(deliveryWrap?.getAttribute("data-shop-lat") || "");
     const shopOriginLng = Number(deliveryWrap?.getAttribute("data-shop-lng") || "");
     const shopHasOrigin =
@@ -2899,6 +2919,8 @@
     const requireClientPhone = cartRoot.dataset.posRequireClientPhone === "1";
     const requireClientName = cartRoot.dataset.posRequireClientName === "1";
     const compulsoryPrintOnSale = cartRoot.dataset.posCompulsoryPrint === "1";
+    const requireConfirmDetails =
+      cartRoot.dataset.posRequireConfirmDetails === "1";
 
     const selectedKind = () => {
       const checked = checkoutForm?.querySelector("[data-cart-kind]:checked");
@@ -3300,6 +3322,7 @@
           { ok: true }
         );
         syncStkPanel();
+        syncConfirmPanel();
         cartLoginCode?.focus();
       } catch (err) {
         if (pollToken !== stkPollToken) return;
@@ -4172,6 +4195,35 @@
       );
     };
 
+    const syncConfirmPanel = () => {
+      const kind = selectedKind();
+      const allowed = kind === "sale" || kind === "credit";
+      if (confirmWrap) confirmWrap.hidden = !allowed;
+      const on = allowed && Boolean(confirmToggle?.checked);
+      if (confirmFields) confirmFields.hidden = !on;
+      if (confirmAmountWrap) {
+        confirmAmountWrap.hidden = !(on && kind === "credit");
+      }
+      if (!on) return;
+      if (confirmDateInput && !confirmDateInput.value) {
+        confirmDateInput.value = localTodayIso();
+      }
+      if (
+        kind === "credit" &&
+        confirmAmountInput &&
+        !confirmAmountInput.value
+      ) {
+        confirmAmountInput.value = cartTotal().toFixed(2);
+      }
+      if (
+        confirmRefInput &&
+        !confirmRefInput.value &&
+        stkConfirmed?.mpesa_receipt_number
+      ) {
+        confirmRefInput.value = stkConfirmed.mpesa_receipt_number;
+      }
+    };
+
     const syncCheckoutMode = () => {
       const kind = selectedKind();
       const isSale = kind === "sale";
@@ -4205,6 +4257,7 @@
       refreshDeliveryUi();
       syncClientRequirements();
       syncStkPanel();
+      syncConfirmPanel();
     };
 
     const verifyCartLoginCode = async ({ autoCheckout = true } = {}) => {
@@ -4592,6 +4645,55 @@
         if (kind === "credit") {
           const dueDate = (creditDueInput?.value || "").trim();
           if (dueDate) payload.credit_due_date = dueDate;
+        }
+
+        if (
+          confirmToggle?.checked &&
+          (kind === "sale" || kind === "credit")
+        ) {
+          const confirmDate = (confirmDateInput?.value || "").trim();
+          const confirmTime = (confirmTimeInput?.value || "").trim();
+          const confirmRef =
+            (confirmRefInput?.value || "").trim() ||
+            payload.mpesa_receipt_number ||
+            "";
+          if (kind === "credit") {
+            const confirmAmount = (confirmAmountInput?.value || "").trim();
+            if (!confirmAmount) {
+              setCartStatus(
+                "Enter the amount received before confirming this credit.",
+                { error: true }
+              );
+              confirmAmountInput?.focus();
+              return;
+            }
+            payload.confirm_amount = confirmAmount;
+          }
+          if (requireConfirmDetails) {
+            if (!confirmRef) {
+              setCartStatus(
+                "Enter the payment reference before confirming.",
+                { error: true }
+              );
+              confirmRefInput?.focus();
+              return;
+            }
+            if (!confirmDate || !confirmTime) {
+              setCartStatus(
+                "Enter the payment date and time before confirming.",
+                { error: true }
+              );
+              (confirmDate ? confirmTimeInput : confirmDateInput)?.focus();
+              return;
+            }
+          }
+          payload.confirm = true;
+          payload.confirm_mpesa_receipt_number = confirmRef;
+          if (confirmDate) {
+            payload.confirm_payment_at = confirmTime
+              ? `${confirmDate}T${confirmTime}`
+              : confirmDate;
+          }
         }
 
         const needsStk =
@@ -6606,7 +6708,7 @@
     checkoutForm?.addEventListener("change", (event) => {
       if (
         event.target.matches?.(
-          "[data-cart-kind], [data-cart-pay], [data-cart-whatsapp], [data-cart-delivery]"
+          "[data-cart-kind], [data-cart-pay], [data-cart-whatsapp], [data-cart-delivery], [data-cart-confirm]"
         )
       ) {
         if (event.target.matches?.("[data-cart-pay], [data-cart-kind]")) {

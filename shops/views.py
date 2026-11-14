@@ -3257,6 +3257,16 @@ def my_shop_checkout(request, shop_id):
                 "login_code": request.POST.get("login_code"),
                 "share_whatsapp": request.POST.get("share_whatsapp")
                 in ("1", "true", "on", "yes"),
+                "confirm": request.POST.get("confirm")
+                in ("1", "true", "on", "yes"),
+                "confirm_mpesa_receipt_number": request.POST.get(
+                    "confirm_mpesa_receipt_number"
+                ),
+                "confirm_payment_at": request.POST.get("confirm_payment_at"),
+                "confirm_amount": request.POST.get("confirm_amount"),
+                "confirm_payment_method": request.POST.get(
+                    "confirm_payment_method"
+                ),
                 "lines": json.loads(request.POST.get("lines") or "[]"),
             }
     except (TypeError, ValueError, json.JSONDecodeError):
@@ -3314,9 +3324,18 @@ def my_shop_checkout(request, shop_id):
         "receipt_font": result.get("receipt_font") or {},
         "receipt_paper_width": result.get("receipt_paper_width") or "80",
         "stock_updates": result.get("stock_updates") or [],
+        "receipt_status": result.get("receipt_status") or "",
+        "receipt_status_label": result.get("receipt_status_label") or "",
+        "confirmed": bool(result.get("confirmed")),
         "message": (
             f"{result['kind_label']} {result['receipt_number']} completed "
+            f"{'and confirmed ' if result.get('confirmed') else ''}"
             f"(KSh {result['total']})."
+            + (
+                f" {result['confirm_message']}"
+                if result.get("confirm_message") and not result.get("confirmed")
+                else ""
+            )
         ),
         "mpesa_receipt_number": result.get("mpesa_receipt_number") or "",
     }

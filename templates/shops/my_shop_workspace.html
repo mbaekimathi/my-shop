@@ -46,6 +46,7 @@
   data-pos-receipt-font-weight="{{ pos_flags.receipt_font_weight }}"
   data-pos-receipt-font-weight-css="{{ pos_flags.receipt_font_weight_css }}"
   data-pos-compulsory-print="{% if pos_settings.compulsory_print_on_sale %}1{% else %}0{% endif %}"
+  data-pos-require-confirm-details="{% if pos_settings.require_mpesa_reference_on_confirm %}1{% else %}0{% endif %}"
   data-credit-whatsapp="{% if credit_whatsapp %}1{% else %}0{% endif %}"
   data-print-relay-url="{{ print_relay_url }}"
   data-print-channels="{{ pos_flags.print_channels|join:',' }}"
@@ -405,6 +406,77 @@
             placeholder="0.00"
           >
         </label>
+      </div>
+      {% endif %}
+
+      {% if "sale" in cart_kinds or "credit" in cart_kinds %}
+      <div
+        class="shop-cart-confirm"
+        data-cart-confirm-wrap
+        {% if default_kind != "sale" and default_kind != "credit" %}hidden{% endif %}
+      >
+        <label class="shop-cart-check">
+          <input type="checkbox" name="confirm_receipt" value="1" data-cart-confirm>
+          <span>Confirm receipt now</span>
+        </label>
+        <div class="shop-cart-confirm-fields" data-cart-confirm-fields hidden>
+          <div class="shop-cart-split">
+            <label class="shop-cart-input">
+              <span>
+                Payment date{% if pos_settings.require_mpesa_reference_on_confirm %}
+                <span class="shop-serial-required" aria-hidden="true">*</span>{% endif %}
+              </span>
+              <input
+                type="date"
+                name="confirm_payment_date"
+                data-cart-confirm-date
+              >
+            </label>
+            <label class="shop-cart-input">
+              <span>
+                Payment time{% if pos_settings.require_mpesa_reference_on_confirm %}
+                <span class="shop-serial-required" aria-hidden="true">*</span>{% endif %}
+              </span>
+              <input
+                type="time"
+                name="confirm_payment_time"
+                data-cart-confirm-time
+              >
+            </label>
+          </div>
+          <label class="shop-cart-input">
+            <span>
+              M-Pesa / payment reference{% if pos_settings.require_mpesa_reference_on_confirm %}
+              <span class="shop-serial-required" aria-hidden="true">*</span>{% else %}
+              <em>(optional)</em>{% endif %}
+            </span>
+            <input
+              type="text"
+              name="confirm_mpesa_receipt_number"
+              maxlength="40"
+              autocomplete="off"
+              data-cart-confirm-ref
+              placeholder="e.g. SII7XXXXXXX"
+            >
+          </label>
+          <label class="shop-cart-input" data-cart-confirm-amount-wrap hidden>
+            <span>Amount received <span class="shop-serial-required" aria-hidden="true">*</span></span>
+            <input
+              type="text"
+              name="confirm_amount"
+              inputmode="decimal"
+              data-cart-confirm-amount
+              placeholder="0.00"
+            >
+          </label>
+          <p class="shop-cart-client-note">
+            {% if pos_settings.require_mpesa_reference_on_confirm %}
+            Reference and payment date &amp; time are required to confirm.
+            {% else %}
+            Marks the receipt confirmed — skips the receipts confirm step.
+            {% endif %}
+          </p>
+        </div>
       </div>
       {% endif %}
 
@@ -923,7 +995,7 @@
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=20261111-delivery-receipt"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=20261111-delivery-eta"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=20261114-confirm-checkout"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261111-stock-take-hide-scope"></script>
 <script defer src="{% static 'js/shop-stock-take.js' %}?v=8"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
