@@ -416,6 +416,44 @@ def set_shop_pos_override(*, shop: Shop, section: str, enabled: bool) -> ShopPos
     return row
 
 
+STOCK_MODE_FIELDS = {
+    "stock_mode_items": (True, False),
+    "stock_mode_shelf": (False, True),
+    "stock_mode_both": (True, True),
+}
+
+
+def stock_mode_of(pos) -> str:
+    """Which single stock-mode toggle is on: items, shelf, or both."""
+    items = bool(getattr(pos, "enable_stock_tracking", True))
+    shelf = bool(getattr(pos, "enable_shelf_mode", False))
+    if items and shelf:
+        return "stock_mode_both"
+    if shelf:
+        return "stock_mode_shelf"
+    if items:
+        return "stock_mode_items"
+    return ""
+
+
+def pos_toggle_enabled(pos, field: str) -> bool:
+    if field in STOCK_MODE_FIELDS:
+        return stock_mode_of(pos) == field
+    return bool(getattr(pos, field))
+
+
+def _apply_stock_mode(row, field: str, enabled: bool) -> list[str]:
+    """Turning one stock mode on switches the others off; one must stay on."""
+    if not enabled:
+        if stock_mode_of(row) == field:
+            raise ValidationError(
+                "One stock mode must stay on. Turn on another mode instead."
+            )
+        return []
+    row.enable_stock_tracking, row.enable_shelf_mode = STOCK_MODE_FIELDS[field]
+    return ["enable_stock_tracking", "enable_shelf_mode"]
+
+
 def _require_shop_override_for_field(shop_row: ShopPosSettings, field: str) -> None:
     if field in SHOP_POS_FIELD_NAMES:
         if not shop_row.override_pos:
@@ -433,6 +471,14 @@ def _require_shop_override_for_field(shop_row: ShopPosSettings, field: str) -> N
 
 
 def set_shop_pos_setting(*, shop: Shop, field: str, enabled: bool) -> ShopPosSettings:
+    if field in STOCK_MODE_FIELDS:
+        row = get_shop_pos_settings(shop)
+        _require_shop_override_for_field(row, "enable_stock_tracking")
+        changed = _apply_stock_mode(row, field, enabled)
+        if changed:
+            row.save(update_fields=[*changed, "updated_at"])
+            _invalidate_pos_settings_cache(shop_id=shop.pk)
+        return row
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")
     row = get_shop_pos_settings(shop)
@@ -2834,6 +2880,14 @@ def sync_require_mpesa_reference_on_confirm_to_shops(
 
 
 def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:
+    if field in STOCK_MODE_FIELDS:
+        _invalidate_pos_settings_cache()
+        settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
+        changed = _apply_stock_mode(settings_row, field, enabled)
+        if changed:
+            settings_row.save(update_fields=[*changed, "updated_at"])
+        _invalidate_pos_settings_cache()
+        return get_company_pos_settings()
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")
     _invalidate_pos_settings_cache()

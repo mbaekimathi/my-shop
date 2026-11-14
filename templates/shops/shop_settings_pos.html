@@ -53,10 +53,12 @@
           >
             <div class="pos-settings-copy">
               <strong>{{ toggle.label }}</strong>
-            {% if toggle.field == "enable_shelf_mode" %}
-            <p>Track a separate shelf stock list you register yourself (on each shop's Shelf stock page). Shelf items are not sold, so sales don't change them. Turn on both switches to track items and shelf stock together.</p>
-            {% elif toggle.field == "enable_stock_tracking" %}
-            <p>Counts the items you sell: sales need enough stock and reduce it.</p>
+            {% if toggle.field == "stock_mode_items" %}
+            <p>Track stock on the items you sell. They show on the shop page, and sales need enough stock and reduce it.</p>
+            {% elif toggle.field == "stock_mode_shelf" %}
+            <p>Track a separate shelf stock list you register on each shop's Shelf stock page. Shelf items don't show on the shop page. Items still sell, but their stock isn't counted.</p>
+            {% elif toggle.field == "stock_mode_both" %}
+            <p>Track stock on the items you sell and also keep a separate shelf stock list.</p>
             {% endif %}
             </div>
             <label class="perm-switch">
@@ -65,7 +67,7 @@
                 class="perm-switch-input"
                 {% if toggle.enabled %}checked{% endif %}
                 data-pos-toggle
-                data-field="{{ toggle.field }}"
+                data-field="{{ toggle.field }}"{% if toggle.field|slice:":11" == "stock_mode_" %} data-stock-mode-toggle{% endif %}
                 aria-label="{{ toggle.label }}"
                 {% if using_company_defaults %}disabled{% endif %}
               >
@@ -108,6 +110,6 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}?v=3"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=4"></script>
 <script src="{% static 'js/shop-settings.js' %}?v=1"></script>
 {% endblock %}

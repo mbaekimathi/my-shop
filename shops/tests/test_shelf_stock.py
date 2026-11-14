@@ -82,6 +82,29 @@ class ShelfStockTests(TestCase):
         self.assertTrue(get_effective_pos_settings(self.shop).enable_shelf_mode)
         self.assertTrue(pos_settings_as_dict()["enable_shelf_mode"])
 
+    def test_stock_mode_toggles_switch_each_other_off(self):
+        from django.core.exceptions import ValidationError
+
+        from shops.services import pos_toggle_enabled, stock_mode_of
+
+        row = set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        self.assertFalse(row.enable_stock_tracking)
+        self.assertTrue(row.enable_shelf_mode)
+        self.assertEqual(stock_mode_of(row), "stock_mode_shelf")
+        self.assertFalse(pos_toggle_enabled(row, "stock_mode_items"))
+
+        row = set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self.assertTrue(row.enable_stock_tracking and row.enable_shelf_mode)
+
+        row = set_company_pos_setting(field="stock_mode_items", enabled=True)
+        self.assertTrue(row.enable_stock_tracking)
+        self.assertFalse(row.enable_shelf_mode)
+
+        with self.assertRaises(ValidationError):
+            set_company_pos_setting(field="stock_mode_items", enabled=False)
+        row = set_company_pos_setting(field="stock_mode_shelf", enabled=False)
+        self.assertEqual(stock_mode_of(row), "stock_mode_items")
+
     def test_page_redirects_when_shelf_mode_off(self):
         client = self._login()
         response = client.get(self.url)

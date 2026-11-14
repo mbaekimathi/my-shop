@@ -92,6 +92,7 @@ from .services import (
     complete_shop_checkout,
     create_shop,
     day_session_balance_summary,
+    stock_mode_of,
     till_summary_payload,
     delete_shop,
     find_client_by_phone,
@@ -115,6 +116,7 @@ from .services import (
     list_shop_receipts,
     open_shop_day,
     pos_settings_as_dict,
+    pos_toggle_enabled,
     preview_receipt_number,
     apply_receipt_copy,
     receipt_font_style,
@@ -4020,10 +4022,11 @@ SHOP_POS_SETTING_GROUPS = (
     },
     {
         "title": "Stock",
-        "summary": "",
+        "summary": "Pick one. Turning one on switches the others off.",
         "toggles": (
-            ("enable_stock_tracking", "Item stock tracking"),
-            ("enable_shelf_mode", "Shelf mode (track separate shelf stock)"),
+            ("stock_mode_items", "Items"),
+            ("stock_mode_shelf", "Shelf"),
+            ("stock_mode_both", "Both"),
         ),
     },
     {
@@ -4168,7 +4171,12 @@ def _handle_shop_settings_post(request, shop, *, section: str):
             return _shop_settings_error(request, message)
         if wants_json:
             return JsonResponse(
-                {"ok": True, "field": field, "enabled": getattr(row, field)}
+                {
+                    "ok": True,
+                    "field": field,
+                    "enabled": pos_toggle_enabled(row, field),
+                    "stock_mode": stock_mode_of(row),
+                }
             )
         messages.success(request, "Setting updated.")
         return redirect(request.path)
@@ -4426,7 +4434,7 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
     for group in setting_groups:
         toggles = []
         for field, label in group["toggles"]:
-            enabled = bool(getattr(pos, field))
+            enabled = pos_toggle_enabled(pos, field)
             toggle_count += 1
             if enabled:
                 enabled_count += 1

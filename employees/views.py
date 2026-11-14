@@ -42,6 +42,7 @@ from shops.services import (
     get_developer_payment_settings,
     mark_developer_subscription_paid,
     pos_settings_as_dict,
+    pos_toggle_enabled,
     preview_receipt_number,
     receipt_font_style,
     receipt_qr_for_settings,
@@ -53,6 +54,7 @@ from shops.services import (
     set_shop_stk_push_enabled,
     set_stk_provider,
     stk_shop_activation_status,
+    stock_mode_of,
     update_nexus_stk_settings,
     apply_receipt_copy,
     receipt_accepted_payment_methods_label,
@@ -2490,10 +2492,11 @@ POS_SETTING_GROUPS = (
     },
     {
         "title": "Stock",
-        "summary": "",
+        "summary": "Pick one. Turning one on switches the others off.",
         "toggles": (
-            ("enable_stock_tracking", "Item stock tracking"),
-            ("enable_shelf_mode", "Shelf mode (track separate shelf stock)"),
+            ("stock_mode_items", "Items"),
+            ("stock_mode_shelf", "Shelf"),
+            ("stock_mode_both", "Both"),
         ),
     },
     {
@@ -2603,7 +2606,8 @@ def _company_pos_settings(
                     {
                         "ok": True,
                         "field": field,
-                        "enabled": getattr(row, field),
+                        "enabled": pos_toggle_enabled(row, field),
+                        "stock_mode": stock_mode_of(row),
                         **stk_payload,
                     }
                 )
@@ -2870,7 +2874,7 @@ def _company_pos_settings(
     for group in setting_groups:
         toggles = []
         for field, label in group["toggles"]:
-            enabled = bool(getattr(pos, field))
+            enabled = pos_toggle_enabled(pos, field)
             toggle_count += 1
             if enabled:
                 enabled_count += 1
