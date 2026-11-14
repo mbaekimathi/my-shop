@@ -410,6 +410,7 @@
       {% endif %}
 
       {% if "sale" in cart_kinds or "credit" in cart_kinds %}
+      {% if pos_flags.enable_cart_confirm_receipt %}
       <div
         class="shop-cart-confirm"
         data-cart-confirm-wrap
@@ -478,7 +479,7 @@
           </p>
         </div>
       </div>
-      {% endif %}
+      {% endif %}{% endif %}
 
       {% if pos_flags.enable_client_data or trade_kinds %}
       <div class="shop-cart-client{% if pos_flags.require_client_phone or pos_flags.require_client_name or default_kind != 'sale' %} is-required{% endif %}" data-cart-client>
@@ -552,6 +553,7 @@
       {% endif %}
 
       {% if "sale" in cart_kinds or "credit" in cart_kinds %}
+      {% if pos_flags.enable_cart_delivery %}
       <div
         class="shop-cart-delivery"
         data-cart-delivery-wrap
@@ -631,7 +633,7 @@
           </label>
         </div>
       </div>
-      {% endif %}
+      {% endif %}{% endif %}
 
       <div class="shop-cart-stk" data-cart-stk-panel hidden>
         <div

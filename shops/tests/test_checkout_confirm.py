@@ -104,6 +104,22 @@ class CheckoutConfirmTests(TestCase):
         payload.update(extra)
         return payload
 
+    def test_confirm_rejected_when_cart_confirm_disabled(self):
+        set_company_pos_setting(field="enable_cart_confirm_receipt", enabled=False)
+        try:
+            with self.assertRaises(ValidationError):
+                complete_shop_checkout(
+                    shop=self.shop,
+                    profile=self.profile,
+                    payload=self._sale_payload(confirm=True),
+                )
+            result = complete_shop_checkout(
+                shop=self.shop, profile=self.profile, payload=self._sale_payload()
+            )
+            self.assertFalse(result["confirmed"])
+        finally:
+            set_company_pos_setting(field="enable_cart_confirm_receipt", enabled=True)
+
     def test_sale_without_confirm_stays_pending(self):
         result = complete_shop_checkout(
             shop=self.shop, profile=self.profile, payload=self._sale_payload()

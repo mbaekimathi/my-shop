@@ -658,6 +658,14 @@ class CompanyPosSettings(models.Model):
         default=False,
         help_text="When on (and client data is collected), client full name is required before checkout.",
     )
+    enable_cart_confirm_receipt = models.BooleanField(
+        default=True,
+        help_text="When on, the cart shows the \"Confirm receipt now\" option. When off, it is hidden.",
+    )
+    enable_cart_delivery = models.BooleanField(
+        default=True,
+        help_text="When on, the cart shows the \"Delivery\" option. When off, it is hidden.",
+    )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     compulsory_print_on_sale = models.BooleanField(default=False)
@@ -964,6 +972,14 @@ class ShopPosSettings(models.Model):
     require_client_name = models.BooleanField(
         default=False,
         help_text="When on (and client data is collected), client full name is required before checkout.",
+    )
+    enable_cart_confirm_receipt = models.BooleanField(
+        default=True,
+        help_text="When on, the cart shows the \"Confirm receipt now\" option. When off, it is hidden.",
+    )
+    enable_cart_delivery = models.BooleanField(
+        default=True,
+        help_text="When on, the cart shows the \"Delivery\" option. When off, it is hidden.",
     )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)

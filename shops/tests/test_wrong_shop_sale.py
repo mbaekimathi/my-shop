@@ -90,6 +90,29 @@ class WrongShopSaleTests(TestCase):
         self.assertContains(response, "data-wrong-shop-modal")
         self.assertContains(response, "OTHER SHOP")
 
+    def test_cart_confirm_and_delivery_hidden_when_disabled(self):
+        from shops.services import set_company_pos_setting
+
+        client = Client()
+        self._login(client)
+        self._unlock_shop(client, self.other_shop)
+        url = reverse(
+            "employees:my_shop_workspace", kwargs={"shop_id": self.other_shop.pk}
+        )
+        response = client.get(url)
+        self.assertContains(response, "data-cart-confirm-wrap")
+        self.assertContains(response, "data-cart-delivery-wrap")
+        set_company_pos_setting(field="enable_cart_confirm_receipt", enabled=False)
+        set_company_pos_setting(field="enable_cart_delivery", enabled=False)
+        try:
+            response = client.get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotContains(response, "data-cart-confirm-wrap")
+            self.assertNotContains(response, "data-cart-delivery-wrap")
+        finally:
+            set_company_pos_setting(field="enable_cart_confirm_receipt", enabled=True)
+            set_company_pos_setting(field="enable_cart_delivery", enabled=True)
+
     def test_verify_login_code_reports_unallocated_staff(self):
         client = Client()
         self._login(client)
