@@ -181,9 +181,14 @@
   };
 
   const paymentTimeLabel = (receipt = {}) =>
-    receipt.status === "confirmed" || receipt.is_partial_confirmation
+    receipt.status === "confirmed" ||
+    receipt.status === "partial_return" ||
+    receipt.is_partial_confirmation
       ? receipt.confirmed_payment_label || ""
       : "";
+
+  const whenLabel = (receipt = {}) =>
+    (receipt.source || "pos") === "pos" ? "Sold" : "Recorded";
 
   const isCreditReceipt = (receipt = {}) =>
     Boolean(receipt.is_credit || receipt.kind === "credit");
@@ -241,7 +246,7 @@
   <td data-label="Sold as">${soldAs}</td>
   <td class="shop-receipts-client" data-label="Client">${client}</td>
   <td class="shop-receipts-total" data-label="Total">KSh ${escapeHtml(money(row.total))}</td>
-  <td class="shop-receipts-when" data-label="Sold at">${escapeHtml(row.created_label)}</td>
+  <td class="shop-receipts-when" data-label="${whenLabel(row)} at">${escapeHtml(row.created_label)}</td>
   <td class="shop-receipts-status-cell" data-label="Status"><span class="shop-receipt-status ${statusClass(
     row.status
   )}">${escapeHtml(row.status_label)}</span>${
@@ -799,7 +804,7 @@
         detailStatus
       )}">${escapeHtml(receipt.status_label)}</span>
     </div>
-    <p class="shop-receipt-summary-when">Sold: <strong>${escapeHtml(
+    <p class="shop-receipt-summary-when">${whenLabel(receipt)}: <strong>${escapeHtml(
       receipt.created_label || ""
     )}</strong></p>
     ${
