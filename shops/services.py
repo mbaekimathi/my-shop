@@ -6188,7 +6188,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 raise ValidationError(
                     "Enter the client phone number so the credit sale can be sent on WhatsApp."
                 )
-        if kind in {ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN}:
+        if collect_client_data and kind in {
+            ShopReceiptKind.TRADE_OUT,
+            ShopReceiptKind.TRADE_IN,
+        }:
             if not client_name:
                 raise ValidationError("Enter the client full name.")
             if not client_phone_raw:
