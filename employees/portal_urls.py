@@ -229,6 +229,11 @@ urlpatterns = [
         shop_views.my_shop_stock_count,
         name="my_shop_stock_count",
     ),
+    path(
+        "my-shop/<int:shop_id>/shelf-stock/",
+        shop_views.my_shop_shelf_stock,
+        name="my_shop_shelf_stock",
+    ),
     path("employee/", views.role_employee, name="role_employee"),
     path(
         "<role_segment:role_segment>/employees/<str:employee_id>/access/",

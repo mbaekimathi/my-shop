@@ -2491,7 +2491,10 @@ POS_SETTING_GROUPS = (
     {
         "title": "Stock",
         "summary": "",
-        "toggles": (("enable_stock_tracking", "Stock quantity tracking"),),
+        "toggles": (
+            ("enable_stock_tracking", "Item stock tracking"),
+            ("enable_shelf_mode", "Shelf mode (track separate shelf stock)"),
+        ),
     },
     {
         "title": "Open & close",

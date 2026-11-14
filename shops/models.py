@@ -638,6 +638,10 @@ class CompanyPosSettings(models.Model):
         default=True,
         help_text="When on, checkout requires enough shop stock. When off, sales can proceed without stock.",
     )
+    enable_shelf_mode = models.BooleanField(
+        default=False,
+        help_text="When on, the shop tracks a separate shelf stock list registered by hand. Shelf items are not sold at the POS.",
+    )
     enable_open_close = models.BooleanField(
         default=True,
         help_text="When on, staff must open the shop day before selling and are redirected to open/close. When off, open/close is optional.",
@@ -956,6 +960,10 @@ class ShopPosSettings(models.Model):
     enable_stock_tracking = models.BooleanField(
         default=True,
         help_text="When on, checkout requires enough shop stock. When off, sales can proceed without stock.",
+    )
+    enable_shelf_mode = models.BooleanField(
+        default=False,
+        help_text="When on, the shop tracks a separate shelf stock list registered by hand. Shelf items are not sold at the POS.",
     )
     enable_open_close = models.BooleanField(
         default=True,

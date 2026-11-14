@@ -128,6 +128,7 @@ PERMISSION_MODULES = (
             {"slug": "trade_in", "label": "Trade in"},
             {"slug": "buy_stock", "label": "Buy stock"},
             {"slug": "stock_count", "label": "Stock count"},
+            {"slug": "shelf_stock", "label": "Shelf stock (shelf mode)"},
             {"slug": "stock_requests", "label": "View stock transfers"},
             {"slug": "respond_stock_request", "label": "Confirm / decline transfers"},
             {"slug": "register_expense", "label": "Register expense"},

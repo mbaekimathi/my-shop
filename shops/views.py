@@ -706,6 +706,10 @@ def _shop_floor_chrome(
         shop_day_floor_state(shop=shop, pos=pos) if shop is not None else {}
     )
     open_session = day_state.get("open_session") if day_state else None
+    shelf_pos = pos
+    if shelf_pos is None and shop is not None:
+        shelf_pos = get_effective_pos_settings(shop)
+    shelf_mode_enabled = bool(getattr(shelf_pos, "enable_shelf_mode", False))
     low_stock_alerts = []
     low_stock_alert_force = False
     # Low stock popup only after a successful open, once per open session.
@@ -734,6 +738,7 @@ def _shop_floor_chrome(
             pending_stock_take_count=pending_stock_take_count,
             trade_in_enabled=bool(getattr(pos, "enable_trade_in", False)),
             trade_out_enabled=bool(getattr(pos, "enable_trade_out", False)),
+            shelf_mode_enabled=shelf_mode_enabled,
         ),
         "shop": shop,
         "shops": shops,
@@ -1916,6 +1921,103 @@ def my_shop_stock_count(request, shop_id):
             **take_context,
             "stock_count_results": shop_results,
             "pending_stock_take_count": pending_count,
+        },
+    )
+
+
+@shop_floor_required
+@require_http_methods(["GET", "POST"])
+def my_shop_shelf_stock(request, shop_id):
+    """Shelf mode: register and adjust this shop's own shelf stock list."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "shelf_stock", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    pos = get_effective_pos_settings(shop)
+    if not getattr(pos, "enable_shelf_mode", False):
+        messages.info(
+            request,
+            "Shelf mode is off. Turn it on under Settings → POS → Stock.",
+        )
+        return redirect("employees:my_shop_workspace", shop_id=shop.pk)
+
+    from items.models import ShelfStockMovementType
+    from items.shelf_stock_services import (
+        archive_shelf_item,
+        list_shelf_items,
+        recent_shelf_movements,
+        record_shelf_movement,
+        register_shelf_item,
+    )
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        try:
+            if action == "register":
+                item = register_shelf_item(
+                    shop=shop,
+                    actor=profile,
+                    name=request.POST.get("name"),
+                    unit=request.POST.get("unit"),
+                    opening_qty=request.POST.get("opening_qty"),
+                    low_stock_threshold=request.POST.get("low_stock_threshold"),
+                )
+                messages.success(request, f"“{item.name}” added to the shelf list.")
+            elif action in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
+                movement = record_shelf_movement(
+                    shop=shop,
+                    shelf_item_id=request.POST.get("shelf_item_id"),
+                    mode=action,
+                    qty=request.POST.get("qty"),
+                    actor=profile,
+                    note=request.POST.get("note") or "",
+                )
+                verb = "Added" if action == ShelfStockMovementType.IN else "Removed"
+                messages.success(
+                    request,
+                    f"{verb} {movement.quantity.normalize():f} "
+                    f"{'to' if action == ShelfStockMovementType.IN else 'from'} "
+                    f"“{movement.shelf_item.name}”.",
+                )
+            elif action == "archive":
+                item = archive_shelf_item(
+                    shop=shop, shelf_item_id=request.POST.get("shelf_item_id")
+                )
+                messages.success(request, f"“{item.name}” removed from the shelf list.")
+            else:
+                messages.error(request, "Unknown shelf action.")
+        except ValidationError as exc:
+            for message in _validation_errors(exc):
+                messages.error(request, message)
+        return redirect("employees:my_shop_shelf_stock", shop_id=shop.pk)
+
+    shelf_items = list_shelf_items(shop=shop)
+    shops = _shops_for_floor(profile, shop)
+    return _render_my_shop_tool_page(
+        request,
+        shop=shop,
+        profile=profile,
+        shops=shops,
+        active="shelf_stock",
+        title=f"Shelf stock — {shop.name}",
+        headline="Shelf stock",
+        summary=(
+            "Register the stock on your shelves and add or remove quantities by hand. "
+            "Shelf items do not show on the selling page and sales do not change them."
+        ),
+        icon="layers",
+        template_name="shops/my_shop_shelf_stock.html",
+        extra_context={
+            "shelf_items": shelf_items,
+            "shelf_item_count": len(shelf_items),
+            "shelf_low_count": sum(1 for row in shelf_items if row["is_low"]),
+            "shelf_movements": recent_shelf_movements(shop=shop),
+            "item_stock_tracking": bool(getattr(pos, "enable_stock_tracking", True)),
         },
     )
 
@@ -3909,7 +4011,10 @@ SHOP_POS_SETTING_GROUPS = (
     {
         "title": "Stock",
         "summary": "",
-        "toggles": (("enable_stock_tracking", "Stock quantity tracking"),),
+        "toggles": (
+            ("enable_stock_tracking", "Item stock tracking"),
+            ("enable_shelf_mode", "Shelf mode (track separate shelf stock)"),
+        ),
     },
     {
         "title": "Open & close",

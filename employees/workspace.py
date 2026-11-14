@@ -786,6 +786,7 @@ def sidebar_for_my_shop(
     pending_stock_take_count=0,
     trade_in_enabled=False,
     trade_out_enabled=False,
+    shelf_mode_enabled=False,
 ):
     """Sidebar for MY-SHOP entry picker and shop floor workspace."""
     from .module_permissions import employee_may
@@ -903,6 +904,18 @@ def sidebar_for_my_shop(
                         badge=pending_stock_take_count,
                     )
                 )
+            if shelf_mode_enabled and _allowed("shelf_stock"):
+                primary.append(
+                    _link(
+                        "Shelf stock",
+                        "layers",
+                        href=reverse(
+                            "employees:my_shop_shelf_stock",
+                            kwargs={"shop_id": shop.pk},
+                        ),
+                        active=active == "shelf_stock",
+                    )
+                )
             if _allowed("register_expense"):
                 primary.append(
                     _action(
@@ -1008,6 +1021,18 @@ def sidebar_for_my_shop(
                     "Transfer stock",
                     "plus",
                     action="request-stock",
+                )
+            )
+        elif active == "shelf_stock" and _allowed("shelf_stock"):
+            primary.append(
+                _link(
+                    "Shelf stock",
+                    "layers",
+                    href=reverse(
+                        "employees:my_shop_shelf_stock",
+                        kwargs={"shop_id": shop.pk},
+                    ),
+                    active=True,
                 )
             )
         elif active == "stock_count" and _allowed("stock_count"):

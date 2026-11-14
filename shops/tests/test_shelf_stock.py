@@ -1,0 +1,166 @@
+"""Shelf mode: separate shelf stock registered and adjusted by hand."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+from django.contrib.auth.hashers import make_password
+from django.contrib.auth.models import User
+from django.test import Client, TestCase, override_settings
+from django.urls import reverse
+
+from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+from items.models import Item, ShelfItem, ShelfStockMovement, ShopStock
+from shops.models import CompanyPosSettings, Shop, ShopPosSettings
+from shops.services import (
+    _invalidate_pos_settings_cache,
+    get_effective_pos_settings,
+    pos_settings_as_dict,
+    set_company_pos_setting,
+)
+
+
+@override_settings(
+    ALLOWED_HOSTS=["testserver", "localhost"],
+    RATE_LIMITS={
+        "login": {"max": 10_000, "window": 60},
+        "check_employee_id": {"max": 10_000, "window": 60},
+        "register": {"max": 10_000, "window": 60},
+        "sync": {"max": 10_000, "window": 60},
+    },
+)
+class ShelfStockTests(TestCase):
+    def setUp(self):
+        self.password = "shelf-pass"
+        user = User.objects.create_user(
+            username="800031", password=self.password, is_active=True
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=user,
+            employee_id="800031",
+            phone_country_code="+254",
+            phone_number="700000831",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        self.shop = Shop.objects.create(
+            name="SHELF SHOP",
+            location="NAIROBI",
+            email="shelf-shop@test.local",
+            phone_number="0700000831",
+            login_code="800331",
+            password_hash=make_password(self.password),
+            created_by=self.profile,
+        )
+        CompanyPosSettings.objects.update_or_create(
+            pk=1, defaults={"enable_shelf_mode": False}
+        )
+        ShopPosSettings.objects.filter(shop=self.shop).delete()
+        _invalidate_pos_settings_cache()
+        self.url = reverse(
+            "employees:my_shop_shelf_stock", kwargs={"shop_id": self.shop.pk}
+        )
+
+    def _login(self):
+        client = Client()
+        response = client.post(
+            reverse("employees:shop_login"),
+            {"login_code": self.shop.login_code, "password": self.password},
+        )
+        self.assertEqual(response.status_code, 302)
+        return client
+
+    def test_shelf_mode_defaults_off_and_toggles(self):
+        self.assertFalse(pos_settings_as_dict()["enable_shelf_mode"])
+        set_company_pos_setting(field="enable_shelf_mode", enabled=True)
+        self.assertTrue(get_effective_pos_settings(self.shop).enable_shelf_mode)
+        self.assertTrue(pos_settings_as_dict()["enable_shelf_mode"])
+
+    def test_page_redirects_when_shelf_mode_off(self):
+        client = self._login()
+        response = client.get(self.url)
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn("shelf-stock", response["Location"])
+
+    def test_register_add_remove_and_archive(self):
+        set_company_pos_setting(field="enable_shelf_mode", enabled=True)
+        client = self._login()
+        response = client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Register shelf stock")
+
+        client.post(
+            self.url,
+            {"action": "register", "name": "Sugar bag", "unit": "bags", "opening_qty": "5"},
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop, name="Sugar bag")
+        self.assertEqual(shelf.quantity, Decimal("5"))
+
+        client.post(self.url, {"action": "in", "shelf_item_id": shelf.pk, "qty": "3"})
+        client.post(self.url, {"action": "out", "shelf_item_id": shelf.pk, "qty": "2"})
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("6"))
+
+        client.post(self.url, {"action": "out", "shelf_item_id": shelf.pk, "qty": "100"})
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("6"))
+        self.assertEqual(
+            list(
+                ShelfStockMovement.objects.filter(shelf_item=shelf)
+                .order_by("id")
+                .values_list("movement_type", flat=True)
+            ),
+            ["register", "in", "out"],
+        )
+
+        response = client.post(
+            self.url, {"action": "register", "name": "sugar BAG"}, follow=True
+        )
+        self.assertContains(response, "already on the shelf list")
+
+        client.post(self.url, {"action": "archive", "shelf_item_id": shelf.pk})
+        shelf.refresh_from_db()
+        self.assertTrue(shelf.is_archived)
+        response = client.get(self.url)
+        self.assertContains(response, "No shelf stock yet")
+
+    def test_shelf_items_do_not_touch_item_stock(self):
+        set_company_pos_setting(field="enable_shelf_mode", enabled=True)
+        item = Item.objects.create(
+            category="GEN",
+            name="Sugar bag",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("20"),
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(shop=self.shop, item=item, quantity=Decimal("4"))
+        client = self._login()
+        client.post(self.url, {"action": "register", "name": "Sugar bag", "opening_qty": "9"})
+        client.post(
+            self.url,
+            {
+                "action": "in",
+                "shelf_item_id": ShelfItem.objects.get(shop=self.shop).pk,
+                "qty": "1",
+            },
+        )
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop, item=item).quantity, Decimal("4")
+        )
+
+    def test_shop_override_controls_shelf_mode(self):
+        ShopPosSettings.objects.update_or_create(
+            shop=self.shop,
+            defaults={
+                "override_pos": True,
+                "enable_shelf_mode": True,
+                "enable_open_close": False,
+            },
+        )
+        _invalidate_pos_settings_cache()
+        client = self._login()
+        workspace = client.get(
+            reverse("employees:my_shop_workspace", kwargs={"shop_id": self.shop.pk})
+        )
+        self.assertContains(workspace, self.url)
+        self.assertEqual(client.get(self.url).status_code, 200)

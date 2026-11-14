@@ -66,6 +66,11 @@
         >
           <div class="pos-settings-copy">
             <strong>{{ toggle.label }}</strong>
+            {% if toggle.field == "enable_shelf_mode" %}
+            <p>Track a separate shelf stock list you register yourself (on each shop's Shelf stock page). Shelf items are not sold, so sales don't change them. Turn on both switches to track items and shelf stock together.</p>
+            {% elif toggle.field == "enable_stock_tracking" %}
+            <p>Counts the items you sell: sales need enough stock and reduce it.</p>
+            {% endif %}
             {% if toggle.employee_perm %}
             <p class="pos-settings-employee-link">
               <a
