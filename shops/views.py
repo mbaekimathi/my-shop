@@ -1948,13 +1948,10 @@ def my_shop_shelf_stock(request, shop_id):
         )
         return redirect("employees:my_shop_workspace", shop_id=shop.pk)
 
-    from items.models import ShelfStockMovementType
     from items.shelf_stock_services import (
-        archive_shelf_item,
+        apply_shelf_action,
         list_shelf_items,
         recent_shelf_movements,
-        record_shelf_movement,
-        register_shelf_item,
     )
 
     if request.method == "POST":
@@ -1967,41 +1964,10 @@ def my_shop_shelf_stock(request, shop_id):
             if denied:
                 return denied
             actor = verify_active_employee_code(login_code)
-        action = (request.POST.get("action") or "").strip()
         try:
-            if action == "register":
-                item = register_shelf_item(
-                    shop=shop,
-                    actor=actor,
-                    name=request.POST.get("name"),
-                    unit=request.POST.get("unit"),
-                    opening_qty=request.POST.get("opening_qty"),
-                    low_stock_threshold=request.POST.get("low_stock_threshold"),
-                )
-                messages.success(request, f"“{item.name}” added to the shelf list.")
-            elif action in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
-                movement = record_shelf_movement(
-                    shop=shop,
-                    shelf_item_id=request.POST.get("shelf_item_id"),
-                    mode=action,
-                    qty=request.POST.get("qty"),
-                    actor=actor,
-                    note=request.POST.get("note") or "",
-                )
-                verb = "Added" if action == ShelfStockMovementType.IN else "Removed"
-                messages.success(
-                    request,
-                    f"{verb} {movement.quantity.normalize():f} "
-                    f"{'to' if action == ShelfStockMovementType.IN else 'from'} "
-                    f"“{movement.shelf_item.name}”.",
-                )
-            elif action == "archive":
-                item = archive_shelf_item(
-                    shop=shop, shelf_item_id=request.POST.get("shelf_item_id")
-                )
-                messages.success(request, f"“{item.name}” removed from the shelf list.")
-            else:
-                messages.error(request, "Unknown shelf action.")
+            messages.success(
+                request, apply_shelf_action(shop=shop, actor=actor, data=request.POST)
+            )
         except ValidationError as exc:
             for message in _validation_errors(exc):
                 messages.error(request, message)

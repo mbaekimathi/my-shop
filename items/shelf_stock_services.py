@@ -172,3 +172,36 @@ def archive_shelf_item(*, shop, shelf_item_id) -> ShelfItem:
     item.is_archived = True
     item.save(update_fields=["is_archived", "updated_at"])
     return item
+
+
+def apply_shelf_action(*, shop, actor, data) -> str:
+    """Run one shelf page action (register / in / out / archive); returns a success message."""
+    action = (data.get("action") or "").strip()
+    if action == "register":
+        item = register_shelf_item(
+            shop=shop,
+            actor=actor,
+            name=data.get("name"),
+            unit=data.get("unit"),
+            opening_qty=data.get("opening_qty"),
+            low_stock_threshold=data.get("low_stock_threshold"),
+        )
+        return f"“{item.name}” added to the shelf list."
+    if action in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
+        movement = record_shelf_movement(
+            shop=shop,
+            shelf_item_id=data.get("shelf_item_id"),
+            mode=action,
+            qty=data.get("qty"),
+            actor=actor,
+            note=data.get("note") or "",
+        )
+        is_in = action == ShelfStockMovementType.IN
+        return (
+            f"{'Added' if is_in else 'Removed'} {movement.quantity.normalize():f} "
+            f"{'to' if is_in else 'from'} “{movement.shelf_item.name}”."
+        )
+    if action == "archive":
+        item = archive_shelf_item(shop=shop, shelf_item_id=data.get("shelf_item_id"))
+        return f"“{item.name}” removed from the shelf list."
+    raise ValidationError("Unknown shelf action.")

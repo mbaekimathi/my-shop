@@ -1,0 +1,73 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=10">
+{% endblock %}
+
+{% block workspace_content %}
+<section class="store-stock shelf-stock" data-animate="rise" data-shelf-stock>
+  <header class="store-stock-hero">
+    <div class="store-stock-hero-copy">
+      <p class="store-stock-kicker">
+        <span class="store-stock-mode-pill" aria-hidden="true">
+          <i data-lucide="{{ meta.icon }}"></i>
+        </span>
+        {% if shop %}{{ shop.name }} · {% endif %}Shelf mode
+      </p>
+      <h2>{{ meta.headline }}</h2>
+      <p class="store-stock-lead">{{ meta.summary }}</p>
+    </div>
+    {% if shop %}
+    <dl class="store-stock-stats">
+      <div class="store-stock-stat">
+        <dt>Shelf items</dt>
+        <dd>{{ shelf_item_count }}</dd>
+      </div>
+      <div class="store-stock-stat">
+        <dt>Low</dt>
+        <dd>{{ shelf_low_count }}</dd>
+      </div>
+    </dl>
+    {% endif %}
+  </header>
+
+  {% if shop %}
+  <section class="store-stock-panel" aria-labelledby="shelf-shop-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="shelf-shop-title">Shop</h3>
+        <p>Pick the shop whose shelf stock you want to register or change.</p>
+      </div>
+    </div>
+    <form method="get" class="shelf-stock-staff-field">
+      <label class="store-stock-field">
+        <span>Shop</span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="store" aria-hidden="true"></i>
+          <select name="shop" onchange="this.form.submit()" data-shelf-shop-select>
+            {% for row in shops %}
+            <option value="{{ row.pk }}"{% if row.pk == shop.pk %} selected{% endif %}>{{ row.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </label>
+    </form>
+  </section>
+
+  {% include "shops/partials/shelf_stock_body.html" %}
+  {% else %}
+  <section class="store-stock-panel">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3>Shelf mode is off</h3>
+        <p>No shop has Shelf mode on. Turn on <strong>Shelf</strong> or <strong>Both</strong> under Settings → POS → Stock, then come back here to register shelf items.</p>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+</section>
+{% endblock %}

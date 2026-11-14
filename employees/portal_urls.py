@@ -269,6 +269,11 @@ urlpatterns = [
         name="store_stock_out",
     ),
     path(
+        "store-manager/shelf-stock/",
+        store_stock_views.store_shelf_stock,
+        name="store_shelf_stock",
+    ),
+    path(
         "store-manager/store-report/",
         store_stock_views.store_stock_report,
         name="store_stock_report",

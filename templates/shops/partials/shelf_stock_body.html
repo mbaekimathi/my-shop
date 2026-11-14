@@ -1,0 +1,200 @@
+  {% if shelf_needs_staff_id %}
+  <section class="store-stock-panel shelf-stock-staff" aria-labelledby="shelf-staff-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="shelf-staff-title">Staff ID</h3>
+        <p>Enter your 6-digit staff ID before registering or changing shelf stock.</p>
+      </div>
+    </div>
+    <label class="store-stock-field shelf-stock-staff-field">
+      <span>Staff ID</span>
+      <div class="store-stock-input-wrap">
+        <i data-lucide="user-round" aria-hidden="true"></i>
+        <input type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 digits" data-shelf-staff-id>
+      </div>
+    </label>
+  </section>
+  {% endif %}
+
+  <section class="store-stock-panel" aria-labelledby="shelf-register-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="shelf-register-title">Register shelf stock</h3>
+        <p>Add something you keep on the shelf. It will not appear on the selling page.</p>
+      </div>
+    </div>
+    <form method="post" class="store-stock-meta-grid shelf-stock-register" data-shelf-register-form>
+      {% csrf_token %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
+      <input type="hidden" name="action" value="register">
+      <label class="store-stock-field">
+        <span>Name</span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="package" aria-hidden="true"></i>
+          <input type="text" name="name" maxlength="200" required placeholder="e.g. Sugar 50kg bag">
+        </div>
+      </label>
+      <label class="store-stock-field">
+        <span>Unit <em>optional</em></span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="ruler" aria-hidden="true"></i>
+          <input type="text" name="unit" maxlength="40" placeholder="pcs, kg, boxes…">
+        </div>
+      </label>
+      <label class="store-stock-field">
+        <span>Quantity on shelf now</span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="hash" aria-hidden="true"></i>
+          <input type="number" name="opening_qty" min="0" step="any" inputmode="decimal" placeholder="0">
+        </div>
+      </label>
+      <label class="store-stock-field">
+        <span>Low stock alert at <em>optional</em></span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="bell" aria-hidden="true"></i>
+          <input type="number" name="low_stock_threshold" min="0" step="any" inputmode="decimal" placeholder="0">
+        </div>
+      </label>
+      <div class="store-stock-actions">
+        <button type="submit" class="store-stock-btn store-stock-btn--primary">Register</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-list-title">
+    <div class="store-stock-panel-head store-stock-panel-head--list">
+      <div>
+        <h3 id="shelf-list-title">On the shelf</h3>
+        <p>Type a quantity, then press <strong>Add</strong> or <strong>Remove</strong>.</p>
+      </div>
+    </div>
+
+    {% if shelf_items %}
+    <div class="store-stock-table-wrap">
+      <table class="store-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">Shelf item</th>
+            <th scope="col" class="store-stock-col-qty">On shelf</th>
+            <th scope="col" class="shelf-stock-col-change">Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in shelf_items %}
+          <tr class="store-stock-row" data-shelf-row="{{ row.id }}">
+            <td data-label="Item">
+              <div class="store-stock-item-cell">
+                <span class="store-stock-item-name">{{ row.name }}</span>
+                {% if row.unit %}<span class="store-stock-item-cat-mobile">{{ row.unit }}</span>{% endif %}
+              </div>
+            </td>
+            <td class="store-stock-col-qty" data-label="On shelf">
+              <span class="store-stock-balance-pill"{% if row.is_low %} data-shelf-low title="At or below the low stock alert ({{ row.low_stock_threshold_display }})"{% endif %}>
+                {{ row.quantity_display }}{% if row.unit %} {{ row.unit }}{% endif %}{% if row.is_low %} · low{% endif %}
+              </span>
+            </td>
+            <td class="shelf-stock-col-change" data-label="Change">
+              <form method="post" class="shelf-stock-move">
+                {% csrf_token %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
+                <input type="hidden" name="shelf_item_id" value="{{ row.id }}">
+                <input
+                  class="store-stock-qty-input"
+                  type="number"
+                  name="qty"
+                  min="0"
+                  step="any"
+                  inputmode="decimal"
+                  placeholder="Qty"
+                  required
+                  aria-label="Quantity for {{ row.name }}"
+                >
+                <input type="text" name="note" maxlength="255" placeholder="Note (optional)" class="store-stock-qty-input shelf-stock-note" aria-label="Note for {{ row.name }}">
+                <button type="submit" name="action" value="in" class="store-stock-btn store-stock-btn--primary">Add</button>
+                <button type="submit" name="action" value="out" class="store-stock-btn store-stock-btn--ghost">Remove</button>
+              </form>
+              <form method="post" class="shelf-stock-archive" data-shelf-confirm="Remove “{{ row.name }}” from the shelf list?">
+                {% csrf_token %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
+                <input type="hidden" name="shelf_item_id" value="{{ row.id }}">
+                <button type="submit" name="action" value="archive" class="store-stock-btn store-stock-btn--ghost" aria-label="Delete {{ row.name }} from the shelf list">
+                  <i data-lucide="trash-2" aria-hidden="true"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="store-stock-empty">
+      <i data-lucide="layers" aria-hidden="true"></i>
+      <p><strong>No shelf stock yet.</strong> Register your first shelf item above.</p>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if shelf_movements %}
+  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-history-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="shelf-history-title">Recent changes</h3>
+        <p>Last {{ shelf_movements|length }} shelf stock changes for {{ shop.name }}.</p>
+      </div>
+    </div>
+    <div class="store-stock-table-wrap">
+      <table class="store-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Shelf item</th>
+            <th scope="col">Change</th>
+            <th scope="col" class="store-stock-col-qty">Qty</th>
+            <th scope="col" class="store-stock-col-qty">Left</th>
+            <th scope="col">By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for move in shelf_movements %}
+          <tr class="store-stock-row">
+            <td data-label="When">{{ move.created_at|date:"d M Y H:i" }}</td>
+            <td data-label="Shelf item">{{ move.shelf_item.name }}{% if move.note %} <span class="store-stock-item-cat-mobile">{{ move.note }}</span>{% endif %}</td>
+            <td data-label="Change">{{ move.get_movement_type_display }}</td>
+            <td class="store-stock-col-qty" data-label="Qty">{% if move.movement_type == "out" %}−{% elif move.movement_type == "in" %}+{% endif %}{{ move.quantity|floatformat:"-3" }}</td>
+            <td class="store-stock-col-qty" data-label="Left">{{ move.balance_after|floatformat:"-3" }}</td>
+            <td data-label="By">{% if move.created_by %}{{ move.created_by.user.get_full_name|default:move.created_by.user.username }}{% else %}Shop portal{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+<script>
+(function () {
+  var root = document.querySelector("[data-shelf-stock]");
+  if (!root) return;
+  var staff = root.querySelector("[data-shelf-staff-id]");
+  root.querySelectorAll("form").forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      var hidden = form.querySelector("[data-shelf-login-code]");
+      if (hidden && staff) {
+        var code = (staff.value || "").replace(/\D+/g, "");
+        if (code.length !== 6) {
+          event.preventDefault();
+          staff.setCustomValidity("Enter your 6-digit staff ID.");
+          staff.reportValidity();
+          staff.focus();
+          return;
+        }
+        hidden.value = code;
+      }
+      var question = form.getAttribute("data-shelf-confirm");
+      if (question && !window.confirm(question)) {
+        event.preventDefault();
+      }
+    });
+  });
+  if (staff) {
+    staff.addEventListener("input", function () { staff.setCustomValidity(""); });
+  }
+})();
+</script>

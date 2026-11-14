@@ -665,6 +665,24 @@ def store_stock_report_url():
     return reverse("employees:store_stock_report")
 
 
+def store_shelf_stock_url():
+    return reverse("employees:store_shelf_stock")
+
+
+def _store_shelf_stock_link(profile, *, active):
+    """Shelf stock shortcut for Store Manager when any shop has Shelf mode on."""
+    from .module_permissions import employee_may
+    from .store_stock_views import shelf_mode_shops
+
+    if profile is not None and not employee_may(profile, "my-shop", "shelf_stock"):
+        return []
+    if not shelf_mode_shops():
+        return []
+    return [
+        _link("Shelf stock", "layers", href=store_shelf_stock_url(), active=active)
+    ]
+
+
 def sidebar_for_store_stock(role, *, profile=None, active="in"):
     """Sidebar for central store stock in/out/report pages."""
     dashboard_url = reverse(role_home_url_name(role))
@@ -691,6 +709,7 @@ def sidebar_for_store_stock(role, *, profile=None, active="in"):
                     href=store_stock_report_url(),
                     active=active == "report",
                 ),
+                *_store_shelf_stock_link(profile, active=active == "shelf"),
             ],
             "footer": _footer_site_links(
                 profile=profile,
@@ -737,6 +756,7 @@ def sidebar_for_role_dashboard(
                     href=store_stock_report_url(),
                     active=active_slug == "store-report",
                 ),
+                *_store_shelf_stock_link(profile, active=active_slug == "shelf-stock"),
             ]
         )
     if role in comms_roles:

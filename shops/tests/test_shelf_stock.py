@@ -62,6 +62,7 @@ class ShelfStockTests(TestCase):
         )
         ShopPosSettings.objects.filter(shop=self.shop).delete()
         _invalidate_pos_settings_cache()
+        self.addCleanup(_invalidate_pos_settings_cache)
         self.staff = {"login_code": self.profile.employee_id}
         self.url = reverse(
             "employees:my_shop_shelf_stock", kwargs={"shop_id": self.shop.pk}
@@ -216,3 +217,61 @@ class ShelfStockTests(TestCase):
         )
         self.assertContains(workspace, self.url)
         self.assertEqual(client.get(self.url).status_code, 200)
+
+
+@override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
+class StoreManagerShelfStockTests(TestCase):
+    def setUp(self):
+        user = User.objects.create_user(
+            username="830041", password="store-pass", is_active=True
+        )
+        self.manager = EmployeeProfile.objects.create(
+            user=user,
+            employee_id="830041",
+            phone_country_code="+254",
+            phone_number="700000941",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.STORE_MANAGER,
+        )
+        self.shop = Shop.objects.create(
+            name="STORE SHELF SHOP",
+            location="NAIROBI",
+            email="store-shelf@test.local",
+            phone_number="0700000941",
+            login_code="830141",
+            password_hash="x",
+            created_by=self.manager,
+        )
+        CompanyPosSettings.objects.update_or_create(
+            pk=1, defaults={"enable_shelf_mode": False, "enable_stock_tracking": True}
+        )
+        _invalidate_pos_settings_cache()
+        self.addCleanup(_invalidate_pos_settings_cache)
+        self.client.login(username="830041", password="store-pass")
+        self.url = reverse("employees:store_shelf_stock")
+
+    def test_store_manager_registers_shelf_items_for_a_shop(self):
+        response = self.client.get("/store-manager/")
+        self.assertNotContains(response, self.url)
+        self.assertContains(self.client.get(self.url), "Shelf mode is off")
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        self.assertContains(self.client.get("/store-manager/"), self.url)
+        page = self.client.get(self.url)
+        self.assertContains(page, "STORE SHELF SHOP")
+
+        self.client.post(
+            f"{self.url}?shop={self.shop.pk}",
+            {"action": "register", "name": "Gunny bags", "opening_qty": "20"},
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        self.assertEqual(shelf.quantity, Decimal("20"))
+        self.assertEqual(shelf.created_by, self.manager)
+        self.assertFalse(Item.objects.filter(name__iexact="Gunny bags").exists())
+
+        self.client.post(
+            self.url,
+            {"action": "out", "shelf_item_id": shelf.pk, "qty": "5", "shop": self.shop.pk},
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("15"))
