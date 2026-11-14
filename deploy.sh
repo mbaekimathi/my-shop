@@ -52,7 +52,7 @@ find_python() {
 update_code() {
   local branch="$1"
   echo "[1/4] Pulling latest code ($branch)..."
-  git fetch origin "$branch" || die "could not download from GitHub (check internet/credentials)."
+  git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" || die "could not download from GitHub (check internet/credentials)."
 
   if ! git diff --quiet || ! git diff --cached --quiet; then
     git status --short --untracked-files=no >&2

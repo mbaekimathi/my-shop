@@ -16,7 +16,7 @@ if not defined DEPLOY_BRANCH set "DEPLOY_BRANCH=main"
 if /i "%~1"=="--pulled" goto after_pull
 
 echo [1/4] Pulling latest code (%DEPLOY_BRANCH%)...
-git fetch origin %DEPLOY_BRANCH%
+git fetch origin "+refs/heads/%DEPLOY_BRANCH%:refs/remotes/origin/%DEPLOY_BRANCH%"
 if errorlevel 1 (
   echo.
   echo Deploy stopped: could not download from GitHub ^(check internet/credentials^).
@@ -28,19 +28,9 @@ if errorlevel 1 goto dirty
 git diff --cached --quiet
 if errorlevel 1 goto dirty
 
-for /f "delims=" %%B in ('git rev-parse --abbrev-ref HEAD') do set "CURRENT_BRANCH=%%B"
-if /i not "%CURRENT_BRANCH%"=="%DEPLOY_BRANCH%" (
-  git checkout %DEPLOY_BRANCH%
-  if errorlevel 1 (
-    echo.
-    echo Deploy stopped: could not switch to branch %DEPLOY_BRANCH%.
-    exit /b 1
-  )
-)
-
-REM Kept on one line: cmd reads this file as it runs, so after the pull it must
-REM re-run the freshly pulled copy instead of reading on from the old one.
-git merge --ff-only origin/%DEPLOY_BRANCH% && (call "%~f0" --pulled & exit /b) || goto diverged
+REM Kept on one line: cmd reads this file as it runs, and checkout/merge may
+REM replace it, so the freshly pulled copy is re-run for the remaining steps.
+git checkout -q %DEPLOY_BRANCH% && git merge --ff-only origin/%DEPLOY_BRANCH% && (call "%~f0" --pulled & exit /b) || (echo. & echo Deploy stopped: could not switch to %DEPLOY_BRANCH% or this server copy has its own commits that are not on GitHub. Ask a developer to sort it out. & exit /b 1)
 
 :after_pull
 set "PY="
@@ -93,10 +83,4 @@ git status --short --untracked-files=no
 echo.
 echo Deploy stopped: the files above were edited on this server. Undo them
 echo (git checkout -- ^<file^>) or commit them, then re-run.
-exit /b 1
-
-:diverged
-echo.
-echo Deploy stopped: this server copy has its own commits that are not on GitHub.
-echo Ask a developer to sort it out.
 exit /b 1
