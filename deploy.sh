@@ -60,7 +60,11 @@ update_code() {
   fi
 
   if [ "$(git rev-parse --abbrev-ref HEAD)" != "$branch" ]; then
-    git checkout "$branch" || die "could not switch to branch $branch."
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      git checkout "$branch" || die "could not switch to branch $branch."
+    else
+      git checkout -b "$branch" "origin/$branch" || die "could not switch to branch $branch."
+    fi
   fi
 
   git merge --ff-only "origin/$branch" \

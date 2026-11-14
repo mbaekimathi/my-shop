@@ -30,7 +30,7 @@ if errorlevel 1 goto dirty
 
 REM Kept on one line: cmd reads this file as it runs, and checkout/merge may
 REM replace it, so the freshly pulled copy is re-run for the remaining steps.
-git checkout -q %DEPLOY_BRANCH% && git merge --ff-only origin/%DEPLOY_BRANCH% && (call "%~f0" --pulled & exit /b) || (echo. & echo Deploy stopped: could not switch to %DEPLOY_BRANCH% or this server copy has its own commits that are not on GitHub. Ask a developer to sort it out. & exit /b 1)
+(git show-ref --verify --quiet refs/heads/%DEPLOY_BRANCH% && git checkout -q %DEPLOY_BRANCH% || git checkout -q -b %DEPLOY_BRANCH% origin/%DEPLOY_BRANCH%) && git merge --ff-only origin/%DEPLOY_BRANCH% && (call "%~f0" --pulled & exit /b) || (echo. & echo Deploy stopped: could not switch to %DEPLOY_BRANCH% or this server copy has its own commits that are not on GitHub. Ask a developer to sort it out. & exit /b 1)
 
 :after_pull
 set "PY="
