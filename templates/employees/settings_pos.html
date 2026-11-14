@@ -123,6 +123,16 @@
         </li>
         {% endif %}
       </ul>
+      {% if group.title == "Stock" and shelf_shortcut_shops %}
+      <div class="pos-settings-shelf-links" data-shelf-shortcuts{% if not pos_settings.enable_shelf_mode %} hidden{% endif %}>
+        <p>Register shelf items for a shop:</p>
+        <ul>
+          {% for row in shelf_shortcut_shops %}
+          <li><a href="{% url 'employees:my_shop_shelf_stock' shop_id=row.pk %}"><i data-lucide="layers" aria-hidden="true"></i>{{ row.name }}</a></li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
     </section>
     {% endfor %}
   </div>
@@ -131,5 +141,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}?v=10"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=11"></script>
 {% endblock %}

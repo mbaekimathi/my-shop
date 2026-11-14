@@ -198,6 +198,12 @@
             el.checked = el.dataset.field === data.stock_mode;
             setStateLabel(el, el.checked);
           });
+          const shelfLinks = root.querySelector("[data-shelf-shortcuts]");
+          if (shelfLinks) {
+            shelfLinks.hidden = !["stock_mode_shelf", "stock_mode_both"].includes(
+              data.stock_mode
+            );
+          }
         }
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(Boolean(data.enabled));

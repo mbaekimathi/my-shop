@@ -24,7 +24,7 @@
       </div>
     </div>
     <form method="post" class="store-stock-meta-grid shelf-stock-register" data-shelf-register-form>
-      {% csrf_token %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
+      {% csrf_token %}{% if shelf_shop_field %}<input type="hidden" name="shop" value="{{ shop.pk }}">{% endif %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
       <input type="hidden" name="action" value="register">
       <label class="store-stock-field">
         <span>Name</span>
@@ -94,7 +94,7 @@
             </td>
             <td class="shelf-stock-col-change" data-label="Change">
               <form method="post" class="shelf-stock-move">
-                {% csrf_token %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
+                {% csrf_token %}{% if shelf_shop_field %}<input type="hidden" name="shop" value="{{ shop.pk }}">{% endif %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
                 <input type="hidden" name="shelf_item_id" value="{{ row.id }}">
                 <input
                   class="store-stock-qty-input"
@@ -112,7 +112,7 @@
                 <button type="submit" name="action" value="out" class="store-stock-btn store-stock-btn--ghost">Remove</button>
               </form>
               <form method="post" class="shelf-stock-archive" data-shelf-confirm="Remove “{{ row.name }}” from the shelf list?">
-                {% csrf_token %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
+                {% csrf_token %}{% if shelf_shop_field %}<input type="hidden" name="shop" value="{{ shop.pk }}">{% endif %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
                 <input type="hidden" name="shelf_item_id" value="{{ row.id }}">
                 <button type="submit" name="action" value="archive" class="store-stock-btn store-stock-btn--ghost" aria-label="Delete {{ row.name }} from the shelf list">
                   <i data-lucide="trash-2" aria-hidden="true"></i>

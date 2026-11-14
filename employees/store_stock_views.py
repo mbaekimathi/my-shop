@@ -138,12 +138,15 @@ def store_shelf_stock(request):
     shops = shelf_mode_shops()
     wanted = str(request.POST.get("shop") or request.GET.get("shop") or "")
     shop = next((row for row in shops if str(row.pk) == wanted), None)
-    if shop is None and shops:
-        shop = shops[0]
 
     if request.method == "POST":
         if shop is None:
-            messages.error(request, "Turn on Shelf or Both under Settings → POS → Stock first.")
+            messages.error(
+                request,
+                "That shop is not in Shelf mode. Pick a shop and try again."
+                if shops
+                else "Turn on Shelf or Both under Settings → POS → Stock first.",
+            )
             return redirect("employees:store_shelf_stock")
         try:
             messages.success(
@@ -154,6 +157,8 @@ def store_shelf_stock(request):
                 messages.error(request, message)
         return redirect(f"{reverse('employees:store_shelf_stock')}?shop={shop.pk}")
 
+    if shop is None and shops:
+        shop = shops[0]
     shelf_items = list_shelf_items(shop=shop) if shop else []
     pos = None
     if shop is not None:
@@ -183,6 +188,7 @@ def store_shelf_stock(request):
             "shelf_movements": recent_shelf_movements(shop=shop) if shop else [],
             "item_stock_tracking": bool(getattr(pos, "enable_stock_tracking", False)),
             "shelf_needs_staff_id": False,
+            "shelf_shop_field": True,
             "page_sidebar": sidebar_for_store_stock(
                 EmployeeRole.STORE_MANAGER, profile=profile, active="shelf"
             ),

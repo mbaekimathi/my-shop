@@ -275,3 +275,26 @@ class StoreManagerShelfStockTests(TestCase):
         )
         shelf.refresh_from_db()
         self.assertEqual(shelf.quantity, Decimal("15"))
+
+    def test_post_for_shop_not_in_shelf_mode_is_rejected(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        ShopPosSettings.objects.update_or_create(
+            shop=self.shop,
+            defaults={"override_pos": True, "enable_shelf_mode": False},
+        )
+        _invalidate_pos_settings_cache()
+        other = Shop.objects.create(
+            name="OTHER SHELF SHOP",
+            location="NAIROBI",
+            email="other-shelf@test.local",
+            phone_number="0700000942",
+            login_code="830142",
+            password_hash="x",
+            created_by=self.manager,
+        )
+        self.client.post(
+            self.url, {"action": "register", "name": "Wrong", "shop": self.shop.pk}
+        )
+        self.assertFalse(ShelfItem.objects.exists())
+        self.client.post(self.url, {"action": "register", "name": "Right", "shop": other.pk})
+        self.assertEqual(ShelfItem.objects.get().shop, other)

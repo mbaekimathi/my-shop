@@ -2919,11 +2919,16 @@ def _company_pos_settings(
 
     from django.urls import reverse
 
+    from shops.models import Shop
+
     stk_shop = stk_shop_activation_status(pos=pos)
     context.update(
         {
             "pos_settings": pos,
             "pos_setting_groups": groups,
+            "shelf_shortcut_shops": list(
+                Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+            ),
             "pos_settings_flags": pos_settings_as_dict(pos),
             "pos_enabled_count": enabled_count,
             "pos_toggle_count": toggle_count,
