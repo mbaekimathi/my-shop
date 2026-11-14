@@ -149,7 +149,9 @@
       const stockModeInputs = input.hasAttribute("data-stock-mode-toggle")
         ? Array.from(root.querySelectorAll("[data-stock-mode-toggle]"))
         : [];
-      const stockModeBefore = stockModeInputs.map((el) => el.checked);
+      const stockModeBefore = stockModeInputs.map((el) =>
+        el === input ? previous : el.checked
+      );
       if (stockModeInputs.length) {
         if (!enabled) {
           // One stock mode must stay on; switch to another to change it.
