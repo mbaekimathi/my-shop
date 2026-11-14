@@ -3232,10 +3232,17 @@ def _confirm_receipt_sale_rows(
             amount = Decimal(row.total or 0)
             amount_label = _money_ksh(amount)
             printed_at = getattr(row, "created_at", None)
-            # Date/time column is print time — payment moment stays on confirmed_payment_at.
+            # "Printed" is created_at; "Paid" is the payment time entered on confirm.
             when_label = (
                 timezone.localtime(printed_at).strftime("%d %b %Y · %H:%M")
                 if printed_at
+                else "—"
+            )
+            paid_at = getattr(row, "confirmed_payment_at", None)
+            shows_paid = is_confirmed or is_partial or is_partial_confirmation
+            paid_when_label = (
+                timezone.localtime(paid_at).strftime("%d %b %Y · %H:%M")
+                if paid_at and shows_paid
                 else "—"
             )
             shop_pk = int(row.shop_id or 0)
@@ -3301,6 +3308,7 @@ def _confirm_receipt_sale_rows(
                     "sold_as_label": sold_as_label,
                     "when": when_label,
                     "when_dt": printed_at,
+                    "paid_when": paid_when_label,
                     "can_confirm": can_confirm,
                     "can_cancel": can_cancel,
                     "can_set_pending": can_set_pending,
@@ -3323,6 +3331,7 @@ def _confirm_receipt_sale_rows(
                             shop_name,
                             status_label,
                             when_label,
+                            paid_when_label if paid_when_label != "—" else "",
                             kind_label,
                             sold_as_label,
                         ]
@@ -3664,6 +3673,7 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                 "status": row.get("status") or "",
                 "status_label": row.get("status_label") or "",
                 "when": row.get("when") or "",
+                "paid_when": row.get("paid_when") or "—",
                 "can_confirm": bool(row.get("can_confirm")),
                 "can_cancel": bool(row.get("can_cancel")),
                 "can_set_pending": bool(row.get("can_set_pending")),
@@ -3843,6 +3853,7 @@ def build_confirm_receipts_print_document(*, profile, request) -> dict:
                 or (_money_ksh(amount) if amount is not None else "—"),
                 "reference": (row.get("reference") or "").strip() or "—",
                 "when": row.get("when") or "—",
+                "paid_when": row.get("paid_when") or "—",
             }
         )
     receipt_total = len(print_rows)

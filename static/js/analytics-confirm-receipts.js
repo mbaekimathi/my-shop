@@ -405,6 +405,7 @@
     const status = escapeHtml(row.status || "");
     const statusLabel = escapeHtml(row.status_label || "");
     const when = escapeHtml(row.when || "");
+    const paidWhen = escapeHtml(row.paid_when || "—");
     const searchText = escapeHtml(row.search_text || row.number || "");
     const selectCell = actionable
       ? `<td class="ax-col-select" data-label="Select">
@@ -453,7 +454,8 @@
   )}</td>
   <td class="ax-confirm-amount" data-label="Amount">${amount}</td>
   <td class="ax-confirm-reference" data-label="Reference">${reference}</td>
-  <td class="ax-confirm-when" data-label="When">${when}</td>
+  <td class="ax-confirm-when" data-label="Printed">${when}</td>
+  <td class="ax-confirm-when ax-confirm-paid" data-label="Paid">${paidWhen}</td>
 </tr>`;
   };
 
