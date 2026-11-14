@@ -180,6 +180,16 @@
     return "is-pending";
   };
 
+  const paymentTimeLabel = (receipt = {}) =>
+    receipt.status === "confirmed" ||
+    receipt.status === "partial_return" ||
+    receipt.is_partial_confirmation
+      ? receipt.confirmed_payment_label || ""
+      : "";
+
+  const whenLabel = (receipt = {}) =>
+    (receipt.source || "pos") === "pos" ? "Sold" : "Recorded";
+
   const isCreditReceipt = (receipt = {}) =>
     Boolean(receipt.is_credit || receipt.kind === "credit");
 
@@ -225,6 +235,7 @@
             : "—";
         const source = escapeHtml(row.source || "pos");
         const soldAs = escapeHtml(row.sold_as_label || "—");
+        const paidAt = paymentTimeLabel(row);
         return `<tr class="shop-receipts-row" data-receipt-id="${row.id}" data-receipt-source="${source}" tabindex="0">
   <td data-label="Receipt">
     <strong>${escapeHtml(row.receipt_number)}</strong>
@@ -235,10 +246,14 @@
   <td data-label="Sold as">${soldAs}</td>
   <td class="shop-receipts-client" data-label="Client">${client}</td>
   <td class="shop-receipts-total" data-label="Total">KSh ${escapeHtml(money(row.total))}</td>
-  <td class="shop-receipts-when" data-label="When">${escapeHtml(row.created_label)}</td>
-  <td data-label="Status"><span class="shop-receipt-status ${statusClass(
+  <td class="shop-receipts-when" data-label="${whenLabel(row)} at">${escapeHtml(row.created_label)}</td>
+  <td class="shop-receipts-status-cell" data-label="Status"><span class="shop-receipt-status ${statusClass(
     row.status
-  )}">${escapeHtml(row.status_label)}</span></td>
+  )}">${escapeHtml(row.status_label)}</span>${
+          paidAt
+            ? `<span class="shop-receipts-paid-at">Paid ${escapeHtml(paidAt)}</span>`
+            : ""
+        }</td>
 </tr>`;
       })
       .join("");
@@ -789,9 +804,16 @@
         detailStatus
       )}">${escapeHtml(receipt.status_label)}</span>
     </div>
-    <p class="shop-receipt-summary-when"><strong>${escapeHtml(
+    <p class="shop-receipt-summary-when">${whenLabel(receipt)}: <strong>${escapeHtml(
       receipt.created_label || ""
     )}</strong></p>
+    ${
+      paymentTimeLabel(receipt)
+        ? `<p class="shop-receipt-summary-when">Paid: <strong>${escapeHtml(
+            paymentTimeLabel(receipt)
+          )}</strong></p>`
+        : ""
+    }
     <p class="shop-receipt-muted">Cashier: ${escapeHtml(
       receipt.cashier || "—"
     )}</p>

@@ -659,6 +659,14 @@
   white-space: nowrap;
 }
 
+.shop-receipts-status-cell .shop-receipts-paid-at {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--mist-dim);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
 .shop-receipts-empty,
 .shop-receipts-empty-row td {
   margin: 0;
