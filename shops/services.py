@@ -78,6 +78,8 @@ POS_SETTING_FIELDS = {
     "enable_client_data",
     "require_client_phone",
     "require_client_name",
+    "enable_cart_confirm_receipt",
+    "enable_cart_delivery",
     "enable_tax",
     "compulsory_print_on_sale",
     "enable_print_bluetooth",
@@ -110,6 +112,8 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_client_data",
         "require_client_phone",
         "require_client_name",
+        "enable_cart_confirm_receipt",
+        "enable_cart_delivery",
         "enable_tax",
         "tax_percent",
     }
@@ -3648,6 +3652,10 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_client_data": bool(getattr(row, "enable_client_data", True)),
         "require_client_phone": bool(getattr(row, "require_client_phone", False)),
         "require_client_name": bool(getattr(row, "require_client_name", False)),
+        "enable_cart_confirm_receipt": bool(
+            getattr(row, "enable_cart_confirm_receipt", True)
+        ),
+        "enable_cart_delivery": bool(getattr(row, "enable_cart_delivery", True)),
         "enable_tax": row.enable_tax,
         "tax_percent": str(Decimal(row.tax_percent or 0).quantize(Decimal("0.01"))),
         "effective_tax_percent": str(tax_percent.quantize(Decimal("0.01"))),
@@ -5868,6 +5876,12 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     confirm_requested = confirm_raw is True or str(
         confirm_raw or ""
     ).strip().lower() in {"1", "true", "on", "yes"}
+    if confirm_requested and not bool(
+        getattr(pos_settings, "enable_cart_confirm_receipt", True)
+    ):
+        raise ValidationError(
+            "Confirm receipt at checkout is disabled in POS settings."
+        )
     if confirm_requested:
         if kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
             raise ValidationError(
@@ -5891,6 +5905,8 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         getattr(pos_settings, "require_client_name", False)
     )
     delivery_wanted = bool(payload.get("delivery"))
+    if delivery_wanted and not bool(getattr(pos_settings, "enable_cart_delivery", True)):
+        raise ValidationError("Delivery is disabled in POS settings.")
     if delivery_wanted and kind not in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
         raise ValidationError("Delivery is only available for sales and credits.")
 

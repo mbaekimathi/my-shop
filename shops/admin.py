@@ -74,6 +74,8 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "enable_client_data",
         "require_client_phone",
         "require_client_name",
+        "enable_cart_confirm_receipt",
+        "enable_cart_delivery",
         "enable_tax",
         "tax_percent",
         "compulsory_print_on_sale",

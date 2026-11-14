@@ -26,6 +26,7 @@ from shops.services import (
     open_deliveries_for_rider,
     open_shop_day,
     rider_delivery_alert_payload,
+    set_company_pos_setting,
 )
 
 
@@ -154,6 +155,17 @@ class ShopDeliveryTests(TestCase):
         self.assertFalse(delivery.assigned_riders.exists())
         self.assertEqual(len(open_deliveries_for_rider(self.rider_a)), 1)
         self.assertEqual(len(open_deliveries_for_rider(self.rider_b)), 1)
+
+    def test_delivery_rejected_when_cart_delivery_disabled(self):
+        from django.core.exceptions import ValidationError
+
+        set_company_pos_setting(field="enable_cart_delivery", enabled=False)
+        try:
+            with self.assertRaises(ValidationError):
+                self._checkout(delivery=True)
+            self.assertFalse(ShopDelivery.objects.exists())
+        finally:
+            set_company_pos_setting(field="enable_cart_delivery", enabled=True)
 
     def test_accept_sets_expected_complete_from_eta(self):
         self._checkout(

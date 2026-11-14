@@ -2515,6 +2515,14 @@ POS_SETTING_GROUPS = (
         ),
     },
     {
+        "title": "Cart",
+        "summary": "",
+        "toggles": (
+            ("enable_cart_confirm_receipt", "Show \"Confirm receipt now\""),
+            ("enable_cart_delivery", "Show \"Delivery\""),
+        ),
+    },
+    {
         "title": "Tax",
         "summary": "",
         "toggles": (("enable_tax", "Tax"),),
