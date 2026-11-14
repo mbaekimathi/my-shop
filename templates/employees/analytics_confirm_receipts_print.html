@@ -207,7 +207,7 @@
     </header>
 
     <p class="sheet-hint">
-      Filtered confirm-receipts list: receipt, status, client, shop, sold as, amount, reference, and date &amp; time.
+      Filtered confirm-receipts list: receipt, status, client, shop, sold as, amount, reference, printed time, and paid time (as entered on confirm).
       Ordered pending first, then cancelled, then confirmed.
     </p>
 
@@ -223,7 +223,8 @@
           <th>Sold as</th>
           <th class="num">Amount</th>
           <th>Reference</th>
-          <th class="col-when">Date &amp; time</th>
+          <th class="col-when">Printed</th>
+          <th class="col-when">Paid</th>
         </tr>
       </thead>
       <tbody>
@@ -238,6 +239,7 @@
           <td class="num">{{ row.total }}</td>
           <td>{{ row.reference }}</td>
           <td class="col-when">{{ row.when }}</td>
+          <td class="col-when">{{ row.paid_when }}</td>
         </tr>
         {% endfor %}
       </tbody>

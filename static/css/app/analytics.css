@@ -6623,7 +6623,7 @@
 .ax--list-table .ax-table--confirm-compact {
   width: 100% !important;
   max-width: none !important;
-  min-width: 44rem !important;
+  min-width: 50rem !important;
   table-layout: fixed;
   border: 0;
   border-radius: 0;
@@ -6636,27 +6636,31 @@
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-receipt {
-  width: 16%;
+  width: 14%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-client {
-  width: 22%;
+  width: 18%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-sold-as {
-  width: 9%;
+  width: 8%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-amount {
-  width: 12%;
+  width: 11%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-reference {
-  width: 16%;
+  width: 13%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-when {
-  width: 14%;
+  width: 12.5%;
+}
+
+.ax--confirm .ax-table--confirm-compact col.ax-col-paid {
+  width: 12.5%;
 }
 
 .ax--confirm .ax-table--confirm-compact th,
@@ -6998,7 +7002,7 @@
   .ax--list-table .ax-table--confirm-compact,
   .ax--list-table.ax--ledger.ax--confirm[data-ax-section="confirm-receipts"] .ax-table--confirm-compact {
     width: 100% !important;
-    min-width: 40rem !important;
+    min-width: 46rem !important;
     max-width: none !important;
     table-layout: fixed;
     font-size: 0.78rem;
@@ -7061,23 +7065,27 @@
   }
 
   .ax--confirm .ax-table--confirm-compact col.ax-col-receipt {
-    width: 18%;
+    width: 15%;
   }
 
   .ax--confirm .ax-table--confirm-compact col.ax-col-client {
-    width: 24%;
+    width: 20%;
   }
 
   .ax--confirm .ax-table--confirm-compact col.ax-col-amount {
-    width: 14%;
+    width: 12%;
   }
 
   .ax--confirm .ax-table--confirm-compact col.ax-col-reference {
-    width: 18%;
+    width: 15%;
   }
 
   .ax--confirm .ax-table--confirm-compact col.ax-col-when {
-    width: 16%;
+    width: 14%;
+  }
+
+  .ax--confirm .ax-table--confirm-compact col.ax-col-paid {
+    width: 14%;
   }
 
   .ax--confirm .ax-table--confirm-compact td.ax-cell--primary,

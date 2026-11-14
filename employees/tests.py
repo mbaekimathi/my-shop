@@ -395,6 +395,7 @@ class ConfirmSalesReceiptTests(TestCase):
             row for row in pending_page["rows"] if row["number"] == "SL-PAY-AT"
         )
         self.assertEqual(pending_row["when"], "11 Nov 2026 · 13:49")
+        self.assertEqual(pending_row["paid_when"], "—")
 
         result = confirm_shop_receipt(
             shop=self.shop,
@@ -428,6 +429,7 @@ class ConfirmSalesReceiptTests(TestCase):
             row for row in confirmed_page["rows"] if row["number"] == "SL-PAY-AT"
         )
         self.assertEqual(confirmed_row["when"], "11 Nov 2026 · 13:49")
+        self.assertEqual(confirmed_row["paid_when"], "12 Nov 2026 · 09:15")
 
     def test_set_status_pending_confirmed_cancelled_round_trip(self):
         from shops.services import set_confirm_receipt_status
