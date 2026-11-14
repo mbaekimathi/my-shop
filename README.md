@@ -65,9 +65,12 @@ Then:
 
 WhiteNoise serves CSS/JS from `staticfiles/`. Media is served automatically on hosted installs.
 
-> Updating an existing install? Run `deploy.bat` (pull → migrate →
-> collectstatic → Passenger restart touch). `git pull` alone does not
-> refresh the CSS/JS browsers receive — `staticfiles/` is built locally.
+> Updating an existing install? Run `./deploy.sh` on Linux/cPanel (or
+> `deploy.bat` on Windows): pull → `pip install -r requirements.txt` →
+> migrate → collectstatic → Passenger restart touch. It finds the Python on
+> its own (active venv, `.venv`/`venv`, or the cPanel `~/virtualenv/<app>/<ver>`),
+> so it works from any app folder. `git pull` alone does not refresh the
+> CSS/JS browsers receive — `staticfiles/` is built locally.
 
 ### VPS (Gunicorn + nginx)
 
