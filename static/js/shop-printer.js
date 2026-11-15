@@ -855,33 +855,34 @@
 </div>`;
   };
 
-  const browserPrint = (text, qr = null, label = "USB", styleOverride = null, ticket = null) =>
+  const buildReceiptBodyHtml = (text, qr, ticket, style) => {
+    const prepared = maskReceiptForPrint(text, ticket);
+    const ticketHtml = renderTicketHtml(prepared.ticket, qr, style.paperMm);
+    if (ticketHtml) return ticketHtml;
+    const { body, maintainer } = splitMaintainerFromText(
+      prepared.text,
+      prepared.ticket
+    );
+    const qrReady = Boolean(qr?.ready && qr?.image_data_url);
+    const qrHtml = qrReady
+      ? `<div class="qr"><img src="${String(qr.image_data_url).replace(
+          /"/g,
+          "&quot;"
+        )}" alt="QR"><p>${escapeHtml(qr.label || "Scan QR")}</p></div>`
+      : qr?.payload
+        ? `<p class="qr-text">QR: ${escapeHtml(qr.payload)}</p>`
+        : "";
+    const maintainerHtml = maintainer
+      ? `<p class="receipt-ticket-footer receipt-ticket-maintainer">${escapeHtml(
+          maintainer
+        )}</p>`
+      : "";
+    return `<pre>${escapeHtml(body || "")}</pre>${qrHtml}${maintainerHtml}`;
+  };
+
+  const printHtmlDocument = (bodyHtml, label, style) =>
     new Promise((resolve, reject) => {
       try {
-        const prepared = maskReceiptForPrint(text, ticket);
-        text = prepared.text;
-        ticket = prepared.ticket;
-        const style = getReceiptPrintStyle(styleOverride);
-        const ticketHtml = renderTicketHtml(ticket, qr, style.paperMm);
-        let bodyHtml = ticketHtml;
-        if (!bodyHtml) {
-          const { body, maintainer } = splitMaintainerFromText(text, ticket);
-          const qrReady = Boolean(qr?.ready && qr?.image_data_url);
-          const qrHtml = qrReady
-            ? `<div class="qr"><img src="${String(qr.image_data_url).replace(
-                /"/g,
-                "&quot;"
-              )}" alt="QR"><p>${escapeHtml(qr.label || "Scan QR")}</p></div>`
-            : qr?.payload
-              ? `<p class="qr-text">QR: ${escapeHtml(qr.payload)}</p>`
-              : "";
-          const maintainerHtml = maintainer
-            ? `<p class="receipt-ticket-footer receipt-ticket-maintainer">${escapeHtml(
-                maintainer
-              )}</p>`
-            : "";
-          bodyHtml = `<pre>${escapeHtml(body || "")}</pre>${qrHtml}${maintainerHtml}`;
-        }
         const frame = document.createElement("iframe");
         frame.setAttribute("aria-hidden", "true");
         frame.title = `${label} print`;
@@ -918,7 +919,8 @@
         // fire, silently suppressing the Windows print dialog.
         frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><title>Receipt · ${escapeHtml(label)}</title>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20261019-assets">
-<style>${ticketCss(style)}</style></head><body>
+<style>${ticketCss(style)}
+.receipt-copy + .receipt-copy { break-before: page; page-break-before: always; }</style></head><body>
 ${bodyHtml}
 </body></html>`;
         loaded
@@ -944,6 +946,38 @@ ${bodyHtml}
         reject(err);
       }
     });
+
+  /**
+   * Print several receipt copies (customer / staff / cashier) as ONE document
+   * — a single Windows print dialog; each copy starts a new page so the
+   * printer driver cuts between them.
+   */
+  const browserPrintCopies = (copies, label = "Receipt", styleOverride = null) => {
+    const style = getReceiptPrintStyle(styleOverride);
+    const bodies = (Array.isArray(copies) ? copies : [])
+      .map((copy) =>
+        buildReceiptBodyHtml(
+          copy?.text || "",
+          copy?.qr || null,
+          copy?.ticket || null,
+          style
+        )
+      )
+      .filter(Boolean);
+    if (!bodies.length) return Promise.resolve(false);
+    const bodyHtml = bodies
+      .map((html) => `<div class="receipt-copy">${html}</div>`)
+      .join("");
+    return printHtmlDocument(bodyHtml, label, style);
+  };
+
+  const browserPrint = (
+    text,
+    qr = null,
+    label = "USB",
+    styleOverride = null,
+    ticket = null
+  ) => browserPrintCopies([{ text, qr, ticket }], label, styleOverride);
 
   const getCsrfToken = () =>
     document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
@@ -2159,6 +2193,7 @@ ${bodyHtml}
   window.RichcomPrinter = {
     encodeEscPos,
     browserPrint,
+    browserPrintCopies,
     renderTicketHtml,
     maskReceiptForPrint,
     onChange(fn) {
@@ -2189,7 +2224,13 @@ ${bodyHtml}
           : wantConnected
             ? store.name || connection.name || ""
             : "",
-        usesBrowserPrint: Boolean(driver?.usesBrowserPrint?.()),
+        usesBrowserPrint: Boolean(
+          driver?.usesBrowserPrint?.() ||
+            // A saved USB session defaults to "Windows printer" mode even
+            // before restore runs — report the dialog path so callers can
+            // batch copies into one print job.
+            (channel === "usb" && store.usb?.printMode !== "raw")
+        ),
         wantConnected,
         restoring: Boolean(connection.restoring) && wantConnected && !connected,
         lastRestoreError: connection.lastRestoreError || "",

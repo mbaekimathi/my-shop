@@ -4885,15 +4885,15 @@
               ...(data.receipt_font || {}),
               paper_width: data.receipt_paper_width || "",
             };
-            for (const copy of copies) {
-              await printReceiptText(
-                copy.text || data.receipt_text,
-                channel,
-                copy.qr || data.receipt_qr,
-                fontStyle,
-                copy.ticket || data.receipt_ticket || null
-              );
-            }
+            await printReceiptCopies(
+              copies.map((copy) => ({
+                text: copy.text || data.receipt_text,
+                qr: copy.qr || data.receipt_qr,
+                ticket: copy.ticket || data.receipt_ticket || null,
+              })),
+              channel,
+              fontStyle
+            );
           }
         };
 
@@ -5141,6 +5141,56 @@
 </body></html>`);
       doc.close();
       window.setTimeout(() => frame.remove(), 4000);
+      return true;
+    };
+
+    /**
+     * Print all enabled receipt copies (customer / staff / cashier).
+     * On the Windows-dialog path (USB "Windows printer" mode or the browser
+     * fallback) all copies go into ONE print job — a single dialog, pages
+     * cut between copies — so the cashier clicks Print once instead of once
+     * per copy. Direct channels (raw USB, Wi‑Fi, Bluetooth) keep one job per
+     * copy: those print and cut automatically with no dialog.
+     */
+    const printReceiptCopies = async (copyList, channel, fontStyle = null) => {
+      const printer = window.RichcomPrinter;
+      const status = printer?.getStatus?.();
+      const targetChannel =
+        (status?.connected && status.channel) || channel || "";
+      const directChannel =
+        targetChannel === "wifi" || targetChannel === "bluetooth";
+      const copies = (Array.isArray(copyList) ? copyList : []).filter(
+        (copy) => copy?.text || copy?.ticket
+      );
+      if (!copies.length) return false;
+
+      const usesBrowserPath =
+        !directChannel &&
+        (Boolean(status?.usesBrowserPrint) ||
+          !printer?.canAutoPrint?.(targetChannel));
+
+      if (
+        copies.length > 1 &&
+        usesBrowserPath &&
+        typeof printer?.browserPrintCopies === "function"
+      ) {
+        try {
+          await printer.browserPrintCopies(copies, "Receipt", fontStyle);
+          return true;
+        } catch (_) {
+          /* fall through to per-copy printing */
+        }
+      }
+
+      for (const copy of copies) {
+        await printReceiptText(
+          copy.text || "",
+          targetChannel,
+          copy.qr || null,
+          fontStyle,
+          copy.ticket || null
+        );
+      }
       return true;
     };
 
