@@ -1,0 +1,162 @@
+{% extends "employees/workspace_base.html" %}
+
+{% block title %}My Performance — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="item-panel item-panel--dense" data-animate="rise">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">Employee · Performance</p>
+        <h2>My performance</h2>
+        <p>Your sales and receipts across every shop.</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ perf.all.amount_label }}</strong>
+          <span>all-time sales</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ perf.all.docs }}</strong>
+          <span>sale{{ perf.all.docs|pluralize }}</span>
+        </p>
+      </div>
+    </div>
+  </header>
+
+  {% if perf.has_activity %}
+  <div class="workspace-grid workspace-grid--profile">
+    {% for period in perf.periods %}
+    <article class="workspace-card{% if forloop.first %} workspace-card--accent{% endif %}">
+      <i data-lucide="{{ period.icon }}" aria-hidden="true"></i>
+      <h3>{{ period.amount_label }}</h3>
+      <p>{{ period.label }} · {{ period.docs }} sale{{ period.docs|pluralize }}</p>
+    </article>
+    {% endfor %}
+    {% if perf.pos_sales %}
+    <article class="workspace-card">
+      <i data-lucide="wifi-off" aria-hidden="true"></i>
+      <h3>{{ perf.pos_sales.amount_label }}</h3>
+      <p>Offline POS · {{ perf.pos_sales.docs }} synced sale{{ perf.pos_sales.docs|pluralize }}</p>
+    </article>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+
+{% if perf.shops %}
+<section class="item-panel item-panel--dense" data-animate="rise" data-delay="1">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Sales by shop</h2>
+        <p>Where your sales were recorded.</p>
+      </div>
+    </div>
+  </header>
+  <div class="item-table-wrap">
+    <table class="item-table item-table--dense">
+      <thead>
+        <tr>
+          <th scope="col" class="item-col--item">Shop</th>
+          <th scope="col">Sales</th>
+          <th scope="col">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in perf.shops %}
+        <tr>
+          <td class="item-cell--item" data-label="Shop"><strong>{{ row.name }}</strong></td>
+          <td data-label="Sales">{{ row.docs }}</td>
+          <td data-label="Total">{{ row.amount_label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if perf.kinds %}
+<section class="item-panel item-panel--dense" data-animate="rise" data-delay="2">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Receipts by type</h2>
+        <p>Every receipt you created, grouped by kind.</p>
+      </div>
+    </div>
+  </header>
+  <div class="item-table-wrap">
+    <table class="item-table item-table--dense">
+      <thead>
+        <tr>
+          <th scope="col" class="item-col--item">Type</th>
+          <th scope="col">Receipts</th>
+          <th scope="col">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in perf.kinds %}
+        <tr>
+          <td class="item-cell--item" data-label="Type"><strong>{{ row.label }}</strong></td>
+          <td data-label="Receipts">{{ row.docs }}</td>
+          <td data-label="Total">{{ row.amount_label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if perf.recent %}
+<section class="item-panel item-panel--dense" data-animate="rise" data-delay="3">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Recent receipts</h2>
+        <p>Your latest receipts, newest first.</p>
+      </div>
+    </div>
+  </header>
+  <div class="item-table-wrap">
+    <table class="item-table item-table--dense">
+      <thead>
+        <tr>
+          <th scope="col">When</th>
+          <th scope="col">Receipt</th>
+          <th scope="col">Shop</th>
+          <th scope="col">Type</th>
+          <th scope="col" class="item-col--status">Status</th>
+          <th scope="col">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for receipt in perf.recent %}
+        <tr>
+          <td data-label="When">{{ receipt.when|date:"j M Y · H:i" }}</td>
+          <td data-label="Receipt"><code>{{ receipt.number }}</code></td>
+          <td data-label="Shop">{{ receipt.shop }}</td>
+          <td data-label="Type">{{ receipt.kind }}</td>
+          <td class="item-cell--status" data-label="Status">
+            <span class="status-pill status-pill--{{ receipt.status_pill }}">{{ receipt.status }}</span>
+          </td>
+          <td data-label="Total">{{ receipt.total }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if not perf.has_activity %}
+<section class="item-panel item-panel--dense" data-animate="rise" data-delay="1">
+  <div class="dashboard-placeholder">
+    <i data-lucide="trending-up" aria-hidden="true"></i>
+    <p><strong>No activity yet.</strong> Sales and receipts you record on the shop floor will show up here.</p>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

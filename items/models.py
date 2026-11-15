@@ -782,3 +782,80 @@ class StoreStockMovement(models.Model):
 
     def __str__(self):
         return f"Store {self.movement_type} {self.quantity} of item {self.item_id}"
+
+
+class ShelfStockMovementType(models.TextChoices):
+    REGISTER = "register", "Registered"
+    IN = "in", "Shelf stock in"
+    OUT = "out", "Shelf stock out"
+
+
+class ShelfItem(models.Model):
+    """Shelf-mode stock line for one shop. Not an Item: never sold at the POS."""
+
+    shop = models.ForeignKey(
+        "shops.Shop",
+        on_delete=models.CASCADE,
+        related_name="shelf_items",
+    )
+    name = models.CharField(max_length=200)
+    category = models.CharField(max_length=120, blank=True, default="")
+    unit = models.CharField(max_length=40, blank=True, default="")
+    quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    low_stock_threshold = models.DecimalField(
+        max_digits=12, decimal_places=3, default=0
+    )
+    is_archived = models.BooleanField(default=False, db_index=True)
+    created_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shelf_items_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["shop", "name"],
+                name="uniq_shop_shelf_item_name",
+            )
+        ]
+
+    def __str__(self):
+        return f"Shelf {self.name} @ {self.shop_id}: {self.quantity}"
+
+
+class ShelfStockMovement(models.Model):
+    """Ledger for shelf stock. Never touches Item / ShopStock quantities."""
+
+    shelf_item = models.ForeignKey(
+        ShelfItem,
+        on_delete=models.CASCADE,
+        related_name="movements",
+    )
+    movement_type = models.CharField(
+        max_length=10,
+        choices=ShelfStockMovementType.choices,
+        db_index=True,
+    )
+    quantity = models.DecimalField(max_digits=12, decimal_places=3)
+    balance_after = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    note = models.CharField(max_length=255, blank=True, default="")
+    created_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shelf_stock_movements",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"Shelf {self.movement_type} {self.quantity} of {self.shelf_item_id}"

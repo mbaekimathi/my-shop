@@ -17,6 +17,34 @@ python manage.py test shops.tests -v 1
 Session-related suites: `test_single_session`, `test_portal_session_exclusivity`,
 `test_shop_portal_session`, `test_switch_login_tmp`.
 
+## Stock modes (Settings → POS → Stock)
+- One-of toggles: Items / Shelf / Both → `enable_stock_tracking` / `enable_shelf_mode`
+  on `CompanyPosSettings` (+ per-shop `ShopPosSettings` override). See
+  `STOCK_MODE_FIELDS` / `stock_mode_of` in `shops/services.py`.
+- `ShelfItem` (per shop, name/unit/qty, no price) is never sold at the POS and
+  never appears on the shop floor — shelf stock is managed only from Stock
+  Management / the shop's Shelf stock page.
+- The shop floor catalog (`my_shop_catalog` → `build_shop_catalog_page`) lists
+  sellable items only; shelf-only mode returns an empty catalog.
+
+## Wi‑Fi printing
+- Channels (Bluetooth/USB/Wi‑Fi) → `enable_print_*` flags; "Connect to printer"
+  lives in the shop floor workspace sidebar, gated by `my-shop/print` permission.
+- LAN printer discovery: `shops/printer_discovery.py` (fast scan = ARP + Windows
+  ports + common DHCP suffixes; deep scan = ping-sweep then TCP-probe live hosts
+  on ports 9100/9101/9102/9112/9200/10001/631/515).
+- USB + Bluetooth print **client-side** (WebUSB/Web Serial/Web Bluetooth +
+  hidden-iframe `win.print()`); Wi‑Fi prints **server-side** via
+  `my_shop_print_relay` (server opens TCP to `host:9100`).
+- **Hosted (cPanel) mode**: the server can't reach shop LAN printers, so the
+  relay queues a `PrintAgentJob` when the target is off the server's LAN and
+  `shop.print_agent_token` is set (else 502 `agent_required`). A local agent
+  (`static/print-agent/print_agent.py`) polls `print-agent/<shop>/jobs/` with
+  the `X-Print-Agent-Token` header and acks `…/jobs/<id>/` (done/failed).
+  Views: `shops/agent_views.py`; token (re)generation: action `print_agent_token`
+  on the shop receipt settings page (gated by `shop_settings`). Tests:
+  `shops/tests/test_print_agent.py`.
+
 ## Auth model
 - Two independent session types per browser: employee (Django auth) and shop
   portal (`shop_portal_auth` + `shop_portal_shop_id` session keys).

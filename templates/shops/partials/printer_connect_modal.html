@@ -5,6 +5,9 @@
   data-printer-modal
   data-print-relay-url="{{ print_relay_url }}"
   data-print-scan-url="{{ print_scan_url }}"
+  data-wifi-config-url="{{ wifi_config_url }}"
+  data-wifi-default-host="{{ wifi_default_host }}"
+  data-wifi-default-port="{{ wifi_default_port }}"
   data-print-channels="{{ pos_flags.print_channels|join:',' }}"
   hidden
 >
@@ -92,6 +95,11 @@
                 >
               </label>
             </div>
+            <p
+              class="printer-channel-hint printer-wifi-net"
+              data-printer-wifi-network
+              hidden
+            ></p>
             <details class="printer-channel-help">
               <summary>Network scan tips</summary>
               <p>
@@ -141,6 +149,17 @@
               <i data-lucide="radar" aria-hidden="true"></i>
               <span>Scan</span>
             </button>
+            {% if channel == "wifi" %}
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm printer-action-btn"
+              data-printer-scan-deep
+              hidden
+            >
+              <i data-lucide="radar" aria-hidden="true"></i>
+              <span>Deep scan</span>
+            </button>
+            {% endif %}
             <button
               type="button"
               class="btn btn--primary btn--sm printer-action-btn"

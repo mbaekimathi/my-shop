@@ -53,6 +53,13 @@
           >
             <div class="pos-settings-copy">
               <strong>{{ toggle.label }}</strong>
+            {% if toggle.field == "stock_mode_items" %}
+            <p>Track stock on the items you sell. They show on the shop page, and sales need enough stock and reduce it.</p>
+            {% elif toggle.field == "stock_mode_shelf" %}
+            <p>Track a shelf stock list you register in Stock Management. Shelf items are not sold, so the shop page shows no items.</p>
+            {% elif toggle.field == "stock_mode_both" %}
+            <p>Track stock on the items you sell and keep a separate shelf stock list, managed in Stock Management.</p>
+            {% endif %}
             </div>
             <label class="perm-switch">
               <input
@@ -60,7 +67,7 @@
                 class="perm-switch-input"
                 {% if toggle.enabled %}checked{% endif %}
                 data-pos-toggle
-                data-field="{{ toggle.field }}"
+                data-field="{{ toggle.field }}"{% if toggle.field|slice:":11" == "stock_mode_" %} data-stock-mode-toggle{% endif %}
                 aria-label="{{ toggle.label }}"
                 {% if using_company_defaults %}disabled{% endif %}
               >
@@ -103,6 +110,6 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}?v=3"></script>
-<script src="{% static 'js/shop-settings.js' %}?v=1"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=5"></script>
+<script src="{% static 'js/shop-settings.js' %}?v=2"></script>
 {% endblock %}

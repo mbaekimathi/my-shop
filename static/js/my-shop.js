@@ -5035,6 +5035,17 @@
         }
       }
 
+      const label =
+        targetChannel === "bluetooth"
+          ? "Bluetooth"
+          : targetChannel === "usb"
+            ? "USB"
+            : targetChannel === "wifi"
+              ? "Wi‑Fi"
+              : "Printer";
+      const directChannel =
+        targetChannel === "wifi" || targetChannel === "bluetooth";
+
       if (printer?.canAutoPrint?.(targetChannel)) {
         try {
           await printer.print(
@@ -5048,20 +5059,21 @@
         } catch (err) {
           setCartStatus(
             err?.message ||
-              "Printer connected but print failed — opening browser print.",
+              (directChannel
+                ? `${label} print failed — check the printer and try again.`
+                : "Printer connected but print failed — opening browser print."),
             { error: true }
           );
+          if (directChannel) return false;
         }
       }
 
-      const label =
-        targetChannel === "bluetooth"
-          ? "Bluetooth"
-          : targetChannel === "usb"
-            ? "USB"
-            : targetChannel === "wifi"
-              ? "Wi‑Fi"
-              : "Printer";
+      // Wi‑Fi / Bluetooth print straight to the connected device — the Windows
+      // print dialog is only a fallback for USB (Windows printer) mode.
+      if (directChannel) {
+        setCartStatus(`${label} printer is not connected.`, { error: true });
+        return false;
+      }
 
       if (typeof printer?.browserPrint === "function") {
         try {

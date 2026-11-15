@@ -599,6 +599,64 @@
     </div>
   </div>
 
+  <section class="pos-settings-group print-agent-group" data-print-agent>
+    <div class="pos-settings-group-head">
+      <h3>Cloud print agent</h3>
+      <p>
+        Only needed when MY-SHOP is hosted online — a hosted server cannot reach
+        this shop’s Wi‑Fi printer. A small agent on the shop computer polls for
+        receipts and prints them locally. Skip this if MY-SHOP runs on a
+        computer inside the shop.
+      </p>
+    </div>
+    <ul class="pos-settings-list">
+      <li class="pos-settings-row pos-settings-row--format">
+        <div class="pos-settings-copy">
+          <strong>Agent token</strong>
+          <p data-print-agent-status>
+            {% if print_agent_token %}
+            Agent enabled — keep this token private.
+            {% else %}
+            No token yet — generate one to enable hosted Wi‑Fi printing.
+            {% endif %}
+          </p>
+          {% if print_agent_token %}
+          <code data-print-agent-token>{{ print_agent_token }}</code>
+          {% endif %}
+        </div>
+        <div class="receipt-format-field">
+          <button
+            type="button"
+            class="btn btn--ghost btn--sm"
+            data-print-agent-generate
+          >
+            {% if print_agent_token %}Regenerate token{% else %}Generate token{% endif %}
+          </button>
+        </div>
+      </li>
+      {% if print_agent_token %}
+      <li class="pos-settings-row">
+        <div class="pos-settings-copy">
+          <strong>Set up the agent</strong>
+          <p>
+            1. Download
+            <a href="{% static 'print-agent/print_agent.py' %}" download>print_agent.py</a>
+            and
+            <a href="{% static 'print-agent/print_agent.bat' %}" download>print_agent.bat</a>
+            into the same folder on the shop computer that can reach the printer
+            (needs Python 3).<br>
+            2. Next to them, create <code>print_agent.json</code> with:<br>
+            <code>{"poll_url": "{{ print_agent_poll_url }}", "token": "{{ print_agent_token }}"}</code><br>
+            3. Double-click <code>print_agent.bat</code> — a terminal opens and
+            runs the agent. Keep that window open while the shop is open.
+            Receipts then print via the agent wherever the server is hosted.
+          </p>
+        </div>
+      </li>
+      {% endif %}
+    </ul>
+  </section>
+
   <section class="receipt-design-panel">
     <div class="receipt-design-head">
       <div>
@@ -658,7 +716,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=20261110-no-payby"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261115-auto-reconnect"></script>
 <script defer src="{% static 'js/receipt-settings.js' %}?v=22"></script>
-<script defer src="{% static 'js/shop-settings.js' %}?v=1"></script>
+<script defer src="{% static 'js/shop-settings.js' %}?v=2"></script>
 {% endblock %}

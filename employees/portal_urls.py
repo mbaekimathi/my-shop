@@ -1,5 +1,6 @@
 from django.urls import path
 
+from shops import agent_views as shop_agent_views
 from shops import views as shop_views
 
 from . import (  # noqa: F401 — registers role_segment converter
@@ -195,6 +196,21 @@ urlpatterns = [
         name="my_shop_wifi_printer_scan",
     ),
     path(
+        "my-shop/<int:shop_id>/wifi-printers/config/",
+        shop_views.my_shop_wifi_printer_config,
+        name="my_shop_wifi_printer_config",
+    ),
+    path(
+        "print-agent/<int:shop_id>/jobs/",
+        shop_agent_views.print_agent_poll,
+        name="print_agent_poll",
+    ),
+    path(
+        "print-agent/<int:shop_id>/jobs/<int:job_id>/",
+        shop_agent_views.print_agent_ack,
+        name="print_agent_ack",
+    ),
+    path(
         "my-shop/<int:shop_id>/clients/lookup/",
         shop_views.my_shop_client_lookup,
         name="my_shop_client_lookup",
@@ -229,6 +245,11 @@ urlpatterns = [
         shop_views.my_shop_stock_count,
         name="my_shop_stock_count",
     ),
+    path(
+        "my-shop/<int:shop_id>/shelf-stock/",
+        shop_views.my_shop_shelf_stock,
+        name="my_shop_shelf_stock",
+    ),
     path("employee/", views.role_employee, name="role_employee"),
     path(
         "<role_segment:role_segment>/employees/<str:employee_id>/access/",
@@ -262,6 +283,11 @@ urlpatterns = [
         "store-manager/store-stock-out/",
         store_stock_views.store_stock_out,
         name="store_stock_out",
+    ),
+    path(
+        "store-manager/shelf-stock/",
+        store_stock_views.store_shelf_stock,
+        name="store_shelf_stock",
     ),
     path(
         "store-manager/store-report/",

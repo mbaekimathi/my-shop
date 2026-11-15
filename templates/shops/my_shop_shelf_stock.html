@@ -1,0 +1,41 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=11">
+{% endblock %}
+
+{% block workspace_content %}
+<section class="store-stock shelf-stock" data-animate="rise" data-shelf-stock>
+  <header class="store-stock-hero">
+    <div class="store-stock-hero-copy">
+      <p class="store-stock-kicker">
+        <span class="store-stock-mode-pill" aria-hidden="true">
+          <i data-lucide="{{ meta.icon }}"></i>
+        </span>
+        {{ shop.name }} · Shelf mode
+      </p>
+      <h2>{{ meta.headline }}</h2>
+      <p class="store-stock-lead">{{ meta.summary }}</p>
+      {% if item_stock_tracking %}
+      <p class="store-stock-lead">Item stock tracking is also on, so sold items are still counted as usual.</p>
+      {% endif %}
+    </div>
+    <dl class="store-stock-stats">
+      <div class="store-stock-stat">
+        <dt>Shelf items</dt>
+        <dd>{{ shelf_item_count }}</dd>
+      </div>
+      <div class="store-stock-stat">
+        <dt>Low</dt>
+        <dd>{{ shelf_low_count }}</dd>
+      </div>
+    </dl>
+  </header>
+
+  {% include "shops/partials/shelf_stock_body.html" %}
+</section>
+{% endblock %}

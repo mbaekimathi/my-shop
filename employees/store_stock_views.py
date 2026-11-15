@@ -11,6 +11,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from employees.access import get_profile_for_request, role_required
 from employees.models import EmployeeRole
+from employees.module_permissions import employee_may
 from employees.workspace import sidebar_for_store_stock
 from items.models import StoreStockMovementType
 from items.store_stock_services import (
@@ -105,6 +106,98 @@ def store_stock_in(request):
 @require_http_methods(["GET", "POST"])
 def store_stock_out(request):
     return _render_store_stock_page(request, mode=StoreStockMovementType.OUT)
+
+
+def shelf_mode_shops():
+    """Active shops whose effective POS settings have Shelf mode on."""
+    from shops.models import Shop
+    from shops.services import get_effective_pos_settings
+
+    return [
+        shop
+        for shop in Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
+        if getattr(get_effective_pos_settings(shop), "enable_shelf_mode", False)
+    ]
+
+
+@role_required(EmployeeRole.STORE_MANAGER)
+@require_http_methods(["GET", "POST"])
+def store_shelf_stock(request):
+    """Store Manager: register and adjust shelf stock for any shop in Shelf mode."""
+    from items.shelf_stock_services import (
+        SHELF_UNIT_CHOICES,
+        apply_shelf_action,
+        list_shelf_items,
+        recent_shelf_movements,
+        shelf_categories,
+    )
+
+    profile = get_profile_for_request(request)
+    if not employee_may(profile, "my-shop", "shelf_stock"):
+        messages.error(request, "You do not have permission to manage shelf stock.")
+        return redirect("employees:role_store_manager")
+
+    shops = shelf_mode_shops()
+    wanted = str(request.POST.get("shop") or request.GET.get("shop") or "")
+    shop = next((row for row in shops if str(row.pk) == wanted), None)
+
+    if request.method == "POST":
+        if shop is None:
+            messages.error(
+                request,
+                "That shop is not in Shelf mode. Pick a shop and try again."
+                if shops
+                else "Turn on Shelf or Both under Settings → POS → Stock first.",
+            )
+            return redirect("employees:store_shelf_stock")
+        try:
+            messages.success(
+                request, apply_shelf_action(shop=shop, actor=profile, data=request.POST)
+            )
+        except ValidationError as exc:
+            for message in exc.messages:
+                messages.error(request, message)
+        return redirect(f"{reverse('employees:store_shelf_stock')}?shop={shop.pk}")
+
+    if shop is None and shops:
+        shop = shops[0]
+    shelf_items = list_shelf_items(shop=shop) if shop else []
+    pos = None
+    if shop is not None:
+        from shops.services import get_effective_pos_settings
+
+        pos = get_effective_pos_settings(shop)
+    return render(
+        request,
+        "employees/store_shelf_stock.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Shelf stock",
+                "headline": "Shelf stock",
+                "summary": (
+                    "Register the stock on each shop's shelves and add or remove "
+                    "quantities by hand. Shelf items are not sold, so they do "
+                    "not show on the shop page."
+                ),
+                "icon": "layers",
+            },
+            "shops": shops,
+            "shop": shop,
+            "shelf_items": shelf_items,
+            "shelf_item_count": len(shelf_items),
+            "shelf_low_count": sum(1 for row in shelf_items if row["is_low"]),
+            "shelf_movements": recent_shelf_movements(shop=shop) if shop else [],
+            "item_stock_tracking": bool(getattr(pos, "enable_stock_tracking", False)),
+            "shelf_needs_staff_id": False,
+            "shelf_shop_field": True,
+            "shelf_unit_choices": SHELF_UNIT_CHOICES,
+            "shelf_categories": shelf_categories(),
+            "page_sidebar": sidebar_for_store_stock(
+                EmployeeRole.STORE_MANAGER, profile=profile, active="shelf"
+            ),
+        },
+    )
 
 
 @role_required(EmployeeRole.STORE_MANAGER)

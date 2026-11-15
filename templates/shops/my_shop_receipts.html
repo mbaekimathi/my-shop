@@ -13,6 +13,10 @@
   data-receipt-confirm-url="{{ receipt_confirm_url_template }}"
   data-receipt-return-url="{{ receipt_return_url_template }}"
   data-print-relay-url="{{ print_relay_url }}"
+  data-print-scan-url="{{ print_scan_url }}"
+  data-wifi-config-url="{{ wifi_config_url }}"
+  data-wifi-default-host="{{ wifi_default_host }}"
+  data-wifi-default-port="{{ wifi_default_port }}"
   data-print-channels="{{ pos_flags.print_channels|join:',' }}"
   data-pos-receipt-width="{{ pos_flags.receipt_paper_width|default:'80' }}"
   data-animate="rise"
@@ -184,6 +188,6 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=20261110-no-payby"></script>
-<script defer src="{% static 'js/my-shop-receipts.js' %}?v=20261114-sold-paid-time2"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261115-auto-reconnect"></script>
+<script defer src="{% static 'js/my-shop-receipts.js' %}?v=20261115-direct-print"></script>
 {% endblock %}

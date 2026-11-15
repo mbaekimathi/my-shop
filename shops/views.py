@@ -56,6 +56,7 @@ from items.services import (
 from .models import (
     ExpenseCategory,
     ExpensePaymentStatus,
+    PrintAgentJob,
     Shop,
     ShopReceiptKind,
     ShopReceiptLine,
@@ -92,6 +93,7 @@ from .services import (
     complete_shop_checkout,
     create_shop,
     day_session_balance_summary,
+    stock_mode_of,
     till_summary_payload,
     delete_shop,
     find_client_by_phone,
@@ -115,6 +117,7 @@ from .services import (
     list_shop_receipts,
     open_shop_day,
     pos_settings_as_dict,
+    pos_toggle_enabled,
     preview_receipt_number,
     apply_receipt_copy,
     receipt_font_style,
@@ -706,6 +709,10 @@ def _shop_floor_chrome(
         shop_day_floor_state(shop=shop, pos=pos) if shop is not None else {}
     )
     open_session = day_state.get("open_session") if day_state else None
+    shelf_pos = pos
+    if shelf_pos is None and shop is not None:
+        shelf_pos = get_effective_pos_settings(shop)
+    shelf_mode_enabled = bool(getattr(shelf_pos, "enable_shelf_mode", False))
     low_stock_alerts = []
     low_stock_alert_force = False
     # Low stock popup only after a successful open, once per open session.
@@ -734,6 +741,7 @@ def _shop_floor_chrome(
             pending_stock_take_count=pending_stock_take_count,
             trade_in_enabled=bool(getattr(pos, "enable_trade_in", False)),
             trade_out_enabled=bool(getattr(pos, "enable_trade_out", False)),
+            shelf_mode_enabled=shelf_mode_enabled,
         ),
         "shop": shop,
         "shops": shops,
@@ -1349,6 +1357,8 @@ def build_shop_catalog_page(
         page_size = 120
     page_size = min(max(page_size, 24), 240)
 
+    # The floor lists sellable catalog items in every stock mode — shelf items
+    # are the only ones excluded (they are never sold and never sent here).
     qs = _catalog_filter_qs(_catalog_base_qs(shop), q=q, category=category)
     page_data = _paginate_queryset(qs, page=page, page_size=page_size)
     rows = _catalog_rows_for_items(shop, page_data["items"])
@@ -1654,6 +1664,9 @@ def my_shop_workspace(request, shop_id):
     stock_take_context = _stock_take_workspace_context(shop)
     pos_settings = get_effective_pos_settings(shop)
     pos_flags = pos_settings_as_dict(pos_settings)
+    # Shelf items never appear on the floor (not sold); the catalog does in
+    # every stock mode.
+    floor_item_total = item_count
     from communications.automations import credit_whatsapp_required
 
     credit_whatsapp = credit_whatsapp_required()
@@ -1716,6 +1729,7 @@ def my_shop_workspace(request, shop_id):
             ),
             "meta": meta,
             "item_count": item_count,
+            "floor_item_total": floor_item_total,
             "category_count": 0,
             "pending_stock_requests": pending_requests,
             "pending_request_count": len(pending_requests),
@@ -1757,6 +1771,11 @@ def my_shop_workspace(request, shop_id):
             "print_scan_url": reverse(
                 "employees:my_shop_wifi_printer_scan", kwargs={"shop_id": shop.pk}
             ),
+            "wifi_config_url": reverse(
+                "employees:my_shop_wifi_printer_config", kwargs={"shop_id": shop.pk}
+            ),
+            "wifi_default_host": shop.wifi_printer_host or "",
+            "wifi_default_port": shop.wifi_printer_port or 9100,
             "client_lookup_url": reverse(
                 "employees:my_shop_client_lookup", kwargs={"shop_id": shop.pk}
             ),
@@ -1916,6 +1935,83 @@ def my_shop_stock_count(request, shop_id):
             **take_context,
             "stock_count_results": shop_results,
             "pending_stock_take_count": pending_count,
+        },
+    )
+
+
+@shop_floor_required
+@require_http_methods(["GET", "POST"])
+def my_shop_shelf_stock(request, shop_id):
+    """Shelf mode: register and adjust this shop's own shelf stock list."""
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "shelf_stock", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    pos = get_effective_pos_settings(shop)
+    if not getattr(pos, "enable_shelf_mode", False):
+        messages.info(
+            request,
+            "Shelf mode is off. Turn it on under Settings → POS → Stock.",
+        )
+        return redirect("employees:my_shop_workspace", shop_id=shop.pk)
+
+    from items.shelf_stock_services import (
+        SHELF_UNIT_CHOICES,
+        apply_shelf_action,
+        list_shelf_items,
+        recent_shelf_movements,
+        shelf_categories,
+    )
+
+    if request.method == "POST":
+        actor = profile
+        if actor is None:
+            login_code = (request.POST.get("login_code") or "").strip()
+            denied = _require_my_shop_permission(
+                request, profile, "shelf_stock", login_code=login_code, shop=shop
+            )
+            if denied:
+                return denied
+            actor = verify_active_employee_code(login_code)
+        try:
+            messages.success(
+                request, apply_shelf_action(shop=shop, actor=actor, data=request.POST)
+            )
+        except ValidationError as exc:
+            for message in _validation_errors(exc):
+                messages.error(request, message)
+        return redirect("employees:my_shop_shelf_stock", shop_id=shop.pk)
+
+    shelf_items = list_shelf_items(shop=shop)
+    shops = _shops_for_floor(profile, shop)
+    return _render_my_shop_tool_page(
+        request,
+        shop=shop,
+        profile=profile,
+        shops=shops,
+        active="shelf_stock",
+        title=f"Shelf stock — {shop.name}",
+        headline="Shelf stock",
+        summary=(
+            "Register the stock on your shelves and add or remove quantities by hand. "
+            "Shelf items are not sold, so they do not show on the shop page."
+        ),
+        icon="layers",
+        template_name="shops/my_shop_shelf_stock.html",
+        extra_context={
+            "shelf_items": shelf_items,
+            "shelf_item_count": len(shelf_items),
+            "shelf_low_count": sum(1 for row in shelf_items if row["is_low"]),
+            "shelf_movements": recent_shelf_movements(shop=shop),
+            "item_stock_tracking": bool(getattr(pos, "enable_stock_tracking", True)),
+            "shelf_needs_staff_id": profile is None,
+            "shelf_unit_choices": SHELF_UNIT_CHOICES,
+            "shelf_categories": shelf_categories(),
         },
     )
 
@@ -2730,6 +2826,14 @@ def my_shop_receipts(request, shop_id):
             "print_relay_url": reverse(
                 "employees:my_shop_print_relay", kwargs={"shop_id": shop.pk}
             ),
+            "print_scan_url": reverse(
+                "employees:my_shop_wifi_printer_scan", kwargs={"shop_id": shop.pk}
+            ),
+            "wifi_config_url": reverse(
+                "employees:my_shop_wifi_printer_config", kwargs={"shop_id": shop.pk}
+            ),
+            "wifi_default_host": shop.wifi_printer_host or "",
+            "wifi_default_port": shop.wifi_printer_port or 9100,
             "pos_flags": pos_flags,
         },
     )
@@ -3543,37 +3647,64 @@ def my_shop_print_relay(request, shop_id):
     if not data or len(data) > 256_000:
         return JsonResponse({"ok": False, "error": "Print data is empty or too large."}, status=400)
 
-    # Explain subnet mismatch before attempting a long connect timeout.
+    # Decide whether this server can reach the printer directly. On a hosted
+    # server (cPanel) the LAN check fails — the payload is queued for the
+    # shop's local print agent instead of erroring.
+    import ipaddress
+
+    from .printer_discovery import _local_ipv4_addresses, _networks_from_local_ips
+
+    local_ips = _local_ipv4_addresses()
+    networks = _networks_from_local_ips(local_ips)
+    on_server_lan = None
     try:
-        import ipaddress
-
-        from .printer_discovery import _local_ipv4_addresses, _networks_from_local_ips
-
-        local_ips = _local_ipv4_addresses()
-        networks = _networks_from_local_ips(local_ips)
         printer_ip = ipaddress.ip_address(host)
-        if networks and isinstance(printer_ip, ipaddress.IPv4Address):
-            if not any(printer_ip in net for net in networks):
-                local_list = ", ".join(local_ips) or "unknown"
-                nets = ", ".join(str(net) for net in networks)
-                return JsonResponse(
-                    {
-                        "ok": False,
-                        "error": (
-                            f"Printer {host} is on a different network than this PC "
-                            f"({local_list} / {nets}). "
-                            "Put the printer on the same Wi‑Fi as this computer, "
-                            "then use the printer’s IP from that network (or tap Scan)."
-                        ),
-                        "host": host,
-                        "port": port,
-                        "local_ips": local_ips,
-                        "networks": [str(net) for net in networks],
-                    },
-                    status=502,
-                )
+        if isinstance(printer_ip, ipaddress.IPv4Address):
+            on_server_lan = bool(networks) and any(
+                printer_ip in net for net in networks
+            )
     except ValueError:
-        pass
+        # Hostname — let the direct socket attempt decide.
+        on_server_lan = None
+
+    if on_server_lan is False:
+        if shop.print_agent_token:
+            job = PrintAgentJob.objects.create(
+                shop=shop,
+                host=host,
+                port=port,
+                data=data,
+                source="relay",
+            )
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "queued": True,
+                    "job_id": job.pk,
+                    "host": host,
+                    "port": port,
+                }
+            )
+        local_list = ", ".join(local_ips) or "unknown"
+        nets = ", ".join(str(net) for net in networks) or "no LAN detected"
+        return JsonResponse(
+            {
+                "ok": False,
+                "agent_required": True,
+                "error": (
+                    f"Printer {host} is on a different network than this server "
+                    f"({local_list} / {nets}). If MY-SHOP is hosted, set up the "
+                    "print agent under Shop settings → Receipt → Cloud print "
+                    "agent; otherwise put the printer on the same Wi‑Fi as "
+                    "this computer, then use its IP from that network."
+                ),
+                "host": host,
+                "port": port,
+                "local_ips": local_ips,
+                "networks": [str(net) for net in networks],
+            },
+            status=502,
+        )
 
     try:
         with socket.create_connection((host, port), timeout=2.5) as sock:
@@ -3634,6 +3765,79 @@ def my_shop_wifi_printer_scan(request, shop_id):
     if not result.get("ok"):
         return JsonResponse(result, status=400)
     return JsonResponse(result)
+
+
+@shop_floor_required
+@require_http_methods(["GET", "POST"])
+def my_shop_wifi_printer_config(request, shop_id):
+    """Read/save the shop's default Wi‑Fi printer (host + port).
+
+    The default is stored on the shop so every terminal on the same Wi‑Fi
+    picks it up automatically instead of re-entering the IP per browser.
+    """
+    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
+    denied = _require_my_shop_permission(request, profile, "print", as_json=True, portal_ok=True)
+    if denied:
+        return denied
+
+    pos = get_effective_pos_settings(shop)
+    if not pos.print_channel_enabled("wifi"):
+        return JsonResponse(
+            {"ok": False, "error": "Wi‑Fi printing is disabled in POS settings."},
+            status=400,
+        )
+
+    if request.method == "GET":
+        from .printer_discovery import _local_ipv4_addresses, _networks_from_local_ips
+
+        local_ips = _local_ipv4_addresses()
+        networks = _networks_from_local_ips(local_ips)
+        return JsonResponse(
+            {
+                "ok": True,
+                "host": shop.wifi_printer_host or "",
+                "port": int(shop.wifi_printer_port or 9100),
+                "local_ips": local_ips,
+                "networks": [str(net) for net in networks],
+            }
+        )
+
+    import json
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return JsonResponse({"ok": False, "error": "Invalid payload."}, status=400)
+
+    host = str(payload.get("host") or "").strip()
+    try:
+        port = int(payload.get("port") or 9100)
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Invalid printer port."}, status=400)
+    if port < 1 or port > 65535:
+        return JsonResponse({"ok": False, "error": "Invalid printer port."}, status=400)
+
+    if not host:
+        shop.wifi_printer_host = ""
+        shop.wifi_printer_port = 9100
+        shop.save(update_fields=["wifi_printer_host", "wifi_printer_port", "updated_at"])
+        return JsonResponse({"ok": True, "host": "", "port": 9100, "cleared": True})
+
+    if not _is_lan_printer_host(host):
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "Printer host must be a local/LAN address (e.g. 192.168.x.x).",
+            },
+            status=400,
+        )
+
+    shop.wifi_printer_host = host
+    shop.wifi_printer_port = port
+    shop.save(update_fields=["wifi_printer_host", "wifi_printer_port", "updated_at"])
+    return JsonResponse({"ok": True, "host": host, "port": port})
 
 
 @shop_floor_required
@@ -3907,11 +4111,6 @@ SHOP_POS_SETTING_GROUPS = (
         "toggles": (("enable_discount", "Discount"),),
     },
     {
-        "title": "Stock",
-        "summary": "",
-        "toggles": (("enable_stock_tracking", "Stock quantity tracking"),),
-    },
-    {
         "title": "Open & close",
         "summary": "",
         "toggles": (("enable_open_close", "Compulsory open & close"),),
@@ -4053,9 +4252,29 @@ def _handle_shop_settings_post(request, shop, *, section: str):
             return _shop_settings_error(request, message)
         if wants_json:
             return JsonResponse(
-                {"ok": True, "field": field, "enabled": getattr(row, field)}
+                {
+                    "ok": True,
+                    "field": field,
+                    "enabled": pos_toggle_enabled(row, field),
+                    "stock_mode": stock_mode_of(row),
+                }
             )
         messages.success(request, "Setting updated.")
+        return redirect(request.path)
+
+    if action == "print_agent_token":
+        # Receipt section only: (re)generate the shop's local print agent key.
+        if section != "receipt":
+            return _shop_settings_error(request, "Unknown action.")
+        import secrets
+
+        shop.print_agent_token = secrets.token_hex(20)
+        shop.save(update_fields=["print_agent_token", "updated_at"])
+        if wants_json:
+            return JsonResponse(
+                {"ok": True, "print_agent_token": shop.print_agent_token}
+            )
+        messages.success(request, "Print agent token saved.")
         return redirect(request.path)
 
     if action == "set_tax_percent":
@@ -4311,7 +4530,7 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
     for group in setting_groups:
         toggles = []
         for field, label in group["toggles"]:
-            enabled = bool(getattr(pos, field))
+            enabled = pos_toggle_enabled(pos, field)
             toggle_count += 1
             if enabled:
                 enabled_count += 1
@@ -4667,6 +4886,10 @@ def my_shop_settings_receipt(request, shop_id):
         "shop_settings_section": "receipt",
         "shop_override_enabled": bool(shop_row.override_receipt),
         "using_company_defaults": not bool(shop_row.override_receipt),
+        "print_agent_token": shop.print_agent_token or "",
+        "print_agent_poll_url": request.build_absolute_uri(
+            reverse("employees:print_agent_poll", kwargs={"shop_id": shop.pk})
+        ),
         **_shop_pos_settings_page_context(
             shop, setting_groups=SHOP_RECEIPT_SETTING_GROUPS
         ),

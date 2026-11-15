@@ -96,4 +96,19 @@
       overrideInput.closest(".perm-switch")?.classList.remove("is-saving");
     }
   });
+
+  const agentBtn = root.querySelector("[data-print-agent-generate]");
+  if (agentBtn) {
+    agentBtn.addEventListener("click", async () => {
+      agentBtn.disabled = true;
+      try {
+        await postSettings({ action: "print_agent_token" });
+        // Reload to show the new token and the setup block.
+        window.location.reload();
+      } catch (error) {
+        window.alert(error.message || "Could not save token.");
+        agentBtn.disabled = false;
+      }
+    });
+  }
 })();

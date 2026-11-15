@@ -73,6 +73,7 @@ POS_SETTING_FIELDS = {
     "enable_cash_mpesa",
     "enable_discount",
     "enable_stock_tracking",
+    "enable_shelf_mode",
     "enable_open_close",
     "enable_passwordless_shop_switch",
     "enable_client_data",
@@ -107,7 +108,6 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_mpesa",
         "enable_cash_mpesa",
         "enable_discount",
-        "enable_stock_tracking",
         "enable_open_close",
         "enable_client_data",
         "require_client_phone",
@@ -414,6 +414,44 @@ def set_shop_pos_override(*, shop: Shop, section: str, enabled: bool) -> ShopPos
     return row
 
 
+STOCK_MODE_FIELDS = {
+    "stock_mode_items": (True, False),
+    "stock_mode_shelf": (False, True),
+    "stock_mode_both": (True, True),
+}
+
+
+def stock_mode_of(pos) -> str:
+    """Which single stock-mode toggle is on: items, shelf, or both."""
+    items = bool(getattr(pos, "enable_stock_tracking", True))
+    shelf = bool(getattr(pos, "enable_shelf_mode", False))
+    if items and shelf:
+        return "stock_mode_both"
+    if shelf:
+        return "stock_mode_shelf"
+    if items:
+        return "stock_mode_items"
+    return ""
+
+
+def pos_toggle_enabled(pos, field: str) -> bool:
+    if field in STOCK_MODE_FIELDS:
+        return stock_mode_of(pos) == field
+    return bool(getattr(pos, field))
+
+
+def _apply_stock_mode(row, field: str, enabled: bool) -> list[str]:
+    """Turning one stock mode on switches the others off; one must stay on."""
+    if not enabled:
+        if stock_mode_of(row) == field:
+            raise ValidationError(
+                "One stock mode must stay on. Turn on another mode instead."
+            )
+        return []
+    row.enable_stock_tracking, row.enable_shelf_mode = STOCK_MODE_FIELDS[field]
+    return ["enable_stock_tracking", "enable_shelf_mode"]
+
+
 def _require_shop_override_for_field(shop_row: ShopPosSettings, field: str) -> None:
     if field in SHOP_POS_FIELD_NAMES:
         if not shop_row.override_pos:
@@ -431,6 +469,14 @@ def _require_shop_override_for_field(shop_row: ShopPosSettings, field: str) -> N
 
 
 def set_shop_pos_setting(*, shop: Shop, field: str, enabled: bool) -> ShopPosSettings:
+    if field in STOCK_MODE_FIELDS or field in (
+        "enable_stock_tracking",
+        "enable_shelf_mode",
+    ):
+        # Stock mode is a company-wide decision — every shop uses the same one.
+        raise ValidationError(
+            "Stock mode is set in Company POS settings and applies to all shops."
+        )
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")
     row = get_shop_pos_settings(shop)
@@ -2832,6 +2878,14 @@ def sync_require_mpesa_reference_on_confirm_to_shops(
 
 
 def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:
+    if field in STOCK_MODE_FIELDS:
+        _invalidate_pos_settings_cache()
+        settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
+        changed = _apply_stock_mode(settings_row, field, enabled)
+        if changed:
+            settings_row.save(update_fields=[*changed, "updated_at"])
+        _invalidate_pos_settings_cache()
+        return get_company_pos_settings()
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")
     _invalidate_pos_settings_cache()
@@ -3648,6 +3702,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_cash_mpesa": row.enable_cash_mpesa,
         "enable_discount": row.enable_discount,
         "enable_stock_tracking": bool(getattr(row, "enable_stock_tracking", True)),
+        "enable_shelf_mode": bool(getattr(row, "enable_shelf_mode", False)),
         "enable_open_close": bool(getattr(row, "enable_open_close", True)),
         "enable_client_data": bool(getattr(row, "enable_client_data", True)),
         "require_client_phone": bool(getattr(row, "require_client_phone", False)),

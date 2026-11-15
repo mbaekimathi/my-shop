@@ -146,6 +146,26 @@
     input.addEventListener("change", async () => {
       const enabled = input.checked;
       const previous = !enabled;
+      const stockModeInputs = input.hasAttribute("data-stock-mode-toggle")
+        ? Array.from(root.querySelectorAll("[data-stock-mode-toggle]"))
+        : [];
+      const stockModeBefore = stockModeInputs.map((el) =>
+        el === input ? previous : el.checked
+      );
+      if (stockModeInputs.length) {
+        if (!enabled) {
+          // One stock mode must stay on; switch to another to change it.
+          input.checked = true;
+          setStateLabel(input, true);
+          return;
+        }
+        stockModeInputs.forEach((el) => {
+          if (el !== input) {
+            el.checked = false;
+            setStateLabel(el, false);
+          }
+        });
+      }
       setStateLabel(input, enabled);
       if (input.dataset.field === "enable_tax") {
         syncTaxRow(enabled);
@@ -173,6 +193,12 @@
         const data = await postSettings(body);
         setStateLabel(input, Boolean(data.enabled));
         input.checked = Boolean(data.enabled);
+        if (stockModeInputs.length && typeof data.stock_mode === "string") {
+          stockModeInputs.forEach((el) => {
+            el.checked = el.dataset.field === data.stock_mode;
+            setStateLabel(el, el.checked);
+          });
+        }
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(Boolean(data.enabled));
         }
@@ -190,6 +216,10 @@
       } catch (error) {
         input.checked = previous;
         setStateLabel(input, previous);
+        stockModeInputs.forEach((el, index) => {
+          el.checked = stockModeBefore[index];
+          setStateLabel(el, el.checked);
+        });
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(previous);
         }

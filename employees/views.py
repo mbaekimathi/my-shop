@@ -42,6 +42,7 @@ from shops.services import (
     get_developer_payment_settings,
     mark_developer_subscription_paid,
     pos_settings_as_dict,
+    pos_toggle_enabled,
     preview_receipt_number,
     receipt_font_style,
     receipt_qr_for_settings,
@@ -53,6 +54,7 @@ from shops.services import (
     set_shop_stk_push_enabled,
     set_stk_provider,
     stk_shop_activation_status,
+    stock_mode_of,
     update_nexus_stk_settings,
     apply_receipt_copy,
     receipt_accepted_payment_methods_label,
@@ -98,6 +100,7 @@ from .pagination import page_url, pagination_links, redirect_query_page
 from .services import (
     EMPLOYEE_ID_RE,
     EMPTY_EMPLOYEE_FORM,
+    build_employee_performance,
     employee_form_data_from_post,
     employee_id_is_taken,
     mark_employee_id_taken,
@@ -686,7 +689,21 @@ def dashboard(request):
 
 @role_required(EmployeeRole.EMPLOYEE)
 def role_employee(request):
-    return _render_role_page(request, EmployeeRole.EMPLOYEE)
+    profile = get_profile_for_request(request)
+    return render(
+        request,
+        "employees/employee_home.html",
+        {
+            "profile": profile,
+            "meta": ROLE_PAGE_META[EmployeeRole.EMPLOYEE],
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "perf": build_employee_performance(profile),
+            "page_sidebar": sidebar_for_role_dashboard(
+                EmployeeRole.EMPLOYEE, profile=profile
+            ),
+        },
+    )
 
 
 @role_required(EmployeeRole.SUPER_ADMIN)
@@ -2490,8 +2507,12 @@ POS_SETTING_GROUPS = (
     },
     {
         "title": "Stock",
-        "summary": "",
-        "toggles": (("enable_stock_tracking", "Stock quantity tracking"),),
+        "summary": "Pick one. Turning one on switches the others off.",
+        "toggles": (
+            ("stock_mode_items", "Items"),
+            ("stock_mode_shelf", "Shelf"),
+            ("stock_mode_both", "Both"),
+        ),
     },
     {
         "title": "Open & close",
@@ -2600,7 +2621,8 @@ def _company_pos_settings(
                     {
                         "ok": True,
                         "field": field,
-                        "enabled": getattr(row, field),
+                        "enabled": pos_toggle_enabled(row, field),
+                        "stock_mode": stock_mode_of(row),
                         **stk_payload,
                     }
                 )
@@ -2867,7 +2889,7 @@ def _company_pos_settings(
     for group in setting_groups:
         toggles = []
         for field, label in group["toggles"]:
-            enabled = bool(getattr(pos, field))
+            enabled = pos_toggle_enabled(pos, field)
             toggle_count += 1
             if enabled:
                 enabled_count += 1

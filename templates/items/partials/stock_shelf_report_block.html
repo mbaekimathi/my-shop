@@ -1,0 +1,103 @@
+{% comment %}
+Shelf-stock report block. Used by the dedicated shelf report/movements page
+and appended to the catalog report for "both"-mode shops.
+Expects: shelf_report, shelf_report_shop (optional), is_movements_page.
+{% endcomment %}
+<section class="store-stock-panel store-stock-panel--list stock-shelf-report" aria-labelledby="shelf-report-title">
+  <div class="store-stock-panel-head store-stock-panel-head--list">
+    <div>
+      <h3 id="shelf-report-title">
+        Shelf items{% if shelf_report_shop %} — {{ shelf_report_shop.name }}{% endif %}
+      </h3>
+      <p>
+        Shelf stock is tracked separately — it is never sold at the POS.
+        {% if shelf_report.type_filter %}Filtered to “{{ shelf_report.type_filter }}” changes.{% endif %}
+      </p>
+    </div>
+    <div class="store-stock-stats">
+      <span><strong>{{ shelf_report.item_count }}</strong> items</span>
+      <span><strong>{{ shelf_report.units_on_hand|floatformat:"-3" }}</strong> on shelf</span>
+      <span><strong>+{{ shelf_report.units_in|floatformat:"-3" }}</strong> in</span>
+      <span><strong>−{{ shelf_report.units_out|floatformat:"-3" }}</strong> out</span>
+    </div>
+  </div>
+
+  {% if is_movements_page %}
+  {% if shelf_report.events %}
+  <div class="store-stock-table-wrap">
+    <table class="store-stock-table">
+      <thead>
+        <tr>
+          <th scope="col">When</th>
+          <th scope="col">Shelf item</th>
+          <th scope="col">Change</th>
+          <th scope="col" class="store-stock-col-qty">Qty</th>
+          <th scope="col" class="store-stock-col-qty">Left</th>
+          <th scope="col">By</th>
+          <th scope="col">Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ev in shelf_report.events %}
+        <tr class="store-stock-row">
+          <td data-label="When">{{ ev.created_at|date:"d M Y H:i" }}</td>
+          <td data-label="Shelf item">{{ ev.name }}</td>
+          <td data-label="Change">{{ ev.type_label }}</td>
+          <td class="store-stock-col-qty" data-label="Qty">{% if ev.type == "out" %}−{% else %}+{% endif %}{{ ev.qty|floatformat:"-3" }}</td>
+          <td class="store-stock-col-qty" data-label="Left">{{ ev.balance_after|floatformat:"-3" }}</td>
+          <td data-label="By">{{ ev.by }}</td>
+          <td data-label="Note">{{ ev.note }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if shelf_report.movement_count > shelf_report.events|length %}
+  <p class="store-stock-panel-note">Showing the latest {{ shelf_report.events|length }} of {{ shelf_report.movement_count }} changes.</p>
+  {% endif %}
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="arrow-left-right" aria-hidden="true"></i>
+    <p>No shelf stock changes in this period.</p>
+  </div>
+  {% endif %}
+  {% else %}
+  {% if shelf_report.rows %}
+  <div class="store-stock-table-wrap">
+    <table class="store-stock-table">
+      <thead>
+        <tr>
+          <th scope="col">Shelf item</th>
+          <th scope="col" class="store-stock-col-qty">On shelf</th>
+          <th scope="col" class="store-stock-col-qty">Registered</th>
+          <th scope="col" class="store-stock-col-qty">In</th>
+          <th scope="col" class="store-stock-col-qty">Out</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in shelf_report.rows %}
+        <tr class="store-stock-row">
+          <td data-label="Shelf item">
+            <div class="store-stock-item-cell">
+              <span class="store-stock-item-name">{{ row.item.name }}</span>
+              {% if row.item.unit %}<span class="store-stock-item-cat-mobile">{{ row.item.unit }}</span>{% endif %}
+              {% if row.item.is_archived %}<span class="stock-item-badge">Archived</span>{% endif %}
+            </div>
+          </td>
+          <td class="store-stock-col-qty" data-label="On shelf">{{ row.item.quantity|floatformat:"-3" }}</td>
+          <td class="store-stock-col-qty" data-label="Registered">{{ row.register_qty|floatformat:"-3" }}</td>
+          <td class="store-stock-col-qty" data-label="In">+{{ row.in_qty|floatformat:"-3" }}</td>
+          <td class="store-stock-col-qty" data-label="Out">−{{ row.out_qty|floatformat:"-3" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="archive" aria-hidden="true"></i>
+    <p>No shelf items are registered for this shop yet. Register them from the Shelf stock page.</p>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>

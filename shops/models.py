@@ -59,6 +59,29 @@ class Shop(models.Model):
             "Diagnostic only — concurrent shop sessions are allowed."
         ),
     )
+    wifi_printer_host = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text=(
+            "Default Wi‑Fi receipt printer IP/host for this shop (LAN only). "
+            "Saved when a terminal connects so every device on the same Wi‑Fi can print."
+        ),
+    )
+    wifi_printer_port = models.PositiveIntegerField(
+        default=9100,
+        help_text="TCP port of the shop's default Wi‑Fi printer (raw ESC/POS is usually 9100).",
+    )
+    print_agent_token = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text=(
+            "Bearer token for the shop's local print agent. Required for Wi‑Fi "
+            "printing when MY-SHOP runs on a hosted server that cannot reach the "
+            "shop LAN — the agent polls PrintAgentJob rows and prints them locally."
+        ),
+    )
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
         on_delete=models.SET_NULL,
@@ -638,6 +661,10 @@ class CompanyPosSettings(models.Model):
         default=True,
         help_text="When on, checkout requires enough shop stock. When off, sales can proceed without stock.",
     )
+    enable_shelf_mode = models.BooleanField(
+        default=False,
+        help_text="When on, the shop tracks a separate shelf stock list registered by hand. Shelf items are not sold at the POS.",
+    )
     enable_open_close = models.BooleanField(
         default=True,
         help_text="When on, staff must open the shop day before selling and are redirected to open/close. When off, open/close is optional.",
@@ -956,6 +983,10 @@ class ShopPosSettings(models.Model):
     enable_stock_tracking = models.BooleanField(
         default=True,
         help_text="When on, checkout requires enough shop stock. When off, sales can proceed without stock.",
+    )
+    enable_shelf_mode = models.BooleanField(
+        default=False,
+        help_text="When on, the shop tracks a separate shelf stock list registered by hand. Shelf items are not sold at the POS.",
     )
     enable_open_close = models.BooleanField(
         default=True,
@@ -1843,3 +1874,51 @@ class ClientCreditAccountEvent(models.Model):
 
     def __str__(self):
         return f"{self.get_kind_display()} · client {self.client_id}"
+
+
+class PrintAgentJob(models.Model):
+    """Queued ESC/POS payload for a shop's local print agent (hosted mode).
+
+    When MY-SHOP runs on a hosted server it cannot reach shop LAN printers.
+    The print relay queues payloads here; a small agent on the shop network
+    polls, writes them to the Wi‑Fi printer, and acks each job.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        CLAIMED = "claimed", "Claimed"
+        DONE = "done", "Done"
+        FAILED = "failed", "Failed"
+
+    shop = models.ForeignKey(
+        Shop,
+        on_delete=models.CASCADE,
+        related_name="print_agent_jobs",
+    )
+    host = models.CharField(max_length=255)
+    port = models.PositiveIntegerField(default=9100)
+    data = models.BinaryField()
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    attempts = models.PositiveSmallIntegerField(default=0)
+    error = models.CharField(max_length=255, blank=True, default="")
+    source = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    done_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        indexes = [
+            models.Index(
+                fields=["shop", "status", "id"],
+                name="shops_print_shop_st_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"print job {self.pk} · {self.shop_id} · {self.status}"

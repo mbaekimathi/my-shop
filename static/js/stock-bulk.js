@@ -2742,6 +2742,8 @@
     });
 
     form.addEventListener("submit", async (event) => {
+      // Shelf panel buttons post natively as shelf_action — not a bulk submit.
+      if (event.submitter && event.submitter.name === "shelf_action") return;
       event.preventDefault();
       if (submitInFlight) return;
       const ready = collectReady();
@@ -5753,6 +5755,8 @@
   });
 
   form.addEventListener("submit", async (event) => {
+    // Shelf panel buttons post natively as shelf_action — not a bulk submit.
+    if (event.submitter && event.submitter.name === "shelf_action") return;
     if (isCatalogBusy()) {
       event.preventDefault();
       blockSubmit(

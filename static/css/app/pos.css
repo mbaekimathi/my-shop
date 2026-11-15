@@ -2198,6 +2198,10 @@
   outline: none;
 }
 
+.shop-floor-item-open--static {
+  cursor: default;
+}
+
 .shop-floor-item-media {
   display: grid;
   place-items: center;

@@ -1040,6 +1040,14 @@
       image_data_url: qr?.image_data_url || "",
     };
 
+    if (printer && !printer.canAutoPrint?.(targetChannel)) {
+      try {
+        // Saved or shop-default Wi‑Fi printers restore on demand here.
+        await printer.ensureConnected?.(targetChannel);
+      } catch (_err) {
+        /* fall through to browser print */
+      }
+    }
     if (printer?.canAutoPrint?.(targetChannel)) {
       try {
         await printer.print(
@@ -1053,6 +1061,12 @@
       } catch (_err) {
         /* fall through to browser print */
       }
+    }
+
+    // Wi‑Fi / Bluetooth print straight to the connected device — the Windows
+    // print dialog is only a fallback for USB (Windows printer) mode.
+    if (targetChannel === "wifi" || targetChannel === "bluetooth") {
+      return false;
     }
 
     if (typeof printer?.browserPrint === "function") {

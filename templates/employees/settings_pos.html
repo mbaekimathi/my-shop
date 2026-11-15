@@ -54,6 +54,7 @@
     <section class="pos-settings-group">
       <div class="pos-settings-group-head">
         <h3>{{ group.title }}</h3>
+        {% if group.summary %}<p>{{ group.summary }}</p>{% endif %}
       </div>
       <ul class="pos-settings-list">
         {% for toggle in group.toggles %}
@@ -66,6 +67,13 @@
         >
           <div class="pos-settings-copy">
             <strong>{{ toggle.label }}</strong>
+            {% if toggle.field == "stock_mode_items" %}
+            <p>Track stock on the items you sell. They show on the shop page, and sales need enough stock and reduce it.</p>
+            {% elif toggle.field == "stock_mode_shelf" %}
+            <p>Track a shelf stock list you register in Stock Management. Shelf items are not sold, so the shop page shows no items.</p>
+            {% elif toggle.field == "stock_mode_both" %}
+            <p>Track stock on the items you sell and keep a separate shelf stock list, managed in Stock Management.</p>
+            {% endif %}
             {% if toggle.employee_perm %}
             <p class="pos-settings-employee-link">
               <a
@@ -83,7 +91,7 @@
               class="perm-switch-input"
               {% if toggle.enabled %}checked{% endif %}
               data-pos-toggle
-              data-field="{{ toggle.field }}"
+              data-field="{{ toggle.field }}"{% if toggle.field|slice:":11" == "stock_mode_" %} data-stock-mode-toggle{% endif %}
               aria-label="{{ toggle.label }}"
             >
             <span class="perm-switch-ui" aria-hidden="true"></span>
@@ -123,5 +131,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}?v=8"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=11"></script>
 {% endblock %}

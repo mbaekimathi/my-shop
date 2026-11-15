@@ -6,7 +6,7 @@
 {% block workspace_content %}
 <section
   class="shop-floor"
-  data-item-total="{{ item_count }}"
+  data-item-total="{{ floor_item_total }}"
   data-shop-cart
   data-shop-id="{{ shop.id }}"
   data-shop-name="{{ shop.name }}"
@@ -123,7 +123,7 @@
       hidden
       aria-live="polite"
     ></span>
-    {% if item_count %}
+    {% if floor_item_total %}
     <div class="shop-floor-view-toggle" role="group" aria-label="Catalog layout">
       <button
         type="button"
@@ -183,7 +183,7 @@
     {% endif %}
   </div>
 
-  {% if item_count %}
+  {% if floor_item_total %}
   <div class="shop-floor-catalog" data-item-list data-catalog-root>
     <div class="dashboard-placeholder shop-floor-catalog-loading" data-catalog-loading>
       <i data-lucide="loader-circle" aria-hidden="true"></i>
@@ -993,11 +993,11 @@
   src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=places&callback=__shopFloorMapsReady&v=weekly"
 ></script>
 {% endif %}
-<script defer src="{% static 'js/shop-catalog.js' %}?v=20261106-hide-shop-qty"></script>
+<script defer src="{% static 'js/shop-catalog.js' %}?v=20261115-no-shelf-floor"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
-<script defer src="{% static 'js/shop-printer.js' %}?v=20261111-delivery-receipt"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=20261114-optional-trade-client"></script>
+<script defer src="{% static 'js/shop-printer.js' %}?v=20261115-auto-reconnect"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=20261115-direct-print"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261111-stock-take-hide-scope"></script>
 <script defer src="{% static 'js/shop-stock-take.js' %}?v=8"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
