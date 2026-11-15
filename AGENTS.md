@@ -41,6 +41,15 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `validate_item_payload` in `items/services.py`; tests in
   `ShopPriceIsolationTests`.
 
+## Shop floor sidebar toggles (Settings → POS)
+- `enable_sidebar_*` on `CompanyPosSettings` (+ per-shop `ShopPosSettings`
+  override) are **link-only**: they hide menu links in the `/my-shop/<id>/`
+  sidebar (`sidebar_for_my_shop` in `employees/workspace.py`, `_flag` checks).
+  They do not drop `my-shop/*` permission keys, do not block the pages by URL,
+  and do not affect employee surfaces (e.g. the cashier role dashboard) —
+  employees keep access per the permission matrix. Tests:
+  `shops/tests/test_pos_toggle_enforcement.py`.
+
 ## Wi‑Fi printing
 - Channels (Bluetooth/USB/Wi‑Fi) → `enable_print_*` flags; "Connect to printer"
   lives in the shop floor workspace sidebar, gated by `my-shop/print` permission.

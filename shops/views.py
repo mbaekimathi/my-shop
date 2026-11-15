@@ -95,7 +95,6 @@ from .services import (
     create_shop,
     day_session_balance_summary,
     stock_mode_of,
-    MY_SHOP_SUBMODULE_SIDEBAR_FIELD,
     till_summary_payload,
     delete_shop,
     find_client_by_phone,
@@ -792,32 +791,6 @@ def _require_my_shop_permission(
     """
     from employees.module_permissions import require_module_permission
     from employees.services import invalid_staff_code_message, verify_active_employee_code
-
-    # Sidebar-hidden features are denied for every session against the shop's
-    # effective settings, so a hidden page stays unreachable even by URL.
-    target_shop = shop
-    if target_shop is None:
-        shop_pk = None
-        if request is not None and request.resolver_match is not None:
-            shop_pk = request.resolver_match.kwargs.get("shop_id")
-        if shop_pk:
-            target_shop = Shop.objects.filter(pk=shop_pk).first()
-    field = MY_SHOP_SUBMODULE_SIDEBAR_FIELD.get(submodule)
-    if (
-        target_shop is not None
-        and field
-        and not getattr(get_effective_pos_settings(target_shop), field, True)
-    ):
-        message = "That page is disabled in POS settings."
-        if as_json:
-            from django.http import JsonResponse
-
-            return JsonResponse({"ok": False, "error": message}, status=403)
-        from django.contrib import messages
-        from django.shortcuts import redirect
-
-        messages.error(request, message)
-        return redirect("employees:my_shop_workspace", shop_id=target_shop.pk)
 
     acting = actor
     if acting is None and login_code is not None:

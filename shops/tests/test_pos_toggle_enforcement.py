@@ -990,7 +990,7 @@ class PosToggleEnforcementTests(TestCase):
         )
         return [item["label"] for item in sidebar["primary"]]
 
-    def test_sidebar_toggles_hide_links_and_drop_permission_keys(self):
+    def test_sidebar_toggles_hide_links_only(self):
         labels = self._sidebar_labels()
         for label in (
             "Close shop",
@@ -1036,7 +1036,8 @@ class PosToggleEnforcementTests(TestCase):
         ):
             self.assertNotIn(label, labels)
 
-        # Hidden features are also removed from the employee permission matrix.
+        # Sidebar toggles are link-only: they never drop permission keys, so
+        # employees (e.g. cashiers) keep the features on their own surfaces.
         disabled = company_pos_disabled_permission_keys()
         for key in (
             ("my-shop", "open_close"),
@@ -1048,11 +1049,10 @@ class PosToggleEnforcementTests(TestCase):
             ("my-shop", "shelf_stock"),
             ("my-shop", "register_expense"),
             ("my-shop", "receipts"),
+            ("my-shop", "print"),
+            ("my-shop", "workspace"),
         ):
-            self.assertIn(key, disabled)
-        # Printer and website are link-only: they do not drop permissions.
-        self.assertNotIn(("my-shop", "print"), disabled)
-        self.assertNotIn(("my-shop", "workspace"), disabled)
+            self.assertNotIn(key, disabled)
 
         for field in (
             "enable_sidebar_open_close",
@@ -1068,7 +1068,7 @@ class PosToggleEnforcementTests(TestCase):
         ):
             set_company_pos_setting(field=field, enabled=True)
 
-    def test_sidebar_hidden_page_denied_for_portal(self):
+    def test_sidebar_hidden_page_stays_reachable(self):
         from django.urls import reverse
 
         client = self.client_class()
@@ -1083,17 +1083,12 @@ class PosToggleEnforcementTests(TestCase):
         response = client.get(transfers_url)
         self.assertEqual(response.status_code, 200)
 
+        # Toggling the link off does not block the page itself.
         set_company_pos_setting(
             field="enable_sidebar_stock_transfers", enabled=False
         )
         response = client.get(transfers_url)
-        self.assertRedirects(
-            response,
-            reverse(
-                "employees:my_shop_workspace", kwargs={"shop_id": self.shop.pk}
-            ),
-            fetch_redirect_response=False,
-        )
+        self.assertEqual(response.status_code, 200)
         set_company_pos_setting(
             field="enable_sidebar_stock_transfers", enabled=True
         )
