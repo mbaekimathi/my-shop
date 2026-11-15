@@ -57,6 +57,12 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   load hook can miss, and checkout/delivery/goods-received callers race the
   print against a page navigation, so a late `win.print()` is destroyed
   before the dialog opens.
+- Multi-copy sales (customer/staff/cashier toggles) go through
+  `browserPrintCopies` / `printReceiptCopies`: on the Windows-dialog path
+  (USB "Windows printer" mode or browser fallback) all copies render into
+  ONE srcdoc document with `page-break-before` between them — a single
+  print dialog, driver cuts each copy. Raw USB / Wi‑Fi / Bluetooth keep
+  one job per copy (those auto-cut, no dialog).
 - **Hosted (cPanel) mode**: the server can't reach shop LAN printers, so the
   relay queues a `PrintAgentJob` when the target is off the server's LAN and
   `shop.print_agent_token` is set (else 502 `agent_required`). A local agent
