@@ -95,7 +95,6 @@ from .services import (
     create_shop,
     day_session_balance_summary,
     stock_mode_of,
-    MY_SHOP_SUBMODULE_SIDEBAR_FIELD,
     till_summary_payload,
     delete_shop,
     find_client_by_phone,
@@ -792,32 +791,6 @@ def _require_my_shop_permission(
     """
     from employees.module_permissions import require_module_permission
     from employees.services import invalid_staff_code_message, verify_active_employee_code
-
-    # Sidebar-hidden features are denied for every session against the shop's
-    # effective settings, so a hidden page stays unreachable even by URL.
-    target_shop = shop
-    if target_shop is None:
-        shop_pk = None
-        if request is not None and request.resolver_match is not None:
-            shop_pk = request.resolver_match.kwargs.get("shop_id")
-        if shop_pk:
-            target_shop = Shop.objects.filter(pk=shop_pk).first()
-    field = MY_SHOP_SUBMODULE_SIDEBAR_FIELD.get(submodule)
-    if (
-        target_shop is not None
-        and field
-        and not getattr(get_effective_pos_settings(target_shop), field, True)
-    ):
-        message = "That page is disabled in POS settings."
-        if as_json:
-            from django.http import JsonResponse
-
-            return JsonResponse({"ok": False, "error": message}, status=403)
-        from django.contrib import messages
-        from django.shortcuts import redirect
-
-        messages.error(request, message)
-        return redirect("employees:my_shop_workspace", shop_id=target_shop.pk)
 
     acting = actor
     if acting is None and login_code is not None:
@@ -2292,7 +2265,7 @@ def my_shop_buy_stock_catalog(request, shop_id):
 @require_http_methods(["GET", "POST"])
 def my_shop_buy_stock(request, shop_id):
     """Buy stock from an outside supplier and stock it into the active shop."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
     if denied:
         if _wants_json_response(request):
             from shops.session import session_expired_response
@@ -2788,7 +2761,7 @@ def my_shop_register_expense(request, shop_id):
 @require_http_methods(["GET"])
 def my_shop_supplier_search(request, shop_id):
     """Live stock-supplier suggestions for Buy stock on the shop floor."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
     if denied:
         return denied
     denied = _require_my_shop_permission(

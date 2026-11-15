@@ -3571,35 +3571,8 @@ _POS_FIELD_TO_RECEIPT_KIND = {
     "enable_trade_in": "trade_in",
 }
 
-# Sidebar-link toggles also block the matching my-shop permission so the
-# feature is unreachable for employees, not just hidden from the menu.
-# ("Connect to printer" and "Shop website" stay link-only: printing is
-# governed by the print-channel toggles and the storefront is shareable.)
-_POS_FIELD_TO_MY_SHOP_PERMS = {
-    "enable_sidebar_open_close": ("open_close",),
-    "enable_sidebar_trade": ("trade_out", "trade_in"),
-    "enable_sidebar_buy_stock": ("buy_stock",),
-    "enable_sidebar_stock_transfers": ("stock_requests",),
-    "enable_sidebar_stock_count": ("stock_count",),
-    "enable_sidebar_shelf_stock": ("shelf_stock",),
-    "enable_sidebar_expense": ("register_expense",),
-    "enable_sidebar_receipts": ("receipts",),
-}
-
-# Shop-portal pages bypass the employee matrix, so sidebar-hidden pages are
-# denied directly against the effective per-shop flags.
-MY_SHOP_SUBMODULE_SIDEBAR_FIELD = {
-    "open_close": "enable_sidebar_open_close",
-    "buy_stock": "enable_sidebar_buy_stock",
-    "stock_requests": "enable_sidebar_stock_transfers",
-    "stock_count": "enable_sidebar_stock_count",
-    "shelf_stock": "enable_sidebar_shelf_stock",
-    "register_expense": "enable_sidebar_expense",
-    "receipts": "enable_sidebar_receipts",
-    "return_receipt": "enable_sidebar_receipts",
-    "trade_out": "enable_sidebar_trade",
-    "trade_in": "enable_sidebar_trade",
-}
+# The "Shop floor sidebar" toggles only hide menu links on the shop page —
+# they never disable employee permissions or block the pages themselves.
 
 
 def company_pos_disabled_permission_keys(
@@ -3620,10 +3593,6 @@ def company_pos_disabled_permission_keys(
     for field, analytics_slug in _POS_FIELD_EXTRA_ANALYTICS_SECTION.items():
         if not bool(getattr(row, field, True)):
             disabled.add(("analytics", analytics_slug))
-    for field, submodules in _POS_FIELD_TO_MY_SHOP_PERMS.items():
-        if not bool(getattr(row, field, True)):
-            for submodule in submodules:
-                disabled.add(("my-shop", submodule))
     if not row.enabled_print_channels():
         disabled.add(("my-shop", "print"))
     return frozenset(disabled)

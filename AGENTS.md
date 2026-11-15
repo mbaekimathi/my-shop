@@ -41,6 +41,33 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `validate_item_payload` in `items/services.py`; tests in
   `ShopPriceIsolationTests`.
 
+## Shop floor sidebar toggles (Settings → POS)
+- `enable_sidebar_*` on `CompanyPosSettings` (+ per-shop `ShopPosSettings`
+  override) are **link-only**: they hide menu links in the `/my-shop/<id>/`
+  sidebar (`sidebar_for_my_shop` in `employees/workspace.py`, `_flag` checks).
+  They do not drop `my-shop/*` permission keys, do not block the pages by URL,
+  and do not affect employee surfaces (e.g. the cashier role dashboard) —
+  employees keep access per the permission matrix. Tests:
+  `shops/tests/test_pos_toggle_enforcement.py`.
+
+## Action popups on role dashboards
+- Sidebar `_action` items render `data-modal-open`/`data-href`; `workspace_base.html`
+  opens `[data-modal="<name>"]` when the modal exists on the page, else follows the
+  href. `?modal=buy-stock|register-expense` auto-opens on load.
+- `expense_modal_context` / `buy_stock_modal_context` (employees/workspace.py) supply
+  modal context **only for single-actionable-shop staff**; multi-shop staff fall back
+  to the `data-href` (MY-SHOP picker / page).
+- Endpoints used by dashboard popups must allow allocation-level access (no floor
+  unlock): `_require_allocated_shop_access` — the staff-ID field in the payload
+  authorises the write. Used by register expense, open/close day, verify-login-code,
+  **buy stock POST and stock-supplier search**. Catalog GETs use
+  `_require_shop_read_access`.
+- Cashier dashboard (`_cashier_dashboard_links`): no Stock Management link — "Buy
+  stock" action (`buy_stock_action`, gated by `my-shop/buy_stock` +
+  `enable_sidebar_buy_stock`) opens `shops/partials/buy_stock_modal.html` on
+  `role_home.html` (stock-catalog.js + stock-bulk.js loaded when
+  `buy_stock_modal`), plus a "Suppliers" link (`analytics/suppliers`).
+
 ## Wi‑Fi printing
 - Channels (Bluetooth/USB/Wi‑Fi) → `enable_print_*` flags; "Connect to printer"
   lives in the shop floor workspace sidebar, gated by `my-shop/print` permission.

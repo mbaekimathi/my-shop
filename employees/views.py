@@ -111,6 +111,7 @@ from .services import (
 from .throttle import rate_limit
 from .workspace import (
     ROLE_PAGE_META,
+    buy_stock_modal_context,
     get_dashboard_module,
     get_settings_section,
     get_settings_sections,
@@ -170,17 +171,16 @@ def _redirect_after_employee_access_update(request, list_page=None):
 def _render_role_page(request, expected_role):
     profile = get_profile_for_request(request)
     meta = ROLE_PAGE_META[expected_role]
-    return render(
-        request,
-        "employees/role_home.html",
-        {
-            "profile": profile,
-            "meta": meta,
-            "role_label": profile.get_role_display(),
-            "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_role_dashboard(expected_role, profile=profile),
-        },
-    )
+    context = {
+        "profile": profile,
+        "meta": meta,
+        "role_label": profile.get_role_display(),
+        "status_label": profile.get_status_display(),
+        "page_sidebar": sidebar_for_role_dashboard(expected_role, profile=profile),
+    }
+    if expected_role == EmployeeRole.SHOP_CASHIER:
+        context.update(buy_stock_modal_context(request, profile))
+    return render(request, "employees/role_home.html", context)
 
 
 @active_employee_required

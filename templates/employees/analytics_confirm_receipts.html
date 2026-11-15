@@ -14,6 +14,7 @@
   data-receipt-confirm-url="{{ page.confirm_url_template }}"
   data-receipt-cancel-url="{{ page.cancel_url_template }}"
   data-receipt-set-status-url="{{ page.set_status_url_template }}"
+  data-verify-login-url="{{ page.verify_login_url }}"
   data-receipt-rows-url="{{ page.rows_url }}"
   data-async-rows="{% if async_rows %}1{% else %}0{% endif %}"
 >
@@ -252,16 +253,21 @@
     </div>
 
     <div class="workspace-modal-actions shop-receipt-modal-actions" data-confirm-receipt-modal-actions hidden>
-      <label class="ax-confirm-status-edit" data-confirm-receipt-status-wrap hidden>
-        <span class="visually-hidden">Receipt status</span>
-        <select data-confirm-receipt-status aria-label="Receipt status">
-          <option value="pending">Pending</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
-      </label>
-      <button type="button" class="btn btn--primary" data-confirm-receipt-save-status hidden>
-        Update status
+      <button type="button" class="btn btn--ghost" data-confirm-receipt-start hidden>
+        <i data-lucide="badge-check" aria-hidden="true"></i>
+        Confirm receipt
+      </button>
+      <button type="button" class="btn btn--ghost" data-confirm-receipt-set-pending hidden>
+        Set pending
+      </button>
+      <button type="button" class="btn btn--ghost" data-confirm-receipt-set-cancelled hidden>
+        Set cancelled
+      </button>
+      <button type="button" class="btn btn--ghost" data-confirm-receipt-cancel-mode hidden>
+        Cancel
+      </button>
+      <button type="button" class="btn btn--primary" data-confirm-receipt-submit hidden disabled>
+        Confirm receipt
       </button>
     </div>
   </div>
@@ -270,7 +276,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=37"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=38"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");
